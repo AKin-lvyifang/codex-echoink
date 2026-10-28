@@ -548,18 +548,21 @@ button.codex-message-action {
   min-height: 28px;
   max-width: 28px;
   max-height: 28px;
-  padding: 0 !important;
-  margin: 0 !important;
   flex: 0 0 28px;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-faint);
-  background: transparent !important;
-  box-shadow: none !important;
   font: inherit;
   line-height: 1;
   cursor: pointer;
   transition: color 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-message-action {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-message-action-icon {
@@ -579,11 +582,14 @@ button.codex-message-action {
 button.codex-message-action:hover:not(:disabled),
 button.codex-message-action:focus-visible:not(:disabled) {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
 }
 
-button.codex-message-action:focus {
-  box-shadow: none !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-message-action:hover:not(:disabled), :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-message-action:focus-visible:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-message-action:focus {
+  box-shadow: none;
 }
 
 button.codex-message-action:focus-visible {
@@ -597,9 +603,12 @@ body:not(.is-mobile) button.codex-message-action:not(.echoink-mobile-finance-set
 }
 
 button.codex-message-action:disabled {
-  background: transparent !important;
   cursor: not-allowed;
   opacity: 0.42;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-message-action:disabled {
+  background: transparent;
 }
 
 .codex-answer-copy[aria-label="回答已复制"] {
@@ -1635,13 +1644,16 @@ body:not(.is-mobile) .echoink-agent-editor.is-onboarding.echoink-theme-boundary 
   border: 0;
   border-radius: 0;
   color: inherit;
-  background: transparent !important;
-  box-shadow: none !important;
   text-align: left;
 }
 
-.codex-task-plan-header:hover {
-  background: var(--background-modifier-hover) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-header {
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-header:hover {
+  background: var(--background-modifier-hover);
 }
 
 .codex-task-plan-header:focus-visible,
@@ -1824,26 +1836,35 @@ body:not(.is-mobile) .echoink-agent-editor.is-onboarding.echoink-theme-boundary 
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
   color: var(--text-muted);
-  background: var(--background-primary) !important;
-  box-shadow: none !important;
   font-size: 11px;
   font-weight: 520;
   line-height: 1.2;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-action {
+  background: var(--background-primary);
+  box-shadow: none;
+}
+
 .codex-task-plan-action:hover:not(:disabled) {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-action:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
 }
 
 .codex-task-plan-action.is-primary {
   border-color: var(--interactive-accent);
   color: var(--text-on-accent);
-  background: var(--interactive-accent) !important;
 }
 
-.codex-task-plan-action.is-primary:hover:not(:disabled) {
-  background: var(--interactive-accent-hover) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-action.is-primary {
+  background: var(--interactive-accent);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-action.is-primary:hover:not(:disabled) {
+  background: var(--interactive-accent-hover);
 }
 
 .codex-task-plan-action.is-danger {
@@ -1856,7 +1877,10 @@ body:not(.is-mobile) .echoink-agent-editor.is-onboarding.echoink-theme-boundary 
     var(--text-error) 45%,
     var(--background-modifier-border)
   );
-  background: color-mix(in srgb, var(--text-error) 8%, transparent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-task-plan-action.is-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-error) 8%, transparent);
 }
 
 .codex-task-plan-action:disabled,
@@ -1957,7 +1981,10 @@ button.codex-context-meter {
 
 button.codex-context-meter[aria-expanded="true"] {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) button.codex-context-meter[aria-expanded="true"] {
+  background: var(--background-modifier-hover);
 }
 
 button.codex-context-meter:focus-visible,
@@ -2008,19 +2035,25 @@ button.codex-context-meter:focus-visible,
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   cursor: pointer;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-context-panel-close {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-context-panel-close:hover,
 .codex-context-panel-close:focus-visible {
   outline: none;
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-context-panel-close:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-context-panel-close:focus-visible {
+  background: var(--background-modifier-hover);
 }
 
 .codex-context-panel-close svg {
@@ -2939,21 +2972,23 @@ body.theme-light .codex-code-wrapper pre {
   max-height: 220px;
   resize: none;
   padding: 10px 10px 4px;
-  border: 0 !important;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   font-family: inherit;
   font-size: 14px;
   line-height: 1.45;
 }
 
-.codex-input:hover,
-.codex-input:focus {
-  outline: none !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-input:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-input:focus {
+  outline: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-input::placeholder {
@@ -3165,14 +3200,16 @@ body.theme-light .codex-code-wrapper pre {
 
 .codex-knowledge-command-menu button.codex-command-item {
   appearance: none;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
 }
 
-.codex-knowledge-command-menu button.codex-command-item:hover,
-.codex-knowledge-command-menu button.codex-command-item.is-selected {
-  background: var(--background-modifier-hover) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-knowledge-command-menu button.codex-command-item {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-knowledge-command-menu button.codex-command-item:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-knowledge-command-menu button.codex-command-item.is-selected {
+  background: var(--background-modifier-hover);
 }
 
 .codex-skill-heading,
@@ -6163,15 +6200,21 @@ body.theme-dark .codex-provider-brand-svg[data-provider-brand="qwen"] > path {
 .codex-resource-button.codex-icon-button {
   width: 30px;
   height: 28px;
-  padding: 0 !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-resource-button.codex-icon-button {
+  padding: 0;
 }
 
 .codex-resource-button svg {
   display: block;
   flex: 0 0 17px;
-  width: 17px !important;
-  height: 17px !important;
   stroke-width: 2;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-resource-button svg {
+  width: 17px;
+  height: 17px;
 }
 
 .codex-resource-body {
@@ -6955,19 +6998,25 @@ body.theme-dark .codex-provider-brand-svg[data-provider-brand="qwen"] > path {
   min-width: 28px;
   height: 28px;
   padding: 0 9px;
-  border: 1px solid var(--background-modifier-border) !important;
   border-radius: 7px;
-  background: var(--background-primary) !important;
-  box-shadow: none !important;
   color: var(--text-muted);
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab-new {
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  box-shadow: none;
+}
+
 .codex-tab.is-active {
-  border-color: color-mix(in srgb, var(--interactive-accent) 62%, var(--background-modifier-border)) !important;
   color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 6%, var(--background-primary)) !important;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 18%, transparent) !important;
   font-weight: 650;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab.is-active {
+  border-color: color-mix(in srgb, var(--interactive-accent) 62%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 6%, var(--background-primary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
 }
 
 .codex-tab:hover,
@@ -6977,7 +7026,10 @@ body.theme-dark .codex-provider-brand-svg[data-provider-brand="qwen"] > path {
 .codex-tab.is-active:hover,
 .codex-tab.is-active:focus-visible {
   outline: none;
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab-new:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab-new:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab.is-active:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-tab.is-active:focus-visible {
+  background: var(--background-modifier-hover);
 }
 
 .codex-kb-dashboard {
@@ -10471,7 +10523,7 @@ body.theme-dark .codex-provider-brand-svg[data-provider-brand="qwen"] > path {
 }
 
 .codex-container {
-  background: transparent !important;
+  background: transparent;
 }
 
 body.theme-dark .codex-container,
@@ -10573,11 +10625,15 @@ body.theme-light .codex-container {
 .codex-settings-button.codex-icon-button {
   width: 32px;
   height: 28px;
-  padding: 0 !important;
-  border-color: transparent !important;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
+}
+
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-resource-button.codex-icon-button, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-settings-button.codex-icon-button {
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-resource-button.codex-icon-button:hover,
@@ -10586,20 +10642,26 @@ body.theme-light .codex-container {
 .codex-settings-button.codex-icon-button:focus-visible {
   outline: none;
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-resource-button.codex-icon-button:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-resource-button.codex-icon-button:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-settings-button.codex-icon-button:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-settings-button.codex-icon-button:focus-visible {
+  background: var(--background-modifier-hover);
 }
 
 .codex-settings-button .codex-settings-gear-svg {
-  display: block !important;
-  width: 18px !important;
-  height: 18px !important;
   flex: 0 0 18px;
   color: currentColor;
-  stroke: currentColor !important;
-  fill: none !important;
-  stroke-width: 2.25 !important;
   opacity: 1;
   overflow: visible;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-settings-button .codex-settings-gear-svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2.25;
 }
 
 .codex-settings-button:hover .codex-settings-gear-svg {
@@ -10661,15 +10723,18 @@ body.theme-light .codex-container {
   gap: 4px;
   height: 24px;
   padding: 0 6px;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-enhance-restore {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-composer-enhance-restore svg {
@@ -10680,8 +10745,11 @@ body.theme-light .codex-container {
 .codex-composer-enhance-restore:hover,
 .codex-composer-enhance-restore:focus-visible {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
   outline: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-enhance-restore:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-enhance-restore:focus-visible {
+  background: var(--background-modifier-hover);
 }
 
 .codex-turn-queue {
@@ -10900,7 +10968,10 @@ body.theme-light .codex-container {
 
 .codex-note-mention-menu button.codex-note-mention-option.is-active {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-note-mention-menu button.codex-note-mention-option.is-active {
+  background: var(--background-modifier-hover);
 }
 
 .codex-note-mention-empty {
@@ -11004,36 +11075,42 @@ button.codex-message-note-mention-chip:focus-visible {
 .codex-composer-resource-panel button.codex-composer-resource-row {
   display: flex;
   align-items: center;
-  justify-content: flex-start !important;
   gap: 9px;
   box-sizing: border-box;
   width: 100%;
-  height: auto !important;
   min-width: 0;
-  min-height: 24px !important;
-  margin: 0 !important;
-  padding: 3px 8px !important;
-  border: 0 !important;
   border-radius: 8px;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   font-family: inherit;
-  font-weight: 400 !important;
-  line-height: 1.25 !important;
   text-align: left;
   cursor: pointer;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row {
+  justify-content: flex-start;
+  height: auto;
+  min-height: 24px;
+  margin: 0;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 400;
+  line-height: 1.25;
 }
 
 .codex-composer-resource-panel button.codex-composer-resource-row:hover,
 .codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
   outline: none;
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
 }
 
-.codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 58%, transparent) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
+  background: var(--background-modifier-hover);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 58%, transparent);
 }
 
 .codex-composer-resource-row.is-active .codex-composer-resource-name {
@@ -11156,10 +11233,13 @@ button.codex-message-note-mention-chip:focus-visible {
   width: 30px;
   flex: 0 0 30px;
   padding: 0;
-  border: 0 !important;
   border-radius: 6px;
-  background: transparent !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-icon-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-composer-icon-button svg {
@@ -11181,7 +11261,10 @@ button.codex-message-note-mention-chip:focus-visible {
 .codex-composer-send-button:disabled {
   opacity: 0.5;
   cursor: default;
-  transform: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-icon-button:disabled, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button:disabled {
+  transform: none;
 }
 
 .codex-composer-left .codex-composer-icon-button {
@@ -11228,13 +11311,16 @@ button.codex-message-note-mention-chip:focus-visible {
   min-width: 112px;
   height: 27px;
   padding: 2px 21px 2px 28px;
-  border: 0 !important;
   border-radius: 999px;
   color: inherit;
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 12px;
   font-weight: 500;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-native-select.codex-select {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-permission-control[data-value="read-only"] {
@@ -11249,10 +11335,10 @@ button.codex-message-note-mention-chip:focus-visible {
   color: var(--text-error);
 }
 
-.codex-permission-control .codex-composer-native-select.codex-select:is(:focus, :focus-visible) {
-  outline: none !important;
-  border: 0 !important;
-  box-shadow: none !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-permission-control .codex-composer-native-select.codex-select:is(:focus, :focus-visible) {
+  outline: none;
+  border: 0;
+  box-shadow: none;
 }
 
 .codex-composer-model-button {
@@ -11292,22 +11378,28 @@ button.codex-message-note-mention-chip:focus-visible {
   max-width: 132px;
   gap: 5px;
   padding: 0 7px;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 12px;
   font-weight: 400;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .codex-model-summary-button .codex-composer-model-icon {
-  display: inline-flex !important;
   width: 17px;
   height: 17px;
   align-items: center;
   justify-content: center;
   color: var(--text-normal);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button .codex-composer-model-icon {
+  display: inline-flex;
 }
 
 .codex-model-summary-button .codex-composer-model-icon .codex-provider-brand-svg {
@@ -11316,8 +11408,11 @@ button.codex-message-note-mention-chip:focus-visible {
 }
 
 .codex-model-summary-button .codex-composer-chevron {
-  display: inline-flex !important;
   color: var(--text-faint);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button .codex-composer-chevron {
+  display: inline-flex;
 }
 
 .codex-composer-model-name {
@@ -11339,7 +11434,10 @@ button.codex-message-note-mention-chip:focus-visible {
 .codex-model-summary-button.is-open {
   outline: none;
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button.is-open {
+  background: var(--background-modifier-hover);
 }
 
 .codex-workspace-button {
@@ -11349,13 +11447,16 @@ button.codex-message-note-mention-chip:focus-visible {
   gap: 6px;
   padding: 0 7px;
   flex: 0 1 auto;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 13px;
   font-weight: 400;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-workspace-button {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-workspace-button.has-workspace {
@@ -11366,7 +11467,10 @@ button.codex-message-note-mention-chip:focus-visible {
 .codex-workspace-button:focus-visible {
   outline: none;
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-workspace-button:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-workspace-button:focus-visible {
+  background: var(--background-modifier-hover);
 }
 
 .codex-workspace-button .codex-composer-model-text {
@@ -11374,8 +11478,11 @@ button.codex-message-note-mention-chip:focus-visible {
 }
 
 .codex-workspace-button .codex-composer-chevron {
-  display: inline-flex !important;
   color: var(--text-faint);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-workspace-button .codex-composer-chevron {
+  display: inline-flex;
 }
 
 .codex-workspace-button.is-invalid {
@@ -11434,10 +11541,10 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   height: 14px;
 }
 
-.codex-kb-channel-chip {
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-kb-channel-chip {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-kb-channel-chip.is-running {
@@ -11478,15 +11585,18 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   min-width: 0;
   min-height: 36px;
   padding: 0 8px;
-  border: 0 !important;
   border-radius: 6px;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   font-family: inherit;
   font-size: 12.5px;
   text-align: left;
   cursor: pointer;
+}
+
+:is(.codex-container, .codex-context-panel, .codex-composer-parameter-menu, .codex-composer-parameter-submenu, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-parameter-menu-item {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-parameter-menu-trigger {
@@ -11504,7 +11614,10 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-parameter-menu-item:not(.is-disabled):focus-visible,
 .codex-parameter-menu-trigger:not(.is-disabled).is-open {
   outline: none;
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .codex-composer-parameter-menu, .codex-composer-parameter-submenu, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-parameter-menu-item:not(.is-disabled):hover, :is(.codex-container, .codex-context-panel, .codex-composer-parameter-menu, .codex-composer-parameter-submenu, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-parameter-menu-item:not(.is-disabled):focus-visible, :is(.codex-container, .codex-context-panel, .codex-composer-parameter-menu, .codex-composer-parameter-submenu, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-parameter-menu-trigger:not(.is-disabled).is-open {
+  background: var(--background-modifier-hover);
 }
 
 .codex-parameter-menu-trigger.is-disabled:focus-visible {
@@ -11589,9 +11702,12 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   padding: 0;
   flex: 0 0 auto;
   color: var(--text-muted);
-  background: transparent !important;
   font-size: 11.5px;
   font-weight: 400;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-context-meter {
+  background: transparent;
 }
 
 .codex-context-meter.is-hidden {
@@ -11606,11 +11722,14 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
-  border: 0 !important;
   border-radius: var(--echoink-conversation-radius-md);
   color: var(--text-normal);
-  background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary)) !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button {
+  border: 0;
+  background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary));
+  box-shadow: none;
 }
 
 .codex-composer-steer-button {
@@ -11622,35 +11741,50 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 
 .codex-composer-send-button.codex-send-button.is-queue-action {
   color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-primary)) !important;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 52%, transparent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button.is-queue-action {
+  background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-primary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 52%, transparent);
 }
 
 .codex-composer-send-button.codex-send-button.is-stop-action {
   color: var(--text-normal);
-  background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary)) !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button.is-stop-action {
+  background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary));
+  box-shadow: none;
 }
 
 .codex-composer-send-button.codex-send-button:hover {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button:hover {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
 }
 
 .codex-composer-send-button.codex-send-button.is-queue-action:hover {
   color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-primary)) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button.is-queue-action:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-primary));
 }
 
 .codex-composer-send-button.codex-send-button.is-stop-action:is(:hover, :focus-visible) {
   color: var(--echoink-conversation-status-danger);
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button.is-stop-action:is(:hover, :focus-visible) {
   background: color-mix(
     in srgb,
     var(--echoink-conversation-status-danger) 15%,
     var(--background-primary)
-  ) !important;
-  box-shadow: none !important;
+  );
+  box-shadow: none;
 }
 
 .codex-composer-send-button.codex-send-button:focus-visible {
@@ -11660,11 +11794,14 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 
 .codex-composer-send-button.codex-send-button:disabled {
   color: var(--text-faint);
-  background: var(--background-modifier-border) !important;
-  box-shadow: none !important;
   opacity: 0.62;
   cursor: default;
-  transform: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-send-button.codex-send-button:disabled {
+  background: var(--background-modifier-border);
+  box-shadow: none;
+  transform: none;
 }
 
 /* Desktop Composer: the send action follows the workbench Demo. */
@@ -11681,15 +11818,21 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 
 .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) {
   color: var(--echoink-control-on-fill);
-  background: var(--echoink-control-fill) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) {
+  background: var(--echoink-control-fill);
 }
 
 .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):is(:hover, :focus-visible, :active),
 .is-desktop-composer .codex-composer-mention-button:is(:hover, :focus-visible, :active) {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
   outline: none;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .is-desktop-composer .codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):is(:hover, :focus-visible, :active), :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .is-desktop-composer .codex-composer-mention-button:is(:hover, :focus-visible, :active) {
+  background: var(--background-modifier-hover);
+  box-shadow: none;
 }
 
 .is-desktop-composer .codex-composer-send-button.is-send-action .codex-composer-send-icon-wrap,
@@ -11876,8 +12019,8 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
     padding: 0 4px;
   }
 
-  .codex-model-summary-button .codex-composer-chevron {
-    display: none !important;
+  :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-model-summary-button .codex-composer-chevron {
+    display: none;
   }
 
   .codex-composer-steer-button {
@@ -12791,26 +12934,32 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-turn-process-summary {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start !important;
   gap: 5px;
   width: fit-content;
   min-height: 22px;
   margin: 0;
-  padding: 1px 0 !important;
   border: 0;
   border-radius: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 11px;
   font-weight: 400;
   cursor: pointer;
   text-align: left;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-turn-process-summary {
+  justify-content: flex-start;
+  padding: 1px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .codex-turn-process-summary:hover {
   color: var(--text-normal);
-  background: transparent !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-turn-process-summary:hover {
+  background: transparent;
 }
 
 .codex-turn-process-title {
@@ -12895,22 +13044,25 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-action-summary {
   display: flex;
   align-items: center;
-  justify-content: flex-start !important;
   gap: 7px;
   width: fit-content;
   max-width: 100%;
   min-width: 0;
   min-height: 22px;
   margin: 0;
-  padding: 1px 0 !important;
   border: 0;
   border-radius: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   font-weight: 400;
   cursor: pointer;
   text-align: left;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-summary {
+  justify-content: flex-start;
+  padding: 1px 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-action-summary-title {
@@ -12950,7 +13102,10 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 
 .codex-action-summary:hover {
   color: var(--text-muted);
-  background: transparent !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-summary:hover {
+  background: transparent;
 }
 
 .codex-action-group-stack,
@@ -12989,25 +13144,31 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-action-group-summary {
   display: flex;
   align-items: center;
-  justify-content: flex-start !important;
   gap: 6px;
   width: fit-content;
   max-width: 100%;
   min-height: 22px;
   margin: 0;
-  padding: 1px 0 !important;
   border: 0;
   border-radius: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   cursor: pointer;
   text-align: left;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-group-summary {
+  justify-content: flex-start;
+  padding: 1px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .codex-action-group-summary:hover {
   color: var(--text-muted);
-  background: transparent !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-group-summary:hover {
+  background: transparent;
 }
 
 .codex-action-group-icon,
@@ -13105,7 +13266,10 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-action-group.is-failed .codex-action-group-status {
   border-color: color-mix(in srgb, var(--text-error) 34%, var(--background-modifier-border));
   color: var(--text-error);
-  background: transparent !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-group.is-failed .codex-action-group-status {
+  background: transparent;
 }
 
 .codex-action-group-time,
@@ -13161,18 +13325,21 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-action-item-head {
   display: flex;
   align-items: center;
-  justify-content: flex-start !important;
   gap: 6px;
   width: fit-content;
   max-width: 100%;
   min-width: 0;
   min-height: 22px;
   margin: 0;
-  padding: 1px 0 !important;
   border: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-item-head {
+  justify-content: flex-start;
+  padding: 1px 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-action-item-expandable > .codex-action-item-head {
@@ -13182,7 +13349,10 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 
 .codex-action-item-expandable > .codex-action-item-head:hover {
   color: var(--text-muted);
-  background: transparent !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-action-item-expandable > .codex-action-item-head:hover {
+  background: transparent;
 }
 
 .codex-action-item-prefix,
@@ -13438,9 +13608,12 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   justify-content: center;
   border: 1px solid transparent;
   border-radius: 6px;
-  box-shadow: none !important;
   font-family: var(--font-interface);
   cursor: pointer;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-tab, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-track-control, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-all, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-new, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-picker-close, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-manage, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-select-all, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-row-action, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-checkbox, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-delete-selected {
+  box-shadow: none;
 }
 
 .codex-session-knowledge,
@@ -13450,8 +13623,11 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-session-new {
   height: 32px;
   flex: 0 0 auto;
-  background: var(--background-primary) !important;
-  border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-tab, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-track-control, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-all, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-new {
+  background: var(--background-primary);
+  border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
 }
 
 .codex-session-knowledge {
@@ -13613,18 +13789,9 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   height: 17px;
 }
 
-.codex-session-knowledge:hover,
-.codex-session-tab:hover,
-.codex-session-track-control:hover:not(:disabled),
-.codex-session-all:hover,
-.codex-session-new:hover,
-.codex-session-knowledge:focus-visible,
-.codex-session-tab:focus-visible,
-.codex-session-track-control:focus-visible,
-.codex-session-all:focus-visible,
-.codex-session-new:focus-visible {
-  border-color: var(--background-modifier-border-hover) !important;
-  background: var(--background-modifier-hover) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-tab:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-track-control:hover:not(:disabled), :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-all:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-new:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-tab:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-track-control:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-all:focus-visible, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-new:focus-visible {
+  border-color: var(--background-modifier-border-hover);
+  background: var(--background-modifier-hover);
 }
 
 .codex-session-track-control:focus-visible,
@@ -13642,9 +13809,12 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 .codex-session-knowledge.is-active,
 .codex-session-tab.is-active,
 .codex-session-all.is-active {
-  border-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border)) !important;
   color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 4%, var(--background-primary)) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge.is-active, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-tab.is-active, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-all.is-active {
+  border-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--interactive-accent) 4%, var(--background-primary));
 }
 
 .codex-session-tab.is-active .codex-session-tab-title {
@@ -13748,16 +13918,22 @@ body.theme-dark .codex-session-picker {
   min-height: 27px;
   padding: 0 7px;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 11.5px;
   font-weight: 500;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-manage {
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-session-manage:hover,
 .codex-session-manage.is-active {
   color: var(--interactive-accent);
-  background: color-mix(in srgb, var(--interactive-accent) 5%, transparent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-manage:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-manage.is-active {
+  background: color-mix(in srgb, var(--interactive-accent) 5%, transparent);
 }
 
 .codex-session-picker-close {
@@ -13765,13 +13941,19 @@ body.theme-dark .codex-session-picker {
   height: 27px;
   padding: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-picker-close {
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-session-picker-close:hover {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-picker-close:hover {
+  background: var(--background-modifier-hover);
 }
 
 .codex-session-picker-close svg {
@@ -13812,12 +13994,15 @@ body.theme-dark .codex-session-picker {
   height: 28px;
   flex: 1 1 auto;
   padding: 0;
-  border: 0 !important;
-  outline: 0 !important;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 12px;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-search-input {
+  border: 0;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .codex-session-search-input::placeholder {
@@ -13876,15 +14061,17 @@ body.theme-dark .codex-session-picker {
   border: 1px solid transparent;
   border-radius: 7px;
   color: var(--text-normal);
-  background: transparent !important;
-  box-shadow: none !important;
   text-align: left;
   cursor: pointer;
 }
 
-.codex-session-knowledge-row:hover,
-.codex-session-knowledge-row.is-active {
-  background: color-mix(in srgb, var(--background-modifier-hover) 62%, transparent) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge-row {
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge-row:hover, :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-knowledge-row.is-active {
+  background: color-mix(in srgb, var(--background-modifier-hover) 62%, transparent);
 }
 
 .codex-session-knowledge-icon {
@@ -13926,14 +14113,17 @@ body.theme-dark .codex-session-picker {
   margin-right: 4px;
   padding: 0 6px;
   color: var(--interactive-accent);
-  background: transparent !important;
-  box-shadow: none !important;
   font-size: 10px;
   font-weight: 500;
 }
 
-.codex-session-select-all:hover {
-  background: color-mix(in srgb, var(--interactive-accent) 5%, transparent) !important;
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-select-all {
+  background: transparent;
+  box-shadow: none;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-select-all:hover {
+  background: color-mix(in srgb, var(--interactive-accent) 5%, transparent);
 }
 
 .codex-session-list {
@@ -14054,13 +14244,19 @@ body.theme-dark .codex-session-picker {
   border-color: var(--background-modifier-border-hover);
   border-radius: 4px;
   color: var(--text-on-accent);
-  background: var(--background-primary) !important;
-  box-shadow: none !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-checkbox {
+  background: var(--background-primary);
+  box-shadow: none;
 }
 
 .codex-session-checkbox.is-selected {
   border-color: var(--interactive-accent);
-  background: var(--interactive-accent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-checkbox.is-selected {
+  background: var(--interactive-accent);
 }
 
 .codex-session-checkbox:disabled {
@@ -14167,17 +14363,23 @@ body.theme-dark .codex-session-picker {
   height: 24px;
   padding: 0;
   color: var(--text-muted);
-  background: transparent !important;
-  box-shadow: none !important;
   transition:
     color 100ms ease,
     background-color 100ms ease,
     transform 80ms ease;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-row-action {
+  background: transparent;
+  box-shadow: none;
+}
+
 .codex-session-row-action:hover {
   color: var(--text-normal);
-  background: var(--background-modifier-hover) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-row-action:hover {
+  background: var(--background-modifier-hover);
 }
 
 .codex-session-row-action:focus-visible {
@@ -14191,7 +14393,10 @@ body.theme-dark .codex-session-picker {
 
 .codex-session-row-action.is-danger:hover {
   color: var(--color-red);
-  background: color-mix(in srgb, var(--color-red) 6%, transparent) !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-row-action.is-danger:hover {
+  background: color-mix(in srgb, var(--color-red) 6%, transparent);
 }
 
 .codex-session-row-action:disabled {
@@ -14259,15 +14464,21 @@ body.theme-dark .codex-session-picker {
   min-height: 27px;
   padding: 0 9px;
   color: var(--text-on-accent);
-  background: var(--color-red) !important;
   font-size: 10.5px;
   font-weight: 500;
 }
 
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-delete-selected {
+  background: var(--color-red);
+}
+
 .codex-session-delete-selected:disabled {
   color: var(--text-faint);
-  background: var(--background-secondary) !important;
   cursor: not-allowed;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-session-delete-selected:disabled {
+  background: var(--background-secondary);
 }
 
 .codex-session-delete-selected svg {
@@ -18408,7 +18619,10 @@ button.codex-assistant-turn-process-toggle:is(:hover, :focus-visible) {
   width: 100%;
   max-width: none;
   min-height: 24px;
-  padding: 3px 0 !important;
+}
+
+:is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-assistant-turn .codex-assistant-turn-action-node > .codex-action-item-head {
+  padding: 3px 0;
 }
 
 .codex-assistant-turn .codex-assistant-turn-action-node .codex-ai-elements-tool-status {
@@ -24755,15 +24969,15 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
 .echoink-inline-task-edit-actions { display: flex; gap: 6px; justify-content: flex-end; align-self: flex-end; }
 .echoink-inline-task-presets { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 0 8px; }
 .echoink-inline-task-composer-actions { display: flex; justify-content: flex-end; width: 100%; }
-.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }
-.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }
+.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-on-fill, var(--background-primary)); outline: none; box-shadow: none; }
+.echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); }
 .has-inline-task .codex-input-wrap > :is(.codex-turn-queue, .codex-composer-workspace, .codex-composer-enhance-review, .codex-skill-menu, .codex-knowledge-command-menu, .codex-composer-resource-panel) { display: none !important; }
 .has-inline-task .codex-input-wrap > .codex-attachments > :not(.echoink-composer-annotation-slot),
 .has-inline-task .codex-input-wrap > .codex-attachments:not(:has(.echoink-composer-annotation-slot)) { display: none !important; }
 .has-inline-task .echoink-task-detail > .echoink-knowledge-activity-slot { display: none; }
-.cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }
 .cm-editor .echoink-inline-request-state button.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }
-.cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none !important; outline: none !important; background: var(--echoink-theme-hover, var(--background-modifier-hover)) !important; }
+.cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none; outline: none; background: var(--echoink-theme-hover, var(--background-modifier-hover)); }
 .echoink-inline-request-state { margin: 0; color: var(--echoink-theme-text, var(--text-normal)); }
 .cm-editor button.echoink-inline-sent-instruction { display: flex; align-items: baseline; gap: 5px; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 5px 8px; border: 0; border-radius: 6px; background: var(--echoink-theme-raised, var(--background-secondary)); color: var(--echoink-theme-text, var(--text-normal)); font: inherit; font-weight: 400; line-height: inherit; text-align: left; box-shadow: none; white-space: pre-wrap; overflow-wrap: anywhere; }
 .cm-editor button.echoink-inline-sent-instruction:is(:hover, :focus-visible) { background: var(--echoink-theme-hover, var(--background-modifier-hover)); outline: none; box-shadow: none; }
@@ -27184,8 +27398,8 @@ body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-contr
 .echoink-agent-tasks { container-type: inline-size; --interactive-accent: var(--echoink-theme-accent); --text-on-accent: var(--echoink-theme-on-accent); }
 .echoink-agent-tasks [hidden] { display: none !important; }
 .echoink-agent-tasks > .codex-header { display: none; }
-.echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none !important; box-shadow: none !important; }
-.echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover) !important; }
+.echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none; box-shadow: none; }
+.echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover); }
 .echoink-agent-tasks :is(button.is-primary, button.is-approve, .codex-composer-send-button):focus-visible { color: var(--text-normal); }
 .echoink-agent-tasks .codex-input-wrap:focus-within { border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent); }
 .echoink-agent-roster { display: flex; flex: 0 0 auto; align-items: center; padding: 8px 10px; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--background-modifier-border); }
@@ -27485,12 +27699,12 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 }
 
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button) {
-  background: var(--echoink-control-fill) !important;
-  color: var(--echoink-control-on-fill) !important;
+  background: var(--echoink-control-fill);
+  color: var(--echoink-control-on-fill);
 }
 .echoink-agent-tasks .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button):is(:hover, :focus-visible) {
-  background: var(--echoink-control-hover) !important;
-  color: var(--echoink-control-fill) !important;
+  background: var(--echoink-control-hover);
+  color: var(--echoink-control-fill);
 }
 
 .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button:focus-visible,

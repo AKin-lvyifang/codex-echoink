@@ -2,8 +2,8 @@
 .echoink-agent-tasks { container-type: inline-size; --interactive-accent: var(--echoink-theme-accent); --text-on-accent: var(--echoink-theme-on-accent); }
 .echoink-agent-tasks [hidden] { display: none !important; }
 .echoink-agent-tasks > .codex-header { display: none; }
-.echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none !important; box-shadow: none !important; }
-.echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover) !important; }
+.echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none; box-shadow: none; }
+.echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover); }
 .echoink-agent-tasks :is(button.is-primary, button.is-approve, .codex-composer-send-button):focus-visible { color: var(--text-normal); }
 .echoink-agent-tasks .codex-input-wrap:focus-within { border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent); }
 .echoink-agent-roster { display: flex; flex: 0 0 auto; align-items: center; padding: 8px 10px; gap: 2px; overflow-x: auto; border-bottom: 1px solid var(--background-modifier-border); }

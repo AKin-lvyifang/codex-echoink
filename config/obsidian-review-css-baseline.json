@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 641,
+  "total": 427,
   "findings": [
     {
       "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
@@ -47,42 +47,6 @@
       "message": "Unexpected browser feature \"text-decoration\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-diary-mark.is-translation {text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}",
       "count": 2
-    },
-    {
-      "fingerprint": "1a910b7c4b8211f330029984176a4988412480627ec604a08eb3da42338041f9",
-      "path": "src/styles/agent-approval.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "color: var(--echoink-control-fill) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "7c87ea7e91e123a6ec40d836baa7246e412a1f361aaaa82ae14c1db5ab5677b2",
-      "path": "src/styles/agent-approval.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "color: var(--echoink-control-on-fill) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "8a1c632d7454dc6fac56d15fd7ad5e7f0fad195fd0684bfba0c104afe67addda",
-      "path": "src/styles/agent-approval.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--echoink-control-hover) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "a31862d74b3984fe76c48a1f4e05e2f543e371da81a672b79b363488d10348a0",
-      "path": "src/styles/agent-approval.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--echoink-control-fill) !important;",
-      "count": 1
     },
     {
       "fingerprint": "5618304f0d7a969619a4d04cf42810a820b45e243956ef7502654b614977442b",
@@ -157,30 +121,12 @@
       "count": 1
     },
     {
-      "fingerprint": "3345c88911cef56f177f8b08352d372e36e5e25c6b654e6e9a8cf15c59fabfd3",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none !important; box-shadow: none !important; }",
-      "count": 2
-    },
-    {
       "fingerprint": "3996a3593cd3adbb733d0527865533abb92594aae01a13f80056b686dbab8e5c",
       "path": "src/styles/agent-tasks.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-agent-tasks [hidden] { display: none !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "fdaa55c985260aecd33f110571138d95361a7c3bcbf65a867be1ea0352273149",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover) !important; }",
       "count": 1
     },
     {
@@ -254,42 +200,6 @@
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo .echoink-generation-output-segment:has(:focus-visible) { background: var(--soft, var(--background-modifier-hover)); border-radius: 6px; }",
       "count": 1
-    },
-    {
-      "fingerprint": "49d4721976cf2c23a39b013941acc7cb29c25a1384c95fb16731ab83fbd2c454",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none !important; outline: none !important; background: var(--echoink-theme-hover, var(--background-modifier-hover)) !important; }",
-      "count": 3
-    },
-    {
-      "fingerprint": "9259027d56f65b732bc7baa975bcf2c166f7465d81918c1419c69a9d981cb925",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }",
-      "count": 2
-    },
-    {
-      "fingerprint": "a024794317204744a5d445d62540cf0fa93f0c6a941602f09c9dcf33532aba86",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }",
-      "count": 4
-    },
-    {
-      "fingerprint": "b0cdb233df2f655c7e5267d57f5affb555db83bcb3348b154ac36d0ced789582",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
     },
     {
       "fingerprint": "c7c29f851b55cb202b6d2804821894cb3511fddb4302f155146ec8aaf1a488e4",
@@ -1282,24 +1192,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0020e5fb3f72f48d26aab314e54a02963b47fcf5cf78565f917e34c77ace241f",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }",
-      "count": 2
-    },
-    {
-      "fingerprint": "01325cf35e44dc3802ba5d7a9e76842175cd6ec849248a282603f369005ac04a",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "height: 17px !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "0385315a1093722fd5eef0e331f3148e32d9702a9e363a4e528061668e89e76d",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1318,15 +1210,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0ac6d57ce2f2b85c9ebae4ab80dfaffc2c37986817429beef7d9c4018b2a8a09",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--interactive-accent) !important;",
-      "count": 2
-    },
-    {
       "fingerprint": "0ee69a696cc2fe067fe3ac4278e4f9f874970127b5a70867b4e5bef8a82a6300",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1336,31 +1219,13 @@
       "count": 2
     },
     {
-      "fingerprint": "13878783bcb3d0f7656ec7be465e700cd4261dbb9e785b6c701d066f7d067574",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ") !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "153a1c5467b6021a5d990347e3361a646aa09cb7f75500a355bade7183b70796",
       "path": "styles.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "outline: none !important;",
-      "count": 4
-    },
-    {
-      "fingerprint": "1877cc343750b481a88f380c3291ab2688297524c641ea1f958c524f1e16c4ae",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--echoink-control-hover) !important;",
-      "count": 1
+      "count": 2
     },
     {
       "fingerprint": "1948ef940fc246b83b531d7c1744b54c1b4915a53c99e3a1f51b25df2d26a722",
@@ -1369,15 +1234,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: var(--background-modifier-border) !important;",
-      "count": 2
-    },
-    {
-      "fingerprint": "1c8b9e064c86f361fbcc891527c7fb3853174b4225c83c6ceca7d53d6bba4a12",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "outline: 0 !important;",
       "count": 1
     },
     {
@@ -1408,24 +1264,6 @@
       "count": 1
     },
     {
-      "fingerprint": "225219552d2a24e08405d9a4c4f507e4f480afb1d2051153a4480b63e9c5163c",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "width: 18px !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "23193c20118f9475f38c4052ecfab7de11c1ba2b8fdcbdbcfda134908ff198ea",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-primary)) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "2326cf074e494eae133fca9c5ea2bfb082114ba172548f331162f9dea11dfc58",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1433,42 +1271,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".modal.echoink-todo-form-modal .echoink-origin-control:is([data-slot=input],[data-slot=select-trigger]):is(:focus,:focus-visible){border-color:var(--origin-line)!important;background:var(--background-modifier-hover)}",
       "count": 1
-    },
-    {
-      "fingerprint": "23a25a3c0b1bf566ca994bbc54896ee0ac8eafe5ff642ea0a5a87f7ab0e1fbcf",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 58%, transparent) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "244d0554ad7f10425ed155a1b5186fb16cd5d5af60dc17998de31c7ca1033524",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "display: block !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "2ad2963fbd4d7688c60ee742c73112fe06c0a4d1b7fec4b5cc8d1bb541ec098d",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border-color: color-mix(in srgb, var(--interactive-accent) 62%, var(--background-modifier-border)) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "2ad99ba992d16fda966c87a1855feab0a537393cb390a427845d597518b3c428",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "justify-content: flex-start !important;",
-      "count": 5
     },
     {
       "fingerprint": "2cd2e3dd7e08491e546ce1c3fc27e39f7a1ac75739782b97b3edcfb2c94db7ab",
@@ -1486,7 +1288,7 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "padding: 0 !important;",
-      "count": 6
+      "count": 3
     },
     {
       "fingerprint": "308a0f53fcace4365a69d2c6a9b8ae78e1f9e5f746012078dfa9ce68e37893c1",
@@ -1516,40 +1318,13 @@
       "count": 2
     },
     {
-      "fingerprint": "32ed16f84781f8c5d23543c41cc5240bebded133ce89c308c9bcae7938d4760a",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "stroke-width: 2.25 !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "33ff4b00d9f480e132be4c2139f3b31ce56a9b9c621c684b0661dbf4956de43d",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--background-primary) !important;",
-      "count": 4
-    },
-    {
-      "fingerprint": "358f5294d6b80691d876de7624369fb514539260dbe7b363840c4fabd542c5d7",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--color-red) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "38536555b0bf1ce637660dc32ed8996db79fb12d3c5586a9dedc4c5cc669fe73",
       "path": "styles.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: transparent !important;",
-      "count": 34
+      "count": 1
     },
     {
       "fingerprint": "3861ce5b990f232343116b6d69a01702b1303b34430f7d2cc787ca47d9d0307a",
@@ -1597,15 +1372,6 @@
       "count": 2
     },
     {
-      "fingerprint": "415cb4566a5ad516a7cd4c13092be2e2f1b3c34668cfe3309e96558e2290a794",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--background-secondary) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "41a23b57fe80fbb4ebf940e01e93b7903956c6c2a580c76b9da7a0c2efef1cf7",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1633,24 +1399,6 @@
       "count": 2
     },
     {
-      "fingerprint": "4f699ff37558f8df948892bc70424628e03b8f5da69c50b9b25fdb3aec1100c5",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "color: var(--echoink-control-on-fill) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5027e37a5d461a5507184acb85583e6cd1cee0fe37fa1e84cd6efc237cbed81d",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--color-red) 6%, transparent) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "531e4643e8164eff8f4371befbe25dc33248e2ba33481fb32dad7683c07fe7f8",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1658,15 +1406,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "transition-duration: 0.01ms !important;",
       "count": 5
-    },
-    {
-      "fingerprint": "54b9651d078bde60d3e4c96341a6f5ab5dd9f6edbb2ab717046636fd81030058",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "width: 17px !important;",
-      "count": 1
     },
     {
       "fingerprint": "56b70203b1867624cf165f6d6334ac8c6c083d35de1c89a21b53eca1d7657e93",
@@ -1696,24 +1435,6 @@
       "count": 2
     },
     {
-      "fingerprint": "5ae7822bd0421b5c53696f4f793ad38282ba089f7d34f839a259e9765fd28e31",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "line-height: 1.25 !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5c8b7a25e7c370dcbaf428cb778aa56068542288d398ea45770e20617e5857c7",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "display: inline-flex !important;",
-      "count": 3
-    },
-    {
       "fingerprint": "5d00d4707470b585a70f5186eb702b87c76bae9df4e1dba5388976a5cd517ac6",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1729,7 +1450,7 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "box-shadow: none !important;",
-      "count": 41
+      "count": 4
     },
     {
       "fingerprint": "5fda46b69dca4268852376ff71bc41fb3fcc8440fb11ed48fdcbb82b1c1ac9ac",
@@ -1765,7 +1486,7 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "border-color: transparent !important;",
-      "count": 2
+      "count": 1
     },
     {
       "fingerprint": "66ed4dd4b4dbf7aa556c371e4da58f94690752216facf860dc2fb60e15bf8947",
@@ -1783,15 +1504,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-theme-recommendation[hidden] { display:none!important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "688771ec54bdeab7404b52cbb86b7323b43d5b7a8fe8d5e6a1fdabf09daf7207",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--interactive-accent) 4%, var(--background-primary)) !important;",
       "count": 1
     },
     {
@@ -1813,24 +1525,6 @@
       "count": 1
     },
     {
-      "fingerprint": "72d80a87498fcf757ba71f668de0136d6eb015d90cb46d13d0f215189ff7780f",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary)) !important;",
-      "count": 2
-    },
-    {
-      "fingerprint": "77fdbfe5380ea3500331a949cbe57f45f608aa15984ff60c7314845e5d14d746",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "padding: 1px 0 !important;",
-      "count": 4
-    },
-    {
       "fingerprint": "78693d530d94944c0f8c6d0f8ce0c0595034051a2df540ae1430f5f7b5df8f65",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1838,15 +1532,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-home-workspace { --bg:var(--background-primary);--ink:var(--text-normal);padding:0!important;container-type:inline-size;overflow:auto;height:100%;min-height:0; font-family:var(--font-interface); }",
       "count": 1
-    },
-    {
-      "fingerprint": "7870672f6c218d52fbfc6142352e30dec3ed8636dab6c58340d3c56d0156c980",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0 !important; border-radius: 0; background: transparent !important; box-shadow: none !important; outline: none !important; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }",
-      "count": 4
     },
     {
       "fingerprint": "78bb6246eb48a5164d53ff27ec9c5db2fb3d378c51ba88001f1d4da49753735c",
@@ -1865,15 +1550,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "color: var(--text-error) !important;",
       "count": 2
-    },
-    {
-      "fingerprint": "7d0eb1e76f4c6ae20ea20bfcd39128a9dab703234e24c0fa5e985b70eb16cdf4",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
     },
     {
       "fingerprint": "7d447f061781262cb0739c9e861b227421efb80fb621736e66c0f989534a47ed",
@@ -1912,15 +1588,6 @@
       "count": 1
     },
     {
-      "fingerprint": "835a8280ff03f2524e2cbf60ccdaf0bc7acc0e52596de8f01eb2e34622aa58e3",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--interactive-accent) 6%, var(--background-primary)) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "85f26f4059bee25fc70b54a26ea45e64e29fd013f0aeffa513a0c0c774395878",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1930,22 +1597,13 @@
       "count": 1
     },
     {
-      "fingerprint": "8664f0631fbd1c26cc34611f3d27494152877eca807ea36abed123fcb902ba67",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--background-modifier-hover) 62%, transparent) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "87e3dd9ce6d593bf0106a51e6ea780d6d042931751b3c3f7fb2cafa1426d03c8",
       "path": "styles.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "transform: none !important;",
-      "count": 5
+      "count": 3
     },
     {
       "fingerprint": "89033e9bf7b27e5325e2e754ddfd96fc2bc5aff51284b97c9101d6aeaa5b6ac5",
@@ -2002,42 +1660,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8ebc8267e4323d8803fe42f94e189f70d2cb6240db33247e2021385d4213a963",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "height: 18px !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "903bff63c5957c30f6b2d9f2bf61c05e1a7ad030e274d938b79b4a4a01677d29",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "stroke: currentColor !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9145487c8ec66b4ecd28677e42cbe854af92240119ab27e6983c30d7b56c9571",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border-color: var(--background-modifier-border-hover) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9153531084dd3117bab8ab4933d19e53e46c415267c650ed98dc8772a52df08e",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "font-weight: 400 !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "91b3cb374d05531675169ed61e137703d2ba3fa23780ce5191e38cecbce946ef",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2056,30 +1678,12 @@
       "count": 2
     },
     {
-      "fingerprint": "953e75890366d50d47c8f184826d32836a06aeb6b8b2c6008ffd9184d6646dfa",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--interactive-accent) 5%, transparent) !important;",
-      "count": 2
-    },
-    {
       "fingerprint": "95f3a83f96c4baf34e89a20c1bb39be443fd1eed458e00803a6df7841d51bb46",
       "path": "styles.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: var(--background-modifier-hover) !important;",
-      "count": 20
-    },
-    {
-      "fingerprint": "9856753ded85d2bffe98d2b5b6e91b2c67d3cc138a9fb0e95e57033c36d1984e",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-primary)) !important;",
       "count": 1
     },
     {
@@ -2092,33 +1696,6 @@
       "count": 1
     },
     {
-      "fingerprint": "9d6533a1a851d16de81c0d9b5b5401c8e53112b6ede1f1fbc6a84034b447e26f",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "min-height: 24px !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9d89aaada527d580ecaaa80aaa396d7d05080c7564f8e53d0965d0876b3cbd46",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 52%, transparent) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9e4719817dfaf07e0e58d32b4d4cef13d20386c05ec8478e1a551ce801f5f1ff",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "padding: 3px 0 !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "a366686d93f8de0a1f993ced10f860569efdedad67cb4fbab89b77840a62c1a8",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2128,39 +1705,12 @@
       "count": 1
     },
     {
-      "fingerprint": "a3e2f8057a698f9498f6f36194ac9d5cbb7a75e41e6426f40239c6f9dd6a63bf",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--interactive-accent-hover) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "a71d1931abf66ab3fab66e07d7bbac2980ce0845c24cb528e9e045ad06199028",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".cm-editor .echoink-inline-request-state button.echoink-inline-state-label:is(:hover, :focus-visible) { box-shadow: none !important; outline: none !important; background: var(--echoink-theme-hover, var(--background-modifier-hover)) !important; }",
-      "count": 3
-    },
-    {
       "fingerprint": "a8ddc7f63b5fc2a43bf3ad7bfbfb0bf7eeb0af1949ef754747b5b4fba2b29ec8",
       "path": "styles.css",
       "rule": "declaration-no-important",
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-pdf-reading-page .pdf-page-artifact-row + .pdf-page-artifact-row { border-top: 1px solid var(--line) !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "a985ad67a93a4d90e5cd70c4473e02500c8f94dc7df6040ed3c9d7380c25137c",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent) !important;",
       "count": 1
     },
     {
@@ -2179,15 +1729,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-run-report-form[hidden], .echoink-run-report-actions button[hidden] { display: none !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "b6eef49bd1da68015151fe31abb90e09e7f7505d69c7deeaae33f789972e6269",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "padding: 3px 8px !important;",
       "count": 1
     },
     {
@@ -2260,7 +1801,7 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "display: none !important;",
-      "count": 6
+      "count": 5
     },
     {
       "fingerprint": "cab60acca380fbc81310af0a3f0b80af6b915893535478287666da37aa8e1cf3",
@@ -2278,15 +1819,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-todo-page [hidden] { display: none !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "d4e4671a2722ce1abdae55761d13c063e95436bf16304511fda0dbcec3787430",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "color: var(--echoink-control-fill) !important;",
       "count": 1
     },
     {
@@ -2308,15 +1840,6 @@
       "count": 2
     },
     {
-      "fingerprint": "db98ce58d18207f2607c0176745adb2af0a095d533de539f51638ef111eaf388",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 18%, transparent) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "dbc92e9465c394527ea288920c4039ccb42727daf0033b32fd827c40ee8d0276",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2324,42 +1847,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "@media (prefers-reduced-motion: reduce) { .echoink-mobile *, .echoink-mobile *::before, .echoink-mobile *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }",
       "count": 3
-    },
-    {
-      "fingerprint": "dc41124cdb69e94393a65a0e4bfb466f038fb2d58a003346cef952f326e29269",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover) !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "dc602cef27034e808f68719687db57c58bca0aebd0b81f3d62032daf43669c31",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border: 0 !important;",
-      "count": 16
-    },
-    {
-      "fingerprint": "decb9204108766033fd172f5efc70db53abb43bfd6e90d600a64f86cca3ee349",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border)) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "e0979530b8a7c9252bd00a3ce448cc7bb58a3a9a47b9bf4ec22d6a7b18dbc5e7",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--echoink-control-fill) !important;",
-      "count": 2
     },
     {
       "fingerprint": "e0fd1f7010060ad93f169a84565ce3dd4d39111cbabecbbef995aadbbf69e437",
@@ -2416,24 +1903,6 @@
       "count": 1
     },
     {
-      "fingerprint": "f2fd2a01b3b81c30fe08bdfa6aaa35abb1c52578c607b7d7a54858aec1996cdf",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "border: 1px solid var(--background-modifier-border) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "f656a5669a4cdcbba6fea8a2c0554f3dbcc463305a7462fe5aac9b4c9d025dbd",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "margin: 0 !important;",
-      "count": 2
-    },
-    {
       "fingerprint": "f697f6fb58d5a2021145ffcbab9a0fe1eb5b688d3e9804aeb4fae77828c104e4",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2461,15 +1930,6 @@
       "count": 1
     },
     {
-      "fingerprint": "fb08be7b81dcd75e0494aec5fe8ac0e4d30f8ba0e3cd970a9dc6d98874095e48",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: color-mix(in srgb, var(--text-error) 8%, transparent) !important;",
-      "count": 1
-    },
-    {
       "fingerprint": "fb0e944f14ee63e41ae52d1c0b1a0296cb9aecfc7d4913c817d30ad39f9cb2f8",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2477,33 +1937,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "transition: none !important;",
       "count": 3
-    },
-    {
-      "fingerprint": "fbf46ec27bd62d5a182fbf10d9bda288d9b5f6117d0f917171a3c3ba8a100556",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "height: auto !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "fe83c4eb6e1d05978817f8a519cae94c0e42f8a7368f614b97fa7ee810def048",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "fill: none !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "feba4fcc2ab4ce4531227e503ce17e0987377565d962d49eb6d5a9c9e7992b81",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none !important; box-shadow: none !important; }",
-      "count": 2
     },
     {
       "fingerprint": "01a47d1d455522810f8430eb18d0675cf55e8c215ea45893f0c12d26488b8336",
