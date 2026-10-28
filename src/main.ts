@@ -1146,6 +1146,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     return {
       taskId, at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.settledAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" : "process_unknown"),
+      ...(last?.interruption?.retryAttempts ? { retryAttempts: last.interruption.retryAttempts } : {}),
       stage,
       ...(last?.interruption?.detail ? { detail: last.interruption.detail } : last?.error ? { detail: last.error } : {}),
       uncertainOperations: (safety?.operations ?? []).filter(operation => operation.status === "uncertain").map(operation => ({ id: operation.operationIdentity, label: operation.label }))

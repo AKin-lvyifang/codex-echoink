@@ -1,4 +1,5 @@
 import { settingsReportNoticeContent } from "../run-reports/notice";
+import { taskInterruptionExplanation } from "../agents/task-interruption-copy";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, appendFile, readdir, stat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +22,14 @@ function report(): RunReport { return { format: "echoink-run-report", formatVers
 export async function runReportTests(document: Document): Promise<void> {
   let passed = 0;
   const test = async (name: string, run: () => void | Promise<void>) => { await run(); passed++; console.log(`OK run reports: ${name}`); };
+  await test("persisted interruption facts select localized copy without inventing retry attempts", () => {
+    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "zh"), "Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。");
+    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "en"), "The agent made no progress for 5 minutes and was stopped. Tap Continue to retry.");
+    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "zh")!, /重试 3 次.*Provider 服务暂时不可用/u);
+    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "en")!, /3 retries.*temporarily unavailable/u);
+    assert.doesNotMatch(taskInterruptionExplanation({ reason: "run_failed", detail: "provider_service_failed" }, "zh")!, /重试 3 次/u);
+    assert.equal(taskInterruptionExplanation({ reason: "process_unknown" }, "zh"), undefined);
+  });
   await test("no open conversation keeps a valid empty envelope and only error/environment data", () => {
     const errors = [{ source: "settings.save", message: "EBUSY fixture" }];
     const snapshot = freezeReport(reportWithoutConversation(environment, errors));

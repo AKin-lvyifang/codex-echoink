@@ -11,6 +11,8 @@ export interface TaskInterruptionRecord {
   readonly reason: TaskInterruptionReason;
   readonly stage: string;
   readonly detail?: string;
+  /** Actual SDK retry count; absent means no retry exhaustion was observed. */
+  readonly retryAttempts?: number;
 }
 export interface TaskInterruptionInfo extends TaskInterruptionRecord {
   readonly taskId: string;

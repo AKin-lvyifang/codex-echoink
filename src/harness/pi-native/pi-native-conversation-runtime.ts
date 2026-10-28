@@ -1,4 +1,5 @@
 import { runErrors } from "../../run-reports/recent-errors";
+import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
 import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
@@ -4230,6 +4231,12 @@ export class PiNativeConversationRuntime {
           steering: event.steering,
           followUp: event.followUp
         });
+        break;
+      case "auto_retry_end":
+        if (!event.success && event.attempt > 0 && !execution.interruption) {
+          execution.interruption = { at: this.now(), reason: "run_failed", stage: taskInterruptionStage(active),
+            retryAttempts: event.attempt, detail: interruptionErrorDetail(event.finalError ?? safeProductRunErrorCode(undefined, active.sessionManager.getEntries())) };
+        }
         break;
       case "agent_end":
         await this.emitRuntimeEvent(active, execution, {

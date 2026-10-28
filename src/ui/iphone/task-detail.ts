@@ -1,3 +1,4 @@
+import { taskInterruptionExplanation, interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { mobileReportActions, openMobileRunReport } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
@@ -76,14 +77,18 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
     const panel = content.closest(".eis-page");
     const heading = panel?.querySelector<HTMLElement>(".eis-title"); if (heading) heading.textContent = page.title;
     const subtitle = panel?.querySelector<HTMLElement>(".eis-subtitle"); if (subtitle) subtitle.textContent = page.subtitle;
-    messages(task.messages); tail.replaceChildren(); errors.textContent = state.error; errors.hidden = !state.error;
+    messages(task.messages); tail.replaceChildren();
+    const explanation = taskInterruptionExplanation(state.interruption, host.settings().settingsLanguage ?? "zh");
+    const repeatedError = !!explanation && !!state.error && interruptionErrorDetail(state.error) === state.interruption?.detail;
+    errors.textContent = repeatedError ? "" : state.error; errors.hidden = repeatedError || !state.error;
     if (task.taskStatus === "interrupted" || state.interruption && !state.busy) {
       const box = shellElement(document, "section", "ip-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
       const line = shellElement(document, "div", "ip-task-interrupted"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "circle-pause"); mark.setAttribute("aria-hidden", "true"); line.append(mark);
       const at = state.interruption?.at ?? task.taskInterruptedAt;
       if (at !== undefined) { const time = shellElement(document, "time", "", `${formatMobileDateTime(at)} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
       else line.append(shellElement(document, "span", "", "已中断 · 时间未记录"));
-      box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
+      if (explanation) box.append(shellElement(document, "div", "ip-task-interrupted", explanation));
+      else box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "ip-task-actions");
       const report = iPhoneAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "iphone", { document, open: config => ctx.shell.openSheet(config) }));
       report.dataset.action = "report-task"; actions.append(report);

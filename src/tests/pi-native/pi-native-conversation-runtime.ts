@@ -689,6 +689,23 @@ export async function runPiSubmissionCancellationTests(): Promise<void> {
 }
 
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
+  await withFixture(["persisted-watchdog", "persisted-retries"], async fixture => {
+    const id = "durable-interruption-copy";
+    await fixture.runtime.createConversation({ conversationId: id, title: "持久原因", cwd: fixture.root });
+    await fixture.runtime.activateConversation(id);
+    const first = await fixture.submit({ conversationId: id, text: "wait", permission: "read-only", submittedAt: 1 });
+    await fixture.runtime.recordTaskInterruption(id, "watchdog");
+    await fixture.runtime.abort(id); await first.result;
+    const second = await fixture.submit({ conversationId: id, text: "retry", permission: "read-only", submittedAt: 2 });
+    fixture.latestSession().finishRetryExhausted(3, "503: controlled service failure");
+    assert.equal((await second.result).terminalState, "failed");
+    await fixture.runtime.releaseConversation(id);
+    const reopened = new FileProductRunStore({ storageRootPath: fixture.catalog.storageRootPath, vaultId: fixture.catalog.vaultId, catalog: fixture.catalog });
+    const records = await reopened.listReadOnly(id);
+    assert.equal(records.find(run => run.productRunId === first.productRunId)?.interruption?.reason, "watchdog");
+    assert.deepEqual(records.find(run => run.productRunId === second.productRunId)?.interruption?.retryAttempts, 3);
+    assert.equal(records.find(run => run.productRunId === second.productRunId)?.interruption?.detail, "provider_service_failed");
+  });
   await runBufferedModelProgressTests();
   await runPiSubmissionCancellationTests();
   await assertWorkspacePermissionsAndLateSources();
@@ -6244,6 +6261,10 @@ class ControlledAgentSession {
     resolve();
   }
 
+  finishRetryExhausted(attempt: number, finalError: string): void {
+    this.emit({ type: "auto_retry_end", success: false, attempt, finalError });
+    this.finishFailed(finalError);
+  }
   finishFailed(errorMessage: string, text = ""): void {
     const resolve = this.resolvePrompt;
     assert.ok(resolve, "expected a pending prompt");

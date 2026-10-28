@@ -1,4 +1,5 @@
 import type { TaskInterruptionInfo } from "../../agents/task-resume";
+import { taskInterruptionExplanation } from "../../agents/task-interruption-copy";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 
@@ -15,6 +16,7 @@ export function renderTaskInterruption(
   };
   if (input.userCopy) text("div", "echoink-task-interruption-copy", input.userCopy);
   else if (info) {
+    const explanation = taskInterruptionExplanation(info, input.language);
     const time = new Date(info.at).toLocaleString(en ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", ...(new Date(info.at).getFullYear() !== new Date().getFullYear() ? { year: "numeric" as const } : {}) });
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
       app_closed: ["关闭 Obsidian 时中断", "interrupted when Obsidian closed"],
@@ -26,10 +28,10 @@ export function renderTaskInterruption(
     };
     const reason = reasons[info.reason][en ? 1 : 0];
     const cause = info.reason === "process_unknown" ? (en ? `Unexpected interruption; last recorded at ${time}` : `运行意外中断，最后记录于 ${time}`) : `${time} ${reason}`;
-    text("div", "echoink-task-interruption-copy", en
+    text("div", "echoink-task-interruption-copy", explanation ?? (en
       ? `${cause}. ${info.stage ? `Stopped at “${info.stage}”.` : "The last step was not recorded."} Everything already completed is preserved.`
-      : `${cause}，${info.stage ? `停在「${info.stage}」。` : "没有保存具体步骤。"}已经完成的内容都保留着。`);
-    if (info.detail) text("div", "echoink-task-interruption-detail", info.detail);
+      : `${cause}，${info.stage ? `停在「${info.stage}」。` : "没有保存具体步骤。"}已经完成的内容都保留着。`));
+    if (info.detail && !explanation) text("div", "echoink-task-interruption-detail", info.detail);
     if (info.uncertainOperations.length) {
       text("div", "echoink-task-interruption-warning", en ? "The result of this operation is uncertain. Check it before continuing." : "这个操作结果不确定，继续前请先核对");
       const list = container.ownerDocument.createElement("ul"); list.className = "echoink-task-interruption-operations";

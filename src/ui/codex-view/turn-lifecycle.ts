@@ -1,5 +1,4 @@
 import type CodexForObsidianPlugin from "../../main";
-import { Notice } from "obsidian";
 import { runErrors } from "../../run-reports/recent-errors";
 import type { StoredSession } from "../../settings/settings";
 import type { SessionMessageInput } from "./session-message-store";
@@ -48,9 +47,10 @@ export function armTurnWatchdog(host: CodexTurnLifecycleHost, timeoutMs = CHAT_T
     if (host.plugin.isPiProductionRun(runId)) {
       const message = timeoutText ?? turnWatchdogTimeoutText(timeoutMs, host.plugin.settings.settingsLanguage);
       runErrors.record("desktop.watchdog", new Error(message), { code: "turn_no_progress_timeout", conversationId: session.id, runId });
-      new Notice(message);
       host.pauseQueueForSession(session.id);
-      void host.plugin.cancelHarnessRun(runId)
+      void host.plugin.recordTaskInterruption(session.id, "watchdog")
+        .catch(error => console.error("Task interruption cause could not be saved", error))
+        .then(() => host.plugin.cancelHarnessRun(runId))
         .catch((error) => console.error("Pi Chat timeout cancellation failed", error));
       host.applyStatus();
     }

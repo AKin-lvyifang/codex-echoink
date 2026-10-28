@@ -78,7 +78,9 @@ const nonempty = (value: unknown): value is string => typeof value === "string" 
 const time = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const permission = (value: unknown): value is MobilePermission => ["read-only", "workspace-write", "full-access"].includes(value as string);
 function validInterruption(value: unknown): boolean {
-  return object(value) && Object.keys(value).every(key => ["at", "reason", "stage"].includes(key)) && time(value.at) && nonempty(value.stage)
+  return object(value) && Object.keys(value).every(key => ["at", "reason", "stage", "detail", "retryAttempts"].includes(key)) && time(value.at) && nonempty(value.stage)
+    && (value.detail === undefined || typeof value.detail === "string" && value.detail.length <= 2000)
+    && (value.retryAttempts === undefined || typeof value.retryAttempts === "number" && Number.isSafeInteger(value.retryAttempts) && value.retryAttempts > 0)
     && ["app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog", "app_backgrounded"].includes(value.reason as string);
 }
 function validOperations(value: unknown, session: Record<string, unknown>, ids: Set<string>): boolean {

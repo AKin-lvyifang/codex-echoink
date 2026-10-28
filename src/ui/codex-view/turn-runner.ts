@@ -1197,7 +1197,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       committedFinalProjection
     );
 
-    if (settledEvent.terminalState === "failed") {
+    if (settledEvent.terminalState === "failed" && !settledRun.interruption?.retryAttempts) {
       const knownFailure = providerFailureText(settledRun.error);
       new Notice(
         knownFailure

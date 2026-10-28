@@ -54,7 +54,7 @@ await withFakeClock(async clock => {
   let cancelled = 0;
   const host = { running: true, activeRunId: "run-lifecycle", turnWatchdog: null,
     activeRunSession: () => ({ id: "task-lifecycle" }),
-    plugin: { settings: { settingsLanguage: "zh" }, isPiProductionRun: () => true, cancelHarnessRun: async () => { cancelled++; } },
+    plugin: { recordTaskInterruption: async (id, reason) => { assert.equal(id, "task-lifecycle"); assert.equal(reason, "watchdog"); }, settings: { settingsLanguage: "zh" }, isPiProductionRun: () => true, cancelHarnessRun: async () => { cancelled++; } },
     pauseQueueForSession() {}, applyStatus() {} };
   host.clearTurnWatchdog = () => api.clearTurnWatchdog(host);
   api.armTurnWatchdog(host);
@@ -69,6 +69,7 @@ await withFakeClock(async clock => {
   assert.equal(cancelled, 0);
   api.setTurnWatchdogWaiting(host, false);
   clock.advance(1);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(cancelled, 1, "resuming retains the remaining execution budget");
   const timeoutError = api.runErrors.snapshot().find(error => error.code === "turn_no_progress_timeout");
   assert.equal(timeoutError?.conversationId, "task-lifecycle");
