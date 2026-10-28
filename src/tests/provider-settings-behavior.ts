@@ -819,6 +819,8 @@ async function assertMemoryCorrectionModalContract(): Promise<void> {
 
 function assertMemoryComposerVisualCssContract(): void {
   const css = readFileSync(path.resolve("styles.css"), "utf8");
+  // Geometry and scoped overrides may occupy separate cascade rules.
+  const blocks = (pattern: RegExp): string => Array.from(css.matchAll(new RegExp(pattern.source, "gu")), match => match[1]).join("\n");
   const currentRule = css.match(
     /\.echoink-memory-correction-current\s*\{([^}]*)\}/u
   )?.[1] ?? "";
@@ -831,18 +833,18 @@ function assertMemoryComposerVisualCssContract(): void {
   const disabledSaveRule = css.match(
     /\.echoink-memory-correction-actions button\.mod-cta:disabled\s*\{([^}]*)\}/u
   )?.[1] ?? "";
-  const sendButtonRule = css.match(
+  const sendButtonRule = blocks(
     /\.codex-composer-send-button\.codex-send-button\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
+  );
   const sendIconRule = css.match(
     /\.codex-composer-send-icon-wrap svg,\s*\.codex-composer-send-button \.echoink-animate-icon-send-horizontal,\s*\.codex-composer-send-button \.echoink-animate-icon-circle-stop\s*\{([^}]*)\}/u
   )?.[1] ?? "";
-  const stopButtonRule = css.match(
+  const stopButtonRule = blocks(
     /\.codex-composer-send-button\.codex-send-button\.is-stop-action\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
-  const permissionKeyboardFocusRule = css.match(
+  );
+  const permissionKeyboardFocusRule = blocks(
     /\.codex-permission-control \.codex-composer-native-select\.codex-select:is\(:focus, :focus-visible\)\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
+  );
 
   assert.match(currentRule, /background:\s*var\(--background-secondary\);/u);
   assert.match(previewRule, /--echoink-memory-preview-cyan:\s*#70d7df;/u);
@@ -866,16 +868,16 @@ function assertMemoryComposerVisualCssContract(): void {
   assert.match(sendButtonRule, /height:\s*34px;/u);
   assert.match(sendButtonRule, /flex:\s*0 0 34px;/u);
   assert.match(sendButtonRule, /color:\s*var\(--text-normal\);/u);
-  assert.match(sendButtonRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(sendButtonRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(sendButtonRule, /interactive-accent|text-on-accent/u);
   assert.match(sendIconRule, /width:\s*20px;/u);
   assert.match(sendIconRule, /height:\s*20px;/u);
   assert.match(stopButtonRule, /color:\s*var\(--text-normal\);/u);
-  assert.match(stopButtonRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(stopButtonRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(stopButtonRule, /text-error|status-danger/u);
-  assert.match(permissionKeyboardFocusRule, /outline:\s*none\s*!important;/u);
-  assert.match(permissionKeyboardFocusRule, /border:\s*0\s*!important;/u);
-  assert.match(permissionKeyboardFocusRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(permissionKeyboardFocusRule, /outline:\s*none;/u);
+  assert.match(permissionKeyboardFocusRule, /border:\s*0;/u);
+  assert.match(permissionKeyboardFocusRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(permissionKeyboardFocusRule, /interactive-accent|currentColor/u);
   assert.doesNotMatch(
     css,
