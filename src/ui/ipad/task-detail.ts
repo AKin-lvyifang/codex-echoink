@@ -1,4 +1,4 @@
-import { mobileReportActions } from "../../run-reports/mobile-ui";
+import { mobileReportActions, openMobileRunReport } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -97,7 +97,10 @@ export function createTaskPage(ctx: IPadPageContext, taskId: string): MobileShel
       else line.append(shellElement(document, "span", "", "已中断 · 时间未记录"));
       box.append(line, shellElement(document, "div", "pd-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "pd-task-actions");
-      const resume = iPadAction(ctx, state.resuming ? "准备中…" : "从这里继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("pd-resume-task")); }, "play");
+      const report = iPadAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "ipad", { document, open: config => ctx.shell.openSheet(config) }));
+      report.dataset.action = "report-task"; actions.append(report);
+      const resume = iPadAction(ctx, state.resuming ? "准备中…" : "继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("pd-resume-task")); }, undefined, true);
+      resume.dataset.action = "resume-task";
       resume.disabled = !!state.resuming || state.busy; actions.append(resume); box.append(actions); tail.append(box);
     } else if (state.busy && state.interaction?.status !== "pending") {
       const live = shellElement(document, "div", "pd-task-live"); const mark = shellElement(document, "span", "pd-icon"); setIcon(mark, "loader-circle"); mark.setAttribute("aria-hidden", "true"); live.append(mark, shellElement(document, "span", "", task.taskStage ? stageLabel(task.taskStage) : "正在进行")); tail.append(live);

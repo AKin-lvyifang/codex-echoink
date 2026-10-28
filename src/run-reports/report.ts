@@ -17,6 +17,12 @@ export interface RunReport {
   redaction: { applied: true; rules: "v1" };
 }
 export interface RedactionContext { secrets?: readonly string[]; vaultPath?: string; homePath?: string }
+/** No selected conversation: keep the envelope valid without inventing session data. */
+export function reportWithoutConversation(environment: RunReport["environment"], recentErrors: unknown[]): RunReport {
+  return { format: "echoink-run-report", formatVersion: 1, createdAt: new Date().toISOString(), description: "", contact: "", environment,
+    conversation: { id: "", title: "", agent: "", provider: "", model: "", catalogStatus: "active", activeLeafId: null },
+    runs: [], diagnostics: [], recentErrors, entries: [], missing: ["conversation_not_open", "catalog_status_not_applicable"], redaction: { applied: true, rules: "v1" } };
+}
 const sensitiveField = /^(?:cookie|set[-_]?cookie|authorization|proxy[-_]?authorization|password|credential(?:value)?|access|refresh|[\w-]*(?:token|key|secret))$/iu;
 
 /** Only configuration credentials are collected, never the complete settings document. */

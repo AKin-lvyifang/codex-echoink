@@ -27397,13 +27397,22 @@ body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-contr
 .echoink-run-report-button:disabled { opacity: .45; }
 .echoink-run-report-menu .echoink-run-report-button { text-align: left; min-height: 54px; }
 .echoink-run-report-menu .echoink-run-report-button::before { border: 0; background: transparent; }
-.echoink-shell-sheet .echoink-run-report-field { font-size: .88em; }
-.echoink-shell-sheet .echoink-run-report-input { font-size: max(16px, 1em); min-height: 44px; padding: 10px; border-radius: 9px; }
-.echoink-shell-sheet .echoink-run-report-disclosure { font-size: .76em; line-height: 1.8; }
-.echoink-shell-sheet .echoink-run-report-preview > summary { min-height: 44px; }
-.echoink-shell-sheet .echoink-run-report-actions button { min-height: 44px; font-size: .9em; }
-.echoink-shell-sheet .echoink-run-report-form { overflow: visible; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-field { font-size: .88em; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-input { font-size: max(16px, 1em); min-height: 44px; padding: 10px; border-radius: 9px; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-disclosure { font-size: .76em; line-height: 1.8; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-preview > summary { min-height: 44px; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-actions button { min-height: 44px; font-size: .9em; }
+:is(.echoink-shell-sheet, .echoink-run-report-mobile-modal) .echoink-run-report-form { overflow: visible; }
 .echoink-ipad .echoink-run-report-button::before { inset: 8px 0; }
+
+.notice .echoink-run-report-notice-actions { margin-top: 6px; }
+.notice button.echoink-run-report-notice-action { padding: 3px 0; min-height: 22px; height: auto; font: inherit; font-size: 12px; color: inherit; background: transparent; border: 0; box-shadow: none; text-decoration: underline; text-underline-offset: 2px; }
+.notice .echoink-run-report-notice-actions.is-mobile button.echoink-run-report-notice-action { min-height: 44px; }
+.notice button.echoink-run-report-notice-action:focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
+.echoink-task-interruption-actions .echoink-origin-control[data-slot=button].is-primary,
+.echoink-iphone .ip-task-stopbox button.ip-action.ip-primary .ip-action-visible,
+.echoink-ipad .pd-task-stopbox button.pd-action.pd-primary .pd-action-visible { background: var(--echoink-control-fill, var(--text-normal)); border-color: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-text, var(--background-primary)); }
+.echoink-run-report-mobile-modal.is-ipad .echoink-run-report-button::before { inset: 8px 0; }
 
 /* Desktop task navigation. Existing message/composer/dock styles remain in use. */
 .echoink-agent-tasks { container-type: inline-size; --interactive-accent: var(--echoink-theme-accent); --text-on-accent: var(--echoink-theme-on-accent); }

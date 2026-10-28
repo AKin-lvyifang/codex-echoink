@@ -1,10 +1,11 @@
+import { RunReportModal } from "./run-reports/desktop-ui";
 import { apiVersion as reportObsidianVersion } from "obsidian";
 import { homedir as reportHome } from "node:os";
 import { FileConversationCatalog as ReportCatalog } from "./harness/pi-native/file-conversation-catalog";
 import { FileProductRunStore as ReportRuns } from "./harness/pi-native/file-product-run-store";
 import { readVaultIdentity as readReportVaultIdentity } from "./plugin/vault-identity";
 import { collectDesktopRunReport } from "./run-reports/desktop-collector";
-import { configuredReportSecrets, freezeReport } from "./run-reports/report";
+import { configuredReportSecrets, freezeReport, reportWithoutConversation } from "./run-reports/report";
 import { runErrors } from "./run-reports/recent-errors";
 import { generateConversationTitle } from "./plugin/conversation-title";
 import { webSearchAvailable } from "./tools/web-search-settings";
@@ -1083,7 +1084,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   }
-  async captureRunReport(conversationId: string) {
+  async openRunReport(conversationId = this.getViewService().getCodexView()?.openReportConversationId()): Promise<void> {
+    const snapshot = await this.captureRunReport(conversationId);
+    new RunReportModal(this.app, snapshot, this.getVaultPath(), this.accountService, this.settings.settingsLanguage === "en").open();
+  }
+  async captureRunReport(conversationId?: string) {
+    const environment = { pluginVersion: this.manifest.version, obsidianVersion: reportObsidianVersion,
+      platform: process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux", surface: "desktop" as const,
+      language: this.settings.settingsLanguage === "en" ? "en" as const : "zh" as const, membership: this.accountService?.read().membership.planId || "free" };
+    const redaction = { secrets: configuredReportSecrets(this.settings), vaultPath: this.getVaultPath(), homePath: reportHome() };
+    if (!conversationId) return freezeReport(reportWithoutConversation(environment, runErrors.snapshot()), redaction);
     const root = pluginDataDir(this.getVaultPath(), this.getPluginDataDirName());
     const identity = this.piLocalData?.vaultIdentity ?? await readReportVaultIdentity(root);
     if (!identity) throw new Error("会话存储标识缺失，无法采集运行记录。");
@@ -1091,10 +1101,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     const catalog = this.piLocalData?.catalog ?? new ReportCatalog({ storageRootPath, vaultId: identity.vaultId });
     const productRuns = this.piLocalData?.productRuns ?? new ReportRuns({ storageRootPath, vaultId: identity.vaultId, catalog });
     const report = await collectDesktopRunReport({ catalog, productRuns, conversationId, recentErrors: runErrors.snapshot(),
-      environment: { pluginVersion: this.manifest.version, obsidianVersion: reportObsidianVersion,
-        platform: process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux", surface: "desktop",
-        language: this.settings.settingsLanguage === "en" ? "en" : "zh", membership: this.accountService?.read().membership.planId || "free" } });
-    return freezeReport(report, { secrets: configuredReportSecrets(this.settings), vaultPath: this.getVaultPath(), homePath: reportHome() });
+      environment });
+    return freezeReport(report, redaction);
   }
   async readPiConversationCatalogEntry(conversationId: string): Promise<Readonly<PiConversationCatalogEntry> | null> {
     return await (await this.ensurePiLocalData()).catalog.get(conversationId);

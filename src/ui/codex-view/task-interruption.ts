@@ -5,7 +5,7 @@ import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro
 /** The interruption card is UI-only; it never becomes a session message. */
 export function renderTaskInterruption(
   container: HTMLElement,
-  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void }
+  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void; onReport?(): void | Promise<void> }
 ): void {
   disposeOriginControls(container);
   container.replaceChildren();
@@ -41,8 +41,13 @@ export function renderTaskInterruption(
   } else if (!input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (input.error) text("div", "echoink-task-interruption-error", input.error).setAttribute("role", "alert");
   const actions = text("div", "echoink-task-interruption-actions", "");
-  const button = createOriginButton(actions, { text: input.pending ? (en ? "Checking…" : "正在核对…") : input.buttonLabel ?? (en ? "Continue from here" : "从这里继续"), attr: { type: "button" } });
-  applyAmicroButton(button, { variant: "secondary", icon: "play" });
+  if (input.onReport) {
+    const report = createOriginButton(actions, { text: en ? "Report a problem" : "上报问题", attr: { type: "button" } });
+    applyAmicroButton(report, { variant: "secondary" }); report.dataset.action = "report-task";
+    report.onclick = event => { event.stopPropagation(); if (report.disabled) return; report.disabled = true; void Promise.resolve().then(() => input.onReport?.()).finally(() => { report.disabled = false; }); };
+  }
+  const button = createOriginButton(actions, { text: input.pending ? (en ? "Checking…" : "正在核对…") : input.buttonLabel ?? (en ? "Continue" : "继续"), attr: { type: "button" } });
+  applyAmicroButton(button, { variant: "primary" });
   const icon = button.querySelector(".echoink-amicro-button-icon");
   if (icon) button.prepend(icon);
   setAmicroButtonPending(button, input.pending);

@@ -1,3 +1,4 @@
+import { settingsReportNoticeContent } from "../run-reports/notice";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, appendFile, readdir, stat, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,7 @@ import { FileProductRunStore } from "../harness/pi-native/file-product-run-store
 import { createDurablePiSession, persistPiActiveLeaf, assertPiSessionPreAssistantDurable } from "../harness/pi-native/pi-session-durability";
 import { collectDesktopRunReport } from "../run-reports/desktop-collector";
 import { collectMobileRunReport } from "../run-reports/mobile-collector";
-import { configuredReportSecrets, describeSnapshot, freezeReport, redactReportValue, RUN_REPORT_LIMIT, type RunReport } from "../run-reports/report";
+import { configuredReportSecrets, describeSnapshot, reportWithoutConversation, freezeReport, redactReportValue, RUN_REPORT_LIMIT, type RunReport } from "../run-reports/report";
 import { RunErrorRecorder } from "../run-reports/recent-errors";
 import { saveRunReport } from "../run-reports/vault-export";
 import { createRunReportForm } from "../run-reports/form";
@@ -20,6 +21,22 @@ function report(): RunReport { return { format: "echoink-run-report", formatVers
 export async function runReportTests(document: Document): Promise<void> {
   let passed = 0;
   const test = async (name: string, run: () => void | Promise<void>) => { await run(); passed++; console.log(`OK run reports: ${name}`); };
+  await test("no open conversation keeps a valid empty envelope and only error/environment data", () => {
+    const errors = [{ source: "settings.save", message: "EBUSY fixture" }];
+    const snapshot = freezeReport(reportWithoutConversation(environment, errors));
+    for (const name of ["id", "title", "agent", "provider", "model"] as const) assert.equal(snapshot.report.conversation[name], "");
+    assert.equal(snapshot.report.conversation.activeLeafId, null);
+    for (const name of ["runs", "entries", "diagnostics"] as const) assert.deepEqual(snapshot.report[name], []);
+    assert.deepEqual(snapshot.report.recentErrors, errors); assert.ok(snapshot.report.missing.includes("conversation_not_open"));
+    assert.deepEqual(snapshot.report.environment, environment);
+  });
+  await test("settings Notice offers one review action and does not submit or open twice while pending", async () => {
+    let opens = 0; const node = document.createElement("div");
+    node.append(settingsReportNoticeContent(document, "设置多次保存失败", async () => { opens++; })); document.body.append(node);
+    const button = node.querySelector("button")!; assert.equal(button.textContent, "上报问题"); assert.equal(opens, 0);
+    button.click(); button.click(); await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(opens, 1); assert.equal(button.disabled, false); assert.match(node.textContent!, /设置多次保存失败/u); node.remove();
+  });
   await test("nested fields, encoded URLs, known Provider/MCP values and path variants are redacted", () => {
     const secret = "synthetic provider credential", envSecret = "synthetic-env-secret", header = "synthetic-header-value";
     const secrets = configuredReportSecrets({ apiProviders: [{ apiKey: secret }], resources: { mcpConnections: [{ env: { PRIVATE: envSecret }, headers: { "X-Auth": header } }] } });
