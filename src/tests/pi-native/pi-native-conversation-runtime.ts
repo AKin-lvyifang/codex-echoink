@@ -830,6 +830,15 @@ export async function runOutputContinuationRuntimeTests(): Promise<void> {
         if (!fenced) assert.equal(result.error, "model_tool_call_text_incompatible");
         const projection = await f.runtime.readProjection(handle.conversationId);
         assert.ok(projection.messages.some(message => message.role === "assistant" && message.text.includes(call)));
+        if (!fenced) {
+          const answer = projection.messages.find(message => message.role === "assistant" && message.text.includes(call));
+          assert.match(answer?.details ?? "", /本轮没有执行工具/u);
+          assert.doesNotMatch(answer?.details ?? "", /达到输出上限/u);
+          f.runtime.releaseProductRun(handle.productRunId);
+          await f.runtime.releaseConversation(handle.conversationId);
+          const reopened = await f.runtime.activateConversation(handle.conversationId);
+          assert.match(reopened.messages.find(message => message.role === "assistant" && message.text.includes(call))?.details ?? "", /本轮没有执行工具/u);
+        }
       });
     }
   });

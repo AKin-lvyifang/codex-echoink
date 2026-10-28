@@ -2607,8 +2607,10 @@ function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId
   if (existing >= 0) messages.splice(existing, 1);
   let answerIndex = -1;
   messages.forEach((message, index) => {
-    if (message.runId === runId && message.role === "assistant" && message.itemType === "assistant") {
+    if (message.runId === runId && message.role === "assistant"
+      && (message.itemType === "assistant" || message.itemType === "error")) {
       message.status = "failed";
+      if (message.itemType === "error") message.title = "回答失败";
       message.details = text;
       answerIndex = index;
     }
