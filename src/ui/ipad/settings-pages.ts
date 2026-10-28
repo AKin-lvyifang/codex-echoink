@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { Notice } from "obsidian";
 import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
 import { decorateProAppearanceChoice } from "../appearance-pro";
@@ -184,7 +185,7 @@ export class IPadSettings {
         const row = settingsRow(ctx, paid ? pro : basic, t(ctx, label)); row.classList.add("pd-settings-module-row");
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!, title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button";
         const value = el(ctx.document, "span", "pd-settings-value", directory); title.append(ipadIcon(ctx.document, icon), copy, value, ipadIcon(ctx.document, "chevron-right")); row.append(title);
-        if (policy && !policy.canToggle) { title.title = policy.reason ?? t(ctx, "需要 PRO"); copy.append(el(ctx.document, "span", "pd-settings-description", policy.reason ?? t(ctx, "需要 PRO"))); }
+        if (policy && !policy.canToggle) { attachNativeTooltip(title, policy.reason ?? t(ctx, "需要 PRO")); copy.append(el(ctx.document, "span", "pd-settings-description", policy.reason ?? t(ctx, "需要 PRO"))); }
         title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(async () => {
           const current = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(this.host.settings(), id)) : undefined;
           if (current && !current.canToggle) throw new Error(current.reason ?? t(ctx, "需要 PRO"));

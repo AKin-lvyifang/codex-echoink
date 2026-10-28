@@ -105,7 +105,7 @@ export const Platform = { isMobileApp: true, isMobile: true, isTablet: false };
 export class Scope { constructor(_parent?: unknown) {} register() {} }
 export const MarkdownRenderer = { async render(_app: unknown, text: string, element: HTMLElement) { element.textContent = text; } };
 export async function requestUrl() { throw new Error("Browser fixture cannot call a real Provider"); }
-export class Notice { constructor(text: string) { console.info("Fixture notice", text); } }
+export class Notice { constructor(text: string, _timeout?: number) { console.info("Fixture notice", text); } hide() {} }
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
 const prototype = HTMLElement.prototype as any;
 (SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };

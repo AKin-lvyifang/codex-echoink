@@ -80,7 +80,6 @@ function applyCodexHeaderCopy(
       ? conversationUiText(language, "回到侧边栏", "Return to sidebar")
       : conversationUiText(language, "打开插件设置", "Open plugin settings");
   button.setAttribute("aria-label", label);
-  button.setAttribute("title", label);
 }
 
 /**

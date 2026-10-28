@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { setIcon, type App } from "obsidian";
 import { renderActivityHeatmap } from "./activity-heatmap";
 import { disposeOriginControls } from "./origin-controls";
@@ -127,9 +128,10 @@ export function renderSettingsKnowledgeDashboard(
   const raw = cells(queues, [t("资料来源", "Sources"), String(snapshot.raw.fileCount), String(snapshot.raw.todayCount), "", ""]);
   for (const [index, count] of [[3, snapshot.raw.changedCount], [4, snapshot.raw.digestStatus.calibration]]) {
     const open = (raw.children[index] as HTMLElement).createEl("button", { cls: "queue-count", text: String(count), attr: {
-      type: "button", title: t("在文件列表中打开资料来源目录", "Open source folders in the file explorer"),
+      type: "button",
       "aria-label": t(`${index === 3 ? "待处理" : "待校准"} ${count} 项，打开资料来源目录`, `${count} ${index === 3 ? "pending" : "needing calibration"}; open source folders`)
     } });
+    attachNativeTooltip(open, t("在文件列表中打开资料来源目录", "Open source folders in the file explorer"));
     open.onclick = actions.onOpenRaw;
   }
   cells(queues, [t("收件箱", "Inbox"), String(snapshot.inbox.fileCount), String(snapshot.inbox.todayCount), String(snapshot.inbox.fileCount), "—"]);
@@ -153,7 +155,7 @@ export function renderSettingsKnowledgeDashboard(
 }
 
 function button(container: HTMLElement, label: string, icon: string, onClick: () => void, iconOnly = false): HTMLButtonElement {
-  const el = container.createEl("button", { cls: iconOnly ? "icon-button text-button" : "text-button", attr: { type: "button", "aria-label": label, title: label } });
+  const el = container.createEl("button", { cls: iconOnly ? "icon-button text-button" : "text-button", attr: { type: "button", "aria-label": label } });
   setIcon(el.createSpan(), icon); if (!iconOnly) el.createSpan({ text: label }); el.onclick = onClick;
   return el;
 }

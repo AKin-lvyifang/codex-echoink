@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import {showEchoInkMenu} from "../theme-boundary";
 import { Menu, Notice, setIcon } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
@@ -585,13 +586,13 @@ function createParameterTrigger(
   if (section.disabled) {
     trigger.setAttribute("aria-disabled", "true");
     if (section.disabledReason) {
-      trigger.setAttribute("title", section.disabledReason);
       trigger.setAttribute(
         "aria-label",
         language === "en"
           ? `${section.label}: ${section.currentValue}. ${section.disabledReason}`
           : `${section.label}：${section.currentValue}。${section.disabledReason}`
       );
+      attachNativeTooltip(trigger, section.disabledReason);
     }
   } else {
     trigger.setAttribute("aria-haspopup", "menu");

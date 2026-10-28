@@ -1,6 +1,7 @@
 import { Scope, setIcon, type App } from "obsidian";
 import { FINANCE_BRAND_ASSETS } from "./finance-brand-assets";
 import { FINANCE_CATEGORY_ICON_CHOICES, FINANCE_CATEGORY_ICON_GROUPS } from "./finance-catalog";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export type FinanceIconScope = "entry" | "merchant" | "category";
 export interface FinanceIconOption { id: string; name: string; group: string; aliases: readonly string[] }
@@ -58,11 +59,14 @@ export function openFinanceIconPicker(host: HTMLElement, formView: HTMLElement, 
   const body = picker.createDiv({ cls: "echoink-finance-icon-picker-body" });
   let group = "";
   let closed = false;
+  const tooltips: ReturnType<typeof attachNativeTooltip>[] = [];
+  const clearTooltips = () => { for (const tooltip of tooltips) tooltip.dispose(); tooltips.length = 0; };
   const escapeScope = new Scope(app.scope);
   const observer = new MutationObserver(() => { if (!picker.isConnected) cleanup(); });
   const cleanup = (): void => {
     if (closed) return;
     closed = true;
+    clearTooltips();
     observer.disconnect();
     app.keymap.popScope(escapeScope);
   };
@@ -81,12 +85,14 @@ export function openFinanceIconPicker(host: HTMLElement, formView: HTMLElement, 
     if (!shown.length) body.createEl("p", { cls: "echoink-life-hint", text: "没有匹配的图标" });
     for (const option of shown) {
       const item = grid.createEl("button", { cls: "echoink-finance-icon-item", attr: { type: "button", "aria-pressed": String(selected === option.id), title: option.name } });
+      tooltips.push(attachNativeTooltip(item, option.name));
       renderFinanceIcon(item.createSpan({ cls: "echoink-finance-icon-art" }), option.id);
       item.createSpan({ text: option.name });
       item.onclick = () => { onSelect(option.id); close(); };
     }
   };
   const render = (): void => {
+    clearTooltips();
     body.empty();
     const query = search.value.trim().toLocaleLowerCase();
     back.setText(group ? "‹ 返回分组" : "‹ 返回编辑");

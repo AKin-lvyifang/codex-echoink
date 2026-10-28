@@ -7,6 +7,7 @@ import { createOriginCheck, createOriginSwitch } from "../settings/origin-contro
 import { createSettingsState, showSettingsInlineConfirmation } from "../settings/settings-v2";
 import { confirmModal } from "../ui/modals";
 import { applyDeleteButton } from "../settings/amicro-buttons";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export type CatalogKind = "merchants" | "accounts" | "categories";
 type CatalogItem = FinanceMerchantSetting | FinanceAccountSetting | FinanceCategorySetting;
@@ -38,9 +39,11 @@ function choice(parent: HTMLElement, label: string, options: readonly [string, s
 
 /** Kept by LifestyleSettingsPanel across redraws; the list and editor are separate pages. */
 export class FinanceCatalogPanel {
+  private tooltipCleanups: Array<() => void> = [];
   private controls: ProPluginControls | null = null;
   private deletionAbort: AbortController | null = null;
   dispose(): void {
+    for (const cleanup of this.tooltipCleanups) cleanup(); this.tooltipCleanups = [];
     this.deletionAbort?.abort(); this.deletionAbort = null;
     this.controls?.dispose(); this.controls = null;
   }
@@ -217,6 +220,7 @@ export class FinanceCatalogPanel {
         ? categoryColors : [["当前颜色", colorValue] as const, ...categoryColors];
       for (const [name, color] of options) {
         const swatch = palette.createEl("button", { cls: "echoink-finance-color-swatch", attr: { type: "button", "aria-label": `${name} ${color}`, "aria-pressed": String(colorValue.toLowerCase() === color.toLowerCase()), title: `${name} ${color}` } });
+        this.tooltipCleanups.push(attachNativeTooltip(swatch, `${name} ${color}`).dispose);
         swatch.style.setProperty("--finance-swatch", color);
         swatch.createSpan({ text: "✓", attr: { "aria-hidden": "true" } });
         swatch.onclick = () => { colorValue = color; for (const button of Array.from(palette.querySelectorAll<HTMLButtonElement>("button"))) button.setAttr("aria-pressed", String(button === swatch)); };

@@ -783,7 +783,6 @@ export class ProviderModelModal extends Modal {
       cls: "codex-provider-modal-icon-button",
       attr: {
         type: "button",
-        title: this.options.copy.providers.showKey,
         "aria-label": this.options.copy.providers.showKey,
         "data-modal-focus-key": "toggle-api-key"
       }
@@ -793,9 +792,6 @@ export class ProviderModelModal extends Modal {
       input.type = input.type === "password" ? "text" : "password";
       reveal.empty();
       setIcon(reveal, input.type === "password" ? "eye" : "eye-off");
-      reveal.title = input.type === "password"
-        ? this.options.copy.providers.showKey
-        : this.options.copy.providers.hideKey;
       reveal.setAttr("aria-label", input.type === "password"
         ? this.options.copy.providers.showKey
         : this.options.copy.providers.hideKey);

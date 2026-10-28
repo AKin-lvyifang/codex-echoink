@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import type { MobileJournalSnapshot } from "../../mobile/module-contracts";
 import { dateKey, BUILT_IN_JOURNAL_TEMPLATES, homeContributionLevel, decodeImportedMarkdown } from "../../home/home-workbench-model";
 import { journalMonthSelection, journalPageEntries } from "../../home/journal-stats";
@@ -37,7 +38,7 @@ export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
       const offset = week * 7 + weekday - row, date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset, 12), key = dateKey(date), outside = offset < 0 || offset >= 365, count = activity.get(key) ?? 0;
       const cell = el(ctx.document, "span", `pd-journal-heat-cell ${outside ? "is-outside" : `level-${homeContributionLevel(count)}`}`); cell.dataset.date = key;
       if (outside) cell.setAttribute("aria-hidden", "true");
-      else { cell.setAttribute("aria-label", `${key} · ${count}`); cell.title = `${key} · ${count}`; }
+      else { cell.setAttribute("aria-label", `${key} · ${count}`); attachNativeTooltip(cell, `${key} · ${count}`, { touch: "notice" }); }
       grid.append(cell);
     } if (available) statistics.append(graph);
     if (!available) { v.status(t(ctx, "日记目录尚未配置。", "The journal location is not configured.")); list.replaceChildren(moduleButton(ctx, t(ctx, "配置日记", "Configure journals"), () => api.openSettings())); }

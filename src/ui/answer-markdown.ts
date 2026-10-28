@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "./native-tooltip";
 import { Component, MarkdownRenderer, normalizePath, TFile, type App } from "obsidian";
 import { mapMarkdownInlineCode, mapMarkdownOutsideFences, normalizeMarkdownMath } from "../core/markdown-math";
 import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
@@ -76,7 +77,7 @@ function decorateNoteLinks(app: App, root: HTMLElement, component: Component, so
     link.textContent = name;
     link.addClass("codex-message-note-link");
     link.setAttribute("aria-label", `打开笔记 ${name}`);
-    link.setAttribute("title", file.path);
+    component.register(attachNativeTooltip(link, file.path).dispose);
     component.registerDomEvent(link, "click", async event => {
       event.preventDefault();
       event.stopPropagation();

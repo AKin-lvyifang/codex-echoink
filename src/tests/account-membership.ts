@@ -1,11 +1,12 @@
 import * as assert from "node:assert/strict";
-import { App, openTestModals } from "obsidian";
+import { App, Platform, openTestModals } from "obsidian";
 import { mountAccountMembership, appendAccountComingSoon } from "../settings/account-membership";
 import { createUnavailableAccountAdapter, type AccountMembershipViewModel } from "../settings/account-membership-model";
 import { normalizeSettingsData, DEFAULT_SETTINGS } from "../settings/settings";
 import { prepareDocument, fixture, mountDefinitions } from "./settings-search-dom";
 import { runAccountMembershipPricingTests } from "./account-membership-pricing";
 import { runAccountMembershipSubscriptionTests } from "./account-membership-subscription";
+import { displayedTooltipsForTests } from "./obsidian-shim";
 
 export async function runAccountMembershipTests(win: Window & typeof globalThis) {
   runAccountMembershipPricingTests();
@@ -26,6 +27,7 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   let currentVm = vm;
   const mount = () => mountAccountMembership(parent, { app: new App(), viewModel: currentVm, language: "zh-CN", actions: { signIn: async () => { calls++; }, saveProfile: async () => { calls++; }, setPassword: async () => { calls++; } }, openProviders: () => { calls++; } });
   const findButton = (root: HTMLElement, text: string) => [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === text)!;
+  const accessibleName = (node: Element) => node.getAttribute("aria-label") ?? node.getAttribute("aria-labelledby")?.split(/\s+/u).map(id => win.document.getElementById(id)?.textContent ?? "").join(" ") ?? node.textContent;
   let page = mount(); await scheduler.flush();
   assert.equal(parent.querySelectorAll(".heat-cell").length, 365);
   assert.equal(parent.querySelectorAll('.heat-cell[tabindex="0"]').length, 1);
@@ -131,17 +133,25 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   assert.equal(parent.querySelectorAll(".metrics small").length, 0, "known metrics show labels, values and units without explanatory footnotes");
   assert.ok(!parent.querySelector(".metrics")?.textContent?.includes(partial.statistics.coverage!), "coverage is not repeated beneath metric cards");
   const last = parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!;
-  assert.ok(last.getAttribute("aria-label")?.includes("0 Token"));
-  findButton(parent, "Turns").click(); assert.ok(parent.querySelector('.heat-cell[data-date="2026-10-06"]')?.getAttribute("aria-label")?.includes("No statistics"));
+  assert.ok(accessibleName(last)?.includes("0 Token"));
+  findButton(parent, "Turns").click(); assert.ok(accessibleName(parent.querySelector('.heat-cell[data-date="2026-10-06"]')!)?.includes("No statistics"));
   findButton(parent, "All").click(); assert.ok(parent.querySelector(".rank-title")?.textContent?.includes("Actual all-range row"));
-  const tooltip = win.document.querySelector<HTMLElement>(".echoink-account-tooltip")!;
-  const focusedCell = parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!;
-  focusedCell.focus(); assert.equal(tooltip.hidden, false); assert.ok(tooltip.textContent?.includes("No statistics"));
-  findButton(parent, "Token").click(); assert.equal(tooltip.hidden, true, "metric switch clears old tooltip");
-  parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!.focus(); assert.equal(tooltip.hidden, false);
-  win.document.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); assert.equal(tooltip.hidden, true);
-  parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-05"]')!.focus(); assert.equal(tooltip.hidden, false);
-  parent.dispatchEvent(new win.Event("scroll")); assert.equal(tooltip.hidden, true);
+  const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+  try {
+    const focusedCell = parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!;
+    focusedCell.focus(); assert.ok(String(displayedTooltipsForTests.get(focusedCell)).includes("No statistics"));
+    findButton(parent, "Token").click(); assert.equal(focusedCell.isConnected, false, "metric switch releases the previous day's controls");
+    const tokenCell = parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!;
+    tokenCell.focus(); assert.ok(String(displayedTooltipsForTests.get(tokenCell)).includes("0 Token"));
+    assert.equal(win.document.querySelector(".echoink-account-tooltip"), null, "heatmap delegates floating readings to the host");
+  } finally { Platform.isDesktopApp = previousDesktop; }
+  const tokenCell = parent.querySelector<HTMLButtonElement>('.heat-cell[data-date="2026-10-06"]')!;
+  tokenCell.click();
+  const usageDialog = openTestModals.at(-1)!;
+  assert.match(usageDialog.titleEl.textContent ?? "", /2026-10-06/);
+  assert.match(usageDialog.contentEl.textContent ?? "", /Completed turns —.*Estimated input — Token.*Estimated output 0 Token.*Estimated total 0 Token/su,
+    "click retains the full daily usage detail");
+  usageDialog.close();
   const cells = [...parent.querySelectorAll<HTMLButtonElement>(".heat-cell")];
   cells.at(-1)!.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })); assert.equal(win.document.activeElement, cells[0]);
   page.dispose();

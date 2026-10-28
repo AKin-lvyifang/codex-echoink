@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
 import { renderInlineAgentSettings } from "./inline-agent-settings";
@@ -1982,7 +1983,7 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "echoink-knowledge-protocol-title",
         text: zh ? step.title : protocolEnglish[index][0]
       });
-      item.setAttr("title", zh ? step.instruction : protocolEnglish[index][1]);
+      attachNativeTooltip(item, zh ? step.instruction : protocolEnglish[index][1]);
     }
 
     const preferenceSection = createSettingsSection(page, {
@@ -3495,11 +3496,7 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       });
       if (providerId !== "openai-codex") {
-        savedProvider.createSpan({
-          cls: "codex-provider-url-tooltip",
-          text: saved.baseUrl,
-          attr: { "aria-hidden": "true" }
-        });
+        attachNativeTooltip(savedProvider, saved.baseUrl, { touch: "notice" });
       }
 
       if (Platform.isDesktopApp) setIcon(identity.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
@@ -3555,7 +3552,6 @@ export class CodexSettingTab extends PluginSettingTab {
         text: label("编辑", "Edit"),
         attr: {
           type: "button",
-          title: label(`编辑 ${providerDisplayName} · ${modelDisplayName}`, `Edit ${providerDisplayName} · ${modelDisplayName}`),
           "aria-label": label(`编辑 ${providerDisplayName} · ${modelDisplayName}`, `Edit ${providerDisplayName} · ${modelDisplayName}`),
           "data-echoink-focus-key": `provider:${saved.id}:edit`
         }
@@ -3568,7 +3564,6 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "codex-provider-row-action is-delete",
         attr: {
           type: "button",
-          title: label(`删除 ${providerDisplayName} · ${modelDisplayName}`, `Delete ${providerDisplayName} · ${modelDisplayName}`),
           "aria-label": label(`删除 ${providerDisplayName} · ${modelDisplayName}`, `Delete ${providerDisplayName} · ${modelDisplayName}`),
           "data-echoink-focus-key": `provider:${saved.id}:delete`
         }
