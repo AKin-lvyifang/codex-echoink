@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 660,
+  "total": 641,
   "findings": [
     {
       "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
@@ -1309,15 +1309,6 @@
       "count": 1
     },
     {
-      "fingerprint": "05961cc944b71a8870c841a05b77f919f7a90df12a7897de50c5b8ebb884b743",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-bill-list-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 16px!important}",
-      "count": 1
-    },
-    {
       "fingerprint": "0a0162e412bbcdf294f3b43a66f8c1719c2ace1c8cebd1ef31e5f16259865e03",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1334,15 +1325,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: var(--interactive-accent) !important;",
       "count": 2
-    },
-    {
-      "fingerprint": "0bedfa17724459159dce7026b95774ac0649935485b916f32481dc79c13cd42c",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ":is(.echoink-finance-workspace,.echoink-finance-dialog,.echoink-finance-catalog-page) :is(input:not([type=checkbox]):not([type=radio]),select,textarea,[data-slot=select-trigger]):is(:focus,:focus-visible){border-color:var(--finance-line,var(--background-modifier-border))!important;outline:none!important;box-shadow:none!important;background:var(--background-modifier-hover)!important}",
-      "count": 4
     },
     {
       "fingerprint": "0ee69a696cc2fe067fe3ac4278e4f9f874970127b5a70867b4e5bef8a82a6300",
@@ -1768,15 +1750,6 @@
       "count": 1
     },
     {
-      "fingerprint": "633acd77cb39630e94ce0893221f0fad8a8791d62ee53caaa87f0775671e9457",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-day.is-within{border-color:var(--color-green,#4e9b77)!important}",
-      "count": 1
-    },
-    {
       "fingerprint": "63e6bfe565eafccd11e07b39a7f63696c622692aa14ce9f2dd42197b6066197a",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1831,15 +1804,6 @@
       "count": 1
     },
     {
-      "fingerprint": "70fb11f9650bdb9b2c4abc80a9add00abec74d97867af9ca65548a13d4c57ba9",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-day{width:100%;height:auto;aspect-ratio:1;min-width:0;min-height:0;padding:0!important;border:3px solid var(--background-modifier-border)!important;border-radius:50%;background:transparent!important;color:var(--text-normal)!important;font-size:.8em!important;font-variant-numeric:tabular-nums}",
-      "count": 5
-    },
-    {
       "fingerprint": "7105057e79abadd0dad82a6935c3e04d6c12d06dabdb541c7553e9a0309becec",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1855,15 +1819,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-primary)) !important;",
-      "count": 2
-    },
-    {
-      "fingerprint": "72e77343f485ba3a7fd275775f9ae6269a58a9942037e4fba68671f748c51b84",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-group-chip{border-radius:5px!important;background:var(--background-secondary)!important}",
       "count": 2
     },
     {
@@ -2155,15 +2110,6 @@
       "count": 1
     },
     {
-      "fingerprint": "9d8af37a8c72d13446508590634061f806fa87b313eb9090d7c472f4f3a28ffb",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-ai-conclusion{margin:0!important;color:var(--text-normal);font-size:.95em!important;font-weight:400;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}",
-      "count": 2
-    },
-    {
       "fingerprint": "9e4719817dfaf07e0e58d32b4d4cef13d20386c05ec8478e1a551ce801f5f1ff",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2308,15 +2254,6 @@
       "count": 1
     },
     {
-      "fingerprint": "c88fe0bdd21a8e68b0db98a71db822dab7c87ba46bb59229e7be4fee41f874e0",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-ai-chart-explanation p{min-width:0;margin:0!important;color:var(--text-normal)}",
-      "count": 1
-    },
-    {
       "fingerprint": "ca0e7d9db88c46c16aff2f79a3b43017f1b83586f091cd70506581ae9566780b",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2333,15 +2270,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-workbench [hidden] { display: none !important; }",
       "count": 1
-    },
-    {
-      "fingerprint": "cd302991fc254dc7f9511d4395384022379bc4af90db94921f50fc52cedc5ddb",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-finance-day.is-over{border-color:var(--text-error)!important;border-right-color:transparent!important}",
-      "count": 2
     },
     {
       "fingerprint": "cd40658587f1eab550ef7e9a73d092264761064c9b8128abc4d9d3a25978d335",
@@ -3664,15 +3592,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": "body.is-popout-modal:has(.modal.mod-settings) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "e7ab9f2ba1922a564234bbb6b4d5fdbc73e78d81be46555287b02c489d71d248",
-      "path": "styles.css",
-      "rule": "selector-type-no-unknown",
-      "severity": 1,
-      "message": "Unknown type selector \"echoink-finance-number-flow-v023\" (selector-type-no-unknown)",
-      "context": ".echoink-finance-workspace echoink-finance-number-flow-v023{font:inherit;letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums;--number-flow-mask-height:.12em;--number-flow-mask-width:.2em}",
       "count": 1
     }
   ]

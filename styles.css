@@ -26211,7 +26211,7 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-gauge svg{display:block;width:100%;height:100%}
 .echoink-finance-gauge path{fill:none;stroke-width:9}.echoink-finance-gauge .is-track{stroke:var(--background-modifier-border)}.echoink-finance-gauge .is-fill{stroke:var(--finance-accent)}.echoink-finance-gauge .is-over{stroke:var(--text-error)}
 .echoink-finance-gauge-label{position:absolute;left:10%;right:10%;bottom:5%;text-align:center}.echoink-finance-gauge-label strong{display:block;font-size:1.6em;font-weight:550}.echoink-finance-gauge-label small{color:var(--text-muted);font-size:.75em}
-.echoink-finance-group-chip{border-radius:5px!important;background:var(--background-secondary)!important}
+.echoink-finance-workspace .echoink-finance-group-chip{border-radius:5px;background:var(--background-secondary)}
 .echoink-finance-report{white-space:pre-wrap;max-height:300px;overflow:auto}
 .echoink-finance-analysis-card .echoink-finance-report{white-space:normal;max-height:none;overflow:visible;overflow-wrap:anywhere;margin:14px 0;font-size:.88em}
 .echoink-finance-analysis-card .echoink-finance-report :is(p,li){font-size:inherit}
@@ -26370,9 +26370,10 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-legacy-goals{margin-top:12px;padding-top:12px;border-top:1px solid var(--finance-line)}.echoink-finance-legacy-goals summary{cursor:pointer}.echoink-finance-legacy-goals>small{display:block;margin:9px 0}.echoink-finance-legacy-goal{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 0}.echoink-finance-legacy-goal span{min-width:0;overflow-wrap:break-word}
 .echoink-finance-calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;margin:12px 0}
 .echoink-finance-calendar>span{text-align:center;color:var(--text-muted);font-size:.76em}
-.echoink-finance-day{width:100%;height:auto;aspect-ratio:1;min-width:0;min-height:0;padding:0!important;border:3px solid var(--background-modifier-border)!important;border-radius:50%;background:transparent!important;color:var(--text-normal)!important;font-size:.8em!important;font-variant-numeric:tabular-nums}
-.echoink-finance-day.is-within{border-color:var(--color-green,#4e9b77)!important}
-.echoink-finance-day.is-over{border-color:var(--text-error)!important;border-right-color:transparent!important}
+.echoink-finance-day{width:100%;height:auto;aspect-ratio:1;min-width:0;min-height:0;border-radius:50%;font-variant-numeric:tabular-nums}
+.echoink-finance-workspace .echoink-finance-day{padding:0;border:3px solid var(--background-modifier-border);background:transparent;color:var(--text-normal);font-size:.8em}
+.echoink-finance-workspace .echoink-finance-day.is-within{border-color:var(--color-green,#4e9b77)}
+.echoink-finance-workspace .echoink-finance-day.is-over{border-color:var(--text-error);border-right-color:transparent}
 .echoink-finance-day[aria-pressed="true"]{box-shadow:0 0 0 2px var(--text-normal)}
 .echoink-finance-day:disabled{opacity:.65;cursor:default}
 /* Finance spending: one category selector, two local read-only breakdowns. */
@@ -26455,7 +26456,8 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-ai-legacy-icon{display:inline-flex;width:18px;height:18px;margin-top:2px;color:var(--finance-accent)}
 .echoink-finance-ai-legacy-summary>div{min-width:0}
 .echoink-finance-ai-legacy-summary small{display:block;margin-bottom:5px;color:var(--finance-accent);font-size:.75em;font-weight:600}
-.echoink-finance-ai-conclusion{margin:0!important;color:var(--text-normal);font-size:.95em!important;font-weight:400;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.echoink-finance-ai-conclusion{color:var(--text-normal);font-weight:400;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.echoink-finance-workspace .echoink-finance-ai-conclusion{margin:0;font-size:.95em}
 .echoink-finance-ai-conclusion strong{font-weight:650}
 .echoink-finance-ai-charts{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;min-width:0;margin:18px 0}
 .echoink-finance-ai-chart{width:100%;min-width:0;padding:16px 0;border:0;border-top:1px solid var(--finance-line);border-radius:0}
@@ -26503,7 +26505,8 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-ai-legend-item>span:first-child.is-rest{background:var(--text-muted)}
 .echoink-finance-ai-chart-explanation{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px;align-items:start;min-width:0;margin-top:14px;padding:10px 12px;border-radius:6px;background:var(--background-secondary);color:var(--text-normal);line-height:1.6}
 .echoink-finance-ai-chart-explanation-label{color:var(--finance-accent);font-size:.75em;font-weight:600;white-space:nowrap}
-.echoink-finance-ai-chart-explanation p{min-width:0;margin:0!important;color:var(--text-normal)}
+.echoink-finance-ai-chart-explanation p{min-width:0;color:var(--text-normal)}
+.echoink-finance-workspace .echoink-finance-ai-chart-explanation p{margin:0}
 .echoink-finance-ai-chart-explanation .echoink-finance-report{min-width:0;margin:0;color:var(--text-normal)}
 .echoink-finance-ai-table-panel{min-width:0;padding-top:16px;border-top:1px solid var(--finance-line)}
 .echoink-finance-ai-table-panel h5{margin:0 0 10px;font-size:.92em;font-weight:600}
@@ -26618,7 +26621,7 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-finance-bill-page.is-entering{animation:echoink-finance-bill-enter .18s ease-out}
 @keyframes echoink-finance-bill-enter{from{opacity:.5;transform:translateX(18px)}to{opacity:1;transform:translateX(0)}}
 @container finance-bill (max-width:700px){
- .echoink-finance-bill-list-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 16px!important}
+ .echoink-finance-workspace .echoink-finance-bill-list-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 16px}
  .echoink-finance-bill-list-row>strong{grid-column:1/3}
  .echoink-finance-bill-list-row>span:last-child{grid-column:3;grid-row:1/4;align-self:center}
  .echoink-finance-bill-chart{grid-template-columns:minmax(0,1fr);gap:18px}
@@ -26643,12 +26646,12 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-finance-bill-page .echoink-finance-bill-actions{justify-content:flex-end}
 
 /* Shared finance summaries, pagination and neutral field focus. */
-.echoink-finance-workspace echoink-finance-number-flow-v023{font:inherit;letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums;--number-flow-mask-height:.12em;--number-flow-mask-width:.2em}
+.echoink-finance-workspace .echoink-finance-number-flow{font:inherit;letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums;--number-flow-mask-height:.12em;--number-flow-mask-width:.2em}
 .echoink-finance-pagination{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 12px;margin-top:12px;min-width:0}
 .echoink-finance-pagination>span{color:var(--text-muted);font-size:.78em}
 .echoink-finance-pagination>nav{margin-left:auto;max-width:100%}
 .echoink-finance-bill-detail-page{min-width:0}
-:is(.echoink-finance-workspace,.echoink-finance-dialog,.echoink-finance-catalog-page) :is(input:not([type=checkbox]):not([type=radio]),select,textarea,[data-slot=select-trigger]):is(:focus,:focus-visible){border-color:var(--finance-line,var(--background-modifier-border))!important;outline:none!important;box-shadow:none!important;background:var(--background-modifier-hover)!important}
+:is(.echoink-finance-workspace,.echoink-finance-dialog,.echoink-finance-catalog-page) :is(input:not([type=checkbox]):not([type=radio]),select,textarea,[data-slot=select-trigger]):is(:focus,:focus-visible){border-color:var(--finance-line,var(--background-modifier-border));outline:none;box-shadow:none;background:var(--background-modifier-hover)}
 @container life-workspace (max-width:560px){.echoink-finance-ledger-metrics{grid-template-columns:1fr;gap:6px}.echoink-finance-ledger-metrics .echoink-finance-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 10px;padding:8px 12px}.echoink-finance-ledger-metrics .echoink-finance-number{font-size:18px;margin:0;grid-column:2;grid-row:1 / span 2}.echoink-finance-ledger-metrics .echoink-finance-card>p{margin:0;grid-column:1}}
 
 /* Budget scopes share one scroll body and a reachable save footer. */

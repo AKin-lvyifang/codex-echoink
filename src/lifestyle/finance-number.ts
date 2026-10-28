@@ -58,6 +58,7 @@ export class FinanceNumbers {
           if (!record.flow) {
             const registry = (typeof window === "undefined" ? win : window).customElements;
             const Constructor = registry.get(tag)!; const flow = new Constructor() as NumberFlowLite;
+            flow.classList.add("echoink-finance-number-flow");
             flow.xTiming = flow.yTiming = { duration: 550, easing: "cubic-bezier(.2,.8,.2,1)" }; flow.fadeTiming = { duration: 180, easing: "ease-out" }; flow.root = true;
             const initial = record.entrance ? 0 : record.value;
             const parts = module.partitionParts(initial / 100, formatter); parts.pre = []; flow.parts = parts;

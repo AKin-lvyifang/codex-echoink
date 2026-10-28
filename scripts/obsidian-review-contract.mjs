@@ -228,6 +228,7 @@ const COMMENT_HARD_RULES = new Set(Object.keys(SOURCE_HARD_RULES).filter(rule =>
 const BASELINE_SOURCE = "eslint-plugin-obsidianmd production errors";
 const WARNING_BASELINE_SOURCE = "eslint-plugin-obsidianmd production warnings";
 const CSS_BASELINE_SOURCE = "stylelint-config-obsidianmd production warnings";
+export const CSS_HARD_RULES = ["selector-type-no-unknown"];
 const SOURCE_EXTENSIONS = /\.(?:ts|cts|mts|tsx|js|cjs|mjs|jsx)$/u;
 // These are tests and upstream reference material, not plugin runtime code.
 const NON_PRODUCTION_DIRECTORIES = new Set(["src/tests", "src/home/magic-ui/provenance"]);
@@ -294,6 +295,7 @@ export function auditLintCoverage(rootDir, files, results) {
 
 export function isHardFinding(finding) {
   return finding.fatal === true || !finding.rule || finding.rule === "<parse>"
+    || CSS_HARD_RULES.includes(finding.rule)
     || (finding.severity === 2 && (hardRule(finding.rule) || finding.path === "manifest.json"));
 }
 

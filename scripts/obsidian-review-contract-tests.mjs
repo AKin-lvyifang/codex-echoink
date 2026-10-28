@@ -8,7 +8,7 @@ import {
   auditLintCoverage, collectFindings, isHardFinding, findingFingerprint, createBaseline,
   validateBaseline, createWarningBaseline, validateWarningBaseline, createCssBaseline, validateCssBaseline, compareBaseline, validateResolvedRules
 } from "./obsidian-review-contract.mjs";
-import { productionCssFiles, auditCssCoverage, runCssBehaviorSentinels } from "./obsidian-css-review.mjs";
+import { productionCssFiles, auditCssCoverage, runCssBehaviorSentinels, CSS_REVIEW_CONFIG } from "./obsidian-css-review.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let checks = 0;
@@ -74,11 +74,13 @@ assert.throws(() => createWarningBaseline(suppressedWarning)); checks += 1;
 const cssFinding = { ...warning, path: "src/example.css", rule: "declaration-no-important", message: "Avoid !important.", context: "a { color: red !important; }" };
 const cssBaseline = createCssBaseline([cssFinding]);
 check(validateCssBaseline(cssBaseline).length === 0, "valid CSS fingerprint baseline");
+assert.throws(() => createCssBaseline([{ ...cssFinding, rule: "selector-type-no-unknown" }])); checks += 1;
 check(validateWarningBaseline(cssBaseline).length > 0 && validateCssBaseline(warningBaseline).length > 0, "CSS and JavaScript baselines cannot be interchanged");
 check(compareBaseline(createCssBaseline([{ ...cssFinding, context: "b { color: red !important; }" }]), cssBaseline).regressions.length === 1, "CSS same-count substitution fails");
 check(compareBaseline(createCssBaseline([cssFinding, cssFinding]), cssBaseline).regressions.length === 1, "CSS count increase fails");
 check(compareBaseline(createCssBaseline([]), cssBaseline).reductions.length === 1, "resolved CSS debt must be tightened");
 const cssSentinels = await runCssBehaviorSentinels();
+check(CSS_REVIEW_CONFIG.rules["selector-type-no-unknown"][1].severity === "error", "unknown CSS types are a hard error");
 check(cssSentinels.errors.length === 0, `CSS behavior sentinels pass: ${cssSentinels.errors.join(", ")}`);
 
 for (const rule of ["obsidianmd/platform", "obsidianmd/object-assign", "import/no-extraneous-dependencies", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",

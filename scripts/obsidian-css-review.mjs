@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import stylelint from "stylelint";
 import obsidian from "stylelint-config-obsidianmd";
+import { CSS_HARD_RULES } from "./obsidian-review-contract.mjs";
 
 // Obsidian 1.11.4 uses Electron 39. Only the four Community CSS rules in
 // scope are selected; the full contents of every production CSS file are read.
@@ -12,6 +13,7 @@ const selectedRules = [
   "plugin/no-unsupported-browser-features"
 ];
 const rules = Object.fromEntries(selectedRules.map(rule => [rule, obsidian.rules[rule]]));
+for (const rule of CSS_HARD_RULES) rules[rule] = [rules[rule][0], { ...rules[rule][1], severity: "error" }];
 rules["plugin/no-unsupported-browser-features"] = [true, {
   ...rules["plugin/no-unsupported-browser-features"][1],
   browsers: ["electron >= 39"]
@@ -76,6 +78,11 @@ export async function runCssBehaviorSentinels() {
   const result = await stylelint.lint({ code: source, codeFilename: "src/css-review-sentinel.css", config: CSS_REVIEW_CONFIG });
   const found = new Set(result.results.flatMap(item => item.warnings.map(warning => warning.rule)));
   const errors = selectedRules.filter(rule => !found.has(rule)).map(rule => `CSS sentinel: ${rule} did not detect its bad sample.`);
+  for (const rule of CSS_HARD_RULES) {
+    if (!result.results.some(item => item.warnings.some(warning => warning.rule === rule && warning.severity === "error"))) {
+      errors.push(`CSS sentinel: ${rule} must reject its bad sample as an error.`);
+    }
+  }
   const suppressed = await stylelint.lint({ code: '/* stylelint-disable declaration-no-important */\na { color: red !important; }',
     codeFilename: "src/css-review-sentinel.css", config: CSS_REVIEW_CONFIG });
   if (!suppressed.results.some(item => item.warnings.some(warning => warning.rule === "declaration-no-important"))) {
