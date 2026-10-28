@@ -4031,6 +4031,13 @@ export class PiNativeConversationRuntime {
     event: AgentSessionEvent
   ): Promise<void> {
     if (["message_end", "tool_execution_start", "tool_execution_end", "compaction_end", "agent_settled"].includes(event.type)) this.checkpointConversationLeaf(active);
+    if (event.type === "message_update"
+      && (event.assistantMessageEvent.type === "text_delta" || event.assistantMessageEvent.type === "thinking_delta" || event.assistantMessageEvent.type === "toolcall_delta")
+      && event.assistantMessageEvent.delta.length > 0) {
+      // Keep the run alive even when answer text is buffered for reference
+      // verification or private generation. No model content leaves this event.
+      await this.emitRuntimeEvent(active, execution, { type: "model_progress" });
+    }
     if (execution.generation && (event.type === "message_start" || event.type === "message_update" || event.type === "message_end") && runtimeMessageRole(event.message) === "assistant") {
       if (event.type === "message_end" && publicMessageText(event.message).trim()) await this.observeFirstAssistantText(active, execution);
       return;

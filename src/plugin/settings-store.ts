@@ -63,6 +63,8 @@ export function restoreApiProviderSettings(
 }
 
 const SETTINGS_CAS_MAX_PRE_COMMIT_ATTEMPTS = 3;
+const SETTINGS_SAVE_RETRY_DELAYS_MS = [200, 1_000, 3_000] as const;
+const SETTINGS_CONFLICT_BACKUP_FILE = "settings-save-conflict-backup.json";
 
 export type SettingsPersistenceStatus = "not_committed" | "unknown";
 
@@ -85,7 +87,8 @@ export class EchoInkSettingsStore {
   private resourceMutationTail: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
   private rawOwnerMutationTail: Promise<void> = Promise.resolve();
-  private settingsPersistenceRecoveryError: SettingsPersistenceError | null = null;
+  private settingsConflictBackupPending = false;
+  private readonly reportedSettingsSaveErrors = new Set<string>();
   private resourceMutationRecoveryError: ResourceMutationError | null = null;
   private readonly conversationMutationLane = new ConversationMutationLane();
 
@@ -128,7 +131,7 @@ export class EchoInkSettingsStore {
     }
     // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
     registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);
-    this.settingsPersistenceRecoveryError = null;
+    this.settingsConflictBackupPending = false;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
     if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated || agentsMigrated) {
@@ -222,7 +225,6 @@ export class EchoInkSettingsStore {
 
   async withResourceMutation<R>(action: () => Promise<R>): Promise<R> {
     const run = this.resourceMutationTail.then(async () => {
-      this.assertNoSettingsPersistenceRecoveryConflict();
       if (this.resourceMutationRecoveryError) {
         throw this.resourceMutationRecoveryError;
       }
@@ -327,7 +329,7 @@ export class EchoInkSettingsStore {
       ) {
         throw new Error("Provider settings rollback readback mismatch");
       }
-      this.settingsPersistenceRecoveryError = null;
+      this.settingsConflictBackupPending = false;
     });
   }
 
@@ -354,7 +356,6 @@ export class EchoInkSettingsStore {
 
   private async flushSettingsSave(options: SettingsSaveOptions = {}): Promise<void> {
     const run = this.saveQueue.then(async () => {
-      this.assertNoSettingsPersistenceRecoveryConflict();
       if (options.flushRawWrites !== false) {
         await this.flushRawWrites();
       }
@@ -363,11 +364,36 @@ export class EchoInkSettingsStore {
       } catch (error) {
         console.warn("EchoInk task metadata could not sync; saving the settings projection for a later retry.", error);
       }
-      const prepared = await this.prepareCanonicalSettingsCandidate();
-      await this.persistSettingsDataCandidate(
-        prepared.candidate,
-        prepared.persistedBefore
-      );
+      let uncertainError: SettingsPersistenceError | null = null;
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const prepared = await this.prepareCanonicalSettingsCandidate();
+          if (this.settingsConflictBackupPending) {
+            await this.backupConflictingSettingsData(prepared.persistedBefore);
+            this.settingsConflictBackupPending = false;
+          }
+          await this.persistSettingsDataCandidate(
+            prepared.candidate,
+            prepared.persistedBefore
+          );
+          this.reportedSettingsSaveErrors.clear();
+          // A write can yield while another caller changes settings. Coalesce a
+          // follow-up instead of waiting for all running Conversations to go idle.
+          if (stableJson(settingsForDataSave(this.plugin.settings)) !== stableJson(prepared.candidate)) {
+            await this.saveSettings();
+          }
+          return;
+        } catch (error) {
+          if (error instanceof SettingsPersistenceError && error.persistenceStatus === "unknown") {
+            uncertainError = error;
+          }
+          const delay = SETTINGS_SAVE_RETRY_DELAYS_MS[attempt];
+          // A later retry that did not commit cannot prove the earlier partial
+          // write harmless. Preserve that status for transactional callers.
+          if (delay === undefined) throw uncertainError ?? error;
+          await new Promise<void>(resolve => setTimeout(resolve, delay));
+        }
+      }
     });
     this.saveQueue = run.catch((error) => {
       this.reportSettingsSaveError(error);
@@ -375,23 +401,13 @@ export class EchoInkSettingsStore {
     await run;
   }
 
-  private assertNoSettingsPersistenceRecoveryConflict(): void {
-    if (this.settingsPersistenceRecoveryError) {
-      throw this.settingsPersistenceRecoveryError;
-    }
-  }
-
-  private poisonSettingsRecovery(
-    code: "settings_cas_conflict" | "settings_persist_failed",
-    message: string
-  ): SettingsPersistenceError {
-    const error = new SettingsPersistenceError(
-      code,
-      `${message}；必须通过 loadSettings 或重启恢复后再保存`,
-      "unknown"
-    );
-    this.settingsPersistenceRecoveryError = error;
-    return error;
+  private async backupConflictingSettingsData(data: unknown): Promise<void> {
+    const vaultPath = this.plugin.getVaultPath();
+    const directory = pluginDataDir(vaultPath, this.plugin.getPluginDataDirName());
+    const backupPath = path.relative(vaultPath, path.join(directory, SETTINGS_CONFLICT_BACKUP_FILE)).split(path.sep).join("/");
+    // The installed plugin directory already exists. If backup fails, keep the
+    // pending flag and do not overwrite the only remaining copy on disk.
+    await this.plugin.app.vault.adapter.write(backupPath, JSON.stringify(data, null, 2));
   }
 
   private reportSettingsSaveError(error: unknown): void {
@@ -400,8 +416,12 @@ export class EchoInkSettingsStore {
       : error instanceof ResourceMutationError
         ? "resource_mutation_failed"
         : "settings_save_failed";
-    console.error("[EchoInk] settings save failed:", code);
-    new Notice(this.plugin.settings.settingsLanguage === "en" ? "EchoInk settings save failed" : "EchoInk 设置保存失败，请稍后重试");
+    console.error("[EchoInk] settings save failed:", code, settingsSaveErrorDetail(error));
+    if (this.reportedSettingsSaveErrors.has(code)) return;
+    this.reportedSettingsSaveErrors.add(code);
+    new Notice(this.plugin.settings.settingsLanguage === "en"
+      ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
+      : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹");
   }
 
   private async flushRawWrites(): Promise<void> {
@@ -410,7 +430,6 @@ export class EchoInkSettingsStore {
   }
 
   private async prepareCanonicalSettingsCandidate(): Promise<{
-    liveBefore: CodexForObsidianSettings;
     candidate: CodexForObsidianSettings;
     persistedBefore: unknown;
   }> {
@@ -419,25 +438,17 @@ export class EchoInkSettingsStore {
       attempt <= SETTINGS_CAS_MAX_PRE_COMMIT_ATTEMPTS;
       attempt += 1
     ) {
-      const liveBefore = cloneSettings(this.plugin.settings);
-      const candidate = cloneSettings(liveBefore);
+      const candidate = settingsForDataSave(this.plugin.settings);
       const persistedBefore = await this.readPersistedSettingsDataStrict();
-      if (stableJson(this.plugin.settings) === stableJson(liveBefore)) {
-        return { liveBefore, candidate, persistedBefore };
+      const latest = settingsForDataSave(this.plugin.settings);
+      if (stableJson(latest) === stableJson(candidate)) {
+        return { candidate, persistedBefore };
       }
       if (attempt === SETTINGS_CAS_MAX_PRE_COMMIT_ATTEMPTS) {
-        throw new SettingsPersistenceError(
-          "settings_cas_conflict",
-          "settings 在 Conversation 提交前持续变化，已耗尽稳定化预算",
-          "not_committed"
-        );
+        return { candidate: latest, persistedBefore };
       }
     }
-    throw new SettingsPersistenceError(
-      "settings_cas_conflict",
-      "settings 无法取得稳定的 Conversation 候选",
-      "not_committed"
-    );
+    throw new Error("Settings snapshot attempts must be positive");
   }
 
   private async readPersistedSettingsDataStrict(): Promise<unknown> {
@@ -457,9 +468,13 @@ export class EchoInkSettingsStore {
       try {
         readback = await this.readPersistedSettingsDataStrict();
       } catch (readbackError) {
-        throw this.poisonSettingsRecovery(
+        this.settingsConflictBackupPending = true;
+        throw new SettingsPersistenceError(
           "settings_persist_failed",
-          `settings saveData 结果未知，严格 readback 失败：${errorMessage(readbackError)}`
+          "settings saveData 结果未知，严格 readback 失败",
+          "unknown",
+          null,
+          { cause: new AggregateError([saveError, readbackError], "Settings write and readback failed") }
         );
       }
       if (stableJson(readback) === stableJson(target)) {
@@ -477,12 +492,12 @@ export class EchoInkSettingsStore {
       const persistedSettings = normalizeSettingsData(readback).settings;
       const error = new SettingsPersistenceError(
         "settings_persist_failed",
-        "settings saveData 抛错后的严格 readback 既不匹配提交前状态，也不匹配完整目标；必须通过 loadSettings 或重启恢复后再保存",
+        "settings saveData 抛错后的严格 readback 既不匹配提交前状态，也不匹配完整目标；下次写入前备份磁盘数据",
         "unknown",
         persistedSettings,
         { cause: saveError }
       );
-      this.settingsPersistenceRecoveryError = error;
+      this.settingsConflictBackupPending = true;
       throw error;
     }
   }
@@ -531,4 +546,15 @@ function stableJson(value: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function settingsSaveErrorDetail(error: unknown, seen = new Set<unknown>()): string {
+  if (seen.has(error)) return "";
+  seen.add(error);
+  if (!(error instanceof Error)) return String(error);
+  const code = (error as NodeJS.ErrnoException).code;
+  return [code, error.message,
+    ...(error instanceof AggregateError ? error.errors.map((cause: unknown) => settingsSaveErrorDetail(cause, seen)) : []),
+    ...(error.cause ? [settingsSaveErrorDetail(error.cause, seen)] : [])
+  ].filter(Boolean).join(": ");
 }

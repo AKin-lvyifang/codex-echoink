@@ -689,6 +689,7 @@ export async function runPiSubmissionCancellationTests(): Promise<void> {
 }
 
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
+  await runBufferedModelProgressTests();
   await runPiSubmissionCancellationTests();
   await assertWorkspacePermissionsAndLateSources();
   await assertConversationDefaultSkillPriorityAndTurnContext();
@@ -742,6 +743,31 @@ export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await assertDerivationExcludesIdentityBoundOperationalState();
   await assertDerivedActivationFailureRemainsAVisibleDurableConversation();
   await runPiNativeTaskPlanRuntimeTests();
+}
+
+export async function runBufferedModelProgressTests(): Promise<void> {
+  await withFixture(["buffered-model-progress"], async fixture => {
+    const conversationId = "buffered-model-progress";
+    await fixture.runtime.createConversation({ conversationId, title: "Buffered model progress", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const handle = await fixture.submit({ conversationId, text: "/ask 查找资料", submittedAt: 1 });
+    const events: PiChatRuntimeEvent[] = [];
+    const subscription = fixture.runtime.subscribeProductRun(handle.productRunId, event => { events.push(event); });
+    fixture.latestSession().emitAssistantText("PRIVATE_UNVERIFIED_CONTENT");
+    await waitForTestCondition(() => events.some(event => event.type === "model_progress"));
+    const progress = events.find(event => event.type === "model_progress")!;
+    assert.deepEqual(Object.keys(progress).sort(), ["activeLeafId", "conversationId", "occurredAt", "piSessionId", "productRunId", "type"]);
+    assert.equal(events.some(event => event.type === "message_update"), false, "unverified answer text remains buffered");
+    assert.doesNotMatch(JSON.stringify(events), /PRIVATE_UNVERIFIED_CONTENT/u);
+    fixture.latestSession().finishSuccessful("没有可引用的资料。");
+    assert.equal((await handle.result).terminalState, "completed");
+    subscription.unsubscribe();
+  }, { knowledge: {
+    async retrieveAsk() { return { status: "no_evidence", references: [], providerResourceText: "",
+      retrieval: { elapsedMs: 1, total: 0, returned: 0, remaining: 0, hasMore: false, exhausted: true } }; },
+    async verifyAskReferences(input) { return { status: "valid", references: input.references }; }
+  } });
+  console.log("PASS idle watchdog: buffered model progress contains no answer content");
 }
 
 async function assertConversationDefaultSkillPriorityAndTurnContext(): Promise<void> {
