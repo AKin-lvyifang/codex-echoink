@@ -4,6 +4,7 @@ import { createOriginButton, createOriginInput, createOriginSelect, createOrigin
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { requireProPluginAction } from "../membership/access";
+import { createSettingsGroup, createSettingsSection } from "../settings/settings-v2";
 
 export class PdfReadingSettingsPanel {
   private controls?: ProPluginControls;
@@ -27,9 +28,10 @@ export class PdfReadingSettingsPanel {
     }
     const form = page.createEl("form", { cls: "echoink-pdf-settings-form" });
     if (options.embedded) form.addClass("is-embedded");
+    const fields = options.embedded ? createSettingsGroup(createSettingsSection(form, { surface: "flat" })) : form;
     const settingField = (title: string) => {
       if (!options.embedded) return form.createEl("label", { text: title });
-      const label = form.createEl("label", { cls: "echoink-pdf-setting-field" });
+      const label = fields.createEl("label", { cls: "echoink-pdf-setting-field" });
       label.createSpan({ cls: "echoink-pdf-setting-name", text: title });
       return label;
     };
@@ -37,7 +39,7 @@ export class PdfReadingSettingsPanel {
     const engine = createOriginSelect(method, {}, [{ value: "local", label: "本地文字提取" }, { value: "mineru", label: "MinerU 增强解析" }], this.plugin.settings.pdfReading.engine, this.plugin.app).element;
     const tokenLabel = settingField("MinerU 专用 Token");
     const token = createOriginInput(tokenLabel, { type: "password", value: this.plugin.settings.pdfReading.mineruToken, attr: { autocomplete: "off", "aria-label": "MinerU 专用 Token" } });
-    form.createEl("p", { text: "增强解析会将 PDF 发送至 MinerU，使用单独 Token 与第三方额度。第三方留存由 MinerU 决定。" });
+    fields.createEl("p", { text: "增强解析会将 PDF 发送至 MinerU，使用单独 Token 与第三方额度。第三方留存由 MinerU 决定。" });
     const directoryLabel = settingField("原 PDF 保存位置");
     const directories = host.originalDirectories();
     const originalDirectory = createOriginSelect(directoryLabel, { attr: { "aria-label": "原 PDF 保存位置" } },
@@ -49,8 +51,8 @@ export class PdfReadingSettingsPanel {
     }
     const languageLabel = settingField("默认翻译语言");
     const language = createOriginInput(languageLabel, { value: this.plugin.settings.pdfReading.translationLanguage, attr: { "aria-label": "默认翻译语言", placeholder: "中文、英文…" } });
-    if (options.embedded) form.insertBefore(languageLabel, directoryLabel);
-    form.createEl("p", { text: "在聊天中上传 PDF 后说出提取、精读或翻译要求。仅在请求翻译时生成译文，聊天指定语言优先。" });
+    if (options.embedded) fields.insertBefore(languageLabel, directoryLabel);
+    fields.createEl("p", { text: options.embedded ? "仅在请求翻译时生成译文，聊天指定语言优先。" : "在聊天中上传 PDF 后说出提取、精读或翻译要求。仅在请求翻译时生成译文，聊天指定语言优先。" });
     const actions = form.createDiv({ cls: "echoink-pdf-settings-actions" });
     const save = createOriginButton(actions, { text: "保存设置", cls: "mod-cta", attr: { type: "submit" } }); let saving = false;
     for (const control of [engine, token, originalDirectory, language, save]) this.controls.bind(control, { businessDisabled: () => saving });

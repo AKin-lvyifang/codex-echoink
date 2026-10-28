@@ -23242,16 +23242,24 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-knowledge-module-page .echoink-settings-navigation-row { min-width: 0; }
 .echoink-knowledge-module-page .echoink-settings-navigation-title,
 .echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
+.echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 230px; }
+/* Knowledge uses a single Lucide circle, without the legacy help-button circle. */
+.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }
+.echoink-settings-demo button.echoink-knowledge-help-trigger > svg { width: 14px; height: 14px; }
 .echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-knowledge-sources-heading h3 { margin: 0; }
-.echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; padding: 12px 0; }
+.echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) 204px 30px; align-items: center; gap: 8px 12px; padding: 12px 0; }
 .echoink-knowledge-source-path { overflow-wrap: anywhere; }
-.echoink-knowledge-source > .setting-item,
 .echoink-knowledge-source > .settings-error { grid-column: 1 / -1; }
 .echoink-knowledge-init-fields .setting-item-control input { max-width: 100%; }
 .echoink-knowledge-init-impact { flex: 1 1 240px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .echoink-knowledge-module-page details { margin-top: 12px; overflow-wrap: anywhere; }
 @container settings (max-width: 520px) {
+  .echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 100%; }
+  .echoink-knowledge-source { grid-template-columns: minmax(0, 1fr) 30px; }
+  .echoink-knowledge-source-path { grid-column: 1; grid-row: 1; }
+  .echoink-knowledge-source-permission { grid-column: 1; grid-row: 2; }
+  .echoink-knowledge-source-unbind { grid-column: 2; grid-row: 1 / 3; }
   .echoink-knowledge-init-fields .setting-item { align-items: stretch; flex-direction: column; }
   .echoink-knowledge-init-fields .setting-item-control { width: 100%; justify-content: flex-start; }
   .echoink-knowledge-init-fields .setting-item-control input { width: 100%; }
@@ -23889,6 +23897,10 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
 .echoink-settings-demo.echoink-settings-aligned .setting-item-info { flex: 1 1 0; width: auto; min-width: 0; margin: 0; text-align: left; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-name,
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
+/* A help icon belongs immediately after its label, including labels that wrap. */
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name:has(> .echoink-settings-help-trigger) { display: block; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name > .echoink-settings-help-trigger { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; }
+body:not(.is-mobile) .echoink-settings-aligned button:is(.echoink-settings-help-trigger, .echoink-provider-form-help, .echoink-mcp-form-help):is(:hover, :focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title:has(> .echoink-settings-help) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title > .echoink-settings-help > svg { width: 13px; height: 13px; }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-description,
@@ -23992,6 +24004,16 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
   .echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-meta { flex-wrap: wrap; }
   .echoink-settings-demo.echoink-settings-aligned .codex-resource-connection-state { flex-basis: auto; }
 }
+
+/* Desktop read-only navigation summaries yield space to the complete setting name. */
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-copy { flex: 1 1 0%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-trailing { display: flex; flex: 0 1 auto; flex-flow: row nowrap; gap: 8px; min-width: 0; max-width: 50%; margin-left: auto; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary .echoink-settings-navigation-value { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-row.has-value-summary :is(.echoink-settings-navigation-value-suffix, .echoink-settings-navigation-action, .echoink-settings-navigation-icon) { flex: none; white-space: nowrap; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-value-suffix { color: var(--secondary); font-size: 12px; font-weight: 400; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help { display: inline-flex; flex: none; align-items: center; color: var(--secondary); border-radius: 3px; cursor: help; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help > svg { width: 13px; height: 13px; }
+body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-help:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 /* Settings-only form composition. Shared controllers keep their original lifecycle. */
 .echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-options {
   display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0;
@@ -24110,6 +24132,10 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
 .echoink-settings-aligned .echoink-memory-settings button.echoink-module-drawer-trigger.echoink-origin-control[data-slot=button] { min-height: 64px; padding: 16px 0 16px 18px; gap: 12px; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-title { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-summary { font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.6; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-chevron { transform: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer.is-expanded .echoink-module-drawer-chevron { transform: rotate(180deg); }
+.echoink-settings-aligned .echoink-generation-template-row .echoink-settings-navigation-copy { gap: 1px; }
+.echoink-settings-aligned .echoink-generation-template-row :is(.echoink-settings-navigation-title, .echoink-settings-navigation-description) { line-height: 1.55; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content { padding: 0; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-dream-options { display: contents; margin: 0; padding: 0; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item,
@@ -24211,6 +24237,7 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-ma
 .echoink-settings-demo.echoink-settings-aligned .echoink-desktop-modules > .echoink-module-group > .echoink-module-drawer.echoink-settings-section {
   margin: 0 0 10px;
   padding: 0;
+  gap: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg);
@@ -24234,6 +24261,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
   margin: 0;
   padding: 0;
+  gap: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -24242,11 +24270,15 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   margin: 0;
   padding: 12px 18px 4px;
 }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section ~ .echoink-settings-section > .echoink-settings-section-header {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-settings-section-header h3 {
   margin: 0;
-  color: var(--secondary);
-  font-size: 12px;
-  font-weight: 400;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
 }
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) :is(.setting-item, .echoink-life-setting-row, button.echoink-settings-navigation-row) {
   box-sizing: border-box;
@@ -24320,19 +24352,25 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   border-radius: 10px;
   overflow: hidden;
 }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; border: 0; }
+.echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section { margin: 0 0 26px; padding: 0; gap: 0; border: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-settings-section-header { padding: 0; margin: 0 0 10px; }
-.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: block; padding: 0; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source { display: grid; min-height: 52px; padding: 13px 18px; border-top: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-knowledge-source-list .echoink-knowledge-source:first-child { border-top: 0; }
-.echoink-settings-aligned .echoink-knowledge-source-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 52px; padding: 13px 18px; }
-.echoink-settings-aligned .echoink-knowledge-source-heading:is(:hover, :focus-within) { background: var(--soft); }
+.echoink-settings-aligned .echoink-knowledge-source:is(:hover, :focus-within) { background: var(--soft); }
 .echoink-settings-aligned .echoink-knowledge-source-path { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
-.echoink-settings-aligned .echoink-knowledge-source-path > span:last-child { min-width: 0; }
+.echoink-settings-aligned .echoink-knowledge-source-path > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-aligned .echoink-knowledge-source-icon { display: inline-flex; flex: none; color: var(--secondary); }
 .echoink-settings-aligned .echoink-knowledge-source-icon svg { width: 14px; height: 14px; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-source > .setting-item { min-height: 0; padding-top: 0; border: 0; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission { justify-content: flex-start; gap: 8px; min-height: 0; padding: 0; border: 0; }
+/* The permission belongs to its directory entry, not a separate host setting row. */
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission::before { content: none; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission > .setting-item-info { flex: 0 1 auto; }
+.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-source > .setting-item.echoink-knowledge-source-permission > .setting-item-control { order: -1; flex: none; width: auto; max-width: none; }
+.echoink-settings-aligned .echoink-knowledge-source-permission .setting-item-name { gap: 6px; }
+.echoink-settings-aligned button.echoink-knowledge-source-unbind.echoink-origin-control[data-slot=button] { justify-self: end; width: 30px; min-width: 30px; max-width: 30px; height: 30px; min-height: 30px; padding: 0; }
 .echoink-settings-aligned .echoink-knowledge-source > .settings-error,
 .echoink-settings-aligned .echoink-knowledge-source-empty { padding: 0 18px 13px; }
+.echoink-settings-aligned .echoink-knowledge-source > .settings-error { padding: 0; }
 .echoink-settings-aligned .echoink-knowledge-source-empty { padding-top: 13px; }
 /* These real Origin navigation buttons must outrank the shared module-row reset. */
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-routes { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -24355,13 +24393,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-knowledge-init-route-icon svg { width: 16px; height: 16px; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-copy { grid-column: 2; grid-row: 1; min-width: 0; text-align: left; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-route > .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; display: flex; width: 16px; max-width: none; margin: 0; }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section { margin: 0; border-top: 1px solid var(--line); }
-.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .echoink-settings-section-header { margin: 0; padding: 12px 18px 4px; }
-.echoink-settings-aligned .echoink-knowledge-role-group .echoink-settings-section-header h3 { margin: 0; color: var(--secondary); font-size: 12px; font-weight: 400; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > .echoink-settings-section > .setting-item { border-top: 0; }
 .echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group > button.echoink-settings-navigation-row.echoink-origin-control[data-slot=button]:first-child { border-top: 0; }
-.echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-role-group .setting-item:has([role=checkbox]) > .setting-item-control:last-child { order: 0; }
-.echoink-settings-aligned .echoink-knowledge-role-unbind { margin-top: 16px; }
 .echoink-settings-aligned .echoink-knowledge-init-fields { margin-top: 16px; }
 .echoink-settings-aligned .echoink-knowledge-init-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 
@@ -24422,7 +24454,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
 
 .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded { display: flex; flex-direction: column; gap: 0; width: 100%; max-width: none; align-self: stretch; padding: 0; margin: 0; }
-.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field {
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded .echoink-pdf-setting-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 55%);
   align-items: center;
@@ -24432,12 +24464,12 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   padding: 13px 18px;
   border-top: 1px solid var(--line);
 }
-.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field:first-child { border-top: 0; }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded .echoink-pdf-setting-field:first-child { border-top: 0; }
 .echoink-settings-aligned .echoink-pdf-setting-name { font-size: 13px; font-weight: 500; }
 .echoink-settings-aligned .echoink-pdf-setting-field > :is(input, [data-slot=select-trigger]) { width: 100%; min-width: 0; max-width: 100%; }
 .echoink-settings-aligned .echoink-pdf-setting-field > button:not([data-slot=select-trigger]) { grid-column: 2; justify-self: end; }
-.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > p { margin: 0; padding: 0 18px 13px; color: var(--secondary); font-size: 12px; line-height: 1.7; }
-.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-settings-actions { display: flex; justify-content: flex-end; margin: 0; padding: 13px 18px; border-top: 1px solid var(--line); }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded .echoink-settings-group > p { margin: 0; padding: 0 18px 13px; color: var(--secondary); font-size: 12px; line-height: 1.7; }
+.echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-settings-actions { display: flex; justify-content: flex-end; margin: 0; padding: 26px 0 0; border: 0; }
 
 /* Detail content from the former standalone settings keeps one continuous frame. */
 .echoink-settings-aligned .echoink-selection-inline-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -24486,6 +24518,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:not(:last-child) { border-bottom: 1px solid var(--line); }
 }
 @container settings (max-width: 520px) {
+  .echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-module-page .setting-item.echoink-knowledge-save-location { flex-direction: column; align-items: stretch; gap: 8px; }
+  .echoink-settings-aligned.echoink-settings-aligned .echoink-knowledge-save-location > .setting-item-control { width: 100%; max-width: none; }
   .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item-control > :is(input, [data-slot=select-trigger]) { width: 100%; }
   .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-finance-analysis-location { flex-direction: column; align-items: stretch; }
   .echoink-settings-aligned .echoink-finance-analysis-location > form { width: 100%; max-width: 100%; }
@@ -24508,6 +24542,9 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help { display: inline-flex; margin-left: 4px; vertical-align: middle; color: var(--secondary); }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-navigation-help svg { width: 13px; height: 13px; }
+/* Read-only module locations share the desktop summary boundary, not editable fields. */
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value { min-width: 0; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
 .echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {

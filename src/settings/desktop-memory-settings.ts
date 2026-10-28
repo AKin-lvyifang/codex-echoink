@@ -28,7 +28,7 @@ export class DesktopMemorySettings {
     const copy = trigger.createSpan({ cls: "echoink-module-drawer-copy" });
     copy.createSpan({ cls: "echoink-module-drawer-title", text: zh ? "长期记忆" : "Long-term memory" });
     copy.createSpan({ cls: "echoink-module-drawer-summary", text: m.useLongTermMemory ? (zh ? "所有 Agent 共用" : "Shared by all Agents") : (zh ? "已停用" : "Disabled") });
-    setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-right");
+    setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
     const toggle = createOriginSwitch(header, { attr: { "aria-label": zh ? "使用长期记忆" : "Use long-term memory", "data-echoink-focus-key": "general:memory:enabled" } });
     toggle.checked = m.useLongTermMemory; toggle.disabled = this.pending;
     const content = card.createDiv({ cls: "echoink-module-drawer-content" });

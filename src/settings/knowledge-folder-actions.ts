@@ -2,10 +2,10 @@ import { Modal, Notice } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { createOriginButton, createOriginCheck, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
-import { createSettingsGroup, createSettingsNavigationRow, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
+import { createSettingsGroup, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 
 type Operation = "optimize" | "restore";
-type OperationState = { running: Operation | null };
+type OperationState = { running: Operation | null; error?: { operation: Operation; message: string } };
 // Keep actions disabled across settings rerenders while an operation is running.
 const operationStates = new WeakMap<EchoInkKnowledgeSurfaceService, OperationState>();
 
@@ -18,46 +18,54 @@ export function renderKnowledgeFolderActions(
   openEditor?: (editor: Modal) => void
 ): void {
   const zh = language !== "en";
-  const state = operationStates.get(service) ?? { running: null };
+  const state: OperationState = operationStates.get(service) ?? { running: null };
   operationStates.set(service, state);
-  const section = createSettingsSection(container, { title: zh ? "目录管理" : "Folder management", surface: "flat" });
+  const section = createSettingsSection(container, { surface: "flat" });
   section.addClass("standard-section", "echoink-knowledge-folder-actions");
   const group = createSettingsGroup(section);
-  renderPlan?.(group);
-  const scopes = service.folderNameScopes();
-  const optimizeSummary = scopes.length ? (zh ? `${scopes.length} 个可选目录` : `${scopes.length} available folders`) : (zh ? "尚未绑定可优化的目录" : "No bound folders are available");
-  const button = createSettingsNavigationRow(group, {
+  const optimizeOptions = () => ({
     title: zh ? "文件夹名称优化" : "Folder names",
-    description: optimizeSummary,
+    description: state.running === "optimize" ? (zh ? "正在优化名称…" : "Optimizing folder names…") : state.error?.operation === "optimize" ? state.error.message : (zh ? "改成「中文（english）」的可读名称" : "Use readable Chinese (english) names"),
+    value: state.running === "optimize" || state.error?.operation === "optimize" ? undefined : (zh ? `${service.folderNameScopes().length} 个目录可优化` : `${service.folderNameScopes().length} folders can be optimized`),
     onActivate: () => openOptimize()
   });
+  let button = createSettingsNavigationRow(group, optimizeOptions());
+  let optimizeView = JSON.stringify(optimizeOptions());
   let record: Awaited<ReturnType<EchoInkKnowledgeSurfaceService["getOriginalDirectoryStatus"]>> = null;
   let recordError = "";
   let recordLoading = true;
   const restoreSummary = () => recordLoading ? (zh ? "正在读取复原记录…" : "Reading restore record…") : recordError || (record
     ? (zh ? `${new Date(record.createdAt).toLocaleString()} · ${record.files} 个文件` : `${new Date(record.createdAt).toLocaleString()} · ${record.files} files`)
     : (zh ? "暂无可复原记录" : "No restore record available"));
-  const restore = createSettingsNavigationRow(group, {
-    title: zh ? "复原仓库" : "Restore vault", description: restoreSummary(), onActivate: () => openRestore()
+  const restoreOptions = () => ({
+    title: zh ? "复原仓库" : "Restore vault",
+    description: state.running === "restore" ? (zh ? "正在复原目录…" : "Restoring folders…") : state.error?.operation === "restore" ? state.error.message : recordLoading || recordError ? restoreSummary() : undefined,
+    value: state.running === "restore" || state.error?.operation === "restore" || recordLoading || recordError ? undefined : restoreSummary(),
+    onActivate: () => openRestore()
   });
-  const original = restore.querySelector<HTMLElement>(".echoink-settings-navigation-description")!;
+  let restore = createSettingsNavigationRow(group, restoreOptions());
+  let restoreView = JSON.stringify(restoreOptions());
+  renderPlan?.(group);
   const syncControls = () => {
+    const optimize = optimizeOptions(), recovery = restoreOptions();
+    const nextOptimizeView = JSON.stringify(optimize), nextRestoreView = JSON.stringify(recovery);
+    if (nextOptimizeView !== optimizeView) { button = replaceSettingsNavigationRow(button, optimize); optimizeView = nextOptimizeView; }
+    if (nextRestoreView !== restoreView) { restore = replaceSettingsNavigationRow(restore, recovery); restoreView = nextRestoreView; }
     const busy = state.running !== null || service.folderOperationBusy;
     button.disabled = busy;
     restore.disabled = busy || recordLoading;
     button.setAttr("aria-busy", String(state.running === "optimize"));
     restore.setAttr("aria-busy", String(state.running === "restore"));
-    button.querySelector<HTMLElement>(".echoink-settings-navigation-description")!.setText(state.running === "optimize" ? (zh ? "正在优化名称…" : "Optimizing folder names…") : optimizeSummary);
-    original.setText(state.running === "restore" ? (zh ? "正在复原目录…" : "Restoring folders…") : restoreSummary());
   };
   syncControls();
   void service.getOriginalDirectoryStatus().then(result => { record = result; })
     .catch(() => { recordError = zh ? "复原记录读取失败，请重新打开设置重试" : "Could not read the restore record. Reopen settings to retry."; })
-    .finally(() => { recordLoading = false; original.setText(restoreSummary()); syncControls(); });
+    .finally(() => { recordLoading = false; syncControls(); });
 
   const run = async (operation: Operation, action: () => Promise<string>) => {
     if (state.running || service.folderOperationBusy || !service.directoryWritable) return;
     state.running = operation;
+    state.error = undefined;
     syncControls();
     try {
       new Notice(await action());
@@ -66,7 +74,9 @@ export function renderKnowledgeFolderActions(
       const summary = operation === "optimize"
         ? (zh ? "名称优化未完成" : "Folder name optimization did not complete")
         : (zh ? "仓库复原未完成" : "Vault restoration did not complete");
-      new Notice(detail ? `${summary}${zh ? "：" : ": "}${detail.length > 160 ? `${detail.slice(0, 160)}…` : detail}` : summary);
+      const message = detail ? `${summary}${zh ? "：" : ": "}${detail}` : summary;
+      state.error = { operation, message };
+      new Notice(message);
     } finally {
       state.running = null;
       syncControls();

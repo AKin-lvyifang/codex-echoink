@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { Platform } from "obsidian";
-import { DESKTOP_SETTINGS_TABS, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute } from "../settings/desktop-settings-route";
+import { DESKTOP_SETTINGS_TABS, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute } from "../settings/desktop-settings-route";
+import { desktopSettingsCategoryDefinitions } from "../settings/settings-search";
 import { compareReleaseVersions, ReleaseUpdateController } from "../settings/release-update";
 import { renderCompactAbout } from "../settings/about-section";
 import { disposeOriginControls } from "../settings/origin-controls";
@@ -33,6 +34,13 @@ assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "capabilities" }, "plugins
 assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "capabilities", capabilityTab: "mcp" }, "plugins", "tools"), { tab: "capabilities", capabilityTab: "mcp" });
 assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "modules" }, "plugins", "skills"), { tab: "modules" });
 console.log("PASS capability routes normalize explicit, remembered and initial selections before rendering");
+for (const [query, focus] of [["生成模板", "knowledge:generation-templates"], ["Generation templates", "knowledge:generation-templates"],
+  ["收藏保存位置", "knowledge:collections"], ["Agent 权限与维护", "knowledge:permissions"], ["目录管理", "knowledge:management"], ["PDF 精读", "pdf-reading:settings"]]) {
+  assert.deepEqual(resolveDesktopSettingsSearchRoute("modules", query), { tab: "modules", focus });
+}
+console.log("PASS module search targets the template list, knowledge details and PDF form");
+const moduleDefinition = desktopSettingsCategoryDefinitions("zh-CN", () => () => {})[0].items.find(item => item.name === "模块")!;
+for (const alias of ["生成模板", "Generation templates", "收藏保存位置", "Agent 权限与维护", "目录管理"]) assert.ok(moduleDefinition.aliases?.includes(alias), `native search indexes ${alias}`);
 
 
 for (const [a, b, expected] of [["v2.10.0", "2.9.0", 1], ["2.7.0", "v2.7.0", 0], ["2.7.0-beta.2", "2.7.0-beta.10", -1], ["2.7.0", "2.7.0-rc.1", 1], ["2.7.0-alpha", "2.7.0-beta", -1], ["2.6.9", "2.7.0", -1]] as const) {
@@ -78,7 +86,7 @@ export async function runCompactAboutTests(repo: string): Promise<void> {
     assert.equal(name, "electron");
     return { shell: { openExternal: async (url: string) => { opened.push(url); } } };
   };
-  const source = await readFile(path.join(repo, "src/settings/settings-tab.ts"), "utf8");
+  const source = await readFile(path.join(repo, "src/settings/about-section.ts"), "utf8");
   const originalGitHubPath = source.match(/"(M12 2C6\.477[^"\n]+)"/u)?.[1];
   assert.ok(originalGitHubPath, "the existing About SVG remains the GitHub reference");
   const tick = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
