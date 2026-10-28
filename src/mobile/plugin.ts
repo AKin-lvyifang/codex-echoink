@@ -1,3 +1,7 @@
+import { settingsReportNoticeContent } from "../run-reports/notice";
+import { openMobileRunReport } from "../run-reports/mobile-ui";
+import { runErrors } from "../run-reports/recent-errors";
+import { configuredReportSecrets } from "../run-reports/report";
 import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -46,15 +50,18 @@ export default class EchoInkMobilePlugin extends Plugin {
   workbench?: MobileWorkbenchService;
   modelRequest?: MobileRequest;
   private settingsWrites: Promise<void> = Promise.resolve();
+  private reportedSettingsSaveFailure = false;
   private retainedRegistry?: { present: boolean; value: unknown };
   private taskLifecycleRegistered = false;
   private unloaded = false;
   async onload(): Promise<void> {
+    runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: (this.app.vault.adapter as typeof this.app.vault.adapter & { getBasePath?: () => string }).getBasePath?.() }));
     try {
       const saved: unknown = await this.loadData();
       this.settings = loadMobileSettings(saved);
       const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
       const migratedTheme = savedRecord.colorTheme !== this.settings.colorTheme;
+      const migratedToolCalling = JSON.stringify(savedRecord.apiProviders ?? []) !== JSON.stringify(this.settings.apiProviders);
       const appearanceDocument = this.app.workspace.containerEl?.ownerDocument ?? document;
       this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
       this.applyAppearanceTheme(appearanceDocument);
@@ -95,7 +102,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
-      if (migratedBindings || migratedTheme) await this.saveSettings();
+      if (migratedBindings || migratedTheme || migratedToolCalling) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
@@ -177,6 +184,19 @@ export default class EchoInkMobilePlugin extends Plugin {
     if (this.unloaded || !this.services || document.visibilityState !== "visible") return;
     void this.services.memory.archiveCompleted().catch(error => new Notice(`自动归档未完成，原会话已保留：${String(error)}`));
   }
+  openRunReport(): void {
+    const types = Platform.isTablet ? [IPAD_SHELL_AGENT_VIEW, IPAD_SHELL_HOME_VIEW] : [IPHONE_SHELL_VIEW];
+    const leaves = types.flatMap(type => this.app.workspace.getLeavesOfType(type));
+    const active = this.app.workspace.activeLeaf;
+    leaves.sort((left, right) => Number(right === active) - Number(left === active));
+    let taskId: string | undefined;
+    for (const leaf of leaves) {
+      const page = leaf.view.containerEl.querySelector<HTMLElement>('[data-page-id^="task:"]:not([hidden])');
+      if (page && !page.closest("[hidden]")) { taskId = page.dataset.pageId?.slice(5); break; }
+    }
+    openMobileRunReport({ app: this.app, store: this.store, runtime: this.runtime, settings: () => this.settings,
+      version: this.manifest.version, accountService: this.accountService }, taskId, Platform.isTablet ? "ipad" : "iphone");
+  }
   async saveSettings(candidateRegistry?: AgentRegistry): Promise<void> {
     const registry = candidateRegistry ? structuredClone(candidateRegistry) : undefined;
     const write = this.settingsWrites.catch(() => {}).then(async () => {
@@ -195,7 +215,18 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (registry) { this.settings.agentRegistry = registry; this.retainedRegistry = undefined; }
     });
     this.settingsWrites = write;
-    await write;
+    try { await write; this.reportedSettingsSaveFailure = false; } catch (error) {
+      runErrors.record("settings.save", error, { code: "settings_save_failed" });
+      if (!this.reportedSettingsSaveFailure) {
+        this.reportedSettingsSaveFailure = true;
+        const english = this.settings.settingsLanguage === "en";
+        new Notice(settingsReportNoticeContent(this.app.workspace.containerEl?.ownerDocument ?? document,
+          english ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
+            : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹",
+          () => this.openRunReport(), english, true), 15000);
+      }
+      throw error;
+    }
     this.services?.settingsChanged();
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
     this.workbench?.invalidate();

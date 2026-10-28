@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { WorkspaceLeaf, TFile } from "obsidian";
 import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
 import { openWorkbenchModule } from "../home/module-navigation";
+import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
+import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
 import type { TaskEntry } from "../agents/task-presentation";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
@@ -37,6 +39,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
   const calls: unknown[][] = [], subscribers = new Set<ConversationRunSubscriber>(), dataSubscribers = new Set<() => void>();
   let tasks: readonly TaskEntry[] = [], failTasks = false, failData = false, hasFocus = true, todoFailure = false;
   let taskReads = 0, dataReads = 0;
+  const guideProvider = createApiProviderConfig("custom", "guide-provider");
+  guideProvider.models = [createApiProviderModelConfig("custom", "guide-model")];
+  let guideMode = "disabled";
   let memoryNotice: VaultMemoryNotice | null = null;
   let memoryError: string | null = null;
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
@@ -88,7 +93,11 @@ export async function runWorkbenchUiTests(): Promise<void> {
     },
     async setPiConversationTaskMetadata() { calls.push(["metadata-write"]); throw new Error("overview must not mark results read"); },
     async ensurePiRuntimeBundle() { calls.push(["provider"]); throw new Error("overview must not initialize Provider"); },
-    async readTaskInterruption(taskId: string) { return { taskId, reason: "user_stopped", at: now, stage: "真实步骤", uncertainOperations: [] }; },
+    async readTaskInterruption(taskId: string) { return { taskId, reason: "user_stopped", at: now, stage: "真实步骤", uncertainOperations: [],
+      ...(taskId.startsWith("guide-") ? { toolCallTextFailure: guideMode === "enabled" ? "model_tool_call_text_incompatible" as const : "model_tool_call_text_disabled" as const,
+        ...(guideMode === "legacy" ? {} : { providerSettingsId: guideProvider.id, modelId: "guide-model" }) } : {}) }; },
+    taskToolCallRecovery(_id: string, info: any) { return toolCallRecoveryGuidance(info, [guideProvider], "desktop"); },
+    async openRunReport(taskId: string) { calls.push(["report", taskId]); },
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
@@ -102,6 +111,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
+    async openWorkbenchModuleSettings(id: string) { calls.push(["module-settings", id]); },
     lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },
     englishDiary: { async openToday() { calls.push(["english"]); } },
     getTodoStore: () => ({ async toggleDone(todo: ParsedTodoRecord, done: boolean) { calls.push(["todo", todo.id, done]); if (todoFailure) throw new Error("保存失败"); snapshot = { ...snapshot, todayTodos: [] }; } })
@@ -182,9 +192,32 @@ export async function runWorkbenchUiTests(): Promise<void> {
       await click("module-lock-back"); assert.equal(document.activeElement, button(`module-${id}`));
     }
     host.settings.lifestyle.finance.enabled = false; await view.refresh();
-    assert.equal(button("module-finance").hidden, true);
+    assert.equal(button("module-finance").hidden, false);
     const disabledCalls = calls.length;
-    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "stale hidden navigation cannot open a disabled module");
+    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "disabled PRO navigation cannot open the module service");
+    assert.ok(content.querySelector('[data-locked-module="finance"]'), "PRO gating precedes setup");
+    await click("module-lock-back");
+    pro = true; host.settings.pdfReading.enabled = false;
+    snapshot = { ...snapshot, modules: ["todos"] }; await view.refresh();
+    const configured = { ...host.settings };
+    Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
+    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 6, "default/unconfigured modules remain discoverable independently of snapshot.modules");
+    Object.assign(host.settings, configured); await view.refresh();
+    for (const id of ["journal", "knowledge-base", "finance", "pdf-reading"] as const) {
+      const before = calls.length; await click(`module-${id}`);
+      const setup = content.querySelector<HTMLElement>(`[data-setup-module="${id}"]`)!;
+      assert.ok(setup); assert.equal(setup.querySelectorAll(".is-primary").length, 1);
+      assert.equal(calls.length, before, "setup landing never starts a module or reads its data");
+      await click("module-setup-settings"); assert.deepEqual(calls.at(-1), ["module-settings", id]);
+      await click("module-setup-back");
+    }
+    host.settings.englishDiary.enabled = false; await click("module-english-diary");
+    assert.match(content.querySelector('[data-wb="module-setup"]')?.textContent ?? "", /英文日记尚未开启/);
+    host.settings.englishDiary.enabled = true; await view.refresh();
+    assert.equal(content.querySelector('[data-wb="module-setup"]'), null, "configuration completion opens the actual module");
+    assert.deepEqual(calls.at(-1), ["english"]);
+    host.settings.pdfReading.enabled = true;
+    snapshot = { ...snapshot, modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"] };
     host.settings.lifestyle.finance.enabled = true; pro = true; await view.refresh();
     assert.equal(button("module-finance").querySelector('[data-plugin-edition="pro"]'), null);
     await click("module-finance"); assert.deepEqual(calls.at(-1), ["lifestyle", "finance"]);
@@ -232,7 +265,21 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(calls.filter(call => call[0] === "resume").length, 1, "double click only resumes once");
     assert.equal(button("resume-stop"), resume, "pending state preserves the control being used");
     assert.equal(resume.disabled, true); assert.equal(document.activeElement, resume);
+    assert.equal(button("report-stop").disabled, true, "both card actions stay disabled during the shared resume flight");
     releaseResume!(); await tick(); assert.equal(button("resume-stop"), resume); assert.equal(resume.disabled, false);
+    const tasksBeforeGuide = tasks;
+    for (const mode of ["disabled", "enabled", "legacy"]) {
+      guideMode = mode; guideProvider.models[0].toolCalling = mode === "enabled";
+      const id = `guide-${mode}`; tasks = [entry(id, "interrupted")]; await view.refresh(); await tick();
+      const card = content.querySelector<HTMLElement>(`[data-task="${id}"]`)!;
+      assert.deepEqual(Array.from(card.querySelectorAll<HTMLButtonElement>(".wb-task-footer button")).map(node => node.textContent?.trim()), ["上报问题", mode === "disabled" ? "开启工具调用并继续" : "继续"]);
+      assert.equal(card.textContent!.split("本轮没有执行工具").length - 1, 1);
+      assert.equal(card.textContent!.includes("模型设置"), false);
+      if (mode === "legacy") assert.match(card.textContent!, /模型服务 → 对应服务 → 参数 → 对应模型/u);
+    }
+    tasks = tasksBeforeGuide; await view.refresh(); await tick();
+    console.log("PASS desktop task cards: closed/enabled/legacy guide has two buttons and one failure prompt");
+
     await click("answer-wait-a"); assert.ok(calls.some(call => call[0] === "answer"));
     const answers = calls.filter(call => call[0] === "answer").length;
     await click("answer-wait-b"); assert.equal(calls.filter(call => call[0] === "answer").length, answers + 1, "option meaning follows the schema rather than guessing from its label");

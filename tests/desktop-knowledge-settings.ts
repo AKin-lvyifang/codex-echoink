@@ -9,8 +9,10 @@ import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
 
 const root = process.cwd();
-const registered = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台P12自动测试-20261019");
-assert.equal(process.env.ECHOINK_MODULES_TEST_ROOT, registered, "Use only the registered P12 test root");
+const registered = process.env.ECHOINK_MODULES_TEST_ROOT;
+assert.ok(registered, "Set ECHOINK_MODULES_TEST_ROOT to a disposable settings test directory");
+const testRootRelative = path.relative(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"), registered);
+assert.ok(testRootRelative && !testRootRelative.startsWith("..") && !path.isAbsolute(testRootRelative), "Use only a disposable root inside EchoInk-TestVaults/90-任务临时");
 const temporary = await mkdtemp(path.join(registered, "desktop-knowledge-"));
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://localhost" });
 const win = dom.window as any;
@@ -49,6 +51,14 @@ const run = async (name: string, callback: () => Promise<void>) => {
   try { await callback(); console.log(`PASS desktop-knowledge: ${name}`); }
   catch (error) { failures.push(name); console.error(`FAIL desktop-knowledge: ${name}`, error); }
 };
+
+function accessibleName(element: Element): string {
+  const references = element.getAttribute("aria-labelledby");
+  return references ? references.split(/\s+/u).map(id => element.ownerDocument.getElementById(id)?.textContent ?? "").join(" ")
+    : element.getAttribute("aria-label") ?? element.textContent ?? "";
+}
+let nativeTooltip: HTMLElement | undefined;
+let restoreNativeTooltip: (() => void) | undefined;
 
 async function inventory(directory: string): Promise<string[]> {
   const items: string[] = [];
@@ -109,7 +119,7 @@ async function fixture(name: string) {
   view = new runtime.DesktopKnowledgeSettings(plugin, { redraw, openPreferences() { navigation.preferences++; }, openLinking() { navigation.linking++; }, openEditor(editor: any) { navigation.editors.push(editor); } });
   redraw(); await settle();
   const button = (text: string): HTMLButtonElement => {
-    const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === text || value.getAttribute("aria-label")?.startsWith(`${text}，`));
+    const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === text || accessibleName(value).startsWith(`${text}，`));
     assert(result, `button ${text}`); return result;
   };
   const field = (label: string): HTMLInputElement => { const element = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert(element, `field ${label}`); return element; };
@@ -129,7 +139,7 @@ async function fixture(name: string) {
 try {
   const output = path.join(temporary, "knowledge-ui.mjs");
   await esbuild.build({ stdin: { contents: `
-    export { Platform, TFolder } from "obsidian";
+    export { Platform, TFolder, displayedTooltipsForTests, setTooltipDisplayForTests } from "obsidian";
     export { DesktopKnowledgeSettings } from "./src/settings/desktop-knowledge-settings";
     export { EchoInkKnowledgeSurfaceService } from "./src/plugin/knowledge-surface-service";
     export { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, knowledgeFolderBindingsSignature } from "./src/knowledge-base/folder-bindings";
@@ -148,6 +158,12 @@ try {
     } }], logLevel: "silent"
   });
   runtime = await import(pathToFileURL(output).href); runtime.Platform.isDesktopApp = true;
+  restoreNativeTooltip = runtime.setTooltipDisplayForTests((element: HTMLElement, content: string, options: { classes: string[] }) => {
+    nativeTooltip?.remove();
+    nativeTooltip = element.ownerDocument.createElement("div");
+    nativeTooltip.className = `tooltip ${options.classes.join(" ")}`; nativeTooltip.textContent = content;
+    element.ownerDocument.body.appendChild(nativeTooltip);
+  });
 
   await run("desktop navigation exposes complete clipped values without replacing activation", async () => {
     const host = document.createElement("div"); host.className = "echoink-settings-demo echoink-settings-aligned"; document.body.appendChild(host);
@@ -157,17 +173,17 @@ try {
       const row = runtime.createSettingsNavigationRow(host, { title: "完整设置名称", value: full, onActivate: () => { activations++; } });
       const value = row.querySelector(".echoink-settings-navigation-value")!;
       Object.defineProperties(value, { scrollWidth: { configurable: true, value: 300 }, clientWidth: { configurable: true, value: 100 } });
-      assert.equal(row.getAttribute("aria-label"), `完整设置名称，${full}，进入`);
+      assert.equal(accessibleName(row), `完整设置名称，${full}，进入`);
       assert.equal(row.hasAttribute("aria-describedby"), false, "the complete accessible label does not repeat the tooltip as a description");
       row.focus();
-      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, full);
+      assert.equal(nativeTooltip?.isConnected ? nativeTooltip.textContent : undefined, full);
       assert.equal(row.querySelector('[role="tooltip"]'), null, "visible tooltip content stays outside the button label");
       row.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null);
-      row.dispatchEvent(new win.MouseEvent("mouseenter"));
-      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, full);
+      assert.equal((nativeTooltip?.isConnected ? nativeTooltip : null), null);
+      row.dispatchEvent(new win.MouseEvent("mouseenter")); await settle();
+      assert.equal(nativeTooltip?.isConnected ? nativeTooltip.textContent : undefined, full);
       row.dispatchEvent(new win.MouseEvent("mouseleave"));
-      assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null);
+      assert.equal((nativeTooltip?.isConnected ? nativeTooltip : null), null);
       row.click(); row.dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 0 }));
       assert.equal(activations, 2, "pointer and keyboard-style activation still navigate exactly once");
     } finally { runtime.disposeOriginControls(host); host.remove(); }
@@ -178,7 +194,7 @@ try {
     let activations = 0;
     try {
       const row = runtime.createSettingsNavigationRow(host, { title: "已归档会话", value: "23", onActivate: () => { activations++; } });
-      row.focus(); assert.equal(host.querySelector('[role="tooltip"]:not([hidden])'), null, "a fitting short value has no summary bubble");
+      row.focus(); assert.equal((nativeTooltip?.isConnected ? nativeTooltip : null), null, "a fitting short value has no summary bubble");
       const help = row.querySelector(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
       const activate = row.onclick; runtime.attachSettingsTooltip(row, "删除后无法恢复", help); row.onclick = activate;
       row.blur(); row.focus();
@@ -203,9 +219,9 @@ try {
       const row = f.host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:directory:raw"]')!;
       assert.equal(row.querySelector(".echoink-settings-navigation-value")?.textContent, first);
       assert.equal(row.querySelector(".echoink-settings-navigation-value-suffix")?.textContent, "等 3 个");
-      assert.equal(row.getAttribute("aria-label"), `资料来源，${first}、资料甲、资料乙，进入`);
+      assert.equal(accessibleName(row), `资料来源，${first}、资料甲、资料乙，进入`);
       row.focus();
-      assert.equal(f.host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, `${first}、资料甲、资料乙`);
+      assert.equal(nativeTooltip?.isConnected ? nativeTooltip.textContent : undefined, `${first}、资料甲、资料乙`);
       row.click();
       assert.equal(f.host.querySelector(".echoink-knowledge-source-path")?.textContent, first, "detail path is not shortened by summary generation");
       assert.equal(f.host.querySelectorAll(".echoink-knowledge-source").length, 3);
@@ -231,12 +247,13 @@ try {
       const help = raw.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
       assert.equal(help.getAttribute("tabindex"), "0");
       assert.equal(raw.querySelector("button"), null, "purpose help never nests another button");
-      raw.dispatchEvent(new win.MouseEvent("mouseenter"));
+      raw.dispatchEvent(new win.MouseEvent("mouseenter")); await settle();
       help.dispatchEvent(new win.MouseEvent("mouseenter"));
-      assert.equal(f.host.querySelectorAll('[role="tooltip"]:not([hidden])').length, 1, "purpose explanation replaces the visible summary bubble");
+      assert.equal(f.host.querySelectorAll('[role="tooltip"]:not([hidden])').length, 0, "native purpose help dismisses the custom summary bubble");
       help.focus();
       assert.equal(document.activeElement, help);
-      assert.equal(document.getElementById(help.getAttribute("aria-describedby")!)?.textContent, "保存原始收藏和材料，网页、公众号、PDF 都放这里");
+      assert.equal(accessibleName(help), "保存原始收藏和材料，网页、公众号、PDF 都放这里");
+      assert.equal(runtime.displayedTooltipsForTests.get(help), "保存原始收藏和材料，网页、公众号、PDF 都放这里");
       help.click();
       for (const key of ["Enter", " "]) help.dispatchEvent(new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
       assert.equal(f.view.isDetail, false, "pointer and keyboard help do not navigate");
@@ -328,11 +345,11 @@ try {
       const check = f.field("允许 Agent 新建子文件夹");
       const row = check.closest(".setting-item")!;
       assert.equal(row.querySelector(".setting-item-description")?.textContent ?? "", "");
-      const hint = row.querySelector(".echoink-settings-help-trigger")!.getAttribute("aria-label")!;
+      const hint = accessibleName(row.querySelector(".echoink-settings-help-trigger")!);
       for (const text of ["知识成果", "项目", "只新建", "不删除", "不移动"]) assert(hint.includes(text));
       const linking = f.field("自动补链").closest(".setting-item")!;
       assert.equal(linking.querySelector(".setting-item-description")?.textContent ?? "", "");
-      const linkingHint = linking.querySelector(".echoink-settings-help-trigger")!.getAttribute("aria-label")!;
+      const linkingHint = accessibleName(linking.querySelector(".echoink-settings-help-trigger")!);
       for (const text of ["本批笔记", "相关老笔记", "已开始的写入会完成", "手动补全"]) assert(linkingHint.includes(text));
       assert.equal(f.button("知识关联").querySelector(".echoink-settings-navigation-description"), null);
       check.click(); await settle();
@@ -393,7 +410,7 @@ try {
       await settle();
       assert.equal(row().querySelector(".echoink-settings-navigation-description"), null);
       assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "已自定义");
-      assert(row().getAttribute("aria-label")?.includes("已自定义"));
+      assert(accessibleName(row())?.includes("已自定义"));
       state = "default"; f.redraw(); await settle();
       assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "使用默认");
       fails = true; f.redraw(); await settle();
@@ -495,7 +512,7 @@ try {
       assert.deepEqual(raw.readPaths, ["资料甲", "资料乙"]); assert.equal(raw.writePath, "资料乙");
       assert.deepEqual(raw.autoOrganizePaths, ["资料甲"], "retrieval does not change per-directory organization grants");
       const retrieval = f.field("允许 Agent 检索这些资料").closest(".setting-item")!;
-      assert(retrieval.querySelector(".setting-item-name > .echoink-settings-help-trigger")?.getAttribute("aria-label")?.includes("你主动 @ 引用或提交到聊天的内容除外"));
+      assert(accessibleName(retrieval.querySelector(".setting-item-name > .echoink-settings-help-trigger")!).includes("你主动 @ 引用或提交到聊天的内容除外"));
       assert.deepEqual(await inventory(f.root), before);
       assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
     } finally { await f.cleanup(); }
@@ -648,6 +665,7 @@ try {
   assert.deepEqual(failures, [], `Failed desktop knowledge scenarios: ${failures.join(", ")}`);
   assert.deepEqual(unhandled, [], "all UI failure paths handle their asynchronous errors");
 } finally {
+  restoreNativeTooltip?.(); nativeTooltip?.remove();
   process.off("unhandledRejection", onUnhandled);
   runtime?.disposeOriginControls(document.body);
   dom.window.close();

@@ -1,6 +1,6 @@
 {
   "name": "echoink-agent",
-  "version": "2.8.9",
+  "version": "2.8.7",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {
@@ -70,7 +70,8 @@
     "test:membership-gates": "node scripts/membership-gate-tests.mjs",
     "test:gallery": "node scripts/gallery-tests.mjs",
     "test:appearance": "node scripts/appearance-theme-tests.mjs",
-    "test:companion-theme": "node scripts/companion-theme-tests.mjs"
+    "test:companion-theme": "node scripts/companion-theme-tests.mjs",
+    "test:run-reports": "node scripts/run-report-tests.mjs"
   },
   "keywords": [
     "obsidian",

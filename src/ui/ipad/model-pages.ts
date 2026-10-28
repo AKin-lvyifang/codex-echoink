@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import type { ApiProviderConfig } from "../../settings/settings";
 import { getApiProviderPreset } from "../../settings/provider-presets";
 import { MOBILE_MODEL_GROUPS } from "../../mobile/model-configuration";
@@ -45,7 +46,7 @@ export function createDefaultModelPage(ctx: IPadSettingsContext): MobileShellPag
           try { await ctx.models.selectDefault(provider.id, model.id); ctx.refresh(); await ctx.back(); }
           catch (failure) { showSettingsError(error, failure); }
           finally { busy = false; content.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; }); }
-        }, settingsBrand(ctx, provider)); row.setAttribute("aria-pressed", String(selected)); row.title = model.displayName || model.id;
+        }, settingsBrand(ctx, provider)); row.setAttribute("aria-pressed", String(selected)); attachNativeTooltip(row, model.displayName || model.id);
       }
     }
     if (!content.childElementCount) content.append(el(ctx.document, "p", "pd-settings-empty", t(ctx, "尚未配置模型服务")));

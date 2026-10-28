@@ -80,6 +80,40 @@ export async function runIPadWorkbenchScenarios(api, win) {
     };
   }
 
+  for (const mode of ["disabled", "enabled", "legacy"]) await test("iPad tool-call guide " + mode + " keeps two buttons and one persisted failure prompt", async () => {
+    const f = await fixture();
+    try {
+      const id = f.store.session.id, provider = f.settings.apiProviders[0], model = provider.models[0];
+      model.toolCalling = mode === "enabled";
+      const other = structuredClone(provider); other.id = "guide-default-other"; other.models[0].id = "global-only"; other.defaultModelId = "global-only";
+      f.settings.apiProviders.push(other); f.settings.activeApiProviderId = other.id; f.settings.defaultModel = "global-only";
+      const code = mode === "enabled" ? "model_tool_call_text_incompatible" : "model_tool_call_text_disabled";
+      await f.store.patchSession(id, { taskStatus: "interrupted", taskInterruptedAt: 1000,
+        interruption: { at: 1000, reason: "run_failed", stage: "saving", toolCallTextFailure: code,
+          ...(mode === "legacy" ? {} : { providerSettingsId: provider.id, modelId: model.id }) },
+        messages: [{ role: "user", content: "原任务", timestamp: 1 }] });
+      const page = api.createTaskPage(f.ctx, id); await f.shell.push(page);
+      const box = page.content.querySelector(".pd-task-stopbox"), buttons = [...box.querySelectorAll("button")];
+      assert.deepEqual(buttons.map(button => button.textContent.trim()), ["上报问题", mode === "disabled" ? "开启工具调用并继续" : "继续"]);
+      assert.equal(page.content.textContent.split("本轮没有执行工具").length - 1, 1);
+      assert.equal(page.content.querySelector('[role="alert"]').hidden, true, "the old error area does not repeat the prompt");
+      assert.equal(page.content.textContent.includes("模型设置"), false);
+      if (mode === "enabled") assert.match(box.textContent, /或在 设置 → 模型服务 中更换模型/u);
+      if (mode === "legacy") assert.match(box.textContent, /模型服务 → 对应服务 → 参数 → 对应模型/u);
+      if (mode === "disabled") {
+        const selected = [f.settings.activeApiProviderId, f.settings.defaultModel]; let sawBothDisabled = false;
+        const unsubscribe = f.runtime.subscribe(taskId => { const box = page.content.querySelector(".pd-task-stopbox"); if (taskId === id && f.runtime.stateFor(id).resuming && box) sawBothDisabled ||= [...box.querySelectorAll("button")].every(button => button.disabled); });
+        buttons[1].click();
+        await until(() => f.calls.length === 1, "the shared continuation starts after enabling");
+        unsubscribe(); assert.equal(sawBothDisabled, true, "saving disables both actions before any continuation request");
+        const saved = f.settings.apiProviders[0].models[0]; assert.equal(saved.toolCalling, true); assert.equal(saved.capabilityOverrides.toolCalling, true);
+        assert.deepEqual([f.settings.activeApiProviderId, f.settings.defaultModel], selected);
+        assert.ok(f.calls[0].body.tools.length); assert.equal(f.calls[0].body.model, "fixture-model"); f.calls[0].resolve(answer("openai-completions", "恢复完成"));
+        await until(() => !f.runtime.isBusy(id), "resumed task settles");
+      }
+    } finally { await f.close(); }
+  });
+
   await test("unavailable task storage leaves the iPad pane readable and disables all task input", async () => {
     const f = await fixture();
     try {

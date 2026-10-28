@@ -37,6 +37,7 @@ import {
 } from "../../settings/pi-model-catalog";
 import {
   assistantHasPartialOutput,
+  isProviderQuotaExhausted,
   sanitizeProviderFailureDetail,
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
@@ -363,6 +364,11 @@ export function classifyPiProviderConnectionFailure(
     case "provider_service_unavailable":
     case "provider_service_failed": return "provider";
   }
+  // Some providers return 429 for exhausted billing/account quota. Retrying
+  // cannot restore that balance; keep ordinary rate limits retryable below.
+  if (isProviderQuotaExhausted(message)) {
+    return "request";
+  }
   if (status === 429 || /rate[ _-]?limit|usage[ _-]?limit|quota|too many requests/u.test(normalized)) {
     return "rate_limit";
   }
@@ -416,6 +422,22 @@ function sanitizeProviderStream(
         allowFallback: boolean
       ): Promise<void> => {
         for await (const event of stream) {
+          if (
+            (event.type === "done" && (event.reason === "length" || event.message.stopReason === "length"))
+            || (event.type === "error" && event.reason !== "aborted" && event.error.errorMessage === "provider_output_limit_reached")
+          ) {
+            const message = event.type === "done" ? event.message : event.error;
+            partial = {
+              ...message,
+              content: message.content.filter((block) => block.type !== "toolCall"),
+              stopReason: "length"
+            };
+            delete partial.errorMessage;
+            // Pi otherwise fails truncated calls and immediately requests again
+            // inside its tool loop, bypassing the runtime continuation budget.
+            output.push({ type: "done", reason: "length", message: partial });
+            continue;
+          }
           if (event.type !== "error") {
             assistantEventObserved = true;
             if ("partial" in event) partial = event.partial;

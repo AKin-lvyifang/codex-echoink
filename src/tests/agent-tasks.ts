@@ -1,3 +1,4 @@
+import { runTaskCardDenialTests } from "./task-card-denial";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import assert from "node:assert/strict";
@@ -58,6 +59,7 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   const f = await createAgentRunFixture(path.join(root, "runtime"), createHost);
   f.plugin.app.vault = { getRoot: () => ({ children: [] }), getAbstractFileByPath: () => null };
   try {
+    await runTaskCardDenialTests(f, dom.window.document);
     await maintenanceDisplayProjection(f, dom.window.document);
     await pluginRemovalApprovalPresentation(path.join(root, "delete-approval-source"));
     await deleteApprovalPresentation(dom.window.document);

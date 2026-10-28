@@ -177,6 +177,7 @@ export class ConversationRunService {
     if (source === "queue" && session.taskStatus === "interrupted" && !item.resumeContext) throw new Error("任务已中断，请先核对恢复信息后继续队列。");
     const state = this.stateFor(session.id);
     if (state.flight || state.running) throw new Error("conversation_already_running");
+    this.resumeErrors.delete(session.id);
     const frozen = cloneQueuedTurnItem(item);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
@@ -279,7 +280,13 @@ export class ConversationRunService {
   }
   async flushSave(): Promise<void> {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
-    await this.plugin.saveSettings(true);
+    try {
+      await this.plugin.saveSettings(true);
+    } catch (error) {
+      // Only the settings projection is best-effort. Catalog and task metadata
+      // writes retain their existing failure handling at their call sites.
+      console.error("Conversation projection save failed", error);
+    }
   }
   private clearWatchdog(state: ConversationRunState): void {
     clearPausableTurnWatchdog(state);
@@ -313,7 +320,7 @@ export class ConversationRunService {
         }
         onAccepted?.();
       },
-      onPiRunFailure: message => { if (item.resumeContext) this.resumeErrors.set(id, message); },
+      onPiRunFailure: message => { this.resumeErrors.set(id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
@@ -331,7 +338,8 @@ export class ConversationRunService {
       clearActiveRun: () => { store.clearActiveRun(); this.clearActiveRun(id, state); },
       armTurnWatchdog: (timeout = CHAT_TURN_WATCHDOG_MS) => {
         armPausableTurnWatchdog(state, () => {
-          if (state.running) void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
+          if (!state.running) return;
+          void this.stopTask(id, "watchdog").catch(error => console.error("Conversation timeout cancellation failed", error));
         }, timeout);
       }, clearTurnWatchdog: () => this.clearWatchdog(state),
       diagnoseCodexFailure: (error, model) => diagnoseProviderError(error, { model: model ?? item.turnOptions.model }),

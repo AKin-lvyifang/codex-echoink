@@ -1,3 +1,4 @@
+import { replaceKnownSecrets } from "../../security/local-secrets";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 export interface ProviderFailureDetail {
@@ -6,6 +7,11 @@ export interface ProviderFailureDetail {
   param?: string;
   message?: string;
   reason?: "unsupported" | "invalid" | "required" | "out_of_range";
+}
+
+/** Billing/account exhaustion can arrive as HTTP 429, without being a throttle. */
+export function isProviderQuotaExhausted(message: string): boolean {
+  return /insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted)|out of (?:budget|credits?)|insufficient (?:balance|credits?)|billing|gousagelimiterror|freeusagelimiterror|monthly usage limit reached|available balance|余额不足|额度(?:不足|用尽|耗尽)/iu.test(message.slice(0, 8_192));
 }
 
 export type AssistantProviderFailure = AssistantMessage & {
@@ -58,10 +64,7 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
 }
 
 function sanitizeProviderMessage(value: string, secrets: readonly string[]): string {
-  let message = value;
-  for (const secret of secrets) {
-    if (secret) message = message.split(secret).join("[已隐藏凭据]");
-  }
+  const message = replaceKnownSecrets(value, secrets, "[已隐藏凭据]");
   return message
     .replace(/\bauthorization\s*:\s*[^;\r\n]+/giu, "[已隐藏凭据]")
     .replace(/\bBearer\s+[^\s,;]+/giu, "[已隐藏凭据]")

@@ -17,6 +17,7 @@ try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexForObsidianPlugin");
   const names = ["conversationRunService", "piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "setPiConversationTaskMetadata", "resumeTask", "isTaskResuming", "getTaskResumeError", "activeTaskResumeSafety", "resumeTaskAndOpenDetail", "readTaskInterruption", "recordTaskInterruption", "prepareTaskResume", "deleteAgent", "agentRegistryWriteTail", "agentRegistryListeners", "writeAgentRegistry"];
+  const recoveryImports = 'import {enableTargetToolCalling,toolCallFailureInfo,toolCallRecoveryGuidance,toolCallRecoveryTarget,TOOL_CALL_RESUME_PROMPT} from "./src/agents/tool-call-recovery";';
   const members = names.map(name => {
     const member = declaration.members.find(member => member.name?.getText(source) === name);
     if (!member) throw new Error(`Missing production member ${name}`);
@@ -27,7 +28,7 @@ try {
   const runtimeClass = runtimeSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "PiNativeConversationRuntime");
   const stageFunction = runtimeSource.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "taskInterruptionStage").getText(runtimeSource);
   const recordInterruption = runtimeClass.members.find(member => member.name?.getText(runtimeSource) === "recordTaskInterruption").getText(runtimeSource);
-  const stageContents = [
+  const stageContents = [recoveryImports,
     'import {runTaskResumeStageTests,runTaskResumeDurableStageTests} from "./src/tests/task-resume";',
     'import {latestTaskPlanFromBranch} from "./src/types/task-plan";',
     'import {latestTaskRun} from "./src/agents/task-resume";',
@@ -44,7 +45,7 @@ try {
     'await runTaskResumeDurableStageTests(process.env.ECHOINK_P4_RUNTIME_TEST_ROOT,async(local,root)=>await new DurableStageHost(local,root).readTaskInterruption("task"));'
   ].join("\n");
   const restartContents = 'import {runTaskResumeRestartTests} from "./src/tests/task-resume-restart"; await runTaskResumeRestartTests(process.env.ECHOINK_P4_RUNTIME_TEST_ROOT,process.env.ECHOINK_P4_RESTART_PHASE);';
-  await esbuild.build({ stdin: { contents: restartOnly ? restartContents : stageOnly ? stageContents : [
+  await esbuild.build({ stdin: { contents: restartOnly ? restartContents : stageOnly ? stageContents : [recoveryImports,
     'import {runTaskResumeTests} from "./src/tests/task-resume";',
     'import {ConversationRunService} from "./src/plugin/conversation-run-service";',
     'import {latestTaskRun} from "./src/agents/task-resume";',

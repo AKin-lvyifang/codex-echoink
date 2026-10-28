@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 import { ItemView, Modal, Notice, TFile, TFolder, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
@@ -41,6 +42,7 @@ function markup(el: HTMLElement, html: string): void {
   el.empty();
   el.appendChild(el.ownerDocument.importNode(sanitizeHTMLToDom(html), true));
   el.querySelectorAll<HTMLElement>("[data-icon]").forEach((node) => setIcon(node, node.dataset.icon!));
+  el.querySelectorAll<HTMLElement>("[title]").forEach(node => attachNativeTooltip(node, node.getAttribute("title") ?? ""));
 }
 const parseDate = (key: string): Date => { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d); };
 
@@ -312,7 +314,7 @@ export class EchoInkHomeView extends ItemView {
       for (const attr of ["aria-controls", "aria-labelledby", "for"]) if (node.hasAttribute(attr)) node.setAttribute(attr, node.getAttribute(attr)!.split(" ").map((id) => `${this.id}-${id}`).join(" "));
     }
     this.el(".date-caption").setText(new Intl.DateTimeFormat(this.language, { month: "short", day: "numeric", weekday: "long" }).format(new Date()));
-    this.field("recent-subtitle").setText(this.t("按文件创建 / 修改时间排序", "Sorted by file creation / modification time"));
+    this.field("recent-subtitle").setText("");
     this.searchOpen = false;
     this.applyModuleVisibility();
     this.renderLoadingState();
@@ -366,6 +368,8 @@ export class EchoInkHomeView extends ItemView {
     this.el(".trace-legend").empty();
     this.field("trace-caption").setText(label);
     this.field("month-record-count").setText(label);
+    const key = this.selectedDate ?? dateKey(new Date());
+    this.field("journal-label").setText(this.t(`${this.shortDate(key)} 的日记`, `Journal · ${this.shortDate(key)}`));
     this.field("journal-hint").setText(label);
     this.el(".wiki-count").setText("—");
     this.field("inbox-count").setText("—");
@@ -381,9 +385,9 @@ export class EchoInkHomeView extends ItemView {
     // Keep the existing icon and keyboard hint in the Home action button.
     const text = Array.from(button.childNodes).find((node) => node.nodeType === 3 && node.textContent?.trim());
     if (text) text.textContent = label;
-    button.title = english
+    attachNativeTooltip(button, english
       ? this.t("打开今天的双语日记", "Open today's bilingual diary")
-      : this.t("自己直接写，保存到 Inbox", "Write directly and save to Inbox");
+      : this.t("自己直接写，保存到 Inbox", "Write directly and save to Inbox"));
   }
   private renderFinanceCard(): void {
     this.contentEl.querySelector(".echoink-life-card-finance")?.remove();
@@ -567,9 +571,9 @@ export class EchoInkHomeView extends ItemView {
     const records = this.records(); const selected = this.selectedDate;
     this.field("recent-title").setText(selected ? this.t(`${this.shortDate(selected)}的记录`, `Notes · ${this.shortDate(selected)}`) : this.t("最近笔记", "Recent notes"));
     this.el(".reset-date").hidden = !selected;
-    this.field("recent-subtitle").setText(selected ? this.t(`已展示 ${Math.min(3, records.length)} / ${records.length} 篇`, `Showing ${Math.min(3, records.length)} of ${records.length}`) : this.t("按文件创建 / 修改时间排序", "Sorted by file creation / modification time"));
+    this.field("recent-subtitle").setText(selected ? this.t(`已展示 ${Math.min(3, records.length)} / ${records.length} 篇`, `Showing ${Math.min(3, records.length)} of ${records.length}`) : "");
     const host = this.field("recent-notes");
-    if (!records.length) { markup(host, `<div class="recent-empty"><h3>${this.t("还没有留下记录", "No notes yet")}</h3><p>${this.t("从现在开始，接住一个想法。", "Start with a thought worth keeping.")}</p><button class="text-button" data-action="reset-date">${this.t("回到最近", "Back to recent")}${icon("arrow-right")}</button></div>`); return; }
+    if (!records.length) { markup(host, `<div class="recent-empty"><h3>${this.t("还没有留下记录", "No notes yet")}</h3><button class="text-button" data-action="reset-date">${this.t("回到最近", "Back to recent")}${icon("arrow-right")}</button></div>`); return; }
     const label = (r: HomeVaultFileRecord) => selected ? [...new Set(this.events.filter((e) => e.path === r.path && e.date === selected).map((e) => this.kind(e.kind)))].join(" · ") : this.kind(r.ctime && r.mtime <= r.ctime + 1000 ? "created" : "modified");
     const time = (r: HomeVaultFileRecord) => selected ? this.shortDate(selected) : formatHomeRelativeTime(Math.max(r.ctime ?? 0, r.mtime), this.language);
     const first = records[0];
@@ -606,8 +610,9 @@ export class EchoInkHomeView extends ItemView {
     });
     this.field("month-record-count").setText(this.t(`本月 ${count} 天 · ${photoDays} 天有图`, `${count} days this month · ${photoDays} with photos`));
     const key = this.selectedDate ?? dateKey(new Date());
-    this.field("journal-label").setText(this.t(`${this.shortDate(key)}的日记`, `Journal · ${this.shortDate(key)}`));
-    this.field("journal-hint").setText(this.dataService.existingJournalForDate(parseDate(key)) ? this.t("已经留下一页，点开看看", "A page is waiting for you") : this.t("这一天还没有日记", "No journal for this day yet"));
+    const existing = this.dataService.existingJournalForDate(parseDate(key));
+    this.field("journal-label").setText(!settings.available || existing ? this.t(`${this.shortDate(key)} 的日记`, `Journal · ${this.shortDate(key)}`) : this.t(`创建 ${this.shortDate(key)} 的日记`, `Create journal · ${this.shortDate(key)}`));
+    this.field("journal-hint").setText(settings.available ? "" : this.t("请先选择日记位置", "Choose a journal location first"));
   }
   private renderEntries(): void {
     const records = this.data?.records ?? [];
@@ -617,9 +622,9 @@ export class EchoInkHomeView extends ItemView {
     markup(this.el(".wiki-count"), `${count("wiki")}<span>${this.t("篇笔记", "notes")}</span>`);
     const changed = new Set(this.events.filter((e) => (this.plugin.settings.knowledgeBase?.folderBindings ? classifyKnowledgePath(this.plugin.settings.knowledgeBase.folderBindings, e.path) === "wiki" : e.path.startsWith("wiki/")) && this.weekDates().includes(e.date) && e.kind !== "reopened").map((e) => e.path)).size;
     this.el(".wiki .bento-meta").setText(this.t(`本周留下 ${changed} 篇笔记的足迹`, `${changed} notes touched this week`));
-    this.el(".outputs .bento-line").setText(latest("outputs")?.title ?? this.t("思考的成果，从这里开始", "A place for your work"));
+    this.el(".outputs .bento-line").setText(latest("outputs")?.title ?? this.t("暂无成果", "No outputs yet"));
     this.el(".outputs .bento-meta").setText(this.t(`${count("outputs")} 份成果`, `${count("outputs")} outputs`));
-    this.el(".project-line").setText(latest("projects")?.title ?? this.t("下一件值得推进的事", "The next thing worth doing"));
+    this.el(".project-line").setText(latest("projects")?.title ?? this.t("暂无项目笔记", "No project notes yet"));
     this.el(".projects .bento-meta").setText(this.t(`${count("projects")} 篇项目笔记`, `${count("projects")} project notes`));
     this.field("inbox-count").setText(String(count("inbox")));
     this.el(".journal-date").setText(new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric" }).format(new Date()));
@@ -658,8 +663,8 @@ export class EchoInkHomeView extends ItemView {
     const done = pool.filter((record) => record.done).length;
     const progress = subtitle.createSpan({ cls: "todo-progress" });
     const assist = this.t(`已完成 ${done} 项，共 ${total} 项`, `${done} of ${total} done`);
-    progress.setAttr("title", assist);
     progress.setAttr("aria-label", assist);
+    attachNativeTooltip(progress, assist, { touch: "notice" });
     const progressIcon = progress.createSpan({ cls: "todo-progress-icon", attr: { "aria-hidden": "true" } });
     setIcon(progressIcon, "check-square");
     const track = progress.createSpan({ cls: "todo-progress-track", attr: { "aria-hidden": "true" } });

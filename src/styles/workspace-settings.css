@@ -503,7 +503,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo main{overflow-wrap:anywhere}
 .echoink-settings-demo .settings-help{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;border:1px solid var(--muted);border-radius:50%;color:var(--secondary);font-size:calc(var(--font-text-size, 16px) * 0.625);font-weight:500;line-height:1;cursor:help;vertical-align:middle}
 .echoink-settings-demo .settings-help:hover,.echoink-settings-demo .settings-help:focus-visible{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
-.echoink-settings-demo .settings-tooltip{position:fixed;z-index:40;width:max-content;max-width:min(330px,calc(100cqw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font-size:calc(var(--font-text-size, 16px) * 0.6875);line-height:1.85;box-shadow:0 5px 25px #1814251c;overflow-wrap:anywhere}
 .echoink-settings-demo .init-preview-bar{display:flex;align-items:center;justify-content:flex-end;gap:9px;color:var(--muted);font-size:calc(var(--font-text-size, 16px) * 0.625);margin:0 0 9px}
 .echoink-settings-demo .init-preview-bar select{background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--secondary);font-size:calc(var(--font-text-size, 16px) * 0.625);padding:3px 6px}
 .echoink-settings-demo .init-progress{margin-top:0;margin-bottom:12px;padding:22px}
@@ -523,7 +522,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .init-complete{display:flex;align-items:flex-start;gap:14px;padding:22px;margin-top:0}.echoink-settings-demo .init-complete .ready-icon{margin-top:1px}.echoink-settings-demo .init-complete h3{margin-bottom:5px}.echoink-settings-demo .init-complete p{font-size:calc(var(--font-text-size, 16px) * 0.6875);color:var(--secondary);line-height:1.85;margin-bottom:17px}
 @container settings (max-width:600px){.echoink-settings-demo{padding-inline:16px}.echoink-settings-demo .init-progress,.echoink-settings-demo .init-complete{padding:16px}.echoink-settings-demo .echoink-knowledge-init-steps{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:16px}.echoink-settings-demo .echoink-knowledge-init-dirs label,.echoink-settings-demo .init-attachment{align-items:flex-start;flex-direction:column;gap:8px}.echoink-settings-demo .echoink-knowledge-init-dirs select{width:100%}.echoink-settings-demo .init-bottom{align-items:flex-end}.echoink-settings-demo .codex-settings-title{gap:8px}.echoink-settings-demo .init-bottom>span{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .init-bottom .button{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .echoink-knowledge-init-meta{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .setting-controls{min-width:0}}
 @container settings (max-width:380px){.echoink-settings-demo .codex-settings-title{flex-wrap:wrap}.echoink-settings-demo .codex-settings-title .preview-tools{margin-left:auto}.echoink-settings-demo{padding-inline:12px}.echoink-settings-demo .codex-settings-tabs .codex-settings-tab{font-size:calc(var(--font-text-size, 16px) * 0.6875)}.echoink-settings-demo .init-bottom{align-items:flex-start;flex-direction:column}.echoink-settings-demo .init-bottom .button{align-self:flex-end}}
-@media(max-height:600px){.echoink-settings-demo .codex-settings-tabs-slot{position:relative;padding-top:14px}.echoink-settings-demo .codex-settings-title{margin-bottom:12px}.echoink-settings-demo .settings-editor{min-height:140px}.echoink-settings-demo .settings-tooltip{max-height:60dvh}}
+@media(max-height:600px){.echoink-settings-demo .codex-settings-tabs-slot{position:relative;padding-top:14px}.echoink-settings-demo .codex-settings-title{margin-bottom:12px}.echoink-settings-demo .settings-editor{min-height:140px}}
 @media(prefers-reduced-motion:reduce){.echoink-settings-demo .echoink-knowledge-init-bar>span{transition:none}}
 
 
@@ -1116,8 +1115,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
 .echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}
-.echoink-settings-demo .echoink-settings-help-panel{position:absolute;top:22px;left:0;width:min(300px,65cqw);padding:11px 13px;background:var(--bg);border:1px solid var(--line);border-radius:7px;box-shadow:0 8px 24px #0002;color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.6875);font-weight:400;line-height:1.85;z-index:20;overflow:auto;overflow-wrap:anywhere}
-.echoink-settings-demo .echoink-settings-help-panel.is-noninteractive{pointer-events:none}
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row:has(>.echoink-settings-inline-confirm){flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}
@@ -1463,9 +1460,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container account (max-width:520px){.echoink-account.echoink-account .two-columns{grid-template-columns:minmax(0,1fr)}.echoink-account.echoink-account .coming-soon{grid-column:1/-1}.echoink-account.echoink-account .section-heading{align-items:flex-start}.echoink-account.echoink-account .scope{max-width:100%}.echoink-account.echoink-account .profile-actions{flex-direction:row}.echoink-account.echoink-account .feature-row{gap:8px}.echoink-account.echoink-account .heat-footer{font-size:var(--f10)}}
 .echoink-settings-demo .codex-settings-tab[data-settings-tab="account"]{margin-left:auto}
 .echoink-account .account-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-
-.echoink-account-tooltip{position:fixed;z-index:3000;pointer-events:none;padding:8px 11px;background:var(--raised,var(--soft));color:var(--text);border:1px solid var(--line);border-radius:6px;font:calc(var(--font-text-size,16px)*.6875)/1.85 var(--font-interface,system-ui);max-width:min(240px,calc(100vw - 16px));overflow-wrap:anywhere;box-shadow:0 5px 20px #0002}
-.echoink-account-tooltip[hidden]{display:none!important}
 .echoink-account.echoink-account .input-action{flex-wrap:wrap}
 .echoink-account.echoink-account .input-action>input{flex:1;min-width:min(120px,100%)}
 .echoink-account.echoink-account .input-action>button{flex:none}
@@ -1746,7 +1740,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-tool-controls>label,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-form-field>label>span,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-checkbox,
-:where(body:not(.is-mobile)) .echoink-settings-demo .settings-tooltip,
 :where(body:not(.is-mobile)) .echoink-settings-demo .init-preview-bar select,
 :where(body:not(.is-mobile)) .echoink-settings-demo .init-plan-description,
 :where(body:not(.is-mobile)) .echoink-settings-demo [aria-labelledby=echoink-knowledge-init-tab-custom]>.echoink-knowledge-init-copy,
@@ -1783,7 +1776,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .history-empty p,
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-step,
 :where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation,
-:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-help-panel,
 :where(body:not(.is-mobile)) .echoink-settings-demo .codex-mcp-server-field-description,
 :where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-details,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resource-status-path-label,

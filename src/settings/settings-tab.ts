@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
 import { renderInlineAgentSettings } from "./inline-agent-settings";
@@ -143,7 +144,7 @@ import {
 import { McpServerModal } from "./mcp-server-modal";
 import {
   applySettingsRow,
-  attachSettingsTooltip,
+  attachSettingsHelpTooltip,
   addSettingsHelp,
   showSettingsInlineConfirmation,
   createSettingsCompactList,
@@ -1749,7 +1750,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const row = applySettingsRow(new OriginSetting(parent).setName(title));
     if (hint) {
       const wrapper = row.nameEl.createSpan({ cls: "echoink-settings-help" });
-      const help = createOriginButton(wrapper, { cls: "is-icon", attr: { "aria-label": `${title}说明` } }); setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint, wrapper);
+      const help = createOriginButton(wrapper, { cls: "is-icon", attr: { "aria-label": `${title}说明` } }); setIcon(help, "circle-alert"); attachSettingsHelpTooltip(help, hint, wrapper);
     }
     const check = createOriginCheck(row.controlEl, { attr: { "aria-label": title } }); check.checked = checked;
     if (focusKey) check.dataset.echoinkFocusKey = focusKey;
@@ -1985,7 +1986,7 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "echoink-knowledge-protocol-title",
         text: zh ? step.title : protocolEnglish[index][0]
       });
-      item.setAttr("title", zh ? step.instruction : protocolEnglish[index][1]);
+      attachNativeTooltip(item, zh ? step.instruction : protocolEnglish[index][1]);
     }
 
     const preferenceSection = createSettingsSection(page, {
@@ -2223,9 +2224,9 @@ export class CodexSettingTab extends PluginSettingTab {
       const wrapper = autoArchive.nameEl.createSpan({ cls: "echoink-settings-help" });
       const help = createOriginButton(wrapper, { cls: "echoink-settings-help-trigger is-icon", attr: { "aria-label": zh ? "自动归档说明" : "Automatic archive information" } });
       setIcon(help, "circle-alert");
-      attachSettingsTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
+      attachSettingsHelpTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
     }
-    const archives = createSettingsNavigationRow(managementGroup, {
+    createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
       description: Platform.isDesktopApp
         ? undefined
@@ -2234,16 +2235,10 @@ export class CodexSettingTab extends PluginSettingTab {
         ? String(this.archivedConversations.length)
         : (zh ? "查看" : "View"),
       actionLabel: Platform.isDesktopApp ? undefined : (zh ? "打开" : "Open"),
+      explanation: Platform.isDesktopApp ? (zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.") : undefined,
       focusKey: "review:archives",
       onActivate: () => this.openSettingsDetail("review-archives")
     });
-    if (Platform.isDesktopApp) {
-      const help = archives.querySelector<HTMLElement>(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
-      setIcon(help, "circle-alert");
-      const activate = archives.onclick;
-      attachSettingsTooltip(archives, zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.", help);
-      archives.onclick = activate;
-    }
     if (!Platform.isDesktopApp) createSettingsNavigationRow(managementGroup, {
       title: zh ? "记忆修正" : "Memory correction",
       description: zh
@@ -3527,11 +3522,7 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       });
       if (providerId !== "openai-codex") {
-        savedProvider.createSpan({
-          cls: "codex-provider-url-tooltip",
-          text: saved.baseUrl,
-          attr: { "aria-hidden": "true" }
-        });
+        attachNativeTooltip(savedProvider, saved.baseUrl, { touch: "notice" });
       }
 
       if (Platform.isDesktopApp) setIcon(identity.createSpan({ cls: "codex-provider-saved-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
@@ -3587,7 +3578,6 @@ export class CodexSettingTab extends PluginSettingTab {
         text: label("编辑", "Edit"),
         attr: {
           type: "button",
-          title: label(`编辑 ${providerDisplayName} · ${modelDisplayName}`, `Edit ${providerDisplayName} · ${modelDisplayName}`),
           "aria-label": label(`编辑 ${providerDisplayName} · ${modelDisplayName}`, `Edit ${providerDisplayName} · ${modelDisplayName}`),
           "data-echoink-focus-key": `provider:${saved.id}:edit`
         }
@@ -3600,7 +3590,6 @@ export class CodexSettingTab extends PluginSettingTab {
         cls: "codex-provider-row-action is-delete",
         attr: {
           type: "button",
-          title: label(`删除 ${providerDisplayName} · ${modelDisplayName}`, `Delete ${providerDisplayName} · ${modelDisplayName}`),
           "aria-label": label(`删除 ${providerDisplayName} · ${modelDisplayName}`, `Delete ${providerDisplayName} · ${modelDisplayName}`),
           "data-echoink-focus-key": `provider:${saved.id}:delete`
         }

@@ -1,7 +1,9 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { setIcon } from "obsidian";
 import type { TaskDraft } from "../../agents/task-workspace";
 import type { MobilePermission } from "../../mobile/store";
 import { selectedModel, supportedProvider } from "../../mobile/settings";
+import { toolCallRecoveryTarget } from "../../agents/tool-call-recovery";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
 import { shellElement } from "../mobile/shell-controls";
 import type { IPadPageContext } from "./workbench-contract";
@@ -85,7 +87,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   let saves: Promise<void> = Promise.resolve();
   const readDraft = (): TaskDraft => {
     if (agentId) return host.store.state.newTaskDrafts[agentId] ?? { text: "", attachments: [] };
-    const task = host.store.getSession(taskId!); return { text: task?.draft ?? "", attachments: [], ...task?.draftContext };
+    const task = host.store.getSession(taskId!);
+    const target = toolCallRecoveryTarget(task?.interruption, host.settings().apiProviders);
+    return { text: task?.draft ?? "", attachments: [], ...(target ? { selectedProviderSettingsId: target.providerSettingsId, selectedModel: target.modelId } : {}), ...task?.draftContext };
   };
   input.value = readDraft().text;
   const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(failure); error.hidden = false; } };
@@ -216,7 +220,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     if (provider && selected) { const brand = shellElement(document, "span", "pd-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom"); visible.append(brand); }
     const modelName = selected?.displayName || selected?.id;
     visible.append(shellElement(document, "span", "pd-model-label", modelName || "配置模型"));
-    model.title = `选择模型：${modelName || "未配置"}`; model.setAttribute("aria-label", model.title);
+    attachNativeTooltip(model, `选择模型：${modelName || "未配置"}`); model.setAttribute("aria-label", model.title);
     permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === effectivePermission())?.[1]}`);
     send.disabled = sending || !!state?.resuming || !input.value.trim(); send.setAttribute("aria-busy", String(sending));
     send.hidden = !!state?.busy && !input.value.trim() && state?.interaction?.status !== "pending";

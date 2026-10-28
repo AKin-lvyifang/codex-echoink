@@ -215,7 +215,6 @@
 .echoink-workbench .wb-header.is-weather-condensed .wb-sky-feedback { position: absolute; right: 0; bottom: 8px; max-width: 100%; padding: 0; }
 .echoink-workbench .wb-weather-copy:disabled { cursor: default; opacity: 1; }
 .echoink-workbench .wb-weather-name { display: flex; align-items: baseline; gap: 6px; font-size: calc(var(--font-text-size, 16px) * .75); }
-.echoink-workbench .wb-weather-name em { font: inherit; font-family: Georgia, serif; color: var(--wb-muted); }
 .echoink-workbench .wb-weather-count { font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-weather-stage { display: block; flex: 0 0 auto; width: 180px; height: 85px; padding: 0; border: 0; border-radius: 8px; color: var(--wb-text); background: transparent; cursor: grab; touch-action: none; box-shadow: none; overflow: visible; }
 .echoink-workbench .wb-weather-stage:active { cursor: grabbing; }
@@ -234,7 +233,7 @@
 .echoink-workbench .wb-checkin-popover { position: absolute; z-index: 24; top: calc(100% + 7px); right: 0; border: 1px solid var(--wb-line); background: var(--wb-bg); border-radius: 10px; padding: 10px 12px; color: var(--wb-secondary); white-space: nowrap; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.8; font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-starters { margin-bottom: 26px; }
 .echoink-workbench .wb-starters > h2 { margin: 0 0 10px; font-size: inherit; font-weight: 600; }
-.echoink-workbench .wb-deck { position: relative; height: 300px; perspective: 1400px; overflow: hidden; touch-action: pan-y; user-select: none; border-radius: 12px; outline: none; }
+.echoink-workbench .wb-deck { position: relative; height: 300px; overflow: hidden; touch-action: pan-y; user-select: none; border-radius: 12px; outline: none; }
 .echoink-workbench .wb-deck:focus-visible { background: var(--wb-hover); }
 .echoink-workbench .wb-starter-card { position: absolute; top: 8px; left: 50%; margin-left: -140px; width: 280px; height: 276px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); padding: 14px; display: flex; flex-direction: column; gap: 10px; backface-visibility: hidden; cursor: pointer; }
 .echoink-workbench .wb-starter-card.is-current { cursor: default; }
@@ -242,13 +241,12 @@
 .echoink-workbench .wb-starter-art { height: 120px; flex: 0 0 120px; background: var(--wb-hover); border-radius: 10px; color: var(--wb-text); --bg: var(--wb-hover); }
 .echoink-workbench .wb-starter-art > svg { display: block; width: 100%; height: 100%; }
 .echoink-workbench .wb-starter-card h3 { margin: 0; font-size: inherit; font-weight: 600; line-height: 1.45; }
-.echoink-workbench .wb-starter-chip { align-self: flex-start; font-size: calc(var(--font-text-size, 16px) * .6875); color: var(--wb-secondary); border: 1px solid var(--wb-line); padding: 1px 8px; border-radius: 999px; }
 .echoink-workbench .wb-starter-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-top: auto; }
 .echoink-workbench .wb-starter-pro { position: absolute; top: 22px; right: 22px; font-size: calc(var(--font-text-size, 16px) * .6875); background: var(--wb-bg); border: 1px solid var(--wb-line); border-radius: 4px; padding: 1px 5px; }
 .echoink-workbench .wb-starter-lock { position: absolute; inset: auto 8px 8px; padding: 12px; background: var(--wb-bg); border: 1px solid var(--wb-line); border-radius: 10px; z-index: 20; }
 .echoink-workbench .wb-starter-lock .wb-starter-actions { margin-top: 12px; }
-.echoink-workbench button.wb-deck-arrow { position: absolute; top: 131px; z-index: 20; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: var(--wb-bg); }
-.echoink-workbench .wb-deck-arrow.is-prev { left: 4px; } .echoink-workbench .wb-deck-arrow.is-next { right: 4px; }
+.echoink-workbench .wb-deck-controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.echoink-workbench button.wb-deck-arrow { flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border-radius: 50%; background: var(--wb-bg); }
 .echoink-workbench .wb-deck-dots { display: flex; justify-content: center; gap: 6px; padding: 2px 0; }
 .echoink-workbench .wb-deck-dots button.wb-button { width: 6px; min-height: 6px; height: 6px; padding: 0; border: 0; border-radius: 3px; background: var(--wb-line); }
 .echoink-workbench .wb-deck-dots button.is-current { width: 18px; background: var(--wb-accent); }
@@ -275,3 +273,8 @@
   .echoink-workbench .is-checkin-disabled .wb-weather-stage { width: 107px; }
   .echoink-workbench .wb-starter-card { width: 250px; margin-left: -125px; }
 }
+
+.echoink-workbench .wb-module-setup-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.echoink-workbench .wb-module-setup-header > h1 { flex: 1; margin: 0; }
+.echoink-workbench .wb-module-setup-header > .is-primary { margin-left: auto; }
+.echoink-workbench .wb-module-setup > .wb-secondary { margin: 0; color: var(--wb-secondary); line-height: 1.7; }

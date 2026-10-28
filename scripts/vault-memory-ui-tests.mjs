@@ -1,5 +1,9 @@
 import path from "node:path";
 import { createRequire } from "node:module";
+import { mkdir, mkdtemp, writeFile, rm, symlink } from "node:fs/promises";
+import { homedir } from "node:os";
+import { pathToFileURL } from "node:url";
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import esbuild from "esbuild";
 
 // Workbench regressions use synthetic session files and membership responses.
@@ -26,20 +30,26 @@ Object.assign(win.Element.prototype, {
 });
 win.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 globalThis.getComputedStyle = win.getComputedStyle.bind(win);
+const base = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台卡片导航-自动测试"));
+await mkdir(base, { recursive: true });
+const temporary = await mkdtemp(path.join(base, ".workbench-ui-"));
 try {
+  await symlink(path.resolve("node_modules"), path.join(temporary, "node_modules"), "dir");
   const build = await esbuild.build({
-    stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh"; export { runWorkbenchCheckinTests } from "./src/tests/workbench-checkin";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "cjs",
+    stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh"; export { runWorkbenchCheckinTests } from "./src/tests/workbench-checkin";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "esm",
+    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
     alias: { obsidian: path.resolve("src/tests/obsidian-shim.ts") },
+    external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text" },
     plugins: [{ name: "workbench-ui-data-boundary", setup(build) {
       build.onResolve({ filter: /^\.\/workbench-data$/ }, () => ({ path: "workbench-data", namespace: "fixture" }));
       build.onLoad({ filter: /.*/, namespace: "fixture" }, () => ({ contents: "export const getWorkbenchDataService = () => globalThis.__p5WorkbenchPort;", loader: "js" }));
     } }]
   });
-  const module = { exports: {} };
-  new Function("require", "module", "exports", build.outputFiles[0].text)(require, module, module.exports);
-  await module.exports.runWorkbenchUiTests();
-  await module.exports.runWorkbenchHomeRefreshTests();
-  await module.exports.runWorkbenchCheckinTests();
+  const output = path.join(temporary, "tests.mjs"); await writeFile(output, build.outputFiles[0].text);
+  const module = await import(pathToFileURL(output));
+  await module.runWorkbenchUiTests();
+  await module.runWorkbenchHomeRefreshTests();
+  await module.runWorkbenchCheckinTests();
   console.log("PASS Workbench memory banners, adoption, inline reset/cancel, English text and existing DOM regressions (native appearance unverified)");
-} finally { win.close(); }
+} finally { win.close(); await rm(temporary, { recursive: true, force: true }); }

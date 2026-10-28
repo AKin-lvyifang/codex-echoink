@@ -13,7 +13,7 @@ export function renderTaskAvatar(root: HTMLElement, agent: AgentDefinition, size
   else setIcon(avatar, "bot");
 }
 export function taskIconButton(root: HTMLElement, label: string, icon: string, onClick: () => void): HTMLButtonElement {
-  const button = createOriginButton(root, { cls: "echoink-task-icon", attr: { type: "button", "aria-label": label, title: label, "data-variant": "icon" } });
+  const button = createOriginButton(root, { cls: "echoink-task-icon", attr: { type: "button", "aria-label": label, "data-variant": "icon" } });
   setIcon(button, icon); button.onclick = onClick; return button;
 }
 export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefinition[], entries: readonly TaskEntry[], selected: string,
@@ -27,7 +27,7 @@ export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefin
     const counts = agentTaskCounts(entries, agent.id);
     const label = language === "en" ? `${agent.name}, ${counts.total} tasks, ${counts.waiting} waiting, ${counts.interrupted} unfinished, ${counts.running} running, ${counts.unread} new results` : `${agent.name}，${counts.total}件事，${counts.waiting}件等你回应，${counts.interrupted}件没做完，${counts.running}件进行中，${counts.unread}件有新结果`;
     const button = createOriginButton(root, { cls: `echoink-agent-roster-item${agent.id === selected ? " is-selected" : ""}`,
-      attr: { type: "button", title: label, "aria-label": label, "aria-pressed": agent.id === selected, "data-agent-id": agent.id } });
+      attr: { type: "button", "aria-label": label, "aria-pressed": agent.id === selected, "data-agent-id": agent.id } });
     renderTaskAvatar(button, agent, 28);
     if (counts.waiting) button.createSpan({ cls: "echoink-agent-badge is-waiting", text: String(counts.waiting) });
     else if (counts.interrupted) button.createSpan({ cls: "echoink-agent-badge is-interrupted", text: "!" });

@@ -12,6 +12,7 @@ import { disposeOriginControls, type OriginSelectElement } from "../settings/ori
 import type { PiProviderModelListResult, PiProviderConnectionTestResult } from "../plugin/pi-provider-configuration-service";
 import type { OpenAICodexAuthStatus } from "../plugin/openai-codex-oauth-service";
 import type { EchoInkMcpServerDraft } from "../plugin/mcp-settings-service";
+import { openTestNotices } from "./obsidian-shim";
 
 const settle = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
@@ -86,12 +87,14 @@ export async function runSettingsEditorTests(): Promise<void> {
     assert.equal(f.root.querySelectorAll(".provider-form-section > .provider-connection-header, .provider-form-section > .provider-model-header").length, 2, "both titles are outside the group before attachment");
     input(f.root, "name", "挂载前的连接草稿");
     document.body.appendChild(f.root);
-    const help = f.root.querySelector<HTMLButtonElement>('[aria-label="自定义供应商名称说明"]')!;
-    const helpPanel = help.querySelector<HTMLElement>(".echoink-settings-help-panel")!;
-    assert.ok(helpPanel.hidden, "optional provider instructions start collapsed");
-    help.focus(); assert.equal(helpPanel.hidden, false, "keyboard focus exposes the existing instructions");
+    const help = f.root.querySelector<HTMLButtonElement>(".echoink-provider-form-help")!;
+    assert.equal(help.querySelector(".echoink-settings-help-panel"), null, "optional provider help creates no custom panel");
+    const explanation = document.getElementById(help.getAttribute("aria-labelledby")!)!.textContent;
+    help.click(); const helpNotice = openTestNotices.at(-1)!;
+    assert.equal(helpNotice.message, explanation, "touch help uses the full accessible explanation in a native Notice");
+    assert.equal(helpNotice.hidden, false);
     help.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.equal(helpPanel.hidden, true); assert.equal(saves, 0, "reading help never submits the form");
+    assert.equal(helpNotice.hidden, true); assert.equal(saves, 0, "reading help never submits the form");
     f.handle.suspend(); f.handle.resume(document.body);
     assert.equal(field<HTMLInputElement>(f.root, "name").value, "挂载前的连接草稿");
     assert.equal(f.modal.titleEl.querySelectorAll(".echoink-provider-form-brand").length, 1);

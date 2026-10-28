@@ -6,7 +6,7 @@ import type {
   EchoInkResource
 } from "../resources/types";
 import { applyAmicroButton } from "./amicro-buttons";
-import { attachSettingsTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { attachSettingsHelpTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
 
 export interface McpServerModalOptions {
   readonly app: App;
@@ -322,7 +322,7 @@ export class McpServerModal extends Modal {
     if (optional && this.modalEl.closest(".echoink-settings-aligned")) {
       const help = createOriginButton(labelEl, { cls: "echoink-settings-help-trigger echoink-mcp-form-help", attr: { type: "button", "aria-label": this.zh ? `${label}说明` : `${label} information` } });
       setIcon(help, "info");
-      attachSettingsTooltip(help, description, help, { interactive: false });
+      attachSettingsHelpTooltip(help, description, help, { interactive: false });
     } else labelEl.createSpan({ cls: "codex-mcp-server-field-description", text: description });
     return field;
   }

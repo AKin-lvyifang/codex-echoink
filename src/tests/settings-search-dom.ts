@@ -11,6 +11,8 @@ import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
 import type { EchoInkResource } from "../resources/types";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { attachSettingsTooltip } from "../settings/settings-v2";
+import { displayedTooltipsForTests } from "./obsidian-shim";
+import { runSettingsHelpTooltipTests } from "../../tests/settings-help-tooltips";
 import { paidTestAccess } from "./membership-access";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
@@ -19,6 +21,12 @@ import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import { profileSlotDefinition, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
 
 const categories: SettingsTab[] = ["general", "layout", "providers", "resources", "knowledgeBase", "review", "todos", "account"];
+
+function accessibleName(element: Element): string {
+  const references = element.getAttribute("aria-labelledby");
+  return references ? references.split(/\s+/u).map(id => element.ownerDocument.getElementById(id)?.textContent ?? "").join(" ")
+    : element.getAttribute("aria-label") ?? element.textContent ?? "";
+}
 
 /** Supply Obsidian's DOM helpers while retaining jsdom's real node semantics. */
 export function prepareDocument(win: Window & typeof globalThis) {
@@ -375,59 +383,9 @@ export async function runBuiltinPluginRowDomTests(primary: Window & typeof globa
   await checkBuiltinFinancePluginRows(primary, scheduler);
 }
 
-async function checkSettingsTooltipLifecycle(win: Window & typeof globalThis) {
-  const surface = win.document.body.createDiv({ cls: "echoink-settings-demo" });
-  const enter = (el: HTMLElement) => el.dispatchEvent(new win.MouseEvent("mouseenter"));
-  const leave = (el: HTMLElement) => el.dispatchEvent(new win.MouseEvent("mouseleave"));
-  try {
-    const directories = ["Raw", "Wiki"].map(name => {
-      const trigger = surface.createEl("button", { text: name });
-      attachSettingsTooltip(trigger, `${name} explanation`, trigger, { interactive: false });
-      return { trigger, panel: trigger.querySelector<HTMLElement>('[role="tooltip"]')! };
-    });
-    for (const { trigger, panel } of directories) {
-      enter(trigger);
-      assert.equal(surface.querySelectorAll('[role="tooltip"]:not([hidden])').length, 1);
-      assert.ok(panel.classList.contains("is-noninteractive"), "directory explanation never catches the pointer over another row");
-      leave(trigger);
-      assert.equal(panel.hidden, true, "directory tooltip closes in the same event, with no timer delay");
-      assert.equal(panel.isConnected, false);
-    }
-    const { trigger, panel } = directories[0];
-    trigger.focus();
-    assert.equal(panel.hidden, false, "keyboard focus still reveals the directory explanation");
-    assert.equal(trigger.getAttribute("aria-describedby"), panel.id);
-    trigger.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.equal(panel.hidden, true);
-    trigger.blur(); trigger.focus(); trigger.blur();
-    assert.equal(panel.hidden, true, "blur dismisses the keyboard explanation");
-    enter(trigger);
-    surface.dispatchEvent(new win.Event("scroll"));
-    assert.equal(panel.hidden, true, "scroll does not strand a floating explanation");
-    enter(trigger);
-    trigger.remove();
-    await Promise.resolve();
-    assert.equal(panel.hidden, true, "removing a row dismisses its tooltip");
-    assert.equal(panel.isConnected, false, "removing a row removes its escaped tooltip from the settings surface");
-
-    const help = surface.createEl("button", { text: "Long help" });
-    attachSettingsTooltip(help, "Long help that can be scrolled");
-    const helpPanel = help.querySelector<HTMLElement>('[role="tooltip"]')!;
-    enter(help); leave(help); enter(helpPanel);
-    await new Promise(resolve => setTimeout(resolve, 150));
-    assert.equal(helpPanel.hidden, false, "hovering a regular help panel cancels its grace-period dismissal");
-    helpPanel.dispatchEvent(new win.Event("scroll"));
-    assert.equal(helpPanel.hidden, false, "regular long help remains readable while scrolling its content");
-    leave(helpPanel);
-    await new Promise(resolve => setTimeout(resolve, 150));
-    assert.equal(helpPanel.hidden, true, "leaving regular help still dismisses it");
-  } finally { surface.remove(); }
-  console.log("PASS settings tooltips: immediate directory leave, pointer/focus/Escape/scroll/teardown, scrollable help retained");
-}
-
 export async function runSettingsSearchDomTests(primary: Window & typeof globalThis, secondDocument: () => any) {
   const scheduler = prepareDocument(primary);
-  await checkSettingsTooltipLifecycle(primary);
+  await runSettingsHelpTooltipTests(primary);
   globalThis.ResizeObserver = primary.ResizeObserver;
   globalThis.requestAnimationFrame = primary.requestAnimationFrame;
   globalThis.cancelAnimationFrame = primary.cancelAnimationFrame;
@@ -1065,19 +1023,17 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
         await scheduler.flush();
         const check = f.tab.containerEl.querySelector<OriginCheckElement>('[data-echoink-focus-key="english-diary:home-shortcut"]')!;
         assert.ok(check, "search opens the actual English diary option");
-        assert.equal(check.getAttribute("aria-label"), en ? "English diary shortcut on mobile" : "移动端英文日记快捷入口");
+        assert.equal(accessibleName(check), en ? "English diary shortcut on mobile" : "移动端英文日记快捷入口");
         assert.equal(win.document.activeElement, check, "new and legacy aliases focus the saved option");
       }
       const check = f.tab.containerEl.querySelector<OriginCheckElement>('[data-echoink-focus-key="english-diary:home-shortcut"]')!;
       const row = check.closest(".setting-item")!;
       const help = row.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
       help.focus();
-      const panel = win.document.getElementById(help.getAttribute("aria-describedby")!)!;
-      assert.equal(panel.hidden, false);
-      assert.equal(panel.textContent, en ? "Replace Quick note on mobile with Write English diary" : "将移动端的快速记录入口改为写英文日记");
+      assert.equal(displayedTooltipsForTests.get(help), en ? "Replace Quick note on mobile with Write English diary" : "将移动端的快速记录入口改为写英文日记");
+      assert.equal(help.ownerDocument.getElementById(help.getAttribute("aria-labelledby")!)?.textContent, displayedTooltipsForTests.get(help));
       assert.equal(selections.length, 0, "reading the hint never saves a setting");
       help.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      assert.equal(panel.hidden, true);
       check.click(); await scheduler.flush();
       assert.equal(plugin.settings.englishDiary.homeShortcut, "english-diary");
       assert.equal((f.saved.at(-1) as any).englishDiary.homeShortcut, "english-diary");
@@ -1094,15 +1050,16 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
       assert.equal(auto.querySelector(".setting-item-description")!.textContent, en ? "How long conversations stay inactive before archiving" : "多久没更新的对话自动归档");
       const autoHelp = auto.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
       autoHelp.focus();
-      const autoPanel = win.document.getElementById(autoHelp.getAttribute("aria-describedby")!)!;
-      assert.equal(autoPanel.hidden, false);
-      assert.equal(autoPanel.textContent, en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
+      assert.equal(displayedTooltipsForTests.get(autoHelp), en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
+      assert.equal(auto.querySelector(".echoink-settings-help-panel"), null);
       const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
       assert.equal(archive.querySelector(".echoink-settings-navigation-description"), null, "archive navigation omits the redundant description");
-      archive.focus();
-      const archivePanel = win.document.getElementById(archive.getAttribute("aria-describedby")!)!;
-      assert.equal(archivePanel.hidden, false);
-      assert.equal(archivePanel.textContent, en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
+      const archiveName = accessibleName(archive);
+      const archiveHelp = archive.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
+      archiveHelp.focus();
+      assert.equal(displayedTooltipsForTests.get(archiveHelp), en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
+      archiveHelp.click();
+      assert.equal(accessibleName(archive), archiveName, "native help preserves the navigation name");
       assert.equal(archive.querySelector("button"), null, "navigation help does not nest a button inside its navigation button");
       assert.equal(archive.tagName, "BUTTON"); assert.equal(archive.disabled, false);
       const openedDetails: string[] = [];

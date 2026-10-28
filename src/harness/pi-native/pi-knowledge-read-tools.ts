@@ -149,6 +149,8 @@ implements PiVaultAdditionalToolSecurityPort {
   constructor(private readonly options: Readonly<{
     currentRunIdentity(): Readonly<PiKnowledgeRunIdentity>;
     currentWorkflow(): "chat" | "ask" | "maintain" | "none";
+    /** Validate current capability before lazily establishing ordinary-chat context. */
+    prepareWorkflow?(toolId: PiKnowledgeReadToolId, args: Readonly<PiKnowledgeReadToolArgumentsById[PiKnowledgeReadToolId]>): Promise<void>;
     onSourceRead?(reference: Readonly<PiKnowledgeReference>, sourceBodyFingerprint?: string): void;
     egress: VaultToolResultEgressPort;
   }>) {}
@@ -160,21 +162,23 @@ implements PiVaultAdditionalToolSecurityPort {
     if (!isPiKnowledgeReadToolId(event.toolName)) {
       return block("tool_policy_blocked");
     }
-    if (
-      (this.options.currentWorkflow() !== "ask"
-        && this.options.currentWorkflow() !== "chat"
-        && this.options.currentWorkflow() !== "maintain")
-      || this.seenToolCallIds.has(event.toolCallId)
-    ) {
+    if (this.seenToolCallIds.has(event.toolCallId)) {
       return block("authorization_failed");
     }
     try {
-      const identity = normalizeIdentity(this.options.currentRunIdentity());
       const args = normalizePiKnowledgeReadToolArguments(
         event.toolName,
         event.input
       );
+      // Reserve before awaiting preparation so an in-flight replay cannot gain
+      // a second one-shot authority while the workflow is being established.
       this.seenToolCallIds.add(event.toolCallId);
+      await this.options.prepareWorkflow?.(event.toolName, args);
+      const workflow = this.options.currentWorkflow();
+      if (workflow !== "ask" && workflow !== "chat" && workflow !== "maintain") {
+        return block("authorization_failed");
+      }
+      const identity = normalizeIdentity(this.options.currentRunIdentity());
       this.calls.set(event.toolCallId, {
         toolId: event.toolName,
         identity,

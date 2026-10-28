@@ -1,14 +1,14 @@
 import type { AgentRunSnapshot } from "../agents/types";
 import type { EchoInkQuestionAnswer, EchoInkQuestionPrompt } from "../types/conversation-turn";
 import type { MobilePermission } from "./store";
-import type { TaskInterruptionReason } from "../agents/task-resume";
+import type { TaskInterruptionReason, TaskInterruptionRecord } from "../agents/task-resume";
 import type { MobileFinanceEvidence } from "./finance-journal";
+import type { ToolCallTextFailureCode } from "../harness/tool-call-text";
 
 export type MobileInterruptionReason = TaskInterruptionReason | "app_backgrounded";
-export interface MobileTaskInterruption {
-  at: number;
+export interface MobileTaskInterruption extends Omit<TaskInterruptionRecord, "reason"> {
+  toolCallTextFailure?: ToolCallTextFailureCode;
   reason: MobileInterruptionReason;
-  stage: string;
 }
 /** Local effect facts; never a permission grant or an automatic retry instruction. */
 export interface MobileWriteOperation {

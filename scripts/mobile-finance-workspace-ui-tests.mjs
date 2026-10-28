@@ -79,7 +79,8 @@ export async function runMobileFinanceWorkspaceUiTests(device) {
   try {
     await mount();
     assert.equal(calls.initialize, 1); assert.equal(calls.storeInitialize, 1); assert.equal(views.size, 1);
-    assert.match(current().textContent, /每一笔，都有自己的去处。/);
+    assert.match(current().textContent, /本月收支差额/);
+    assert.doesNotMatch(current().textContent, /每一笔，都有自己的去处。/);
     assert.deepEqual([...current().querySelectorAll('[role="tab"]')].map(node => node.firstElementChild.nextSibling.textContent), ["财务总览", "收支明细", "月度预算", "账单计划"]);
     assert.equal(current().querySelector('.ip-finance-summary,.pd-finance-summary,input[type="month"]'), null);
     assert.ok(current().querySelector(".echoink-finance-donut-svg")); assert.ok(current().querySelector(".echoink-finance-calendar"));

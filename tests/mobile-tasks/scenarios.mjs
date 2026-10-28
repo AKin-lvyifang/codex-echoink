@@ -13,9 +13,9 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const provider = mobileProvider("custom"); Object.assign(provider, { apiKey: "fake-key", baseUrl: "https://fixture.example/v1", models: [mobileModel("fixture-model", options)], defaultModelId: "fixture-model" });
     return loadMobileSettings({ apiProviders: [provider], activeApiProviderId: provider.id, defaultModel: "fixture-model" });
   };
-  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context, initialize = true) => {
+  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context, initialize = true, persistSettings = async () => {}) => {
     const host = createHost(); const store = new MobileStore(host.adapter, "plugin/mobile", "task-fixture"); await store.load();
-    const runtime = new MobileRuntime(host.app, store, () => settings, request, context); if (initialize) await runtime.initialize();
+    const runtime = new MobileRuntime(host.app, store, () => settings, request, context, persistSettings); if (initialize) await runtime.initialize();
     return { ...host, store, runtime, settings };
   };
 
@@ -27,6 +27,84 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     await state.runtime.send("still completes");
     assert.equal(state.runtime.busy, false); assert.ok(seen.length > 1); assert.ok(seen.every(id => id === state.store.session.id));
     assert.equal(state.store.session.messages.at(-1).content[0].text, "ok"); bad(); good(); state.runtime.dispose();
+  });
+
+  await test("text tool invocations interrupt durably, both switch states, with code examples and actual execution preserved", async () => {
+    const call = '<tool_call>{"name":"note_read","arguments":{"path":"example.md"}}</tool_call>';
+    for (const mode of ["disabled", "enabled", "code", "executed"]) {
+      let calls = 0;
+      const text = mode === "code" ? "```xml\n" + call + "\n```" : call;
+      const state = await fixture(async request => {
+        const body = JSON.parse(request.body);
+        if (mode === "disabled") {
+          assert.equal(body.tools, undefined);
+          assert.doesNotMatch(body.messages[0].content, /写入前搜索|只能使用当前注册工具/u);
+        }
+        if (mode === "executed" && calls++ === 0) return { status: 200, json: { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "real-read", type: "function", function: { name: "note_read", arguments: JSON.stringify({ path: "笔记/来源.md" }) } }] }, finish_reason: "tool_calls" }] } };
+        return answer("openai-completions", text);
+      }, config({ toolCalling: mode !== "disabled" }));
+      const failed = mode === "disabled" || mode === "enabled";
+      if (failed) await assert.rejects(state.runtime.send("read supplied note"), /本轮没有执行工具/u);
+      else await state.runtime.send("read supplied note");
+      const task = state.store.session;
+      assert.equal(task.taskStatus, failed ? "interrupted" : "completed");
+      assert.equal(task.messages.at(-1).content[0].text, text);
+      const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
+      const runtime = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("no replay"); });
+      assert.equal(/本轮没有执行工具/u.test(runtime.stateFor(task.id).error), failed);
+      if (failed) {
+        assert.match(reopened.session.runs.at(-1).interruption.toolCallTextFailure, /^model_tool_call_text_/u);
+        assert.match(reopened.session.runs.at(-1).interruption.detail, /本轮没有执行工具/u);
+      }
+      runtime.dispose(); state.runtime.dispose();
+    }
+  });
+
+  await test("tool failure recovery saves the exact nondefault model before one shared continuation and executes a real tool", async () => {
+    const saveGate = gate(); let saves = 0, calls = 0, saved;
+    const settings = config({ toolCalling: false }); const original = settings.apiProviders[0];
+    const state = await fixture(async request => {
+      const body = JSON.parse(request.body); calls++;
+      if (calls === 1) { assert.equal(body.tools, undefined); return answer("openai-completions", '<tool_call>{"name":"note_read","arguments":{"path":"笔记/来源.md"}}</tool_call>'); }
+      assert.ok(body.tools.some(tool => tool.function.name === "note_read"));
+      assert.equal(body.model, "fixture-model");
+      assert.equal(userTexts(body).at(-1), "上一轮的工具调用只是文字，没有真正执行。请用可用的工具重新执行需要的操作。");
+      if (calls === 2) return answer("openai-completions", "", [["recovery-read", "note_read", { path: "笔记/来源.md" }]]);
+      assert.ok(body.messages.some(message => message.role === "tool"));
+      return answer("openai-completions", "已读取真实工具结果");
+    }, settings, undefined, true, async () => { saves++; await saveGate.promise; saved = JSON.stringify(settings); });
+    try {
+      await assert.rejects(state.runtime.send("读取笔记"), /本轮没有执行工具/u);
+      const id = state.store.session.id;
+      assert.equal(state.store.session.interruption.providerSettingsId, original.id);
+      assert.equal(state.store.session.interruption.modelId, "fixture-model");
+      const other = structuredClone(original); other.id = "default-other"; settings.apiProviders.push(other); settings.activeApiProviderId = other.id;
+      const selected = { provider: settings.activeApiProviderId, model: settings.defaultModel };
+      const one = state.runtime.resumeTask(id), two = state.runtime.resumeTask(id);
+      assert.strictEqual(one, two); await waitFor(() => saves === 1);
+      assert.equal(calls, 1); assert.equal(state.runtime.stateFor(id).resuming, true);
+      saveGate.resolve(); const submission = await one; await submission.completion;
+      const persisted = JSON.parse(saved).apiProviders.find(provider => provider.id === original.id).models[0];
+      assert.equal(persisted.toolCalling, true); assert.equal(persisted.capabilityOverrides.toolCalling, true);
+      assert.equal(settings.apiProviders.find(provider => provider.id === other.id).models[0].toolCalling, false);
+      assert.deepEqual({ provider: settings.activeApiProviderId, model: settings.defaultModel }, selected);
+      assert.equal(calls, 3); assert.equal(state.store.session.taskStatus, "completed");
+      assert.equal(state.store.session.messages.filter(message => message.role === "toolResult").length, 1);
+    } finally { saveGate.resolve(); state.runtime.dispose(); }
+  });
+
+  await test("tool recovery save failure rolls back, retains draft and never starts a continuation request", async () => {
+    let saves = 0, calls = 0;
+    const settings = config({ toolCalling: false }); const before = JSON.stringify(settings);
+    const state = await fixture(async () => { calls++; return answer("openai-completions", '<tool_call>{"name":"note_read","arguments":{}}</tool_call>'); }, settings, undefined, true,
+      async () => { saves++; throw new Error("synthetic settings save failure"); });
+    try {
+      await assert.rejects(state.runtime.send("原任务")); const id = state.store.session.id;
+      await assert.rejects(state.runtime.resumeTask(id, "保留补充输入"), /设置保存失败/u);
+      assert.equal(saves, 1); assert.equal(calls, 1); assert.equal(JSON.stringify(settings), before);
+      assert.equal(state.store.session.taskStatus, "interrupted"); assert.equal(state.store.session.draft, "保留补充输入");
+      assert.match(state.runtime.stateFor(id).error, /设置保存失败/u);
+    } finally { state.runtime.dispose(); }
   });
 
   await test("sendNew rejects invalid input/model/Skill/context without publishing a task or changing selection", async () => {

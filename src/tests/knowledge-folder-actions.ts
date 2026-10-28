@@ -4,7 +4,7 @@ import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface
 import { renderKnowledgeFolderActions } from "../settings/knowledge-folder-actions";
 import { createSettingsNavigationRow } from "../settings/settings-v2";
 import { disposeOriginControls } from "../settings/origin-controls";
-import { openTestModals, openTestNoticeMessages } from "./obsidian-shim";
+import { displayedTooltipsForTests, openTestModals, openTestNoticeMessages } from "./obsidian-shim";
 
 /** Run under the folder-settings DOM so this suite is included in its existing entry. */
 export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { Event: typeof Event }): Promise<void> {
@@ -90,10 +90,11 @@ export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { E
     assert.equal(restoreCalls, 1, "a missing record never exposes an executable restore");
     record = { createdAt: 1_800_000_000_000, files: 9 }; draw(); await flush();
     const updated = button("复原仓库"), updatedValue = updated.querySelector<HTMLElement>(".echoink-settings-navigation-value")!;
-    assert(updated.getAttribute("aria-label")?.includes("9 个文件"), "asynchronous metadata refreshes the accessible value");
+    const accessibleValue = updated.getAttribute("aria-labelledby")?.split(/\s+/u).map(id => updated.ownerDocument.getElementById(id)?.textContent ?? "").join(" ") ?? updated.getAttribute("aria-label");
+    assert(accessibleValue?.includes("9 个文件"), "asynchronous metadata refreshes the accessible value");
     Object.defineProperties(updatedValue, { scrollWidth: { configurable: true, value: 400 }, clientWidth: { configurable: true, value: 100 } });
     updated.focus();
-    assert.equal(host.querySelector('[role="tooltip"]:not([hidden])')?.textContent, updatedValue.textContent, "the full tooltip uses the latest restore record");
+    assert.equal(displayedTooltipsForTests.get(updated), updatedValue.textContent, "the native tooltip uses the latest restore record");
     updated.blur();
     recordFails = true; draw(); await flush();
     assert(button("复原仓库").querySelector(".echoink-settings-navigation-description")?.textContent?.includes("复原记录读取失败"));

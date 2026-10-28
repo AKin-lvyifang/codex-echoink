@@ -1,4 +1,5 @@
 import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
+import { DEFAULT_UNDECLARED_TOOL_CALLING, resolveStoredModelToolCalling } from "../settings/provider-model-capabilities";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { ApiProviderConfig, ApiProviderModelConfig, CodexForObsidianSettings } from "../settings/settings";
 import { API_PROVIDER_PRESETS, getApiProviderPreset, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
@@ -56,7 +57,13 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     ...raw,
     colorTheme: normalizeEchoInkColorTheme(raw?.colorTheme),
     // Both desktop and mobile persist the same provider configuration schema.
-    apiProviders: Array.isArray(raw?.apiProviders) ? raw.apiProviders as ApiProviderConfig[] : [],
+    apiProviders: Array.isArray(raw?.apiProviders) ? (raw.apiProviders as ApiProviderConfig[]).map(provider => {
+      const models = provider.models.map(model => {
+        const toolCalling = resolveStoredModelToolCalling(model);
+        return model.toolCalling === toolCalling ? model : { ...model, toolCalling };
+      });
+      return models.some((model, index) => model !== provider.models[index]) ? { ...provider, models } : provider;
+    }) : [],
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     autoOpenHome: raw?.autoOpenHome === true,
@@ -93,7 +100,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
   return settings;
 }
 export function mobileModel(id: string, existing?: ApiProviderModelConfig): ApiProviderModelConfig {
-  return { input: ["text"], toolCalling: true, reasoning: false, reasoningEnabled: false, contextWindow: 128000, modelMaxTokens: 8192, maxOutputTokens: 4096, metadataSource: "manual", ...existing, id, displayName: existing?.displayName || id };
+  return { input: ["text"], toolCalling: DEFAULT_UNDECLARED_TOOL_CALLING, reasoning: false, reasoningEnabled: false, contextWindow: 128000, modelMaxTokens: 8192, maxOutputTokens: 4096, metadataSource: "manual", ...existing, id, displayName: existing?.displayName || id };
 }
 export function mobileProvider(providerId: ApiProviderId): ApiProviderConfig {
   const preset = getApiProviderPreset(providerId);

@@ -6,7 +6,7 @@
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {
   /* `inherit` on a custom property would inherit the theme's heading token.
      `initial` makes the heading's var() invalid so its font/color inherit,
      exactly as the original host's unset heading token did. */
@@ -76,13 +76,12 @@
   body:not(.is-mobile) .echoink-expression-view,body:not(.is-mobile) .echoink-chat-surface,body:not(.is-mobile) .echoink-theme-boundary,
   body:not(.is-mobile) .codex-review-preview,body:not(.is-mobile) .echoink-journal-template-modal,body:not(.is-mobile) .echoink-todo-form-modal,
   body:not(.is-mobile) .echoink-diary-modal,body:not(.is-mobile) .echoink-finance-dialog,body:not(.is-mobile) .echoink-account-modal,
-  body:not(.is-mobile) .echoink-account-tooltip,body:not(.is-mobile) .codex-kb-health-tooltip-panel,body:not(.is-mobile) .echoink-onboarding-coachmark,
-  body:not(.is-mobile) .echoink-diary-tooltip) {font-family:var(--font-interface)}
+  body:not(.is-mobile) .echoink-onboarding-coachmark) {font-family:var(--font-interface)}
 .theme-dark:not(:where(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {
   --menu-background:#282828;--menu-border-color:#3f3f3f;--modal-background:#1c1c1c;--modal-border-color:#3f3f3f;
   --dropdown-background:#333;--dropdown-background-hover:#3f3f3f;
   --input-placeholder-color:#666;
@@ -111,7 +110,7 @@
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
 /* Both navigation levels keep their original background, accent, padding,
    corners, and active underline. The resource tabs had no shadow declaration. */
 .echoink-settings-demo.echoink-settings-demo :is(.codex-settings-tab,.codex-resource-tab) {

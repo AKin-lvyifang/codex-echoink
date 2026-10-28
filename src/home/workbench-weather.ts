@@ -112,7 +112,7 @@ export class WorkbenchWeatherStage {
     this.text.hidden = weather === null; this.text.disabled = !weather || weather === "still";
     this.text.replaceChildren();
     if (weather) {
-      const name = this.text.createSpan({ cls: "wb-weather-name" }); name.createSpan({ text: names[weather][0] }); name.createEl("em", { text: names[weather][1] });
+      const name = this.text.createSpan({ cls: "wb-weather-name" }); name.setText(names[weather][this.plugin.settings.settingsLanguage === "en" ? 1 : 0]);
       this.text.createSpan({ cls: "wb-weather-count", text: line });
       this.text.setAttribute("aria-label", `${names[weather][this.plugin.settings.settingsLanguage === "en" ? 1 : 0]} · ${line}`);
     }

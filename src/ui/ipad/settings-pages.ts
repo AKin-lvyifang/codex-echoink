@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { Notice } from "obsidian";
 import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
 import { decorateProAppearanceChoice } from "../appearance-pro";
@@ -23,7 +24,7 @@ import { createEnglishDiarySettingsPage } from "./english-diary-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
-import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
+import { el, settingsContent, settingsGroup, settingsRow, settingsSelect, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
 
 const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
 const aliases: Record<string, string> = { providers: "model", models: "model", basic: "general", layout: "general", resources: "caps", modules: "mods" };
@@ -103,6 +104,7 @@ export class IPadSettings {
   private general(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx); let signature = "", busy = false;
     const render = () => {
+      if (busy) return;
       const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
       if (key === signature) return; signature = key; content.replaceChildren();
       const appearance = settingsGroup(ctx, content, t(ctx, "外观")), row = settingsRow(ctx, appearance, t(ctx, "配色"));
@@ -116,34 +118,27 @@ export class IPadSettings {
         button.addEventListener("click", () => { if (busy || value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService) === value) return; busy = true;
           track.dataset.value = value;
           this.root.ownerDocument.body.setAttribute("data-echoink-theme", effectiveEchoInkColorTheme(value, this.host.accountService));
-          track.querySelectorAll("button").forEach(control => { control.disabled = true; control.setAttribute("aria-pressed", String(control === button)); });
+          content.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>("button,input,select").forEach(control => { control.disabled = true; });
+          track.querySelectorAll("button").forEach(control => { control.setAttribute("aria-pressed", String(control === button)); });
           void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
       }
       row.append(track);
       renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en");
-      settingsRow(ctx, appearance, t(ctx, "界面语言"), settings.settingsLanguage === "en" ? "English" : "简体中文", () => ctx.push(this.language()));
+      const language = settingsSelect(ctx, appearance, t(ctx, "界面语言"), [["zh-CN", "简体中文"], ["en", "English"]], settings.settingsLanguage, value => {
+        if (busy) { language.value = this.host.settings().settingsLanguage; return; }
+        if (value === this.host.settings().settingsLanguage) return;
+        busy = true; content.setAttribute("aria-busy", "true");
+        content.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>("button,input,select").forEach(control => { control.disabled = true; });
+        void this.save(current => { const previous = current.settingsLanguage; current.settingsLanguage = value as "en" | "zh-CN"; return () => { current.settingsLanguage = previous; }; })
+          .catch(error => ctx.error(error)).finally(() => { busy = false; content.removeAttribute("aria-busy"); signature = ""; render(); });
+      });
       settingsSwitch(ctx, settingsGroup(ctx, content, t(ctx, "启动")), t(ctx, "启动时打开工作台"), settings.autoOpenHome === true, enabled => this.save(current => {
         const previous = current.autoOpenHome; current.autoOpenHome = enabled; return () => { current.autoOpenHome = previous; };
       }));
       settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "关于")), "EchoInk Agent", this.host.version ?? "", () => ctx.push(this.about()));
     };
     content.dataset.echoinkAppearancePicker = ""; content.addEventListener(ECHOINK_APPEARANCE_REFRESH, render);
-    return liveSettingsPage(ctx, { id: "ipad-settings-general", title: "通用", content, dispose: () => content.removeEventListener(ECHOINK_APPEARANCE_REFRESH, render) }, render);
-  }
-  private language(): MobileShellPage {
-    const ctx = this.context, content = settingsContent(ctx); let busy = false, signature = "";
-    const render = () => {
-      const value = this.host.settings().settingsLanguage; if (value === signature) return; signature = value; content.replaceChildren();
-      const group = settingsGroup(ctx, content, t(ctx, "界面语言"));
-      for (const [id, label] of [["zh-CN", "简体中文"], ["en", "English"]]) {
-        const row = settingsRow(ctx, group, label, value === id ? t(ctx, "已选择") : "", async () => {
-          if (busy || this.host.settings().settingsLanguage === id) return; busy = true;
-          try { await this.save(settings => { const old = settings.settingsLanguage; settings.settingsLanguage = id as "en" | "zh-CN"; return () => { settings.settingsLanguage = old; }; }); }
-          finally { busy = false; }
-        }); row.setAttribute("aria-pressed", String(value === id));
-      }
-    };
-    return liveSettingsPage(ctx, { id: "ipad-settings-language", title: "界面语言", content }, render);
+    return liveSettingsPage(ctx, { id: "ipad-settings-general", title: "通用", content, canLeave: () => !busy, dispose: () => content.removeEventListener(ECHOINK_APPEARANCE_REFRESH, render) }, render);
   }
   private about(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx);
@@ -190,7 +185,7 @@ export class IPadSettings {
         const row = settingsRow(ctx, paid ? pro : basic, t(ctx, label)); row.classList.add("pd-settings-module-row");
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!, title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button";
         const value = el(ctx.document, "span", "pd-settings-value", directory); title.append(ipadIcon(ctx.document, icon), copy, value, ipadIcon(ctx.document, "chevron-right")); row.append(title);
-        if (policy && !policy.canToggle) { title.title = policy.reason ?? t(ctx, "需要 PRO"); copy.append(el(ctx.document, "span", "pd-settings-description", policy.reason ?? t(ctx, "需要 PRO"))); }
+        if (policy && !policy.canToggle) { attachNativeTooltip(title, policy.reason ?? t(ctx, "需要 PRO")); copy.append(el(ctx.document, "span", "pd-settings-description", policy.reason ?? t(ctx, "需要 PRO"))); }
         title.addEventListener("click", event => { event.stopPropagation(); void Promise.resolve().then(async () => {
           const current = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(this.host.settings(), id)) : undefined;
           if (current && !current.canToggle) throw new Error(current.reason ?? t(ctx, "需要 PRO"));

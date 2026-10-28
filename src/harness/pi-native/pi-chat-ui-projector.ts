@@ -1,11 +1,18 @@
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
 import { maintenanceFailureText, maintenancePageLabel, maintenanceToolTitle, maintenanceUserReceiptFromResult } from "../../knowledge-base/maintenance-user-copy";
 import { savedAnswerNotePaths } from "./pi-answer-save";
+import {
+  appendOutputContinuationText,
+  outputContinuationFromSessionEntry,
+  type PiOutputContinuationRecord
+} from "./pi-output-continuation";
+import { knowledgeVerificationFromSessionEntry } from "./pi-knowledge-verification";
 import { projectInjectedMemorySources } from "./pi-memory-sources";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
 import { assistantProviderFailureText } from "../pi/provider-failure";
+import { toolCallTextFailureMessage } from "../tool-call-text";
 import {
   extractProcessFileRefs,
   stableHashedIdentity,
@@ -196,6 +203,7 @@ export type PiChatUiRunState =
 
 /** Optional ProductRun identities let a durable rebuild retain UI turn groups. */
 export interface PiChatUiRunIdentity {
+  readonly toolCallTextFailure?: string;
   readonly productRunId: string;
   readonly userEntryId: string;
   readonly assistantEntryId?: string;
@@ -217,6 +225,8 @@ export interface PiChatUiViewModel {
   provisionalMessageIds: string[];
   /** Tool calls visible on the active Branch without a durable Tool Result. */
   pendingToolCallIds: string[];
+  /** Live aliases only; durable ownership is rebuilt from continuation custom Entries. */
+  outputContinuationMessageIds?: Readonly<Record<string, string>>;
   /** Current-session request shown by the Composer Interaction Dock. */
   pendingInteraction?: Readonly<EchoInkTurnInteraction>;
   updatedAt: number;
@@ -347,11 +357,24 @@ export class PiChatUiProjector {
       privacySafeToolRuns,
       maintenanceRunIds
     } = buildRunIdentityMaps(input.runIdentities ?? []);
+    const continuations = outputContinuationsFromBranch(input.entries, piSessionId);
+    const continuationEntryRuns = new Map(entryRuns);
+    for (const record of continuations.values()) {
+      for (const entryId of record.assistantEntryIds) {
+        continuationEntryRuns.set(entryId, record.productRunId);
+      }
+    }
+    for (const entry of input.entries) {
+      const record = knowledgeVerificationFromSessionEntry(entry, piSessionId);
+      if (record && !continuationEntryRuns.has(record.assistantEntryId)) {
+        continuationEntryRuns.set(record.assistantEntryId, record.productRunId);
+      }
+    }
     const context: BranchProjectionContext = {
       scope,
       piSessionId,
       vaultPath: input.vaultPath ?? "",
-      entryRuns,
+      entryRuns: continuationEntryRuns,
       toolRuns,
       privacySafeToolRuns,
       maintenanceRunIds,
@@ -381,6 +404,8 @@ export class PiChatUiProjector {
     for (const entry of input.entries) {
       this.projectDurableEntry(messages, pendingTools, entry, context);
     }
+    projectOutputContinuations(messages, input.entries, continuations, scope);
+    projectKnowledgeVerificationOutcome(messages, input.entries, piSessionId, continuations, scope);
     const reopenedReasoningStatus = reopenedReasoningTerminalStatus(runState);
     if (reopenedReasoningStatus && input.productRunId) {
       const message = messages.find((candidate) =>
@@ -419,6 +444,10 @@ export class PiChatUiProjector {
       ...diagnostics.map((diagnostic) => diagnostic.createdAt)
     );
     const projectionTime = finiteTime(input.now, durableUpdatedAt);
+    for (const run of input.runIdentities ?? []) {
+      const text = toolCallTextFailureMessage(run.toolCallTextFailure);
+      if (text) upsertToolCallTextFailure(messages, scope, run.productRunId, run.toolCallTextFailure!, run.updatedAt ?? projectionTime);
+    }
     appendRehydratedTerminalMarker(
       messages,
       scope,
@@ -515,6 +544,8 @@ export class PiChatUiProjector {
         if (index < 0) view.messages.push(message); else view.messages[index] = { ...message, createdAt: view.messages[index].createdAt };
         break;
       }
+      case "model_progress":
+        break;
       case "message_start":
         if (!runtimeEventIsPrivate(event) && event.role !== "tool") {
           this.projectRuntimeMessageStart(view, scope, event);
@@ -532,6 +563,9 @@ export class PiChatUiProjector {
         break;
       case "message_entry_resolved":
         this.resolveRuntimeMessageEntry(view, scope, event.messageKey, event.entryId);
+        break;
+      case "output_continuation":
+        this.projectRuntimeOutputContinuation(view, scope, event);
         break;
       case "tool_execution_start":
         this.projectRuntimeToolStart(view, scope, event, input.vaultPath ?? "");
@@ -570,6 +604,7 @@ export class PiChatUiProjector {
         break;
       case "product_run_settled":
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
+        if (toolCallTextFailureMessage(event.toolCallTextFailure)) upsertToolCallTextFailure(view.messages, scope, event.productRunId, event.toolCallTextFailure!, event.occurredAt);
         break;
     }
     view.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(view.messages), event.productRunId));
@@ -596,12 +631,33 @@ export class PiChatUiProjector {
     });
     const durableEntryIds = new Set(input.entries.map((entry) => entry.id));
     const durableToolResultIds = toolResultIdsFromEntries(input.entries);
+    const continuations = outputContinuationsFromBranch(input.entries, current.piSessionId);
+    const continuationRepresentatives = new Map<string, ChatMessage>();
+    for (const record of continuations.values()) {
+      const representative = findByIdentity(rebuilt.messages, "entry", record.assistantEntryIds.at(-1)!);
+      if (representative) continuationRepresentatives.set(record.productRunId, representative);
+    }
 
     const unresolved: string[] = [];
     for (const provisionalId of current.provisionalMessageIds) {
       const live = current.messages.find((message) => message.id === provisionalId);
       if (!live) continue;
       const identity = projectionIdentity(live.id);
+      const continued = live.role === "assistant" && live.runId
+        ? continuationRepresentatives.get(live.runId) : undefined;
+      const isContinuationMember = live.runId && identity?.kind === "entry"
+        && continuations.get(live.runId)?.assistantEntryIds.includes(identity.value);
+      const isContinuationAlias = Object.values(current.outputContinuationMessageIds ?? {}).includes(live.id);
+      if (continued && (isContinuationMember || isContinuationAlias)) {
+        // A persisted continuation record proves this provisional answer's durable owner.
+        if (!continued.text.startsWith(live.text) && live.text.startsWith(continued.text)) {
+          Object.assign(continued, cloneProjectedMessage(live), { id: continued.id });
+          continued.title = live.title;
+          continued.details = live.details;
+          unresolved.push(continued.id);
+        }
+        continue;
+      }
       if (identity?.kind === "entry" && durableEntryIds.has(identity.value)) continue;
       if (identity?.kind === "tool" && durableToolResultIds.has(identity.value)) continue;
       const nextId = reScopeMessageId(live.id, projectionScope(current.piSessionId, input.activeLeafId));
@@ -615,6 +671,15 @@ export class PiChatUiProjector {
       ...current.diagnostics.filter((item) => item.piSessionId === current.piSessionId)
     ]);
     rebuilt.provisionalMessageIds = uniqueStrings(unresolved);
+    if (current.outputContinuationMessageIds) {
+      rebuilt.outputContinuationMessageIds = Object.fromEntries(
+        Object.entries(current.outputContinuationMessageIds).map(([key, id]) => {
+          const live = current.messages.find(message => message.id === id);
+          const representative = live?.runId ? continuationRepresentatives.get(live.runId) : undefined;
+          return [key, representative?.id ?? reScopeMessageId(id, projectionScope(current.piSessionId, input.activeLeafId))];
+        })
+      );
+    }
     rebuilt.pendingToolCallIds = uniqueStrings([
       ...rebuilt.pendingToolCallIds,
       ...unresolved.flatMap((id) => {
@@ -1351,6 +1416,52 @@ export class PiChatUiProjector {
     replaceProvisional(view, provisionalId, resolvedId);
   }
 
+  private projectRuntimeOutputContinuation(
+    view: PiChatUiViewModel,
+    scope: string,
+    event: Extract<PiChatRuntimeEvent, { type: "output_continuation" }>
+  ): void {
+    const key = `${event.productRunId}\0${event.messageKey}`;
+    const provisionalId = runtimeMessageId(scope, event.messageKey);
+    const previousId = view.outputContinuationMessageIds?.[key];
+    let existing = view.messages.find(message => message.id === previousId)
+      ?? view.messages.find(message => message.id === provisionalId)
+      ?? (event.entryId ? findByIdentity(view.messages, "entry", event.entryId) : undefined);
+    if (!existing) {
+      for (let index = view.messages.length - 1; index >= 0; index--) {
+        const candidate = view.messages[index];
+        if (candidate.runId === event.productRunId && candidate.role === "assistant"
+          && (candidate.itemType === "assistant" || candidate.itemType === "error")) {
+          existing = candidate;
+          break;
+        }
+      }
+    }
+    const id = event.entryId ? entryMessageId(scope, event.entryId) : existing?.id ?? provisionalId;
+    const projected: ChatMessage = {
+      ...(existing ?? { role: "assistant", text: "", createdAt: event.occurredAt }),
+      id,
+      role: "assistant",
+      text: event.text.trim() ? event.text : existing?.text ?? "",
+      runId: event.productRunId,
+      turnId: event.productRunId
+    };
+    if (existing && id !== existing.id) delete projected.savedNotePath;
+    const alreadyDurable = event.entryId !== undefined && existing?.id === id
+      && existing.text === projected.text && !view.provisionalMessageIds.includes(id);
+    applyOutputContinuationStatus(projected, event.status, event.occurredAt);
+    if (existing) {
+      removeMessage(view.messages, existing.id);
+      if (!alreadyDurable) replaceProvisional(view, existing.id, id);
+    }
+    removeMessage(view.messages, provisionalId);
+    upsertMessage(view.messages, projected);
+    if (!alreadyDurable) addProvisional(view, id);
+    view.outputContinuationMessageIds = { ...view.outputContinuationMessageIds, [key]: id };
+    if (projected.text.trim()) removeRuntimeProgressMessages(view, scope, event.productRunId);
+    if (event.status === "running") view.runState = "running";
+  }
+
   private projectRuntimeToolStart(
     view: PiChatUiViewModel,
     scope: string,
@@ -1672,6 +1783,7 @@ export class PiChatUiProjector {
     const scope = projectionScope(current.piSessionId, event.activeLeafId);
     const next = cloneView(current);
     delete next.pendingInteraction;
+    delete next.outputContinuationMessageIds;
     return {
       ...next,
       activeLeafId: event.activeLeafId,
@@ -2489,6 +2601,28 @@ function diagnosticFromCustomEntry(
 }
 
 
+function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId: string, code: string, at: number): void {
+  const text = toolCallTextFailureMessage(code)!;
+  const toolCallTextFailure = code as NonNullable<ChatMessage["toolCallTextFailure"]>;
+  const id = terminalMessageId(scope, runId);
+  const existing = messages.findIndex(message => message.id === id);
+  if (existing >= 0) messages.splice(existing, 1);
+  let answerIndex = -1;
+  messages.forEach((message, index) => {
+    if (message.runId === runId && message.role === "assistant"
+      && (message.itemType === "assistant" || message.itemType === "error")) {
+      message.status = "failed";
+      if (message.itemType === "error") message.title = "回答失败";
+      message.details = text;
+      message.toolCallTextFailure = toolCallTextFailure;
+      answerIndex = index;
+    }
+  });
+  const marker: ChatMessage = { id, role: "system", itemType: "error", title: "工具未执行", text,
+    status: "failed", toolCallTextFailure, runId, turnId: runId, createdAt: at, completedAt: at };
+  messages.splice(answerIndex >= 0 ? answerIndex + 1 : messages.length, 0, marker);
+}
+
 function appendRehydratedTerminalMarker(
   messages: ChatMessage[],
   scope: string,
@@ -2735,6 +2869,115 @@ function runtimeToolProgressStatus(
   const object = plainObject(update);
   const phase = normalizedToken(object?.phase ?? object?.status);
   return phase === "approved" ? "approved" : "running";
+}
+
+function outputContinuationsFromBranch(
+  entries: readonly PiSessionBranchEntryView[],
+  piSessionId: string
+): ReadonlyMap<string, PiOutputContinuationRecord> {
+  const assistants = new Map<string, number>();
+  entries.forEach((entry, index) => {
+    if (entry.type === "message" && entry.message?.role === "assistant") assistants.set(entry.id, index);
+  });
+  const records = new Map<string, PiOutputContinuationRecord>();
+  for (const entry of entries) {
+    const record = outputContinuationFromSessionEntry(entry, piSessionId);
+    if (!record) continue;
+    let previousIndex = -1;
+    const onBranch = record.assistantEntryIds.every(id => {
+      const index = assistants.get(id);
+      if (index === undefined || index <= previousIndex) return false;
+      previousIndex = index;
+      return true;
+    });
+    if (onBranch) records.set(record.productRunId, record);
+  }
+  return records;
+}
+
+function projectOutputContinuations(
+  messages: ChatMessage[],
+  entries: readonly PiSessionBranchEntryView[],
+  continuations: ReadonlyMap<string, PiOutputContinuationRecord>,
+  scope: string
+): void {
+  const byId = new Map(entries.map(entry => [entry.id, entry]));
+  for (const record of continuations.values()) {
+    const lastEntryId = record.assistantEntryIds.at(-1)!;
+    const members = new Set(record.assistantEntryIds);
+    const first = messages.find(message => {
+      const id = piEntryIdFromProjectedMessageId(message.id);
+      return message.role === "assistant" && id && members.has(id);
+    });
+    const last = findByIdentity(messages, "entry", lastEntryId);
+    const lastEntry = byId.get(lastEntryId)!;
+    let text = "";
+    for (const id of record.assistantEntryIds) {
+      text = appendOutputContinuationText(text, textFromContent(byId.get(id)?.message?.content)).text;
+    }
+    if (!first && !text) continue;
+    const representative: ChatMessage = {
+      ...(first ?? { role: "assistant", text: "", createdAt: entryTime(lastEntry) }),
+      ...last,
+      id: entryMessageId(scope, lastEntryId),
+      role: "assistant",
+      text: text || last?.text || first?.text || "",
+      runId: record.productRunId,
+      turnId: record.productRunId,
+      createdAt: first?.createdAt ?? entryTime(lastEntry)
+    };
+    const realFailure = normalizedToken(lastEntry.message?.stopReason) === "error"
+      && lastEntry.message?.errorMessage !== "provider_output_limit_reached"
+      ? assistantFailure(lastEntry.message!) : undefined;
+    applyOutputContinuationStatus(representative, record.status, entryTime(lastEntry), realFailure);
+    // Keep the original answer's position while its final Entry anchors all actions.
+    const position = first ? messages.indexOf(first) : messages.length;
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const id = piEntryIdFromProjectedMessageId(messages[index].id);
+      if (messages[index].role === "assistant" && id && members.has(id)) messages.splice(index, 1);
+    }
+    messages.splice(Math.min(position, messages.length), 0, representative);
+  }
+}
+
+function applyOutputContinuationStatus(
+  message: ChatMessage,
+  status: PiOutputContinuationRecord["status"],
+  observedAt: number,
+  realFailure?: ReturnType<typeof assistantFailure>
+): void {
+  message.status = status === "cancelled" ? "interrupted" : status;
+  message.itemType = status === "failed" || status === "cancelled" ? "error" : "assistant";
+  delete message.title;
+  delete message.details;
+  if (status === "failed") {
+    message.title = realFailure?.title ?? "回答未完成";
+    message.details = realFailure?.text ?? providerFailureText("provider_output_limit_reached")
+      ?? "达到输出上限，回答未完整生成。";
+  } else if (status === "cancelled") {
+    message.title = "回答已停止";
+  }
+  if (status === "running") delete message.completedAt;
+  else message.completedAt = observedAt;
+}
+
+function projectKnowledgeVerificationOutcome(
+  messages: ChatMessage[],
+  entries: readonly PiSessionBranchEntryView[],
+  piSessionId: string,
+  continuations: ReadonlyMap<string, PiOutputContinuationRecord>,
+  scope: string
+): void {
+  for (const entry of entries) {
+    const record = knowledgeVerificationFromSessionEntry(entry, piSessionId);
+    if (!record) continue;
+    const continuation = continuations.get(record.productRunId);
+    const entryId = continuation?.assistantEntryIds.includes(record.assistantEntryId)
+      ? continuation.assistantEntryIds.at(-1)! : record.assistantEntryId;
+    const answer = messages.find(message => message.id === entryMessageId(scope, entryId)
+      && message.role === "assistant" && message.runId === record.productRunId);
+    if (answer) answer.knowledgeVerificationSkipped = record.reason;
+  }
 }
 
 function buildRunIdentityMaps(identities: readonly PiChatUiRunIdentity[]): {
@@ -3182,6 +3425,9 @@ function cloneView(current: Readonly<PiChatUiViewModel>): PiChatUiViewModel {
     queuedFollowUp: [...current.queuedFollowUp],
     provisionalMessageIds: [...current.provisionalMessageIds],
     pendingToolCallIds: [...current.pendingToolCallIds],
+    ...(current.outputContinuationMessageIds
+      ? { outputContinuationMessageIds: { ...current.outputContinuationMessageIds } }
+      : {}),
     ...(current.pendingInteraction
       ? { pendingInteraction: cloneEchoInkTurnInteraction(current.pendingInteraction) }
       : {})

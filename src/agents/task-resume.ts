@@ -1,4 +1,5 @@
 import type { TaskResumeSafetySnapshot } from "../plugin/task-resume-safety";
+import type { ToolCallFailureInfo } from "./tool-call-recovery";
 
 export const TASK_INTERRUPTION_REASONS = [
   "app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog"
@@ -6,14 +7,19 @@ export const TASK_INTERRUPTION_REASONS = [
 export type TaskInterruptionReason = typeof TASK_INTERRUPTION_REASONS[number];
 
 /** Saved on the ProductRun. Absence on old runs means the cause was not recorded. */
-export interface TaskInterruptionRecord {
+export interface TaskInterruptionRecord extends ToolCallFailureInfo {
   readonly at: number;
   readonly reason: TaskInterruptionReason;
   readonly stage: string;
   readonly detail?: string;
+  /** Actual SDK retry count; absent means no retry exhaustion was observed. */
+  readonly retryAttempts?: number;
 }
 export interface TaskInterruptionInfo extends TaskInterruptionRecord {
   readonly taskId: string;
+  /** Derived from current policy, never a fifth persisted task state. */
+  readonly failureMessage?: string;
+  readonly resumeBlocked?: boolean;
   readonly uncertainOperations: readonly { readonly id: string; readonly label: string }[];
 }
 /** Per-run recovery facts; never reused as the next ordinary turn's policy. */

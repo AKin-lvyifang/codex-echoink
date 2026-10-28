@@ -25,10 +25,17 @@ export class ElementNode {
   onsubmit: ((event: { preventDefault(): void }) => void) | null = null;
   private ownText = "";
   private attributes = new Map<string, string>();
+  private listeners = new Map<string, Set<EventListenerOrEventListenerObject>>();
+  namespaceURI = "http://www.w3.org/1999/xhtml";
   scrollTop = 0;
   scrollHeight = 0;
   clientHeight = 0;
   constructor(readonly tagName: string, readonly ownerDocument: TestDocument) {}
+  get parentNode(): ElementNode | null { return this.parentElement; }
+  get nextSibling(): ElementNode | null { const siblings = this.parentElement?.children ?? []; return siblings[siblings.indexOf(this) + 1] ?? null; }
+  get id(): string { return this.getAttribute("id") ?? ""; }
+  set id(value: string) { this.setAttribute("id", value); }
+  get accessibleName(): string { return this.getAttribute("aria-label") ?? (this.getAttribute("aria-labelledby")?.split(/\s+/u).map(id => this.ownerDocument.getElementById(id)?.textContent ?? "").join(" ") || this.textContent); }
   get isConnected(): boolean { return this === this.ownerDocument.body || !!this.parentElement?.isConnected; }
   get textContent(): string { return this.ownText + this.children.map((child) => child.textContent).join(""); }
   set textContent(value: string) { this.empty(); this.ownText = value; }
@@ -39,6 +46,7 @@ export class ElementNode {
     toggle: (name: string, force?: boolean) => { const next = force ?? !this.className.split(" ").includes(name); this.toggleClass(name, next); return next; }
   }; }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
+  hasAttribute(name: string): boolean { return this.attributes.has(name); }
   removeAttribute(name: string): void { this.attributes.delete(name); }
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
@@ -75,35 +83,49 @@ export class ElementNode {
     const direct = selector.startsWith(":scope > ");
     const target = direct ? selector.slice(9) : selector;
     const matches = (node: ElementNode): boolean => {
-      if (target.startsWith(".")) return node.classList.contains(target.slice(1));
+      if (target.startsWith(".")) return target.slice(1).split(".").every(name => node.classList.contains(name));
+      if (target.startsWith("#")) return node.id === target.slice(1);
       const attribute = target.match(/^\[data-catalog-index="(.*)"\]$/u);
       return attribute ? node.getAttribute("data-catalog-index") === attribute[1] : node.tagName === target;
     };
     const visit = (nodes: ElementNode[]): ElementNode[] => nodes.flatMap((node) => [node, ...visit(node.children)]);
     return (direct ? this.children : visit(this.children)).filter(matches) as T[];
   }
-  click(): void { if (!this.disabled) this.onclick?.(); }
-  focus(): void { this.ownerDocument.activeElement = this; }
+  click(): void { if (!this.disabled) this.dispatchEvent({ type: "click" }); }
+  focus(): void { const previous = this.ownerDocument.activeElement; if (previous === this) return; previous?.dispatchEvent({ type: "blur" }); this.ownerDocument.activeElement = this; this.dispatchEvent({ type: "focus" }); }
   scrollIntoView(): void {}
-  addEventListener(): void {}
-  removeEventListener(): void {}
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject): void { if (!this.listeners.has(type)) this.listeners.set(type, new Set()); this.listeners.get(type)!.add(listener); }
+  removeEventListener(type: string, listener: EventListenerOrEventListenerObject): void { this.listeners.get(type)?.delete(listener); }
+  dispatchEvent(input: { type: string }): void {
+    const event = { preventDefault() {}, stopPropagation() {}, ...input } as Event;
+    for (const listener of this.listeners.get(input.type) ?? []) { if (typeof listener === "function") listener.call(this as unknown as EventTarget, event); else listener.handleEvent(event); }
+    const handler = (this as unknown as Record<string, unknown>)[`on${input.type}`];
+    if (typeof handler === "function") handler.call(this, event);
+  }
   requestSubmit(): void { this.onsubmit?.({ preventDefault() {} }); }
 }
 
 export class TestDocument {
   activeElement: ElementNode | null = null;
   body = new ElementNode("body", this);
-  defaultView = { innerHeight: 800, requestAnimationFrame: (callback: () => void) => { callback(); return 1; } };
+  defaultView = {
+    innerHeight: 800, requestAnimationFrame: (callback: () => void) => { callback(); return 1; },
+    setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
+    addEventListener: (type: string, listener: (event: { key: string }) => void) => this.addEventListener(type, listener),
+    removeEventListener: (type: string, listener: (event: { key: string }) => void) => this.removeEventListener(type, listener)
+  };
   private listeners = new Map<string, Set<(event: { key: string }) => void>>();
   addEventListener(type: string, listener: (event: { key: string }) => void): void {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
     this.listeners.get(type)!.add(listener);
   }
   removeEventListener(type: string, listener: (event: { key: string }) => void): void { this.listeners.get(type)?.delete(listener); }
-  dispatchKey(key: string): void { for (const listener of this.listeners.get("keydown") ?? []) listener({ key }); }
+  dispatchKey(key: string): void { for (const listener of this.listeners.get("keydown") ?? []) listener({ key, preventDefault() {}, stopPropagation() {} } as { key: string }); }
   listenerCount(type: string): number { return this.listeners.get(type)?.size ?? 0; }
   createElement(tag: string): ElementNode { return new ElementNode(tag, this); }
-  createElementNS(_namespace: string, tag: string): ElementNode { return new ElementNode(tag, this); }
+  querySelectorAll(selector: string): ElementNode[] { return this.body.querySelectorAll(selector); }
+  getElementById(id: string): ElementNode | null { return this.body.querySelector(`#${id}`); }
+  createElementNS(namespace: string, tag: string): ElementNode { const node = new ElementNode(tag, this); node.namespaceURI = namespace; return node; }
 }
 
 export async function runLifestyleFinanceUiTests(): Promise<void> {

@@ -9,6 +9,7 @@ import type { SavedDiaryEntry } from "../english-diary/types";
 import { ForegroundView } from "../ui/foreground-view";
 import { workbenchModuleOwner } from "./module-navigation";
 import { loadEnglishDiaryPageData, type EnglishDiaryPageData } from "./english-diary-page-data";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export const ENGLISH_DIARY_PAGE_VIEW_TYPE = "echoink-english-diary-page";
 type DiaryPage = "diary" | "expressions";
@@ -20,6 +21,7 @@ export class EnglishDiaryPageView extends ItemView {
   private closed = true;
   private foreground: ForegroundView | null = null;
   private releases: Array<() => void> = [];
+  private reviewTooltip: ReturnType<typeof attachNativeTooltip> | null = null;
   private generation = 0;
   private pending = true;
   private scheduled = false;
@@ -58,6 +60,7 @@ export class EnglishDiaryPageView extends ItemView {
     this.closed = true; this.generation++; this.unsubscribe(); this.syncActive();
     this.expressions?.close(); this.expressions = null;
     this.foreground?.dispose(); this.foreground = null;
+    this.reviewTooltip?.dispose(); this.reviewTooltip = null;
     disposeOriginControls(this.contentEl);
   }
   private subscribe(): void {
@@ -187,7 +190,7 @@ export class EnglishDiaryPageView extends ItemView {
     const review = this.field("owner") as HTMLButtonElement;
     review.setText(this.t(`交给 ${owner.name} 复习表达`, `Ask ${owner.name} to review expressions`));
     review.disabled = !this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled;
-    review.title = !this.snapshot?.expressions.length ? this.t("还没有可复习的表达", "No expressions to review yet") : "";
+    this.reviewTooltip = attachNativeTooltip(review, !this.snapshot?.expressions.length ? this.t("还没有可复习的表达", "No expressions to review yet") : "");
     const reason = this.field("review-reason");
     reason.setText(this.snapshot && !this.snapshot.expressions.length && !this.snapshot.errors.expressions ? this.t("还没有可复习的表达", "No expressions to review yet") : "");
     reason.hidden = !reason.textContent;

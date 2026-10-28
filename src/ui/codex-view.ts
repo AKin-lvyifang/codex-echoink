@@ -1,3 +1,4 @@
+import { exportDesktopRunReport } from "../run-reports/desktop-ui";
 import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
 import { GenerationModal } from "../generation/modal";
@@ -176,6 +177,7 @@ import {
   derivePiConversationFromMessage as derivePiConversationFromMessageAction,
   refreshPiConversationShells as refreshPiConversationShellsAction,
   renderTabsView,
+  openSessionMenuView,
   renameSession as renameSessionAction,
   sessionById as sessionByIdAction,
   type CodexSessionHost,
@@ -183,7 +185,6 @@ import {
 } from "./codex-view/session-controller";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
-export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
 export interface HomeConversationStartInput {
   readonly title: string;
@@ -349,8 +350,10 @@ export class CodexView extends ItemView {
     this.attachments = draft.attachments.map(attachment => ({ ...attachment })); this.selectedSkill = draft.selectedSkill ?? null;
     clearComposerNoteMentions(this.inputEl);
     for (const mention of draft.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
-    this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? this.plugin.settings.activeApiProviderId;
-    this.selectedModel = draft.selectedModel ?? this.plugin.settings.defaultModel;
+    const page = this.taskNavigation.page;
+    const recovery = page.kind === "detail" ? this.plugin.taskToolCallRecovery?.(page.taskId, this.taskInterruptions.get(page.taskId)?.info) : undefined;
+    this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? recovery?.target?.providerSettingsId ?? this.plugin.settings.activeApiProviderId;
+    this.selectedModel = draft.selectedModel ?? recovery?.target?.modelId ?? this.plugin.settings.defaultModel;
     this.selectedPermission = draft.selectedPermission ?? this.plugin.settings.defaultPermission;
     this.selectedMode = draft.selectedMode ?? "agent";
     this.renderAttachments(); this.renderToolbar(); this.updateInputPlaceholder();
@@ -405,6 +408,18 @@ export class CodexView extends ItemView {
       rememberPiConversationProjection(this.plugin, projection);
       applyPiConversationProjectionToShell(this.sessionHost(), session, projection);
       this.taskEntries = [...this.taskEntries.filter(entry => entry.conversationId !== taskId), projection.catalog];
+      if (projection.catalog.taskStatus === "interrupted") {
+        const key = `${projection.catalog.taskInterruptedAt ?? 0}:${projection.catalog.taskStage ?? ""}`;
+        try {
+          const info = await this.plugin.readTaskInterruption(taskId);
+          if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+          this.taskInterruptions.set(taskId, { key, info });
+          this.restoreTaskComposerDraft();
+        } catch (error) {
+          if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+          this.taskInterruptions.set(taskId, { key, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
       this.plugin.settings.activeSessionId = taskId;
       this.resetVirtualWindow(); this.virtualListEl.empty();
       this.renderTaskPlanDock(session); this.renderInteractionDock(session);
@@ -421,16 +436,18 @@ export class CodexView extends ItemView {
     }
   }
   refreshAgentTasks(): void { if (this.taskUiMounted) void this.reloadTaskCatalog(); }
+  async refreshAgentTasksAfterMutation(): Promise<void> { if (this.taskUiMounted) await this.reloadTaskCatalog(); }
   private async reloadTaskCatalog(): Promise<void> {
     if (this.taskCatalogFlight) { this.taskRefreshAgain = true; return await this.taskCatalogFlight; }
     this.taskCatalogFlight = (async () => {
       do {
         this.taskRefreshAgain = false;
         try {
-          const entries = await this.plugin.listAgentTaskEntries();
+          const entries = await this.plugin.listAgentTaskEntries(true);
           if (this.viewLifecycleAbortController.signal.aborted) return;
           this.taskEntries = entries;
           for (const entry of entries) {
+            if (entry.status !== "active") continue;
             if (inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId)) continue;
             const at = Math.max(entry.updatedAt, entry.taskCompletedAt ?? 0, entry.taskStartedAt ?? 0, entry.taskInterruptedAt ?? 0);
             const resident = this.sessionById(entry.conversationId);
@@ -457,6 +474,13 @@ export class CodexView extends ItemView {
     this.taskMidnightTimer = window.setTimeout(() => { if (this.viewLifecycleAbortController.signal.aborted) return; this.renderTaskPages(); this.scheduleTaskMidnightRefresh(); }, tomorrow.getTime() - Date.now());
   }
   private showTaskError(message: string): void { this.taskLoadError = message; this.renderTaskPages(); }
+  private async openTaskRunReport(id: string): Promise<void> {
+    try { await this.plugin.openRunReport(id); } catch (error) { new Notice(error instanceof Error ? error.message : "无法打开上报问题"); }
+  }
+  openReportConversationId(): string | undefined {
+    if (this.taskUiMounted) return !this.taskEditor && this.taskNavigation.page.kind === "detail" ? this.taskNavigation.page.taskId : undefined;
+    return this.plugin.settings.activeSessionId || undefined;
+  }
   private renderTaskInterruptionCard(): void {
     const element = this.taskInterruptionEl, entry = this.currentTaskEntry();
     if (!element) return;
@@ -472,16 +496,28 @@ export class CodexView extends ItemView {
       const reason = this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? activity.failures[0]?.message ?? "停止";
       renderTaskInterruption(element, { pending, language: this.plugin.settings.settingsLanguage,
         userCopy: activity.taskKind === "upgrade" ? reason : maintenanceFailureText(reason, activity.currentPath, this.plugin.settings.settingsLanguage === "en"),
-        buttonLabel: this.taskText("继续", "Continue"), onResume: () => { void this.resumeInterruptedTask(id, false); } });
+        buttonLabel: this.taskText("继续", "Continue"), onReport: () => this.openTaskRunReport(id), onResume: () => { void this.resumeInterruptedTask(id, false); } });
       return;
     }
-    const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}`;
+    const policy = JSON.stringify([this.currentTaskAgent(), this.plugin.settings.knowledgeBase.folderBindings,
+      this.plugin.settings.defaultPermission, this.plugin.settings.settingsLanguage, this.plugin.settings.resources.catalog.map(resource => [resource.id, resource.enabled])]);
+    const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}:${policy}`;
     let record = this.taskInterruptions.get(id);
     if (!record || record.key !== key) {
       record = { key }; this.taskInterruptions.set(id, record);
       const current = record;
       // Opening a task only reads local records. It never starts recovery or a model.
-      void this.plugin.readTaskInterruption(id).then(info => { current.info = info; }).catch(error => {
+      void this.plugin.readTaskInterruption(id).then(info => {
+        current.info = info;
+        const draft = this.plugin.settings.taskWorkspace?.replyDrafts[id];
+        // Loading an old task must not turn the current global default into an explicit choice.
+        if (!this.viewLifecycleAbortController.signal.aborted && this.currentTaskEntry()?.conversationId === id
+          && !draft?.selectedProviderSettingsId && !draft?.selectedModel
+          && this.selectedProviderSettingsId === this.plugin.settings.activeApiProviderId && this.selectedModel === this.plugin.settings.defaultModel) {
+          const target = this.plugin.taskToolCallRecovery?.(id, info)?.target;
+          if (target) { this.selectedProviderSettingsId = target.providerSettingsId; this.selectedModel = target.modelId; this.renderToolbar(); }
+        }
+      }).catch(error => {
         current.error = this.taskText("读取中断记录失败：", "Could not read interruption details: ") + (error instanceof Error ? error.message : String(error));
       }).finally(() => {
         if (this.viewLifecycleAbortController.signal.aborted || this.currentTaskEntry()?.conversationId !== id || this.taskInterruptions.get(id) !== current) return;
@@ -491,8 +527,10 @@ export class CodexView extends ItemView {
       });
     }
     const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
+    const recovery = this.plugin.taskToolCallRecovery?.(id, record.info);
     renderTaskInterruption(element, { info: record.info, error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
-      pending, language: this.plugin.settings.settingsLanguage,
+      ...(recovery ? { explanation: recovery.message, buttonLabel: recovery.enable ? this.taskText("开启工具调用并继续", "Enable tools and continue") : this.taskText("继续", "Continue") } : {}),
+      pending, language: this.plugin.settings.settingsLanguage, onReport: () => this.openTaskRunReport(id),
       onResume: () => { void this.resumeInterruptedTask(id, false); } });
   }
   private async resumeInterruptedTask(taskId: string, withComposer: boolean): Promise<void> {
@@ -526,7 +564,7 @@ export class CodexView extends ItemView {
     const displayEntries = projectInlineTaskEntries(this.taskEntries.map(task => {
       const activity = maintenanceActivityForTask(task, this.taskMaintenanceActivities ?? []), entry = taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []);
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
-    }), inlineHost?.service.list() ?? []);
+    }), inlineHost?.service.list() ?? []).filter(task => task.status === "active");
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
@@ -555,13 +593,17 @@ export class CodexView extends ItemView {
       retry.onclick = () => { this.taskLoadError = ""; if (page.kind === "detail") void this.openTaskDetail(page.taskId); else void this.reloadTaskCatalog(); };
     }
     if (this.taskEditor) return;
-    if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions, {
+    if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions.filter(session => !inlineHost?.service.latestForTask(session.id)), {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
+      onSessionMenu: (event, session) => openSessionMenuView(this.sessionHost(), event, session),
       summary: entry => this.taskSummaryText(entry),
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
     else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
-      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined);
+      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined, {
+        export: async () => exportDesktopRunReport(this.app, this.plugin.getVaultPath(), await this.plugin.captureRunReport(entry.conversationId), this.plugin.settings.settingsLanguage === "en"),
+        report: () => this.plugin.openRunReport(entry.conversationId)
+      });
     else {
       disposeOriginControls(this.taskDetailHeaderEl!); this.taskDetailHeaderEl!.empty();
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });
@@ -841,7 +883,7 @@ export class CodexView extends ItemView {
         this.rehomeComposerQueue(created.id, key); this.composerConversationTargets.delete(key);
         await this.plugin.setPiConversationStatus(created.id, "deleted");
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(session => session.id !== created!.id);
-        if (outcome === "failed") this.showTaskError(this.taskText("消息尚未发送，请检查输入区提示后重试。", "The message was not sent. Check the Composer notice and try again."));
+        if (outcome === "failed") this.showTaskError(this.plugin.getTaskResumeError(created.id) ?? this.taskText("消息尚未发送，请检查输入区提示后重试。", "The message was not sent. Check the Composer notice and try again."));
       }
     } catch (error) {
       if (created && !item?.piUserEntryAccepted) {

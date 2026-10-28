@@ -1,5 +1,6 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
-import { setIcon, setTooltip } from "obsidian";
+import { setIcon } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { AGENT_STYLES } from "../../agents/styles";
@@ -360,7 +361,7 @@ export class AgentEditorController {
     const reasons = [...new Set([availability?.available === false ? this.availabilityReason(availability.reason ?? this.t("当前不可用", "Currently unavailable")) : "", resource?.enabled === false ? this.t("资源未启用", "Resource disabled") : "", extraReason ?? ""].filter(Boolean))];
     if (reasons.length) {
       row.classList.add("is-unavailable"); const reason = reasons.join(this.t("；", "; "));
-      row.title = check.title = reason; check.setAttribute("aria-description", reason); setTooltip(row, reason);
+      check.setAttribute("aria-description", reason); attachNativeTooltip(row, reason);
     }
     check.onchange = () => { this.setCapability(id, check.checked); this.changed(); };
   }
@@ -404,7 +405,7 @@ export class AgentEditorController {
       const ids = (record?.tools ?? []).map(tool => mcpToolCapabilityId(resource.id, tool.name));
       this.mcpChecks.push({ check, ids }); check.disabled = !ids.length;
       const reason = !record ? this.t("尚未连接服务", "Service not connected") : !record.tools.length ? this.t("尚未发现可用工具", "No tools discovered") : !record.trusted ? this.t("服务尚未信任", "Service not trusted") : !resource.enabled ? this.t("服务未启用", "Service disabled") : "";
-      if (reason) { head.classList.add("is-unavailable"); head.title = check.title = reason; check.setAttribute("aria-description", reason); setTooltip(head, reason); }
+      if (reason) { head.classList.add("is-unavailable"); check.setAttribute("aria-description", reason); attachNativeTooltip(head, reason); }
       check.onchange = () => { for (const id of ids) this.setCapability(id, check.checked); this.changed(); };
       let rendered = false;
       details.ontoggle = () => {

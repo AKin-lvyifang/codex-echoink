@@ -48,7 +48,7 @@ import {
   type ProviderPreflightService
 } from "./provider-preflight";
 import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
-import { attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
+import { attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 
 type ProviderFormField =
@@ -783,7 +783,6 @@ export class ProviderModelModal extends Modal {
       cls: "codex-provider-modal-icon-button",
       attr: {
         type: "button",
-        title: this.options.copy.providers.showKey,
         "aria-label": this.options.copy.providers.showKey,
         "data-modal-focus-key": "toggle-api-key"
       }
@@ -793,9 +792,6 @@ export class ProviderModelModal extends Modal {
       input.type = input.type === "password" ? "text" : "password";
       reveal.empty();
       setIcon(reveal, input.type === "password" ? "eye" : "eye-off");
-      reveal.title = input.type === "password"
-        ? this.options.copy.providers.showKey
-        : this.options.copy.providers.hideKey;
       reveal.setAttr("aria-label", input.type === "password"
         ? this.options.copy.providers.showKey
         : this.options.copy.providers.hideKey);
@@ -1567,7 +1563,7 @@ export class ProviderModelModal extends Modal {
       source,
       input,
       unknown && model.discovery?.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined && !(this.providerId === "deepseek" && model.discovery)
-        ? this.label("工具能力未声明", "Tool capability undeclared")
+        ? (model.toolCalling ? this.label("工具调用（默认开启）", "Tool calling (enabled by default)") : this.label("工具能力未声明", "Tool capability undeclared"))
         : model.toolCalling
         ? (this.providerId === "deepseek" && model.discovery && model.discovery.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined
           ? this.label("工具调用（官方兼容）", "Tool calling (official compatibility)")
@@ -1855,7 +1851,7 @@ export class ProviderModelModal extends Modal {
   private addOptionalHelp(parent: HTMLElement, label: string, description: string): void {
     const help = createOriginButton(parent, { cls: "echoink-settings-help-trigger echoink-provider-form-help", attr: { type: "button", "aria-label": this.zh ? `${label}说明` : `${label} information` } });
     setIcon(help, "info");
-    attachSettingsTooltip(help, description, help, { interactive: false });
+    attachSettingsHelpTooltip(help, description, help, { interactive: false });
   }
 
   private createField(container: HTMLElement, label: string, controlId: string): HTMLElement {

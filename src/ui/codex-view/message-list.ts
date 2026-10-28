@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
@@ -101,6 +102,14 @@ import {
   renderSmoothAILoader,
   type SmoothAIApprovalState
 } from "./smooth-chat-ui";
+
+/** Consume only first-party DOM titles at their creation site, including incremental renders. */
+function withNativeMessageTooltip<T extends HTMLElement>(element: T): T {
+  const explanation = element.getAttribute("title");
+  if (explanation) attachNativeTooltip(element, explanation);
+  else element.removeAttribute("title");
+  return element;
+}
 
 type MessageRenderRow =
   | { id: string; kind: "message"; message: ChatMessage; showAgentHeader: boolean; showAgentFooter: boolean; processExpanded: boolean }
@@ -1311,11 +1320,11 @@ export class CodexMessageListRenderer {
       });
       const time = messageTitleTime(message, env.settingsLanguage);
       if (time) {
-        title.createSpan({
+        withNativeMessageTooltip(title.createSpan({
           cls: "codex-message-title-time",
           text: time,
           attr: { title: formatAbsoluteTime(message.createdAt, env.settingsLanguage) }
-        });
+        }));
       }
     }
     if (message.selectionAnnotations?.length) {
@@ -1449,6 +1458,7 @@ export class CodexMessageListRenderer {
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     this.renderKnowledgeUsageCards(wrapper, message.id, knowledgeUsageMessageData(message), message.citations);
+    this.renderKnowledgeVerificationNote(wrapper, message.knowledgeVerificationSkipped);
     if (message.role === "user") this.renderMessageCopyAction(wrapper, message, true);
     const footerActions = options.showAgentFooter
       ? this.renderAgentFooter(wrapper, message)
@@ -1526,7 +1536,7 @@ export class CodexMessageListRenderer {
     const existing = container.querySelector<HTMLElement>(
       ":scope > .codex-assistant-turn-failure-reason"
     );
-    const text = message.status === "failed"
+    const text = message.status === "failed" && !message.toolCallTextFailure
       ? firstPartyMessageDetail(
         message,
         message.details?.trim() ?? "",
@@ -1655,7 +1665,7 @@ export class CodexMessageListRenderer {
     const actions = inline
       ? container
       : container.createDiv({ cls: "codex-message-derive-actions" });
-    const button = actions.createEl("button", {
+    const button = withNativeMessageTooltip(actions.createEl("button", {
       cls: "codex-message-action codex-message-derive-action",
       attr: {
         type: "button",
@@ -1663,7 +1673,7 @@ export class CodexMessageListRenderer {
         "aria-label": label,
         "aria-busy": "false"
       }
-    });
+    }));
     button.disabled = Boolean(env.piConversationDeriveDisabled);
     const icon = button.createSpan({
       cls: "codex-message-action-icon codex-message-derive-action-icon",
@@ -1693,7 +1703,7 @@ export class CodexMessageListRenderer {
     const idleLabel = userMessage ? copy.message.copyMessage : copy.message.copyAnswer;
     const successLabel = userMessage ? copy.message.messageCopied : copy.message.answerCopied;
     const failureLabel = userMessage ? copy.message.copyMessageFailed : copy.message.copyAnswerFailed;
-    const copyButton = container.createEl("button", {
+    const copyButton = withNativeMessageTooltip(container.createEl("button", {
       cls: `codex-message-action ${userMessage ? "codex-user-message-copy" : "codex-answer-copy"}`,
       attr: {
         type: "button",
@@ -1701,7 +1711,7 @@ export class CodexMessageListRenderer {
         "aria-label": idleLabel,
         "aria-live": "polite"
       }
-    });
+    }));
     const icon = copyButton.createSpan({
       cls: "codex-message-action-icon",
       attr: { "aria-hidden": "true" }
@@ -1723,18 +1733,18 @@ export class CodexMessageListRenderer {
       );
       if (result.status === "success") {
         renderIcon("check");
-        copyButton.setAttr("title", copy.message.copied);
         copyButton.setAttr("aria-label", successLabel);
+        attachNativeTooltip(copyButton, copy.message.copied);
       } else {
         renderIcon("triangle-alert");
-        copyButton.setAttr("title", copy.message.copyFailed);
         copyButton.setAttr("aria-label", failureLabel);
+        attachNativeTooltip(copyButton, copy.message.copyFailed);
         new Notice(`${copy.message.copyFailed}: ${result.error instanceof Error ? result.error.message : String(result.error)}`);
       }
       window.setTimeout(() => {
         renderIcon("copy");
-        copyButton.setAttr("title", idleLabel);
         copyButton.setAttr("aria-label", idleLabel);
+        attachNativeTooltip(copyButton, idleLabel);
         copyButton.disabled = false;
       }, 1400);
     };
@@ -1793,6 +1803,7 @@ export class CodexMessageListRenderer {
       cls: "codex-agent-footer-model",
       text: message.modelId?.trim() || conversationUiText(language, "未知模型", "Unknown model")
     });
+    withNativeMessageTooltip(runtime);
     const time = formatAnswerFooterTime(message.completedAt ?? message.createdAt, language);
     if (time) footer.createSpan({ cls: "codex-agent-footer-time", text: time });
     return actions;
@@ -1818,7 +1829,6 @@ export class CodexMessageListRenderer {
       button.disabled = state?.status === "pending";
       button.setAttribute("aria-busy", String(state?.status === "pending"));
       button.setAttribute("aria-label", label);
-      button.setAttribute("title", label);
       button.toggleClass("is-pending", state?.status === "pending");
       button.toggleClass("is-failed", state?.status === "failed");
       icon.empty();
@@ -1977,6 +1987,7 @@ export class CodexMessageListRenderer {
       const open = header.createEl("button", { cls: "codex-kb-maintain-open", attr: { type: "button", title: maintenancePageLabel(payload.reportPath) } });
       setIcon(open.createSpan({ cls: "codex-kb-maintain-open-icon" }), "external-link");
       open.createSpan({ text: conversationUiText(language, "打开报告", "Open report") });
+      withNativeMessageTooltip(open);
       open.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -2031,14 +2042,14 @@ export class CodexMessageListRenderer {
           const row = body.createDiv({ cls: `codex-kb-maintain-detail codex-kb-maintain-detail-${item.tone ?? "info"}` });
           const itemPath = knowledgeBaseMaintainReportItemPath(item);
           if (itemPath) {
-            const title = row.createEl("button", {
+            const title = withNativeMessageTooltip(row.createEl("button", {
               cls: "codex-kb-maintain-detail-title codex-kb-maintain-detail-link",
               text: item.title,
               attr: {
                 type: "button",
                 title: conversationUiText(language, `打开 ${item.title}`, `Open ${item.title}`)
               }
-            });
+            }));
             title.onclick = (event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -2112,6 +2123,12 @@ export class CodexMessageListRenderer {
     ));
   }
 
+  private renderKnowledgeVerificationNote(container: HTMLElement, skipped: ChatMessage["knowledgeVerificationSkipped"]): void {
+    if (skipped !== "knowledge_permission_revoked") return;
+    container.createDiv({ cls: "codex-kb-no-evidence", text: conversationUiText(this.requireEnv().settingsLanguage,
+      "权限关闭，引用未重新核验。", "Knowledge permission was disabled; references were not rechecked.") });
+  }
+
   private renderKnowledgeUsageCards(
     container: HTMLElement,
     messageId: string,
@@ -2170,13 +2187,15 @@ export class CodexMessageListRenderer {
       counts: { wiki: 0, journal: 0, outputs: 0 },
       citations
     } : undefined;
-    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount]);
+    const verificationSkipped = turn.messages.find(message => message.knowledgeVerificationSkipped)?.knowledgeVerificationSkipped;
+    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount, verificationSkipped]);
     const previous = container.querySelector<HTMLElement>(".codex-answer-sources");
     if (previous?.dataset.signature === signature) return;
     previous?.remove();
     const host = container.createDiv({ cls: "codex-answer-sources" });
     host.dataset.signature = signature;
     this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount, true);
+    this.renderKnowledgeVerificationNote(host, verificationSkipped);
     const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
     if (footer) container.insertBefore(host, footer);
   }
@@ -2210,7 +2229,7 @@ export class CodexMessageListRenderer {
     const file = env.app.vault.getAbstractFileByPath(document.path);
     const noteName = noteNameForPath(document.path);
     if (file instanceof TFile) {
-      const title = header.createEl("button", {
+      const title = withNativeMessageTooltip(header.createEl("button", {
         cls: "codex-ai-elements-source-title codex-message-note-link",
         text: noteName,
         attr: {
@@ -2219,7 +2238,7 @@ export class CodexMessageListRenderer {
           "data-path": document.path,
           title: copy.sources.openInObsidian(document.path)
         }
-      });
+      }));
       title.onclick = (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -2232,11 +2251,11 @@ export class CodexMessageListRenderer {
         });
       };
     } else {
-      header.createSpan({
+      withNativeMessageTooltip(header.createSpan({
         cls: "codex-ai-elements-source-title codex-message-note-link is-disabled",
         text: noteName,
         attr: { title: copy.sources.missingInVault(document.path) }
-      });
+      }));
     }
 
     const ranges = sourceLineRanges(document.references, compactRanges);
@@ -2277,7 +2296,7 @@ export class CodexMessageListRenderer {
 
   private renderKnowledgeProducedPath(container: HTMLElement, producedPath: string): void {
     const copy = this.copy();
-    const title = container.createEl("button", {
+    const title = withNativeMessageTooltip(container.createEl("button", {
       cls: "codex-ai-elements-artifact-source",
       text: noteNameForPath(producedPath),
       attr: {
@@ -2286,7 +2305,7 @@ export class CodexMessageListRenderer {
         "data-path": producedPath,
         title: copy.details.open(producedPath)
       }
-    });
+    }));
     const icon = title.createSpan({ cls: "codex-artifact-file-icon", attr: { "aria-hidden": "true" } });
     setIcon(icon, producedPath.endsWith(".canvas") ? "layout-dashboard" : "file-text");
     title.onclick = (event) => {
@@ -2638,20 +2657,20 @@ export class CodexMessageListRenderer {
 
     const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
     const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
-    const title = heading.createSpan({
+    const title = withNativeMessageTooltip(heading.createSpan({
       cls: "codex-assistant-turn-node-title",
       text: source && generationStage ? generationProgressTitle(source) : node.title,
       attr: { title: source && generationStage ? generationProgressTitle(source) : node.title }
-    });
+    }));
     if (node.status === "running") {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
     }
     if (node.summary && !generationStage) {
-      (node.status === "failed" ? content : heading).createSpan({
+      withNativeMessageTooltip((node.status === "failed" ? content : heading).createSpan({
         cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary",
         text: node.summary,
         attr: { title: node.summary }
-      });
+      }));
     }
     if (node.status === "cancelled") content.createDiv({ cls: "codex-work-record-failure", text: conversationUiText(this.requireEnv().settingsLanguage, "未完成", "Incomplete") });
 
@@ -2877,17 +2896,17 @@ export class CodexMessageListRenderer {
       text: chrome.process.taskProgress(progress.completed, progress.total)
     });
     if (current?.text) {
-      copy.createSpan({
+      withNativeMessageTooltip(copy.createSpan({
         cls: "codex-assistant-turn-task-current",
         text: current.text,
         attr: { title: current.text }
-      });
+      }));
     } else if (plan.lastUpdateSummary?.trim()) {
-      copy.createSpan({
+      withNativeMessageTooltip(copy.createSpan({
         cls: "codex-assistant-turn-task-current",
         text: plan.lastUpdateSummary.trim(),
         attr: { title: plan.lastUpdateSummary.trim() }
-      });
+      }));
     }
   }
 
@@ -2915,7 +2934,7 @@ export class CodexMessageListRenderer {
     const bodyId = stableDomId(`codex-assistant-turn-resource-${stateKey}`);
     const root = container.createEl("details", { cls: "codex-assistant-turn-resource" });
     root.open = this.openProcessItems.get(stateKey) ?? false;
-    const summary = root.createEl("summary", {
+    const summary = withNativeMessageTooltip(root.createEl("summary", {
       cls: `codex-assistant-turn-resource-summary${withDisclosureHint ? " codex-action-item-head" : ""}`,
       text: label,
       attr: {
@@ -2923,7 +2942,7 @@ export class CodexMessageListRenderer {
         "aria-expanded": String(root.open),
         title: label
       }
-    });
+    }));
     const caret = withDisclosureHint
       ? summary.createSpan({ cls: "codex-action-item-caret", attr: { "aria-hidden": "true" } })
       : null;
@@ -3074,6 +3093,7 @@ export class CodexMessageListRenderer {
       }
     });
     this.renderActionItemHead(summary, item);
+    withNativeMessageTooltip(summary);
     caret = summary.createSpan({ cls: "codex-action-item-caret" });
     setIcon(caret, details.open ? "chevron-up" : "chevron-down");
     if (options.showApprovalCard !== false) {
@@ -3247,11 +3267,11 @@ export class CodexMessageListRenderer {
   ): void {
     const row = container.createDiv({ cls: "codex-action-detail-row" });
     row.createSpan({ cls: "codex-action-detail-label", text: label });
-    row.createSpan({
+    withNativeMessageTooltip(row.createSpan({
       cls: path ? "codex-action-detail-value is-path" : "codex-action-detail-value",
       text: value,
       attr: { title: value }
-    });
+    }));
   }
 
   private renderActionPreview(container: HTMLElement, text: string): void {
@@ -3273,7 +3293,7 @@ export class CodexMessageListRenderer {
     const ref = findProcessFileRef(item.source.files ?? [], path)
       ?? normalizeProcessFileRef(path, this.requireEnv().vaultPath);
     if (!this.actionFileExists(ref)) return;
-    const link = container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createEl("span", {
       cls: "codex-action-open-note",
       text: this.copy().details.openFullNote,
       attr: {
@@ -3282,7 +3302,7 @@ export class CodexMessageListRenderer {
         title: ref.displayPath,
         "aria-label": `${this.copy().details.openFullNote} ${ref.displayPath}`
       }
-    });
+    }));
     link.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3433,14 +3453,14 @@ export class CodexMessageListRenderer {
         }
         const resourceUri = resource.resourceUri;
         const sessionId = this.requireEnv().sessionId;
-        const preview = item.createEl("button", {
+        const preview = withNativeMessageTooltip(item.createEl("button", {
           cls: "codex-message-attachment-preview",
           attr: {
             type: "button",
             title: conversationUiText(language, `打开 ${resource.displayName}`, `Open ${resource.displayName}`),
             "aria-label": conversationUiText(language, `打开图片：${resource.displayName}`, `Open image: ${resource.displayName}`)
           }
-        });
+        }));
         const img = preview.createEl("img", { attr: { alt: "", draggable: "false" } });
         img.onload = () => this.scheduleMeasureIfVirtualRowHeightChanged(item, sessionId);
         img.onerror = () => {
@@ -3497,7 +3517,7 @@ export class CodexMessageListRenderer {
     const language = this.requireEnv().settingsLanguage;
     container.setAttribute("aria-label", conversationUiText(language, "消息中的笔记提及", "Note mentions in this message"));
     for (const mention of noteMentions) {
-      const chip = container.createEl("button", {
+      const chip = withNativeMessageTooltip(container.createEl("button", {
         cls: "codex-note-mention-chip codex-message-note-mention-chip",
         attr: {
           type: "button",
@@ -3505,7 +3525,7 @@ export class CodexMessageListRenderer {
           title: conversationUiText(language, `打开 ${mention.fileName}`, `Open ${mention.fileName}`),
           "aria-label": conversationUiText(language, `打开笔记：${mention.fileName}`, `Open note: ${mention.fileName}`)
         }
-      });
+      }));
       const icon = chip.createSpan({
         cls: "codex-note-mention-chip-icon",
         attr: { "aria-hidden": "true" }
@@ -3970,13 +3990,13 @@ export class CodexMessageListRenderer {
       ? noteNameForPath(file.path || label)
       : label;
     if (!file.openable) {
-      return container.createSpan({
+      return withNativeMessageTooltip(container.createSpan({
         cls: `codex-process-file-text is-disabled ${extraClass}`.trim(),
         text: displayLabel,
         attr: { title: this.copy().details.cannotOpenPath(file.displayPath) }
-      });
+      }));
     }
-    const link = container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createEl("span", {
       cls: `codex-process-file-link codex-process-file-link-${file.kind} ${extraClass}`.trim(),
       text: displayLabel,
       attr: {
@@ -3985,7 +4005,7 @@ export class CodexMessageListRenderer {
         title: file.displayPath,
         "aria-label": this.copy().details.open(displayLabel)
       }
-    });
+    }));
     link.onclick = (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -4090,14 +4110,14 @@ export class CodexMessageListRenderer {
   private renderProcessFileChips(container: HTMLElement, files: ProcessFileRef[]): void {
     for (const file of files) {
       const displayName = file.kind === "vault" ? noteNameForPath(file.path || file.name) : file.name;
-      const chip = container.createEl("button", {
+      const chip = withNativeMessageTooltip(container.createEl("button", {
         cls: `codex-process-file-chip codex-process-file-${file.kind}`,
         attr: {
           type: "button",
           title: file.openable ? file.displayPath : this.copy().details.cannotOpenPath(file.displayPath),
           "aria-label": this.copy().details.open(displayName)
         }
-      });
+      }));
       chip.toggleClass("is-disabled", !file.openable);
       const icon = chip.createSpan({ cls: "codex-process-file-icon" });
       setIcon(icon, file.kind === "external" ? "folder-open" : "file-text");
@@ -4800,14 +4820,14 @@ function renderUnavailablePiImage(
   displayName: string,
   language: SettingsLanguage = "zh-CN"
 ): HTMLElement {
-  const unavailable = container.createDiv({
+  const unavailable = withNativeMessageTooltip(container.createDiv({
     cls: "codex-message-attachment-tile codex-message-attachment-unavailable is-disabled",
     attr: {
       role: "status",
       title: conversationUiText(language, `${displayName} · 图片附件不可在本地打开`, `${displayName} · Image attachment cannot be opened locally`),
       "aria-label": conversationUiText(language, `${displayName}：图片附件不可在本地打开`, `${displayName}: Image attachment cannot be opened locally`)
     }
-  });
+  }));
   const icon = unavailable.createSpan({ cls: "codex-message-attachment-icon" });
   setIcon(icon, "image-off");
   return unavailable;

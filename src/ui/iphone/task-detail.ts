@@ -1,3 +1,7 @@
+import { taskInterruptionExplanation, interruptionErrorDetail } from "../../agents/task-interruption-copy";
+import { toolCallRecoveryGuidance } from "../../agents/tool-call-recovery";
+import { toolCallTextFailureMessage } from "../../harness/tool-call-text";
+import { mobileReportActions, openMobileRunReport } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -26,6 +30,7 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
   let disposed = false, messagesKey = "", lastRead = 0;
   const task = host.store.getSession(taskId);
   const page: MobileShellPage = { id: `task:${taskId}`, title: task?.title ?? "任务详情", content, footer: composer.element, canLeave: composer.canLeave };
+  page.actions = mobileReportActions(ctx, taskId, "iphone");
   const markRead = () => {
     const task = host.store.getSession(taskId);
     if (!task?.unreadAnswerAt || task.unreadAnswerAt <= (task.lastReadAt ?? 0) || task.unreadAnswerAt <= lastRead) return;
@@ -74,16 +79,27 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
     const panel = content.closest(".eis-page");
     const heading = panel?.querySelector<HTMLElement>(".eis-title"); if (heading) heading.textContent = page.title;
     const subtitle = panel?.querySelector<HTMLElement>(".eis-subtitle"); if (subtitle) subtitle.textContent = page.subtitle;
-    messages(task.messages); tail.replaceChildren(); errors.textContent = state.error; errors.hidden = !state.error;
+    messages(task.messages); tail.replaceChildren();
+    const draft = task.draftContext;
+    const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
+    const recovery = toolCallRecoveryGuidance(state.interruption, host.settings().apiProviders, "iphone", selected);
+    const explanation = recovery?.message ?? taskInterruptionExplanation(state.interruption, host.settings().settingsLanguage ?? "zh");
+    const repeatedError = !!explanation && !!state.error && (interruptionErrorDetail(state.error) === state.interruption?.detail || !!recovery && state.error === toolCallTextFailureMessage(state.interruption?.toolCallTextFailure));
+    errors.textContent = repeatedError ? "" : state.error; errors.hidden = repeatedError || !state.error;
     if (task.taskStatus === "interrupted" || state.interruption && !state.busy) {
       const box = shellElement(document, "section", "ip-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
       const line = shellElement(document, "div", "ip-task-interrupted"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "circle-pause"); mark.setAttribute("aria-hidden", "true"); line.append(mark);
       const at = state.interruption?.at ?? task.taskInterruptedAt;
       if (at !== undefined) { const time = shellElement(document, "time", "", `${formatMobileDateTime(at)} ${state.interruption ? interruptionReasons[state.interruption.reason] : "中断原因未确认"}`); time.dateTime = new Date(at).toISOString(); line.append(time); }
       else line.append(shellElement(document, "span", "", "已中断 · 时间未记录"));
-      box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
+      if (explanation) box.append(shellElement(document, "div", "ip-task-interrupted", explanation));
+      else box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "ip-task-actions");
-      const resume = iPhoneAction(ctx, state.resuming ? "准备中…" : "从这里继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("ip-resume-task")); }, "play");
+      const report = iPhoneAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "iphone", { document, open: config => ctx.shell.openSheet(config) }));
+      report.dataset.action = "report-task"; actions.append(report);
+      report.disabled = !!state.resuming || state.busy;
+      const resume = iPhoneAction(ctx, state.resuming ? "准备中…" : recovery?.buttonLabel ?? "继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("ip-resume-task")); }, undefined, true);
+      resume.dataset.action = "resume-task";
       resume.disabled = !!state.resuming || state.busy; actions.append(resume); box.append(actions); tail.append(box);
     } else if (state.busy && state.interaction?.status !== "pending") {
       const live = shellElement(document, "div", "ip-task-live"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "loader-circle"); mark.setAttribute("aria-hidden", "true"); live.append(mark, shellElement(document, "span", "", task.taskStage ? stageLabel(task.taskStage) : "正在进行")); tail.append(live);

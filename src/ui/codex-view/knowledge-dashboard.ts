@@ -1,14 +1,8 @@
 import { setIcon } from "obsidian";
-import { newId, type SettingsLanguage } from "../../settings/settings";
+import type { SettingsLanguage } from "../../settings/settings";
+import { attachNativeTooltip } from "../native-tooltip";
 import type { KnowledgeBaseDashboardSnapshot } from "../../knowledge-base/dashboard";
 import { conversationUiLocale, conversationUiText } from "./ui-i18n";
-
-interface RectLike {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
 
 export interface KnowledgeDashboardRenderState {
   language?: SettingsLanguage;
@@ -29,38 +23,14 @@ export interface KnowledgeDashboardActions {
 }
 
 export interface KnowledgeDashboardTooltipState {
-  panels: HTMLElement[];
-  tooltips: KnowledgeDashboardHealthTooltipEntry[];
-  closeTimers: Set<number>;
-  cleanups: Array<() => void>;
+  tooltips: Array<ReturnType<typeof attachNativeTooltip>>;
 }
 
-interface KnowledgeDashboardHealthTooltipEntry {
-  wrapper: HTMLElement;
-  button: HTMLButtonElement;
-  panel: HTMLElement;
-  bridge: HTMLElement;
-  placement: "summary" | "meter";
-  lastPointer: { x: number; y: number } | null;
-  closeTimer?: number;
-  closePanel: () => void;
-  repositionOpenPanel: () => void;
-  trackOpenTooltipPointer: (event: MouseEvent) => void;
-  isTooltipTarget: (target: EventTarget | null) => boolean;
-}
-
-const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING = 16;
-const KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS = 360;
 const KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT = 24;
 const HEATMAP_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function createKnowledgeDashboardTooltipState(): KnowledgeDashboardTooltipState {
-  return {
-    panels: [],
-    tooltips: [],
-    closeTimers: new Set<number>(),
-    cleanups: []
-  };
+  return { tooltips: [] };
 }
 
 export function renderKnowledgeDashboardView(
@@ -109,14 +79,14 @@ export function renderKnowledgeDashboardView(
 
   const dashboardActions = header.createDiv({ cls: "codex-kb-dashboard-actions" });
   const refreshLabel = conversationUiText(language, "刷新状态", "Refresh status");
-  const refresh = dashboardActions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: refreshLabel, "aria-label": refreshLabel } });
+  const refresh = dashboardActions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", "aria-label": refreshLabel } });
   setIcon(refresh, state.loading ? "loader-circle" : "refresh-cw");
   refresh.disabled = state.loading;
   refresh.onclick = actions.onRefresh;
   const toggleTitle = state.expanded
     ? conversationUiText(language, "收起详情", "Collapse details")
     : conversationUiText(language, "展开详情", "Expand details");
-  const toggle = dashboardActions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", title: toggleTitle, "aria-label": toggleTitle } });
+  const toggle = dashboardActions.createEl("button", { cls: "codex-icon-button codex-kb-dashboard-button", attr: { type: "button", "aria-label": toggleTitle } });
   setIcon(toggle, state.expanded ? "chevron-up" : "chevron-down");
   toggle.onclick = actions.onToggleExpanded;
 
@@ -144,55 +114,14 @@ export function renderKnowledgeDashboardView(
 }
 
 export function clearKnowledgeDashboardHealthTooltips(state: KnowledgeDashboardTooltipState): void {
-  for (const timer of state.closeTimers) {
-    window.clearTimeout(timer);
+  for (const tooltip of state.tooltips) {
+    tooltip.dispose();
   }
-  state.closeTimers.clear();
   state.tooltips = [];
-  for (const panel of state.panels) {
-    panel.remove();
-  }
-  state.panels = [];
 }
 
 export function disposeKnowledgeDashboardTooltipState(state: KnowledgeDashboardTooltipState): void {
   clearKnowledgeDashboardHealthTooltips(state);
-  for (const cleanup of state.cleanups) {
-    cleanup();
-  }
-  state.cleanups = [];
-}
-
-export function isKnowledgeDashboardHealthTooltipHoverPoint(
-  triggerRect: RectLike,
-  panelRect: RectLike,
-  x: number,
-  y: number,
-  padding = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING
-): boolean {
-  if (isPointInExpandedRect(triggerRect, x, y, padding) || isPointInExpandedRect(panelRect, x, y, padding)) return true;
-
-  const bridgeLeft = Math.min(triggerRect.left, panelRect.left) - padding;
-  const bridgeRight = Math.max(triggerRect.right, panelRect.right) + padding;
-  let bridgeTop: number;
-  let bridgeBottom: number;
-
-  if (panelRect.top >= triggerRect.bottom) {
-    bridgeTop = triggerRect.bottom - padding;
-    bridgeBottom = panelRect.top + padding;
-  } else if (triggerRect.top >= panelRect.bottom) {
-    bridgeTop = panelRect.bottom - padding;
-    bridgeBottom = triggerRect.top + padding;
-  } else {
-    bridgeTop = Math.min(triggerRect.top, panelRect.top) - padding;
-    bridgeBottom = Math.max(triggerRect.bottom, panelRect.bottom) + padding;
-  }
-
-  return x >= bridgeLeft && x <= bridgeRight && y >= bridgeTop && y <= bridgeBottom;
-}
-
-function isPointInExpandedRect(rect: RectLike, x: number, y: number, padding: number): boolean {
-  return x >= rect.left - padding && x <= rect.right + padding && y >= rect.top - padding && y <= rect.bottom + padding;
 }
 
 function addKnowledgeDashboardMetric(container: HTMLElement, label: string, value: string): void {
@@ -211,7 +140,7 @@ function addKnowledgeDashboardHealthMetric(
   const metric = container.createSpan({ cls: `codex-kb-dashboard-metric codex-kb-dashboard-health codex-kb-health-${status}` });
   metric.createSpan({ cls: "codex-kb-status-dot" });
   metric.createSpan({ cls: "codex-kb-dashboard-metric-value", text: knowledgeHealthStatusLabel(status, health.label, language) });
-  addKnowledgeDashboardHealthTooltip(metric, health, "summary", tooltipState, language);
+  addKnowledgeDashboardHealthTooltip(metric, health, tooltipState, language);
 }
 
 function renderKnowledgeDashboardHealth(
@@ -296,7 +225,7 @@ function addKnowledgeDashboardEnergyMeter(
   row.createDiv({ cls: "codex-kb-dashboard-meter-label", text: label });
   const percent = row.createDiv({ cls: "codex-kb-dashboard-energy-percent" });
   const percentValue = percent.createSpan({ cls: "codex-kb-dashboard-energy-percent-value", text: scoreValue === null ? "—" : `${safeScore}%` });
-  if (healthTooltip) addKnowledgeDashboardHealthTooltip(percentValue, healthTooltip, "meter", tooltipState, language);
+  if (healthTooltip) addKnowledgeDashboardHealthTooltip(percentValue, healthTooltip, tooltipState, language);
   if (scoreValue === null) { row.createDiv({ cls: "codex-kb-dashboard-health-badge", text: statusLabel }); return; }
   const track = row.createDiv({ cls: "codex-kb-dashboard-energy-track", attr: { "aria-hidden": "true" } });
   for (let index = 0; index < KNOWLEDGE_DASHBOARD_ENERGY_CELL_COUNT; index++) {
@@ -313,258 +242,30 @@ function addKnowledgeDashboardEnergyMeter(
 function addKnowledgeDashboardHealthTooltip(
   container: HTMLElement,
   health: KnowledgeBaseDashboardSnapshot["health"],
-  placement: "summary" | "meter",
   state: KnowledgeDashboardTooltipState,
   language: SettingsLanguage
 ): void {
-  const document = container.ownerDocument;
-  const window = document.defaultView!;
-  ensureKnowledgeDashboardHealthTooltipDelegates(state, document);
-  const placementClass = placement === "summary" ? "codex-kb-health-tooltip-placement-summary" : "codex-kb-health-tooltip-placement-meter";
-  const wrapper = container.createSpan({ cls: `codex-kb-health-tooltip ${placementClass}` });
-  const tooltipId = newId("codex-kb-health-tooltip");
+  const wrapper = container.createSpan({ cls: "codex-kb-health-tooltip" });
   const button = wrapper.createEl("button", {
     cls: "codex-kb-health-tooltip-trigger",
     text: "!",
-    attr: {
-      type: "button",
-      tabindex: "0",
-      title: conversationUiText(language, "健康分解释", "Health score explanation"),
-      "aria-label": conversationUiText(language, "解释知识库健康分", "Explain knowledge health score"),
-      "aria-describedby": tooltipId,
-      "aria-expanded": "false"
-    }
+    attr: { type: "button" }
   });
-  const owner = button.ownerDocument;
-  const bridge = owner.body.createDiv({ cls: "codex-kb-health-tooltip-bridge" });
-  const panel = owner.body.createDiv({ cls: "codex-kb-health-tooltip-panel", attr: { id: tooltipId, role: "tooltip" } });
-  state.panels.push(bridge);
-  state.panels.push(panel);
-  panel.createDiv({ cls: "codex-kb-health-tooltip-title", text: conversationUiText(language, "健康分解释", "Health score explanation") });
-  panel.createDiv({
-    cls: "codex-kb-health-tooltip-summary",
-    text: health.status === "unknown" ? knowledgeHealthStatusLabel(health.status, health.label, language) : conversationUiText(language, `当前 ${health.score} 分，状态：${health.label}。`, `Current score: ${health.score}. Status: ${knowledgeHealthStatusLabel(health.status, health.label, language)}.`)
-  });
-  const reasons = panel.createDiv({ cls: "codex-kb-health-tooltip-reasons" });
-  const scoreReasons = health.scoreReasons ?? [];
-  if (scoreReasons.length) {
-    for (const reason of scoreReasons) {
-      reasons.createDiv({ cls: "codex-kb-health-tooltip-reason", text: knowledgeDashboardHealthReasonText(reason, language) });
-    }
-  } else {
-    reasons.createDiv({ cls: "codex-kb-health-tooltip-reason codex-kb-health-tooltip-reason-muted", text: conversationUiText(language, "暂无扣分项", "No score deductions") });
-  }
-  const note = panel.createDiv({ cls: "codex-kb-health-tooltip-note" });
-  note.createDiv({ text: language === "en" ? "Score = max(0, min(100, 100 − deductions)). Based on checked local structure and source status only. Maintenance is not a full knowledge check." : health.scoreCheckNote || "体检成功只代表检查完成；健康分反映检查发现的结构问题。" });
-  note.createDiv({ text: language === "en" ? "85+ healthy, 60–84 at risk, below 60 unhealthy. Each missing core structure deducts 24 points and always shows unhealthy." : health.scoreThresholdText || "85+ 健康，60-84 风险，低于 60 异常。" });
-
-  note.createDiv({ text: language === "en" ? "Unchecked: broken links, orphan pages, stale content and index link validity." : `未检查：${(health.unchecked ?? []).join("、")}` });
-  let tooltip: KnowledgeDashboardHealthTooltipEntry;
-  const rememberTooltipPointer = (event: MouseEvent) => {
-    tooltip.lastPointer = { x: event.clientX, y: event.clientY };
-  };
-  const hidePanelState = () => {
-    button.setAttribute("aria-expanded", "false");
-  };
-  const showPanelState = () => {
-    button.setAttribute("aria-expanded", "true");
-  };
-  hidePanelState();
-  const clearCloseTimer = () => {
-    if (!tooltip.closeTimer) return;
-    window.clearTimeout(tooltip.closeTimer);
-    state.closeTimers.delete(tooltip.closeTimer);
-    tooltip.closeTimer = undefined;
-  };
-  const openPanel = () => {
-    clearCloseTimer();
-    positionKnowledgeDashboardHealthTooltip(button, panel, bridge, placement);
-    wrapper.addClass("is-tooltip-open");
-    bridge.addClass("is-visible");
-    panel.addClass("is-visible");
-    showPanelState();
-  };
-  const closePanel = () => {
-    clearCloseTimer();
-    wrapper.removeClass("is-tooltip-open");
-    wrapper.removeClass("is-click-open");
-    bridge.removeClass("is-visible");
-    panel.removeClass("is-visible");
-    hidePanelState();
-  };
-  const scheduleClose = (delayMs = 160) => {
-    clearCloseTimer();
-    tooltip.closeTimer = window.setTimeout(closePanelIfPointerOutside, delayMs);
-    state.closeTimers.add(tooltip.closeTimer);
-  };
-  const isPointerInsideTooltip = (event: MouseEvent) => isKnowledgeDashboardHealthTooltipHoverPoint(
-    button.getBoundingClientRect(),
-    panel.getBoundingClientRect(),
-    event.clientX,
-    event.clientY
-  );
-  const isTooltipTarget = (target: EventTarget | null) => {
-    if (!(target instanceof window.Node)) return false;
-    return button.contains(target) || panel.contains(target) || bridge.contains(target);
-  };
-  const isPointerCurrentlyInsideTooltip = () => {
-    if (!tooltip.lastPointer) return false;
-    const elementAtPointer = document.elementFromPoint(tooltip.lastPointer.x, tooltip.lastPointer.y);
-    if (isTooltipTarget(elementAtPointer)) return true;
-    return isKnowledgeDashboardHealthTooltipHoverPoint(
-      button.getBoundingClientRect(),
-      panel.getBoundingClientRect(),
-      tooltip.lastPointer.x,
-      tooltip.lastPointer.y
-    );
-  };
-  const closePanelIfPointerOutside = () => {
-    if (tooltip.closeTimer) state.closeTimers.delete(tooltip.closeTimer);
-    tooltip.closeTimer = undefined;
-    if (isPointerCurrentlyInsideTooltip()) return;
-    closePanel();
-  };
-  const trackOpenTooltipPointer = (event: MouseEvent) => {
-    if (!wrapper.hasClass("is-tooltip-open")) return;
-    rememberTooltipPointer(event);
-  };
-  const scheduleCloseIfOutside = (event: MouseEvent, delayMs = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_CLOSE_DELAY_MS) => {
-    rememberTooltipPointer(event);
-    if (wrapper.hasClass("is-click-open")) {
-      clearCloseTimer();
-      return;
-    }
-    if (isTooltipTarget(event.relatedTarget) || isPointerInsideTooltip(event)) {
-      clearCloseTimer();
-      return;
-    }
-    scheduleClose(delayMs);
-  };
-  const repositionOpenPanel = () => {
-    if (!wrapper.hasClass("is-tooltip-open")) return;
-    positionKnowledgeDashboardHealthTooltip(button, panel, bridge, placement);
-  };
-  tooltip = {
-    wrapper,
-    button,
-    panel,
-    bridge,
-    placement,
-    lastPointer: null,
-    closePanel,
-    repositionOpenPanel,
-    trackOpenTooltipPointer,
-    isTooltipTarget
-  };
-  state.tooltips.push(tooltip);
-  const openPanelFromPointer = (event: MouseEvent) => {
-    rememberTooltipPointer(event);
-    openPanel();
-  };
-  const openPanelFromClick = (event: MouseEvent) => {
-    rememberTooltipPointer(event);
-    openPanel();
-    wrapper.addClass("is-click-open");
-  };
-  button.onpointerdown = openPanelFromClick;
-  button.onmousedown = openPanelFromClick;
-  button.onmouseenter = openPanelFromPointer;
-  button.onpointerenter = openPanelFromPointer;
-  button.onmouseover = openPanelFromPointer;
-  button.onmouseleave = (event) => scheduleCloseIfOutside(event);
-  button.onpointerleave = (event) => scheduleCloseIfOutside(event);
-  button.onfocus = openPanel;
-  button.onblur = (event) => {
-    if (isTooltipTarget(event.relatedTarget)) return;
-    if (wrapper.hasClass("is-click-open")) return;
-    scheduleClose();
-  };
-  button.onclick = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    openPanelFromClick(event);
-  };
-  panel.onmouseenter = openPanelFromPointer;
-  panel.onpointerenter = openPanelFromPointer;
-  panel.onmouseleave = (event) => scheduleCloseIfOutside(event);
-  panel.onpointerleave = (event) => scheduleCloseIfOutside(event);
-  bridge.onmouseenter = openPanelFromPointer;
-  bridge.onpointerenter = openPanelFromPointer;
-  bridge.onmouseleave = (event) => scheduleCloseIfOutside(event);
-  bridge.onpointerleave = (event) => scheduleCloseIfOutside(event);
-}
-
-function ensureKnowledgeDashboardHealthTooltipDelegates(state: KnowledgeDashboardTooltipState, document: Document): void {
-  const window = document.defaultView!;
-  if (state.cleanups.length) return;
-  const repositionOpenHealthTooltipPanels = () => {
-    for (const tooltip of state.tooltips) {
-      tooltip.repositionOpenPanel();
-    }
-  };
-  const trackOpenHealthTooltipPointer = (event: MouseEvent) => {
-    for (const tooltip of state.tooltips) {
-      tooltip.trackOpenTooltipPointer(event);
-    }
-  };
-  const closeOpenHealthTooltipOnOutsidePointer = (event: MouseEvent) => {
-    for (const tooltip of state.tooltips) {
-      if (!tooltip.wrapper.hasClass("is-tooltip-open")) continue;
-      if (tooltip.isTooltipTarget(event.target)) continue;
-      tooltip.closePanel();
-    }
-  };
-  window.addEventListener("resize", repositionOpenHealthTooltipPanels);
-  window.addEventListener("scroll", repositionOpenHealthTooltipPanels, true);
-  window.addEventListener("pointermove", trackOpenHealthTooltipPointer, { passive: true });
-  window.addEventListener("mousemove", trackOpenHealthTooltipPointer, { passive: true });
-  document.addEventListener("pointerdown", closeOpenHealthTooltipOnOutsidePointer, true);
-  document.addEventListener("mousedown", closeOpenHealthTooltipOnOutsidePointer, true);
-  state.cleanups.push(() => window.removeEventListener("resize", repositionOpenHealthTooltipPanels));
-  state.cleanups.push(() => window.removeEventListener("scroll", repositionOpenHealthTooltipPanels, true));
-  state.cleanups.push(() => window.removeEventListener("pointermove", trackOpenHealthTooltipPointer));
-  state.cleanups.push(() => window.removeEventListener("mousemove", trackOpenHealthTooltipPointer));
-  state.cleanups.push(() => document.removeEventListener("pointerdown", closeOpenHealthTooltipOnOutsidePointer, true));
-  state.cleanups.push(() => document.removeEventListener("mousedown", closeOpenHealthTooltipOnOutsidePointer, true));
-}
-
-function positionKnowledgeDashboardHealthTooltip(button: HTMLElement, panel: HTMLElement, bridge: HTMLElement, placement: "summary" | "meter"): void {
-  const window = button.ownerDocument.defaultView!;
-  const trigger = button.getBoundingClientRect();
-  const viewportWidth = window.innerWidth;
-  const viewportHeight = window.innerHeight;
-  const margin = 12;
-  const gap = 8;
-  const width = Math.min(320, Math.max(220, viewportWidth - margin * 2));
-  panel.setCssStyles({ width: `${width}px` });
-  const panelHeight = panel.getBoundingClientRect().height || 220;
-  const preferredLeft = placement === "meter" ? trigger.left : trigger.right - width;
-  const left = Math.max(margin, Math.min(preferredLeft, viewportWidth - width - margin));
-  const preferredTop = trigger.bottom + gap;
-  const top = preferredTop + panelHeight > viewportHeight - margin
-    ? Math.max(margin, trigger.top - panelHeight - gap)
-    : preferredTop;
-  panel.setCssStyles({
-    left: `${Math.round(left)}px`,
-    top: `${Math.round(top)}px`
-  });
-  const panelRect = panel.getBoundingClientRect();
-  const bridgePadding = KNOWLEDGE_DASHBOARD_HEALTH_TOOLTIP_HOVER_PADDING;
-  const bridgeLeft = Math.max(0, Math.min(trigger.left, panelRect.left) - bridgePadding);
-  const bridgeRight = Math.min(viewportWidth, Math.max(trigger.right, panelRect.right) + bridgePadding);
-  const panelBelowTrigger = panelRect.top >= trigger.bottom;
-  const bridgeTop = panelBelowTrigger
-    ? Math.max(0, trigger.bottom - bridgePadding)
-    : Math.max(0, panelRect.bottom - bridgePadding);
-  const bridgeBottom = panelBelowTrigger
-    ? Math.min(viewportHeight, panelRect.top + bridgePadding)
-    : Math.min(viewportHeight, trigger.top + bridgePadding);
-  bridge.setCssStyles({
-    left: `${Math.round(bridgeLeft)}px`,
-    top: `${Math.round(Math.min(bridgeTop, bridgeBottom))}px`,
-    width: `${Math.max(16, Math.round(bridgeRight - bridgeLeft))}px`,
-    height: `${Math.max(10, Math.round(Math.abs(bridgeBottom - bridgeTop)))}px`
-  });
+  state.tooltips.push(attachNativeTooltip(button, () => {
+    const scoreReasons = health.scoreReasons ?? [];
+    return [
+      conversationUiText(language, "健康分解释", "Health score explanation"),
+      health.status === "unknown"
+        ? knowledgeHealthStatusLabel(health.status, health.label, language)
+        : conversationUiText(language, `当前 ${health.score} 分，状态：${health.label}。`, `Current score: ${health.score}. Status: ${knowledgeHealthStatusLabel(health.status, health.label, language)}.`),
+      ...(scoreReasons.length
+        ? scoreReasons.map((reason) => knowledgeDashboardHealthReasonText(reason, language))
+        : [conversationUiText(language, "暂无扣分项", "No score deductions")]),
+      language === "en" ? "Score = max(0, min(100, 100 − deductions)). Based on checked local structure and source status only. Maintenance is not a full knowledge check." : health.scoreCheckNote || "体检成功只代表检查完成；健康分反映检查发现的结构问题。",
+      language === "en" ? "85+ healthy, 60–84 at risk, below 60 unhealthy. Each missing core structure deducts 24 points and always shows unhealthy." : health.scoreThresholdText || "85+ 健康，60-84 风险，低于 60 异常。",
+      language === "en" ? "Unchecked: broken links, orphan pages, stale content and index link validity." : `未检查：${(health.unchecked ?? []).join("、")}`
+    ].join("\n");
+  }, { preserveLabel: false, touch: "notice" }));
 }
 
 function renderKnowledgeDashboardWiki(container: HTMLElement, snapshot: KnowledgeBaseDashboardSnapshot, language: SettingsLanguage): void {
@@ -633,7 +334,6 @@ function renderKnowledgeDashboardHeatmap(container: HTMLElement, snapshot: Knowl
     const cell = grid.createSpan({
       cls: `codex-kb-heatmap-cell is-${day.status}`,
       attr: {
-        title: `${day.date} · ${knowledgeHeatmapStatusLabel(day.status, language)}`,
         "aria-label": `${day.date} ${knowledgeHeatmapStatusLabel(day.status, language)}`
       }
     });

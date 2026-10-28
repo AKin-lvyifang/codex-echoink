@@ -1,3 +1,4 @@
+export const apiVersion = "1.14.4";
 const paths: Record<string, string> = {
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01"/>',
@@ -48,6 +49,14 @@ export function setIcon(element: HTMLElement, name: string) {
   element.replaceChildren(svg);
 }
 
+export function setTooltip(element: HTMLElement, content: string, options?: { placement?: string; classes?: string[] }): void {
+  element.setAttribute("aria-label", content);
+  if (options?.placement) element.setAttribute("data-tooltip-position", options.placement);
+  if (options?.classes) element.setAttribute("data-tooltip-class", options.classes.join(" "));
+}
+// Mobile help uses its tappable panel. Desktop native rendering requires Obsidian.
+export function displayTooltip(_element: HTMLElement, _content: string | DocumentFragment): void {}
+
 export { FixtureTFile as TFile } from "./host.mjs";
 export { parse as parseYaml } from "yaml";
 export class TFolder {
@@ -96,7 +105,7 @@ export const Platform = { isMobileApp: true, isMobile: true, isTablet: false };
 export class Scope { constructor(_parent?: unknown) {} register() {} }
 export const MarkdownRenderer = { async render(_app: unknown, text: string, element: HTMLElement) { element.textContent = text; } };
 export async function requestUrl() { throw new Error("Browser fixture cannot call a real Provider"); }
-export class Notice { constructor(text: string) { console.info("Fixture notice", text); } }
+export class Notice { constructor(text: string, _timeout?: number) { console.info("Fixture notice", text); } hide() {} }
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
 const prototype = HTMLElement.prototype as any;
 (SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };

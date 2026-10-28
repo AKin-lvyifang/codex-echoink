@@ -1,4 +1,6 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
+import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
 import { WorkbenchStarters } from "./workbench-starters";
 import { workbenchResultType, type WorkbenchResultType } from "./workbench-result";
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
@@ -21,7 +23,7 @@ import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher"
 import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
-import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro, workbenchProModuleEnabled, type ProWorkbenchModuleId } from "./workbench-module-lock";
+import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro } from "./workbench-module-lock";
 import { maintenanceActivityText, maintenanceTaskTitle, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
@@ -127,7 +129,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private searchResolvedQuery: string | null = null;
   private searchMatches: HomeSearchMatch[] = [];
   private searchIndex = -1;
-  private lockedModule: ProWorkbenchModuleId | null = null;
+  private lockedModule: typeof WORKBENCH_MODULES[number]["id"] | null = null;
+  private modulePageState = "";
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -301,8 +304,8 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private button(parent: HTMLElement, text: string, key: string, action: () => unknown, variant: "primary" | "secondary" | "tertiary" | "icon" = "secondary", icon?: string): HTMLButtonElement {
-    const button = createOriginButton(parent, { cls: `wb-button is-${variant}`, text, attr: { "data-wb-focus": key, ...(variant === "icon" ? { "aria-label": text, title: text } : {}) } });
-    if (variant === "icon") button.textContent = "";
+    const button = createOriginButton(parent, { cls: `wb-button is-${variant}`, text, attr: { "data-wb-focus": key, ...(variant === "icon" ? { "aria-label": text } : {}) } });
+    if (variant === "icon") { button.textContent = ""; attachNativeTooltip(button, text); }
     applyAmicroButton(button, { variant });
     if (icon) { const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } }); setIcon(node, icon); button.prepend(node); }
     button.onclick = () => { void Promise.resolve().then(action).catch(error => new Notice(message(error))); };
@@ -319,7 +322,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
     for (const module of WORKBENCH_MODULES) {
       const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
-      button.dataset.module = module.id; button.hidden = !this.snapshot?.modules.includes(module.id);
+      button.dataset.module = module.id;
     }
     this.button(nav, this.t("更多", "More"), "module-more", () => this.openMoreModules(), "tertiary", "ellipsis").dataset.wb = "module-more";
     this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, weather => {
@@ -360,7 +363,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const header = nav.closest<HTMLElement>(".wb-header")!;
     // Always retry with the full layout so weather returns when space becomes available.
     header.classList.remove("is-weather-condensed"); header.style.removeProperty("column-gap");
-    const visible = WORKBENCH_MODULES.filter(module => isProWorkbenchModule(module.id) ? workbenchProModuleEnabled(this.plugin, module.id) : this.snapshot?.modules.includes(module.id));
+    const visible = WORKBENCH_MODULES;
     const buttons = visible.map(module => nav.querySelector<HTMLButtonElement>(`[data-module="${module.id}"]`)!);
     buttons.forEach(button => { button.hidden = false; }); more.hidden = true; this.overflowModules = [];
     if (!nav.getBoundingClientRect().width) return;
@@ -408,28 +411,29 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private async openModule(id: typeof WORKBENCH_MODULES[number]["id"]): Promise<void> {
-    if (isProWorkbenchModule(id)) {
-      if (!workbenchProModuleEnabled(this.plugin, id)) return;
-      if (!workbenchHasPro(this.plugin)) { this.showModuleLock(id); return; }
-    }
+    if (isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) || workbenchModuleSetupReason(this.plugin, id)) { this.showModuleLock(id); return; }
     await openWorkbenchModule(this.plugin, id);
   }
-  private showModuleLock(id: ProWorkbenchModuleId): void {
+  private showModuleLock(id: typeof WORKBENCH_MODULES[number]["id"]): void {
     this.closeSearch(false);
-    const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"]');
+    const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
     if (previous) { disposeOriginControls(previous); previous.remove(); }
     this.lockedModule = id;
     this.weatherStage?.setActive(false); this.starters?.setActive(false);
     this.field("page").hidden = true;
     this.field("page").inert = true;
-    const page = renderWorkbenchModuleLock(this.contentEl, this.plugin, id, () => this.closeModuleLock());
+    const reason = workbenchModuleSetupReason(this.plugin, id);
+    const locked = isProWorkbenchModule(id) && !workbenchHasPro(this.plugin);
+    this.modulePageState = locked ? "pro" : reason ?? "";
+    const page = locked ? renderWorkbenchModuleLock(this.contentEl, this.plugin, id, () => this.closeModuleLock())
+      : renderWorkbenchModuleSetup(this.contentEl, this.plugin, id, reason!, () => this.closeModuleLock());
     page.querySelector<HTMLButtonElement>("button")?.focus();
   }
   private closeModuleLock(): void {
     const id = this.lockedModule;
-    const page = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"]');
+    const page = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
     if (page) { disposeOriginControls(page); page.remove(); }
-    this.lockedModule = null;
+    this.lockedModule = null; this.modulePageState = "";
     this.field("page").hidden = false;
     this.field("page").inert = false;
     this.weatherStage?.setActive(this.active()); this.starters?.setActive(this.active());
@@ -449,13 +453,18 @@ export class EchoInkWorkbenchView extends ItemView {
     this.field("modules").querySelectorAll<HTMLButtonElement>("[data-module]").forEach(button => {
       const id = button.dataset.module as typeof WORKBENCH_MODULES[number]["id"];
       const proModule = isProWorkbenchModule(id);
-      button.hidden = proModule ? !workbenchProModuleEnabled(this.plugin, id) : !this.snapshot?.modules.includes(id);
+      button.hidden = false;
       const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
       const locked = proModule && !workbenchHasPro(this.plugin);
       if (locked && !badge) createPluginEditionBadge(button, "pro", this.language);
       else if (!locked) badge?.remove();
     });
-    if (this.lockedModule && (workbenchHasPro(this.plugin) || !workbenchProModuleEnabled(this.plugin, this.lockedModule))) this.closeModuleLock();
+    if (this.lockedModule) {
+      const id = this.lockedModule;
+      const state = isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) ? "pro" : workbenchModuleSetupReason(this.plugin, id) ?? "";
+      if (!state) { this.closeModuleLock(); void this.openModule(id).catch(error => new Notice(message(error))); }
+      else if (state !== this.modulePageState) this.showModuleLock(id);
+    }
     this.scheduleNav();
     this.renderStarters();
     this.renderStatus();
@@ -570,7 +579,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (!section) return;
     const host = section.lastElementChild as HTMLElement;
     this.syncRows(host, entries, entry => entry.conversationId,
-      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
+      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
       entry => state === "completed" ? this.completedRow(entry) : this.taskCard(entry));
     host.querySelectorAll<HTMLElement>("[data-started-at]").forEach(time => { time.textContent = this.elapsed(Number(time.dataset.startedAt), now); });
   }
@@ -635,17 +644,23 @@ export class EchoInkWorkbenchView extends ItemView {
     } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
     body.createSpan({ cls: "wb-task-title", text: title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
-    const step = activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry);
-    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
+    const recovery = state === "interrupted" ? this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)) : undefined;
+    const step = recovery?.message ?? (activity && state === "interrupted" ? undefined : activity ? this.summary(entry) : inline ? entry.taskStage : this.summary(entry));
+    if (step && !(state === "interrupted" && step === this.t("没做完", "Not finished"))) body.createSpan({ cls: `wb-task-step${activity ? " wb-maintenance-summary" : ""}`, text: state === "interrupted" && !activity && !recovery ? this.t(`停在：${step}`, `Stopped at: ${step}`) : step });
     if (activity) renderMaintenanceProgressBar(body, activity);
     if (state === "interrupted") {
       const footer = card.createDiv({ cls: "wb-task-footer" });
       const info = this.interruptions.get(entry.conversationId);
-      footer.createSpan({ cls: "wb-interruption wb-grow", text: activity ? this.summary(entry) : this.interruptionText(entry, info) });
+      const interruptedAt = info?.at ?? entry.taskInterruptedAt ?? entry.updatedAt;
+      footer.createSpan({ cls: "wb-interruption wb-grow", text: recovery ? `${localDateLabel(interruptedAt, Date.now(), this.language)} ${localTaskTime(interruptedAt)}` : activity ? this.summary(entry) : this.interruptionText(entry, info) });
       const key = `resume-${entry.conversationId}`;
-      const resume = this.button(footer, this.busy.has(key) ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue"), key,
-        () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "secondary", "play");
-      resume.classList.add("is-small"); resume.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(resume, this.busy.has(key));
+      const pending = this.busy.has(key) || !!this.plugin.isTaskResuming?.(entry.conversationId);
+      const report = this.button(footer, this.t("上报问题", "Report a problem"), `report-${entry.conversationId}`, () => this.plugin.openRunReport(entry.conversationId), "secondary");
+      report.classList.add("is-small"); report.disabled = pending; report.dataset.action = "report-task";
+      report.dataset.wbBusy = key; report.dataset.wbSource = "tasks";
+      const resume = this.button(footer, pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue"), key,
+        () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "primary");
+      resume.classList.add("is-small"); resume.disabled = !!this.taskError || pending; setAmicroButtonPending(resume, pending);
       resume.dataset.wbMemory = "true"; resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
     } else if (activity?.taskKind === "upgrade" && state === "running") {
       const footer = card.createDiv({ cls: "wb-task-footer" }), key = `stop-upgrade-${entry.conversationId}`;
@@ -668,7 +683,7 @@ export class EchoInkWorkbenchView extends ItemView {
         for (const option of question.options) {
           const button = this.button(options, option.label, `${key}-${option.optionId}`,
             () => this.runAction(key, async () => { await answerWorkbenchQuestion(this.plugin, entry, question.questionId, option.optionId); }), "secondary");
-          button.classList.add("is-small"); button.title = option.description ?? option.label;
+          button.classList.add("is-small"); attachNativeTooltip(button, option.description ?? option.label);
           button.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
           button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "tasks";
         }
@@ -785,12 +800,14 @@ export class EchoInkWorkbenchView extends ItemView {
   private todoKey(todo: ParsedTodoRecord): string { return `todo-${todo.id || `${todo.lineStart}-${todo.title}`}`; }
   private updateActionStates(): void {
     this.field("groups").querySelectorAll<HTMLButtonElement>("[data-wb-busy]").forEach(button => {
-      const pending = this.busy.has(button.dataset.wbBusy!);
+      const taskId = button.closest<HTMLElement>("[data-task]")?.dataset.task;
+      const pending = this.busy.has(button.dataset.wbBusy!) || !!taskId && !!this.plugin.isTaskResuming?.(taskId);
       button.disabled = pending || !!(button.dataset.wbSource === "tasks" ? this.taskError : this.dataError)
         || button.dataset.wbMemory === "true" && !!(this.memoryNotice || this.memoryError);
       setAmicroButtonPending(button, pending);
       if (button.dataset.wbResume) {
-        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : this.t("继续", "Continue");
+        const recovery = taskId ? this.plugin.taskToolCallRecovery?.(taskId, this.interruptions.get(taskId)) : undefined;
+        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue");
       }
     });
   }

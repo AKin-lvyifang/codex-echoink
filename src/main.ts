@@ -1,3 +1,14 @@
+import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
+import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
+import { RunReportModal } from "./run-reports/desktop-ui";
+import { apiVersion as reportObsidianVersion } from "obsidian";
+import { homedir as reportHome } from "node:os";
+import { FileConversationCatalog as ReportCatalog } from "./harness/pi-native/file-conversation-catalog";
+import { FileProductRunStore as ReportRuns } from "./harness/pi-native/file-product-run-store";
+import { readVaultIdentity as readReportVaultIdentity } from "./plugin/vault-identity";
+import { collectDesktopRunReport } from "./run-reports/desktop-collector";
+import { configuredReportSecrets, freezeReport, reportWithoutConversation } from "./run-reports/report";
+import { runErrors } from "./run-reports/recent-errors";
 import { generateConversationTitle } from "./plugin/conversation-title";
 import { webSearchAvailable } from "./tools/web-search-settings";
 import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
@@ -255,6 +266,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
   private appearance: EchoInkAppearance | null = null;
   async onload(): Promise<void> {
+    runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: this.getVaultPath(), homePath: reportHome() }));
     this.registerEvent(this.app.workspace.on("quit", tasks => {
       this.applicationQuitObserved = true;
       tasks.add(async () => { await this.conversationRunService?.dispose("app_closed"); });
@@ -795,6 +807,13 @@ export default class CodexForObsidianPlugin extends Plugin {
       target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : "general:appearance");
   }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
+  async openWorkbenchModuleSettings(id: import("./agents/types").AgentModuleId): Promise<void> {
+    if (id === "journal") return this.getViewService().openEchoInkSettings("general", "module:journal");
+    if (id === "knowledge-base") return this.getViewService().openEchoInkSettings("knowledgeBase");
+    if (id === "todos") return this.getViewService().openEchoInkSettings("todos");
+    this.settings.resourceManagementTab = "plugins";
+    await this.getViewService().openEchoInkSettings("resources", `${id === "pdf-reading" ? "pdf-reading" : id}:settings`);
+  }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
   }
@@ -950,9 +969,13 @@ export default class CodexForObsidianPlugin extends Plugin {
         const handle = await bundle.runtime.submit(request);
         void handle.result.then(async (result) => {
           if (result.terminalState === "completed") {
-            await this.usageStore?.recordCompletedTurn(result.productRunId, result.settledAt ?? result.updatedAt);
+            try {
+              await this.usageStore?.recordCompletedTurn(result.productRunId, result.settledAt ?? result.updatedAt);
+            } catch (error) {
+              console.error("EchoInk conversation usage could not be recorded", error);
+            }
           }
-        }).catch((error) => console.error("EchoInk conversation usage could not be recorded", error));
+        }, (error) => console.error("EchoInk conversation run could not settle", error));
         this.piRunConversations.set(
           handle.productRunId,
           handle.conversationId
@@ -1067,6 +1090,26 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
   }
+  async openRunReport(conversationId = this.getViewService().getCodexView()?.openReportConversationId()): Promise<void> {
+    const snapshot = await this.captureRunReport(conversationId);
+    new RunReportModal(this.app, snapshot, this.getVaultPath(), this.accountService, this.settings.settingsLanguage === "en").open();
+  }
+  async captureRunReport(conversationId?: string) {
+    const environment = { pluginVersion: this.manifest.version, obsidianVersion: reportObsidianVersion,
+      platform: process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux", surface: "desktop" as const,
+      language: this.settings.settingsLanguage === "en" ? "en" as const : "zh" as const, membership: this.accountService?.read().membership.planId || "free" };
+    const redaction = { secrets: configuredReportSecrets(this.settings), vaultPath: this.getVaultPath(), homePath: reportHome() };
+    if (!conversationId) return freezeReport(reportWithoutConversation(environment, runErrors.snapshot()), redaction);
+    const root = pluginDataDir(this.getVaultPath(), this.getPluginDataDirName());
+    const identity = this.piLocalData?.vaultIdentity ?? await readReportVaultIdentity(root);
+    if (!identity) throw new Error("会话存储标识缺失，无法采集运行记录。");
+    const storageRootPath = path.join(root, "pi-agent-product-v1");
+    const catalog = this.piLocalData?.catalog ?? new ReportCatalog({ storageRootPath, vaultId: identity.vaultId });
+    const productRuns = this.piLocalData?.productRuns ?? new ReportRuns({ storageRootPath, vaultId: identity.vaultId, catalog });
+    const report = await collectDesktopRunReport({ catalog, productRuns, conversationId, recentErrors: runErrors.snapshot(),
+      environment });
+    return freezeReport(report, redaction);
+  }
   async readPiConversationCatalogEntry(conversationId: string): Promise<Readonly<PiConversationCatalogEntry> | null> {
     return await (await this.ensurePiLocalData()).catalog.get(conversationId);
   }
@@ -1088,6 +1131,11 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   isTaskResuming(taskId: string): boolean { return this.knowledgeBase?.upgrade?.ownsTask(taskId) ? this.knowledgeBase.upgrade.running : this.conversationRunService?.isResuming(taskId) ?? false; }
   getTaskResumeError(taskId: string): string | undefined { return this.conversationRunService?.getResumeError(taskId); }
+  taskToolCallRecovery(taskId: string, info?: TaskInterruptionInfo | null) {
+    const draft = this.settings.taskWorkspace?.replyDrafts[taskId];
+    const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
+    return toolCallRecoveryGuidance(info ?? undefined, this.settings.apiProviders, "desktop", selected);
+  }
   get activeTaskResumeSafety(): ReadonlyMap<string, Readonly<TaskResumeContext>> {
     return this.getConversationRunService().activeResumeContexts;
   }
@@ -1106,9 +1154,35 @@ export default class CodexForObsidianPlugin extends Plugin {
     const safety = last ? await readTaskResumeSafety({ ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), interruptedRunId: last.productRunId }) : null;
     const stage = last?.interruption?.stage?.trim() || entry.taskStage?.trim()
       || (last ? readDurableTaskInterruptionStage({ catalogStore: local.catalog, catalog: entry, runs, productRunId: last.productRunId }) : "");
+    const detail = last?.interruption?.detail ?? last?.error;
+    const recordedDenial = knownAgentCapabilityDenial(detail);
+    const requiredCapabilities = recordedDenial ? [recordedDenial.capabilityId]
+      : last?.knowledge?.workflow === "ask" || detail === "agent_capability_knowledge_denied" ? ["knowledge"] : [];
+    let failureMessage = agentCapabilityErrorText(detail, this.settings.settingsLanguage);
+    let resumeBlocked = false;
+    if (last) {
+      const reply = this.settings.taskWorkspace?.replyDrafts[taskId];
+      try {
+        await assertTaskResumeCapabilities(this, local.catalog, taskId, {
+          permission: reply?.selectedPermission ?? this.settings.defaultPermission,
+          mode: reply?.selectedMode === "plan" ? "plan" : "agent",
+          memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal"
+        }, last.agentSnapshot, safety?.operations ?? [], requiredCapabilities);
+      } catch (error) {
+        // Only recognized policy denials change this read-only presentation.
+        // Other checks stay on the explicit resume path.
+        if (knownAgentCapabilityDenial(error)) {
+          failureMessage = agentCapabilityErrorText(error, this.settings.settingsLanguage);
+          resumeBlocked = true;
+        }
+      }
+    }
     return {
+      ...(failureMessage ? { failureMessage, resumeBlocked } : {}),
       taskId, at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.settledAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" : "process_unknown"),
+      ...(last?.interruption?.retryAttempts ? { retryAttempts: last.interruption.retryAttempts } : {}),
+      ...toolCallFailureInfo(last?.interruption, last?.error),
       stage,
       ...(last?.interruption?.detail ? { detail: last.interruption.detail } : last?.error ? { detail: last.error } : {}),
       uncertainOperations: (safety?.operations ?? []).filter(operation => operation.status === "uncertain").map(operation => ({ id: operation.operationIdentity, label: operation.label }))
@@ -1120,6 +1194,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Only the run service calls this after synchronously taking its resume lease. */
   async prepareTaskResume(taskId: string, message?: string, frozenItem?: QueuedTurnItem, signal?: AbortSignal): Promise<QueuedTurnItem> {
     assertPiSubmissionActive(signal);
+    if (frozenItem && frozenItem.sessionId !== taskId) throw new Error("这份文字和附件不属于当前任务，请重新发送。");
+    if (frozenItem && message !== undefined && message !== frozenItem.text) throw new Error("发送内容与已保存的快照不一致，请重新发送。");
     const reply = this.settings.taskWorkspace?.replyDrafts[taskId];
     const choice = reply ? { providerId: reply.selectedProviderSettingsId, model: reply.selectedModel, permission: reply.selectedPermission, mode: reply.selectedMode } : undefined;
     const local = await this.ensurePiLocalData();
@@ -1139,18 +1215,24 @@ export default class CodexForObsidianPlugin extends Plugin {
     const snapshotInput = { ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), ...(last ? { interruptedRunId: last.productRunId } : {}) };
     const inspected = await readTaskResumeSafety(snapshotInput);
     assertPiSubmissionActive(signal);
+    const failure = toolCallFailureInfo(last.interruption, last.error);
+    const selected = frozenItem ? { providerSettingsId: frozenItem.turnOptions.providerSettingsId, modelId: frozenItem.turnOptions.model }
+      : choice?.providerId && choice.model ? { providerSettingsId: choice.providerId, modelId: choice.model } : undefined;
+    const recoveryTarget = toolCallRecoveryTarget(failure, this.settings.apiProviders, selected);
+    if (recoveryTarget && !this.settings.apiProviders.find(provider => provider.id === recoveryTarget.providerSettingsId)?.models.find(model => model.id === recoveryTarget.modelId)?.toolCalling) {
+      await this.activateApiProviderSettings(settings => { assertPiSubmissionActive(signal); enableTargetToolCalling(settings.apiProviders, recoveryTarget); });
+      assertPiSubmissionActive(signal);
+    }
     let item: QueuedTurnItem;
     if (frozenItem) {
-      if (frozenItem.sessionId !== taskId) throw new Error("这份文字和附件不属于当前任务，请重新发送。");
       item = cloneQueuedTurnItem(frozenItem);
-      if (message !== undefined && message !== frozenItem.text) throw new Error("发送内容与已保存的快照不一致，请重新发送。");
     } else {
-      const providerId = choice?.providerId ?? this.settings.activeApiProviderId;
-      const modelId = choice?.model ?? this.settings.defaultModel;
+      const providerId = recoveryTarget?.providerSettingsId ?? choice?.providerId ?? this.settings.activeApiProviderId;
+      const modelId = recoveryTarget?.modelId ?? choice?.model ?? this.settings.defaultModel;
       const provider = this.settings.apiProviders.find(provider => provider.id === providerId);
       const model = provider && getApiProviderModel(provider, modelId);
       if (!provider || !model) throw new Error("没有可用模型，请先在设置中选择模型。");
-      item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。", attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
+      item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || (failure.toolCallTextFailure ? TOOL_CALL_RESUME_PROMPT : "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
           reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
           permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? "agent", mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
@@ -1162,12 +1244,13 @@ export default class CodexForObsidianPlugin extends Plugin {
     const validation = validateApiProvider(provider);
     if (validation.length) throw new Error(`当前模型配置不可用：${validation.join("；")}`);
     if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
-    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations);
+    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations, last.knowledge?.workflow === "ask" ? ["knowledge"] : []);
     assertPiSubmissionActive(signal);
     const safety = await prepareTaskResumeSafety(snapshotInput);
     assertPiSubmissionActive(signal);
     if (safety.fileConflicts.length) throw new Error(`文件已被修改，本次没有继续，也不会覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
     const interruption = {
+      ...failure,
       at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" as const : "process_unknown" as const),
       stage: last?.interruption?.stage ?? entry.taskStage ?? "",
@@ -1315,12 +1398,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return { available: true };
   }
-  async listAgentTaskEntries(): Promise<Readonly<PiConversationCatalogEntry>[]> {
-    const entries = (await this.listPiConversations()).filter(entry => entry.status !== "deleted");
+  async listAgentTaskEntries(includeDeleted = false): Promise<Readonly<PiConversationCatalogEntry>[]> {
+    const entries = (await this.listPiConversations()).filter(entry => includeDeleted || entry.status !== "deleted");
     const localData = await this.ensurePiLocalData();
     const visible: Readonly<PiConversationCatalogEntry>[] = [];
     for (const entry of entries) {
-      if (entry.taskStatus) { visible.push(entry); continue; }
+      if (entry.taskStatus || includeDeleted && entry.status !== "active") { visible.push(entry); continue; }
       const runs = await localData.productRuns.list(entry.conversationId);
       const last = [...runs].sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0];
       if (!last) {
@@ -2019,7 +2102,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       item.textContent = current.kind === "maintenance" ? maintenanceStatusBarText(current, english)
         : `EchoInk ${english ? "Knowledge links" : "知识关联"}：${maintenanceTaskStateLabel(current, english)}${current.task.total === null ? "" : ` ${current.task.processed}/${current.task.total}${english ? " pages" : " 页"}`}`;
       const detail = current.kind === "maintenance" ? maintenanceActivityText(current, english) : knowledgeLinkingProgressText(current.task, english);
-      item.setAttribute("aria-label", detail); item.title = detail;
+      item.setAttribute("aria-label", detail);
     }));
   }
   getKnowledgeActivitySource(): import("./knowledge-base/maintenance-activity").KnowledgeActivitySource | undefined { return this.knowledgeBase?.activity; }

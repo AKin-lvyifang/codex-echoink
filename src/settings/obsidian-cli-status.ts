@@ -1,6 +1,7 @@
 import { Platform } from "obsidian";
 import { OriginSetting } from "./origin-setting";
 import { applySettingsRow } from "./settings-v2";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 interface CliHost {
   remote?: { app?: { getVersion?(): string } };
@@ -51,7 +52,7 @@ export function renderObsidianCliStatus(container: HTMLElement, zh: boolean): vo
     row.controlEl.createSpan({ text: labels[status], cls: "setting-item-description" });
   } else {
     const needsUpdate = status === "update-installer" || status === "update-app";
-    row.controlEl.createEl("a", {
+    const link = row.controlEl.createEl("a", {
       text: labels[status], cls: "external-link text-button",
       attr: {
         href: needsUpdate ? "https://obsidian.md/download" : "https://obsidian.md/help/cli",
@@ -61,5 +62,6 @@ export function renderObsidianCliStatus(container: HTMLElement, zh: boolean): vo
           : (zh ? "在 Obsidian 设置 → 通用中查看并开启命令行界面" : "Check Command line interface in Obsidian Settings → General")
       }
     });
+    attachNativeTooltip(link, link.title);
   }
 }

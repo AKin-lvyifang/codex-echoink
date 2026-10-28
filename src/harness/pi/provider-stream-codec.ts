@@ -125,16 +125,18 @@ class OpenAICompatibleSseDecoder implements ProviderSseStreamDecoder {
     this.endThinking();
     this.endText();
     if (!this.finishReason) throw new Error("provider_finish_reason_missing");
-    if (this.finishReason === "length") {
-      throw new Error("provider_output_limit_reached");
-    }
     if (this.finishReason === "content_filter") {
       throw new Error("provider_content_filtered");
     }
     if (this.finishReason === "network_error") {
       throw new Error("provider_network_error");
     }
-    if (
+    if (this.finishReason === "length") {
+      // Even calls whose JSON happens to parse may have been cut short. Keep
+      // the response body, but leave all continuation to the outer runtime.
+      this.discardToolCalls();
+      this.partial.stopReason = "length";
+    } else if (
       this.finishReason === "tool_calls"
       || this.finishReason === "function_call"
     ) {
@@ -155,7 +157,7 @@ class OpenAICompatibleSseDecoder implements ProviderSseStreamDecoder {
     deepFreeze(this.partial);
     this.input.stream.push({
       type: "done",
-      reason: this.partial.stopReason as "stop" | "length" | "toolUse",
+      reason: this.partial.stopReason,
       message: this.partial
     });
     return this.partial;
@@ -514,14 +516,21 @@ export function validProviderHistory(
   messages: readonly Message[],
   model: Model<Api>
 ): Message[] {
-  const transformed = transformMessages([...messages], model);
+  // Sanitize before Pi transforms cross-model thinking into text and inserts
+  // synthetic results. Neither is valid for a truncated assistant response.
+  const history = messages.flatMap((message): Message[] => {
+    if (message.role !== "assistant" || message.stopReason !== "length") {
+      return [message];
+    }
+    const content: TextContent[] = message.content
+      .filter((block): block is TextContent => block.type === "text")
+      .map((block) => ({ type: "text", text: block.text }));
+    return content.length ? [{ ...message, content }] : [];
+  });
+  const transformed = transformMessages(history, model);
   let pendingToolCallIds = new Set<string>();
   return transformed.filter((message) => {
     if (message.role === "assistant") {
-      if (message.stopReason === "length") {
-        pendingToolCallIds.clear();
-        return false;
-      }
       pendingToolCallIds = new Set(message.content
         .filter((block): block is ToolCall => block.type === "toolCall")
         .map((block) => block.id));

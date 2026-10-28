@@ -134,7 +134,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
       const count = day.count ?? 0;
       const text = day.label ?? label?.(day.date, count) ?? day.date;
       const level = day.level ?? (count === 0 ? 0 : count < low ? 1 : count < high ? 2 : 3);
-      const cell = grid.createEl("button", { cls: `todo-heatmap-cell todo-level-${level}`, attr: { type: "button", title: text, "aria-label": text, "data-date": day.date, tabindex: "-1" } });
+      const cell = grid.createEl("button", { cls: `todo-heatmap-cell todo-level-${level}`, attr: { type: "button", "aria-label": text, "data-date": day.date, tabindex: "-1" } });
       cell.style.gridColumn = String(column);
       cell.style.gridRow = String(date.getDay() + 2);
       cell.onmouseenter = cell.onclick = () => { info.setText(text); };
@@ -144,7 +144,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
     }
     focused ??= cells[0];
     focused.tabIndex = 0;
-    info.setText(focused.title);
+    info.setText(focused.getAttribute("aria-label") ?? "");
     const initial = focused;
     const scrollKey = `${stateKey}Scroll${mode}${start}To${end}`;
     scroll.onscroll = () => { if (scroll.isConnected) state.dataset[scrollKey] = String(scroll.scrollLeft); };

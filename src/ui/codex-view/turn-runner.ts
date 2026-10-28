@@ -1,10 +1,14 @@
+import { agentCapabilityErrorText } from "../../agents/capability-denial";
+import { runErrors } from "../../run-reports/recent-errors";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
+import { isPiConversationPersistenceError } from "../../harness/pi-native/pi-conversation-persistence-error";
 import { freezeWorkbenchTaskSource } from "../../home/workbench-context";
 import { isPdfReadingIntent } from "../../pdf-reading/intent";
 import { buildPiSelectionAnnotationContextMessage } from "../../harness/pi-native/pi-selection-annotations";
 import { composerSelectionAnnotations, restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnnotation } from "../../types/selection-annotations";
 import { Notice } from "obsidian";
+import { isTurnWatchdogProgressEvent } from "../turn-watchdog";
 import type {
   PiChatPreparedImage,
   PiChatPreparedDocument,
@@ -623,6 +627,7 @@ export async function startQueuedTurnItemSafely(view: CodexViewTurnContext, item
   try {
     return await view.startQueuedTurnItem(item, source);
   } catch (error) {
+    runErrors.record("desktop.turn.finalization", error, { conversationId: item.sessionId, runId: item.id });
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
@@ -637,6 +642,7 @@ async function startPreparedQueuedTurnItemSafely(
   try {
     return await startPreparedQueuedTurnItem(view, item, source);
   } catch (error) {
+    runErrors.record("desktop.turn.finalization", error, { conversationId: item.sessionId, runId: item.id });
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(uiText(view, `任务收口失败：${message}`, `Task finalization failed: ${message}`));
     return "failed";
@@ -1101,6 +1107,10 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       (event) => {
         try {
           assertPiChatRuntimeEventIdentity(event, handle!);
+          if (isTurnWatchdogProgressEvent(event)) view.armTurnWatchdog();
+          // Buffered/private model text still makes progress, without changing
+          // the visible projection or scheduling a settings save for each token.
+          if (event.type === "model_progress") return;
           if (event.type === "tool_execution_end" && event.toolName === "pdf_reading_process" && !event.isError) {
             const receipt = pdfAttachmentReceipt(event.result);
             if (receipt?.conversationId === handle!.conversationId && receipt.userEntryId === handle!.userEntryId) {
@@ -1189,7 +1199,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       committedFinalProjection
     );
 
-    if (settledEvent.terminalState === "failed") {
+    if (settledEvent.terminalState === "failed" && !settledRun.interruption?.retryAttempts) {
       const knownFailure = providerFailureText(settledRun.error);
       new Notice(
         knownFailure
@@ -1197,12 +1207,13 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
             view.plugin.settings.settingsLanguage,
             knownFailure
           )
-          : settledRun.error
+          : agentCapabilityErrorText(settledRun.error, view.plugin.settings.settingsLanguage) ?? settledRun.error
           ?? uiText(view, "EchoInk Pi Chat 执行失败。", "EchoInk Pi Chat failed.")
       );
     }
     return queuedTurnOutcomeForPiTerminal(settledEvent.terminalState);
   } catch (error) {
+    runErrors.record("desktop.turn", error, { conversationId: session.id, runId: handle?.productRunId });
     view.onPiRunFailure?.(localizedPiChatErrorMessage(view, error));
     if (item.piUserEntryAccepted || piUserEntryWasAccepted(error)) {
       item.piUserEntryAccepted = true;
@@ -1254,6 +1265,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       view.renderMessagesIfActive(session);
     }
     if (submissionSignal?.aborted) return "cancelled";
+    console.error("EchoInk conversation finalization failed", error);
     const rawMessage = normalizePiChatError(error).message;
     const message = localizedPiChatErrorMessage(view, error);
     new Notice(
@@ -1265,14 +1277,12 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
         )
         : item.piUserEntryAccepted
           ? uiText(view,
-            session.messages.some(message => message.role === "assistant" && message.runId === handle?.productRunId
-              && message.itemType === "assistant" && message.status === "completed" && message.text.trim())
+            isPiConversationPersistenceError(error)
               ? "回答已生成，但记录保存失败。已有内容已保留，无需重新发送。"
-              : "消息已受理，但本轮未能完成。请查看运行记录后继续。",
-            session.messages.some(message => message.role === "assistant" && message.runId === handle?.productRunId
-              && message.itemType === "assistant" && message.status === "completed" && message.text.trim())
+              : "本轮收尾未能完成，已有内容已保留。",
+            isPiConversationPersistenceError(error)
               ? "The answer was generated, but its records could not be saved. Your content was kept; do not resend."
-              : "The message was accepted, but the turn could not finish. Check its run records before continuing.")
+              : "This turn could not finish finalizing. Your content was kept.")
         : rawMessage === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE
         ? message
         : uiText(
@@ -1865,6 +1875,8 @@ function localizedKnownPiChatError(
   view: Pick<CodexViewTurnContext, "plugin">,
   message: string
 ): string {
+  const denial = agentCapabilityErrorText(message, view.plugin.settings.settingsLanguage);
+  if (denial) return denial;
   if (message === PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE) {
     return uiText(
       view,
