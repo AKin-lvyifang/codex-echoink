@@ -27543,7 +27543,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench button.wb-button.echoink-amicro-button:not(:disabled):focus-visible, .echoink-workbench .wb-search-input:focus,
 .echoink-workbench .wb-search-input:focus-visible, .echoink-workbench .wb-todo-check:focus-visible,
 .echoink-workbench summary:focus-visible {
-  background: var(--wb-hover); color: var(--wb-text); outline: none !important; box-shadow: none !important; border-color: var(--wb-line);
+  background: var(--wb-hover); color: var(--wb-text); outline: none; box-shadow: none; border-color: var(--wb-line);
 }
 .echoink-workbench button.wb-button.echoink-amicro-button:where(.is-icon, .is-tertiary, .is-primary):not(:disabled):is(:hover, :active, :focus-visible) { border-color: transparent; }
 .echoink-workbench button.wb-button:disabled, .echoink-workbench .wb-todo-check:disabled { opacity: .45; cursor: default; transform: none; }
@@ -27559,7 +27559,8 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-count { color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr)); align-items: start; gap: 10px; }
 .echoink-workbench .wb-task { min-width: 0; padding: 12px 14px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); display: flex; flex-direction: column; gap: 10px; }
-.echoink-workbench .wb-task:has(.wb-task-body:hover), .echoink-workbench .wb-task:has(.wb-task-body:focus-visible),
+/* Retain the former relational selector's specificity and body-only feedback. */
+.echoink-workbench .wb-task.wb-task.has-active-task-body,
 .echoink-workbench .wb-task.is-current { background: var(--wb-hover); }
 .echoink-workbench button.wb-task-body { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 10px; width: calc(100% + 28px); max-width: none; margin: -12px -14px 0; padding: 12px 14px 0; border: 0; border-radius: 11px 11px 0 0; color: var(--wb-text); text-align: left; font-size: inherit; }
 .echoink-workbench button.wb-task-body:hover, .echoink-workbench button.wb-task-body:focus-visible { background: transparent; }
@@ -27567,7 +27568,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-agent-name { color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
 .echoink-workbench .wb-task-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-task-status.is-interrupted, .echoink-workbench .wb-task-status.is-waiting { color: var(--wb-warn); }
-.echoink-workbench .wb-task-status > span:has(svg) { display: inline-flex; }
+.echoink-workbench .wb-task-status > span.wb-status-icon { display: inline-flex; }
 .echoink-workbench .wb-task-status svg { width: 12px; height: 12px; }
 .echoink-workbench .wb-spinner { animation: echoink-workbench-spin 1.2s linear infinite; }
 @keyframes echoink-workbench-spin { to { transform: rotate(360deg); } }
@@ -27630,7 +27631,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-search-panel { position: absolute; top: 100%; left: 0; right: 0; z-index: 10; max-height: min(480px, 60vh); overflow: auto; padding: 8px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); }
 .echoink-workbench .wb-search-heading, .echoink-workbench .wb-search-hint, .echoink-workbench .wb-search-empty { padding: 6px; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
 .echoink-workbench button.wb-search-result { display: flex; align-items: flex-start; justify-content: flex-start; gap: 10px; width: 100%; padding: 8px; text-align: left; color: var(--wb-text); }
-.echoink-workbench .wb-search-result > span:has(svg) { display: inline-flex; flex-shrink: 0; }
+.echoink-workbench .wb-search-result > span.wb-result-icon { display: inline-flex; flex-shrink: 0; }
 .echoink-workbench .wb-search-result svg { width: 16px; height: 16px; }
 .echoink-workbench .wb-search-result .wb-grow > * { display: block; overflow-wrap: anywhere; }
 .echoink-workbench .wb-search-result[aria-selected="true"] { background: var(--wb-hover); }
@@ -28870,7 +28871,7 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-iphone .ip-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
 .echoink-iphone .ip-section-heading h2 { margin: 0; font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 600; }
 .echoink-iphone .ip-count { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-section-more { margin-left: auto !important; }
+.echoink-iphone .ip-section-heading > button.ip-section-more { margin-left: auto; }
 .echoink-iphone .ip-cards { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-task-card:hover,
@@ -29918,7 +29919,7 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-ipad .pd-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
 .echoink-ipad .pd-section-heading h2 { margin: 0; font-size: calc(var(--pd-ui-font) * 0.8125); font-weight: 600; }
 .echoink-ipad .pd-count { color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
-.echoink-ipad .pd-section-more { margin-left: auto !important; }
+.echoink-ipad .pd-section-heading > button.pd-section-more { margin-left: auto; }
 .echoink-ipad .pd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); align-items: start; gap: 10px; }
 .echoink-ipad .pd-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
 .echoink-ipad .pd-task-card:hover,

@@ -1,3 +1,5 @@
+import { StateField } from "@codemirror/state";
+
 export const apiVersion = "1.14.4";
 const paths: Record<string, string> = {
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
@@ -142,3 +144,16 @@ export class Setting {
 
 /** Native editor type boundary; browser preview does not emulate a real editor. */
 export class MarkdownView {}
+
+export const editorInfoField = StateField.define({ create: () => ({ file: null }), update: value => value });
+export const editorLivePreviewField = StateField.define({ create: () => false, update: value => value });
+export class Menu {
+  addItem(callback: (item: Menu) => void) { callback(this); return this; }
+  addSeparator() { return this; }
+  setTitle() { return this; }
+  setIcon() { return this; }
+  setSection() { return this; }
+  setDisabled() { return this; }
+  onClick() { return this; }
+  showAtMouseEvent() {}
+}

@@ -85,7 +85,7 @@
 .echoink-iphone .ip-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
 .echoink-iphone .ip-section-heading h2 { margin: 0; font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 600; }
 .echoink-iphone .ip-count { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-section-more { margin-left: auto !important; }
+.echoink-iphone .ip-section-heading > button.ip-section-more { margin-left: auto; }
 .echoink-iphone .ip-cards { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-task-card:hover,

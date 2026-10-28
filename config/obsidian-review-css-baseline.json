@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 822,
+  "total": 806,
   "findings": [
     {
       "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
@@ -814,15 +814,6 @@
       "count": 1
     },
     {
-      "fingerprint": "237e8592c29af69999184272788d1481fd1d759c8b4158b1e5229e9e03907736",
-      "path": "src/styles/workbench.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--wb-hover); color: var(--wb-text); outline: none !important; box-shadow: none !important; border-color: var(--wb-line);",
-      "count": 2
-    },
-    {
       "fingerprint": "9fdb4485dd2a3bd96e36d7e307cc7ee89b1fafd44e5240e73c050c7cdcc8c9c3",
       "path": "src/styles/workbench.css",
       "rule": "declaration-no-important",
@@ -886,15 +877,6 @@
       "count": 1
     },
     {
-      "fingerprint": "460931b94f6a87dfe85208a7cee985d8a9ca004e82b2a3313dc551c84a8eb332",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-search-result > span:has(svg) { display: inline-flex; flex-shrink: 0; }",
-      "count": 1
-    },
-    {
       "fingerprint": "4931e404e2539b75699060cb01f785936d77f73024ee770a6bbef0e968fd2c87",
       "path": "src/styles/workbench.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -904,30 +886,12 @@
       "count": 1
     },
     {
-      "fingerprint": "55d8653fc4f011586806bceabf96f5e919172b2712baafc146e5256163a7376c",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-task:has(.wb-task-body:hover), .echoink-workbench .wb-task:has(.wb-task-body:focus-visible),",
-      "count": 2
-    },
-    {
       "fingerprint": "6e900cae99e46e6aab427869542c58f1690b652729af7cbccf29ef911340592d",
       "path": "src/styles/workbench.css",
       "rule": "selector-pseudo-class-disallowed-list",
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".codex-messages-shell:has(> .echoink-knowledge-activity-slot) > .codex-messages { height: auto; flex: 1 1 0; min-height: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "9aa17fd27c8510e38ac044d80406f5beb6d8fcabca383fdd9cb135650ecabf28",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-task-status > span:has(svg) { display: inline-flex; }",
       "count": 1
     },
     {
@@ -1462,15 +1426,6 @@
       "count": 1
     },
     {
-      "fingerprint": "ea7eedd4843de08cf838c1ea4f5f560420c6bdb17b91367588316720a11be3fc",
-      "path": "src/ui/ipad/workbench.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-ipad .pd-section-more { margin-left: auto !important; }",
-      "count": 1
-    },
-    {
       "fingerprint": "010dea035fbc0af893ad9df2dfeca5029c26c2f2b688968d6193cbaabcc1fb22",
       "path": "src/ui/ipad/workbench.css",
       "rule": "plugin/no-unsupported-browser-features",
@@ -1603,15 +1558,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-iphone .ip-settings-row > .ip-settings-label:not(:has(.ip-settings-name)) { font-size: .92em; font-weight: 500; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "5c69afb2adf866e3f6fe8ee056bbdeae394fd519c289a485259f839ff77fbf24",
-      "path": "src/ui/iphone/workbench.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-iphone .ip-section-more { margin-left: auto !important; }",
       "count": 1
     },
     {
@@ -1957,15 +1903,6 @@
       "count": 1
     },
     {
-      "fingerprint": "3675c99ef3e86f013480f19b563e99fdb4abf04f56c5d6099e1fc294fd70313b",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-iphone .ip-section-more { margin-left: auto !important; }",
-      "count": 1
-    },
-    {
       "fingerprint": "38536555b0bf1ce637660dc32ed8996db79fb12d3c5586a9dedc4c5cc669fe73",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2107,15 +2044,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "@media(prefers-reduced-motion:reduce){:is(.echoink-settings-demo, .echoink-onboarding-coachmark) .settings-motion-icon,:is(.echoink-settings-demo, .echoink-onboarding-coachmark) .settings-motion-icon *{animation:none!important;transition:none!important}}",
-      "count": 2
-    },
-    {
-      "fingerprint": "57dd84bd83034df4211cb8e4493f48e7112db8ecf18c9c6a6df50305cd3fe4a4",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--wb-hover); color: var(--wb-text); outline: none !important; box-shadow: none !important; border-color: var(--wb-line);",
       "count": 2
     },
     {
@@ -2794,15 +2722,6 @@
       "count": 1
     },
     {
-      "fingerprint": "cbc64c04aa11ecf27bde19e189fea42d57c4bc71707ebd154fe6cc6f6acbea2d",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-ipad .pd-section-more { margin-left: auto !important; }",
-      "count": 1
-    },
-    {
       "fingerprint": "cd302991fc254dc7f9511d4395384022379bc4af90db94921f50fc52cedc5ddb",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -3451,15 +3370,6 @@
       "count": 1
     },
     {
-      "fingerprint": "13fee795bd8a0697767c9bceebd6a598d0ebec895601e1fc93cfd36a4fde4a7e",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-task-status > span:has(svg) { display: inline-flex; }",
-      "count": 1
-    },
-    {
       "fingerprint": "14cd5aec1e2a10dc6d9ea36b0ef213e6517b3a7ef3670acb07ae14f01fb8e145",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3613,15 +3523,6 @@
       "count": 1
     },
     {
-      "fingerprint": "3240b02087b62eb1f701ba7f532d386e838821a8ba4d322b84a5626fc811f281",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-task:has(.wb-task-body:hover), .echoink-workbench .wb-task:has(.wb-task-body:focus-visible),",
-      "count": 2
-    },
-    {
       "fingerprint": "39c68c9f83af82bc70a63a53d5a2a8a65ea267158f94a144399f4ebfdb305862",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3691,15 +3592,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-ipad .echoink-ipad-page:has(> .echoink-ipad-content > .pd-agent-form) > .echoink-ipad-header { border-bottom: 1px solid var(--pd-line); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "4e8413afac65c2cf22571787425077967a2faa1208f74b533f6de3330befa5ed",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-workbench .wb-search-result > span:has(svg) { display: inline-flex; flex-shrink: 0; }",
       "count": 1
     },
     {

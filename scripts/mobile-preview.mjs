@@ -10,6 +10,7 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/browser.
 ] });
 const hostCssPath = process.env.ECHOINK_HOST_CSS;
 const baselineCssPath = process.env.ECHOINK_BASELINE_CSS;
+const baselineJsPath = process.env.ECHOINK_BASELINE_JS;
 const lucidePath = process.env.ECHOINK_LUCIDE_JS;
 const port = Number(process.env.ECHOINK_PREVIEW_PORT ?? 5179);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("ECHOINK_PREVIEW_PORT must be a valid TCP port.");
@@ -45,7 +46,7 @@ const server = http.createServer(async (request, response) => {
     if (pathname === "/" && port === 5185 && !params.toString()) {
       response.writeHead(302, { location: "/?host&workbench&modulefixture&financepreview&theme=green&tablet" }); response.end(); return;
     }
-    if (pathname === "/app.js") { response.setHeader("content-type", "text/javascript"); response.end(build.outputFiles[0].text); }
+    if (pathname === "/app.js") { response.setHeader("content-type", "text/javascript"); response.end(params.has("baseline") && baselineJsPath ? await fs.readFile(baselineJsPath) : build.outputFiles[0].text); }
     else if (pathname === "/styles.css") { response.setHeader("content-type", "text/css"); response.end(await fs.readFile(params.has("baseline") && baselineCssPath ? baselineCssPath : "styles.css")); }
     else if (pathname === "/host.css" && hostCssPath) { response.setHeader("content-type", "text/css"); response.end(await fs.readFile(hostCssPath)); }
     else if (pathname === "/lucide.js" && lucidePath) { response.setHeader("content-type", "text/javascript"); response.end(await fs.readFile(lucidePath)); }
@@ -54,6 +55,7 @@ const server = http.createServer(async (request, response) => {
       response.end(html.replace("__HOST_STYLE__", params.has("host") && hostCssPath ? '<link rel="stylesheet" href="/host.css">' : "")
         .replace('href="/styles.css"', params.has("baseline") ? 'href="/styles.css?baseline"' : 'href="/styles.css"')
         .replace('<script type="module" src="/app.js">', `${lucidePath ? '<script src="/lucide.js"></script>' : ""}<script type="module" src="/app.js">`)
+        .replace('src="/app.js"', params.has("baseline") && baselineJsPath ? 'src="/app.js?baseline"' : 'src="/app.js"')
         .replace("const p=new URLSearchParams(location.search);", "const p=new URLSearchParams(location.search);const theme=p.get('theme');if(theme==='green'||theme==='violet')document.body.dataset.echoinkTheme=theme;"));
     } else { response.writeHead(404, { "content-type": "text/plain; charset=utf-8" }); response.end("Not found"); }
   } catch (error) { response.writeHead(500, { "content-type": "text/plain; charset=utf-8" }); response.end(String(error)); }

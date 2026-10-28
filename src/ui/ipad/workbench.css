@@ -90,7 +90,7 @@
 .echoink-ipad .pd-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
 .echoink-ipad .pd-section-heading h2 { margin: 0; font-size: calc(var(--pd-ui-font) * 0.8125); font-weight: 600; }
 .echoink-ipad .pd-count { color: var(--pd-muted); font-size: calc(var(--pd-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
-.echoink-ipad .pd-section-more { margin-left: auto !important; }
+.echoink-ipad .pd-section-heading > button.pd-section-more { margin-left: auto; }
 .echoink-ipad .pd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); align-items: start; gap: 10px; }
 .echoink-ipad .pd-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--pd-line); border-radius: 12px; cursor: pointer; }
 .echoink-ipad .pd-task-card:hover,
