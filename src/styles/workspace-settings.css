@@ -1114,7 +1114,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .health-card.is-unknown .health-score strong{color:var(--muted)}
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
-.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}
+.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;border:1px solid var(--muted);border-radius:50%;background:none;color:var(--secondary);line-height:1}
+.echoink-settings-demo button.echoink-settings-help-trigger[type="button"]{padding:0;width:13px;min-height:13px;height:13px;font-size:9px}
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row:has(>.echoink-settings-inline-confirm){flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}

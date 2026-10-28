@@ -20842,7 +20842,8 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .health-card.is-unknown .health-score strong{color:var(--muted)}
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
-.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}
+.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;border:1px solid var(--muted);border-radius:50%;background:none;color:var(--secondary);line-height:1}
+.echoink-settings-demo button.echoink-settings-help-trigger[type="button"]{padding:0;width:13px;min-height:13px;height:13px;font-size:9px}
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row:has(>.echoink-settings-inline-confirm){flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}
@@ -22978,12 +22979,12 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
   .echoink-journal-template-management :is(.echoink-journal-template-grid, .echoink-journal-custom-list) { grid-template-columns: minmax(0, 1fr); }
 }
 /* Boolean labels and their controls stay together at narrow desktop widths. */
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) {
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox {
   flex-direction: row;
   align-items: center;
 }
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) > .setting-item-info { flex: 1; width: auto; min-width: 0; }
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-info { flex: 1; width: auto; min-width: 0; }
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }
 .echoink-module-drawer-content .echoink-life-setting-row > .echoink-module-boolean-copy { display: flex; flex-direction: row; align-items: center; }
 @container (max-width: 520px) {
   .echoink-module-drawer-content .echoink-life-setting-row:has(form) { flex-direction: column; align-items: stretch; }
@@ -23015,7 +23016,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
 .echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 230px; }
 /* Knowledge uses a single Lucide circle, without the legacy help-button circle. */
-.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }
+.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px; min-width: 14px; height: 14px; min-height: 14px; padding: 0; border: 0; }
 .echoink-settings-demo button.echoink-knowledge-help-trigger > svg { width: 14px; height: 14px; }
 .echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-knowledge-sources-heading h3 { margin: 0; }
@@ -23082,7 +23083,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 }
 
 .echoink-desktop-account-settings .echoink-account .primary.echoink-origin-control[data-slot=button]:focus-visible {
-  background: var(--soft) !important;
+  background: var(--soft);
   border-color: var(--line);
   color: var(--text);
   filter: none;
@@ -24206,23 +24207,23 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > .echoink-finance-dialog-actions { margin: 0; padding: 13px 18px; }
 
 /* Finance detail keeps its existing route while taking the full desktop settings body. */
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:not(:has(.echoink-module-detail)),
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-settings-section-header,
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer:not(:has(.echoink-module-detail)),
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer:has(.echoink-module-detail) > .echoink-module-drawer-header { display: none; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:has(.echoink-module-detail) { margin: 0; }
-.echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer.echoink-settings-section:has(.echoink-module-detail) {
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group:not(.has-module-detail),
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-settings-section-header,
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-module-drawer:not(.has-module-detail),
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer.has-module-detail > .echoink-module-drawer-header { display: none; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group.has-module-detail { margin: 0; }
+.echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-module-drawer.echoink-settings-section.has-module-detail {
   margin: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer-content:has(.echoink-module-detail) { border-top: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > h2 { margin-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer-content.has-module-detail { border-top: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > h2 { margin-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
 
 .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded { display: flex; flex-direction: column; gap: 0; width: 100%; max-width: none; align-self: stretch; padding: 0; margin: 0; }
 .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded .echoink-pdf-setting-field {
@@ -24297,8 +24298,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > :is(label, .echoink-finance-icon-field),
   .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field { grid-template-columns: minmax(0, 1fr); }
   .echoink-settings-aligned .echoink-pdf-setting-field > button:not([data-slot=select-trigger]) { grid-column: 1; }
-  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) { flex-direction: row; align-items: center; }
-  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) .setting-item-control { flex: none; width: auto; max-width: none; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox { flex-direction: row; align-items: center; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox .setting-item-control { flex: none; width: auto; max-width: none; }
 }
 
 /* Module values are paths/status text; only action controls retain their surface. */
@@ -24318,12 +24319,12 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
 body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox {
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
 }
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-control {
   order: -1;
   flex: none;
   width: auto;
@@ -24331,8 +24332,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
   align-self: center;
   padding-top: 0;
 }
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-info { flex: 1; min-width: 0; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row.has-origin-direct-checkbox { justify-content: flex-start; align-items: center; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 0; }
 /* Generation uses the existing desktop settings and Obsidian surfaces. */
 .echoink-settings-demo .echoink-generation-template-drawer {

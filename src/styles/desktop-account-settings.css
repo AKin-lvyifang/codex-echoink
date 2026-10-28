@@ -42,7 +42,7 @@
 }
 
 .echoink-desktop-account-settings .echoink-account .primary.echoink-origin-control[data-slot=button]:focus-visible {
-  background: var(--soft) !important;
+  background: var(--soft);
   border-color: var(--line);
   color: var(--text);
   filter: none;

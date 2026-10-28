@@ -210,23 +210,23 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > .echoink-finance-dialog-actions { margin: 0; padding: 13px 18px; }
 
 /* Finance detail keeps its existing route while taking the full desktop settings body. */
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:not(:has(.echoink-module-detail)),
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-settings-section-header,
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer:not(:has(.echoink-module-detail)),
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer:has(.echoink-module-detail) > .echoink-module-drawer-header { display: none; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:has(.echoink-module-detail) { margin: 0; }
-.echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer.echoink-settings-section:has(.echoink-module-detail) {
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group:not(.has-module-detail),
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-settings-section-header,
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-module-drawer:not(.has-module-detail),
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer.has-module-detail > .echoink-module-drawer-header { display: none; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail > .echoink-module-group.has-module-detail { margin: 0; }
+.echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules.has-module-detail > .echoink-module-group > .echoink-module-drawer.echoink-settings-section.has-module-detail {
   margin: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer-content:has(.echoink-module-detail) { border-top: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > h2 { margin-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer-content.has-module-detail { border-top: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > h2 { margin-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
+.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
 
 .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded { display: flex; flex-direction: column; gap: 0; width: 100%; max-width: none; align-self: stretch; padding: 0; margin: 0; }
 .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded .echoink-pdf-setting-field {
@@ -301,8 +301,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
   .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-form > :is(label, .echoink-finance-icon-field),
   .echoink-settings-aligned .echoink-pdf-settings-form.is-embedded > .echoink-pdf-setting-field { grid-template-columns: minmax(0, 1fr); }
   .echoink-settings-aligned .echoink-pdf-setting-field > button:not([data-slot=select-trigger]) { grid-column: 1; }
-  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) { flex-direction: row; align-items: center; }
-  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) .setting-item-control { flex: none; width: auto; max-width: none; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox { flex-direction: row; align-items: center; }
+  .echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox .setting-item-control { flex: none; width: auto; max-width: none; }
 }
 
 /* Module values are paths/status text; only action controls retain their surface. */
@@ -322,12 +322,12 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
 body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink-module-path-value:focus-visible { outline: none; box-shadow: none; background: var(--soft); }
 
 /* Boolean controls lead their copy. Switches keep their original trailing slot. */
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox {
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
 }
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-control {
   order: -1;
   flex: none;
   width: auto;
@@ -335,6 +335,6 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
   align-self: center;
   padding-top: 0;
 }
-.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }
-.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }
+.echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-info { flex: 1; min-width: 0; }
+.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row.has-origin-direct-checkbox { justify-content: flex-start; align-items: center; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row > [role=checkbox] { order: -1; flex: none; margin-top: 0; }

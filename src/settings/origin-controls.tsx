@@ -111,6 +111,17 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
     : <Checkbox ref={island.ref} className="echoink-origin-control" checked={indeterminate ? "indeterminate" : checked} disabled={disabled} onCheckedChange={onCheckedChange} />);
   render();
   const element = island.element() as OriginCheckElement;
+  const row = parent.closest<HTMLElement>(".setting-item, .echoink-life-setting-row");
+  if (row) {
+    const state = kind === "checkbox" ? "has-origin-checkbox" : "has-origin-switch";
+    row.classList.add(state);
+    if (kind === "checkbox" && element.parentElement === row) row.classList.add("has-origin-direct-checkbox");
+    island.onDispose(() => {
+      const others = Array.from(row.querySelectorAll(`[data-slot="${kind}"]`)).filter(control => control !== element);
+      if (!others.length) row.classList.remove(state);
+      if (kind === "checkbox" && !others.some(control => control.parentElement === row)) row.classList.remove("has-origin-direct-checkbox");
+    });
+  }
   Object.defineProperty(element, "checked", { get: () => checked, set: (value: boolean) => { checked = Boolean(value); render(); } });
   Object.defineProperty(element, "indeterminate", { get: () => indeterminate, set: (value: boolean) => { indeterminate = kind === "checkbox" && Boolean(value); render(); } });
   Object.defineProperty(element, "disabled", { get: () => disabled, set: (value: boolean) => { disabled = Boolean(value); render(); } });

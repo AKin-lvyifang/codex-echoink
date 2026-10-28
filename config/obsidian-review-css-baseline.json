@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 732,
+  "total": 660,
   "findings": [
     {
       "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
@@ -193,33 +193,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8027af9d3a8250991484648d95db2d4d1dd64f10fd1fc5b1fc2afc2e30902bb8",
-      "path": "src/styles/desktop-account-settings.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--soft) !important;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9df730a9bdd3ac3e3a3aff4189ee99d5ec50ad59d95f4dd8157e81f07d6d3f9b",
-      "path": "src/styles/desktop-knowledge-settings.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }",
-      "count": 4
-    },
-    {
-      "fingerprint": "51ad06e3b3758dc4784232a0238d73cee2b75eda8f30db7f2022236b256a9793",
-      "path": "src/styles/desktop-module-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }",
-      "count": 1
-    },
-    {
       "fingerprint": "52b8b683fd377a15818d3702e0c1ae15d2b93757a90ac3fb0d797ffd2846534a",
       "path": "src/styles/desktop-module-settings.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -235,24 +208,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-module-drawer-content .echoink-life-setting-row:has(form) { flex-direction: column; align-items: stretch; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "e4d68cb855de5425be2a1b5e7a3e577b48292c84f16a072d69a5e71024b71897",
-      "path": "src/styles/desktop-module-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) > .setting-item-info { flex: 1; width: auto; min-width: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "fae9dfe1a2e201ac44fae0cef3c4d896baf22f5f782088a7e67413c539cc5327",
-      "path": "src/styles/desktop-module-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) {",
       "count": 1
     },
     {
@@ -580,159 +535,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1e3405f446e6a4934d7b741413059d4de657fcb180471249cf5062c024a2667a",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {",
-      "count": 1
-    },
-    {
-      "fingerprint": "246e6833b4d8b188cc9ab5483a956dc44179f0d96f7183598a143c9b322523fb",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer:has(.echoink-module-detail) > .echoink-module-drawer-header { display: none; }",
-      "count": 2
-    },
-    {
-      "fingerprint": "2b9d6380755faf4718938cfaca477402a9867943b6f238bebbffcac51fa2d2cb",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:not(:has(.echoink-module-detail)),",
-      "count": 2
-    },
-    {
-      "fingerprint": "360fabf8191c02415a4089b45d204166fe160e50ba4b9305e49dcaad43b3e361",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > h2 { margin-inline: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "6200cab03ad37ab0b6888f073109e7920f29e6c3218ed7331462ecfdad36f651",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "7c520643433ff852e176dafffbb46dcdb68cac1e773af1d6106eecea67d716b0",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) { flex-direction: row; align-items: center; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "7ff0422b380159a16f35e3d22224234256832839f3a42bf2edad8b1d3ebb9577",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "a18b8d9afd65d55dfac93fbde3c45478bf64f81b53bc2aa39b32b4e1bee89e52",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "a6ef2c0796175d055d45d2789a33845f3c337c6c61a50df218e0657009d5c2ea",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer.echoink-settings-section:has(.echoink-module-detail) {",
-      "count": 2
-    },
-    {
-      "fingerprint": "b00eb6d917a569603c16c1bb8a555e7bcbf02b35b71610fb830e277ffb5e7405",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer-content:has(.echoink-module-detail) { border-top: 0; }",
-      "count": 2
-    },
-    {
-      "fingerprint": "bb22ed6812b533d2bcfced3157a5e131dd2a441e1c5e3a2656040f1705ec8138",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-settings-section-header,",
-      "count": 1
-    },
-    {
-      "fingerprint": "c0280ce58e02f848e82a45b8ae9e85b53fef5d695ef1a98cadbf5116e3af7ba2",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:has(.echoink-module-detail) { margin: 0; }",
-      "count": 2
-    },
-    {
-      "fingerprint": "d4c71a3ea970ab40badd762bf7681726527fe568c398dbfad688ffe7d95295f8",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "d8b48cb6ce213d11bbd81d698ad02dcb679aba16df1933529fd83726417c9b26",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) .setting-item-control { flex: none; width: auto; max-width: none; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "e07e5fb29d138cf5c47575edfc4099aa631e3a394adf08ffdce49d8e8f46d165",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "e98f1fd269f734e94356928c947f92ff3e54a656532197c59f6472eb07f0b2da",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "f59f2b6a82eec0f33159efc90eb3a5bf9969245b06ff950ead32d5974717cd75",
-      "path": "src/styles/settings-demo-modules.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer:not(:has(.echoink-module-detail)),",
-      "count": 2
-    },
-    {
       "fingerprint": "fbe1f7da29b4190f8a4352484ad2bd476744fcbc09b4aa31afdc80392990f65d",
       "path": "src/styles/todo-page.css",
       "rule": "declaration-no-important",
@@ -866,15 +668,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "transition-duration: 0.01ms !important;",
       "count": 1
-    },
-    {
-      "fingerprint": "64875e682ed39b066b18e5d74befaf469dcbca17565375227cc9e8e84fde0e5f",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}",
-      "count": 5
     },
     {
       "fingerprint": "6765b2b3733b33090ec6f58dd526ea19da5a7ebe63fe99559f1eec0cc9c57a05",
@@ -1561,15 +1354,6 @@
       "count": 2
     },
     {
-      "fingerprint": "116a7bab2db1ba69a41fac93b28b83ede21706af37775a33a69f11df7acec8e5",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px !important; min-width: 14px; height: 14px !important; min-height: 14px !important; padding: 0 !important; border: 0; }",
-      "count": 4
-    },
-    {
       "fingerprint": "13878783bcb3d0f7656ec7be465e700cd4261dbb9e785b6c701d066f7d067574",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1622,15 +1406,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "@media(prefers-reduced-motion:reduce){.echoink-home-workspace *,.echoink-home-workspace *:before,.echoink-home-workspace *:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}@media print{.echoink-home-workspace .start-strip,.echoink-home-workspace .heading-right,.echoink-home-workspace .page-footer,.echoink-home-workspace .dialog{display:none}.echoink-home-workspace .home-content{max-width:none;padding:15px}.echoink-home-workspace .bento{break-inside:avoid}}",
       "count": 3
-    },
-    {
-      "fingerprint": "1da5eca5d1cf86f4897a560c68a1370966de6c5c2ac28b14caf1d8f1b6f8b9be",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}",
-      "count": 5
     },
     {
       "fingerprint": "1ef31ae336201f5b3244c0074fa1acb905b1f9a5c85bbb11204b33171c64d839",
@@ -1720,15 +1495,6 @@
       "severity": 1,
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ":is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-editor[hidden] { display: none !important; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "2e4953e8559735a82d7d617af77ce5e7276b96d852f181130d556de10a161054",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "background: var(--soft) !important;",
       "count": 1
     },
     {
@@ -3136,15 +2902,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0334c2c96dec0d9cc8736cdcb94aaf9b3579d1bb06650a8c2ccbe19f7c0df23f",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer:not(:has(.echoink-module-detail)),",
-      "count": 2
-    },
-    {
       "fingerprint": "047ff1669ee8b77f970d1abecb16b129ed342b7c1ae6ad3b5895da4086c8baeb",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3152,15 +2909,6 @@
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-iphone .eis-page:has(> .eis-scroll > .eis-content > .ip-legacy) > .eis-scroll { display: flex; overflow: hidden; }",
       "count": 1
-    },
-    {
-      "fingerprint": "05f84478a0454349e52768b1697738fd162687490b08b8980a9f3d00955a06ac",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:not(:has(.echoink-module-detail)),",
-      "count": 2
     },
     {
       "fingerprint": "060b77846cbbf4f92c870cbc7248a0ad9157dcf19b451318f6a7b02257c9bee7",
@@ -3208,15 +2956,6 @@
       "count": 1
     },
     {
-      "fingerprint": "14cd5aec1e2a10dc6d9ea36b0ef213e6517b3a7ef3670acb07ae14f01fb8e145",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) {",
-      "count": 1
-    },
-    {
       "fingerprint": "151209fb4e2beecdaed9e13d1ef01935d271c609330f8dac1e10f89594f1f1bd",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3241,15 +2980,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-generation-template-card:has([role=\"radio\"][data-state=\"checked\"]),",
-      "count": 1
-    },
-    {
-      "fingerprint": "1ccfd76ab6bdd88341f9bbbc9f6470cf7643c7ee484650ee5ad47184ecdc541f",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) .setting-item-control { flex: none; width: auto; max-width: none; }",
       "count": 1
     },
     {
@@ -3307,33 +3037,6 @@
       "count": 1
     },
     {
-      "fingerprint": "2784224eedfea794ede82c70e72db059897621210faba9d71e4e81f0a99f9b00",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content .echoink-life-setting-row:has(> [role=checkbox]) { justify-content: flex-start; align-items: center; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "288cc61c763415be8ad1234d258e9b841e69326a8606610c76bc7b8840d33c5a",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "2a38af0f9f5c138f170105c460b18c0fc9ea621c602edcfd9395cd7637ba78e7",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer-content:has(.echoink-module-detail) { border-top: 0; }",
-      "count": 2
-    },
-    {
       "fingerprint": "2a4ee85e88124449024e9e0ebc924f1751912af902b5b8543926d7969071fc3e",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3358,15 +3061,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": "body:not(.is-mobile) :is(.echoink-settings-inline-confirm, .modal.echoink-theme-boundary):has(.echoink-delete-button) button:focus-visible {",
-      "count": 1
-    },
-    {
-      "fingerprint": "39c68c9f83af82bc70a63a53d5a2a8a65ea267158f94a144399f4ebfdb305862",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > h2 { margin-inline: 0; }",
       "count": 1
     },
     {
@@ -3484,15 +3178,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo .echoink-generation-output-segment:has(:focus-visible) { background: var(--soft, var(--background-modifier-hover)); border-radius: 6px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "5d2150237d301d940e25ea9cb5bea44ca36d5f94c96d5f5ba4473553cf1f69a6",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-settings-section-header,",
       "count": 1
     },
     {
@@ -3622,15 +3307,6 @@
       "count": 1
     },
     {
-      "fingerprint": "77ce56e4c5230c7de7aadc741e8d41a33b046f637e87ff1e5d76e9403e40347f",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-demo .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group > .echoink-module-drawer.echoink-settings-section:has(.echoink-module-detail) {",
-      "count": 2
-    },
-    {
       "fingerprint": "7aa1ad21037257b478034c9f66d80e459cecbc7ff60c29d58993ab76670d8b5a",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3658,15 +3334,6 @@
       "count": 1
     },
     {
-      "fingerprint": "81bfad69b962050d5f289c745100a4e0ecc3ecb5d5669b889972fe53615b0ff8",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) > .setting-item-info { flex: 1; width: auto; min-width: 0; }",
-      "count": 1
-    },
-    {
       "fingerprint": "826d8a6f4fae15f8b3da27c6be16671a6273d15e5b53f5e52fe0f169d81cc3d1",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3683,15 +3350,6 @@
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": "&:has(>svg) {",
       "count": 3
-    },
-    {
-      "fingerprint": "88e95807de002790a16347a6b82a220e388f7287db4fc8e685f2dfb3c682a8c0",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }",
-      "count": 1
     },
     {
       "fingerprint": "890a8766f4fb5f2cede43a2b04c3a152566e9cdceb41edf414a71089843a4a8d",
@@ -3784,15 +3442,6 @@
       "count": 1
     },
     {
-      "fingerprint": "aa881b4ea3ab41e2aa454d83afa77e7a0125394062498875204d669d9bbd4127",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-drawer:has(.echoink-module-detail) > .echoink-module-drawer-header { display: none; }",
-      "count": 2
-    },
-    {
       "fingerprint": "ac1461139f85db137bcc9ab63e8ca37163d6e936c64b84eb834f84ebb60b8305",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3829,48 +3478,12 @@
       "count": 1
     },
     {
-      "fingerprint": "b8d1b29652fef84597ae26a444ba2fc7142f81da4b507d45ae688a62e40d99e2",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }",
-      "count": 1
-    },
-    {
       "fingerprint": "b97789d6cd054ff107e4c2fc88d1d86b8f9fc078335f94c3c332f01debb30468",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-desktop .codex-resource-row:has(>.codex-resource-assignment){flex-wrap:wrap}",
-      "count": 1
-    },
-    {
-      "fingerprint": "b9cfbab25537a910d6d1cf03c383d18205807617f7bafcc9b9f4c0f461373364",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-control {",
-      "count": 1
-    },
-    {
-      "fingerprint": "c1f2c6cf3eeae6fd4954c571c6a2bb2ed883510a6b74985a6dcb3453d4c51cd8",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role=\"checkbox\"]) > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "c2f6e7789e7516b10b61ea9c7e6ff3f27e03c35bfdb1a55be1d859bb33efafb0",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) { flex-direction: row; align-items: center; }",
       "count": 1
     },
     {
@@ -3964,15 +3577,6 @@
       "count": 1
     },
     {
-      "fingerprint": "e4395543e03f62abc97ddfb275f1248da04b46441e10160484d8f4003f859b09",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) > .echoink-module-group:has(.echoink-module-detail) { margin: 0; }",
-      "count": 2
-    },
-    {
       "fingerprint": "e84e98eb7c1aebc0fa1fd75e1e67c25c5d826691c85b91b64f3992a63680276a",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -3988,15 +3592,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-workbench .wb-header:has(.wb-sky.is-feedback) { padding-bottom: 54px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "f17cf1c75979dc519a12689e3f953d97916d01f4ee2714f76bc362e91f3d019e",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned.echoink-settings-aligned :is(.echoink-desktop-modules .echoink-module-drawer-content, .echoink-knowledge-module-page) .setting-item:has([role=checkbox]) > .setting-item-info { flex: 1; min-width: 0; }",
       "count": 1
     },
     {
@@ -4033,15 +3628,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo.echoink-settings-aligned [data-resource-group]:not(:has(.codex-resource-row:not(.is-search-hidden))) { display: none; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "f9296fb5773bbbec28603a37b2ec48e35e70351a131735efe5c89441c2b11043",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-aligned .echoink-desktop-modules:has(.echoink-module-detail) .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }",
       "count": 1
     },
     {
