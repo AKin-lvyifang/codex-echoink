@@ -279,7 +279,13 @@ export class ConversationRunService {
   }
   async flushSave(): Promise<void> {
     if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
-    await this.plugin.saveSettings(true);
+    try {
+      await this.plugin.saveSettings(true);
+    } catch (error) {
+      // Only the settings projection is best-effort. Catalog and task metadata
+      // writes retain their existing failure handling at their call sites.
+      console.error("Conversation projection save failed", error);
+    }
   }
   private clearWatchdog(state: ConversationRunState): void {
     clearPausableTurnWatchdog(state);

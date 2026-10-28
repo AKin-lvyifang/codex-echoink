@@ -102,6 +102,7 @@ async function startChatTurn(...args: Parameters<typeof runChatTurn>): ReturnTyp
 }
 
 export async function runPiNativeTurnRunnerTests(): Promise<void> {
+  await runProjectionSaveFailureTests();
   localAttachmentClassificationUsesMimeOrExtension();
   asyncSkillMenuOnlyReturnsEnabledSkills();
   composerModelLabelsOnlyRemoveKnownBrandPrefixes();
@@ -129,6 +130,66 @@ export async function runPiNativeTurnRunnerTests(): Promise<void> {
   await maintainScopeIsResolvedBeforeProviderSubmit();
   await queuedTurnsKeepExactProviderModelAndRetainUnavailableHead();
   await concurrentViewRunsRemainIndependent();
+}
+
+export async function runProjectionSaveFailureTests(): Promise<void> {
+  const session = piSessionShell("conversation-turn-runner");
+  const settings = createQueueImageProviderSettings();
+  settings.sessions = [session]; settings.activeSessionId = session.id;
+  const listeners = new Map<string, PiChatRuntimeEventListener>();
+  const results = [deferred<Readonly<PiProductRunRecord>>(), deferred<Readonly<PiProductRunRecord>>()];
+  let submits = 0;
+  const plugin = {
+    settings, getVaultPath: () => "/fixture",
+    saveSettings: async () => { throw new Error("fixture projection save failed"); },
+    submitPiChat: async () => {
+      const index = submits++;
+      return { productRunId: `projection-${index}`, conversationId: session.id,
+        piSessionId: session.piSessionId!, userEntryId: "entry-user", result: results[index].promise };
+    },
+    subscribePiRun: (id: string, listener: PiChatRuntimeEventListener) => {
+      listeners.set(id, listener); return { unsubscribe: () => listeners.delete(id) };
+    },
+    subscribePiAgentApproval: () => ({ unsubscribe() {} }),
+    piAgentApprovalBinding: () => null,
+    readPiConversationProjection: async () => durableProjection(session, "completed"),
+    releasePiProductionRun() {}, releasePiConversationIfInactive: async () => false,
+    abortPiConversation: async () => undefined
+  };
+  const service = attachTestConversationRunService(plugin);
+  const provider = settings.apiProviders[0];
+  const item: QueuedTurnItem = { id: "first", sessionId: session.id, text: "hello", attachments: [], skill: null,
+    kind: "chat", createdAt: 1, turnOptions: { providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId,
+      model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } };
+  async function settle(index: number): Promise<void> {
+    const identity = { productRunId: `projection-${index}`, conversationId: session.id,
+      piSessionId: session.piSessionId!, activeLeafId: "entry-assistant" };
+    await waitFor(() => listeners.has(identity.productRunId));
+    await emit(listeners.get(identity.productRunId)!, { ...runtimeEvent({ type: "agent_settled" }), ...identity });
+    await emit(listeners.get(identity.productRunId)!, { ...runtimeEvent({ type: "product_run_settled", terminalState: "completed", assistantEntryId: "entry-assistant" }), ...identity });
+    results[index].resolve({ ...identity, userEntryId: "entry-user", assistantEntryId: "entry-assistant", toolCallIds: [],
+      memoryMode: "normal", state: "product_run_settled", terminalState: "completed", createdAt: 1, updatedAt: 8, agentSettledAt: 7, settledAt: 8 });
+  }
+  try {
+    const first = service.run(item);
+    // Attach a handler before emitting terminal events so the old code's rejection is observed.
+    const firstResult = first.then(outcome => ({ outcome }), error => ({ error }));
+    await waitFor(() => listeners.has("projection-0"));
+    service.turnQueue.enqueue({ ...item, id: "next", text: "next" });
+    await settle(0);
+    assert.deepEqual(await firstResult, { outcome: "completed" }, "projection failure must preserve the completed turn");
+    await waitFor(() => submits === 2);
+    const second = service.runs.get(session.id)!.flight!;
+    await settle(1);
+    assert.equal(await second, "completed");
+    assert.equal(session.messages.at(-1)?.status, "completed");
+    await service.stopTask(session.id);
+    await service.dispose();
+    console.log("PASS projection save failure: completed result, next queue turn, stopTask and dispose");
+  } finally {
+    // Also clear timers on an assertion failure against the old implementation.
+    await service.dispose().catch(() => undefined);
+  }
 }
 
 export async function acceptedMetadataFailureConsumesDraftAndQueue(): Promise<void> {

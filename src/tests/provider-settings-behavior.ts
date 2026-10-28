@@ -1,4 +1,5 @@
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
+import { runSettingsSaveResilienceTests } from "./settings-save-resilience";
 import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
@@ -252,6 +253,7 @@ import { resolvePiProductionSkillById } from "../plugin/pi-production-runtime-co
 import { runEnglishDiaryProviderTests } from "./english-diary-provider";
 
 export async function runProviderSettingsBehaviorTests(): Promise<void> {
+  await runSettingsSaveResilienceTests();
   await runEnglishDiaryProviderTests(installProviderModalDomFixture);
   await runSettingsWindowRefreshTest();
   await assertInlineEditorAsyncRetirement();
@@ -2199,8 +2201,7 @@ async function assertSettingsPersistenceReadbackOutcomes(): Promise<void> {
       store.withResourceMutation(async () => undefined),
       (error: unknown) => {
         assert.ok(firstError);
-        assert.ok(error instanceof SettingsPersistenceError);
-        assert.equal(error.persistenceStatus, "unknown");
+        assert.equal(error, firstError, "the separate unsafe resource-mutation guard remains in force");
         return true;
       }
     );
@@ -11353,7 +11354,9 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
 
 
 Platform.isDesktopApp = false;
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p16-settings") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-save-resilience") {
+  await runSettingsSaveResilienceTests();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p16-settings") {
   await assertKnowledgeSettingsDetailRetiresLegacyControls();
   await assertKnowledgeInitNotePickerModalContract();
   await assertPersonalMemoryDtoAndRegistryIdentity();
