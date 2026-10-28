@@ -122,6 +122,8 @@ export class FakeElement {
 
   constructor(readonly tag: string) {}
 
+  instanceOf(type: new (...args: never[]) => unknown): boolean { return this instanceof type; }
+
   get firstChild(): FakeElement | null { return this.children[0] ?? null; }
 
   insertBefore(child: FakeElement, reference: FakeElement | null): FakeElement {

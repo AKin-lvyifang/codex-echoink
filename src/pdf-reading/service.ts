@@ -111,7 +111,7 @@ export class PdfReadingService {
     const conversationId = context?.conversationId ?? frozen?.conversationId;
     if (!/\.pdf$/iu.test(name) || bytes.length < 5 || bytes.length > 200 * 1024 * 1024
       || new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") throw new Error("请选择有效 PDF（最大 200 MB）。");
-    const id = operationId ?? frozen?.id ?? globalThis.crypto.randomUUID(); this.path(id);
+    const id = operationId ?? frozen?.id ?? crypto.randomUUID(); this.path(id);
     const normalized = normalizePdfOptions(options), sourceFingerprint = await pdfFingerprint(bytes);
     if (options.wiki && this.deps.canWriteKnowledge && !this.deps.canWriteKnowledge()) throw new Error("请先选择可用的知识成果位置；可单独提取原文。");
     if (frozen) {

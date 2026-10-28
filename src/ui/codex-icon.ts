@@ -16,7 +16,7 @@ export const SETTINGS_GEAR_ICON_PATHS = [
 ];
 
 export function renderCodexIcon(container: HTMLElement): void {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = window.createSvg("svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
@@ -24,7 +24,7 @@ export function renderCodexIcon(container: HTMLElement): void {
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
   for (const d of CODEX_ICON_PATHS) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const path = window.createSvg("path");
     path.setAttribute("d", d);
     svg.appendChild(path);
   }
@@ -32,7 +32,7 @@ export function renderCodexIcon(container: HTMLElement): void {
 }
 
 export function renderSettingsGearIcon(container: HTMLElement): void {
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = window.createSvg("svg");
   svg.addClass("codex-settings-gear-svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
@@ -42,11 +42,11 @@ export function renderSettingsGearIcon(container: HTMLElement): void {
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
   for (const d of SETTINGS_GEAR_ICON_PATHS) {
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    const path = window.createSvg("path");
     path.setAttribute("d", d);
     svg.appendChild(path);
   }
-  const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  const circle = window.createSvg("circle");
   circle.setAttribute("cx", "12");
   circle.setAttribute("cy", "12");
   circle.setAttribute("r", "3");

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production warnings",
-  "total": 950,
+  "total": 734,
   "findings": [
     {
       "fingerprint": "b95a6cdb515183e365043181940f6580f48f7e4850eb8a2f826d1f5d92c2b551",
@@ -83,15 +83,6 @@
       "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
       "context": "?? (globalThis as typeof globalThis & { require?: ElectronRequire }).require;",
       "count": 2
-    },
-    {
-      "fingerprint": "25adde22ae8a218333b3f2a649b08e7f1898467297eeff2805ab955c19c855d0",
-      "path": "src/core/mapping.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "export function reasoningTextFromPayload(payload: any): string {",
-      "count": 1
     },
     {
       "fingerprint": "fa52a79922955bb6947184baf275992ac2818872b3b93b45aaa596e22ad88f07",
@@ -181,15 +172,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { mkdir, readFile, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4af7a2de8d850eb207532398152dabc43774df974bb63965b0fe714805305c58",
-      "path": "src/core/vault-note-links.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'VAULT_NOTE_ROOTS' is assigned a value but never used.",
-      "context": "const VAULT_NOTE_ROOTS = new Set([\"wiki\", \"journal\", \"outputs\", \"raw\", \"inbox\", \"projects\", \"work\", \"templates\", \"archive\", \"testing\", \"assets\"]);",
       "count": 1
     },
     {
@@ -292,39 +274,12 @@
       "count": 1
     },
     {
-      "fingerprint": "7b23bab0a1eed2b5136c59f56f2d65261de4b4e67c67b618d75e8918312c22ae",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'overlay.ownerDocument.win.createSpan()' instead of 'overlay.ownerDocument.createElement(\"span\")'.",
-      "context": "const count = overlay.ownerDocument.createElement(\"span\"); count.setAttribute(\"role\", \"status\"); count.textContent = `已选 ${selected.length} 张图片`; bar.append(count);",
-      "count": 1
-    },
-    {
       "fingerprint": "95ff829d8ad41eed8cd634df0c4d7c3fca2f9e05aeee8c10fec2fb29f3f832ba",
       "path": "src/gallery/controller.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'view.dom.ownerDocument.win.createDiv()' instead of 'view.dom.ownerDocument.createElement(\"div\")'.",
       "context": "this.overlay = touchOnly ? null : view.dom.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "9711d58c9397f49128edaf6fbd7c379037b848701593ca1a6a2c44dcdf8a5b39",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'overlay.ownerDocument.win.createEl(\"button\")' instead of 'overlay.ownerDocument.createElement(\"button\")'.",
-      "context": "const add = (label: string, run: () => void) => { const button = overlay.ownerDocument.createElement(\"button\"); button.type = \"button\"; button.textContent = label; button.addEventListener(\"mousedown\", event => event.preventDefault()); button.addEventListener(\"click\", event => { event.stopPropagation(); run(); }); bar.append(button); };",
-      "count": 1
-    },
-    {
-      "fingerprint": "b48f38adf0b4838f5f25f6684da4a63b25065af5cf8e6dbe9bf6bf20e5e2e026",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'overlay.ownerDocument.win.createEl(\"button\")' instead of 'overlay.ownerDocument.createElement(\"button\")'.",
-      "context": "const button = overlay.ownerDocument.createElement(\"button\"); button.type = \"button\"; button.className = \"echoink-gallery-pick\";",
       "count": 1
     },
     {
@@ -499,24 +454,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6efb3f503900ed09809bae056228c7575c80d1c7e33cf4f2920353503883219d",
-      "path": "src/harness/memory/dream-scheduler.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setInterval()' instead of 'setInterval()' for popout window compatibility.",
-      "context": "const handle = setInterval(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "ffb2cdbf80d10a508deb7dd15a1751aff6321c40e20b023258755e902e6ea785",
-      "path": "src/harness/memory/dream-scheduler.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearInterval()' instead of 'clearInterval()' for popout window compatibility.",
-      "context": "clearInterval(this.timer);",
-      "count": 1
-    },
-    {
       "fingerprint": "76fccb0d9ec719625c8047f2ddae9c15b74e032911463b6d389a962e7b5a568f",
       "path": "src/harness/memory/dream-state.ts",
       "rule": "obsidianmd/no-nodejs-modules",
@@ -550,15 +487,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8be52755402cf8b2e572049c58415839ae8d4950367323e43df058cb6c950d24",
-      "path": "src/harness/memory/personal-memory-repository.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'SECONDARY_MEMORY_SCHEMA' is defined but never used.",
-      "context": "SECONDARY_MEMORY_SCHEMA,",
       "count": 1
     },
     {
@@ -895,24 +823,6 @@
       "count": 1
     },
     {
-      "fingerprint": "7d33a12cd40864d7bf94fd2821424acd880e9019a5d88fe6c9b5616daf63f81a",
-      "path": "src/harness/pi-native/pi-context-budget.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "readonly model: Pick<Model<any>, \"provider\" | \"id\">;",
-      "count": 1
-    },
-    {
-      "fingerprint": "be38b6b757eb7a6d49a22e7d9117f6bd0029042eac0498d0ccd6361a91af0b5b",
-      "path": "src/harness/pi-native/pi-context-budget.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "readonly model: Pick<Model<any>, \"provider\" | \"id\" | \"contextWindow\">;",
-      "count": 1
-    },
-    {
       "fingerprint": "35b8d0daad8f24c8acc74f1214771c3ec2175812c4d06bf239a0f9f8fe3fa74c",
       "path": "src/harness/pi-native/pi-document-context.ts",
       "rule": "no-undef",
@@ -964,24 +874,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9fc47d8c966ddf3326fa1c6b37f88a832acaac12d9c5e56b5e32696d4337f55c",
-      "path": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'echoInkKnowledgeMaintenanceProtocolPrompt' is defined but never used.",
-      "context": "import { echoInkKnowledgeMaintenanceProtocolPrompt, MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from \"../../knowledge-base/knowledge-maintenance-protocol\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a3a2f5ef71a800904448267288dd9b5d6c23c1456bdf05f9cdcfb15cb0ed082a",
-      "path": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRolePath' is defined but never used.",
-      "context": "import { knowledgeRolePath, knowledgePathRole } from \"../../knowledge-base/root-paths\";",
       "count": 1
     },
     {
@@ -1090,24 +982,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "178ae1659e3563518efc265d2484456629bbb163ff7f3e16670e640dfcae9c2c",
-      "path": "src/harness/pi-native/pi-native-conversation-runtime.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearInterval()' instead of 'clearInterval()' for popout window compatibility.",
-      "context": "clearInterval(execution.providerWaitTimer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "ebf35e64be4eccf35adc65cb4bdbf95793fd81c2bf74e7efe9ae791c30da0200",
-      "path": "src/harness/pi-native/pi-native-conversation-runtime.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setInterval()' instead of 'setInterval()' for popout window compatibility.",
-      "context": "run.providerWaitTimer = setInterval(() => {",
       "count": 1
     },
     {
@@ -1423,15 +1297,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "afde3b7dd62e5ca7a5e4e87d5410ab18dacd6e954ec412947d1a11a557b5bce9",
-      "path": "src/harness/pi-native/vault-tool-result-safety.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'REDACTED_SECRET' is defined but never used.",
-      "context": "import { REDACTED_SECRET, redactEchoInkLocalSecretsV1 } from \"../../security/local-secrets\";",
       "count": 1
     },
     {
@@ -1840,15 +1705,6 @@
       "count": 1
     },
     {
-      "fingerprint": "11a45fd74ac28e5a645e26ad76871e6c1f5173c27f7581652b23ba60cf7353ce",
-      "path": "src/harness/usage/usage-store.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const temporary = `${this.filePath}.${globalThis.crypto.randomUUID()}.tmp`;",
-      "count": 1
-    },
-    {
       "fingerprint": "8051a67e3af4030267da1a68f32caa0636b31b6479173349b3ec672bcbab1215",
       "path": "src/harness/usage/usage-store.ts",
       "rule": "obsidianmd/no-nodejs-modules",
@@ -1864,33 +1720,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { mkdir, readFile, rename, rm, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d22f1b45d02fc472878391e170b187b2c7b9afb06736e8caf7382b388c65b995",
-      "path": "src/harness/usage/usage-stream.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const requestId = options.requestId ?? globalThis.crypto.randomUUID();",
-      "count": 1
-    },
-    {
-      "fingerprint": "05bf7c301e2816b24a8b2d223ed26fd2dd6cfe741041d3be4a8c5e86cd0ccb5e",
-      "path": "src/home/home-activity-core.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.timer !== null) clearTimeout(this.timer);",
-      "count": 2
-    },
-    {
-      "fingerprint": "78e4c3be7df17cf9f9ff3ce87936bb065e714bdaf2b10d5a757e627375d35e8f",
-      "path": "src/home/home-activity-core.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, 650);",
       "count": 1
     },
     {
@@ -1921,30 +1750,12 @@
       "count": 1
     },
     {
-      "fingerprint": "32a45bd0a92e5b4caafb538c75f265ef83876e4aad21fb8e1cd4398e210ed262",
-      "path": "src/home/home-search.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (i % 100 === 99) await new Promise<void>((resolve) => setTimeout(resolve, 0));",
-      "count": 1
-    },
-    {
       "fingerprint": "0377bc6ee0935027d102f295a17ec6d1af1436731061793148db4bb08b8842b9",
       "path": "src/home/home-view.ts",
       "rule": "@typescript-eslint/no-deprecated",
       "severity": 1,
       "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
       "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "7231bbd59d57b4eda3093844e007928e8a2861c67491cf2db3a5a7d601d7e359",
-      "path": "src/home/home-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'formatHomeFullDate' is defined but never used.",
-      "context": "import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from \"./home-i18n\";",
       "count": 1
     },
     {
@@ -2029,15 +1840,6 @@
       "count": 1
     },
     {
-      "fingerprint": "9b21e6657f81948296ff24502a802098790131962c6cd20ce5e0efd5c0fff8c3",
-      "path": "src/home/knowledge-page-data.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const yieldFrame = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));",
-      "count": 1
-    },
-    {
       "fingerprint": "63cf9b3486c1ef406c204e5530d277308565981c4e83a57f741b8d4108a2899c",
       "path": "src/home/magic-ui/bento-grid.tsx",
       "rule": "no-undef",
@@ -2056,15 +1858,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0e6759f5e207fcd7a9a85bee7ea454b8dfdb404c63bbad305ddbc9582f907feb",
-      "path": "src/home/photo-calendar.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'day.ownerDocument.win.createSpan()' instead of 'day.ownerDocument.createElement(\"span\")'.",
-      "context": "const number = day.ownerDocument.createElement(\"span\"); number.className = \"calendar-day-number\"; number.textContent = blank ? \"\" : String(date.getDate()); day.appendChild(number);",
-      "count": 1
-    },
-    {
       "fingerprint": "150c2104e19ce6d209ef796792fdc0c858e029b803a254838d6fbbc9f47e681b",
       "path": "src/home/photo-calendar.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -2080,15 +1873,6 @@
       "severity": 1,
       "message": "Use 'day.ownerDocument.win.createEl(\"img\")' instead of 'day.ownerDocument.createElement(\"img\")'.",
       "context": "const image = day.ownerDocument.createElement(\"img\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "677a601127bd919277065112da321cdd17477352584da6de59cdd0f31467f50e",
-      "path": "src/home/photo-calendar.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'weekdays.ownerDocument.win.createSpan()' instead of 'weekdays.ownerDocument.createElement(\"span\")'.",
-      "context": "for (let index = 0; index < 7; index++) { const label = weekdays.ownerDocument.createElement(\"span\"); label.textContent = new Intl.DateTimeFormat(language, { weekday: \"narrow\" }).format(new Date(2024, 0, index + 1)); weekdays.appendChild(label); }",
       "count": 1
     },
     {
@@ -2191,15 +1975,6 @@
       "count": 1
     },
     {
-      "fingerprint": "d6816fa52d8decf4c9fe0b1f08fc0516c52f2c4a2abdc8dae457b6f5b63f7f2e",
-      "path": "src/home/workbench-data.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));",
-      "count": 1
-    },
-    {
       "fingerprint": "5dccd034eb3fcb0801eea5563ec01336c5c3396b36b9f232448f44cf43492b47",
       "path": "src/home/workbench-records.ts",
       "rule": "no-undef",
@@ -2233,15 +2008,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a5d5ce08c6fce2b7bed5c700bf8a1334d375c68aa408444d716d9228f3a4e905",
-      "path": "src/home/workbench-starters.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "private listen(target: EventTarget, event: string, action: (e: any) => void): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }",
       "count": 1
     },
     {
@@ -2296,15 +2062,6 @@
       "severity": 1,
       "message": "Use 'this.contentEl.ownerDocument.win.createDiv()' instead of 'this.contentEl.ownerDocument.createElement(\"div\")'.",
       "context": "const row = this.contentEl.ownerDocument.createElement(\"div\"); row.className = \"wb-row\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a73586d81803fbf12374186543c2cf3377ac04ac90c907e76d9a795f2e2a36d8",
-      "path": "src/home/workbench-weather.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "private listen(target: EventTarget, name: string, listener: (event: any) => void): void {",
       "count": 1
     },
     {
@@ -2479,42 +2236,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5764001655b7afb1eb7d718c122632cc57a8244b78e98f29090d051f382b1b10",
-      "path": "src/inline-agent/service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.timer) clearTimeout(this.timer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "aa98dbe2f95b1439988567b8378daa721703c460bb96f2eccb8f07b39385cdcb",
-      "path": "src/inline-agent/service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.timer = setTimeout(() => { this.timer = undefined; void this.flush().catch(error => this.host.report(error)); }, 120);",
-      "count": 1
-    },
-    {
-      "fingerprint": "ad11d5adad35bcceddea4b4881bd3060dbaf5c2bd79ccab3f699452bfde7e33a",
-      "path": "src/inline-agent/service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "async dispose(): Promise<void> { this.stopped = true; this.listeners.clear(); this.runDocuments.clear(); if (this.timer) { clearTimeout(this.timer); this.timer = undefined; } await this.flush(); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "c397ed4196044522330d09b976d55ecc2c03958510d91f7e4e8ba0f62a19edfb",
-      "path": "src/inline-agent/service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }",
-      "count": 1
-    },
-    {
       "fingerprint": "229331b766a1d38b1dfa9bd1a1ab2790724e92e8b80c27fc11eb198728bdf163",
       "path": "src/knowledge-base/capture.ts",
       "rule": "no-undef",
@@ -2557,51 +2278,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "3aa54e4b8b6179160c989289a09dca7011878ea953fbf05454aaba56e58d6978",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'rawDigestStateForRecord' is defined but never used.",
-      "context": "import { rawDigestStateForRecord, rawDigestStateLabel } from \"./digest-status\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4c80eaea40ac6d29a8baa45c016ab36d17f86d17db2ff99dcdedbea70b5b6df5",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'cachedRawFingerprint' is defined but never used.",
-      "context": "function cachedRawFingerprint(",
-      "count": 1
-    },
-    {
-      "fingerprint": "69128e77f677e6117973f221b7e22cc45e3f485486cb027cc9a879295e41b597",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'shouldReadKnowledgeBaseFileContent' is defined but never used.",
-      "context": "import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from \"./io-budget\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "954aec28fb7de9289ea78484cd51d49b591488e9dfb90eff155e43d6eec94df2",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'isDashboardRawTextPath' is defined but never used.",
-      "context": "function isDashboardRawTextPath(relativePath: string): boolean {",
-      "count": 1
-    },
-    {
-      "fingerprint": "fdd66cc3c53f62512043bf732462048dc271c4187bd44cdb2c1bfdd0f593a9a3",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'isRawProcessingSource' is defined but never used.",
-      "context": "function isRawProcessingSource(file: KnowledgeBaseDashboardFile): boolean {",
       "count": 1
     },
     {
@@ -2665,33 +2341,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1cac638092c0eec36c3e9e83835da752bf3ac9d47b38a1e388bff5ef072e4c73",
-      "path": "src/knowledge-base/folder-link-renames.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (!indexed) await new Promise((resolve) => setTimeout(resolve, 50));",
-      "count": 1
-    },
-    {
-      "fingerprint": "b560762d7b521ab63c3430080cc61206f60390094667b4d4e8ae0eae30ee5e15",
-      "path": "src/knowledge-base/folder-link-renames.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "await new Promise((resolve) => setTimeout(resolve, 50));",
-      "count": 1
-    },
-    {
-      "fingerprint": "dfb11d579f82b463db259ebdb77387374d484def1290e4c9460898757b6bcbd8",
-      "path": "src/knowledge-base/folder-link-renames.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (!valid) { await new Promise((resolve) => setTimeout(resolve, 50)); continue; }",
       "count": 1
     },
     {
@@ -2785,15 +2434,6 @@
       "count": 1
     },
     {
-      "fingerprint": "b5f1ca1c30b5351edee34ccbb5935d06b80cd34f4053cde4e4fa231920f222d5",
-      "path": "src/knowledge-base/initializer.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'errorMessage' is defined but never used.",
-      "context": "function errorMessage(error: unknown): string {",
-      "count": 1
-    },
-    {
       "fingerprint": "5541fc433fb1be251fdfd211f4ce90061f365005efb2038b77aca47d4c2f7a58",
       "path": "src/knowledge-base/initializer.ts",
       "rule": "no-undef",
@@ -2866,24 +2506,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1108e56519db2d1d6ffc3bb9cba4e39ce6635e9da88b2b4b2d23a1129c327346",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRootRole' is defined but never used.",
-      "context": "import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from \"./root-paths\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eadc1030e652d1cd0e92b8d14ceea8c04e982fc94e43974c001d139733731c02",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgePathPolicy' is defined but never used.",
-      "context": "import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from \"./root-paths\";",
-      "count": 1
-    },
-    {
       "fingerprint": "71f04a02156f86aa03915553f64f3122e6aff56a86550ad934bbb14b7fdc5322",
       "path": "src/knowledge-base/knowledge-agent-index.ts",
       "rule": "no-undef",
@@ -2944,24 +2566,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "2e91cca80bd559f6cc6e553f3038ccee61b7d86533522a0f0a7834686f0e5e96",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (processed % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));",
-      "count": 1
-    },
-    {
-      "fingerprint": "c36867a4ecb10d614c3f178fd9322927a7133c058c8615bf637bf2ac72143daa",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (scannedCount % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));",
       "count": 1
     },
     {
@@ -3118,30 +2722,12 @@
       "count": 1
     },
     {
-      "fingerprint": "ef63f3996fa35e88a7356fa67192f0fae50145c4709a51f419d01ad66fdf1462",
-      "path": "src/knowledge-base/knowledge-maintenance-result.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'resolveKnowledgePath' is defined but never used.",
-      "context": "import { knowledgeRolePath, resolveKnowledgePath } from \"./root-paths\";",
-      "count": 1
-    },
-    {
       "fingerprint": "d96d1e62670c5d12162c54e4f7efffe2a2ab4b11de8ba2fa67dd56e79ea3dc94",
       "path": "src/knowledge-base/knowledge-relations.ts",
       "rule": "obsidianmd/no-nodejs-modules",
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6c0e1050323ba8db546050ae1db41fcd1c17d0df112cb721b1f216ddbd164640",
-      "path": "src/knowledge-base/link-health.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "if (++batch % 200 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));",
       "count": 1
     },
     {
@@ -3421,15 +3007,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "af9f7e1ed2d431b6ae41d751ebe6eafd61bf259e0fb24fefcf772328e6c6f6c1",
-      "path": "src/knowledge-base/query.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'error' is defined but never used.",
-      "context": "} catch (error) {",
       "count": 1
     },
     {
@@ -3973,24 +3550,6 @@
       "count": 1
     },
     {
-      "fingerprint": "12680187799bfb3fbb8b137d74f94195b6dabf7f129062e94696007f92e52a5c",
-      "path": "src/knowledge-base/search/scheduling.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "return () => clearTimeout(timer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "cbc2b85a46de31f7147a550771f55358bc3f3c9c105f6117a66a46b09f9a59f6",
-      "path": "src/knowledge-base/search/scheduling.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = setTimeout(done, 0);",
-      "count": 1
-    },
-    {
       "fingerprint": "c0a436c6c660a7c5610e326859d58c424b2cbaaef22184b4ac967224ced04229",
       "path": "src/knowledge-base/source-health.ts",
       "rule": "no-undef",
@@ -4279,15 +3838,6 @@
       "count": 1
     },
     {
-      "fingerprint": "2d77709f2272024a32d1b8bb48f51e130ab239ae43235516f7d2c885288b60d6",
-      "path": "src/lifestyle/finance-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"a\")' instead of 'document.createElement(\"a\")'.",
-      "context": "const anchor = document.createElement(\"a\"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();",
-      "count": 1
-    },
-    {
       "fingerprint": "467da4e7d0523799c70178e484e92b229f3e8c099dbb42c34d8a9d1d1004730b",
       "path": "src/lifestyle/finance-view.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -4441,24 +3991,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8282e24e3f41ef9edb74a2be7730c0dd41971585ffa2c04c2f0116d4e1d2a81c",
-      "path": "src/membership/account-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.expiryTimer = setTimeout(",
-      "count": 1
-    },
-    {
-      "fingerprint": "ba930c62fdcdf9dc5ea780e1164b35009cb3970ea1bfbed9d28a41fc69612d1f",
-      "path": "src/membership/account-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.expiryTimer) clearTimeout(this.expiryTimer);",
-      "count": 2
-    },
-    {
       "fingerprint": "6a39881db746df8046580bc3dca43de69995dded6aa8039faf05d1b72c630be6",
       "path": "src/membership/storage.ts",
       "rule": "obsidianmd/no-nodejs-modules",
@@ -4486,48 +4018,12 @@
       "count": 1
     },
     {
-      "fingerprint": "96384e76473fa10e574ae3bb16746c73adc4d2b7874792d408439c7a03a29c42",
-      "path": "src/membership/transport.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "} finally { if (timer !== undefined) clearTimeout(timer); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "d33f3afd81c09fca9e5134624e0d96e7ab71a8552914df1c6e06d8972cb4f0ba",
-      "path": "src/membership/transport.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(\"会员服务连接超时，请重试。\")), 15000); })",
-      "count": 1
-    },
-    {
       "fingerprint": "fe9ecdeb69da6fd7c48ccbc79bc66ab48b7d9358c7392450ea8b6bb9af7c3ba5",
       "path": "src/mobile/data-root.ts",
       "rule": "obsidianmd/hardcoded-config-path",
       "severity": 1,
       "message": "Obsidian's configuration folder is not necessarily `.obsidian`, it can be configured by the user. Use `Vault#configDir` to get the current value",
       "context": "const previous = legacyDirectory.startsWith(\".obsidian/plugins/\") ? legacyDirectory : `.obsidian/plugins/${legacyDirectory}`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0c6099eb8ed98fbdc1a97f7fabf7804ed1868d84f45bbca97c6a587b8b1c9645",
-      "path": "src/mobile/model-configuration.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "} finally { if (timer !== undefined) clearTimeout(timer); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "a50be811375144ea93a3bb4cfcf6211f5ecfb99bb1f2bf7adff03d81b903868a",
-      "path": "src/mobile/model-configuration.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "timer = setTimeout(() => { controller.abort(); reject(new Error(\"模型服务请求超时，请重试。\")); }, MOBILE_MODEL_REQUEST_TIMEOUT_MS);",
       "count": 1
     },
     {
@@ -4576,60 +4072,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8edb7fe96e9e66321ab5aeec69539abbfd29b8a1e7ee985e97e08e74a750f67f",
-      "path": "src/mobile/remote-tools.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "timer = setTimeout(() => { cancel(); reject(new MobileMcpError(\"timeout\", \"MCP 连接超时，未自动重试。\")); }, this.timeoutMs);",
-      "count": 1
-    },
-    {
-      "fingerprint": "b42216e596cc61147e93bc45612a898f4a0ecb96a649866e43fbeac69f6a4f2b",
-      "path": "src/mobile/remote-tools.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "} finally { if (timer !== undefined) clearTimeout(timer); if (abort) signal?.removeEventListener(\"abort\", abort); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "642d16f3229593d072b76c01a1053fd3942ba7083ffe091b2d686176f61a072f",
-      "path": "src/pdf-reading/local-extractor.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"canvas\")' instead of 'document.createElement(\"canvas\")'.",
-      "context": "const canvas = document.createElement(\"canvas\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ddd56f6b7e61360d0768cb66b64de38b4c93951b03a692653148241f0429589a",
-      "path": "src/pdf-reading/mineru.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = setTimeout(() => { signal.removeEventListener(\"abort\", onAbort); resolve(); }, 2500);",
-      "count": 1
-    },
-    {
-      "fingerprint": "e4fac14bd581a3b758f80c434d38c5498de4383e639fd04d866b7abdfd8ddc32",
-      "path": "src/pdf-reading/mineru.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "const onAbort = () => { clearTimeout(timer); reject(new Error(\"处理已取消。\")); };",
-      "count": 1
-    },
-    {
-      "fingerprint": "2b05ab250503119342ad94e4293b8ec0565439c6142bfd45f09e3c1a59a5497b",
-      "path": "src/pdf-reading/service.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const id = operationId ?? frozen?.id ?? globalThis.crypto.randomUUID(); this.path(id);",
-      "count": 1
-    },
-    {
       "fingerprint": "94d2ba58be6a7bd601c898f7cfd319df64c40cc053308f834c31629b291215e7",
       "path": "src/pdf-reading/settings-panel.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -4672,60 +4114,6 @@
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '用 echoink 生成…'",
       "context": "menu.addItem(item => item.setTitle(\"用 EchoInk 生成…\").setIcon(\"sparkles\").onClick(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "7d41d10a3294eece9c380dccd9991fc9d516feff821d0f87ce5614b13549013f",
-      "path": "src/plugin/conversation-auto-archive.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearInterval()' instead of 'clearInterval()' for popout window compatibility.",
-      "context": "if (this.timer !== undefined) clearInterval(this.timer);",
-      "count": 2
-    },
-    {
-      "fingerprint": "cf226d888a2ba3158b461ddc480481f5346e9781d80c1d5636271ac4546020d5",
-      "path": "src/plugin/conversation-auto-archive.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setInterval()' instead of 'setInterval()' for popout window compatibility.",
-      "context": "this.timer = setInterval(() => { void this.scan(); }, 60 * 60 * 1_000);",
-      "count": 1
-    },
-    {
-      "fingerprint": "224e0262adef5645a303c6c7c8d1679689f15a4002d218dd2d859e49ea95b6a1",
-      "path": "src/plugin/conversation-run-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.refreshTimer = setTimeout(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "8117bb1280205206f9ff2390ad536d420509d84680f5afde8a009ae0208725da",
-      "path": "src/plugin/conversation-run-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "b891a29283679b40b0c0bc3c29b1a20c54b81616de1dcf8650bf96d149a837ef",
-      "path": "src/plugin/conversation-run-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.saveTimer = setTimeout(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "bb8ae36e1315e580ad159a4c71d2495a7253904912e3d39085ae8e4813c40b9e",
-      "path": "src/plugin/conversation-run-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.refreshTimer !== null) clearTimeout(this.refreshTimer);",
       "count": 1
     },
     {
@@ -4954,33 +4342,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5c1ebfabc4a329f1e2fd59ce11d25061a593878a8f81da049bc9086461c8af17",
-      "path": "src/plugin/knowledge-linking-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const yieldUI = () => new Promise<void>(resolve => setTimeout(resolve, 0));",
-      "count": 1
-    },
-    {
-      "fingerprint": "85cf65b6e3659594eec8f79851003f4e64379498bc9853e012fe03673a7c10fb",
-      "path": "src/plugin/knowledge-linking-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (this.notifyTimer) clearTimeout(this.notifyTimer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "f0bad4eed912a0ca8847ab1db540443de757c9d5088aa7af25a930b702d11c23",
-      "path": "src/plugin/knowledge-linking-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.notifyTimer = setTimeout(() => { this.notifyTimer = null; this.publish(this.snapshot()); }, 80);",
-      "count": 1
-    },
-    {
       "fingerprint": "1b1d8304fc60b142ee606503a7bb3b449fc96534f9c2f3426b8b13a150675c11",
       "path": "src/plugin/knowledge-surface-service.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -4990,39 +4351,12 @@
       "count": 1
     },
     {
-      "fingerprint": "343f14cec4ecebbe09011a0cbdb88fb9cea556f626420fc0fa84e364afbd0812",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'apiProviderHasUsableCredential' is defined but never used.",
-      "context": "apiProviderHasUsableCredential,",
-      "count": 1
-    },
-    {
-      "fingerprint": "699c9ec7040718445d5d700c9daebf68086148448f81a1cbcb3e24aa09ab299f",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'classifyKnowledgePath' is defined but never used.",
-      "context": "import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from \"../knowledge-base/folder-bindings\";",
-      "count": 1
-    },
-    {
       "fingerprint": "91dbc127bc9712ce681bafe8a73aa74c6484a543e0bbcaa066a54385b2ca466a",
       "path": "src/plugin/knowledge-surface-service.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'isFolder' is assigned a value but never used.",
       "context": "const isFolder = file instanceof TFolder;",
-      "count": 1
-    },
-    {
-      "fingerprint": "aff905e7fafddf7102ea8611d90420921095da28dfd1eec323486d5a112c9364",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRoleRoots' is defined but never used.",
-      "context": "import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from \"../knowledge-base/root-paths\";",
       "count": 1
     },
     {
@@ -5221,24 +4555,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:http\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import {\nrequest as httpRequest,\ntype IncomingHttpHeaders\n} from \"node:http\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4b9970f032e7f0199417e54ec8a4726443ed2580fc7dcee3b37c92a6f452d61c",
-      "path": "src/plugin/maintenance-activity-controller.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setInterval()' instead of 'setInterval()' for popout window compatibility.",
-      "context": "this.timer = setInterval(() => { void this.serial(async () => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "5a6d5a95f444c7938a19db91ddd8f31dd7d476c7498bf1fb3a393303fa3141bb",
-      "path": "src/plugin/maintenance-activity-controller.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearInterval()' instead of 'clearInterval()' for popout window compatibility.",
-      "context": "private disarm(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }",
       "count": 1
     },
     {
@@ -5512,78 +4828,6 @@
       "count": 1
     },
     {
-      "fingerprint": "37fa29c7e0606693fe5640abcd3caeb9502c82626de480c752cd88e91d9729ab",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'candidateSourcePaths' is defined but never used.",
-      "context": "function candidateSourcePaths(content: string, selected: readonly string[]): string[] {",
-      "count": 1
-    },
-    {
-      "fingerprint": "4152d9b39e24cdb6388753bea3fd6c2c86522e86d1269c9f12680f753c93998a",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'reliableKnowledgeNoopMessage' is defined but never used.",
-      "context": "function reliableKnowledgeNoopMessage(",
-      "count": 1
-    },
-    {
-      "fingerprint": "592ea6f1e3c4f4e5f980b053a9e1974e01aaa4e72c03aa65290f64994a33fef4",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'PHASE3_MAINTENANCE_RAW_INDEX_PATH' is defined but never used.",
-      "context": "PHASE3_MAINTENANCE_RAW_INDEX_PATH,",
-      "count": 1
-    },
-    {
-      "fingerprint": "67c9509e108b2f5e8351a301b74da6cd792b781274686ff0a86331451da63ae5",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'completeKnowledgeMaintenanceCandidateSources' is defined but never used.",
-      "context": "completeKnowledgeMaintenanceCandidateSources,",
-      "count": 1
-    },
-    {
-      "fingerprint": "83400dd67b4737901bfdffeb5bcf343d5e47b2c95212983be452652fa5800402",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'safeMaintenanceError' is defined but never used.",
-      "context": "function safeMaintenanceError(error: unknown): string {",
-      "count": 1
-    },
-    {
-      "fingerprint": "865d60750154fae6b34c55b85e9ebbd06af670bb20618084ac4b5e11f3e918e1",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'echoInkKnowledgeMaintenanceProtocolPrompt' is defined but never used.",
-      "context": "echoInkKnowledgeMaintenanceProtocolPrompt,",
-      "count": 1
-    },
-    {
-      "fingerprint": "9822a3f3d5806d3f7328ea746705709ab2dd1874e6378c89f851be006124e56a",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'isRawMarkdownPath' is defined but never used.",
-      "context": "import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath, isKnowledgeMaintenanceSourcePath, rawDigestRecordFromMarkdown } from \"../knowledge-base/raw-digest\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a2253d6541d77f38c8c663a1988bbf1165fcd2b4a4b46142f61bb722c853fb7a",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'cancelledResult' is defined but never used.",
-      "context": "function cancelledResult(): Readonly<PiKnowledgeMaintenanceToolResult> {",
-      "count": 1
-    },
-    {
       "fingerprint": "aa63b3f327198387882db1b8abe94e70fc8f4ddc909b53389037b7d86c57a129",
       "path": "src/plugin/pi-knowledge-maintenance-production.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -5593,57 +4837,12 @@
       "count": 1
     },
     {
-      "fingerprint": "b37b61982a759133513cd31be9b9907d7b13b0943feab3d714e99b6e6cb3c9a3",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'extractExplicitRawPaths' is defined but never used.",
-      "context": "function extractExplicitRawPaths(value: string, vaultRoot = \"\"): string[] {",
-      "count": 1
-    },
-    {
       "fingerprint": "c61b533b9fe1f639f8271fc3b3340a36bd869d5867a56aa01814d4f656c2799a",
       "path": "src/plugin/pi-knowledge-maintenance-production.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'PHASE3_MAINTENANCE_TRACKER_PATH' is defined but never used.",
       "context": "PHASE3_MAINTENANCE_TRACKER_PATH,",
-      "count": 1
-    },
-    {
-      "fingerprint": "cd213d09d08b22d5eb9bd73810a4fb20b40df1daa130ac3a4f46efea5c5c5b93",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'rawDigestRecordFromMarkdown' is defined but never used.",
-      "context": "import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath, isKnowledgeMaintenanceSourcePath, rawDigestRecordFromMarkdown } from \"../knowledge-base/raw-digest\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "dc06685c81d472c9c2ce4b00d3393ef8e28e9799597fe54d44a685bce039d0af",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'uniqueShadowFileName' is defined but never used.",
-      "context": "function uniqueShadowFileName(",
-      "count": 1
-    },
-    {
-      "fingerprint": "e27e3e9eb83efbca811a5f7781aae39b0be95674dca185afbfce4fb062fe5e08",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'parseChangedRawPaths' is defined but never used.",
-      "context": "function parseChangedRawPaths(text: string): string[] {",
-      "count": 1
-    },
-    {
-      "fingerprint": "e566b7a2a785205f6e8467b3ad8c1c0b57cbf4a9bae38163ca5bfda8025d7fbe",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'ensureSafeControlDirectories' is defined but never used.",
-      "context": "async function ensureSafeControlDirectories(",
       "count": 1
     },
     {
@@ -5662,15 +4861,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "const siblings: import(\"node:fs\").Dirent[] = await readdir(path.join(this.vaultRootPath, parent), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => { if (error.code === \"ENOENT\") return []; throw error; });",
-      "count": 1
-    },
-    {
-      "fingerprint": "d663c554b6c469264af54153086596a117332e055d187ff7f4305ef38744f353",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "no-undef",
-      "severity": 1,
-      "message": "'Buffer' is not defined.",
-      "context": "const bytes = Buffer.from(content, \"utf8\");",
       "count": 1
     },
     {
@@ -5818,24 +5008,6 @@
       "count": 1
     },
     {
-      "fingerprint": "ae10e8f65e9829ef97fcf4af9dc058e33362232f6880578f61d42e36409847a4",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'PI_TASK_UPDATE_TOOL_ID' is defined but never used.",
-      "context": "PI_TASK_UPDATE_TOOL_ID,",
-      "count": 1
-    },
-    {
-      "fingerprint": "ce7ef7d070cf0f267b78446b3d15d660fa08b18b7deae43e80c5639a77435038",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'FilePhase3MaintenanceStateStore' is defined but never used.",
-      "context": "import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from \"./pi-knowledge-maintenance-production\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1f7bf32ba7d2b8fb21c353746b1879521b5502f14f806e3bda8c4dca715a9ce3",
       "path": "src/plugin/pi-production-runtime-composition.ts",
       "rule": "no-undef",
@@ -5887,78 +5059,6 @@
       "severity": 1,
       "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
       "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1445f578cf6957b8837f363fdb99b9350526f70b53aeaedd89d1fc84eca630c6",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (recallTimer) clearTimeout(recallTimer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "de793c7c658cb37fe96bb30193007f257b108186afd30d456fea90072b0c0b2e",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "recallTimer = setTimeout(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "c230249f2c737af42b42d915b4b619007135d2ee150051d072e85419f37bb03b",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'normalizeApiProviderId' is defined but never used.",
-      "context": "normalizeApiProviderId,",
-      "count": 1
-    },
-    {
-      "fingerprint": "3e7600e6ff6daa69219a11838395f239cdc03d7c19bc93986e5a2c5bf1835f44",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = setTimeout(() => abort(\"timeout\"), timeoutMs);",
-      "count": 1
-    },
-    {
-      "fingerprint": "5c0fe3d337ad7beed38035acbfff927a4d05c2c4c457767a2a27cc0e80a00865",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "clearTimeout(timeout);",
-      "count": 1
-    },
-    {
-      "fingerprint": "cd4738ff3d1c00dcfcdcdee70c71af5fa301cda1277f2fa0a1153c727fb202dd",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "clearTimeout(timer);",
-      "count": 2
-    },
-    {
-      "fingerprint": "d92acd96506d9849a5d6fa0cb8d25c6110a91da44049b63d9f76a250d609ba99",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = setTimeout(() => controller.abort(), timeoutMs);",
-      "count": 1
-    },
-    {
-      "fingerprint": "fc3d33da69d5a129efe53a40181fa315a5189d53034fb299b98fa93229c4fb44",
-      "path": "src/plugin/pi-provider-configuration-service.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timeout = setTimeout(",
       "count": 1
     },
     {
@@ -6142,33 +5242,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6b84557917cdfbfcf4c4c4285dd5ec1095d138151da95660f1c0ce86f9260882",
-      "path": "src/plugin/settings-store.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "clearTimeout(this.saveTimer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "963f44e29aab993f6b9eef88ad50faab61ace09bc96c9636d04bf9215c2af94d",
-      "path": "src/plugin/settings-store.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "await new Promise<void>(resolve => setTimeout(resolve, delay));",
-      "count": 1
-    },
-    {
-      "fingerprint": "b2ee6349041c35130398b1cbf98fe676df463d95ab88279c593064c283e9c51c",
-      "path": "src/plugin/settings-store.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "this.saveTimer = setTimeout(() => {",
-      "count": 1
-    },
-    {
       "fingerprint": "7bb3ddc553d4b53571fb13b633b20fe84bbaf9b22268e31ba6c90febf5e1751a",
       "path": "src/plugin/task-resume-safety.ts",
       "rule": "obsidianmd/no-nodejs-modules",
@@ -6232,15 +5305,6 @@
       "count": 1
     },
     {
-      "fingerprint": "ac3e2768325de7ef160dbef3a29c50d6c24e136791c748a57007e5f7c01c8113",
-      "path": "src/plugin/view-service.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "private getViewInstance<T>(viewType: string, viewClass: { new (...args: any[]): T }): T | null {",
-      "count": 1
-    },
-    {
       "fingerprint": "1b4bbb5b1e7da947efadda9b8ddc179b84dae7c7b93293e78c3ce50227f00be9",
       "path": "src/plugin/view-service.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -6286,69 +5350,6 @@
       "count": 1
     },
     {
-      "fingerprint": "03ac264b80f674fa3473fd08bc85812639ab6f434438cb048d7fd05243546d10",
-      "path": "src/resources/json-rpc-stdio-transport.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = noTimeout ? null : setTimeout(() => {",
-      "count": 1
-    },
-    {
-      "fingerprint": "45ed46dc50bdf71ac6bcb685f9990eca8307fb223c34ab5f4a9fb6d02f12cc44",
-      "path": "src/resources/json-rpc-stdio-transport.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (pending.timer) clearTimeout(pending.timer);",
-      "count": 2
-    },
-    {
-      "fingerprint": "d60b05c72cc2ff70d8dbc46fb38a15c99878833d4935a37920aa2fd83e819c32",
-      "path": "src/resources/json-rpc-stdio-transport.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (timer) clearTimeout(timer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "070b9905744cc50f9a08676ba832a1650839e0d2084c1d6a2dff869398344b81",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "if (!result || typeof result !== \"object\" || !Array.isArray((result as any).tools)) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "4df5c757ebb9c49ef2cc5b255175dc5c35aa6e72b2cb79835a25545cfea1f039",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "const tools = (result as any).tools;",
-      "count": 1
-    },
-    {
-      "fingerprint": "aac2c60ffab1bdafd392e365d29207af3014a1c950230b531801b0c410bf0883",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "function parseMcpHttpResponse(response: RequestUrlResponse): any {",
-      "count": 1
-    },
-    {
-      "fingerprint": "c2140ff74322784e694ceff154420e279561f5b1142da34ce9437bd322d9bfb1",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} } as any));",
-      "count": 1
-    },
-    {
       "fingerprint": "8278062071c19a550a4373a716c79e8595b00962bd631052576d0d6255fe1391",
       "path": "src/resources/mcp-broker.ts",
       "rule": "no-undef",
@@ -6364,24 +5365,6 @@
       "severity": 1,
       "message": "'process' is not defined.",
       "context": "env: { ...process.env, ...(this.config.env ?? {}) }",
-      "count": 1
-    },
-    {
-      "fingerprint": "be161f700a23cc998588159565e5f6f0e4429fc7750c62f27b33120f2a59dcdb",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "clearTimeout(timer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "df6f9d4d6b96e36bbabff8d3636be35c39dbf47ac723315c522f9ebb7f582b6b",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "const timer = setTimeout(() => finish(() => reject(",
       "count": 1
     },
     {
@@ -6673,57 +5656,12 @@
       "count": 1
     },
     {
-      "fingerprint": "59f86b30e79e4fcc0ab38a2509cc5166f112ced1d9dd405cfa0dca391db0e564",
-      "path": "src/settings/account-membership.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (feedbackTimer !== null) clearTimeout(feedbackTimer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "63dd68492f378aaa0799a1bfc14a0ee018544019b186b286aa477c6d38ada0ca",
-      "path": "src/settings/account-membership.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "feedbackTimer = setTimeout(() => { feedbackTimer = null; finishFeedback = null; resolve(); }, 650);",
-      "count": 1
-    },
-    {
-      "fingerprint": "9763c5e714767f3da57a03a5a24fb0cbe5da9be73265cad42f90893ca94f7557",
-      "path": "src/settings/account-membership.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,\"loading\",\"\");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,\"success\",t(\"验证码已发送，请查收邮箱。\",\"Code sent. Check your email.\"));const timer=setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,\"error\",error instanceof Error?error.message:t(\"发送失败，请重试。\",\"Could not send. Try again.\"));send.disabled=false;}};",
-      "count": 1
-    },
-    {
-      "fingerprint": "a166216302971d416514f3020959f0de990bc64b36d55cc3af2f59a2e91b16e9",
-      "path": "src/settings/account-membership.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "for (const timer of codeTimers) clearTimeout(timer); codeTimers.clear();",
-      "count": 1
-    },
-    {
       "fingerprint": "6479ff28e20b74f3b270154a54a3d06bb39a1c772919073db300a7ee994e69d7",
       "path": "src/settings/amicro-buttons.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'button.ownerDocument.win.createSpan()' instead of 'button.ownerDocument.createElement(\"span\")'.",
       "context": "const icon = button.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "1c8c8b44c6d4eeffcb97f84a7e0063e6708560f291aa60f798a23a58ce2f3ab1",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const swatch = doc.createElement(\"span\");",
       "count": 1
     },
     {
@@ -6736,48 +5674,12 @@
       "count": 1
     },
     {
-      "fingerprint": "374600b89c643b284be387e33a8cab563c1d042be3b21abe87b090d2b170f684",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const title = doc.createElement(\"span\");",
-      "count": 1
-    },
-    {
       "fingerprint": "6eb08193977e5418f2c5a3af20ea02da55fc5ee03795be4acb1b18b444ff57ef",
       "path": "src/settings/appearance-picker.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
       "context": "const picker = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "e978f4c46774e2a887ff2bbf5e5bd57794dd7d4b45de55599770ed6ef77ca90d",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"input\")' instead of 'doc.createElement(\"input\")'.",
-      "context": "const input = doc.createElement(\"input\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ecafcd452b2bd1a5f97850d6da92e7df60e4ef09e4c0e95461584c1c69aa5428",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"fieldset\")' instead of 'doc.createElement(\"fieldset\")'.",
-      "context": "const options = doc.createElement(\"fieldset\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "f077e3ea68d4279df1480fd730441c9059bd663d51369dd070994454d731b42e",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"legend\")' instead of 'doc.createElement(\"legend\")'.",
-      "context": "const legend = doc.createElement(\"legend\");",
       "count": 1
     },
     {
@@ -6790,30 +5692,12 @@
       "count": 1
     },
     {
-      "fingerprint": "2743ec75879031a6605d3c91efad89a171d778b802a7b6fdec39e47d3d9e8012",
-      "path": "src/settings/desktop-knowledge-settings.ts",
-      "rule": "obsidianmd/object-assign",
-      "severity": 1,
-      "message": "Using `Object.assign` with an non-empty target object can lead to unexpected behaviour as it will overwrite the  target object.",
-      "context": "Object.assign(defaults, prepareKnowledgeModuleDirectories(this.plugin.settings, bindings,\n(this.plugin.app.vault.getRoot?.().children ?? []).map(file => file.path)).directories);",
-      "count": 1
-    },
-    {
       "fingerprint": "143ef53723e4911846a081a6d7c8391adb10ab3f6d3a4bf14117ecb13662fb82",
       "path": "src/settings/inline-editor.ts",
       "rule": "@typescript-eslint/no-deprecated",
       "severity": 1,
       "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
       "context": "if (event.key !== \"Escape\" || event.isComposing || event.keyCode === 229 || event.defaultPrevented || host.querySelector(\".codex-provider-combobox.is-open, [data-slot=select-content][data-state=open]\")) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "cfeb2210a6ec262451ec085f4ede127efd2f29c9958690cfc77da7c4b35a36b5",
-      "path": "src/settings/provider-brand-icons.ts",
-      "rule": "obsidianmd/prefer-instanceof",
-      "severity": 1,
-      "message": "Use '.instanceOf(OwnerSVGSVGElement)' instead of 'instanceof OwnerSVGSVGElement' for cross-window safe type checking.",
-      "context": "if (!(importedSvg instanceof OwnerSVGSVGElement)) {",
       "count": 1
     },
     {
@@ -6844,24 +5728,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1eca65cb5793a2ea18e0aec9528a29cfcb88c0c362abc1ab67de09ab9b644805",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'addSettingsHelp' is defined but never used.",
-      "context": "addSettingsHelp,",
-      "count": 1
-    },
-    {
-      "fingerprint": "30985b9119d88d4a7424a8df395f6e5bf132a0265d2ee0e7ecdf57ebc6b6d22c",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'error' is defined but never used.",
-      "context": "} catch (error) {",
-      "count": 1
-    },
-    {
       "fingerprint": "a941c5eb4f31755c9918dffaebf601bd66ac187b7ed2d0c5dc690ea2f557b489",
       "path": "src/settings/settings-tab.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -6880,15 +5746,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5f5584dac317cb4baca1a073095285b7ca76423e5f79fa2461cbe7dcb681e19c",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "obsidianmd/prefer-instanceof",
-      "severity": 1,
-      "message": "Use '.instanceOf(this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement)' instead of 'instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement' for cross-window safe type checking.",
-      "context": "if (quickDrawer instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement) {",
-      "count": 1
-    },
-    {
       "fingerprint": "935a339b5275f6a216c3dbfee09325c94dc89e55cec2bceed00fd3590f752986",
       "path": "src/settings/settings-tab.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -6904,87 +5761,6 @@
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '跟随 echoink 默认模型'",
       "context": "dropdown.addOption(\"\", \"跟随 EchoInk 默认模型\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "77383beab243df35530b0377c65912535038cd59ee53d358c1b0c3ef87d17e45",
-      "path": "src/settings/settings.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'normalizeComparablePath' is defined but never used.",
-      "context": "function normalizeComparablePath(value: unknown): string {",
-      "count": 1
-    },
-    {
-      "fingerprint": "79c4f3a2f52e66f6caa9c4f84f746b68032a99d3fd48e9dbc63092ad463bdf24",
-      "path": "src/settings/settings.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'normalizePermissionMode' is defined but never used.",
-      "context": "function normalizePermissionMode(value: unknown, fallback: PermissionMode): PermissionMode {",
-      "count": 1
-    },
-    {
-      "fingerprint": "9eefc0390e9c7b93ababe80f5f60c16313dc92b4c62e7b84aa81754bef261c16",
-      "path": "src/settings/settings.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'normalizeUiMode' is defined but never used.",
-      "context": "function normalizeUiMode(value: unknown, fallback: UiMode): UiMode {",
-      "count": 1
-    },
-    {
-      "fingerprint": "9e30dcdeb53dcf953a9e9a0f8d730b2868a813f4f04d16fc1fa99a62f7aa1d55",
-      "path": "src/tools/deepseek-search.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "finally { if (timer !== undefined) clearTimeout(timer); if (cancel) input.signal?.removeEventListener(\"abort\", cancel); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "b3bf3113dac87486da8ad1aedb9b379331db992f7c40ca9fb30644e672aaeadf",
-      "path": "src/tools/deepseek-search.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "timer = setTimeout(() => reject(new DeepSeekSearchError(\"timeout\")), input.timeoutMs ?? 20_000);",
-      "count": 1
-    },
-    {
-      "fingerprint": "cf635a0697b4530c24329da0589cf214d132ac4bea0f09ac757440afa2267580",
-      "path": "src/tools/tavily-search.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
-      "context": "timer = setTimeout(() => reject(new TavilyError(\"timeout\")), input.timeoutMs ?? 20_000);",
-      "count": 1
-    },
-    {
-      "fingerprint": "e8f23843cbbd09651623262e2b9429ae1e0b62a336eb45e1d154c3d4571bcc85",
-      "path": "src/tools/tavily-search.ts",
-      "rule": "obsidianmd/prefer-window-timers",
-      "severity": 1,
-      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
-      "context": "if (timer !== undefined) clearTimeout(timer);",
-      "count": 1
-    },
-    {
-      "fingerprint": "90fa3cdc3e436840550bc7bb3e298b74e29e58beabed93dd8459f5d1c1343082",
-      "path": "src/ui/agent-avatar-processor.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"img\")' instead of 'document.createElement(\"img\")'.",
-      "context": "const image = document.createElement(\"img\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "fa3b67412b2c7e3d11eabed35634db80e07e8e1517d76668c3bc734e03400ad1",
-      "path": "src/ui/agent-avatar-processor.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"canvas\")' instead of 'document.createElement(\"canvas\")'.",
-      "context": "const output = document.createElement(\"canvas\");",
       "count": 1
     },
     {
@@ -7078,165 +5854,12 @@
       "count": 1
     },
     {
-      "fingerprint": "1c450fae4e8917aed1204962288f944264d4ccd26834aa6ae445848e7378d199",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"img\")' instead of 'doc.createElement(\"img\")'.",
-      "context": "const comparison = doc.createElement(\"img\"); comparison.src = galleryComparison;",
-      "count": 1
-    },
-    {
-      "fingerprint": "424b0770dc5f93685629f7c9ff7e39a154fb50d80e57a32a5dd193cf58404259",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"p\")' instead of 'doc.createElement(\"p\")'.",
-      "context": "const text = doc.createElement(\"p\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "49401fda79331e4c64734964168b696af83da7d419257a5d648de879a266ff2c",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"p\")' instead of 'doc.createElement(\"p\")'.",
-      "context": "const usage = doc.createElement(\"p\"); usage.textContent = zh ? \"启用新版配套主题后，在笔记编辑器的命令面板中选择“插入图片组”，或选中连续的 2–3 张图片后选择“把选中的图片排成图片组”。手写时以 > [!gallery] 开头，推荐每行一张 > ![[图片.png]]；高度写在开头，如 [!gallery|row|300]。\" : \"With the current companion theme active, use Insert image gallery in the editor, or select 2–3 consecutive image embeds and run Group selected images. For handwriting, start with > [!gallery] and put each > ![[image.png]] on its own line. Set height in the header, e.g. [!gallery|row|300].\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "74cf402292dab7048359512faca850c227cf2d52299f4da48b661fc5a77d8aac",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"a\")' instead of 'doc.createElement(\"a\")'.",
-      "context": "const title = doc.createElement(\"a\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "d6c0e883e618a51637219599ae34e25931722ee8f36fc466d22d9d2f1e3a7491",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"summary\")' instead of 'doc.createElement(\"summary\")'.",
-      "context": "const summary = doc.createElement(\"summary\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "fb7739a9aa589defa2630b6c530ed52efb72e2c9eeb6817619557ad1418f12c1",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"details\")' instead of 'doc.createElement(\"details\")'.",
-      "context": "const details = doc.createElement(\"details\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "55bfcc9004f62a44cf20e8fbfe848c8af83815280fe76ff36103030593d3cb4c",
-      "path": "src/ui/codex-icon.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createSvg(\"circle\")' instead of 'document.createElementNS(\"http://www.w3.org/2000/svg\", \"circle\")'.",
-      "context": "const circle = document.createElementNS(\"http://www.w3.org/2000/svg\", \"circle\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "812e7d9a9096d103f8567852029ebd8f01404162c36fdd57a393b8a9b82fccbe",
-      "path": "src/ui/codex-icon.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createSvg(\"svg\")' instead of 'document.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\")'.",
-      "context": "const svg = document.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "817b4d965d299514d40c53ea4b2616687d3a6b0102cf02a933b1100c6742d0db",
-      "path": "src/ui/codex-icon.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createSvg(\"path\")' instead of 'document.createElementNS(\"http://www.w3.org/2000/svg\", \"path\")'.",
-      "context": "const path = document.createElementNS(\"http://www.w3.org/2000/svg\", \"path\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "55a6491bf26221df4ea900ee684212532f676a9242f5a32b0df17f359de7e927",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'startQueuedTurnItemSafelyRunner' is defined but never used.",
-      "context": "startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner,",
-      "count": 1
-    },
-    {
       "fingerprint": "5b4b06daf836fc99a3d79a6318a7740fb30b1cad26a89d15891017c9d00aaf38",
       "path": "src/ui/codex-view.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'unavailableCapabilityAccess' is defined but never used.",
       "context": "import { unavailableCapabilityAccess } from \"../membership/access\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "639f720a2b64c800e84a2ef9fca6bf93a75382fea2a2adf7e36654a3127b8802",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'startNextQueuedTurnRunner' is defined but never used.",
-      "context": "startNextQueuedTurn as startNextQueuedTurnRunner,",
-      "count": 1
-    },
-    {
-      "fingerprint": "84fc8e8f13eefb6db0a7ed7e272594b7e0cd02219a57c5d42c2a8c961a02df4b",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'startChatTurnRunner' is defined but never used.",
-      "context": "startChatTurn as startChatTurnRunner,",
-      "count": 1
-    },
-    {
-      "fingerprint": "91c75ffb40682961f9c505b70167c945ccbb796b78ee2488e9790a6109c19b2c",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'startQueuedTurnItemRunner' is defined but never used.",
-      "context": "startQueuedTurnItem as startQueuedTurnItemRunner,",
-      "count": 1
-    },
-    {
-      "fingerprint": "a48565153855063c3d6f145537f0b7db605c91859196533a50f33bd197259a1f",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'stopTurnAction' is defined but never used.",
-      "context": "stopTurn as stopTurnAction,",
-      "count": 1
-    },
-    {
-      "fingerprint": "b821bb4d92f8c899d12734929f1cef8be95e8401f9010f8d220742cf5971646a",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'resumeQueuedTurnsRunner' is defined but never used.",
-      "context": "resumeQueuedTurns as resumeQueuedTurnsRunner,",
-      "count": 1
-    },
-    {
-      "fingerprint": "ba72fd0868a04c5290e6eb0b70008ea612229f437a47b96e4a17fe03dda3b37e",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'afterTurnSettledRunner' is defined but never used.",
-      "context": "afterTurnSettled as afterTurnSettledRunner,",
-      "count": 1
-    },
-    {
-      "fingerprint": "ded567b4e1cf5c1f008547de2337771d72001f59318489eb14cdad367dec1e94",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'piConversationSupport' is defined but never used.",
-      "context": "import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, piConversationSupport, rememberPiConversationProjection } from \"./codex-view/pi-conversation-support\";",
       "count": 1
     },
     {
@@ -7255,15 +5878,6 @@
       "severity": 1,
       "message": "Use 'this.inputEl.ownerDocument.win.createDiv()' instead of 'this.inputEl.ownerDocument.createElement(\"div\")'.",
       "context": "const presets = this.inputEl.ownerDocument.createElement(\"div\"); presets.className = \"echoink-inline-task-presets\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "0d867050b1465802a769b79e3e9ac7962ab57e4c1eec41e372c24611fe7501e6",
-      "path": "src/ui/codex-view/agent-editor.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "id: `agent-${globalThis.crypto.randomUUID()}`, name: \"\", avatar: { kind: \"default\" }, position: \"\", styleId: \"execution\", capabilityIds: []",
       "count": 1
     },
     {
@@ -7303,15 +5917,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1cde4e3b35b6b45c3ee59bf449ffc03f4a10a4ea463e91f3a79e11d5b370e640",
-      "path": "src/ui/codex-view/attachments.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"input\")' instead of 'document.createElement(\"input\")'.",
-      "context": "const input = document.createElement(\"input\");",
-      "count": 2
-    },
-    {
       "fingerprint": "605cbf654de1ca2829e902f6a9941b5b8340e5747e21f5ac7184dc23fd34625d",
       "path": "src/ui/codex-view/composer-controller.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -7330,75 +5935,12 @@
       "count": 1
     },
     {
-      "fingerprint": "cf0a7c4e95b3da860578b079ddcc692ff36c44efde347049047dc3281f37c6e3",
-      "path": "src/ui/codex-view/header.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'icon' is assigned a value but never used.",
-      "context": "const icon = title.createSpan({ cls: \"codex-title-icon codex-title-icon-codex\", attr: { \"aria-hidden\": \"true\" } });",
-      "count": 1
-    },
-    {
       "fingerprint": "5b2c9fad9f81a0bcf6318f8ba780ea61638435fa674abf31fd4aae8f8e2d9ba7",
       "path": "src/ui/codex-view/inline-task.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'this.root.ownerDocument.win.createDiv()' instead of 'this.root.ownerDocument.createElement(\"div\")'.",
       "context": "const row = this.root.ownerDocument.createElement(\"div\"); row.className = `echoink-inline-task-message is-${message.role}`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0007fb094fb8e23e84f933b742bcc7db20dfd36d17f38acfa9bbda85640ce309",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createDiv()' instead of 'document.createElement(\"div\")'.",
-      "context": "const path = document.createElement(\"div\"); path.className = \"echoink-knowledge-activity-path\"; details.append(path);",
-      "count": 1
-    },
-    {
-      "fingerprint": "2d1070bca12190fc20dc2260090c4a1d787a8e1501db49f1b9b92d04aa16bf36",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const title = document.createElement(\"span\"); title.className = \"echoink-knowledge-linking-progress-title\";",
-      "count": 2
-    },
-    {
-      "fingerprint": "332d39fb96faa3744988ccad2f4fa0bf33b8bd493eba6fbcacd0cd10f7546e18",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const status = document.createElement(\"span\"); status.className = \"echoink-knowledge-linking-progress-status\";",
-      "count": 2
-    },
-    {
-      "fingerprint": "3f4f82a62e1856c93343012a430a5b79e7f12e826bffd546694e8146b47363aa",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const count = document.createElement(\"span\"); count.className = \"echoink-knowledge-activity-step-status\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4bfa5a997ccd77161289791ad5046186ad1da17a01a2858954d53bf973b015e6",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createSpan()' instead of 'container.ownerDocument.createElement(\"span\")'.",
-      "context": "const segment = container.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "66c3116b048b7392c4e24130205044f74e876a1ec2d6882896e7035ca0ab37b0",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createSpan()' instead of 'container.ownerDocument.createElement(\"span\")'.",
-      "context": "const fill = container.ownerDocument.createElement(\"span\");",
       "count": 1
     },
     {
@@ -7429,33 +5971,6 @@
       "count": 1
     },
     {
-      "fingerprint": "82f65dc351304ec50888b100dd4f60e9489d88424a1f319eabeac5cdd945fc6b",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"progress\")' instead of 'document.createElement(\"progress\")'.",
-      "context": "const progress = document.createElement(\"progress\"); progress.className = \"echoink-knowledge-linking-progress-bar\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8fed31ee3a9e5d9108bff4c0ff4d750defb4420a2ec010a8d84d1691ece45a45",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"button\")' instead of 'document.createElement(\"button\")'.",
-      "context": "const detailButton = document.createElement(\"button\"); detailButton.type = \"button\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a964e3f6450f3734c8874a6d7716d8df13f4d6c2cf6e04f21116536c1401fccc",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"ol\")' instead of 'document.createElement(\"ol\")'.",
-      "context": "const steps = document.createElement(\"ol\"); details.append(steps);",
-      "count": 1
-    },
-    {
       "fingerprint": "ab0ea2b27dc0b52efe4139b4e1043baabcd547c07f035e9b70bb8d67f6da01f0",
       "path": "src/ui/codex-view/knowledge-linking-progress.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -7471,15 +5986,6 @@
       "severity": 1,
       "message": "Use 'document.win.createDiv()' instead of 'document.createElement(\"div\")'.",
       "context": "const details = document.createElement(\"div\"); details.className = \"echoink-knowledge-activity-details\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "dc49a4f16896e936932554582c2c810e28ba17e1ecdea8fb6af52e6196d1b7ae",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const label = document.createElement(\"span\"); label.textContent = maintenanceStageLabel(step.stage, english, current.taskKind);",
       "count": 1
     },
     {
@@ -7510,15 +6016,6 @@
       "count": 1
     },
     {
-      "fingerprint": "eecea93b0f2b1ea642d889248f45cdd2f95e0b13400a25799144f7240041ad60",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const barHost = document.createElement(\"span\"); barHost.className = \"echoink-knowledge-activity-bar\";",
-      "count": 1
-    },
-    {
       "fingerprint": "6c5e3a487ce627d186115105e7a669fc2478ddbdd9b0803f1c25da8cf61fc81a",
       "path": "src/ui/codex-view/menus.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -7537,60 +6034,6 @@
       "count": 1
     },
     {
-      "fingerprint": "d6f68c812831c8001320612c9c496d9abee2b3392195141d94acee64cb308de9",
-      "path": "src/ui/codex-view/menus.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"button\")' instead of 'document.createElement(\"button\")'.",
-      "context": "const item = document.createElement(\"button\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "121c5605c877d7e1bd590b234d4146495d40855922ebaa34bbff3c80ece84280",
-      "path": "src/ui/codex-view/message-controller.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'CHAT_SESSION_SAVE_DEBOUNCE_MS' is assigned a value but never used.",
-      "context": "const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;",
-      "count": 1
-    },
-    {
-      "fingerprint": "21cb79c4cda6fc3f30a73199df6740e8e56ed87210269b4af5c64bb433360c14",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'localDocumentExcerpts' is defined but never used.",
-      "context": "function localDocumentExcerpts(document: LocalVaultDocumentSource): string[] {",
-      "count": 1
-    },
-    {
-      "fingerprint": "8d8d1716cc130953ff77f7711a3d6a65071713518f9573e948f2fd99322b38f9",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'createAIElementsDocumentSources' is defined but never used.",
-      "context": "createAIElementsDocumentSources,",
-      "count": 1
-    },
-    {
-      "fingerprint": "cc11d31eb16f70ff696059124b561e9862dabea48a28d03adc0d4f19b4f8ae49",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'localDocumentMetadata' is defined but never used.",
-      "context": "function localDocumentMetadata(",
-      "count": 1
-    },
-    {
-      "fingerprint": "7f5e4e9bc3f9ba3c76e25c2ca42e6c34485ffd5bdd32569ce98743f391a1483b",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "?? (typeof globalThis.ResizeObserver === \"function\" ? globalThis.ResizeObserver : null);",
-      "count": 4
-    },
-    {
       "fingerprint": "1c9e2219eff3047f2edeb99e696ca138cace393aedd74e692417db579a60047e",
       "path": "src/ui/codex-view/message-list.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -7606,24 +6049,6 @@
       "severity": 1,
       "message": "Use 'env.messagesEl.ownerDocument.win.createEl(\"button\")' instead of 'env.messagesEl.ownerDocument.createElement(\"button\")'.",
       "context": "const open = env.messagesEl.ownerDocument.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "7ab64b5f07cf7a8e330cb6cdc4d18371a9aee9ea7114b767708d99569abca626",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "obsidianmd/prefer-instanceof",
-      "severity": 1,
-      "message": "Use '.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)' instead of 'instanceof child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement' for cross-window safe type checking.",
-      "context": "if (child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)) this.visibleRowsResizeObserver.observe(child);",
-      "count": 1
-    },
-    {
-      "fingerprint": "f2ce1eab700ece931096cd2128973e436085b20ed4d5a09a2b36929e1905842e",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "obsidianmd/prefer-instanceof",
-      "severity": 1,
-      "message": "Use '.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)' instead of 'instanceof child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement' for cross-window safe type checking.",
-      "context": "if (!(child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue;",
       "count": 1
     },
     {
@@ -7789,147 +6214,12 @@
       "count": 1
     },
     {
-      "fingerprint": "0088226ab8a4af87c17f2ea9e434f6b0e731239437bc83a1b443ff20d3a6bd6b",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const controls = doc.createElement(\"span\"); controls.className = \"echoink-annotation-actions\"; header.append(controls);",
-      "count": 1
-    },
-    {
-      "fingerprint": "2a8847379d478aa2b85d9f116c0b5847a2411fbf9d9f24f6f0ec37687961cc09",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const source = doc.createElement(\"button\"); source.type = \"button\"; source.className = \"echoink-annotation-source\"; source.textContent = annotation.fileName;",
-      "count": 1
-    },
-    {
-      "fingerprint": "49b770653c4faf584bdd94ca5e7e282b15d69bd0415a12478f6bafb7d2fa48c3",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const header = doc.createElement(\"div\"); header.className = \"echoink-annotation-card-header\"; card.append(header);",
-      "count": 1
-    },
-    {
-      "fingerprint": "7542b8b7507113bf5c88c0d47e9475ba34d2e554a2612a6827a605d8bffc315e",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const trigger = doc.createElement(\"button\"); trigger.type = \"button\"; trigger.className = \"echoink-annotation-trigger\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "79717cceedb7dac5e00bb562f91c68124bd4501f3bb95e990cb8a4799424427b",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "if (annotation.anchor.invalid || annotation.anchor.unresolved) { const hint = doc.createElement(\"div\"); hint.className = \"echoink-annotation-invalid\"; hint.textContent = conversationUiText(language, \"原文位置已变化\", \"The source position has changed\"); card.append(hint); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "9209636baeb526279194ed7aa42165bf55bc0e435ff792af1539e20b9a45fd49",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const wrapper = doc.createElement(\"div\"); wrapper.className = \"echoink-annotation-summary\"; host.append(wrapper);",
-      "count": 1
-    },
-    {
-      "fingerprint": "ca9d174ca1178f5e3818b18c894b1df654ccf48d35fae526c32a2d07cc3a7fa9",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const number = doc.createElement(\"span\"); number.className = \"echoink-annotation-number\"; number.textContent = String(annotation.number); header.append(number);",
-      "count": 1
-    },
-    {
-      "fingerprint": "f1a2473c1c72ab6d832d9f19ed94c3cb82c1d6e70d32b9ed872868c7915cd7b8",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const card = doc.createElement(\"div\"); card.className = \"echoink-annotation-card\"; panel.append(card);",
-      "count": 1
-    },
-    {
       "fingerprint": "f3f7d7094eb49eb3cb603cf65ab52c9a1494acd514656e29b01e1b3e5cfdf38c",
       "path": "src/ui/codex-view/selection-annotations.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
       "context": "const panel = doc.createElement(\"div\"); panel.className = \"echoink-annotation-popover\"; panel.hidden = true;",
-      "count": 1
-    },
-    {
-      "fingerprint": "f545853d998877f5a100f615f49d38adb2bc3b76f033bf7c9172819085179152",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const text = doc.createElement(\"div\"); text.className = \"echoink-annotation-text\"; text.textContent = annotation.selectedText; card.append(text);",
-      "count": 1
-    },
-    {
-      "fingerprint": "f84298f866b074e7bac42eb4e706beca087030d2257e7d5ce288fa866656f537",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const element = doc.createElement(\"button\"); element.type = \"button\"; element.setAttribute(\"aria-label\", conversationUiText(language, zh, en));",
-      "count": 1
-    },
-    {
-      "fingerprint": "fef9a8a93686aa50e69bd33de2a5eff8d9d4e52f8a6df9ce4eef907d00bef0e4",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const remove = doc.createElement(\"button\"); remove.type = \"button\"; remove.className = \"echoink-annotation-remove-all\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "58d607c7bd59a614b8ff8464ea06c23babf93614f2830ac02e05eaf08f86aee1",
-      "path": "src/ui/codex-view/tabs.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'twoDigits' is defined but never used.",
-      "context": "function twoDigits(value: number): string {",
-      "count": 1
-    },
-    {
-      "fingerprint": "8fd9a7821e1a2f6ed8ebef7b9bb4733daca1e83a62b3ba7bcbec65bcba9a95cf",
-      "path": "src/ui/codex-view/tabs.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'sameLocalDate' is defined but never used.",
-      "context": "function sameLocalDate(left: Date, right: Date): boolean {",
-      "count": 1
-    },
-    {
-      "fingerprint": "412198b9feef5bee645f6bffc17574c3c45db99e3c9791dcb4de622e4a4b13a9",
-      "path": "src/ui/codex-view/task-interruption.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createEl(\"li\")' instead of 'container.ownerDocument.createElement(\"li\")'.",
-      "context": "const item = container.ownerDocument.createElement(\"li\"); item.textContent = operation.label; list.append(item);",
-      "count": 1
-    },
-    {
-      "fingerprint": "763484d56ed5191b8b7d5fa729446d3207e890044f69012862793621bca0bff8",
-      "path": "src/ui/codex-view/task-interruption.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createEl(tag)' instead of 'container.ownerDocument.createElement(tag)'.",
-      "context": "const node = container.ownerDocument.createElement(tag); node.className = className; node.textContent = value; container.append(node); return node;",
       "count": 1
     },
     {
@@ -7987,39 +6277,12 @@
       "count": 1
     },
     {
-      "fingerprint": "a44a15c58fefc598fbe135b4c461590a3e1de9fd8b1502c2e2dc45ca8c7d9c3c",
-      "path": "src/ui/mobile/mobile-ui.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(\"aside\")' instead of 'document.createElement(\"aside\")'.",
-      "context": "const aside = document.createElement(\"aside\"); aside.className = \"em-sidebar\"; aside.setAttribute(\"aria-label\", label);",
-      "count": 1
-    },
-    {
-      "fingerprint": "d29eb069956111c02292a8137ed1e905eeceadf60bee2c57d1f2ce1fe3626dbf",
-      "path": "src/ui/mobile/mobile-ui.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'createEl(tag)' instead of 'document.createElement(tag)'.",
-      "context": "const node = document.createElement(tag); node.className = className;",
-      "count": 1
-    },
-    {
       "fingerprint": "c9828aff83f3698eea9bda90475e0595f576e370946220e199a299f79b4020d7",
       "path": "src/ui/mobile/mobile-ui.ts",
       "rule": "obsidianmd/ui/sentence-case",
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: 'Echoink 导航'",
       "context": "const navigation = el(workspace, \"nav\", \"em-navigation\"); navigation.setAttribute(\"aria-label\", \"EchoInk 导航\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "1b4ee2e31654c6ecf9f4fddaceb0d07a8c8b43f2bd1cc40e8fc551811fda0700",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"li\")' instead of 'parent.ownerDocument.createElement(\"li\")'.",
-      "context": "const add = (label: string, target: number, disabled = false) => { const item = list.appendChild(parent.ownerDocument.createElement(\"li\")); item.dataset.slot = \"pagination-item\"; const button = createOriginButton(item, { text: label, attr: { \"aria-label\": label === \"‹\" ? \"上一页\" : label === \"›\" ? \"下一页\" : `第 ${target} 页` } }); button.dataset.slot = \"pagination-link\"; button.disabled = disabled; if (target === page && label !== \"‹\" && label !== \"›\") button.setAttribute(\"aria-current\", \"page\"); button.onclick = () => onChange(target); };",
       "count": 1
     },
     {
@@ -8041,24 +6304,6 @@
       "count": 1
     },
     {
-      "fingerprint": "42ca40926a954bcf70ac2292dfd5105d0457fa0f7a8ef749e3355bd1350776aa",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createSpan()' instead of 'parent.ownerDocument.createElement(\"span\")'.",
-      "context": "for (const item of items) if (typeof item === \"number\") add(String(item), item); else { const span = list.appendChild(parent.ownerDocument.createElement(\"li\")).appendChild(parent.ownerDocument.createElement(\"span\")); span.textContent = item; span.dataset.slot = \"pagination-ellipsis\"; span.setAttribute(\"aria-hidden\", \"true\"); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "59894e0053e07ad6f121555c6e90cde1815f31187ea676ae4c3579d79064e3a8",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"li\")' instead of 'parent.ownerDocument.createElement(\"li\")'.",
-      "context": "for (const item of items) if (typeof item === \"number\") add(String(item), item); else { const span = list.appendChild(parent.ownerDocument.createElement(\"li\")).appendChild(parent.ownerDocument.createElement(\"span\")); span.textContent = item; span.dataset.slot = \"pagination-ellipsis\"; span.setAttribute(\"aria-hidden\", \"true\"); }",
-      "count": 1
-    },
-    {
       "fingerprint": "5b9132f73f2f503603a506fe63186eabca4a583e067728f4afe72e5cdbb1fe7e",
       "path": "src/ui/mobile/origin-controls.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -8074,15 +6319,6 @@
       "severity": 1,
       "message": "Use 'parent.ownerDocument.win.createEl(\"ul\")' instead of 'parent.ownerDocument.createElement(\"ul\")'.",
       "context": "const list = parent.ownerDocument.createElement(\"ul\"); list.dataset.slot = \"pagination-content\"; nav.append(list);",
-      "count": 1
-    },
-    {
-      "fingerprint": "7cb4a93a55abef56be5b4d93677fc0055dfc87723b07a2f53051979b24039a98",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createSpan()' instead of 'parent.ownerDocument.createElement(\"span\")'.",
-      "context": "const thumb = kind === \"switch\" ? button.appendChild(parent.ownerDocument.createElement(\"span\")) : undefined;",
       "count": 1
     },
     {
@@ -8104,39 +6340,12 @@
       "count": 1
     },
     {
-      "fingerprint": "6d473e0cabd7d95a8dd07f0e3327f8e61d12d088614d84591b5f9126ba60f7da",
-      "path": "src/ui/mobile/settings-pages.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(tag)' instead of 'parent.ownerDocument.createElement(tag)'.",
-      "context": "const element = parent.ownerDocument.createElement(tag); element.className = cls; if (text !== undefined) element.textContent = text; parent.append(element); return element;",
-      "count": 1
-    },
-    {
       "fingerprint": "239fd688432359952ee79c97e2225a173574306ff89c5b05b4aefcbdfcc98e22",
       "path": "src/ui/mobile/shell-controls.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'document.win.createEl(tag)' instead of 'document.createElement(tag)'.",
       "context": "const element = document.createElement(tag);",
-      "count": 1
-    },
-    {
-      "fingerprint": "1c7b84c2867a7ca72ea916cb04f12ca3c171a89c9d3d57fd36f559af0f034a10",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "constructor(app: App, private readonly questions: any[], private readonly done: (answers: Record<string, { answers: string[] }>) => void) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "51a3ddad4284858acc5eee9fc0137007c2d762af7002d910feb00c0cf264a26c",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "export function requestUserInputModal(app: App, questions: any[]): Promise<Record<string, { answers: string[] }>> {",
       "count": 1
     },
     {
@@ -8176,39 +6385,12 @@
       "count": 1
     },
     {
-      "fingerprint": "4f40c6db32cba56bd8b586e87cd69fe8f415746bd453f934e8f71d07cbcab5d5",
-      "path": "src/ui/render-message.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "const adapter = app.vault.adapter as any;",
-      "count": 1
-    },
-    {
       "fingerprint": "1f9d982651433d1bda014e1570f7b6fe5b54e62ce7cc96dcb4ea3b65c5b4ab03",
       "path": "src/ui/selection-ask-popover.ts",
       "rule": "obsidianmd/prefer-create-el",
       "severity": 1,
       "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
       "context": "const menu = doc.createElement(\"div\"); menu.className = \"echoink-selection-menu\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c415d1fd58ba7e63565e67e886614938b7cd51ba0bba0938981a3cc8bbe0967b",
-      "path": "src/ui/selection-ask-popover.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const button = doc.createElement(\"button\"); button.type = \"button\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eef4bfccb3ea7622e8caa1a06d0effcde47fa30a27fcc599fbc63d811929c1ba",
-      "path": "src/ui/selection-ask-popover.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const icon = doc.createElement(\"span\"); icon.setAttribute(\"aria-hidden\", \"true\"); setIcon(icon, \"pencil\"); button.append(icon, doc.createTextNode(action.name));",
       "count": 1
     }
   ]

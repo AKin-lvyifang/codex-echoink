@@ -39,7 +39,7 @@ interface Controls {
   act(action: () => void | Promise<void>): Promise<void>;
 }
 function node<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, cls = "", text?: string): HTMLElementTagNameMap[K] {
-  const element = parent.ownerDocument.createElement(tag); element.className = cls; if (text !== undefined) element.textContent = text; parent.append(element); return element;
+  return parent.createEl(tag, { cls, ...(text === undefined ? {} : { text }) });
 }
 export class MobileSettingsPages {
   readonly categories: { page: MobileSettingsPage | "providers"; title: string; icon: AnimatedSettingsTabIconName }[] = [

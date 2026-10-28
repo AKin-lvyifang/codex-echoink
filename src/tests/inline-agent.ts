@@ -1,3 +1,4 @@
+import "./inline-timer-host";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";

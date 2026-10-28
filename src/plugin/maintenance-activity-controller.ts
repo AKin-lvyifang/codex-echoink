@@ -24,10 +24,14 @@ interface ActivityHost {
 }
 
 /** Durable clock checkpoints share the same record/file-write lane as page receipts. */
+function hasTimerUnref(value: unknown): value is { unref(): void } {
+  return value !== null && typeof value === "object" && "unref" in value && typeof value.unref === "function";
+}
+
 export class MaintenanceActivityController {
   private readonly active = new Map<string, ActiveMaintenance>();
   private lane: Promise<unknown> = Promise.resolve();
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private timer: number | undefined;
   private disposed = false;
   constructor(private readonly host: ActivityHost) {}
   async initialize(): Promise<void> {
@@ -214,11 +218,12 @@ export class MaintenanceActivityController {
   }
   private arm(): void {
     if (this.timer || !this.host.liveCheckpoint) return;
-    this.timer = setInterval(() => { void this.serial(async () => {
+    this.timer = window.setInterval(() => { void this.serial(async () => {
       for (const [conversationId, active] of this.active) if (active.liveSince !== null) await this.mutate(conversationId, active, () => {});
     }).catch(error => console.error("Maintenance progress checkpoint failed", error)); }, 1000);
-    this.timer.unref?.();
+    const handle: unknown = this.timer;
+    if (hasTimerUnref(handle)) handle.unref();
   }
-  private disarm(): void { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  private disarm(): void { if (this.timer) window.clearInterval(this.timer); this.timer = undefined; }
   private serial<T>(action: () => Promise<T>): Promise<T> { const next = this.lane.then(action); this.lane = next.catch(() => undefined); return next; }
 }

@@ -312,7 +312,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         const resolution = resolveMaintenanceSourceState(content, { fingerprint: () => cached.rawFingerprint, registry: registry.entries[file.path], maintenance: latest.get(file.path), previous: this.plugin.settings.knowledgeBase.processedSources[file.path] });
         if (resolution.state !== "digested") result.push({ path: file.path, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
-      if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (++batch % 32 === 0) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     return result;
   }

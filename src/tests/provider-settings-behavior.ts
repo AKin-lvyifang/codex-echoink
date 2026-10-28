@@ -10964,6 +10964,8 @@ function installProviderModalDomFixture(): void {
   const scope = globalThis as unknown as Record<string, unknown>;
   scope.document = providerModalTestDocument;
   scope.window = globalThis;
+  scope.createEl = (tag: string) => providerModalTestDocument.createElement(tag);
+  scope.createSvg = (tag: string) => providerModalTestDocument.createElementNS("http://www.w3.org/2000/svg", tag);
   scope.Element = ProviderModalTestElement;
   scope.HTMLElement = ProviderModalTestElement;
   scope.SVGElement = ProviderModalTestSvgElement;
@@ -11138,6 +11140,7 @@ class ProviderModalTestStyle {
 }
 
 class ProviderModalTestElement {
+  instanceOf(type: new (...args: any[]) => unknown): boolean { return this instanceof type; }
   readonly children: ProviderModalTestElement[] = [];
   readonly dataset: Record<string, string> = {};
   readonly classList = new ProviderModalTestClassList(this);

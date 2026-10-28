@@ -65,7 +65,7 @@ export class UsageStore {
 
   private async persist(document: UsageDocument): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.${globalThis.crypto.randomUUID()}.tmp`;
+    const temporary = `${this.filePath}.${crypto.randomUUID()}.tmp`;
     try {
       await writeFile(temporary, JSON.stringify(document), { encoding: "utf8", mode: 0o600 });
       await rename(temporary, this.filePath);

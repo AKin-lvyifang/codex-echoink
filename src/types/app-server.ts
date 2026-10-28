@@ -8,7 +8,7 @@ export interface CodexModel {
   displayName: string;
   description?: string;
   isDefault?: boolean;
-  supportedReasoningEfforts?: Array<{ effort: ReasoningEffort } | ReasoningEffort | string>;
+  supportedReasoningEfforts?: Array<{ effort: ReasoningEffort } | string>;
   defaultReasoningEffort?: ReasoningEffort;
   inputModalities?: string[];
 }

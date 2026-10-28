@@ -1148,7 +1148,7 @@ async function resolveKnowledgeVaultRoot(vaultPath: string): Promise<string> {
   let realVaultPath: string;
   try {
     realVaultPath = await fsp.realpath(resolved);
-  } catch (error) {
+  } catch {
     throw new KnowledgeRetrievalError(
       "invalid-path",
       `当前 Vault 路径不可用：${resolved}`

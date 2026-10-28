@@ -16,7 +16,7 @@ import { JournalTemplateModal } from "./journal-template-modal";
 import { renderPhotoCalendar } from "./photo-calendar";
 import { chooseEnglishDiaryHomeShortcut } from "./english-diary-shortcut-modal";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
-import { formatHomeFullDate, formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
+import { formatHomeRelativeTime, homeCopy, type HomeCopy } from "./home-i18n";
 import { openObsidianFolderGraphLeaf } from "./open-native-graph";
 import { homeWorkspaceMarkup } from "./home-workspace-template";
 import { bindHomeBentoMagnet } from "./home-bento-magnet";

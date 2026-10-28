@@ -209,7 +209,7 @@ export class EchoInkViewService {
     return this.getViewInstance(VIEW_TYPE_REVIEW_PREVIEW, ReviewPreviewView);
   }
 
-  private getViewInstance<T>(viewType: string, viewClass: { new (...args: any[]): T }): T | null {
+  private getViewInstance<T>(viewType: string, viewClass: abstract new (...args: never[]) => T): T | null {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(viewType)) {
       if (leaf.view instanceof viewClass) return leaf.view;
     }

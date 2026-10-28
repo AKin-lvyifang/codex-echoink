@@ -314,9 +314,9 @@ export class DesktopKnowledgeSettings {
       if (role === "raw" && bindings.roles.raw.readPaths.length > 1) row.descEl.setText(`读取：${bindings.roles.raw.readPaths.join("、")}；新内容保存到所选位置。`);
     }
     const native = readNativeJournalSettings(this.plugin.app, this.plugin.settings.journalDirectory, bindings);
-    const defaults: KnowledgeModuleDirectories = { journal: native.folder, review: this.plugin.settings.review.outputDir, english: this.plugin.settings.englishDiary.englishDirectory, expressions: this.plugin.settings.englishDiary.expressionDirectory, pdfOriginal: this.plugin.settings.pdfReading.originalDirectory ?? knowledgeCollectionDirectory(bindings, "web") ?? "" };
-    Object.assign(defaults, prepareKnowledgeModuleDirectories(this.plugin.settings, bindings,
-      (this.plugin.app.vault.getRoot?.().children ?? []).map(file => file.path)).directories);
+    const defaults: KnowledgeModuleDirectories = { journal: native.folder, review: this.plugin.settings.review.outputDir, english: this.plugin.settings.englishDiary.englishDirectory, expressions: this.plugin.settings.englishDiary.expressionDirectory, pdfOriginal: this.plugin.settings.pdfReading.originalDirectory ?? knowledgeCollectionDirectory(bindings, "web") ?? "",
+      ...prepareKnowledgeModuleDirectories(this.plugin.settings, bindings,
+        (this.plugin.app.vault.getRoot?.().children ?? []).map(file => file.path)).directories };
     const moduleFields = fieldGroup("模块保存位置");
     for (const [key, title] of [["journal", "日记"], ["review", "复盘输出"], ["english", "英文稿"], ["expressions", "表达库"], ["pdfOriginal", "原 PDF"]] as const) {
       const row = new OriginSetting(moduleFields).setName(title); const input = createOriginInput(row.controlEl, { value: this.moduleDraft[key] ?? defaults[key] ?? "", attr: { "aria-label": `初始化${title}` } });

@@ -90,7 +90,7 @@ export class WorkbenchWeatherStage {
   }
   private t(zh: string, en: string): string { return this.plugin.settings.settingsLanguage === "en" ? en : zh; }
   private layer(name: string): SVGElement { return this.svg.querySelector<SVGElement>(`[data-layer="${name}"]`)!; }
-  private listen(target: EventTarget, name: string, listener: (event: any) => void): void {
+  private listen(target: EventTarget, name: string, listener: EventListener): void {
     target.addEventListener(name, listener); this.cleanups.push(() => target.removeEventListener(name, listener));
   }
   private signed(): boolean { return this.checkins.snapshot().checkedIn; }

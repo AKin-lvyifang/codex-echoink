@@ -17,7 +17,6 @@ import {
 import path from "node:path";
 import {
   PERSONAL_MEMORY_SCHEMA,
-  SECONDARY_MEMORY_SCHEMA,
   type PersonalMemoryBasis,
   type PersonalMemoryContentOrigin,
   type PersonalMemoryKind,

@@ -18,11 +18,10 @@ export function mountKnowledgeLinkingProgress(container: HTMLElement, source: Kn
   container.classList.add("echoink-knowledge-linking-progress");
   const button = document.createElement("button"); button.type = "button";
   button.className = "echoink-knowledge-linking-progress-button";
-  const title = document.createElement("span"); title.className = "echoink-knowledge-linking-progress-title";
-  title.textContent = english ? "Knowledge links" : "知识关联";
-  const status = document.createElement("span"); status.className = "echoink-knowledge-linking-progress-status";
-  const progress = document.createElement("progress"); progress.className = "echoink-knowledge-linking-progress-bar";
-  button.append(title, status, progress); container.append(button);
+  const title = button.createSpan({ cls: "echoink-knowledge-linking-progress-title", text: english ? "Knowledge links" : "知识关联" });
+  const status = button.createSpan({ cls: "echoink-knowledge-linking-progress-status" });
+  const progress = button.createEl("progress", { cls: "echoink-knowledge-linking-progress-bar" });
+  container.append(button);
   let currentTaskId: string | undefined;
   button.onclick = () => open(currentTaskId);
   const unsubscribe = source.subscribe(task => {
@@ -45,13 +44,11 @@ export function renderMaintenanceProgressBar(container: HTMLElement, activity: R
   bar.className = "echoink-maintenance-progress-bar";
   bar.setAttribute("aria-hidden", "true");
   for (const step of activity.steps) {
-    const segment = container.ownerDocument.createElement("span");
-    segment.className = `echoink-maintenance-progress-segment is-${step.state}`;
+    const segment = bar.createSpan({ cls: `echoink-maintenance-progress-segment is-${step.state}` });
     segment.dataset.stage = step.stage;
-    const fill = container.ownerDocument.createElement("span");
+    const fill = segment.createSpan();
     const fraction = step.state === "completed" ? 1 : step.total !== null && step.total > 0 ? Math.max(0, Math.min(1, step.completed / step.total)) : 0;
     fill.style.width = `${fraction * 100}%`;
-    segment.append(fill); bar.append(segment);
   }
   container.append(bar);
   return bar;
@@ -69,17 +66,14 @@ export function mountKnowledgeActivityProgress(
   container.hidden = true;
   const button = document.createElement("button"); button.type = "button";
   button.className = "echoink-knowledge-linking-progress-button";
-  const title = document.createElement("span"); title.className = "echoink-knowledge-linking-progress-title";
-  const status = document.createElement("span"); status.className = "echoink-knowledge-linking-progress-status";
-  const barHost = document.createElement("span"); barHost.className = "echoink-knowledge-activity-bar";
-  button.append(title, status, barHost);
+  const title = button.createSpan({ cls: "echoink-knowledge-linking-progress-title" });
+  const status = button.createSpan({ cls: "echoink-knowledge-linking-progress-status" });
+  const barHost = button.createSpan({ cls: "echoink-knowledge-activity-bar" });
   const details = document.createElement("div"); details.className = "echoink-knowledge-activity-details";
   details.id = `echoink-knowledge-activity-${++activityProgressId}`; details.hidden = true;
-  const steps = document.createElement("ol"); details.append(steps);
-  const path = document.createElement("div"); path.className = "echoink-knowledge-activity-path"; details.append(path);
-  const detailButton = document.createElement("button"); detailButton.type = "button";
-  detailButton.className = "echoink-knowledge-activity-open";
-  detailButton.textContent = english ? "View task" : "查看任务"; details.append(detailButton);
+  const steps = details.createEl("ol");
+  const path = details.createDiv({ cls: "echoink-knowledge-activity-path" });
+  const detailButton = details.createEl("button", { cls: "echoink-knowledge-activity-open", text: english ? "View task" : "查看任务", attr: { type: "button" } });
   const failures = document.createElement("ul"); failures.className = "echoink-knowledge-activity-failures"; failures.hidden = true;
   details.insertBefore(failures, detailButton);
   const otherButton = document.createElement("button"); otherButton.type = "button";
@@ -117,15 +111,15 @@ export function mountKnowledgeActivityProgress(
       renderMaintenanceProgressBar(barHost, current);
       for (const step of current.steps) {
         const row = document.createElement("li");
-        const label = document.createElement("span"); label.textContent = maintenanceStageLabel(step.stage, english, current.taskKind);
-        const count = document.createElement("span"); count.className = "echoink-knowledge-activity-step-status";
+        row.createSpan({ text: maintenanceStageLabel(step.stage, english, current.taskKind) });
+        const count = row.createSpan({ cls: "echoink-knowledge-activity-step-status" });
         const state = step.state === "completed" ? (english ? "Completed" : "已完成")
           : step.state === "pending" ? (english ? "Not started" : "待开始")
           : maintenanceTaskStateLabel(current, english);
         const progress = step.stage === "finalize" && step.state === "running" || step.total !== null && ["decompose", "write"].includes(step.stage)
           ? maintenanceStepText(step, english, current.taskKind) : "";
         count.textContent = progress ? `${state} · ${progress}` : state;
-        row.append(label, count); steps.append(row);
+        steps.append(row);
       }
       path.hidden = !current.currentPath;
       path.textContent = current.currentPath ? `${english ? "Current: " : "当前："}${maintenancePageLabel(current.currentPath)}` : "";

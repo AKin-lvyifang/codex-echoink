@@ -54,7 +54,7 @@ export class WorkbenchStarters {
     this.update();
   }
   private t(zh: string, en: string): string { return this.options.english() ? en : zh; }
-  private listen(target: EventTarget, event: string, action: (e: any) => void): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }
+  private listen(target: EventTarget, event: string, action: EventListener): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }
   private button(parent: HTMLElement, text: string, action: () => unknown, primary = false): HTMLButtonElement {
     const button = createOriginButton(parent, { text, cls: `wb-button ${primary ? "is-primary" : "is-secondary"}`, attr: { type: "button" } }); applyAmicroButton(button, { variant: primary ? "primary" : "secondary" });
     button.onclick = e => { e.stopPropagation(); void Promise.resolve().then(action).catch(error => this.options.error(error)); }; return button;

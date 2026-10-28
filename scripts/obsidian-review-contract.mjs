@@ -38,14 +38,22 @@ export const SOURCE_HARD_RULES = {
   "obsidianmd/no-plugin-as-component": [2],
   "obsidianmd/no-view-references-in-plugin": [2],
   "obsidianmd/no-unsupported-api": [2],
+  "@typescript-eslint/no-unnecessary-type-assertion": [2],
+  "@typescript-eslint/no-redundant-type-constituents": [2],
+  "@typescript-eslint/no-misused-promises": [2],
+  "@typescript-eslint/no-unsafe-call": [2],
+  "no-useless-escape": [2, { allowRegexCharacters: [] }],
   "import/no-extraneous-dependencies": [2],
   "obsidianmd/commands/no-plugin-name-in-command-name": [2],
   "obsidianmd/prefer-file-manager-trash-file": [2],
+  "obsidianmd/prefer-window-timers": [2],
+  "obsidianmd/prefer-instanceof": [2],
+  "obsidianmd/object-assign": [2],
   "eslint-comments/no-unlimited-disable": [2],
   "eslint-comments/require-description": [2],
   "eslint-comments/disable-enable-pair": [2, { allowWholeFile: false }],
   "eslint-comments/no-restricted-disable": [2,
-    "obsidianmd/*", "import/no-extraneous-dependencies", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+    "obsidianmd/*", "import/no-extraneous-dependencies", "@typescript-eslint/no-unnecessary-type-assertion", "@typescript-eslint/no-redundant-type-constituents", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-useless-escape", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
     "@typescript-eslint/no-floating-promises", "no-unsanitized/method", "no-unsanitized/property"]
 };
 // Audited source warning settings. Weakening a rule must not masquerade as resolved debt.
@@ -173,9 +181,6 @@ export const SOURCE_WARNING_RULES = {
   "obsidianmd/no-tfile-tfolder-cast": [
     1
   ],
-  "obsidianmd/object-assign": [
-    1
-  ],
   "obsidianmd/prefer-abstract-input-suggest": [
     1
   ],
@@ -183,12 +188,6 @@ export const SOURCE_WARNING_RULES = {
     1
   ],
   "obsidianmd/prefer-get-language": [
-    1
-  ],
-  "obsidianmd/prefer-instanceof": [
-    1
-  ],
-  "obsidianmd/prefer-window-timers": [
     1
   ],
   "obsidianmd/settings-tab/no-deprecated-display": [
@@ -224,11 +223,13 @@ const JSON_RULES = {
   "json/no-unnormalized-keys": [2, { form: "NFC" }], "json/no-unsafe-values": [2]
 };
 export const PACKAGE_HARD_RULES = {
-  "depend/ban-dependencies": [2, { presets: ["native", "microutilities", "preferred"] }]
+  "depend/ban-dependencies": [2, { presets: ["native", "microutilities", "preferred"] }],
+  "no-useless-escape": [2, { allowRegexCharacters: [] }]
 };
 const COMMENT_HARD_RULES = new Set(Object.keys(SOURCE_HARD_RULES).filter(rule => rule.startsWith("eslint-comments/")));
 const BASELINE_SOURCE = "eslint-plugin-obsidianmd production errors";
 const WARNING_BASELINE_SOURCE = "eslint-plugin-obsidianmd production warnings";
+const CSS_BASELINE_SOURCE = "stylelint-config-obsidianmd production warnings";
 const SOURCE_EXTENSIONS = /\.(?:ts|cts|mts|tsx|js|cjs|mjs|jsx)$/u;
 // These are tests and upstream reference material, not plugin runtime code.
 const NON_PRODUCTION_DIRECTORIES = new Set(["src/tests", "src/home/magic-ui/provenance"]);
@@ -337,6 +338,10 @@ export function createWarningBaseline(findings) {
   return createSeverityBaseline(findings, 1, WARNING_BASELINE_SOURCE);
 }
 
+export function createCssBaseline(findings) {
+  return createSeverityBaseline(findings, 1, CSS_BASELINE_SOURCE);
+}
+
 function createSeverityBaseline(findings, severity, source) {
   const entries = new Map();
   for (const finding of findings) {
@@ -361,6 +366,10 @@ export function validateBaseline(value) {
 
 export function validateWarningBaseline(value) {
   return validateSeverityBaseline(value, 1, WARNING_BASELINE_SOURCE);
+}
+
+export function validateCssBaseline(value) {
+  return validateSeverityBaseline(value, 1, CSS_BASELINE_SOURCE);
 }
 
 function validateSeverityBaseline(value, severity, source) {
@@ -419,6 +428,27 @@ export {};`,
     { name: "direct dependency declaration", file: sourcePath,
       source: 'import { StreamLanguage } from "@codemirror/streamparser"; void StreamLanguage; export {};',
       expected: ["import/no-extraneous-dependencies"] },
+    { name: "redundant assertion and escape", file: sourcePath,
+      source: String.raw`declare const a: string; const b = a as string; const re = /[\[\]]/g; void b; void re; export {};`,
+      expected: ["@typescript-eslint/no-unnecessary-type-assertion", "no-useless-escape"] },
+    { name: "window timers", file: sourcePath,
+      source: 'const timer = setTimeout(() => {}, 1); clearTimeout(timer); export {};',
+      expected: ["obsidianmd/prefer-window-timers"] },
+    { name: "redundant type constituent", file: sourcePath,
+      source: 'type Effort = "high" | string; declare const value: Effort; void value; export {};',
+      expected: ["@typescript-eslint/no-redundant-type-constituents"] },
+    { name: "cross-window node type", file: sourcePath,
+      source: 'declare const element: HTMLElement; if (element instanceof HTMLElement) element.focus(); export {};',
+      expected: ["obsidianmd/prefer-instanceof"] },
+    { name: "object mutation", file: sourcePath,
+      source: 'const defaults = { first: 1 }; declare const input: object; Object.assign(defaults, input); export {};',
+      expected: ["obsidianmd/object-assign"] },
+    { name: "unsafe call", file: sourcePath,
+      source: 'declare const value: any; value(); export {};',
+      expected: ["@typescript-eslint/no-unsafe-call"] },
+    { name: "misused async callback", file: sourcePath,
+      source: 'const handler: () => void = async () => {}; void handler; export {};',
+      expected: ["@typescript-eslint/no-misused-promises"] },
     { name: "restricted suppression", file: sourcePath,
       source: '// eslint-disable-next-line no-eval -- Contract sentinel\neval("1");\nexport {};',
       expected: ["eslint-comments/no-restricted-disable"], suppressed: "no-eval" },

@@ -107,13 +107,23 @@ export const MarkdownRenderer = { async render(_app: unknown, text: string, elem
 export async function requestUrl() { throw new Error("Browser fixture cannot call a real Provider"); }
 export class Notice { constructor(text: string, _timeout?: number) { console.info("Fixture notice", text); } hide() {} }
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
+// Obsidian exposes detached DOM creation helpers on each window.
+window.createEl = ((tag: keyof HTMLElementTagNameMap) => window.document.createElement(tag)) as typeof window.createEl;
+window.createSvg = ((tag: keyof SVGElementTagNameMap) => window.document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof window.createSvg;
+for (const owner of [HTMLElement.prototype, SVGElement.prototype]) {
+  (owner as any).instanceOf = function(type: new (...args: any[]) => unknown) {
+    const view = this.ownerDocument?.defaultView;
+    const local = view?.[type.name] ?? type;
+    return this instanceof local;
+  };
+}
 const prototype = HTMLElement.prototype as any;
 (SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };
 prototype.empty = function() { this.replaceChildren(); };
 prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
 prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };
 prototype.setText = function(text: string) { this.textContent = text; };
-prototype.createEl = function(tag: string, opts: any = {}) { const element = document.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; if (opts.value !== undefined) (element as HTMLInputElement).value = opts.value; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
+prototype.createEl = function(tag: string, opts: any = {}) { const element = this.ownerDocument.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; if (opts.value !== undefined) (element as HTMLInputElement).value = opts.value; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
 prototype.createDiv = function(opts: any = {}) { return this.createEl("div", typeof opts === "string" ? { cls: opts } : opts); };
 prototype.createSpan = function(opts: any = {}) { return this.createEl("span", opts); };
 export { default as moment } from "moment";

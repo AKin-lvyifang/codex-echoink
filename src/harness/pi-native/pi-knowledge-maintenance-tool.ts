@@ -1,7 +1,7 @@
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "../../knowledge-base/maintenance-knowledge-types";
 import type { MaintenanceP1Action } from "../../knowledge-base/maintenance-p1-contract";
 import { throwMaintenanceDiagnostics } from "../../knowledge-base/maintenance-diagnostics";
-import { knowledgeRolePath, knowledgePathRole } from "../../knowledge-base/root-paths";
+import { knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { isDeepStrictEqual } from "node:util";
 import {
@@ -24,7 +24,7 @@ import {
   secureVaultToolResult,
   type VaultToolResultEgressPort
 } from "./vault-tool-result-safety";
-import { echoInkKnowledgeMaintenanceProtocolPrompt, MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from "../../knowledge-base/knowledge-maintenance-protocol";
+import { MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from "../../knowledge-base/knowledge-maintenance-protocol";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
 import type { KnowledgeMaintenanceAssessment } from "../../knowledge-base/knowledge-maintenance-result";
 

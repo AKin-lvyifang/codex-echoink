@@ -54,6 +54,12 @@ try {
   const first = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   const second = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   try {
+    for (const owner of [first.window, second.window]) {
+      owner.Node.prototype.instanceOf = function (type) {
+        const local = owner[type.name] ?? type;
+        return this instanceof local;
+      };
+    }
     for (const name of ['window', 'document', 'navigator', 'Element', 'Node', 'HTMLElement', 'HTMLButtonElement', 'MutationObserver']) {
       Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? first.window : first.window[name] });
     }

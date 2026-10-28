@@ -1595,13 +1595,3 @@ function renderShortcut(container: HTMLElement, keys: string[], label: string): 
   for (const key of keys) shortcut.createEl("kbd", { text: key });
   shortcut.createSpan({ text: label });
 }
-
-function sameLocalDate(left: Date, right: Date): boolean {
-  return left.getFullYear() === right.getFullYear()
-    && left.getMonth() === right.getMonth()
-    && left.getDate() === right.getDate();
-}
-
-function twoDigits(value: number): string {
-  return String(value).padStart(2, "0");
-}

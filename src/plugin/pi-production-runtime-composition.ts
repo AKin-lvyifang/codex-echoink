@@ -28,7 +28,7 @@ import { recordMaintenanceSourceBodyFingerprint } from "../harness/pi-native/pi-
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../knowledge-base/search/contracts";
 import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
-import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
+import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
@@ -142,7 +142,6 @@ import {
 } from "../harness/pi-native/pi-mcp-custom-tool-adapter";
 import { createPiMcpToolSecurity } from "../harness/pi-native/pi-mcp-tool-security";
 import {
-  PI_TASK_UPDATE_TOOL_ID,
   PiTaskPlanToolSecurity,
   createPiTaskPlanToolDefinition
 } from "../harness/pi-native/pi-task-plan";
@@ -1380,7 +1379,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           let recallVisible = false;
           let recallStats: Readonly<PersonalMemoryRecallSafeStats> | undefined;
           let recallObservation: Readonly<PiPersonalMemoryRecallEvidence> | undefined;
-          let recallTimer: ReturnType<typeof setTimeout> | undefined;
+          let recallTimer: number | undefined;
           const progressDelay = input.personalMemoryRecallProgressDelayMs ?? 300;
           const publishProgress = async (
             stage: PersonalMemoryRecallStage,
@@ -1390,7 +1389,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             if (stats) recallStats = Object.freeze({ ...stats });
             if (!input.onPersonalMemoryRecallProgress) return;
             if (!recallTimer && !recallVisible) {
-              recallTimer = setTimeout(() => {
+              recallTimer = window.setTimeout(() => {
                 recallTimer = undefined;
                 recallVisible = true;
                 void input.onPersonalMemoryRecallProgress?.({
@@ -1444,7 +1443,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               exhausted: false
             });
           } finally {
-            if (recallTimer) clearTimeout(recallTimer);
+            if (recallTimer) window.clearTimeout(recallTimer);
             const elapsedMs = Math.max(0, Date.now() - recallStartedAt);
             if (recallStats) {
               recallObservation = Object.freeze({

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
+import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
+import { ObsidianVaultDomainAdapter, createPhase3MaintenanceVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -16,10 +19,38 @@ export { Notice } from "./obsidian-shim";
 export { conversationUiText } from "../ui/codex-view/ui-i18n";
 
 export async function runCommunityWarningFixesTests(first: Window, second: Window, createCapture: (host: any) => () => void) {
+  processEventPayloads();
+  customConfigProtection();
   await dataRoots();
   measuredRows(first, second);
+  providerIcons(first, second);
   await runShortcutFailureTests(createCapture);
   console.log("Community warning fixes regression: PASS");
+}
+
+function processEventPayloads(): void {
+  assert.equal(reasoningTextFromPayload({ text: ["推理", 7], summary: " 补充 " }), "推理\n7\n补充");
+  assert.equal(reasoningTextFromPayload(null), "");
+  const tool = summarizeProcessEvent("mcpToolCall", { server: "vault", tool: "search", message: 42 }, "/vault");
+  assert.equal(tool.title, "使用工具：vault.search");
+  assert.equal(tool.detail, "42");
+  assert.equal(summarizeProcessEvent("commandExecution", "npm test", "/vault").kind, "run");
+  const inherited = Object.create({ message: "继承的状态" });
+  assert.equal(summarizeProcessEvent("unknown", inherited, "/vault").detail, "继承的状态");
+  assert.equal(summarizeProcessEvent("reasoning", { status: "inProgress" }, "/vault").title, "正在思考");
+}
+
+function customConfigProtection(): void {
+  const app = { vault: { configDir: ".obsidian-work" } } as never;
+  const base = new ObsidianVaultDomainAdapter(app, "fixture", path.join(tmpdir(), "config-fixture"));
+  for (const trackerRelativePath of [".obsidian-work/tracker.md", ".obsidian/tracker.md", ".echoink/tracker.md"]) {
+    assert.throws(() => createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath }), /managed_hidden_update_path_invalid/);
+  }
+  assert.doesNotThrow(() => createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath: "outputs/.ingest-tracker.md" }));
+  for (const [configDir, trackerRelativePath] of [["Config", "Config/.tracker.md"], ["Config/Nested", "Config/Nested/.tracker.md"]]) {
+    const custom = new ObsidianVaultDomainAdapter({ vault: { configDir } } as never, "fixture", path.join(tmpdir(), "config-fixture"));
+    assert.throws(() => createPhase3MaintenanceVaultDomainAdapter({ base: custom, trackerRelativePath }), /managed_hidden_update_path_invalid/);
+  }
 }
 
 async function dataRoots() {
@@ -147,6 +178,16 @@ async function dataRoots() {
   }
 }
 
+function providerIcons(first: Window, second: Window): void {
+  for (const win of [first, second]) {
+    const container = win.document.createElement("div");
+    const icon = renderProviderBrandIcon(container, "deepseek");
+    assert.equal(icon.ownerDocument, win.document);
+    assert.equal(icon.namespaceURI, "http://www.w3.org/2000/svg");
+    assert.equal(container.firstChild, icon);
+  }
+}
+
 function measuredRows(first: Window, second: Window) {
   for (const [name, win] of [["main", first], ["popout", second]] as const) {
     const messages = win.document.createElement("div");
@@ -182,6 +223,20 @@ function measuredRows(first: Window, second: Window) {
     assert.equal(rerenders, 1);
     renderer.dispose();
   }
+  // If a popout lacks ResizeObserver, the main window remains the fallback.
+  (second as any).ResizeObserver = undefined;
+  const observedFallback: Element[] = [];
+  (first as any).ResizeObserver = class {
+    observe(element: Element) { observedFallback.push(element); }
+    disconnect() {}
+  };
+  const messages = second.document.createElement("div"), list = second.document.createElement("div");
+  const row = second.document.createElement("div"); row.dataset.rowId = "fallback-row"; list.append(row);
+  const fallback = new CodexMessageListRenderer();
+  (fallback as any).env = { messagesEl: messages, virtualListEl: list };
+  (fallback as any).observeVisibleVirtualRows(messages, list);
+  assert.deepEqual(observedFallback, [row]);
+  fallback.dispose();
   console.log("Two-window production row measurement and ResizeObserver registration/callback: PASS");
 }
 

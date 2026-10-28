@@ -33,7 +33,6 @@ import {
   apiProviderModelsUrl,
   isLoopbackApiProviderUrl,
   normalizeApiProviderBaseUrl,
-  normalizeApiProviderId,
   getApiProviderPreset,
   type ApiProviderAuthMode,
   type ApiProviderId,
@@ -207,7 +206,7 @@ export class PiProviderConfigurationService {
     };
     const abortFromExternal = () => abort("external");
     input.signal?.addEventListener("abort", abortFromExternal, { once: true });
-    const timer = setTimeout(() => abort("timeout"), timeoutMs);
+    const timer = window.setTimeout(() => abort("timeout"), timeoutMs);
     try {
       const dispatcher = this.options.textGenerationDispatcher
         ?? (this.options.adapters
@@ -267,7 +266,7 @@ export class PiProviderConfigurationService {
       }
       throw error;
     } finally {
-      clearTimeout(timer);
+      window.clearTimeout(timer);
       input.signal?.removeEventListener("abort", abortFromExternal);
     }
   }
@@ -300,7 +299,7 @@ export async function requestProviderModels(input: {
   timeoutMs?: number;
 }): Promise<PiProviderModelListResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(
+  const timeout = window.setTimeout(
     () => controller.abort(),
     input.timeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS
   );
@@ -354,7 +353,7 @@ export async function requestProviderModels(input: {
   } catch {
     return { status: "network_error", models: [] };
   } finally {
-    clearTimeout(timeout);
+    window.clearTimeout(timeout);
   }
 }
 
@@ -423,7 +422,7 @@ export async function testProviderConnection(input: {
   const timeoutMs = input.timeoutMs ?? (codex
     ? CODEX_CONNECTION_TIMEOUT_MS
     : PROVIDER_REQUEST_TIMEOUT_MS);
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   let responseStatus: number | null = null;
   try {
     const model = createProviderModelFromDraft(input.draft);
@@ -494,7 +493,7 @@ export async function testProviderConnection(input: {
         )
     };
   } finally {
-    clearTimeout(timer);
+    window.clearTimeout(timer);
   }
 }
 

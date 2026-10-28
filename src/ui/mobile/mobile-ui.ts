@@ -47,7 +47,7 @@ const permissions: [MobilePermission, string, string][] = [
 ];
 const toolNames: Record<string, string> = { vault_search: "查找笔记", note_read: "读取笔记", note_create: "保存文档", memory_search: "查找记忆", memory_read: "读取记忆", memory_write: "保存记忆" };
 function el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag); node.className = className;
+  const node = window.createEl(tag); node.className = className;
   if (text !== undefined) node.textContent = text;
   parent.append(node); return node;
 }
@@ -249,7 +249,7 @@ export class MobileUI {
   }
   private tabletPanels(panels: HTMLElement, body: HTMLElement): boolean {
     const sidebar = (label: string) => {
-      const aside = document.createElement("aside"); aside.className = "em-sidebar"; aside.setAttribute("aria-label", label);
+      const aside = window.createEl("aside"); aside.className = "em-sidebar"; aside.setAttribute("aria-label", label);
       panels.prepend(aside); el(aside, "h3", "em-sidebar-title", label); return aside;
     };
     if (this.page === "chat" || this.page === "history") {

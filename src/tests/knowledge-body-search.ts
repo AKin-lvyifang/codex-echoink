@@ -1042,6 +1042,20 @@ export async function runKnowledgeBodySearchSchedulingTests(): Promise<void> {
     assertReleased();
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(activeHandles().filter(handle => !previousHandles.has(handle) && handle.constructor.name === "MessagePort"), [], "no new active MessagePort handles remain");
+    // The scheduler also runs in standalone test and worker hosts without Window.
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    try {
+      Reflect.deleteProperty(globalThis, "window");
+      setGlobal("scheduler", undefined); setGlobal("MessageChannel", undefined);
+      const beforeFallback = timerCalls;
+      await yieldSearchTask();
+      assert.equal(timerCalls, beforeFallback + 1, "host without Window still completes a cancellable timer task");
+      const cancelled = new AbortController();
+      const waiting = yieldSearchTask(cancelled.signal); cancelled.abort();
+      await assert.rejects(waiting, { name: "AbortError" });
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    }
   } finally {
     afterMessage = undefined;
     for (const channel of channels) for (const port of channel.ports) port.close();

@@ -4,10 +4,10 @@ import { validateDirectoryModuleSettings } from "../knowledge-base/initializatio
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { KnowledgeActivityService } from "./knowledge-activity-service";
 import { createProductionKnowledgeUpgradeService, type KnowledgeUpgradeService } from "./knowledge-upgrade-service";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -32,7 +32,6 @@ import type {
   StoredAttachment
 } from "../settings/settings";
 import {
-  apiProviderHasUsableCredential,
   getActiveApiProviderModel,
   newId
 } from "../settings/settings";

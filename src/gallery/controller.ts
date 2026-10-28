@@ -154,18 +154,18 @@ class GalleryEditor {
           const mark = overlay.ownerDocument.createElement("div"); mark.className = "echoink-gallery-image-control";
           mark.classList.toggle("is-selected", box.picked);
           Object.assign(mark.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
-          const button = overlay.ownerDocument.createElement("button"); button.type = "button"; button.className = "echoink-gallery-pick";
+          const button = mark.createEl("button", { cls: "echoink-gallery-pick", attr: { type: "button" } });
           button.setAttribute("aria-label", box.picked ? "取消选择图片" : "选择图片"); button.setAttribute("aria-pressed", String(box.picked));
           button.textContent = box.picked ? "✓" : "";
           button.addEventListener("mousedown", event => event.preventDefault());
           button.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); this.toggle(box.image); });
-          mark.append(button); overlay.append(mark);
+          overlay.append(mark);
         }
         const selected = this.selected();
         if (selected.length >= 2) {
           const bar = overlay.ownerDocument.createElement("div"); bar.className = "echoink-gallery-toolbar"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "图片组操作");
-          const count = overlay.ownerDocument.createElement("span"); count.setAttribute("role", "status"); count.textContent = `已选 ${selected.length} 张图片`; bar.append(count);
-          const add = (label: string, run: () => void) => { const button = overlay.ownerDocument.createElement("button"); button.type = "button"; button.textContent = label; button.addEventListener("mousedown", event => event.preventDefault()); button.addEventListener("click", event => { event.stopPropagation(); run(); }); bar.append(button); };
+          bar.createSpan({ text: `已选 ${selected.length} 张图片`, attr: { role: "status" } });
+          const add = (label: string, run: () => void) => { const button = bar.createEl("button", { text: label, attr: { type: "button" } }); button.addEventListener("mousedown", event => event.preventDefault()); button.addEventListener("click", event => { event.stopPropagation(); run(); }); };
           if (selected.length === 2) add("排成图片组（并排）", () => this.controller.run(this, "group"));
           else { add("排成一大两小", () => this.controller.run(this, "mosaic")); add("排成一排三张", () => this.controller.run(this, "row")); }
           add("取消", () => this.clear()); overlay.append(bar);

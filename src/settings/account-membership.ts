@@ -87,12 +87,12 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const hideTip = () => { for (const tooltip of heatTooltips) tooltip.hide(); };
   const modals = new Set<AccountModal>();
   let disposed = false;
-  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
-  const codeTimers = new Set<ReturnType<typeof setTimeout>>();
+  let feedbackTimer: number | null = null;
+  const codeTimers = new Set<number>();
   let finishFeedback: (() => void) | null = null;
   const shortFeedback = () => new Promise<void>(resolve => {
     finishFeedback = resolve;
-    feedbackTimer = setTimeout(() => { feedbackTimer = null; finishFeedback = null; resolve(); }, 650);
+    feedbackTimer = window.setTimeout(() => { feedbackTimer = null; finishFeedback = null; resolve(); }, 650);
   });
   const beginAction = options.beginAction ?? (() => () => {});
   const buttonState = (node: HTMLButtonElement, state: "loading" | "success" | "idle", label: string) => {
@@ -120,7 +120,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const number = (n: number | null | undefined) => n == null ? "—" : n.toLocaleString(zh ? "zh-CN" : "en-US");
   const wireCode=(send:HTMLButtonElement,address:()=>string,purpose:"login"|"password-set"|"password-reset",parent:HTMLElement)=>{
     const feedback=el(parent,"div","activation-feedback");feedbackState(feedback,"status","");
-    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));const timer=setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,"error",error instanceof Error?error.message:t("发送失败，请重试。","Could not send. Try again."));send.disabled=false;}};
+    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));const timer=window.setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,"error",error instanceof Error?error.message:t("发送失败，请重试。","Could not send. Try again."));send.disabled=false;}};
   };
   const unavailable = desktop && !vm.serviceAvailable ? t("服务暂不可用", "Service unavailable") : t("即将开放", "Coming soon");
   const missing = t("暂无统计", "No statistics");
@@ -666,8 +666,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   }
   return { dispose: () => {
     if (disposed) return; disposed = true;
-    if (feedbackTimer !== null) clearTimeout(feedbackTimer);
-    for (const timer of codeTimers) clearTimeout(timer); codeTimers.clear();
+    if (feedbackTimer !== null) window.clearTimeout(feedbackTimer);
+    for (const timer of codeTimers) window.clearTimeout(timer); codeTimers.clear();
     finishFeedback?.(); finishFeedback = null;
     if (heatFrame != null) view?.cancelAnimationFrame(heatFrame);
     for (const tooltip of [...heatTooltips, ...actionTooltips]) tooltip.dispose();

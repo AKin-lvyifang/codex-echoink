@@ -46,8 +46,8 @@ export class ConversationRunService {
   private readonly blockedAgents = new Set<string>();
   private readonly pendingRefreshes = new Map<string, ChatMessage | undefined>();
   private readonly pendingInteractionWrites = new Map<string, { key: string }>();
-  private refreshTimer: ReturnType<typeof setTimeout> | null = null;
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private refreshTimer: number | null = null;
+  private saveTimer: number | null = null;
   private disposed = false;
   private disposalFlight?: Promise<void>;
 
@@ -73,7 +73,7 @@ export class ConversationRunService {
     if (this.refreshTimer !== null) return;
     // Pi replays its buffered events in microtasks. Yield to the host event loop
     // before rendering; a microtask flush would still starve input and timers.
-    this.refreshTimer = setTimeout(() => {
+    this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
       const updates = [...this.pendingRefreshes];
       this.pendingRefreshes.clear();
@@ -85,7 +85,7 @@ export class ConversationRunService {
     }, 16);
   }
   private clearRefreshes(): void {
-    if (this.refreshTimer !== null) clearTimeout(this.refreshTimer);
+    if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = null;
     this.pendingRefreshes.clear();
   }
@@ -273,13 +273,13 @@ export class ConversationRunService {
   }
   scheduleSave(): void {
     if (this.disposed || this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
+    this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
       void this.plugin.saveSettings(true).catch(error => console.error("Conversation projection save failed", error));
     }, 500);
   }
   async flushSave(): Promise<void> {
-    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    if (this.saveTimer) { window.clearTimeout(this.saveTimer); this.saveTimer = null; }
     try {
       await this.plugin.saveSettings(true);
     } catch (error) {

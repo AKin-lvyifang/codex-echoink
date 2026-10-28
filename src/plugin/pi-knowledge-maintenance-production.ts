@@ -22,7 +22,7 @@ import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base
 import { registerKnowledgePrivateRoot, knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { knowledgePathPolicy, knowledgePathRole, getKnowledgeFolderBindings, knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
-import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isRawMarkdownPath, isKnowledgeMaintenanceSourcePath, rawDigestRecordFromMarkdown } from "../knowledge-base/raw-digest";
+import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isKnowledgeMaintenanceSourcePath } from "../knowledge-base/raw-digest";
 import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
@@ -54,7 +54,6 @@ import type {
 } from "../harness/pi-native/vault-domain-service";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import {
-  PHASE3_MAINTENANCE_RAW_INDEX_PATH,
   PHASE3_MAINTENANCE_TRACKER_PATH,
   Phase3KnowledgeMaintenanceService,
   Phase3MaintenanceError,
@@ -71,18 +70,13 @@ import {
 } from "../knowledge-base/phase3-maintenance-service";
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION,
-  echoInkKnowledgeMaintenanceProtocolPrompt,
-  completeKnowledgeMaintenanceCandidateSources,
   validateKnowledgeMaintenanceCandidateSources
 } from "../knowledge-base/knowledge-maintenance-protocol";
 import {
   createKnowledgeMaintenanceResultEnvelope,
   parseKnowledgeMaintenanceResultEnvelope
 } from "../knowledge-base/knowledge-maintenance-result";
-import {
-  KnowledgeAgentIndex,
-  type KnowledgeAgentReliableRawKnowledge
-} from "../knowledge-base/knowledge-agent-index";
+import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const LINKING_BACKGROUND_RECEIPT = "正文已写入并回读；本批正文的首次提及链接和老笔记反向关联由后台任务统一完成。关联仍可能进行中，不要为补链接反复调用 knowledge_maintain 或重写正文；不要把正文写入成功说成关联已完成。";
@@ -1173,57 +1167,7 @@ function extractAttachmentPaths(
   return [...normalized].sort((left, right) => left.localeCompare(right, "en"));
 }
 
-function parseChangedRawPaths(text: string): string[] {
-  const changed = new Set<string>();
-  let inChangedSection = false;
-  for (const line of text.split(/\r?\n/u)) {
-    const heading = /^#{1,6}\s+(.+)$/u.exec(line);
-    if (heading) {
-      inChangedSection = /(?:changed|变更|变化|待处理|未处理)/iu.test(
-        heading[1] ?? ""
-      );
-      continue;
-    }
-    if (!inChangedSection && !/(?:changed|变更|变化)/iu.test(line)) continue;
-    for (const match of line.matchAll(/(?:raw|[^\s/`[\]（）]+（raw）)\/[^`[\]\r\n]+?\.md\b/giu)) {
-      try {
-        changed.add(normalizeVaultRelativePath(match[0].trim()));
-      } catch {
-        // The service rejects invalid paths; the parser ignores non-path text.
-      }
-    }
-  }
-  return [...changed].sort((left, right) => left.localeCompare(right, "en"));
-}
 
-async function ensureSafeControlDirectories(
-  vaultRootPathInput: string,
-  relativePaths: readonly string[]
-): Promise<void> {
-  const vaultRootPath = await realpath(vaultRootPathInput);
-  for (const relativePathInput of relativePaths) {
-    const relativePath = normalizeVaultRelativePath(relativePathInput);
-    let cursor = vaultRootPath;
-    for (const segment of relativePath.split("/")) {
-      cursor = path.join(cursor, segment);
-      let stat = await lstat(cursor).catch((error: unknown) => {
-        if (isNodeErrorWithCode(error, "ENOENT")) return null;
-        throw error;
-      });
-      if (!stat) {
-        await mkdir(cursor, { mode: 0o700 });
-        stat = await lstat(cursor);
-      }
-      if (stat.isSymbolicLink() || !stat.isDirectory()) {
-        throw new Error("phase3_control_path_unsafe");
-      }
-    }
-    const resolved = await realpath(cursor);
-    if (!isInside(vaultRootPath, resolved)) {
-      throw new Error("phase3_control_path_outside_vault");
-    }
-  }
-}
 
 async function assertExistingPrivateStateDirectoriesSafe(
   rootPathInput: string
@@ -1300,6 +1244,7 @@ async function ensurePrivateStateDirectory(
   }
   return cursor;
 }
+
 
 async function writeNewFileWithReadback(
   filePath: string,
@@ -1426,70 +1371,11 @@ function requireWal(value: unknown): Readonly<Phase3MaintenanceWalRecord> {
   return deepFreeze(value as unknown as Phase3MaintenanceWalRecord);
 }
 
-function reliableKnowledgeNoopMessage(
-  reliable: Readonly<KnowledgeAgentReliableRawKnowledge>
-): string {
-  const content = [
-    `Raw ${reliable.rawPath} 未变化，已复用现有知识；knowledge_maintain=noop。`,
-    ...reliable.entries.flatMap((entry) => [
-      `\n## ${entry.title}`,
-      `路径：${entry.vaultRelativePath}`,
-      entry.content
-    ])
-  ].join("\n");
-  const bytes = Buffer.from(content, "utf8");
-  if (bytes.byteLength <= 6_000) return content;
-  return `${bytes.subarray(0, 5_900).toString("utf8").replace(/\uFFFD$/u, "")}\n\n（现有知识内容较长，已截断显示；本轮仍为 noop。）`;
-}
 
-function cancelledResult(): Readonly<PiKnowledgeMaintenanceToolResult> {
-  return Object.freeze({
-    status: "cancelled" as const,
-    message: "Knowledge maintenance was cancelled before a new write started."
-  });
-}
 
-function safeMaintenanceError(error: unknown): string {
-  const code = error instanceof Phase3MaintenanceError ? error.code : "knowledge_maintenance_failed";
-  const file = error instanceof Phase3MaintenanceError && error.relativePath ? `（${error.relativePath}）` : "";
-  return `知识维护 ${code}${file}：${knowledgeErrorDetail(error)}；已完成内容保留，请只处理受影响项。`;
-}
 
-function candidateSourcePaths(content: string, selected: readonly string[]): string[] {
-  const matches = selected.filter((relative) => content.includes(relative));
-  return matches.length ? matches : [...selected];
-}
 
-function extractExplicitRawPaths(value: string, vaultRoot = ""): string[] {
-  const paths = new Set<string>();
-  for (const match of value.matchAll(/[^\s`[\]\r\n]+\/[^`[\]\r\n]+?\.md\b/giu)) {
-    const candidate = normalizeVaultRelativePath(match[0].trim());
-    if (knowledgePathRole(vaultRoot, candidate) !== "raw") throw new Error("指定资料不在来源范围，不能回退全局维护。");
-    paths.add(candidate);
-  }
-  return [...paths].sort((left, right) => left.localeCompare(right, "en"));
-}
 
-function uniqueShadowFileName(
-  targetPath: string,
-  usedNames: Set<string>
-): string {
-  const normalized = targetPath
-    .replaceAll("\\", "-")
-    .replaceAll("/", "-")
-    .replace(/[^\p{L}\p{N}_. -]/gu, "-")
-    .replace(/^\.+/u, "")
-    .slice(0, 180) || "candidate";
-  let candidate = normalized;
-  if (usedNames.has(candidate)) {
-    const extension = path.posix.extname(normalized);
-    const stem = extension ? normalized.slice(0, -extension.length) : normalized;
-    candidate = `${stem}-${sha256(targetPath).slice(0, 12)}${extension}`;
-  }
-  if (usedNames.has(candidate)) throw new Error("phase3_shadow_name_collision");
-  usedNames.add(candidate);
-  return candidate;
-}
 
 function requireControlId(value: string): string {
   const id = requireNonEmpty(value, "controlId");

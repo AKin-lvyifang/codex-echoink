@@ -7,6 +7,10 @@ import type { CapabilityAccess } from "../membership/types";
 const first = new JSDOM('<body class="theme-light"><main class="echoink-settings-demo echoink-settings-aligned"></main></body>');
 const second = new JSDOM('<body class="theme-dark"></body>');
 for (const owner of [first.window, second.window]) {
+  owner.HTMLElement.prototype.createEl = function (tag: string) {
+    const element = this.ownerDocument.createElement(tag);
+    this.appendChild(element); return element;
+  } as typeof owner.HTMLElement.prototype.createEl;
   owner.HTMLElement.prototype.createSpan = function (options: { cls?: string; text?: string; attr?: Record<string,string> } = {}) {
     const span = this.ownerDocument.createElement("span"); if (options.cls) span.className = options.cls;
     if (options.text) span.textContent = options.text; for (const [key,value] of Object.entries(options.attr ?? {})) span.setAttribute(key,value);
@@ -26,6 +30,11 @@ const app = { workspace: { containerEl: doc.body, iterateAllLeaves(callback: (le
 const appearance = new EchoInkAppearance(app as never, () => host.settings.colorTheme, () => host.accountService);
 const settle = () => new Promise(resolve => setTimeout(resolve,0));
 appearance.refresh(); renderAppearancePicker(doc.querySelector("main")!,host,true);
+const detached = doc.implementation.createHTMLDocument("settings without a window");
+renderAppearancePicker(detached.body, host, true);
+assert.ok([...detached.body.querySelectorAll("*")].every(element => element.ownerDocument === detached), "detached-document settings retain their owner document");
+renderCompanionThemeRecommendation(detached.body, true);
+assert.ok([...detached.body.querySelectorAll("*")].every(element => element.ownerDocument === detached), "detached-document recommendations retain their owner document");
 const input = (value: string) => doc.querySelector<HTMLInputElement>(`input[value="${value}"]`)!;
 assert.equal(doc.body.dataset.echoinkTheme,"minimal"); assert.equal(host.settings.colorTheme,"manifesto"); assert.ok(input("minimal").checked);
 assert.equal(doc.querySelectorAll('[data-plugin-edition="pro"]').length,2);

@@ -145,7 +145,6 @@ import { McpServerModal } from "./mcp-server-modal";
 import {
   applySettingsRow,
   attachSettingsHelpTooltip,
-  addSettingsHelp,
   showSettingsInlineConfirmation,
   createSettingsCompactList,
   createSettingsFeatureCard,
@@ -1222,7 +1221,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
     const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
     const quickDrawer = Platform.isDesktopApp ? quickChatSection.createEl("details", { cls: "echoink-quick-chat-drawer" }) : quickChatSection;
-    if (quickDrawer instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement) {
+    if (quickDrawer.instanceOf(this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement)) {
       quickDrawer.open = this.plugin.settings.quickChat.enabled && (this.quickChatExpanded ?? true);
       quickDrawer.addEventListener("toggle", () => { this.quickChatExpanded = quickDrawer.open; });
     }
@@ -5473,7 +5472,7 @@ export class CodexSettingTab extends PluginSettingTab {
       new Notice(message);
       this.announceSettingsStatus(message);
       await this.loadWorkspaceResources(true, "mcp");
-    } catch (error) {
+    } catch {
       const message = this.plugin.settings.settingsLanguage === "en"
         ? "Connection test did not finish. Review the visible error, then retry."
         : "连接测试未完成。请查看页面中的错误后重试。";

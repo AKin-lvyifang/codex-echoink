@@ -33,7 +33,7 @@ export class InlineRequestService {
   private readonly commitTails = new Map<string, Promise<void>>();
   private readonly restoredReadyQueues = new Set<string>();
   private nextOrder = 0;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: number | undefined;
   private stopped = false;
   readonly comparingOriginal = new Set<string>();
   storageError: string | undefined;
@@ -395,14 +395,14 @@ export class InlineRequestService {
   }
   private changed(updateQueues = true): void { if (updateQueues && this.updateQueues()) this.scheduleSave(); this.host.changed(); for (const listener of this.listeners) listener(); }
   async flush(): Promise<void> {
-    if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
+    if (this.timer) { window.clearTimeout(this.timer); this.timer = undefined; }
     try { await this.repository.save(this.list()); this.storageError = undefined; }
     catch (error) { this.storageError = "正文请求保存失败，暂时不能确认。"; this.changed(); throw error; }
   }
   private scheduleSave(): void {
     if (this.stopped) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => { this.timer = undefined; void this.flush().catch(error => this.host.report(error)); }, 120);
+    if (this.timer) window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => { this.timer = undefined; void this.flush().catch(error => this.host.report(error)); }, 120);
   }
-  async dispose(): Promise<void> { this.stopped = true; this.listeners.clear(); this.runDocuments.clear(); if (this.timer) { clearTimeout(this.timer); this.timer = undefined; } await this.flush(); }
+  async dispose(): Promise<void> { this.stopped = true; this.listeners.clear(); this.runDocuments.clear(); if (this.timer) { window.clearTimeout(this.timer); this.timer = undefined; } await this.flush(); }
 }

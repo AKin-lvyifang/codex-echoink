@@ -41,7 +41,8 @@ export function createPhase3MaintenanceVaultDomainAdapter(
   options: Readonly<CreatePhase3MaintenanceVaultDomainAdapterOptions>
 ): VaultDomainAdapter {
   const trackerRelativePath = normalizeManagedHiddenPath(
-    options.trackerRelativePath
+    options.trackerRelativePath,
+    options.base.configDir
   );
   return Object.freeze(new Phase3MaintenanceVaultDomainAdapter(
     options.base,
@@ -68,6 +69,8 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
     this.vaultRootPath = path.resolve(vaultRootPath);
     this.resolver = new VaultTargetResolver(this);
   }
+
+  get configDir(): string { return this.app.vault.configDir; }
 
   async lstat(absolutePath: string): Promise<Readonly<VaultPathStat> | null> {
     let stats: Awaited<ReturnType<typeof fsp.lstat>>;
@@ -545,12 +548,14 @@ class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
   }
 }
 
-function normalizeManagedHiddenPath(value: string): string {
+function normalizeManagedHiddenPath(value: string, configDir?: string): string {
   const relativePath = normalizeVaultRelativePath(value);
   const segments = relativePath.split("/");
+  const configuredRoot = configDir?.trim() ? normalizeVaultRelativePath(configDir) : null;
   if (
     !hasHiddenPathSegment(relativePath)
     || segments[0] === ".obsidian"
+    || (configuredRoot !== null && (relativePath === configuredRoot || relativePath.startsWith(`${configuredRoot}/`)))
     || segments[0] === ".echoink"
   ) {
     throw new TypeError("managed_hidden_update_path_invalid");

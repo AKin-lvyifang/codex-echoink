@@ -30,6 +30,8 @@ function accessibleName(element: Element): string {
 
 /** Supply Obsidian's DOM helpers while retaining jsdom's real node semantics. */
 export function prepareDocument(win: Window & typeof globalThis) {
+  win.createEl = ((tag: keyof HTMLElementTagNameMap) => win.document.createElement(tag)) as typeof win.createEl;
+  win.createSvg = ((tag: keyof SVGElementTagNameMap) => win.document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof win.createSvg;
   const create = function (this: HTMLElement, tag: string, options: any = {}) {
     if (typeof options === "string") options = { cls: options };
     const el = this.ownerDocument.createElement(tag);

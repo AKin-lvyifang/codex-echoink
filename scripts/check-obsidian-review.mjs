@@ -4,14 +4,16 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
 import { validateManifestSource } from "./manifest-contract.mjs";
+import { lintProductionCss, runCssBehaviorSentinels } from "./obsidian-css-review.mjs";
 import {
   productionLintFiles, auditResolvedContracts, auditLintCoverage, collectFindings,
-  isHardFinding, createBaseline, validateBaseline, createWarningBaseline, validateWarningBaseline, compareBaseline, runBehaviorSentinels
+  isHardFinding, createBaseline, validateBaseline, createWarningBaseline, validateWarningBaseline, createCssBaseline, validateCssBaseline, compareBaseline, runBehaviorSentinels
 } from "./obsidian-review-contract.mjs";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const baselinePath = path.join(rootDir, "config", "obsidian-review-baseline.json");
 const warningBaselinePath = path.join(rootDir, "config", "obsidian-review-warning-baseline.json");
+const cssBaselinePath = path.join(rootDir, "config", "obsidian-review-css-baseline.json");
 const writeBaseline = process.argv.includes("--write-baseline");
 
 try {
@@ -19,6 +21,8 @@ try {
   requirePass("Invalid Obsidian review baseline", validateBaseline(baseline));
   const warningBaseline = JSON.parse(fs.readFileSync(warningBaselinePath, "utf8"));
   requirePass("Invalid Obsidian review warning baseline", validateWarningBaseline(warningBaseline));
+  const cssBaseline = JSON.parse(fs.readFileSync(cssBaselinePath, "utf8"));
+  requirePass("Invalid CSS warning baseline", validateCssBaseline(cssBaseline));
   requirePass("Invalid manifest", validateManifestSource(fs.readFileSync(path.join(rootDir, "manifest.json"), "utf8")));
   const eslint = new ESLint({ cwd: rootDir });
   const files = productionLintFiles(rootDir);
@@ -32,6 +36,14 @@ try {
   requirePass("Obsidian review hard findings are forbidden, including suppressed findings", findings.filter(isHardFinding).map(formatFinding));
   const sentinels = await runBehaviorSentinels(eslint, rootDir);
   requirePass("Obsidian review behavior sentinels failed", sentinels.errors);
+  const css = await lintProductionCss(rootDir);
+  requirePass("CSS lint coverage or syntax failed", css.errors);
+  const cssSentinels = await runCssBehaviorSentinels();
+  requirePass("CSS behavior sentinels failed", cssSentinels.errors);
+  const currentCss = createCssBaseline(css.findings);
+  requirePass("Invalid current CSS warnings", validateCssBaseline(currentCss));
+  const cssComparison = compareBaseline(currentCss, cssBaseline);
+  requirePass("New CSS warning fingerprints or increased counts are forbidden", cssComparison.regressions.map(entry => `${entry.path} ${entry.rule}: ${entry.message}\n  ${entry.context}`));
   const current = createBaseline(findings);
   requirePass("Invalid current lint findings", validateBaseline(current));
   const comparison = compareBaseline(current, baseline);
@@ -45,12 +57,14 @@ try {
     // missing baseline or approve a new finding.
     if (comparison.reductions.length) fs.writeFileSync(baselinePath, `${JSON.stringify(current, null, 2)}\n`, "utf8");
     if (warningComparison.reductions.length) fs.writeFileSync(warningBaselinePath, `${JSON.stringify(currentWarnings, null, 2)}\n`, "utf8");
-    console.log(`Obsidian review baseline: ${baseline.total} -> ${current.total} error(s), ${warningBaseline.total} -> ${currentWarnings.total} warning(s); no new fingerprints.`);
+    if (cssComparison.reductions.length) fs.writeFileSync(cssBaselinePath, `${JSON.stringify(currentCss, null, 2)}\n`, "utf8");
+    console.log(`Obsidian review baseline: ${baseline.total} -> ${current.total} error(s), ${warningBaseline.total} -> ${currentWarnings.total} warning(s), ${cssBaseline.total} -> ${currentCss.total} CSS warning(s); no new fingerprints.`);
   } else {
     requirePass("Resolved baseline debt must be removed with lint:update-baseline after review", comparison.reductions.map(entry => `${entry.path} ${entry.rule} ${entry.fingerprint}`));
     requirePass("Resolved warning debt must be removed with lint:update-baseline after review", warningComparison.reductions.map(entry => `${entry.path} ${entry.rule} ${entry.fingerprint}`));
+    requirePass("Resolved CSS debt must be removed with lint:update-baseline after review", cssComparison.reductions.map(entry => `${entry.path} ${entry.rule} ${entry.fingerprint}`));
   }
-  console.log(`Obsidian review lint: PASS (${files.length} covered files, ${current.total} unchanged error(s), ${currentWarnings.total} unchanged warning(s), ${sentinels.count} behavior sentinels).`);
+  console.log(`Obsidian review lint: PASS (${files.length} covered files, ${current.total} unchanged error(s), ${currentWarnings.total} unchanged warning(s), ${currentCss.total} CSS warning(s) across ${css.files.length} files, ${sentinels.count + cssSentinels.count} behavior sentinels).`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

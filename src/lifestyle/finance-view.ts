@@ -1437,7 +1437,7 @@ export class FinanceWorkspace {
     }
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();
+    const anchor = window.createEl("a"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
   private budgetDialog(focusCategory?: FinanceCategory): void {

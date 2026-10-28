@@ -23,7 +23,7 @@ import type { InlineRequest } from "../inline-agent/types";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { unavailableCapabilityAccess } from "../membership/access";
-import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, piConversationSupport, rememberPiConversationProjection } from "./codex-view/pi-conversation-support";
+import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, rememberPiConversationProjection } from "./codex-view/pi-conversation-support";
 import { validateTaskTurnBeforeCreation } from "./codex-view/turn-runner";
 import type { ConversationRunState } from "../plugin/conversation-run-service";
 export type { ConversationRunState } from "../plugin/conversation-run-service";
@@ -52,18 +52,12 @@ import { enabledSkillResources, mcpResourceEnablement } from "../resources/regis
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
 import { enhanceChatInput as enhanceChatInputRunner } from "./codex-view/prompt-enhancer-runner";
 import {
-  afterTurnSettled as afterTurnSettledRunner,
   createQueuedTurnFromComposer as createQueuedTurnFromComposerRunner,
   enqueueComposerDraft as enqueueComposerDraftRunner,
   handlePiTaskPlanAction as handlePiTaskPlanActionRunner,
-  resumeQueuedTurns as resumeQueuedTurnsRunner,
   runKnowledgeBaseShortcut as runKnowledgeBaseShortcutRunner,
   sendMessage as sendMessageRunner,
   steerPiChatFromComposer as steerPiChatFromComposerRunner,
-  startChatTurn as startChatTurnRunner,
-  startNextQueuedTurn as startNextQueuedTurnRunner,
-  startQueuedTurnItem as startQueuedTurnItemRunner,
-  startQueuedTurnItemSafely as startQueuedTurnItemSafelyRunner,
   resourceMatchesSkillId
 } from "./codex-view/turn-runner";
 import type {
@@ -152,7 +146,6 @@ import {
   armTurnWatchdog as armTurnWatchdogAction,
   clearActiveRun as clearActiveRunAction,
   clearTurnWatchdog as clearTurnWatchdogAction,
-  stopTurn as stopTurnAction,
   type CodexTurnLifecycleHost
 } from "./codex-view/turn-lifecycle";
 import { refreshViewShellCopy, renderViewShell, moveKnowledgeProgressToTaskDetail, type CodexViewShellHost } from "./codex-view/view-shell";

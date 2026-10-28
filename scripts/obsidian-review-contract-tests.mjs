@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 import {
   SOURCE_HARD_RULES, SOURCE_WARNING_RULES, PACKAGE_HARD_RULES, productionLintFiles, auditResolvedContracts,
   auditLintCoverage, collectFindings, isHardFinding, findingFingerprint, createBaseline,
-  validateBaseline, createWarningBaseline, validateWarningBaseline, compareBaseline, validateResolvedRules
+  validateBaseline, createWarningBaseline, validateWarningBaseline, createCssBaseline, validateCssBaseline, compareBaseline, validateResolvedRules
 } from "./obsidian-review-contract.mjs";
+import { productionCssFiles, auditCssCoverage, runCssBehaviorSentinels } from "./obsidian-css-review.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let checks = 0;
@@ -46,7 +47,7 @@ for (const [name, mutate] of [
 }
 for (const changed of [
   { context: "const value = replacement();" }, { message: "Different unsafe error" },
-  { path: "src/elsewhere.ts" }, { rule: "@typescript-eslint/no-unsafe-call" }
+  { path: "src/elsewhere.ts" }, { rule: "@typescript-eslint/no-unsafe-member-access" }
 ]) check(compareBaseline(createBaseline([{ ...finding, ...changed }]), accepted).regressions.length === 1, "same-count debt substitution must fail");
 check(compareBaseline(createBaseline([finding, finding]), accepted).regressions.length === 1, "count increase must fail");
 check(compareBaseline(createBaseline([]), accepted).reductions.length === 1, "resolved debt must be tightened");
@@ -70,7 +71,17 @@ const suppressedWarning = collectFindings(root, [{ filePath: path.join(root, "sr
 check(suppressedWarning.length === 1 && suppressedWarning[0].suppressed, "suppressed warning remains visible");
 assert.throws(() => createWarningBaseline(suppressedWarning)); checks += 1;
 
-for (const rule of ["obsidianmd/platform", "import/no-extraneous-dependencies", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+const cssFinding = { ...warning, path: "src/example.css", rule: "declaration-no-important", message: "Avoid !important.", context: "a { color: red !important; }" };
+const cssBaseline = createCssBaseline([cssFinding]);
+check(validateCssBaseline(cssBaseline).length === 0, "valid CSS fingerprint baseline");
+check(validateWarningBaseline(cssBaseline).length > 0 && validateCssBaseline(warningBaseline).length > 0, "CSS and JavaScript baselines cannot be interchanged");
+check(compareBaseline(createCssBaseline([{ ...cssFinding, context: "b { color: red !important; }" }]), cssBaseline).regressions.length === 1, "CSS same-count substitution fails");
+check(compareBaseline(createCssBaseline([cssFinding, cssFinding]), cssBaseline).regressions.length === 1, "CSS count increase fails");
+check(compareBaseline(createCssBaseline([]), cssBaseline).reductions.length === 1, "resolved CSS debt must be tightened");
+const cssSentinels = await runCssBehaviorSentinels();
+check(cssSentinels.errors.length === 0, `CSS behavior sentinels pass: ${cssSentinels.errors.join(", ")}`);
+
+for (const rule of ["obsidianmd/platform", "obsidianmd/object-assign", "import/no-extraneous-dependencies", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
   "@typescript-eslint/no-floating-promises", "depend/ban-dependencies", "no-unsanitized/method", "no-unsanitized/property",
   "eslint-comments/no-unlimited-disable", "eslint-comments/require-description", "eslint-comments/disable-enable-pair", "eslint-comments/no-restricted-disable", "<parse>"]) {
   check(isHardFinding({ ...finding, rule }), `${rule} is hard`);
@@ -116,6 +127,15 @@ try {
   fs.writeFileSync(path.join(fixture, "src/new.ts"), "export {};");
   fs.writeFileSync(path.join(fixture, "src/nested/new.mjs"), "export {};");
   fs.writeFileSync(path.join(fixture, "src/tests/fixture.ts"), "export {};");
+  fs.writeFileSync(path.join(fixture, "styles.css"), "a { color: red; }");
+  fs.writeFileSync(path.join(fixture, "src/nested/untracked.css"), "a { color: red; }");
+  fs.writeFileSync(path.join(fixture, "src/tests/fixture.css"), "a { color: red; }");
+  const cssFiles = productionCssFiles(fixture);
+  check(cssFiles.includes("styles.css") && cssFiles.includes("src/nested/untracked.css"), "CSS enumeration includes release and untracked production files");
+  check(!cssFiles.includes("src/tests/fixture.css"), "test CSS is excluded consistently with production source");
+  check(auditCssCoverage(fixture, cssFiles, []).length === cssFiles.length, "missing CSS lint results fail");
+  check(auditCssCoverage(fixture, cssFiles, cssFiles.map(file => ({ source: path.join(fixture, file) }))).length === 0, "one result for each CSS file passes");
+  check(auditCssCoverage(fixture, ["styles.css"], [{ source: path.join(fixture, "styles.css"), ignored: true }]).length === 1, "ignored production CSS fails");
   const files = productionLintFiles(fixture);
   check(files.includes("src/new.ts") && files.includes("src/nested/new.mjs"), "filesystem enumeration includes untracked/nested production code");
   check(!files.includes("src/tests/fixture.ts"), "only declared non-production directories are excluded");

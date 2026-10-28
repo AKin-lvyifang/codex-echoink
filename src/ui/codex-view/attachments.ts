@@ -134,7 +134,7 @@ export function currentDisplayedMarkdownFile(app: App): TFile | null {
 }
 
 export function pickFiles(host: CodexAttachmentHost, imagesOnly: boolean): void {
-  const input = document.createElement("input");
+  const input = window.createEl("input");
   input.type = "file";
   input.multiple = true;
   input.accept = imagesOnly
@@ -151,7 +151,7 @@ export function pickFiles(host: CodexAttachmentHost, imagesOnly: boolean): void 
 }
 
 export function pickKnowledgeBaseFiles(host: CodexAttachmentHost): void {
-  const input = document.createElement("input");
+  const input = window.createEl("input");
   input.type = "file";
   input.multiple = true;
   input.accept = ".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain";

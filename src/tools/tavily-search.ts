@@ -21,11 +21,11 @@ export async function searchTavily(input: {
   if (input.signal?.aborted) throw new TavilyError("cancelled");
   const query = input.query.trim();
   if (!query || query.length > 1_000) throw new TavilyError("invalid_response");
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: number | undefined;
   let cancel: (() => void) | undefined;
   try {
     const interrupted = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new TavilyError("timeout")), input.timeoutMs ?? 20_000);
+      timer = window.setTimeout(() => reject(new TavilyError("timeout")), input.timeoutMs ?? 20_000);
       cancel = () => reject(new TavilyError("cancelled"));
       input.signal?.addEventListener("abort", cancel, { once: true });
     });
@@ -58,7 +58,7 @@ export async function searchTavily(input: {
     return { source: "web", provider: "Tavily", results };
   } catch (error) { throw error instanceof TavilyError ? error : new TavilyError("network"); }
   finally {
-    if (timer !== undefined) clearTimeout(timer);
+    if (timer !== undefined) window.clearTimeout(timer);
     if (cancel) input.signal?.removeEventListener("abort", cancel);
   }
 }

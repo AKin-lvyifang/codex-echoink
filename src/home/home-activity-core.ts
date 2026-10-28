@@ -34,7 +34,7 @@ export class HomeActivityCore {
   private readonly opened = new Set<string>();
   private currentPath: string | null = null;
   private readonly listeners = new Set<() => void>();
-  private timer: ReturnType<typeof setTimeout> | null = null;
+  private timer: number | null = null;
   private writes: Promise<void> = Promise.resolve();
   private dirty = false;
   private disposed = false;
@@ -120,7 +120,7 @@ export class HomeActivityCore {
     this.changed();
   }
   async flush(): Promise<void> {
-    if (this.timer !== null) clearTimeout(this.timer);
+    if (this.timer !== null) window.clearTimeout(this.timer);
     this.timer = null;
     if (!this.dirty || !this.writable) { this.emit(); return this.writes; }
     this.dirty = false;
@@ -151,8 +151,8 @@ export class HomeActivityCore {
   }
   private changed(): void {
     this.dirty = true;
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, 650);
+    if (this.timer !== null) window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => { this.timer = null; void this.flush(); }, 650);
   }
   private emit(): void { for (const listener of this.listeners) listener(); }
 }

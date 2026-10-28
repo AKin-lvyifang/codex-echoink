@@ -784,7 +784,7 @@ interface ActiveProductRun {
   skillTurnContext: Readonly<PiNativeSkillTurnContext> | null;
   memoryRecall?: PiMemoryRecallObservation;
   providerStartedAt?: number;
-  providerWaitTimer?: ReturnType<typeof setInterval>;
+  providerWaitTimer?: number;
   firstAssistantTextSeen: boolean;
   providerReasoningBlocks: Map<string, MutableProviderReasoningBlock>;
   providerReasoningExposedMessageKeys: Set<string>;
@@ -2982,7 +2982,7 @@ export class PiNativeConversationRuntime {
             startedAt: providerStartedAt,
             updatedAt: providerStartedAt
           });
-          run.providerWaitTimer = setInterval(() => {
+          run.providerWaitTimer = window.setInterval(() => {
             if (active.currentRun !== run || run.firstAssistantTextSeen
               || run.knowledgeAbort.signal.aborted || run.reasoningSummary.terminalAt !== undefined) {
               this.finishProviderWait(run);
@@ -4716,7 +4716,7 @@ export class PiNativeConversationRuntime {
     status: EchoInkReasoningActivityStatus = "completed"
   ): void {
     if (execution.providerWaitTimer !== undefined) {
-      clearInterval(execution.providerWaitTimer);
+      window.clearInterval(execution.providerWaitTimer);
       delete execution.providerWaitTimer;
     }
     const provider = execution.reasoningSummary.activities.find((activity) =>

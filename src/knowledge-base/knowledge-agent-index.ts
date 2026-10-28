@@ -1,7 +1,7 @@
 import { extractKnowledgeLinks, extractKnowledgeApplicability, resolveKnowledgeLink, type KnowledgeLink, type KnowledgeApplicability, type KnowledgeLinkResolver, type KnowledgeRelation, type KnowledgeRelationPage } from "./knowledge-relations";
 import { locateKnowledgeAnchor } from "./search/markdown-navigation";
 import type { KnowledgeAnchorLocation } from "./search/contracts";
-import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from "./root-paths";
+import { knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, getKnowledgeFolderBindings } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
 import { createHash } from "node:crypto";
 import { createReadStream, type Stats } from "node:fs";
@@ -439,7 +439,7 @@ export class KnowledgeAgentIndex {
       const current = await this.read({ vaultRelativePath: entry.vaultRelativePath, expectedContentRevision: entry.contentRevision });
       yield readKnowledgeLinkingDocument(current.vaultRelativePath, current.content, current.contentRevision);
       processed += 1;
-      if (processed % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (processed % 16 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
   }
 
@@ -578,7 +578,7 @@ export class KnowledgeAgentIndex {
       const files = (await Promise.all(knowledgeRoleRoots(vaultRoot, kind).map((root) => walkKnowledgeRoot(vaultRoot, kind, root)))).flat();
       for (const file of files) {
         scannedCount += 1;
-        if (scannedCount % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (scannedCount % 16 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         if (knowledgePathRole(vaultRoot, file.vaultRelativePath) !== kind) continue;
         const oldEntry = previous.entries[file.vaultRelativePath];
         if (oldEntry?.relationSchema === 2 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {

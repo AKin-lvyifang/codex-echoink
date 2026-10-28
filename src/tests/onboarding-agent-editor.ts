@@ -55,9 +55,9 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     const root = win.document.createElement("div"); win.document.body.append(root);
     let editor = new AgentEditorController(host);
     const open = async (id?: string) => {
-      const original = globalThis.crypto.randomUUID;
-      globalThis.crypto.randomUUID = () => { const value = original.call(globalThis.crypto); allocatedIds.push(`agent-${value}`); return value; };
-      try { editor.open(id); } finally { globalThis.crypto.randomUUID = original; }
+      const original = win.crypto.randomUUID;
+      win.crypto.randomUUID = () => { const value = original.call(win.crypto); allocatedIds.push(`agent-${value}`); return value; };
+      try { editor.open(id); } finally { win.crypto.randomUUID = original; }
       editor.render(root); await settle();
     };
     return { settings, host, root, saved, closed, allocatedIds, get editor() { return editor; }, open,

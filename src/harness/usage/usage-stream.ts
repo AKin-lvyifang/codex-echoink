@@ -40,7 +40,7 @@ export function observeUsageStream(
   options: ObserveUsageOptions
 ): AssistantMessageEventStream {
   const output = createAssistantMessageEventStream();
-  const requestId = options.requestId ?? globalThis.crypto.randomUUID();
+  const requestId = options.requestId ?? crypto.randomUUID();
   const now = options.now ?? Date.now;
   const recordedAt = now();
   const additionalInputTokens = Number.isSafeInteger(options.additionalInputTokens)

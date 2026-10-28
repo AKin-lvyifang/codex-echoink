@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production errors",
-  "total": 70,
+  "total": 29,
   "findings": [
     {
       "fingerprint": "49628d8f6b19808170eb33b4a9a7cc96df337aa64d89105450653bfaa3e10b9a",
@@ -58,15 +58,6 @@
       "count": 1
     },
     {
-      "fingerprint": "20331bd81d94d28c3ae27405bbeac94876df2aa7e8314b3f4f98c0d5bbe5a56e",
-      "path": "src/core/mapping.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .summary on an `any` value.",
-      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
-      "count": 1
-    },
-    {
       "fingerprint": "25de64fc874c5d6e8dc2e31b116e3dd3f7fce89fe294b6d4810d0a7d6b4b97fb",
       "path": "src/core/mapping.ts",
       "rule": "@typescript-eslint/no-unsafe-member-access",
@@ -82,15 +73,6 @@
       "severity": 2,
       "message": "Unsafe member access .text on an `any` value.",
       "context": "const commandText = String(payload?.command ?? payload?.text ?? payload ?? \"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "5e4a1bb6099fbaa8b5e9245cc4338363ef94efe584f452acbf47e1426642ab28",
-      "path": "src/core/mapping.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .text on an `any` value.",
-      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
       "count": 1
     },
     {
@@ -127,15 +109,6 @@
       "severity": 2,
       "message": "Unsafe member access .tool on an `any` value.",
       "context": "const toolName = [payload?.namespace, payload?.tool].filter(Boolean).join(\".\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "aeaa50e9021f0deacc86faed1b3551b53d5de07e2c10b6dfc6e66827be41a793",
-      "path": "src/core/mapping.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .content on an `any` value.",
-      "context": "return joinTextFragments([payload?.text, payload?.summary, payload?.content]);",
       "count": 1
     },
     {
@@ -229,69 +202,6 @@
       "count": 1
     },
     {
-      "fingerprint": "67c40cc643b66da9a3c34118feb9cc897b331c36d701b392ec80a72c36b789e0",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-misused-promises",
-      "severity": 2,
-      "message": "Promise-returning method provided where a void return was expected by extended/implemented type 'JsonRpcStdioTransport'.",
-      "context": "async notify(\nmethod: string,\nparams?: Record<string, unknown>,\nsignal?: AbortSignal\n): Promise<void> {\nthrowIfMcpAborted(signal);\nsuper.notify(method, params ?? {});\n}",
-      "count": 1
-    },
-    {
-      "fingerprint": "158dae0f7dd31b96c8e12eb2d43113c99d9276a3da7c9a9f62b945099f88b8b1",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `Pick<EchoInkResourceSettings, \"mcpConnections\"> | null | undefined`.",
-      "context": "return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} } as any));",
-      "count": 1
-    },
-    {
-      "fingerprint": "33f061f64292f7d21f2aad1580941edda43803af828b673e47edbc1761cde84f",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "const tools = (result as any).tools;",
-      "count": 1
-    },
-    {
-      "fingerprint": "cd6a0b451ddc3ba209028cd38f2f3b27b77b6d503452ce5bd7fb4de4257673bc",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "return { tools };",
-      "count": 1
-    },
-    {
-      "fingerprint": "99300d7f54972375b384b650e366144113bee467426f6340bdc4dc350406b0ed",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .tools on an `any` value.",
-      "context": "if (!result || typeof result !== \"object\" || !Array.isArray((result as any).tools)) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "bf7eaa879a08e334b8d8fb30e93bcbc0bbd133f095e715653edf60f74408a132",
-      "path": "src/resources/mcp-broker.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .tools on an `any` value.",
-      "context": "const tools = (result as any).tools;",
-      "count": 1
-    },
-    {
-      "fingerprint": "a3c7858e71d8224cd26ab526932b4121a275425d18196b619c203fea28bf67b8",
-      "path": "src/types/app-server.ts",
-      "rule": "@typescript-eslint/no-redundant-type-constituents",
-      "severity": 2,
-      "message": "\"none\" | \"minimal\" | \"low\" | \"medium\" | \"high\" | \"xhigh\" | \"max\" is overridden by string in this union type.",
-      "context": "supportedReasoningEfforts?: Array<{ effort: ReasoningEffort } | ReasoningEffort | string>;",
-      "count": 1
-    },
-    {
       "fingerprint": "0b7413c6d33883aec290ae80082a671e577cb2fd9cf8dbc715d5b56efb18a3df",
       "path": "src/ui/codex-view.ts",
       "rule": "@typescript-eslint/no-this-alias",
@@ -299,24 +209,6 @@
       "message": "Unexpected aliasing of 'this' to local variable.",
       "context": "const view = this;",
       "count": 3
-    },
-    {
-      "fingerprint": "de882c917721729c367e65b5c38b295b7deeeebc42502d8e3caa8f62b0b886fc",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
-      "context": "this.rawTextCache.delete(oldest);",
-      "count": 1
-    },
-    {
-      "fingerprint": "444adf931f6fd66d6793f51c4ff617009b842eed9594fddc313d4ebe3ea3be08",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "const oldest = this.rawTextCache.keys().next().value;",
-      "count": 1
     },
     {
       "fingerprint": "9adc89ba7553270cf7a8cd1943fbb092fa2fb70f43436bd6b4959f5521a9aa7c",
@@ -335,195 +227,6 @@
       "message": "Unsafe argument of type `any[]` assigned to a parameter of type `RawFileChange[]`.",
       "context": "const diffSummary = buildDiffSummary(changes);",
       "count": 1
-    },
-    {
-      "fingerprint": "3265697ead09ce674f9d3cb553211becb0400253a50913de0b38d3b562acad75",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `string | DocumentFragment`.",
-      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "f335827dcb25fcc8844b46046aed7e5aacd9c8b0e8bac6a02ebfc4891709166d",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-argument",
-      "severity": 2,
-      "message": "Unsafe argument of type `any` assigned to a parameter of type `string`.",
-      "context": "for (const option of options) dropdown.addOption(option.label, option.label);",
-      "count": 2
-    },
-    {
-      "fingerprint": "667e6ebbf3769784727dbc45b41f6fac695d63632b8657a704744da66bc50870",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "const options = Array.isArray(question.options) ? question.options : [];",
-      "count": 1
-    },
-    {
-      "fingerprint": "f093b204d56aa05dd8bf7ccf49cba9854c84d594a2e3ddf18e9dd5059ec6d7c8",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of type `any[]` to a variable of type `string[]`.",
-      "context": "this.answers[question.id] = [options[0].label];",
-      "count": 1
-    },
-    {
-      "fingerprint": "2784082311fb8b7244ea3ce728c71f7734092d4bb7b787762da236d94a4f55b4",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .label on an `any` value.",
-      "context": "for (const option of options) dropdown.addOption(option.label, option.label);",
-      "count": 2
-    },
-    {
-      "fingerprint": "2e2c39fec92e4ca45ad678ed7639fc6cf62eef484354703d6e8304df4d74e82c",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Computed name [question.id] resolves to an `any` value.",
-      "context": "this.answers[question.id] = [value];",
-      "count": 2
-    },
-    {
-      "fingerprint": "30ce922c8b279ea286c3b1de921c5d1827d2b58fe49a4ebf4181d8871b4c1096",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .length on an `any` value.",
-      "context": "if (options.length > 0) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "481797f7b20d060aa691f023ae5659f2f9a8133393a69691f1c5baf20e3416cd",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .id on an `any` value.",
-      "context": "this.answers[question.id] = [value];",
-      "count": 2
-    },
-    {
-      "fingerprint": "5b8a79144e22bdec1814125d425be8c93ed2c4381a3d560b56256db70ef120bd",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Computed name [question.id] resolves to an `any` value.",
-      "context": "this.answers[question.id] = [options[0].label];",
-      "count": 1
-    },
-    {
-      "fingerprint": "5d793a9200295d580b6a313e3fe62e20dbc9a90bb9401fd1ae69ca383a366576",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .id on an `any` value.",
-      "context": "this.answers[question.id] = [\"\"];",
-      "count": 1
-    },
-    {
-      "fingerprint": "66d90e711f170b3daac84b862b94832bb3abffb89731c9dce2efa2d04ae4a6a1",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access [0] on an `any` value.",
-      "context": "this.answers[question.id] = [options[0].label];",
-      "count": 1
-    },
-    {
-      "fingerprint": "7683c0d3708885db1720493f342cded940088a41ec5d4948567e77b99c2887c9",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .isSecret on an `any` value.",
-      "context": "if (question.isSecret) text.inputEl.type = \"password\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "76d5ac65f5a5b68e1b10643340066d89353fa962ad7afeb5e8ae2e4d25061950",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .id on an `any` value.",
-      "context": "this.answers[question.id] = [options[0].label];",
-      "count": 1
-    },
-    {
-      "fingerprint": "8b35134b401f0e41568a7fc06702da7c7cbd61517be9e6332574f644c2da7ac3",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .header on an `any` value.",
-      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "96fc0925c3fa72daf8a65277bf63755fbfd59249f5a9ab47507eeb9977eb6bb9",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .question on an `any` value.",
-      "context": "const setting = new Setting(contentEl).setName(question.header || question.question).setDesc(question.question || \"\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "c29de84ee797edf1d9d4c9bbcb8242a6d684cb654bdc0a13b5fce6aa28e65f5a",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Computed name [question.id] resolves to an `any` value.",
-      "context": "this.answers[question.id] = [\"\"];",
-      "count": 1
-    },
-    {
-      "fingerprint": "ed4f33325918479092197fa694b47783f8f2a4cfa06c0fc8d8c89eb201ec6cce",
-      "path": "src/ui/modals.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .options on an `any` value.",
-      "context": "const options = Array.isArray(question.options) ? question.options : [];",
-      "count": 2
-    },
-    {
-      "fingerprint": "72d9205ff9f2f7fe5640356d26eb233627f70fa733d1bb1fda1a03c00103faaf",
-      "path": "src/ui/render-message.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "const adapter = app.vault.adapter as any;",
-      "count": 1
-    },
-    {
-      "fingerprint": "7bb6555cc40089ff8cf1e207b79d9fd82511337cbc53bf9fa88a71ac14acec32",
-      "path": "src/ui/render-message.ts",
-      "rule": "@typescript-eslint/no-unsafe-assignment",
-      "severity": 2,
-      "message": "Unsafe assignment of an `any` value.",
-      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "25a9007b86c9f2213313f3685cc9b575fe4d85319918a91315cb71d395caa43d",
-      "path": "src/ui/render-message.ts",
-      "rule": "@typescript-eslint/no-unsafe-call",
-      "severity": 2,
-      "message": "Unsafe call of an `any` typed value.",
-      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "42d7d57c02cff05551bde4ad45aa4bfdb0e8081ab9fb30e236fdddfe521b4d23",
-      "path": "src/ui/render-message.ts",
-      "rule": "@typescript-eslint/no-unsafe-member-access",
-      "severity": 2,
-      "message": "Unsafe member access .getBasePath on an `any` value.",
-      "context": "const basePath = typeof adapter.getBasePath === \"function\" ? adapter.getBasePath() : \"\";",
-      "count": 2
     }
   ]
 }

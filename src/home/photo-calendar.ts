@@ -15,7 +15,7 @@ export interface PhotoCalendarOptions {
 export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays: number; photoDays: number } {
   const { days, weekdays, month, selected, language } = options;
   weekdays.empty(); days.empty();
-  for (let index = 0; index < 7; index++) { const label = weekdays.ownerDocument.createElement("span"); label.textContent = new Intl.DateTimeFormat(language, { weekday: "narrow" }).format(new Date(2024, 0, index + 1)); weekdays.appendChild(label); }
+  for (let index = 0; index < 7; index++) weekdays.createSpan({ text: new Intl.DateTimeFormat(language, { weekday: "narrow" }).format(new Date(2024, 0, index + 1)) });
   const dates = new Set<string>(), photos = new Map<string, string>();
   for (const record of options.records) {
     const date = journalDateFromPath(record.path, options.folder, options.format);
@@ -36,7 +36,7 @@ export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays
     days.appendChild(day);
     for (const [name, active] of [["outside", outside], ["today", key === dateKey(new Date())], ["selected", key === selected], ["has-record", count > 0 || dates.has(key)], ["has-photo", Boolean(photo)]] as const) day.classList.toggle(name, active);
     if (key === dateKey(new Date())) day.setAttribute("aria-current", "date");
-    const number = day.ownerDocument.createElement("span"); number.className = "calendar-day-number"; number.textContent = blank ? "" : String(date.getDate()); day.appendChild(number);
+    day.createSpan({ cls: "calendar-day-number", text: blank ? "" : String(date.getDate()) });
     if (photo) {
       const image = day.ownerDocument.createElement("img");
       image.className = "echoink-calendar-photo"; image.alt = ""; image.loading = "lazy";

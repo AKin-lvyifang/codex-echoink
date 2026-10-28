@@ -17,6 +17,8 @@ interface TaskChannel {
 const environment = globalThis as unknown as {
   scheduler?: SchedulerLike;
   MessageChannel?: new () => TaskChannel;
+  setTimeout: typeof setTimeout;
+  clearTimeout: typeof clearTimeout;
 };
 
 function abortError(): Error {
@@ -97,8 +99,13 @@ export async function yieldSearchTask(signal?: AbortSignal): Promise<void> {
   } catch { checkAbort(signal); }
 
   await waitForTask(signal, (done) => {
-    const timer = setTimeout(done, 0);
-    return () => clearTimeout(timer);
+    if (typeof window !== "undefined") {
+      const timer = window.setTimeout(done, 0);
+      return () => window.clearTimeout(timer);
+    }
+    // Standalone Node test/worker hosts have no Window, but still own timers.
+    const timer = environment.setTimeout(done, 0);
+    return () => environment.clearTimeout(timer);
   });
   checkAbort(signal);
 }

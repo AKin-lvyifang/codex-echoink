@@ -56,7 +56,7 @@ export async function extractLocalPdf(bytes: Uint8Array, signal: AbortSignal,
 async function renderPageImage(page: PdfPageProxy, signal: AbortSignal): Promise<Uint8Array> {
   const original = page.getViewport({ scale: 1 });
   const viewport = page.getViewport({ scale: Math.min(1.4, 1800 / Math.max(original.width, original.height)) });
-  const canvas = document.createElement("canvas");
+  const canvas = window.createEl("canvas");
   canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("无法保存 PDF 页面图像。");

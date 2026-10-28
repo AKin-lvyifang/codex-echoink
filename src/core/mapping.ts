@@ -391,8 +391,15 @@ export function processGroupStateId(items: Array<{ id?: string; runId?: string }
   return `group-${first?.runId ?? "none"}-${first?.id ?? "process"}-${last?.id ?? first?.id ?? "process"}-${items.length}`;
 }
 
-export function reasoningTextFromPayload(payload: any): string {
-  return joinTextFragments([payload?.text, payload?.summary, payload?.content]);
+export function reasoningTextFromPayload(payload: unknown): string {
+  return joinTextFragments([payloadField(payload, "text"), payloadField(payload, "summary"), payloadField(payload, "content")]);
+}
+
+/** Preserve ordinary JavaScript property access for unknown protocol payloads. */
+function payloadField(value: unknown, name: string): unknown {
+  if (value === null || value === undefined) return undefined;
+  const field: unknown = Reflect.get(Object(value) as object, name);
+  return field;
 }
 
 function commandSummary(command: string): { title: string; detail: string; kind: ProcessEventSummary["kind"] } {

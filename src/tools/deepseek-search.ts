@@ -17,10 +17,10 @@ export async function searchDeepSeek(input: { apiKey: string; query: string; max
   if (input.signal?.aborted) throw new DeepSeekSearchError("cancelled");
   const query = validateDeepSeekSearchQuery(input.query);
   const count = Number.isFinite(input.maxResults) ? Math.max(1, Math.min(5, Math.floor(input.maxResults!))) : 5;
-  let timer: ReturnType<typeof setTimeout> | undefined, cancel: (() => void) | undefined;
+  let timer: number | undefined, cancel: (() => void) | undefined;
   try {
     const interrupted = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new DeepSeekSearchError("timeout")), input.timeoutMs ?? 20_000);
+      timer = window.setTimeout(() => reject(new DeepSeekSearchError("timeout")), input.timeoutMs ?? 20_000);
       cancel = () => reject(new DeepSeekSearchError("cancelled")); input.signal?.addEventListener("abort", cancel, { once: true });
     });
     const response = await Promise.race([(input.transport ?? requestUrl)({ url: "https://api.deepseek.com/v1/tools/search", method: "POST", throw: false,
@@ -44,7 +44,7 @@ export async function searchDeepSeek(input: { apiKey: string; query: string; max
     }
     return { source: "web", provider: "DeepSeek", results };
   } catch (error) { throw error instanceof DeepSeekSearchError ? error : new DeepSeekSearchError("network"); }
-  finally { if (timer !== undefined) clearTimeout(timer); if (cancel) input.signal?.removeEventListener("abort", cancel); }
+  finally { if (timer !== undefined) window.clearTimeout(timer); if (cancel) input.signal?.removeEventListener("abort", cancel); }
 }
 export function deepSeekSearchErrorMessage(error: DeepSeekSearchError, english: boolean): string {
   const messages: Record<DeepSeekSearchErrorCode, [string, string]> = {

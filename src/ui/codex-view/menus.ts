@@ -713,7 +713,7 @@ function createKnowledgeCommandItem(
   index: number,
   onFillCommand: (command: string) => void
 ): HTMLElement {
-  const item = document.createElement("button");
+  const item = window.createEl("button");
   item.setAttribute("type", "button");
   item.setAttribute("role", "option");
   item.setAttribute("aria-selected", "false");
@@ -742,7 +742,7 @@ function createSlashSkillItem(
   language: SettingsLanguage
 ): HTMLElement {
   const presentation = resourcePresentation(skill, language);
-  const item = document.createElement("button");
+  const item = window.createEl("button");
   item.setAttribute("type", "button");
   item.setAttribute("role", "option");
   item.setAttribute("aria-selected", String(selected));

@@ -1,3 +1,4 @@
+import "./inline-timer-host";
 import assert from "node:assert/strict";
 import { runInlineProGateTests } from "./inline-agent-pro";
 import { paidTestAccess } from "./membership-access";
