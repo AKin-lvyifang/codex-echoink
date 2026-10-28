@@ -5,3 +5,4 @@ export { MobileServices } from "../../src/mobile/services";
 export { loadMobileSettings, mobileProvider, mobileModel } from "../../src/mobile/settings";
 export { mobileWorkspaceFixture } from "../mobile/workspace-fixture";
 export { Platform } from "obsidian";
+export { createUnavailableAccountAdapter } from "../../src/settings/account-membership-model";

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import vm from "node:vm";
+import { createRequire } from "node:module";
 import { webcrypto } from "node:crypto";
 import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
@@ -23,6 +24,7 @@ const shimBuild = await esbuild.build({ entryPoints: ["tests/mobile/browser-obsi
 vm.runInNewContext(shimBuild.outputFiles[0].text, { module: shim, exports: shim.exports, window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, SVGElement: dom.window.SVGElement, DOMParser: dom.window.DOMParser, console });
 const obsidian = { ...shim.exports, TFile: FixtureTFile, Platform: { ...shim.exports.Platform, isTablet: true } };
 const module = { exports: {} };
+const requireHost = createRequire(import.meta.url), hostModules = new Set(["@codemirror/state", "@codemirror/view", "@codemirror/commands"]);
 vm.runInNewContext(build.outputFiles[0].text, {
   module, exports: module.exports, window: dom.window, document: dom.window.document,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, SVGElement: dom.window.SVGElement,
@@ -30,6 +32,7 @@ vm.runInNewContext(build.outputFiles[0].text, {
   requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
   crypto: webcrypto, setTimeout, clearTimeout, console, btoa, atob, Blob, FormData, Response,
   require(id) {
+    if (hostModules.has(id)) return requireHost(id);
     assert.equal(id, "obsidian", `Unexpected browser dependency: ${id}`);
     return obsidian;
   }

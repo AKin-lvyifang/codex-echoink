@@ -44,6 +44,11 @@
   border: 1px solid var(--ip-line); border-radius: 9px; box-shadow: none; background: var(--ip-bg); color: var(--ip-ink); font-family: inherit; font-size: max(16px, 1em); line-height: 1.4;
 }
 .echoink-iphone .ip-settings select.ip-settings-input { padding-right: 24px; }
+.echoink-iphone .ip-settings .ip-settings-row:has(> .ip-settings-select-value) { padding-top: 0; padding-bottom: 0; }
+.echoink-iphone .ip-settings-select-value { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
+.echoink-iphone .ip-settings select.ip-settings-select { appearance: auto; flex: 1 1 auto; width: auto; line-height: 1.5; text-overflow: ellipsis; }
+.echoink-iphone .ip-settings select.ip-settings-select:focus-visible { background: var(--background-modifier-hover); }
+.echoink-iphone .ip-settings select.ip-settings-select:disabled { opacity: .45; }
 .echoink-iphone .ip-settings input.ip-settings-check { appearance: auto; flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--ip-accent); }
 .echoink-iphone .ip-settings-choice { cursor: pointer; }
 .echoink-iphone .ip-settings .ip-settings-module-row { padding-top: 0; padding-bottom: 0; }

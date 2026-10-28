@@ -1,6 +1,6 @@
 .echoink-ipad.pd-settings .pd-agent-settings { width: 100%; min-width: 0; max-width: 720px; container-type: inline-size; }
 .echoink-ipad.pd-settings .pd-agent-settings-body { min-width: 0; margin: 0; padding: 0; border: 0; }
-.echoink-ipad.pd-settings .pd-agent-owner-avatar { flex: none; width: 20px; height: 20px; margin-right: -4px; }
+.echoink-ipad.pd-settings .pd-agent-owner-avatar { flex: 0 0 20px; width: 20px; height: 20px; }
 .echoink-ipad.pd-settings .pd-agent-dream { min-width: 0; padding: 0 12px 10px; border-bottom: 1px solid var(--pd-settings-line); }
 .echoink-ipad.pd-settings .pd-agent-dream .pd-settings-field { margin: 8px 0; }
 .echoink-ipad.pd-settings .pd-agent-dream .pd-settings-actions { justify-content: flex-end; }
@@ -44,6 +44,8 @@
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-actions { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row { flex-wrap: wrap; }
   .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row > .pd-settings-copy { flex-basis: 45%; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) { flex-wrap: nowrap; }
+  .echoink-ipad.pd-settings .pd-agent-settings .pd-settings-row:has(> .pd-settings-select-value) > .pd-settings-copy { flex-basis: auto; }
 }
 
 .echoink-ipad.pd-settings .pd-agent-dream-row { padding-top: 0; padding-bottom: 0; }

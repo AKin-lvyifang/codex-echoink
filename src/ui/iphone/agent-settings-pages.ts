@@ -1,12 +1,11 @@
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
-import type { AgentModuleId } from "../../agents/types";
 import type { MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileMemorySettingsPort, MobileMemorySnapshot, MobileUserProfileSnapshot } from "../../mobile/memory-contracts";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { IPHONE_MODULES, iphoneAvatar, iphoneElement as el } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
 import { settingsMessage, settingsText } from "./settings-language";
-import { pushSettingsPage, settingsBody, settingsButton, settingsError, settingsField, settingsGroup, settingsRow, settingsSwitch } from "./settings-elements";
+import { pushSettingsPage, settingsBody, settingsButton, settingsError, settingsField, settingsGroup, settingsRow, settingsSelect, settingsSwitch } from "./settings-elements";
 
 /** iPhone page state stays local; profile, Memory and Dream share the canonical service. */
 export class IPhoneAgentSettingsPages {
@@ -33,10 +32,32 @@ export class IPhoneAgentSettingsPages {
       if (registry.status === "fulfilled") {
         for (const agent of registry.value.registry.agents) settingsRow(ctx, agents, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true, detail: agent.position || undefined, action: () => this.editAgent(agent.id) });
         settingsRow(ctx, agents, "新建 Agent", { icon: "user-plus", action: () => this.editAgent() });
-        for (const module of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"].map(id => IPHONE_MODULES.find(module => module.id === id)!)) {
-          const owner = registry.value.registry.agents.find(agent => agent.id === registry.value.registry.moduleOwners[module.id]);
-          settingsRow(ctx, owners, module.name, { value: owner?.name || settingsText(ctx, "未设置"), literalValue: true, valueLeading: owner ? iphoneAvatar(ctx.document, owner, "ip-avatar ip-agent-owner-avatar") : undefined, action: () => this.owner(module.id, module.name) });
-        }
+        let snapshot = registry.value;
+        const ownerError = settingsError(ctx, body);
+        const renderOwners = () => {
+          owners.replaceChildren();
+          for (const module of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"].map(id => IPHONE_MODULES.find(module => module.id === id)!)) {
+            const owner = snapshot.registry.agents.find(agent => agent.id === snapshot.registry.moduleOwners[module.id]);
+            const select = settingsSelect(ctx, owners, module.name, snapshot.registry.agents.map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
+              if (busy || value === snapshot.registry.moduleOwners[module.id]) { select.value = snapshot.registry.moduleOwners[module.id]; return; }
+              busy = true; this.controls(body, true); body.setAttribute("aria-busy", "true"); ownerError.show();
+              void (async () => {
+                let saved = false;
+                try {
+                  snapshot = await ctx.host.agents.setOwner(module.id, value, snapshot.version); saved = true;
+                  try { await ctx.host.services.refreshAgentIdentity(); } catch (failure) { ctx.error(failure); }
+                } catch (failure) {
+                  try { snapshot = await ctx.host.agents.snapshot(); } catch (reloadFailure) { ctx.error(reloadFailure); }
+                  if (!disposed) ownerError.show(failure);
+                } finally {
+                  busy = false; this.controls(body, false); body.removeAttribute("aria-busy");
+                  if (!disposed) { renderOwners(); if (saved) this.refresh(); }
+                }
+              })();
+            }, owner ? iphoneAvatar(ctx.document, owner, "ip-avatar ip-agent-owner-avatar") : undefined);
+            select.dataset.moduleOwner = module.id;
+          }
+        }; renderOwners();
       } else { settingsError(ctx, agents).show(registry.reason); agents.append(settingsButton(ctx, "重试", () => { void render(); })); }
       const memory = settingsGroup(ctx, body, "记忆"); prefs = this.service.readSettings(); limitBase = prefs.dreamRunsPerDay; limit = String(limitBase);
       const persist = async (key: "memoryEnabled" | "dreamEnabled" | "autoArchive", value: boolean) => {
@@ -96,16 +117,6 @@ export class IPhoneAgentSettingsPages {
     ctx.document.addEventListener("visibilitychange", background);
     await pushSettingsPage(ctx, { id, title: "Agent", content: body, canLeave: async () => { if (!await guard.canLeave()) return false; if (controller || this.service.dreamStatus().phase === "running") await stop(); return true; }, dispose: () => { disposed = true; revision++; unsubscribe(); guard.dispose(); this.refreshers.delete(render); ctx.document.removeEventListener("visibilitychange", background); if (controller || this.service.dreamStatus().phase === "running") void stop().catch(error => ctx.error(error)); } });
     if (!disposed) await render();
-  }
-
-  private async owner(module: AgentModuleId, name: string): Promise<void> {
-    const { ctx } = this, body = this.body(), group = settingsGroup(ctx, body, this.text(`${settingsText(ctx, name)} 的负责人`, `Owner for ${settingsText(ctx, name)}`), true), error = settingsError(ctx, body), snapshot = await ctx.host.agents.snapshot(); let busy = false;
-    for (const agent of snapshot.registry.agents) settingsRow(ctx, group, agent.name, { literal: true, leading: iphoneAvatar(ctx.document, agent), selected: snapshot.registry.moduleOwners[module] === agent.id, action: async () => {
-      if (busy) return; busy = true; this.controls(group, true); error.show();
-      try { await ctx.host.agents.setOwner(module, agent.id, snapshot.version); busy = false; this.refresh(); await ctx.shell.back(); }
-      catch (failure) { error.show(failure); } finally { busy = false; this.controls(group, false); }
-    } });
-    await pushSettingsPage(ctx, { id: `iphone-settings-owner-${module}`, title: "模块负责人", content: body, canLeave: () => !busy });
   }
 
   private async profile(): Promise<void> {
@@ -310,7 +321,7 @@ export class IPhoneAgentSettingsPages {
   private loading(body: HTMLElement): void { body.replaceChildren(settingsMessage(this.ctx, el(this.ctx.document, "div", "ip-agent-status"), "正在加载…")); }
   private loadFailure(body: HTMLElement, failure: unknown, retry: () => Promise<void>): void { body.replaceChildren(); settingsError(this.ctx, body).show(failure); body.append(settingsButton(this.ctx, "重试", () => { this.loading(body); void retry(); })); }
   private controls(parent: HTMLElement, busy: boolean): void {
-    for (const field of Array.from(parent.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement>("input,button,textarea"))) {
+    for (const field of Array.from(parent.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLTextAreaElement | HTMLSelectElement>("input,button,textarea,select"))) {
       if (busy) { if (!this.previousDisabled.has(field)) this.previousDisabled.set(field, field.disabled); field.disabled = true; }
       else if (this.previousDisabled.has(field)) { field.disabled = this.previousDisabled.get(field)!; this.previousDisabled.delete(field); }
     }
