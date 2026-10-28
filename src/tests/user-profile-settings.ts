@@ -20,8 +20,75 @@ export async function runUserProfileSettingsTests(root: string): Promise<void> {
   try {
     await profileUi(path.join(root, "repository"));
     await correctionInline();
+    await correctionSettingsPages();
   } finally { Platform.isDesktopApp = priorDesktop; }
-  console.log("P13 real profile controller/repository and inline correction UI: PASS");
+  console.log("P13 real profile controller/repository and inline/settings-page correction UI: PASS");
+}
+
+async function correctionSettingsPages() {
+  const container = document.body.createDiv({ cls: "echoink-settings-aligned" });
+  let failGeneration = true, failSave = true, conflict = false, saved = 0, navigations = 0;
+  const results: string[] = [];
+  const modal = new MemoryCorrectionModal(new App() as never, { memoryType: "事实", title: "原标题", content: "原正文", recallWhen: "原时机" }, "zh-CN", {
+    generate: async () => { if (failGeneration) throw new Error("fixture generation failure"); return { title: "新标题", content: "新正文", recallWhen: "新时机" }; },
+    save: async () => { if (conflict) throw Object.assign(new Error("revision_conflict"), { code: "revision_conflict" }); if (failSave) throw new Error("fixture save failure"); saved++; }
+  }, result => results.push(result));
+  const mount = (unavailable?: string) => modal.mountSettingsPage(container, { backLabel: "事实", unavailable, onNavigate: () => { navigations++; mount(); } });
+  try {
+    mount();
+    assert.equal(openTestModals.length, 0);
+    assert.equal(container.querySelector("h2")?.textContent, "修正记忆");
+    assert.equal(container.querySelectorAll(".echoink-memory-correction-current .echoink-memory-correction-field").length, 3);
+    const type = (value: string) => { const input = container.querySelector<HTMLTextAreaElement>("textarea")!; input.value = value; input.dispatchEvent(new Event("input")); };
+    type("保留完整修正输入");
+    textButton(container, "生成预览").click(); await until(() => !modal.submitting);
+    assert.equal(container.querySelector("h2")?.textContent, "修正记忆");
+    assert.match(container.textContent!, /生成失败/);
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")!.value, "保留完整修正输入");
+    failGeneration = false;
+    textButton(container, "生成预览").click(); await until(() => !modal.submitting);
+    assert.equal(container.querySelector("h2")?.textContent, "预览修正");
+    assert.equal(container.querySelector<HTMLElement>(".echoink-memory-correction-editor")!.hidden, true);
+    assert.equal(container.querySelectorAll(".echoink-memory-correction-preview .echoink-memory-correction-field").length, 3);
+    assert.equal(container.querySelector(".echoink-memory-correction-instruction .echoink-memory-correction-field-value")?.textContent, "保留完整修正输入");
+    textButton(container, "确认保存").click(); await until(() => !modal.submitting);
+    assert.match(container.textContent!, /保存失败/); assert.equal(saved, 0); assert(modal.hasDraft);
+    textButton(container, "返回修改").click();
+    assert.equal(container.querySelector("h2")?.textContent, "修正记忆");
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")!.value, "保留完整修正输入");
+    textButton(container, "重新生成预览").click(); await until(() => !modal.submitting);
+    conflict = true;
+    textButton(container, "确认保存").click(); await until(() => !modal.submitting);
+    assert(textButton(container, "确认保存").disabled); assert.equal(results.length, 0);
+    modal.updateSettingsRecord({ memoryType: "事实", title: "最新标题", content: "外部新正文", recallWhen: "最新时机" });
+    modal.suspend(); mount();
+    assert.match(container.textContent!, /外部新正文/); assert.match(container.textContent!, /保留完整修正输入/);
+    assert.equal(container.querySelector("h2")?.textContent, "预览修正");
+    modal.requestLeave(() => {}); textButton(container, "继续编辑").click();
+    assert.equal(document.activeElement, textButton(container, "返回修改"), "preview leave cancellation restores a visible control");
+    textButton(container, "返回修改").click();
+    modal.suspend(); mount("这条记忆已失效，修正文字仍保留。");
+    assert(textButton(container, "重新生成预览").disabled);
+    assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")!.value, "保留完整修正输入");
+    modal.suspend(); mount(); conflict = false; failSave = false;
+    textButton(container, "重新生成预览").click(); await until(() => !modal.submitting);
+    textButton(container, "确认保存").click(); await until(() => !modal.submitting);
+    assert.equal(saved, 1); assert.deepEqual(results, ["saved"]); assert(navigations >= 5);
+  } finally { modal.suspend(); container.remove(); }
+  const pendingRoot = document.body.createDiv();
+  let signal!: AbortSignal, resolve!: (value: { title: string; content: string; recallWhen: string }) => void;
+  const pending = new MemoryCorrectionModal(new App() as never, { memoryType: "事实", title: "旧", content: "旧", recallWhen: "旧" }, "zh-CN", {
+    generate: async (_text, requestSignal) => { signal = requestSignal; return new Promise(done => { resolve = done; }); }, save: async () => {}
+  }, () => {});
+  try {
+    pending.mountSettingsPage(pendingRoot, { backLabel: "事实", onNavigate: () => {} });
+    const input = pendingRoot.querySelector<HTMLTextAreaElement>("textarea")!; input.value = "停止后保留"; input.dispatchEvent(new Event("input"));
+    textButton(pendingRoot, "生成预览").click(); textButton(pendingRoot, "停止").click();
+    assert(signal.aborted); assert(!pending.submitting);
+    resolve({ title: "过期结果", content: "旧", recallWhen: "旧" }); await settle();
+    assert.equal(pendingRoot.querySelector("h2")?.textContent, "修正记忆"); assert(!pendingRoot.textContent!.includes("过期结果"));
+    assert.equal(pendingRoot.querySelector<HTMLTextAreaElement>("textarea")!.value, "停止后保留");
+  } finally { pending.suspend(); pendingRoot.remove(); }
 }
 
 async function profileUi(root: string) {
