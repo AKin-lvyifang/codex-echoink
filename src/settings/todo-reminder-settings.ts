@@ -63,8 +63,8 @@ export function renderTodoReminderSettings(page: HTMLElement, plugin: CodexForOb
   statusRow.descEl.setAttribute("aria-live", "polite");
   statusRow.descEl.setAttribute("data-todo-reminder-status", "true");
   applySettingsRow(new OriginSetting(group).setName(english ? "Test notification" : "测试通知").setDesc(english
-    ? "Send one test without changing to-do reminder history. Check the system notification center to confirm receipt."
-    : "发送一条测试通知，不改变待办提醒记录；请在系统通知中心确认是否收到。")
+    ? "To-do reminder history is unchanged. Check the system notification center to confirm receipt."
+    : "不改变待办提醒记录；请在系统通知中心确认是否收到。")
     .addOriginButton((button) => {
       button.buttonEl.setAttribute("type", "button");
       button.buttonEl.setAttribute("data-todo-reminder-test", "true");

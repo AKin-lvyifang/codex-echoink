@@ -6136,7 +6136,8 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   mutableTab.knowledgePreferenceState = preference;
   mutableTab.knowledgePreferenceEditor = createKnowledgeMaintenancePreferenceEditor(preference);
   const knowledge = new DesktopKnowledgeSettings(host as never, {
-    redraw() {}, openLinking() {}, openEditor() {},
+    redraw() { tab.containerEl.empty(); if (knowledge.isDetail) knowledge.renderDetail(tab.containerEl); else knowledge.renderSummary(tab.containerEl); },
+    openLinking() {}, openEditor() {},
     openPreferences() { tab.containerEl.empty(); mutableTab.renderKnowledgeMaintenancePreferences(tab.containerEl); }
   });
   knowledge.renderSummary(tab.containerEl);
@@ -6147,6 +6148,10 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   assert.equal(tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]'), null,
     "Knowledge uses the global model page");
   assertLegacyKnowledgeControlsAbsent(tab.containerEl.textContent);
+  assert.equal(tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:preferences"]'), null, "refinement preferences live under Agent permissions and maintenance");
+  const permissionsNavigation = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:permissions"]');
+  assert.ok(permissionsNavigation); permissionsNavigation.click();
+  assert.equal(tab.containerEl.querySelector("h2")?.textContent, "Agent 权限与维护");
   const preferenceNavigation = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:preferences"]');
   assert.ok(preferenceNavigation);
   preferenceNavigation.click();

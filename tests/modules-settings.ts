@@ -71,7 +71,7 @@ try {
   const access = { checkCapability: () => qualified, requireCapability: () => { if (!qualified) throw new Error("需要 PRO"); }, subscribe: (fn: () => void) => { subscribers.add(fn); return () => subscribers.delete(fn); } };
   const settings = { settingsLanguage: "zh-CN", selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }, { id: "a", name: "总结", template: "总结一下" }] },
     lifestyle: { finance: { enabled: true, aiEnabled: false, importAiEnabled: false, analysisDirectory: "报告", merchants: [], accounts: [], categories: [] } },
-    englishDiary: { enabled: true }, homeModules: { finance: true }, pdfReading: { enabled: true, engine: "local", mineruToken: "secret-token", translationLanguage: "中文", originalDirectory: "资料" } };
+    englishDiary: { enabled: true }, inlineAgent: { enabled: true, trigger: "@" }, homeModules: { finance: true }, pdfReading: { enabled: true, engine: "local", mineruToken: "secret-token", translationLanguage: "中文", originalDirectory: "资料" } };
   const plugin: any = { settings, accountService: access, app: {}, saveSettings: async () => { saves++; if (fail) throw new Error("磁盘已满"); },
     lifestyle: { label: () => "财务", setEnabled: async (_kind: string, value: boolean) => { access.requireCapability(); settings.lifestyle.finance.enabled = value; }, finance: { access, accessState: () => ({ canWrite: qualified, canEnter: true, canToggle: qualified, reason: qualified ? null : "需要 PRO" }), ledger: { paths: () => ({ root: "财务" }) }, saveOption: async (name: string, value: boolean) => { access.requireCapability(); settings.lifestyle.finance[name] = value; }, saveAnalysisDirectory: async () => { access.requireCapability(); } } },
     pdfReading: { api: { deps: { access } }, policy: () => ({ canWrite: qualified, canEnter: true, canToggle: qualified, reason: qualified ? null : "需要 PRO" }), setEnabled: async (value: boolean) => { access.requireCapability(); settings.pdfReading.enabled = value; }, originalDirectories: () => ["资料"], defaultOriginalDirectory: () => "资料" },
@@ -81,16 +81,25 @@ try {
   assert.equal(runtime.visibleCharacters("👨‍👩‍👧‍👦你好").length, 3);
 
   const modules = host(), expanded = new Set(["knowledge", "finance"]), rendered: string[] = [];
-  const disposeModules = runtime.renderDesktopModuleSettings(modules, { plugin, expanded, renderContent: (id: string) => { rendered.push(id); }, summary: () => "真实目录", onProBenefits() {} });
-  assert.equal(modules.querySelectorAll(".echoink-module-drawer").length, 8);
-  assert.equal(modules.querySelectorAll('[role="switch"]').length, 4);
+  let pdfOpened = 0, benefitsOpened = 0;
+  const disposeModules = runtime.renderDesktopModuleSettings(modules, { plugin, expanded, details: { pdf: () => pdfOpened++ }, renderContent: (id: string) => { rendered.push(id); }, summary: () => "真实目录", onProBenefits() { benefitsOpened++; } });
+  assert.equal(modules.querySelectorAll(".echoink-module-drawer").length, 9);
+  assert.equal(modules.querySelectorAll('[role="switch"]').length, 5);
   const financeTrigger = input(modules, "财务"), financeToggle = input(modules, "启用财务");
+  const pdfTrigger = input(modules, "PDF 精读 · 提取"), pdfToggle = input(modules, "启用PDF 精读 · 提取");
+  assert.equal(pdfTrigger.hasAttribute("aria-expanded"), false); assert.equal(pdfTrigger.hasAttribute("aria-controls"), false);
+  assert.equal(modules.querySelector('[data-module="pdf"] .echoink-module-drawer-content'), null);
+  pdfTrigger.click(); assert.equal(pdfOpened, 1); assert.equal(rendered.includes("pdf"), false);
+  pdfToggle.click(); await settle(); assert.equal(settings.pdfReading.enabled, false); assert.equal(pdfOpened, 1, "toggle never opens the detail");
+  assert.equal(pdfTrigger.disabled, true); pdfTrigger.click(); assert.equal(pdfOpened, 1, "disabled PDF keeps its existing entry policy");
+  pdfToggle.click(); await settle(); assert.equal(settings.pdfReading.enabled, true);
   const beforeSave = saves; financeTrigger.click(); financeTrigger.click(); assert.equal(saves, beforeSave);
   financeToggle.click(); await settle(); assert.equal(settings.lifestyle.finance.enabled, false); assert.equal(expanded.has("finance"), false);
   assert.equal(financeTrigger.disabled, true);
   financeToggle.click(); await settle(); assert.equal(settings.lifestyle.finance.enabled, true); assert.equal(expanded.has("finance"), true, "successful enable opens the drawer");
   qualified = false; subscribers.forEach(fn => fn());
-  assert.equal(financeToggle.disabled, true); assert.equal(financeTrigger.disabled, false); assert.equal(settings.lifestyle.finance.enabled, true);
+  pdfTrigger.click(); assert.equal(benefitsOpened, 1); assert.equal(pdfOpened, 1, "locked PDF routes to benefits");
+  assert.equal(financeToggle.isConnected, false); assert.equal(modules.querySelector('[aria-label="启用财务"]'), null); assert.equal(financeTrigger.disabled, false); assert.equal(settings.lifestyle.finance.enabled, true);
   const selectionToggle = input(modules, "启用选文提问"); fail = true; selectionToggle.click(); await settle(); assert.equal(settings.selectionAsk.enabled, true); assert.equal(selectionToggle.checked, true); fail = false;
   disposeModules(); assert.equal(subscribers.size, 0);
 
@@ -188,20 +197,114 @@ try {
   shell.plugin.englishDiary = plugin.englishDiary;
   shell.plugin.englishDiaryProviderLabel = () => "默认模型";
   shell.tab.openDesktopRoute({ tab: "modules", section: "journal" }); shell.tab.display(); await documentHarness.flush();
-  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer").length, 8);
+  assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer").length, 9);
   assert.ok(input(shell.tab.containerEl, "日记保存文件夹"));
   shell.tab.containerEl.querySelector('[data-echoink-focus-key="journal:templates"]').click(); await documentHarness.flush();
   assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-journal-template-card").length, 4); assert.equal(runtime.openTestModals.length, 0);
   shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush(); assert.ok(input(shell.tab.containerEl, "日记保存文件夹"));
   shell.tab.openDesktopRoute({ tab: "modules", section: "review" }); await documentHarness.flush();
   assert.equal(shell.tab.containerEl.querySelectorAll(".review-generation").length, 0); assert.ok(shell.tab.containerEl.querySelector('[data-module="review"] [role="checkbox"]'));
-  shell.plugin.settings.pdfReading.enabled = true; shell.plugin.settings.englishDiary.enabled = true; shell.plugin.settings.lifestyle.finance.enabled = true;
-  for (const module of ["knowledge", "journal", "review", "todo", "selection", "finance", "english", "pdf"]) shell.state.desktopModuleExpanded.add(module);
+  shell.plugin.settings.pdfReading.enabled = true; shell.plugin.settings.englishDiary.enabled = true; shell.plugin.settings.lifestyle.finance.enabled = true; shell.plugin.settings.inlineAgent.enabled = true;
+  for (const module of ["knowledge", "journal", "review", "todo", "selection", "finance", "english", "pdf", "inline-agent"]) shell.state.desktopModuleExpanded.add(module);
   shell.state.renderSettingsContent();
   assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-module-drawer.is-expanded").length, 8);
   assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-journal-modal-actions,.review-generation").length, 0);
   assert.equal(shell.tab.containerEl.querySelectorAll('.echoink-module-drawer-content [role="switch"]').length, 0);
-  change(input(shell.tab.containerEl, "MinerU 专用 Token"), "unsaved-token-draft"); shell.state.renderSettingsContent(); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").value, "unsaved-token-draft");
+  assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token"), null, "PDF form is outside the module summary");
+  shell.tab.openDesktopRoute(runtime.resolveDesktopSettingsSearchRoute("modules", "MinerU")); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "pdf-reading"); assert.equal(shell.tab.containerEl.querySelector("h2")?.textContent, "PDF 精读 · 提取");
+  assert.equal(shell.tab.containerEl.querySelectorAll('[role="switch"]').length, 0, "detail does not duplicate the module switch");
+  qualified = false; subscribers.forEach(fn => fn()); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").disabled, true, "live PRO revocation disables the existing form");
+  qualified = true; subscribers.forEach(fn => fn()); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").disabled, false);
+  change(input(shell.tab.containerEl, "MinerU 专用 Token"), "unsaved-token-draft");
+  change(input(shell.tab.containerEl, "默认翻译语言"), "English draft");
+  const pdfEngine = () => shell.tab.containerEl.querySelector('.echoink-pdf-setting-field button[role="combobox"]') as HTMLButtonElement & { value: string };
+  pdfEngine().value = "mineru";
+  shell.state.renderSettingsContent(); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").value, "unsaved-token-draft"); assert.equal(pdfEngine().value, "mineru");
+  shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, null); assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "module:pdf");
+  shell.tab.openPdfReadingDetail(); await documentHarness.flush(); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").value, "unsaved-token-draft");
+  await shell.state.activateSettingsTab("models", true); await documentHarness.flush();
+  shell.tab.openPdfReadingDetail(); await documentHarness.flush(); assert.equal(input(shell.tab.containerEl, "默认翻译语言").value, "English draft"); assert.equal(pdfEngine().value, "mineru");
+  const savedPdf = shell.plugin.settings.pdfReading;
+  const originalSave = shell.plugin.saveSettings;
+  let rejectPdfSave: (error: Error) => void;
+  shell.plugin.saveSettings = () => new Promise((_resolve, reject) => { rejectPdfSave = reject; });
+  shell.tab.containerEl.querySelector("form").dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true })); await documentHarness.flush();
+  shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+  rejectPdfSave!(new Error("测试保存失败")); await documentHarness.flush();
+  assert.equal(shell.plugin.settings.pdfReading, savedPdf, "failed save restores the saved PDF configuration");
+  shell.tab.openPdfReadingDetail(); await documentHarness.flush(); assert.equal(input(shell.tab.containerEl, "MinerU 专用 Token").value, "unsaved-token-draft", "leaving during a failed save retains the draft");
+  shell.plugin.saveSettings = originalSave;
+  shell.tab.containerEl.querySelector("form").dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true })); await documentHarness.flush();
+  assert.equal(shell.plugin.settings.pdfReading.mineruToken, "unsaved-token-draft");
+  shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+  assert.deepEqual([...shell.state.moduleInputDrafts.keys()].filter((key: string) => key.startsWith("pdf:")), [], "saved PDF values leave no stale draft");
+
+  shell.tab.openDesktopRoute(runtime.resolveDesktopSettingsSearchRoute("modules", "生成模板")); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "generation-templates"); assert.equal(shell.tab.containerEl.querySelectorAll(".echoink-generation-template-row").length, 4);
+  Object.defineProperties(shell.tab.containerEl, { scrollHeight: { configurable: true, value: 1000 }, clientHeight: { configurable: true, value: 500 } });
+  shell.tab.containerEl.scrollTop = 180;
+  shell.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:generation-template:brief"]').click(); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "generation-template"); assert.equal(shell.tab.containerEl.scrollTop, 0);
+  change(input(shell.tab.containerEl, "写作要求"), "模板编辑草稿"); shell.state.renderSettingsContent();
+  assert.equal(input(shell.tab.containerEl, "写作要求").value, "模板编辑草稿");
+  shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "generation-templates"); assert.equal(shell.tab.containerEl.scrollTop, 180);
+  assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:generation-template:brief");
+  shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, null); assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:generation-templates");
+
+  shell.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:preferences" }); await documentHarness.flush();
+  assert.equal(shell.state.desktopKnowledge.navigationKey(), "permissions:");
+  assert.equal(shell.state.settingsDetail, "knowledge-preferences"); assert.ok(shell.tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:preferences:editor"]') || shell.tab.containerEl.textContent.includes("知识提炼偏好"));
+  shell.state.knowledgePreferenceEditor = { savedContent: "原偏好", draftContent: "未保存偏好" };
+  let allowPreferenceLeave = false;
+  const originalPreferenceDiscard = shell.state.confirmKnowledgePreferenceDiscard;
+  shell.state.confirmKnowledgePreferenceDiscard = async () => allowPreferenceLeave;
+  await shell.state.activateSettingsTab("models", true); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "knowledge-preferences"); assert.equal(shell.state.desktopKnowledge.navigationKey(), "permissions:", "cancel preserves the parent page");
+  shell.tab.openDesktopRoute({ tab: "models" }); await documentHarness.flush(); assert.equal(shell.state.settingsDetail, "knowledge-preferences");
+  allowPreferenceLeave = true; await shell.state.closeSettingsDetail(); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, null); assert.equal(shell.state.desktopKnowledge.navigationKey(), "permissions:");
+  assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:preferences");
+  shell.state.confirmKnowledgePreferenceDiscard = originalPreferenceDiscard;
+  shell.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:linking" }); await documentHarness.flush();
+  assert.equal(shell.state.settingsDetail, "knowledge-linking"); assert.equal(shell.state.desktopKnowledge.navigationKey(), "permissions:");
+  await shell.state.closeSettingsDetail(); await documentHarness.flush(); assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:linking");
+  shell.tab.openPdfReadingDetail(); await documentHarness.flush();
+  assert.equal(shell.state.desktopKnowledge.navigationKey(), null, "external PDF entry leaves its previous knowledge parent");
+  await shell.state.closeSettingsDetail(); await documentHarness.flush();
+  assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "module:pdf");
+  for (const focus of ["knowledge:preferences", "knowledge:linking"]) {
+    shell.tab.openDesktopRoute({ tab: "modules", focus }); await documentHarness.flush();
+    const knowledgeBeforeClose = shell.state.desktopKnowledge;
+    const detailBeforeClose = shell.state.settingsDetail;
+    shell.tab.hide(); assert.equal(shell.state.desktopKnowledge, null, "clean settings close disposes the knowledge controller");
+    shell.tab.display(); await documentHarness.flush();
+    assert.notEqual(shell.state.desktopKnowledge, knowledgeBeforeClose); assert.equal(shell.state.settingsDetail, detailBeforeClose);
+    shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+    assert.equal(shell.state.settingsDetail, null); assert.equal(shell.state.desktopKnowledge.navigationKey(), "permissions:", `${focus}: reopened detail returns to permissions`);
+    assert.equal(shell.tab.containerEl.querySelector("h2")?.textContent, "Agent 权限与维护");
+    assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), focus);
+  }
+  const folderManagementService = { app: shell.plugin.app, folderOperationBusy: false, directoryWritable: true,
+    folderNameScopes: () => ["资料"], getOriginalDirectoryStatus: async () => null };
+  shell.plugin.getKnowledgeSurfaceService = () => folderManagementService;
+  for (const action of ["文件夹名称优化", "复原仓库"]) {
+    shell.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:management" }); await documentHarness.flush();
+    shell.tab.containerEl.querySelector(`[data-echoink-focus-key="navigation:${action}"]`).click(); await documentHarness.flush();
+    const editorBeforeTabSwitch = shell.state.inlineEditor.host;
+    assert.equal(shell.state.desktopKnowledge.navigationKey(), "management:");
+    await shell.state.activateSettingsTab("models", true); await documentHarness.flush();
+    assert.equal(shell.state.desktopKnowledge.navigationKey(), null);
+    await shell.state.activateSettingsTab("modules", true); await documentHarness.flush();
+    assert.equal(shell.state.inlineEditor.host, editorBeforeTabSwitch, "returning to modules resumes the original editor");
+    shell.tab.containerEl.querySelector(".settings-back").click(); await documentHarness.flush();
+    assert.equal(shell.state.inlineEditor, null); assert.equal(shell.state.desktopKnowledge.navigationKey(), "management:", `${action}: editor returns to management after tab switch`);
+    assert.equal(shell.tab.containerEl.querySelector("h2")?.textContent, "目录管理");
+  }
+  shell.plugin.getKnowledgeSurfaceService = () => null;
   shell.tab.openDesktopRoute({ tab: "modules", focus: "selection-ask:settings" }); await documentHarness.flush();
   buttons(shell.tab.containerEl, "编辑").click(); const retainedTemplate = input(shell.tab.containerEl, "提问模板"); change(retainedTemplate, "保留壳重绘草稿");
   shell.state.renderSettingsContent(); assert.equal(input(shell.tab.containerEl, "提问模板"), retainedTemplate); assert.equal(retainedTemplate.value, "保留壳重绘草稿");
