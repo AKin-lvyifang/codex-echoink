@@ -1,26 +1,8 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 427,
+  "total": 409,
   "findings": [
-    {
-      "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
-      "path": "src/english-diary/integration.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-english-settings .setting-item:has([data-slot=switch]:focus-visible) { background-color: var(--background-modifier-hover); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "33c8ce4a07c6bb4c4e3fccb34133c0ad3002550cb9cebce34591b1d9920da69b",
-      "path": "src/english-diary/ui.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-diary-view {container-type:inline-size;padding:0!important;overflow:auto;}",
-      "count": 1
-    },
     {
       "fingerprint": "1207a06152e71ffed5586abe70a1e9db16918db1ae6bc737bac73917a4480589",
       "path": "src/english-diary/ui.css",
@@ -91,24 +73,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-echoink-focus-key=\"general:memory:dream-now\"]) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "1a44fe81ce4a8831e70e635924c7799a58a9ad9768dee57a6736fc87d8333886",
-      "path": "src/styles/agent-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]),",
-      "count": 1
-    },
-    {
-      "fingerprint": "7f940c9094340d734472b230447c5e67dda1a7ab05b54e0d43a313e02a654e54",
-      "path": "src/styles/agent-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]) > .setting-item-control,",
       "count": 1
     },
     {
@@ -742,15 +706,6 @@
       "count": 2
     },
     {
-      "fingerprint": "08b0fa1bd88c87fc8ab6e20358f31545be20efdb63324b92b7c98ef7fcd35caf",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}",
-      "count": 1
-    },
-    {
       "fingerprint": "08de543926ebc7a111b22e0ba3f4bcec6f75ef270e0ab52ab23d3c3e14687b06",
       "path": "src/styles/workspace-settings.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -796,33 +751,6 @@
       "count": 2
     },
     {
-      "fingerprint": "367be33cf4ce3a811b1d377ebabe9e6b6f54c6c035f5d86ecac2a443cd50b511",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}",
-      "count": 1
-    },
-    {
-      "fingerprint": "9fb7c588c5eb01d84fa656380c577d63c4501aa05d4be9f5320f31e208ff5189",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}",
-      "count": 1
-    },
-    {
-      "fingerprint": "a943cb7a3e2541d1def13ca2c1b6bf2f0b655c4389869b363bb0b6d6c4aa1b94",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}",
-      "count": 1
-    },
-    {
       "fingerprint": "c8b7c047aeda29c16960c88af4e84f820b2414ec1e2d1ddd9a581a89d5be1f1e",
       "path": "src/styles/workspace-settings.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -838,15 +766,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo .codex-mcp-server-field:has(textarea),.echoink-settings-demo .codex-mcp-credential-section{grid-column:1/-1}",
-      "count": 1
-    },
-    {
-      "fingerprint": "e2c1e221442a62ed1eaa33102203745eff7939e2fc4d90e0828a9844ce6bc985",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}",
       "count": 1
     },
     {
@@ -1822,15 +1741,6 @@
       "count": 1
     },
     {
-      "fingerprint": "d7af8408e9a68bc2336de4281bacbffe81b1dccd7bafda1e792d3b8eb6bae05c",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-diary-view {container-type:inline-size;padding:0!important;overflow:auto;}",
-      "count": 1
-    },
-    {
       "fingerprint": "db7845a919cc9a0b89c5c02d9caf6e6c844be856589e4c804777749afe395d15",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2344,30 +2254,12 @@
       "count": 1
     },
     {
-      "fingerprint": "1d76c0329db8864a34f7f031e9ddc6afce7ec124e7dec8f3f00c9808fa428f5c",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}",
-      "count": 1
-    },
-    {
       "fingerprint": "1f8f878ff5b0e0b4507384db2c57b6cf14c02e48ce2b8dbf22920af77fe43625",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo.echoink-settings-aligned .codex-provider-saved-row:has(.codex-provider-saved-identity:is(:hover, :focus-visible)) { background: var(--soft); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "20fde8149602292a452937d3b193d47a0c4eb58db4df2851e3b9fab1eeecf21e",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}",
       "count": 1
     },
     {
@@ -2551,15 +2443,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5eb575f3b89237fc97fe5552edc638cdc4062eec2a6969a0ef7363f75ff77417",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]) > .setting-item-control,",
-      "count": 1
-    },
-    {
       "fingerprint": "5fb42412cee651bf2901770f5b19b9a1c6ac53a8742a8f3876a19553a4c9f8f0",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -2638,15 +2521,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch:focus-visible) { background: var(--pd-settings-soft); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "6b8d53a4489318e86285f9641334b312cd6130cc88f01bd0a189b36bad97b86a",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}",
       "count": 1
     },
     {
@@ -2747,15 +2621,6 @@
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-aligned .echoink-theme-picker.is-text-segments .echoink-theme-choice:has(> input:not(:disabled)):is(:hover, :has(> input:focus-visible)) { background: var(--soft); }",
       "count": 2
-    },
-    {
-      "fingerprint": "9ed09f32bd9d6bf1187cb7989cbbc4256121d438e206db829b443f43c60cfe14",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-english-settings .setting-item:has([data-slot=switch]:focus-visible) { background-color: var(--background-modifier-hover); }",
-      "count": 1
     },
     {
       "fingerprint": "9f0526c2191c3cefcf04538a562dfd6e54374694a871ae484f06a42f175a25f2",
@@ -2884,15 +2749,6 @@
       "count": 1
     },
     {
-      "fingerprint": "d492df79abe5f9e4e8a0835b0bc6d201db2299664707ca714e9eda6d1a27cf90",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}",
-      "count": 1
-    },
-    {
       "fingerprint": "d4bba0134b74f6beb29d14ebe5e4210ec4f303845a25c75726b048599641e356",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -2992,30 +2848,12 @@
       "count": 1
     },
     {
-      "fingerprint": "f9d4eed7747222bb1b4c073db29ac7b7392bc742e3651590ce761e61b2c5966a",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}",
-      "count": 1
-    },
-    {
       "fingerprint": "fb3ae38cb175469a374198c34701fc4f088376fd1ae27b8ea85456410d349114",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title:has(> .echoink-settings-help) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "fc40f483b5fd1738b4d058640aa69dc62204b522e90a083650f57c6949d8f8ab",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]),",
       "count": 1
     },
     {

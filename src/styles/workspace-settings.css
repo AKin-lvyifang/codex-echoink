@@ -1133,12 +1133,12 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container settings (max-width:600px){
  /* Navigation rows stack here; stretch their copy despite the shared button's centered alignment. */
  .echoink-settings-demo:not(.echoink-settings-aligned) .echoink-settings-navigation-row>.echoink-settings-navigation-copy{align-self:stretch;width:100%;text-align:start}
- .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}
- .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(.has-origin-switch){flex-direction:column;align-items:stretch;gap:11px}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(.has-origin-switch)>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
  /* Keep Demo switch rows compact after the legacy narrow setting-row layout. */
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch{flex-direction:row;flex-wrap:nowrap;align-items:stretch}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch>.setting-item-info{width:auto;align-self:stretch;text-align:left}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
  .echoink-settings-demo .setting-item-control input:not([type=range]){width:100%}
  .echoink-settings-demo .provider-connection-grid,.echoink-settings-demo .codex-mcp-server-form{grid-template-columns:1fr}
  .echoink-settings-demo .codex-provider-saved-meta{max-width:100%;width:100%;justify-content:flex-end}

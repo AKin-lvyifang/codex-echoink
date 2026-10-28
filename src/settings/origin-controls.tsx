@@ -116,10 +116,23 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
     const state = kind === "checkbox" ? "has-origin-checkbox" : "has-origin-switch";
     row.classList.add(state);
     if (kind === "checkbox" && element.parentElement === row) row.classList.add("has-origin-direct-checkbox");
+    if (kind === "switch" && element.parentElement?.classList.contains("setting-item-control") && element.parentElement.parentElement === row) row.classList.add("has-origin-direct-switch");
+    let disposed = false;
+    const syncFocus = () => {
+      if (!disposed) row.classList.toggle(`has-origin-${kind}-focus`, Array.from(row.querySelectorAll(`[data-slot="${kind}"]`)).some(control => control.matches(":focus-visible")));
+    };
+    const feedback = () => queueMicrotask(syncFocus);
+    const events = ["focusin", "focusout", "keydown", "pointerdown", "pointerup"];
+    for (const event of events) row.addEventListener(event, feedback, true);
+    syncFocus();
     island.onDispose(() => {
+      disposed = true;
+      for (const event of events) row.removeEventListener(event, feedback, true);
       const others = Array.from(row.querySelectorAll(`[data-slot="${kind}"]`)).filter(control => control !== element);
       if (!others.length) row.classList.remove(state);
       if (kind === "checkbox" && !others.some(control => control.parentElement === row)) row.classList.remove("has-origin-direct-checkbox");
+      if (kind === "switch" && !others.some(control => control.parentElement?.classList.contains("setting-item-control") && control.parentElement.parentElement === row)) row.classList.remove("has-origin-direct-switch");
+      row.classList.toggle(`has-origin-${kind}-focus`, others.some(control => control.matches(":focus-visible")));
     });
   }
   Object.defineProperty(element, "checked", { get: () => checked, set: (value: boolean) => { checked = Boolean(value); render(); } });

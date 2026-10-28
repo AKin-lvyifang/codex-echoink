@@ -21075,12 +21075,12 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container settings (max-width:600px){
  /* Navigation rows stack here; stretch their copy despite the shared button's centered alignment. */
  .echoink-settings-demo:not(.echoink-settings-aligned) .echoink-settings-navigation-row>.echoink-settings-navigation-copy{align-self:stretch;width:100%;text-align:start}
- .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch])){flex-direction:column;align-items:stretch;gap:11px}
- .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(:has([data-slot=switch]))>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(.has-origin-switch){flex-direction:column;align-items:stretch;gap:11px}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .setting-item:not(.has-origin-switch)>.setting-item-control{max-width:none;width:100%;justify-content:flex-end}
  /* Keep Demo switch rows compact after the legacy narrow setting-row layout. */
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch]){flex-direction:row;flex-wrap:nowrap;align-items:stretch}
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-info{width:auto;align-self:stretch;text-align:left}
- .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item:has(>.setting-item-control>[data-slot=switch])>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch{flex-direction:row;flex-wrap:nowrap;align-items:stretch}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch>.setting-item-info{width:auto;align-self:stretch;text-align:left}
+ .echoink-settings-demo:not(.echoink-settings-aligned) .settings-stack>.setting-item.has-origin-direct-switch>.setting-item-control{width:auto;max-width:none;align-self:center;justify-content:flex-end}
  .echoink-settings-demo .setting-item-control input:not([type=range]){width:100%}
  .echoink-settings-demo .provider-connection-grid,.echoink-settings-demo .codex-mcp-server-form{grid-template-columns:1fr}
  .echoink-settings-demo .codex-provider-saved-meta{max-width:100%;width:100%;justify-content:flex-end}
@@ -26016,7 +26016,8 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
   color:var(--text);background:var(--bg);font-family:var(--font-interface);
   font-size:calc(var(--font-text-size,16px)*.75);line-height:1.7;
 }
-.echoink-diary-view {container-type:inline-size;padding:0!important;overflow:auto;}
+.echoink-diary-view {container-type:inline-size;overflow:auto;}
+.view-content.echoink-diary-view {padding:0;}
 .echoink-diary-page {display:flex;flex-direction:column;gap:24px;max-width:1240px;margin:0 auto;padding:24px;min-width:0;box-sizing:border-box;}
 .echoink-diary-view :is(h2,h3,h4,p),.echoink-diary-modal :is(h2,h3,h4,p) {margin:0;}
 .echoink-diary-view h2.echoink-diary-title,.echoink-diary-modal h2 {font-size:calc(var(--font-text-size,16px)*1.3125);font-weight:600;line-height:1.55;}
@@ -26173,7 +26174,7 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 
 .echoink-settings-demo .echoink-english-settings :is(button:not(.todo-heatmap-cell),.echoink-origin-control[data-slot]):focus-visible { outline: none; box-shadow: none; }
 .echoink-settings-demo .echoink-english-settings :is(button:not(.todo-heatmap-cell),.echoink-origin-control[data-slot]):not([data-slot=switch]):focus-visible { background-color: var(--background-modifier-hover); }
-.echoink-settings-demo .echoink-english-settings .setting-item:has([data-slot=switch]:focus-visible) { background-color: var(--background-modifier-hover); }
+.echoink-settings-demo .echoink-english-settings .setting-item.has-origin-switch.has-origin-switch-focus { background-color: var(--background-modifier-hover); }
 .echoink-diary-progress { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,150px),1fr)); gap: 14px; margin: 0; }
 .echoink-diary-progress > div { min-width: 0; padding: 18px 21px; border: 1px solid var(--line); border-radius: var(--radius,10px); background: var(--bg); }
 .echoink-diary-progress dt { margin: 0; color: var(--secondary); font-size: calc(var(--font-text-size,16px)*.75); font-weight: 500; line-height: 1.6; }
@@ -28638,11 +28639,11 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-settings-demo .echoink-desktop-agent-page .echoink-settings-navigation-row > .echoink-settings-navigation-trailing {
   width: auto; align-self: center;
 }
-.echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]),
+.echoink-settings-demo .echoink-desktop-agent-page .setting-item.has-origin-checkbox,
 .echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-echoink-focus-key="general:memory:dream-now"]) {
   flex-direction: row; align-items: center; gap: 12px;
 }
-.echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]) > .setting-item-control,
+.echoink-settings-demo .echoink-desktop-agent-page .setting-item.has-origin-checkbox > .setting-item-control,
 .echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-echoink-focus-key="general:memory:dream-now"]) > .setting-item-control {
   width: auto; flex: none; max-width: none;
 }

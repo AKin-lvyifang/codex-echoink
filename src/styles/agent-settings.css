@@ -52,11 +52,11 @@
 .echoink-settings-demo .echoink-desktop-agent-page .echoink-settings-navigation-row > .echoink-settings-navigation-trailing {
   width: auto; align-self: center;
 }
-.echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]),
+.echoink-settings-demo .echoink-desktop-agent-page .setting-item.has-origin-checkbox,
 .echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-echoink-focus-key="general:memory:dream-now"]) {
   flex-direction: row; align-items: center; gap: 12px;
 }
-.echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-slot=checkbox]) > .setting-item-control,
+.echoink-settings-demo .echoink-desktop-agent-page .setting-item.has-origin-checkbox > .setting-item-control,
 .echoink-settings-demo .echoink-desktop-agent-page .setting-item:has([data-echoink-focus-key="general:memory:dream-now"]) > .setting-item-control {
   width: auto; flex: none; max-width: none;
 }
