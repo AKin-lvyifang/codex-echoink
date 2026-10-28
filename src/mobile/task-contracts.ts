@@ -3,9 +3,11 @@ import type { EchoInkQuestionAnswer, EchoInkQuestionPrompt } from "../types/conv
 import type { MobilePermission } from "./store";
 import type { TaskInterruptionReason, TaskInterruptionRecord } from "../agents/task-resume";
 import type { MobileFinanceEvidence } from "./finance-journal";
+import type { ToolCallTextFailureCode } from "../harness/tool-call-text";
 
 export type MobileInterruptionReason = TaskInterruptionReason | "app_backgrounded";
 export interface MobileTaskInterruption extends Omit<TaskInterruptionRecord, "reason"> {
+  toolCallTextFailure?: ToolCallTextFailureCode;
   reason: MobileInterruptionReason;
 }
 /** Local effect facts; never a permission grant or an automatic retry instruction. */

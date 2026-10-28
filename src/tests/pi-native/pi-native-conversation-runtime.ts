@@ -688,6 +688,44 @@ export async function runPiSubmissionCancellationTests(): Promise<void> {
   console.log("PASS submission lifecycle: initialization, ask/chat preflight read18, before_agent_start, handle cancellation and listener isolation");
 }
 
+export async function runCustomToolCallingRuntimeTests(): Promise<void> {
+  const call = '<tool_call>{"name":"note_read","arguments":{"path":"example.md"}}</tool_call>';
+  for (const scenario of ["disabled", "enabled", "code", "executed", "plain"] as const) {
+    await withFixture([`tool-text-${scenario}`], async fixture => {
+      fixture.configureFactoryTools({ registered: ["note_read"], defaults: ["note_read"], planAllowed: ["note_read"], supportsToolCalling: scenario !== "disabled" });
+      const conversationId = `tool-text-${scenario}`;
+      const handle = await fixture.submit({ conversationId, text: "read supplied note", submittedAt: 1 });
+      const session = fixture.latestSession();
+      if (scenario === "disabled") assert.deepEqual(session.activeToolSelections.at(-1), []);
+      if (scenario === "executed") session.finishTool("real-read", "note_read", { content: [{ type: "text", text: "read result" }] }, false);
+      const text = scenario === "code" ? `示例：\n\`\`\`xml\n${call}\n\`\`\`` : scenario === "plain" ? "纯聊天回答" : call;
+      session.finishSuccessful(text);
+      const result = await handle.result;
+      const failed = scenario === "disabled" || scenario === "enabled";
+      assert.equal(result.terminalState, failed ? "failed" : "completed");
+      if (failed) assert.equal(result.error, scenario === "disabled" ? "model_tool_call_text_disabled" : "model_tool_call_text_incompatible");
+      const live = await fixture.runtime.readProjection(conversationId);
+      assert.ok(live.messages.some(message => message.role === "assistant" && message.text === text), "original answer survives");
+      if (failed) assert.ok(live.messages.some(message => message.itemType === "error" && /本轮没有执行工具/u.test(message.text)));
+      if (failed) assert.match(live.messages.find(message => message.itemType === "assistant")!.details!, /本轮没有执行工具/u, "the existing answer failure component receives the specific reason");
+      await fixture.runtime.shutdown();
+      const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId, resolveConversationCwd: () => fixture.root });
+      assert.equal((await fixture.productRuns.read(handle.productRunId))?.terminalState, failed ? "failed" : "completed");
+      assert.equal(cold.messages.some(message => message.itemType === "error" && /本轮没有执行工具/u.test(message.text)), failed, "cold read restores specific failure");
+      if (failed) assert.match(cold.messages.find(message => message.itemType === "assistant")!.details!, /本轮没有执行工具/u);
+      console.log(`PASS tool text runtime: ${scenario}; settlement, original answer and cold projection`);
+    });
+  }
+  await withFixture([], async fixture => {
+    fixture.configureFactoryTools({ registered: ["note_read"], defaults: ["note_read"], planAllowed: ["note_read"], supportsToolCalling: false });
+    for (const request of [{ text: "请规划", mode: "plan" as const }, { text: "/maintain 整理知识" }]) {
+      await assert.rejects(fixture.submit({ conversationId: "disabled-required-tools", ...request, submittedAt: 1 }), /当前模型未开启工具调用，无法执行/u);
+    }
+    assert.equal(fixture.latestSession().promptTexts.length, 0);
+    console.log("PASS tools disabled: Plan and maintenance fail before sending a model request");
+  }, { knowledge: {} as PiKnowledgeRuntimePort });
+}
+
 export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await withFixture(["persisted-watchdog", "persisted-retries"], async fixture => {
     const id = "durable-interruption-copy";
@@ -5861,6 +5899,7 @@ interface RuntimeFixture {
     defaults: readonly string[];
     planAllowed: readonly string[];
     externalReadAllowed?: readonly string[];
+    supportsToolCalling?: boolean;
   }>): void;
   currentMemoryTurn(): Readonly<PiNativeMemoryTurnContext> | null;
   currentKnowledgeTurn(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -5926,6 +5965,7 @@ async function withFixture(
   let factoryWarnings: readonly string[] = [];
   let memoryToolNames: readonly string[] = [];
   let factoryTools = {
+    supportsToolCalling: true,
     registered: [] as readonly string[],
     defaults: [] as readonly string[],
     planAllowed: [] as readonly string[],
@@ -5980,6 +6020,7 @@ async function withFixture(
       sessions.push(session);
       return {
         session: session.asAgentSession(),
+        supportsToolCalling: factoryTools.supportsToolCalling,
         planToolNames: [...factoryTools.planAllowed],
         externalReadToolNames: [...factoryTools.externalReadAllowed],
         memoryToolNames: [...memoryToolNames],
@@ -6030,6 +6071,7 @@ async function withFixture(
       },
       configureFactoryTools: (input) => {
         factoryTools = {
+          supportsToolCalling: input.supportsToolCalling !== false,
           registered: [...input.registered],
           defaults: [...input.defaults],
           planAllowed: [...input.planAllowed],

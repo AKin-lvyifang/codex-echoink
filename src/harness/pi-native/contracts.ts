@@ -668,6 +668,7 @@ export type PiChatRuntimeEvent =
   | (PiChatRuntimeEventBase & {
       type: "product_run_settled";
       terminalState: PiProductRunTerminalState;
+      toolCallTextFailure?: string;
       assistantEntryId?: string;
     });
 

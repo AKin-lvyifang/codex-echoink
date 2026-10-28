@@ -61,6 +61,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.settings = loadMobileSettings(saved);
       const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
       const migratedTheme = savedRecord.colorTheme !== this.settings.colorTheme;
+      const migratedToolCalling = JSON.stringify(savedRecord.apiProviders ?? []) !== JSON.stringify(this.settings.apiProviders);
       const appearanceDocument = this.app.workspace.containerEl?.ownerDocument ?? document;
       this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
       this.applyAppearanceTheme(appearanceDocument);
@@ -101,7 +102,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
       await this.services.initialize();
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
-      if (migratedBindings || migratedTheme) await this.saveSettings();
+      if (migratedBindings || migratedTheme || migratedToolCalling) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());

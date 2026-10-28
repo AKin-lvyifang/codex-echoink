@@ -12253,10 +12253,13 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
 }
 
 .codex-process-detail {
-  overflow: hidden;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.codex-process-detail:not(.codex-assistant-turn-failure-reason) {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

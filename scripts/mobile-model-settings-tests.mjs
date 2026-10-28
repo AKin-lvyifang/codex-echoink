@@ -46,6 +46,25 @@ await test("six addable presets and legacy API-key compatibility preserve stored
   assert.equal(loadMobileSettings({ autoOpenHome: true }).autoOpenHome, true);
   assert.equal(loadMobileSettings({ autoOpenHome: "true" }).autoOpenHome, false);
 });
+await test("tool calling migrates unknown and ID-only discovery while preserving declared and manual false", () => {
+  const base = mobileModel("uncatalogued");
+  const models = [
+    { ...base, metadataSource: "unknown", toolCalling: false },
+    { ...base, metadataSource: "discovery", discovery: { id: base.id }, toolCalling: false },
+    { ...base, metadataSource: "discovery", discovery: { id: base.id, toolCalling: false }, toolCalling: false },
+    { ...base, capabilityOverrides: { toolCalling: false }, toolCalling: false },
+    { ...base, toolCalling: false },
+    { ...base, capabilityOverrides: { reasoning: false }, toolCalling: false },
+    { ...base, metadataSource: "preset", toolCalling: false },
+    { ...base, metadataSource: "catalog", toolCalling: false }
+  ];
+  const raw = { apiProviders: [{ ...mobileProvider("custom"), extra: { keep: true }, models }] };
+  const before = plain(raw), once = loadMobileSettings(raw);
+  assert.deepEqual(plain(once.apiProviders[0].models.map(model => model.toolCalling)), [true, true, false, false, false, true, false, false]);
+  assert.deepEqual(plain(raw), before, "loading cannot mutate its saved input");
+  assert.deepEqual(plain(loadMobileSettings(once).apiProviders), plain(once.apiProviders));
+  assert.deepEqual(plain(once.apiProviders[0].extra), { keep: true });
+});
 await test("GET discovery uses shared URL/parser, metadata and unknown old model fields survive", async () => {
   const f = fixture({ request: async () => ({ status: 200, json: { data: [{ id: "one", context_window: 256000, supports_tool_calling: false }, { id: "new", name: "New", context_window: 64000, max_output_tokens: 1024, supports_reasoning: true }], has_more: true } }) });
   f.provider.models[0].unknown = { retained: true }; f.provider.models[0].limitsOverride = { maxOutputTokens: 1000 };

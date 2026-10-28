@@ -7,6 +7,7 @@ import type { AgentRegistry } from "../agents/types";
 import { defaultTaskWorkspace, normalizeTaskWorkspace, type TaskWorkspace } from "../agents/task-workspace";
 import { normalizeConversationTaskMetadata } from "../agents/task-metadata";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
+import { DEFAULT_UNDECLARED_TOOL_CALLING, resolveStoredModelToolCalling } from "./provider-model-capabilities";
 import { normalizeInlineAgentSettings } from "../inline-agent/settings";
 import { newId } from "../core/new-id";
 export { newId } from "../core/new-id";
@@ -1055,7 +1056,7 @@ export function createApiProviderModelConfig(
     id,
     displayName: id,
     input: ["text"],
-    toolCalling: false,
+    toolCalling: DEFAULT_UNDECLARED_TOOL_CALLING,
     // Provider discovery often returns models newer than the pinned Pi
     // catalog. Product default assumes deep reasoning until the user turns it
     // off; an explicit catalog/preset `false` above still wins.
@@ -1082,8 +1083,7 @@ export function createDiscoveredApiProviderModelConfig(
     ...baseline,
     displayName: discovery.displayName ?? baseline.displayName,
     input: discovery.input ?? baseline.input,
-    // Official DeepSeek compatibility fills only an absent declaration.
-    toolCalling: discovery.toolCalling ?? (providerId === "deepseek" ? true : baseline.toolCalling),
+    toolCalling: discovery.toolCalling ?? baseline.toolCalling,
     reasoning: discovery.reasoning ?? baseline.reasoning,
     contextWindow: discovery.contextWindow ?? baseline.contextWindow,
     modelMaxTokens: discovery.modelMaxTokens ?? baseline.modelMaxTokens,
@@ -2828,6 +2828,8 @@ function normalizeStoredApiProviderModel(
   if (normalized.metadataSource === "unknown") {
     normalized.displayName = normalizeText(record.displayName, id);
   }
+  normalized.toolCalling = resolveStoredModelToolCalling(record,
+    createApiProviderModelConfig(providerId, id, runtimeProviderId, discovery ?? undefined).toolCalling);
   if (
     (record.metadataSource !== "manual" || discovery || normalized.capabilityOverrides)
     && Object.hasOwn(record, "limitsOverride")
