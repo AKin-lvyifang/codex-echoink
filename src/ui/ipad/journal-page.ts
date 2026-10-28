@@ -7,7 +7,7 @@ import type { HomeJournalTemplateChoice } from "../../home/home-workbench-data";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadPageContext } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
-import { el, moduleActions, moduleButton, moduleConfirm, moduleEmpty, moduleSegments, selectModuleSegment, moduleView, moduleText as t } from "./module-elements";
+import { el, moduleActions, moduleButton, moduleConfirm, moduleEmpty, moduleNavigationRow, moduleSettingsGroup, moduleSegments, selectModuleSegment, moduleView, moduleText as t } from "./module-elements";
 
 export function createJournalPage(ctx: IPadPageContext): MobileShellPage {
   const api = ctx.host.services.modules.journal, v = moduleView(ctx, "module:journal", t(ctx, "日记", "Journal"), "journal");
@@ -72,8 +72,9 @@ function createTemplatePicker(ctx: IPadPageContext, snapshot: MobileJournalSnaps
     const actions = moduleActions(ctx, preview.body), use = moduleButton(ctx, t(ctx, "使用这个模板", "Use this template"), async () => { const saved = await preview.run(async () => { const result = await api.create(new Date(`${date}T12:00:00`), choice); await ctx.host.openNote(result.path); }); if (saved) { preview.allow(); await ctx.shell.backTo("module:journal"); } }, true); use.disabled = true; actions.append(use);
     void preview.read(() => api.readTemplate(choice), text => { ctx.host.renderMarkdown(text, content); use.disabled = false; }); return v.push(preview.finish());
   };
-  for (const template of BUILT_IN_JOURNAL_TEMPLATES) v.body.append(moduleButton(ctx, template.name, () => open({ kind: "built-in", template }, template.name)));
-  for (const template of snapshot.templates) v.body.append(moduleButton(ctx, template.name, () => open({ kind: "custom", path: template.path, name: template.name }, template.name)));
+  const templates = moduleSettingsGroup(ctx, v.body);
+  for (const template of BUILT_IN_JOURNAL_TEMPLATES) moduleNavigationRow(ctx, templates, template.name, "", () => open({ kind: "built-in", template }, template.name));
+  for (const template of snapshot.templates) moduleNavigationRow(ctx, templates, template.name, "", () => open({ kind: "custom", path: template.path, name: template.name }, template.name));
   const field = el(ctx.document, "label", "pd-module-field"), input = el(ctx.document, "input", "pd-module-input"); input.type = "file"; input.accept = ".md,.markdown"; input.setAttribute("aria-label", t(ctx, "导入模板", "Import template")); field.append(el(ctx.document, "span", "", t(ctx, "导入模板", "Import template")), input); v.body.append(field);
   input.addEventListener("change", () => { const file = input.files?.[0]; if (!file) return; void (async () => { let review: MobileShellPage | undefined; const loaded = await v.run(async () => {
     const template = api.previewImportedTemplate(file.name, decodeImportedMarkdown(await file.arrayBuffer(), ctx.host.settings().settingsLanguage)), preview = moduleView(ctx, "ipad-journal-import-template", template.name), text = el(ctx.document, "div", "pd-journal-template-preview markdown-rendered"), area = el(ctx.document, "div", "pd-module-confirm-area");

@@ -274,10 +274,10 @@ export function onboardingCoachmarkCopy(step: EchoInkOnboardingStep, zh: boolean
 
 export function onboardingCompletionCopy(zh: boolean) {
   return Object.freeze({
-    title: zh ? "准备好了，从一句话开始" : "You are ready. Start with one thought.",
+    title: zh ? "准备好了，从一件事开始" : "You are ready. Start with one thing.",
     description: zh
-      ? "你已经认识了 EchoInk 的几个重要入口。写下一个想法，或和 Agent 聊聊今天，让第一条记录自然发生。"
-      : "You now know your way around EchoInk. Capture an idea or talk about your day, and let the first note take shape.",
+      ? "写下一个想法，或和 Agent 聊聊今天。"
+      : "Capture an idea, or talk about your day with an Agent.",
     previousLabel: zh ? "再看一遍" : "Show me again",
     actionLabel: zh ? "回到工作台" : "Back to my workspace"
   });
