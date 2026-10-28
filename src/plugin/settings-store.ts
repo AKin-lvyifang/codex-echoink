@@ -1,7 +1,7 @@
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { runErrors } from "../run-reports/recent-errors";
 import { Notice, Platform } from "obsidian";
-import path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
 import { pluginDataDir } from "./plugin-data-paths";
 import type CodexForObsidianPlugin from "../main";
@@ -21,6 +21,8 @@ import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecov
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootDirectories, migrateKnowledgeFolderBindings, preferExistingBilingualKnowledgeDefaults, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+
+const path = getDesktopPath();
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {

@@ -1,8 +1,12 @@
-import * as fs from "fs";
-import * as path from "path";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import { getElectronDialog } from "../../core/electron";
 import type { SettingsLanguage } from "../../settings/settings";
 import { conversationUiText } from "./ui-i18n";
+
+const fs = getDesktopFs();
+const path = getDesktopPath();
 
 export async function pickWorkspaceDirectory(
   defaultPath: string,

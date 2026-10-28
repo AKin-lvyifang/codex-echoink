@@ -1,6 +1,8 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { type App, type ReferenceCache, type TFile } from "obsidian";
 import { rebaseKnowledgePath } from "./root-paths";
+
+const path = getDesktopPath();
 
 interface LinkEdit { original: string; replacement: string; start: number; end: number }
 export interface FolderLinkRenamePlan { path: string; content: string; edits: LinkEdit[]; replacementCounts: Record<string, number> }

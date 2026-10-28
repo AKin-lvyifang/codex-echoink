@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
@@ -13,7 +14,7 @@ try {
   await symlink(path.join(root, "node_modules"), path.join(temporary, "node_modules"), "dir");
   const output = path.join(temporary, "tests.mjs");
   const contents = `${process.argv.includes("--with-core") ? 'import "./src/tests/inline-agent";\n' : ''}import "./src/tests/inline-agent-recovery";`;
-  await build({ stdin: { contents, resolveDir: root, sourcefile: "inline-recovery-entry.ts", loader: "ts" }, outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
+  await build({ banner: desktopNodeTestBanner, stdin: { contents, resolveDir: root, sourcefile: "inline-recovery-entry.ts", loader: "ts" }, outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml", "jsdom"], loader: { ".md": "text", ".svg": "text", ".webp": "dataurl" },
     plugins: [{ name: "inline-recovery-host-shim", setup(bundle) {
       bundle.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(root, "src/tests/origin-controls-shim.ts") }));

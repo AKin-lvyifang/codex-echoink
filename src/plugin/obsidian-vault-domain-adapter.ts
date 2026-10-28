@@ -1,10 +1,11 @@
 import { getKnowledgeFolderBindings, knowledgeRolePath } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizePath, type App, type TFile } from "obsidian";
 import {
   VaultDomainAdapterError,
@@ -21,6 +22,12 @@ import {
   type ResolvedVaultTarget,
   type VaultPathStat
 } from "../harness/pi-native/vault-target-resolver";
+
+const { createHash } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const SEARCH_SCAN_LIMIT_BYTES = 32_000;
 const SEARCH_EXCERPT_LIMIT_BYTES = 2_000;

@@ -1,7 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { ChatMessage } from "../settings/settings";
 import { CURRENT_PLUGIN_ID, pluginDataDir } from "../plugin/plugin-data-paths";
+
+const { mkdir, readFile, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export { CURRENT_PLUGIN_ID, pluginDataDir } from "../plugin/plugin-data-paths";
 export const RAW_TEXT_THRESHOLD = 30_000;

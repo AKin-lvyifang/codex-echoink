@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type { App } from "obsidian";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
 import { readVaultIdentity } from "../plugin/vault-identity";
@@ -29,6 +29,8 @@ import type {
   EchoInkMcpCredentialPurpose,
   EchoInkResource
 } from "./types";
+
+const { createHash, randomUUID } = getDesktopCrypto();
 
 const MAX_CAS_ATTEMPTS = 3;
 

@@ -1,13 +1,19 @@
 import { knowledgePathRole, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
 import { knowledgeRolePath, knowledgeRoleRoots } from "./root-paths";
-import { createHash } from "node:crypto";
-import * as fs from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { pluginDataDir } from "../plugin/plugin-data-paths";
 import { contentFingerprint } from "./raw-integrity";
 import { rawDigestFingerprint } from "./raw-digest";
 import { isMissingPathError, normalizeSlashes, writeFileAtomic } from "./utils";
+
+const { createHash } = getDesktopCrypto();
+
+const fs = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const KNOWLEDGE_BASE_INDEX_SCHEMA_VERSION = 1;
 
@@ -266,9 +272,9 @@ async function walkIndexRoot(
   vaultPath: string,
   root: KnowledgeBaseIndexRoot,
   options: { maxFiles?: number; validateRawSafety: boolean }
-): Promise<Array<{ absolutePath: string; relativePath: string; stat: fs.Stats }>> {
+): Promise<Array<{ absolutePath: string; relativePath: string; stat: import("node:fs").Stats }>> {
   const rootPaths = knowledgeRoleRoots(vaultPath, root);
-  const files: Array<{ absolutePath: string; relativePath: string; stat: fs.Stats }> = [];
+  const files: Array<{ absolutePath: string; relativePath: string; stat: import("node:fs").Stats }> = [];
   const maxFiles = normalizePositiveLimit(options.maxFiles, Number.POSITIVE_INFINITY);
   for (const actualRoot of rootPaths) {
     const rootPath = path.join(vaultPath, actualRoot);
@@ -304,7 +310,7 @@ async function walkIndexRoot(
   return files;
 }
 
-function assertSafeRawIndexEntry(relativePath: string, stat: fs.Stats): void {
+function assertSafeRawIndexEntry(relativePath: string, stat: import("node:fs").Stats): void {
   if (stat.isSymbolicLink()) throw new Error(`raw/ 不能包含 symlink：${relativePath}`);
   if (!stat.isDirectory() && !stat.isFile()) throw new Error(`raw/ 不能包含特殊文件：${relativePath}`);
   if (stat.isFile() && stat.nlink > 1) throw new Error(`raw/ 不能包含 hardlink：${relativePath}`);
@@ -325,7 +331,7 @@ async function buildIndexEntry(
   absolutePath: string,
   relativePath: string,
   root: KnowledgeBaseIndexRoot,
-  stat: fs.Stats,
+  stat: import("node:fs").Stats,
   indexedAt: number,
   maxSearchChars = DEFAULT_MAX_SEARCH_CHARS
 ): Promise<KnowledgeBaseIndexEntry> {
@@ -364,7 +370,7 @@ async function buildIndexEntry(
 function seededIndexEntry(
   relativePath: string,
   root: KnowledgeBaseIndexRoot,
-  stat: fs.Stats,
+  stat: import("node:fs").Stats,
   fingerprint: string,
   indexedAt: number
 ): KnowledgeBaseIndexEntry {
@@ -394,13 +400,13 @@ async function fingerprintFile(absolutePath: string, size: number): Promise<stri
   return `sha256:${size}:${hash.digest("hex")}`;
 }
 
-function indexMetadataMatches(entry: KnowledgeBaseIndexEntry, stat: fs.Stats): boolean {
+function indexMetadataMatches(entry: KnowledgeBaseIndexEntry, stat: import("node:fs").Stats): boolean {
   return entry.size === stat.size
     && Math.abs(entry.mtime - stat.mtimeMs) < 1
     && Math.abs(entry.ctime - stat.ctimeMs) < 1;
 }
 
-function seedMetadataMatches(seed: KnowledgeBaseIndexSeed, stat: fs.Stats): boolean {
+function seedMetadataMatches(seed: KnowledgeBaseIndexSeed, stat: import("node:fs").Stats): boolean {
   return seed.size === stat.size && Math.abs(seed.mtime - stat.mtimeMs) < 1;
 }
 

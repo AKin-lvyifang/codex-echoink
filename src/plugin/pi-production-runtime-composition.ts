@@ -43,9 +43,10 @@ import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
 import { isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { piWorkspaceToolDecision, piToolAccessFailure, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   ModelRuntime,
@@ -286,6 +287,11 @@ import {
   mcpToolIsAdmitted,
   resolveMcpConnectionRecord
 } from "../resources/mcp-connections";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface PiProductionPluginHost {
   getKnowledgeSurfaceService?(): { activity: import("./knowledge-activity-service").KnowledgeActivityService } | null;

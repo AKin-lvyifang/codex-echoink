@@ -1,22 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  lstatSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  realpathSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-  type Stats
-} from "node:fs";
-import * as path from "node:path";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type {
   FileEntry,
   SessionEntry,
@@ -25,6 +11,12 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { ECHOINK_TASK_PLAN_ENTRY_TYPE } from "../../types/task-plan";
 import { PI_CONTEXT_LEDGER_CUSTOM_TYPE } from "./pi-context-budget";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } = getDesktopFs();
+const path = getDesktopPath();
 
 export const ECHOINK_PI_CODING_AGENT_VERSION = "0.82.1";
 export const ECHOINK_PI_SESSION_VERSION = 3;
@@ -1275,7 +1267,7 @@ function resolveSessionRoot(
   if (create && !existsSync(requestedPath)) {
     mkdirSync(requestedPath, { recursive: true, mode: 0o700 });
   }
-  let rootStats: Stats;
+  let rootStats: import("node:fs").Stats;
   let realPath: string;
   try {
     rootStats = statSync(requestedPath);
@@ -1336,7 +1328,7 @@ function resolveDirectSessionFile(
 }
 
 function assertRegularOwnedFile(filePath: string): PiSessionFileIdentity {
-  let fileStats: Stats;
+  let fileStats: import("node:fs").Stats;
   try {
     fileStats = lstatSync(filePath);
   } catch (error) {

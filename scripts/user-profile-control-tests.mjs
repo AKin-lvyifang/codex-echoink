@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -21,7 +22,7 @@ if (await realpath(testRoot) !== testRoot) throw new Error("Test root must not c
 const runRoot = await mkdtemp(path.join(testRoot, "user-profile-control-"));
 try {
   const outputFile = path.join(runRoot, "user-profile-control-tests.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,
     stdin: {
       contents: 'import { runUserProfileControlScenarios } from "./src/tests/user-profile-control"; await runUserProfileControlScenarios();',
       resolveDir: rootDir, sourcefile: "user-profile-control-test-entry.ts", loader: "ts"

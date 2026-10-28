@@ -1,8 +1,10 @@
-import { TextDecoder } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 
 export const ECHOINK_LOCAL_SECRETS_V1 =
   "echoink-local-secrets-v1" as const;
 import { redactEchoInkLocalSecretsV1 } from "../../security/local-secrets";
+
+const { TextDecoder } = getDesktopUtil();
 export { REDACTED_SECRET, redactEchoInkLocalSecretsV1 } from "../../security/local-secrets";
 export const VAULT_READ_TOOL_RESULT_LIMIT_BYTES = 32_000;
 export const VAULT_WRITE_TOOL_RESULT_LIMIT_BYTES = 8_000;

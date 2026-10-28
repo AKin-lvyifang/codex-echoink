@@ -1,4 +1,4 @@
-import * as path from "path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { readFreshKnowledgeBaseReportExcerpt } from "./report";
@@ -10,6 +10,8 @@ import {
   type KnowledgeTransactionSnapshot,
   type KnowledgeTransactionSnapshotEntry
 } from "./transaction-snapshot-core";
+
+const path = getDesktopPath();
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./transaction-snapshot-core";
 

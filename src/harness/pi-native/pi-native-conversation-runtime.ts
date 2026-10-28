@@ -22,8 +22,8 @@ import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/ro
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
 import { normalizePiWorkspacePermission, piWorkspaceAllowsTool, type PiWorkspaceAccess } from "./pi-workspace-access";
-import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -189,6 +189,10 @@ import type {
   DreamPublicExperienceInput,
   DreamTaskResultSummary
 } from "../memory/dream-experience-inbox";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const { readFileSync } = getDesktopFs();
 
 const BUILTIN_TOOL_NAMES = new Set([
   "bash",

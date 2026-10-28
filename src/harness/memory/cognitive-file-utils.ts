@@ -4,9 +4,15 @@
  * Kept dependency-free so tests can run them under plain Node.
  */
 
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
+const { randomUUID } = getDesktopCrypto();
+
+
+const { lstat, mkdir, readFile, rename, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export async function cognitivePathExists(target: string): Promise<boolean> {
   try {

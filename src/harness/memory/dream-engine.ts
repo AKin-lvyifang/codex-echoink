@@ -24,7 +24,7 @@ import { normalizeDreamUserProfileItems, userProfileMemoryEligible } from "./dre
  *     rounds are not re-paid every 60s.
  */
 
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import {
   SECONDARY_CONTENT_MAX_CHARS,
   SECONDARY_EVIDENCE_MAX_CHARS,
@@ -90,6 +90,8 @@ import {
   memorySourceGroup,
   productRunIdFromExperienceProfileSourceId
 } from "./dream-source-group";
+
+const { createHash } = getDesktopCrypto();
 
 // ---------------------------------------------------------------------------
 // Ports

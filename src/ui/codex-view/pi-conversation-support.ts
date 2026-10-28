@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
 import type CodexForObsidianPlugin from "../../main";
 import type {
   PiChatPreparedDocument,
@@ -18,6 +18,8 @@ import {
   type StoredSession
 } from "../../settings/settings";
 import { attachmentDisplayName } from "./attachment-resource";
+
+const { existsSync } = getDesktopFs();
 
 interface PiConversationUiState {
   readonly supportByConversation: Map<string, PiConversationSupportState>;

@@ -1,5 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { EchoInkMcpConnectionConfig, EchoInkResource } from "./types";
 import {
   initializeVaultResourceStore,
@@ -11,6 +12,9 @@ import {
   vaultResourceLayout
 } from "../harness/resources/vault-store";
 import { resourceRefToUri } from "../harness/resources/resource-ref";
+
+const { mkdir, readFile, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface LoadVaultEchoInkResourcesInput {
   vaultPath: string;

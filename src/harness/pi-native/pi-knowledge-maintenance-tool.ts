@@ -3,7 +3,7 @@ import type { MaintenanceP1Action } from "../../knowledge-base/maintenance-p1-co
 import { throwMaintenanceDiagnostics } from "../../knowledge-base/maintenance-diagnostics";
 import { knowledgePathRole } from "../../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import {
   defineTool,
   type AgentToolResult,
@@ -27,6 +27,8 @@ import {
 import { MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from "../../knowledge-base/knowledge-maintenance-protocol";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
 import type { KnowledgeMaintenanceAssessment } from "../../knowledge-base/knowledge-maintenance-result";
+
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_KNOWLEDGE_MAINTAIN_TOOL_ID = "knowledge_maintain" as const;
 

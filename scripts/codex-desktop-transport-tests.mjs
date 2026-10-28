@@ -45,7 +45,7 @@ const browserFetch = () => {
 };
 const requireHost = name => {
   if (name === "electron") return { remote: { net: { request: options => nativeRequestFactory(options) } } };
-  if (name === "obsidian") return { Platform: { isDesktopApp: true } };
+  if (name === "obsidian") return { Platform: { isDesktop: true, isDesktopApp: true } };
   assert.ok(isBuiltin(name), `unexpected external dependency: ${name}`);
   return localRequire(name);
 };

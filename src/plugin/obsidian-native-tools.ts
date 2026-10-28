@@ -1,7 +1,8 @@
 import type { App } from "obsidian";
-import * as path from "node:path";
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopPath } from "../platform/desktop-paths";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+
 import { readNativeJournalContext, nativeJournalPathForDate, readNativeJournalSettings } from "../home/native-journal";
 import { normalizeObsidianCliRequest, type ObsidianNativePort, type PreparedObsidianOperation, type ObsidianCliResult } from "../harness/pi-native/pi-obsidian-tools";
 import { obsidianCliArgv, obsidianCliEffect } from "../harness/pi-native/obsidian-cli-policy";
@@ -17,6 +18,11 @@ import { financeConversationPort } from "../lifestyle/finance-conversation-port"
 import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
 import { getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const path = getDesktopPath();
 
 export interface ObsidianNativeOptions {
   knowledgeBindings?: () => import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;

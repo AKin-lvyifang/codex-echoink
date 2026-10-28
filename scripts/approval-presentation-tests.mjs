@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
@@ -16,7 +17,7 @@ if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`
 const run = await mkdtemp(path.join(fixture, ".approval-presentation-"));
 try {
   const outfile = path.join(run, "approval-presentation-tests.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import { runApprovalPresentationTests } from "./src/tests/approval-presentation"; await runApprovalPresentationTests();', resolveDir: root, loader: "ts" },
     bundle: true, platform: "node", format: "esm", target: "node22", outfile, logLevel: "silent",
     loader: { ".md": "text", ".svg": "text", ".txt": "text" },

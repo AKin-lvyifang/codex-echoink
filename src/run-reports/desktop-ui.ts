@@ -1,5 +1,5 @@
 import { Modal, Notice, type App } from "obsidian";
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import type { AccountService } from "../membership/account-service";
 import { showItemInFinder } from "../core/electron";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
@@ -7,6 +7,8 @@ import { createRunReportForm } from "./form";
 import type { ReportSnapshot } from "./report";
 import { saveRunReport } from "./vault-export";
 import { uploadRunReport } from "./upload";
+
+const path = getDesktopPath();
 
 export async function exportDesktopRunReport(app: App, vaultPath: string, snapshot: ReportSnapshot, english = false): Promise<void> {
   const file = await saveRunReport(app, snapshot);

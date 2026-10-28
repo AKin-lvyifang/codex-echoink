@@ -1,10 +1,12 @@
-import { createHash, randomBytes } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import {
   TARGET_IDENTITY_DIGEST_PATTERN,
   canonicalizeProviderEndpoint,
   jcsCanonicalize,
   type ProviderTransport
 } from "./provider-target-identity";
+
+const { createHash, randomBytes } = getDesktopCrypto();
 
 export const ECHOINK_CREDENTIAL_OWNER_NAMESPACE = "codex-echoink" as const;
 export const DEVICE_CREDENTIAL_REGISTRY_SCHEMA_VERSION = 1 as const;

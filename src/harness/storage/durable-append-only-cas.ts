@@ -1,7 +1,14 @@
-import { randomUUID } from "node:crypto";
-import { constants as fsConstants, type Stats } from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
+const { randomUUID } = getDesktopCrypto();
+
+
+
+const { constants: fsConstants } = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 const SAFE_COMPONENT = /^[a-zA-Z0-9.][a-zA-Z0-9._-]{0,127}$/;
@@ -408,7 +415,7 @@ export async function readDurableRegularFile(
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new DurableAppendOnlyCasError("invalid_path", "read maxBytes 非法");
   }
-  let handle: fsp.FileHandle;
+  let handle: import("node:fs/promises").FileHandle;
   try {
     handle = await fsp.open(
       absolutePath,
@@ -463,7 +470,7 @@ export async function writeDurableNewFile(
   }
   const parentPath = path.dirname(absolutePath);
   const parentIdentity = await requireSafeDirectory(parentPath, "new file parent");
-  let handle: fsp.FileHandle;
+  let handle: import("node:fs/promises").FileHandle;
   try {
     handle = await fsp.open(
       absolutePath,
@@ -577,7 +584,7 @@ export async function assertDirectoryIdentity(
   }
 }
 
-export function assertDurableDirectoryStat(stat: Stats, label: string): void {
+export function assertDurableDirectoryStat(stat: import("node:fs").Stats, label: string): void {
   if (!stat.isDirectory() || stat.isSymbolicLink()) {
     throw new DurableAppendOnlyCasError(
       "unsafe_entry",
@@ -587,7 +594,7 @@ export function assertDurableDirectoryStat(stat: Stats, label: string): void {
 }
 
 export function assertDurableRegularFileStat(
-  stat: Stats,
+  stat: import("node:fs").Stats,
   label: string,
   allowedLinkCounts: readonly number[] = [1]
 ): void {
@@ -650,7 +657,7 @@ function hasUnsafeControlCharacter(value: string): boolean {
 }
 
 export async function syncDurableDirectory(directoryPath: string): Promise<void> {
-  let handle: fsp.FileHandle | undefined;
+  let handle: import("node:fs/promises").FileHandle | undefined;
   try {
     handle = await fsp.open(directoryPath, "r");
     await handle.sync();
@@ -669,7 +676,7 @@ export async function syncDurableDirectory(directoryPath: string): Promise<void>
 
 export async function durableLstatOrNull(
   absolutePath: string
-): Promise<Stats | null> {
+): Promise<import("node:fs").Stats | null> {
   return await fsp.lstat(absolutePath).catch((error) => {
     if (isNotFound(error)) return null;
     throw error;
@@ -822,7 +829,7 @@ async function removeDurableStagingTree(absolutePath: string): Promise<void> {
   await fsp.rmdir(absolutePath);
 }
 
-function fileSnapshot(stat: Stats): DurableFileSnapshot {
+function fileSnapshot(stat: import("node:fs").Stats): DurableFileSnapshot {
   return {
     dev: Number(stat.dev),
     ino: Number(stat.ino),
@@ -834,7 +841,7 @@ function fileSnapshot(stat: Stats): DurableFileSnapshot {
   };
 }
 
-function sameOpenFileVersion(left: Stats, right: Stats): boolean {
+function sameOpenFileVersion(left: import("node:fs").Stats, right: import("node:fs").Stats): boolean {
   return left.dev === right.dev
     && left.ino === right.ino
     && left.size === right.size

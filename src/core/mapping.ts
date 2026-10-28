@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import * as os from "os";
-import * as path from "path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopOs, getDesktopPath } from "../platform/desktop-paths";
+
 import type {
   PermissionMode,
   ProcessEventSummary,
@@ -15,6 +15,11 @@ import type { PiContextLedger } from "../harness/pi-native/pi-context-budget";
 import type { StoredAttachment } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
 import { normalizeSlashes } from "./path-utils";
+
+const { createHash } = getDesktopCrypto();
+
+const os = getDesktopOs();
+const path = getDesktopPath();
 
 export const DEFAULT_REPLY_STYLE_INSTRUCTION =
   "回复格式要求：使用中文；先给结论，再给关键依据；短段落；能用列表就用列表；对比、取舍、验收项优先用 Markdown 表格；避免整段长文。";

@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import { build } from "esbuild";
 import { mkdtemp, rm, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
@@ -13,7 +14,7 @@ if (!fixture.startsWith(allowed + sep)) throw new Error("Use disposable test Vau
 const output = await mkdtemp(join(fixture, "usage-"));
 try {
   const outfile = join(output, "tests.mjs");
-  await build({ absWorkingDir: root, entryPoints: ["src/tests/usage-accounting.ts"], outfile,
+  await build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases, absWorkingDir: root, entryPoints: ["src/tests/usage-accounting.ts"], outfile,
     bundle: true, format: "esm", platform: "node", target: "node22", logLevel: "silent", plugins: [{name: "package-location", setup(b) {
       b.onResolve({filter: /^[^./]/}, args => {const target=import.meta.resolve(args.path);return {path:target.startsWith("node:")?target:fileURLToPath(target),external:true};});
     }}] });

@@ -1,6 +1,7 @@
 import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { TFile, TFolder, type EventRef } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
@@ -18,6 +19,9 @@ import { journalContentLines, readWorkbenchJournalDay, recordWorkbenchJournalTem
 import { calculateWorkbenchSignals, nextWorkbenchRefreshAt, type WorkbenchFacts, type WorkbenchSourceFile } from "./workbench-signals";
 import { getWorkbenchRecordStore, localWorkbenchDate, validWorkbenchDate, workbenchFingerprint, workbenchWeekKey, type WorkbenchRecordStore, type WorkbenchRecords } from "./workbench-records";
 import type { WorkbenchDataPort, WorkbenchSnapshot, WorkbenchTaskSource } from "./workbench-types";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest" | "accountService" | "lifestyle" | "pdfReading" | "getVaultPath" | "getPluginDataDirName" | "listPiConversations" | "readPiConversationCatalogEntry" | "getKnowledgeSurfaceService"> & {
   getKnowledgeActivitySource?(): KnowledgeActivitySource | undefined;

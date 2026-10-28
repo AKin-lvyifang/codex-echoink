@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -13,7 +14,7 @@ if (!requested.startsWith(allowed + path.sep)) throw new Error("Capability fixtu
 const run = await mkdtemp(path.join(requested, "capabilities-run-"));
 try {
   const outfile = path.join(run, "agent-capabilities-tests.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import { runAgentCapabilitiesTests } from "./src/tests/agent-capabilities"; await runAgentCapabilitiesTests(process.env.ECHOINK_AGENT_CAPABILITIES_FIXTURE_ROOT);', resolveDir: root, loader: "ts" },
     bundle: true, platform: "node", format: "esm", target: "node22", outfile, logLevel: "silent",
     loader: { ".md": "text", ".svg": "text", ".txt": "text" },

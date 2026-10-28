@@ -1,21 +1,20 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  realpath,
-  rename,
-  unlink
-} from "node:fs/promises";
-import * as path from "node:path";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { serializePiNativeFileWrite } from "../harness/pi-native/file-store-utils";
 import { MAINTENANCE_KNOWLEDGE_TYPES, MAINTENANCE_QUOTE_HARD_RULE } from "./maintenance-knowledge-types";
 import {
   ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES,
   ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES
 } from "../core/knowledge-preferences-default";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const { lstat, mkdir, open, readFile, realpath, rename, unlink } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export {
   ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES,

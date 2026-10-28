@@ -1,4 +1,4 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { Annotation, StateEffect, StateField, Transaction, type EditorState } from "@codemirror/state";
 import { isolateHistory } from "@codemirror/commands";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
@@ -17,6 +17,8 @@ import { InlineAgentRuntimeController } from "./orchestrator";
 import { FileInlineRepository } from "./store";
 import { InlineRequestService, type InlineEditorPort } from "./service";
 import type { InlineProposalInput, InlineRequest, TextSpan } from "./types";
+
+const path = getDesktopPath();
 
 export const inlineSystemEdit = Annotation.define<string>();
 const redraw = StateEffect.define<null>();

@@ -43,7 +43,7 @@ class NativeRequest extends EventEmitter {
 }
 const requireHost = name => {
   if (name === "electron") return { remote: { net: { request: options => { const r = new NativeRequest(options); requests.push(r); return r; } }, getCurrentWebContents: () => ({ session }) } };
-  if (name === "obsidian") return { Platform: { isDesktopApp: true } };
+  if (name === "obsidian") return { Platform: { isDesktop: true, isDesktopApp: true } };
   assert.ok(isBuiltin(name), `unexpected external ${name}`); return requireLocal(name);
 };
 const module = { exports: {} };

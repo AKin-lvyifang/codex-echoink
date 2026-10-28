@@ -1,15 +1,19 @@
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { isMissingPathError, swallowError } from "../core/error-handling";
+
+const fs = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 export { isMissingPathError };
 export { normalizeSlashes } from "../core/path-utils";
 
 export interface WalkFilesOptions {
   maxFiles?: number;
-  shouldSkipEntry?: (entry: fs.Dirent, absolutePath: string) => boolean;
-  shouldIncludeFile?: (entry: fs.Dirent, absolutePath: string) => boolean;
-  onDirectory?: (entry: fs.Dirent, absolutePath: string) => void | Promise<void>;
+  shouldSkipEntry?: (entry: import("node:fs").Dirent, absolutePath: string) => boolean;
+  shouldIncludeFile?: (entry: import("node:fs").Dirent, absolutePath: string) => boolean;
+  onDirectory?: (entry: import("node:fs").Dirent, absolutePath: string) => void | Promise<void>;
   onReadDirError?: (error: unknown, absolutePath: string) => void | Promise<void>;
 }
 
@@ -56,7 +60,7 @@ export async function walkFiles(dir: string, options: WalkFilesOptions = {}): Pr
   const result: string[] = [];
   async function walk(current: string): Promise<void> {
     if (options.maxFiles !== undefined && result.length >= options.maxFiles) return;
-    let entries: fs.Dirent[];
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await fsp.readdir(current, { withFileTypes: true });
     } catch (error) {

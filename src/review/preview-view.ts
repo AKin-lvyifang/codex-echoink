@@ -1,9 +1,13 @@
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { ItemView, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { isReviewHtmlPath } from "./schedule";
 import { attachNativeTooltip } from "../ui/native-tooltip";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const VIEW_TYPE_REVIEW_PREVIEW = "codex-review-preview";
 

@@ -1,7 +1,11 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { writeFileAtomic } from "./utils";
 import type { KnowledgeLinkingTask } from "./knowledge-linking-types";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 /** Private plugin state; never creates a visible Knowledge report or tracker. */
 export class KnowledgeLinkingStateStore {

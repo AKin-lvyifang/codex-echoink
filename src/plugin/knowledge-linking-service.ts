@@ -1,8 +1,10 @@
 import { backgroundMaintenancePageWrite } from "../knowledge-base/maintenance-page-lock";
-import { createHash, randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { buildKnowledgeLinkingTargets, scanKnowledgeLinkingMentions, buildKnowledgeLinkingPatch, selectKnowledgeLinkingMentions } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask, KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
+
+const { createHash, randomUUID } = getDesktopCrypto();
 
 export interface KnowledgeLinkingHost {
   readonly vaultRootPath?: string;

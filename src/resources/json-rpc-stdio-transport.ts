@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { getDesktopChildProcess } from "../platform/desktop-process";
+
+const { spawn } = getDesktopChildProcess();
 
 export interface JsonRpcMessage {
   id?: number | string;

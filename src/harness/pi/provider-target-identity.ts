@@ -1,6 +1,12 @@
-import { createHash } from "node:crypto";
-import { isIP } from "node:net";
-import { domainToASCII } from "node:url";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopNet } from "../../platform/desktop-network";
+
+import { getDesktopUrl } from "../../platform/desktop-paths";
+
+const { createHash } = getDesktopCrypto();
+const { isIP } = getDesktopNet();
+
+const { domainToASCII } = getDesktopUrl();
 
 const TARGET_IDENTITY_PREFIX = "echoink-target-identity-v1\0";
 const PATH_SCOPE_PREFIX = "echoink-path-scope-v1\0";

@@ -1,5 +1,6 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import {
   createExtensionRuntime,
   createSyntheticSourceInfo,
@@ -16,6 +17,9 @@ import {
   type ToolDefinition
 } from "@earendil-works/pi-coding-agent";
 import { PI_VAULT_TOOL_IDS } from "./pi-vault-tool-contracts";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const RESERVED_PI_BUILTIN_TOOL_NAMES = new Set([
   "bash",

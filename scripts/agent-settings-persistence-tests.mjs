@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import assert from 'node:assert/strict';
 import {readFile, realpath, mkdtemp, rm} from 'node:fs/promises';
 import {pathToFileURL, fileURLToPath} from 'node:url';
@@ -16,7 +17,7 @@ try {
  const names=['agentRegistryWriteTail','agentRegistryListeners','writeAgentRegistry','onAgentRegistryChanged','saveAgentDefinition','setAgentModuleOwner'];
  const code=names.map(name=>cls.members.find(m=>m.name?.getText(source)===name).getText(source)).join('\n');
  const output=path.join(run,'test.mjs');
- await esbuild.build({stdin:{contents:`import {normalizeAgentRegistry,setModuleOwner} from './src/agents/registry'; import {AGENT_MODULE_IDS,GENERAL_ASSISTANT_ID} from './src/agents/types'; export class Host { constructor(){this.settings={agentRegistry:normalizeAgentRegistry(null)}; this.disk=null;this.saveCount=0;this.fail=false;} getCodexView(){return null;} async saveSettings(immediate){if(!immediate)throw Error('not durable');this.saveCount++; if(this.gate){const g=this.gate;this.gate=null;await g;}if(this.fail){this.fail=false;throw Error('disk failed');}this.disk=structuredClone(this.settings.agentRegistry);} ${code} }`,resolveDir:root,loader:'ts'},outfile:output,bundle:true,platform:'node',format:'esm',logLevel:'silent'});
+ await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,stdin:{contents:`import {normalizeAgentRegistry,setModuleOwner} from './src/agents/registry'; import {AGENT_MODULE_IDS,GENERAL_ASSISTANT_ID} from './src/agents/types'; export class Host { constructor(){this.settings={agentRegistry:normalizeAgentRegistry(null)}; this.disk=null;this.saveCount=0;this.fail=false;} getCodexView(){return null;} async saveSettings(immediate){if(!immediate)throw Error('not durable');this.saveCount++; if(this.gate){const g=this.gate;this.gate=null;await g;}if(this.fail){this.fail=false;throw Error('disk failed');}this.disk=structuredClone(this.settings.agentRegistry);} ${code} }`,resolveDir:root,loader:'ts'},outfile:output,bundle:true,platform:'node',format:'esm',logLevel:'silent'});
  const {Host}=await import(pathToFileURL(output).href); const h=new Host();let notices=0;h.onAgentRegistryChanged(()=>notices++);
  const first={id:'fixture-one',name:'First',avatar:{kind:'default'},position:'Research',styleId:'analysis',capabilityIds:['knowledge']};
  const second={...first,id:'fixture-two',name:'Second'};

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type {
   EchoInkMcpConnectionConfig,
   EchoInkMcpConnectionRecord,
@@ -12,6 +12,8 @@ import type {
   EchoInkResource,
   EchoInkResourceSettings
 } from "./types";
+
+const { createHash } = getDesktopCrypto();
 
 export type EchoInkMcpConnectionStatus =
   | "not-mcp"

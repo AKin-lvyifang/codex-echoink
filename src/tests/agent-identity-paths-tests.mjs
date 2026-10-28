@@ -201,6 +201,8 @@ for (const windowsPaths of [false, true]) {
     platform: "node",
     target: "node22",
     format: "esm",
+    banner: { js: `import { createRequire as createIdentityTestRequire } from "node:module"; const require = createIdentityTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
+    alias: { obsidian: path.join(rootDir, "src/tests/obsidian-shim.ts") },
     outfile: outputFile,
     logLevel: "silent",
     plugins: [{
@@ -210,25 +212,23 @@ for (const windowsPaths of [false, true]) {
           path: "repository-path", namespace: "identity-path-test"
         }));
         build.onResolve({ filter: /^node:path$/ }, (args) =>
-          args.importer.replaceAll("\\", "/").endsWith("/harness/memory/personal-memory-repository.ts")
+          args.importer.replaceAll("\\", "/").endsWith("/platform/desktop-paths.ts")
             ? { path: "repository-path", namespace: "identity-path-test" }
             : undefined);
         build.onLoad({ filter: /.*/, namespace: "identity-path-test" }, () => ({
           contents: String.raw`
 import native from "node:path";
+export * from "node:path";
 let windows = false;
-export function setWindowsPaths(value) { windows = value; }
-export default {
-  ...native,
-  get sep() { return windows ? "\\" : native.sep; },
-  relative(from, to) {
+export let sep = native.sep;
+export function setWindowsPaths(value) { windows = value; sep = windows ? "\\" : native.sep; }
+export function relative(from, to) {
     const relative = native.relative(from, to);
     return windows ? relative.split(native.sep).join("\\") : relative;
-  },
-  resolve(...parts) {
+}
+export function resolve(...parts) {
     return native.resolve(...(windows ? parts.map((part) => part.replaceAll("\\", native.sep)) : parts));
-  }
-};`,
+}`,
           loader: "js"
         }));
       }

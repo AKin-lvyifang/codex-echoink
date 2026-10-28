@@ -1,5 +1,7 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import type { KnowledgeAnchorLocation } from "./search/contracts";
+
+const path = getDesktopPath();
 
 /** Text-authored hints, never programmatic claims that two facts agree. */
 export interface KnowledgeApplicability {

@@ -1,20 +1,9 @@
 import { renderCanonicalMemoryExport, serializeCanonicalMemoryRecord, parseCanonicalMemoryRecord, CanonicalMemoryFormatError, PersonalMemoryIdentityMismatchError, parseCanonicalMemoryManifest } from "./personal-memory-core";
 import { renderPersonalMemoryOverview as renderOverview } from "./mobile-profile-protocol";
-import { createHash, randomUUID } from "node:crypto";
-import { watch, type FSWatcher, type Stats } from "node:fs";
-import {
-  copyFile,
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  realpath,
-  rename,
-  rm,
-  unlink,
-  writeFile
-} from "node:fs/promises";
-import path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import {
   PERSONAL_MEMORY_SCHEMA,
   type PersonalMemoryBasis,
@@ -74,6 +63,12 @@ import {
   productRunIdFromExperienceProfileSourceId,
   productRunIdFromMemorySource
 } from "./dream-source-group";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const { watch } = getDesktopFs();
+const { copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, unlink, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const MAX_OVERVIEW_CHARS = 20_000;
 const MAX_RECORD_CONTENT_CHARS = 24_000;
@@ -331,7 +326,7 @@ export class PersonalMemoryRepository {
   private fixedContextCache: Readonly<{ agent: string; user: string; memory: string }> | null = null;
   private sourceDirectoryRefreshPending = false;
   private sourceDirectoryRefreshRunning: Promise<void> | null = null;
-  private readonly externalWatchers: FSWatcher[] = [];
+  private readonly externalWatchers: import("node:fs").FSWatcher[] = [];
   private readonly internalWatchExpectations = new Map<
     string,
     Readonly<{ hash: string | null; until: number }>
@@ -4155,7 +4150,7 @@ function compareText(left: string, right: string): number {
 }
 
 export interface ManagedTreeNodeSafetyFileSystem {
-  readonly lstat: (target: string) => Promise<Stats>;
+  readonly lstat: (target: string) => Promise<import("node:fs").Stats>;
   readonly realpath: (target: string) => Promise<string>;
 }
 
@@ -4180,11 +4175,11 @@ export async function inspectManagedTreeNodeSafety(
   target: string,
   vaultRealPath: string,
   options: ManagedTreeNodeSafetyOptions = {}
-): Promise<Stats | null> {
+): Promise<import("node:fs").Stats | null> {
   const fileSystem = options.fileSystem ?? MANAGED_TREE_NODE_SAFETY_FILE_SYSTEM;
   const allowMissing = options.allowMissing ?? false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    let stat: Stats;
+    let stat: import("node:fs").Stats;
     try {
       stat = await fileSystem.lstat(target);
     } catch (error) {

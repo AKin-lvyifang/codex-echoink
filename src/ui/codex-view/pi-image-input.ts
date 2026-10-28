@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import {
   convertToPng,
   resizeImage
@@ -11,6 +11,8 @@ import type {
 import type { PiChatPreparedImage } from "../../harness/pi-native/contracts";
 import type { StoredAttachment } from "../../settings/settings";
 import { attachmentDisplayName } from "./attachment-resource";
+
+const { readFile } = getDesktopFsPromises();
 
 const DIRECT_IMAGE_MIME_TYPES = new Set<PiInlineImageMimeType>([
   "image/png",

@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ try {
   // the already-installed repository dependencies, reached through this temp link.
   await symlink(path.join(rootDir, "node_modules"), path.join(outputDir, "node_modules"), "dir");
   const outputFile = path.join(outputDir, "knowledge-linking.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: {
       contents: 'import { runKnowledgeLinkingTests } from "./src/tests/knowledge-linking";\nimport { runKnowledgeLinkingProductionTests } from "./src/tests/knowledge-linking-production";\nimport { runKnowledgeLinkingProgressTests } from "./src/tests/knowledge-linking-progress";\nimport { runKnowledgeFolderSettingsTests } from "./src/tests/knowledge-folder-settings";\nawait runKnowledgeLinkingTests();\nawait runKnowledgeLinkingProductionTests();\nawait runKnowledgeLinkingProgressTests();\nawait runKnowledgeFolderSettingsTests();',
       resolveDir: rootDir, sourcefile: "knowledge-linking-entry.ts", loader: "ts"

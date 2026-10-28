@@ -1,9 +1,9 @@
-import { constants as fsConstants } from "node:fs";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
 import { resolveKnowledgePath } from "./root-paths";
 import { knowledgeCollectionDirectory } from "./folder-bindings";
-import * as fsp from "fs/promises";
-import * as path from "path";
+
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
@@ -17,6 +17,10 @@ import {
   sanitizeWebCaptureFileName,
   stripCollectPrefix
 } from "./web-capture";
+
+const { constants: fsConstants } = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
 

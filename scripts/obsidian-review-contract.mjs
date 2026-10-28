@@ -49,6 +49,7 @@ export const SOURCE_HARD_RULES = {
   "obsidianmd/prefer-window-timers": [2],
   "obsidianmd/prefer-instanceof": [2],
   "obsidianmd/object-assign": [2],
+  "obsidianmd/no-nodejs-modules": [2],
   "eslint-comments/no-unlimited-disable": [2],
   "eslint-comments/require-description": [2],
   "eslint-comments/disable-enable-pair": [2, { allowWholeFile: false }],
@@ -173,9 +174,6 @@ export const SOURCE_WARNING_RULES = {
     1
   ],
   "obsidianmd/no-global-this": [
-    1
-  ],
-  "obsidianmd/no-nodejs-modules": [
     1
   ],
   "obsidianmd/no-tfile-tfolder-cast": [
@@ -446,6 +444,24 @@ export {};`,
     { name: "unsafe call", file: sourcePath,
       source: 'declare const value: any; value(); export {};',
       expected: ["@typescript-eslint/no-unsafe-call"] },
+    { name: "Node loads require desktop protection", file: sourcePath,
+      source: `import { Platform } from "obsidian";
+import fs from "node:fs"; import type { Stats } from "node:fs";
+declare const require: (id: string) => unknown;
+require("node:path"); void import("node:os");
+if (Platform.isMobileApp) require("node:child_process");
+if (!Platform.isDesktop) require("node:net");
+Platform.isDesktop ? undefined : require("node:crypto");
+void fs; export type { Stats };`,
+      expected: ["obsidianmd/no-nodejs-modules"], minimumByRule: { "obsidianmd/no-nodejs-modules": 7 } },
+    { name: "guarded desktop Node loads", file: sourcePath,
+      source: `import { Platform } from "obsidian";
+declare const require: (id: string) => unknown;
+export function desktopFs() { if (!Platform.isDesktop) throw new Error("desktop only"); return require("node:fs"); }
+if (Platform.isDesktop) { require("node:path"); void import("node:os"); }
+const crypto = Platform.isDesktop ? require("node:crypto") : undefined;
+void crypto; void (Platform.isDesktop && import("node:util"));`,
+      expected: [], forbidden: ["obsidianmd/no-nodejs-modules"] },
     { name: "misused async callback", file: sourcePath,
       source: 'const handler: () => void = async () => {}; void handler; export {};',
       expected: ["@typescript-eslint/no-misused-promises"] },
@@ -474,6 +490,8 @@ export {};`,
     if (!result) { errors.push(`${probe.name}: no lint result.`); continue; }
     const reported = result.messages.filter(message => message.severity === 2);
     for (const rule of probe.expected) if (!reported.some(message => message.ruleId === rule && !message.fatal)) errors.push(`${probe.name}: ${rule} did not reject the bad sample at error severity.`);
+    for (const [rule, minimum] of Object.entries(probe.minimumByRule ?? {})) if (reported.filter(message => message.ruleId === rule).length < minimum) errors.push(`${probe.name}: ${rule} did not reject every bad import form.`);
+    for (const rule of probe.forbidden ?? []) if (result.messages.some(message => message.ruleId === rule)) errors.push(`${probe.name}: ${rule} rejected a correctly guarded load.`);
     if (probe.minimumErrors && reported.filter(message => message.ruleId === "depend/ban-dependencies").length < probe.minimumErrors) errors.push(`${probe.name}: all three dependency presets must reject their sample.`);
     if (probe.fatal && !result.messages.some(message => message.fatal && message.severity === 2)) errors.push(`${probe.name}: parsing did not fail.`);
     if (probe.suppressed && !collectFindings(rootDir, [{ ...result, source: probe.source }]).some(finding => finding.suppressed && finding.rule === probe.suppressed && isHardFinding(finding))) errors.push(`${probe.name}: suppressed hard finding was lost.`);

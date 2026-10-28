@@ -3,15 +3,21 @@ import { locateKnowledgeAnchor } from "./search/markdown-navigation";
 import type { KnowledgeAnchorLocation } from "./search/contracts";
 import { knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, getKnowledgeFolderBindings } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
-import { createHash } from "node:crypto";
-import { createReadStream, type Stats } from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { isMissingPathError, writeFileAtomic } from "./utils";
 import { readKnowledgeLinkingDocument } from "./knowledge-linking";
 import type { KnowledgeLinkingDocument } from "./knowledge-linking-types";
 import type { KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeBodySearchPort } from "./vault-body-search";
+
+const { createHash } = getDesktopCrypto();
+
+const { createReadStream } = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_AGENT_INDEX_FILE = "index-v1.json" as const;
@@ -717,7 +723,7 @@ async function buildCandidateEntry(
   file: Readonly<{
     absolutePath: string;
     vaultRelativePath: string;
-    stat: Stats;
+    stat: import("node:fs").Stats;
   }>,
   kind: KnowledgeAgentKind,
   vaultRoot = ""
@@ -758,7 +764,7 @@ async function walkKnowledgeRoot(
 ): Promise<Array<{
   absolutePath: string;
   vaultRelativePath: string;
-  stat: Stats;
+  stat: import("node:fs").Stats;
 }>> {
   const rootPath = path.join(vaultRoot, actualRoot);
   const rootStat = await fsp.lstat(rootPath).catch((error) => {
@@ -775,7 +781,7 @@ async function walkKnowledgeRoot(
   const files: Array<{
     absolutePath: string;
     vaultRelativePath: string;
-    stat: Stats;
+    stat: import("node:fs").Stats;
   }> = [];
   const walk = async (directoryPath: string): Promise<void> => {
     const entries = await fsp.readdir(directoryPath, { withFileTypes: true });
@@ -1260,7 +1266,7 @@ function sameEntry(
 
 function metadataMatches(
   entry: StoredKnowledgeEntry,
-  stat: Stats
+  stat: import("node:fs").Stats
 ): boolean {
   return entry.size === stat.size
     && Math.abs(entry.mtimeMs - stat.mtimeMs) < 1

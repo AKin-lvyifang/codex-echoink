@@ -1,7 +1,7 @@
 import { knowledgeRootEntries, knowledgeRootRole } from "../knowledge-base/root-paths";
-import * as fsp from "fs/promises";
-import type { Dirent } from "fs";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { Notice, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
@@ -17,6 +17,9 @@ import {
 } from "./report";
 import { latestScheduledReviewRange, reviewRangeForMode, reviewRangeKey, shouldRunScheduledReview, type ReviewRange } from "./schedule";
 import { recordWorkbenchReviewSaved } from "../home/workbench-records";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface ReviewRunResult {
   status: "success" | "failed";
@@ -181,7 +184,7 @@ export class ReviewManager {
 
 async function readMaintenanceReportEntries(dir: string, relativeDir: string): Promise<Array<{ path: string }>> {
   const entries = await fsp.readdir(dir, { withFileTypes: true })
-    .catch((error): Dirent[] => emptyArrayOnMissingPathOrWarn("read review report entries")(error));
+    .catch((error): import("node:fs").Dirent[] => emptyArrayOnMissingPathOrWarn("read review report entries")(error));
   return entries
     .filter((entry) => entry.isFile() && /^kb-maintenance-\d{4}-\d{2}-\d{2}\.md$/.test(entry.name))
     .map((entry) => ({ path: `${relativeDir}/${entry.name}` }));

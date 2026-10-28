@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
+import { getDesktopUrl } from "../../platform/desktop-paths";
+
 import {
   normalizePath,
   Platform,
@@ -8,6 +9,9 @@ import {
 } from "obsidian";
 import type { SettingsLanguage, StoredAttachment } from "../../settings/settings";
 import { conversationUiText } from "./ui-i18n";
+
+const { existsSync } = getDesktopFs();
+const { fileURLToPath } = getDesktopUrl();
 
 export type EchoInkAttachmentAvailability = "available" | "unavailable";
 

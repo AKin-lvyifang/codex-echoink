@@ -26,18 +26,11 @@ import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isKnowledgeMainten
 import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
-import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import {
-  lstat,
-  mkdir,
-  open,
-  readFile,
-  readdir,
-  realpath
-} from "node:fs/promises";
-import * as path from "node:path";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type {
   PiKnowledgeMaintenanceToolInput,
   PiKnowledgeMaintenanceToolPort,
@@ -77,6 +70,13 @@ import {
   parseKnowledgeMaintenanceResultEnvelope
 } from "../knowledge-base/knowledge-maintenance-result";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const { constants: fsConstants } = getDesktopFs();
+const { lstat, mkdir, open, readFile, readdir, realpath } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const LINKING_BACKGROUND_RECEIPT = "正文已写入并回读；本批正文的首次提及链接和老笔记反向关联由后台任务统一完成。关联仍可能进行中，不要为补链接反复调用 knowledge_maintain 或重写正文；不要把正文写入成功说成关联已完成。";

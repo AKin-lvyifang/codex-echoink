@@ -1,5 +1,8 @@
-import * as os from "os";
-import * as path from "path";
+import { getDesktopOs, getDesktopPath } from "../platform/desktop-paths";
+
+
+const os = getDesktopOs();
+const path = getDesktopPath();
 
 export function expandHome(value: string, home = os.homedir()): string {
   if (value === "~") return home;

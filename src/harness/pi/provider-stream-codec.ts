@@ -1,4 +1,4 @@
-import { Buffer } from "node:buffer";
+import { getDesktopBuffer } from "../../platform/desktop-runtime";
 import {
   parseStreamingJson,
   type Api,
@@ -17,6 +17,8 @@ import { transformMessages } from "@earendil-works/pi-ai/api/transform-messages"
 import type {
   ControlledPiStreamInput
 } from "./production-pi-model-resolver";
+
+const { Buffer } = getDesktopBuffer();
 
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 

@@ -1,9 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 import { ChangeSet, type ChangeDesc } from "@codemirror/state";
 import { anchorAt, applyChanges, cleanDocument, commitChanges, intersects, locateInstruction, locateTarget, mapAnchor, markerFor, markerPattern, touchesInterior } from "./document";
 import { validNotePath, type InlineRepository } from "./store";
 import type { InlineChange, InlineContext, InlineModelSelection, InlineProposalInput, InlineRequest, InlineTarget, InlineTiming } from "./types";
+
+const { randomUUID } = getDesktopCrypto();
 
 export interface InlineEditorPort {
   read(): string;

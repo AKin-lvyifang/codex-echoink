@@ -1,9 +1,15 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import { cognitiveAtomicWrite } from "../../harness/memory/cognitive-file-utils";
 import { parseSecondaryRecord } from "../../harness/memory/secondary-memory-store";
 import { parsePersonalMemoryRecord } from "../../harness/memory/personal-memory-repository";
+
+const { randomUUID } = getDesktopCrypto();
+
+const fs = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const FIXED = [
   "agents/echoink/AGENT.md", "agents/echoink/agent-self-meta.json",

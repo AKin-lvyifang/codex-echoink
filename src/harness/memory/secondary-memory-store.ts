@@ -12,8 +12,9 @@
  * - 活动值 < 0.1 的 llm_inferred 可自动禁用；user_edited_inference 永不自动禁用。
  */
 
-import { createHash } from "node:crypto";
-import path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopPath } from "../../platform/desktop-paths";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import {
   isSecondaryDisabledReason,
   SECONDARY_DECAY_FACTOR,
@@ -39,7 +40,12 @@ import {
   type SecondarySupportLevel
 } from "./personal-memory-contracts";
 import { cognitiveAtomicWrite, cognitivePathExists, newCognitiveId } from "./cognitive-file-utils";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+
+const { createHash } = getDesktopCrypto();
+
+
+const path = getDesktopPath();
+const { mkdir, readdir, readFile } = getDesktopFsPromises();
 
 const MS_PER_DAY = 86_400_000;
 const SAFE_SECONDARY_ID = /^[a-zA-Z0-9_-]{3,96}$/u;

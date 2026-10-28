@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "../../scripts/desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
 import os from "node:os";
@@ -21,7 +22,7 @@ const runtimeDependencyPlugin = { name: "runtime-test-dependencies", setup(build
 const outputFile = path.join(outputDir, "agent-self-tests.mjs");
 
 await mkdir(outputDir, { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: {
     contents: [
       'import { runAgentSelfMigrationScenarios } from "./src/tests/agent-self-migration";',

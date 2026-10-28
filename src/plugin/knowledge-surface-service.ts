@@ -18,9 +18,10 @@ import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base
 import { resolveKnowledgePath, knowledgeRootRole, rebaseKnowledgePath, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { InitializationDirectoryHistory, type DirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizePath, Notice, TFolder, type TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
@@ -72,6 +73,11 @@ export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
 
 export { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
 import { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 /** Current Knowledge dashboard and capture surfaces. Pi owns agent execution. */
 export class EchoInkKnowledgeSurfaceService {

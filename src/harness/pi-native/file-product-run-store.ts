@@ -2,9 +2,10 @@ import { parseMaintenanceInitialActivity } from "../../knowledge-base/maintenanc
 import { TASK_INTERRUPTION_REASONS, type TaskInterruptionRecord } from "../../agents/task-resume";
 import type { AgentRunSnapshot } from "../../agents/types";
 import { normalizePiWorkspacePermission } from "./pi-workspace-access";
-import { isDeepStrictEqual } from "node:util";
-import { readdir, stat } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type {
   PiConversationCatalogEntry,
   PiConversationMemoryMode,
@@ -30,6 +31,11 @@ import {
   stablePathToken,
   type PiNativeVaultFileLayout
 } from "./file-store-utils";
+
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const { readdir, stat } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const PRODUCT_RUN_STATES = new Set<PiProductRunState>([
   "accepted",

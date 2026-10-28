@@ -1,5 +1,6 @@
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { swallowError } from "../core/error-handling";
 import type {
   MaintenanceWorkflowFileCas,
@@ -15,6 +16,9 @@ import type {
   KnowledgeBaseSource
 } from "./types";
 import { formatDateForFile, pad } from "./utils";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const MAINTENANCE_FINAL_BLOCK_START = "<!-- echoink-maintenance-final:v1:start -->";
 const MAINTENANCE_FINAL_BLOCK_END = "<!-- echoink-maintenance-final:v1:end -->";

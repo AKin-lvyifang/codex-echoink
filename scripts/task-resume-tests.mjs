@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -45,7 +46,7 @@ try {
     'await runTaskResumeDurableStageTests(process.env.ECHOINK_P4_RUNTIME_TEST_ROOT,async(local,root)=>await new DurableStageHost(local,root).readTaskInterruption("task"));'
   ].join("\n");
   const restartContents = 'import {runTaskResumeRestartTests} from "./src/tests/task-resume-restart"; await runTaskResumeRestartTests(process.env.ECHOINK_P4_RUNTIME_TEST_ROOT,process.env.ECHOINK_P4_RESTART_PHASE);';
-  await esbuild.build({ stdin: { contents: restartOnly ? restartContents : stageOnly ? stageContents : [recoveryImports,
+  await esbuild.build({ banner: desktopNodeTestBanner, stdin: { contents: restartOnly ? restartContents : stageOnly ? stageContents : [recoveryImports,
     'import {runTaskResumeTests} from "./src/tests/task-resume";',
     'import {ConversationRunService} from "./src/plugin/conversation-run-service";',
     'import {latestTaskRun} from "./src/agents/task-resume";',

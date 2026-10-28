@@ -356,6 +356,7 @@ export function normalizePath(value: string): string {
 }
 
 export const Platform = {
+  isDesktop: true,
   isDesktopApp: false
 };
 

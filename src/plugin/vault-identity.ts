@@ -1,6 +1,7 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { atomicWriteJsonFile, serializePiNativeFileWrite } from "../harness/pi-native/file-store-utils";
 import { cognitiveAtomicWrite } from "../harness/memory/cognitive-file-utils";
 import { PersonalMemoryRepository } from "../harness/memory/personal-memory-repository";
@@ -8,6 +9,11 @@ import { parseCanonicalMemoryManifest } from "../harness/memory/personal-memory-
 import { MemoryDeveloperBackups } from "./developer-mode/memory-backups";
 import { preparePortableVaultData, type VaultMigrationIO } from "../storage/vault-data-migration";
 import { legacyPathVaultId, MEMORY_MANIFEST_FILE, parseVaultIdentity, VAULT_IDENTITY_FILE, type VaultIdentity } from "../storage/vault-identity";
+
+const { randomUUID } = getDesktopCrypto();
+
+const fs = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const PRODUCT = "pi-agent-product-v1", BACKUPS = "vault-identity-backups", JOURNAL = "active-change.json";
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";

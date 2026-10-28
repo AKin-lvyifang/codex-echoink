@@ -3,9 +3,9 @@ import { buildKnowledgeStructureHealth } from "./health-core";
 import { getKnowledgeFolderBindings, knowledgePrivateRoot, knowledgePathRole, knowledgeRoleStatus, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
 import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import { wikiCategoryLabel } from "./wiki-folder-names";
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
 import { rawDigestStateLabel } from "./digest-status";
@@ -14,6 +14,9 @@ import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecord
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus, KnowledgeBaseRunCompletion } from "./types";
 import { isMissingPathError, exists, normalizeSlashes, walkFiles } from "./utils";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -871,7 +874,7 @@ async function resolveLatestReportPath(vaultPath: string, configuredPath: string
 }
 
 async function countImmediateDirectories(root: string): Promise<number> {
-  const entries: fs.Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read dashboard report directory"));
+  const entries: import("node:fs").Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read dashboard report directory"));
   return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).length;
 }
 

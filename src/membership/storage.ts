@@ -1,12 +1,16 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import * as os from "node:os";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath, getDesktopOs } from "../platform/desktop-paths";
+
 import { decode, encode, deviceIdentity } from "./crypto";
 import type {
   DeviceIdentity,
   LocalAccountState,
   MembershipStorage,
 } from "./types";
+
+const fs = getDesktopFsPromises();
+const path = getDesktopPath();
+const os = getDesktopOs();
 interface SecretPort {
   getSecret(id: string): string | null;
   setSecret(id: string, value: string): void;

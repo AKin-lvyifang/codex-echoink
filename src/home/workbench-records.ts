@@ -1,11 +1,17 @@
 import { workbenchWeekKey, validWorkbenchDate } from "./workbench-source";
 export { localWorkbenchDate, workbenchWeekKey, validWorkbenchDate } from "./workbench-source";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { createHash } from "node:crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type { App } from "obsidian";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
 import type { WorkbenchTaskSource } from "./workbench-types";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const workbenchFingerprint = (value: string | Uint8Array): string => createHash("sha256").update(value).digest("hex");
 export interface JournalTemplateBaseline { fingerprint: string; lines: string[] }

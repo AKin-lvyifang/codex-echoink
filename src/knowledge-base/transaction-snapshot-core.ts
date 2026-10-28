@@ -1,11 +1,17 @@
-import { createHash } from "node:crypto";
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import { tmpdir } from "os";
-import * as path from "path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopOs, getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizePath } from "obsidian";
 import { swallowError } from "../core/error-handling";
 import { walkExistingEntries } from "./utils";
+
+const { createHash } = getDesktopCrypto();
+
+const fs = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const { tmpdir } = getDesktopOs();
+const path = getDesktopPath();
 
 export interface KnowledgeTransactionSnapshot {
   vaultPath: string;
@@ -38,7 +44,7 @@ export async function snapshotKnowledgeTransactionEntries(
   roots: string[],
   options: KnowledgeTransactionSnapshotOptions = {}
 ): Promise<KnowledgeTransactionSnapshot> {
-  const records: Array<{ absolutePath: string; relativePath: string; stat: fs.Stats }> = [];
+  const records: Array<{ absolutePath: string; relativePath: string; stat: import("node:fs").Stats }> = [];
   for (const root of roots) {
     const absolute = path.join(vaultPath, root);
     const paths = await walkExistingEntries(absolute);
@@ -105,7 +111,7 @@ export async function disposeKnowledgeTransactionSnapshot(snapshot: KnowledgeTra
 
 async function snapshotFileEntry(
   absolutePath: string,
-  stat: fs.Stats,
+  stat: import("node:fs").Stats,
   tempDir: string | undefined,
   tempFileIndex: number
 ): Promise<KnowledgeTransactionSnapshotEntry> {

@@ -1,10 +1,14 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { KnowledgeLinkHealth } from "../knowledge-base/link-health";
 import { knowledgePagePathStat, loadKnowledgeSourceHealth, type KnowledgeSourceHealth } from "../knowledge-base/source-health";
 import { mergeKnowledgeMaintenanceHistory } from "../knowledge-base/maintenance-history-core";
 import { aggregateKnowledgePageActivity, type KnowledgePageDirectory, type KnowledgePageDirectoryRole, type KnowledgePageDirectoryRoot, type PageFile, type KnowledgePageHost, type KnowledgePageSnapshot } from "./knowledge-page-core";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 export * from "./knowledge-page-core";
 
 interface DirectoryScan { directory: KnowledgePageDirectory; files: PageFile[]; }

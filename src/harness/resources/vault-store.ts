@@ -1,9 +1,13 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type { ResourceRef } from "../../resources/types";
 import { parseResourceUri, resourceRefToUri } from "./resource-ref";
 import { loadVaultSkill } from "./skill-loader";
 import { installBuiltinSkillFiles } from "./skill-runtime";
+
+const { mkdir, readdir, readFile, stat, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface VaultResourceManifest {
   version: 1;

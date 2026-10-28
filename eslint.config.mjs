@@ -48,6 +48,7 @@ export default defineConfig(
       "obsidianmd/prefer-window-timers": "error",
       "obsidianmd/prefer-instanceof": "error",
       "obsidianmd/object-assign": "error",
+      "obsidianmd/no-nodejs-modules": "error",
       "eslint-comments/no-restricted-disable": [
         "error",
         "obsidianmd/*",

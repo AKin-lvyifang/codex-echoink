@@ -1,17 +1,8 @@
 {
   "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production warnings",
-  "total": 734,
+  "total": 466,
   "findings": [
-    {
-      "fingerprint": "b95a6cdb515183e365043181940f6580f48f7e4850eb8a2f826d1f5d92c2b551",
-      "path": "src/agents/capability-policy.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
     {
       "fingerprint": "2058c942526f2a6e9eb04ac22baf0241eed9d1cd675768e13237f1b4d9ed77bb",
       "path": "src/agents/migration.ts",
@@ -31,48 +22,12 @@
       "count": 1
     },
     {
-      "fingerprint": "3109d0579badeb37550f793a9d10320abc2773f9acc65869ca3b9af88081eab5",
-      "path": "src/agents/migration.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "440b7a5b678a20f19458b76fa40c31f863540af321d24e48596159f8eca27013",
-      "path": "src/agents/migration.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "51a401892145ca2f24661103eadebac242ba7e892945d5713a56f4436b282805",
       "path": "src/core/clipboard-images.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "await writeFile(target, Buffer.from(await file.arrayBuffer()));",
-      "count": 1
-    },
-    {
-      "fingerprint": "5ccb46a8868af15d735277c36ba86bcd5b02cdcf893f850ae881a231314f0eb0",
-      "path": "src/core/clipboard-images.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "be1a9b510a0f61d094262e1502406b097d1bfe4d07f717e37de444b9e2aa10cc",
-      "path": "src/core/clipboard-images.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -100,78 +55,6 @@
       "severity": 1,
       "message": "'process' is not defined.",
       "context": "...(hasExactWritableRoots ? writableRootsOverride! : [vaultPath, os.tmpdir(), process.env.TMPDIR])",
-      "count": 1
-    },
-    {
-      "fingerprint": "369cc3e3f6833492e27d827a574ee5997a6ef30aae47dbc840e9658b0ed9492b",
-      "path": "src/core/mapping.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as os from \"os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4d128f9d36db6721cc29edffd5987ba7503b17f26dc9ce23960a5494f52414df",
-      "path": "src/core/mapping.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bb3821308f48fbe79160f73e5a82fd602368d7bc945be7ef4c8b9fbf06a05cbb",
-      "path": "src/core/mapping.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "0515c48689fcdc5d136ee492b53bfea43a6938ce088215d6bba67d907e6920e1",
-      "path": "src/core/message-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e8cb1c07f6d281b40343880013e5822210b90dcde762db81e580ee822945ef51",
-      "path": "src/core/path-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ff7ebd91ac79c724a5acf0279d8ab16d19b157a741fd51afd6e144bfc3b466eb",
-      "path": "src/core/path-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as os from \"os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "58925900c935bcf7d7b76eb3270fa94250d6a1846b72d0da3f8a8700fb3a7593",
-      "path": "src/core/raw-message-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b6e07db756de30befe6717cb0fb5415da45bd78f12a39fdf5ff9e871c08f6b75",
-      "path": "src/core/raw-message-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readFile, writeFile } from \"node:fs/promises\";",
       "count": 1
     },
     {
@@ -319,24 +202,6 @@
       "count": 1
     },
     {
-      "fingerprint": "3b306f618ddb371c827f28bf6dfeef7171b4d830192e7c060769c3495de592fd",
-      "path": "src/generation/sources.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bf3dc192dd9238bef72a3c49e54c57f42dd68fa028aa9fa50523860bc79801f9",
-      "path": "src/generation/sources.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { lstat, readFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "6e3709a890d4f6823a4b824f83874616dcb4c0d9568ce0ecf0593b26964ace09",
       "path": "src/harness/contracts/conversation-v2.ts",
       "rule": "no-undef",
@@ -355,66 +220,12 @@
       "count": 1
     },
     {
-      "fingerprint": "7f4c64a85b8c78259245cae3fb392ddbbb85807e462308384d06c5cac00efa72",
-      "path": "src/harness/contracts/conversation-v2.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ab49253900b81f24ac0d75d241148dec6ffee1bea8640ec9d58d343372bcb410",
-      "path": "src/harness/conversation/conversation-message-product.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "e223fb913caa81acab9fa6657305b5e3d2f46df731af3d9fb7644436917994fe",
       "path": "src/harness/memory/cognitive-file-utils.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return false;",
-      "count": 1
-    },
-    {
-      "fingerprint": "20c626f2fa88729415ddbaa69a999820bf471edf204c471750a7ceb279d763dc",
-      "path": "src/harness/memory/cognitive-file-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5c0a4e729f9e0d56052fdc129fbb888965c3bab0acbcdb3918eba83e4f0af932",
-      "path": "src/harness/memory/cognitive-file-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { lstat, mkdir, readFile, rename, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ba12b3d07efb40a45a12c500affcd30d5d00db015017aaad02ba9d2a826acdde",
-      "path": "src/harness/memory/cognitive-file-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "980c9fc3e4707138b42fd42c50e09b37ba6d43cbcf61dfddc8203b9f53315cae",
-      "path": "src/harness/memory/dream-engine.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -436,57 +247,12 @@
       "count": 1
     },
     {
-      "fingerprint": "92876c2139e523987d8afdd8df179d2fa99ea155411d477c3a4677b62d919cb2",
-      "path": "src/harness/memory/dream-experience-inbox.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9bc446be186f3441358a2337ba1b762fae93da764d1f4c1b7f3e69f6a3636142",
-      "path": "src/harness/memory/dream-experience-inbox.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "76fccb0d9ec719625c8047f2ddae9c15b74e032911463b6d389a962e7b5a568f",
-      "path": "src/harness/memory/dream-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "b5c1b99ad6526d2a7b51888ddcdda8a0a50a0c140af0cb11cf4e46dae28e340f",
       "path": "src/harness/memory/legacy-personality-reader.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "if (Buffer.byteLength(markdown, \"utf8\") > AGENT_MD_HARD_MAX_BYTES) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "d2f15524293ebc9032b818558a21f4bb7400d33b45ed6693d05dfbe74ba6f18b",
-      "path": "src/harness/memory/legacy-personality-reader.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eec89621efdb8a358a596a44439afb441742effeaedcf1f971536de8dc36980f",
-      "path": "src/harness/memory/legacy-personality-reader.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
       "count": 1
     },
     {
@@ -544,138 +310,12 @@
       "count": 1
     },
     {
-      "fingerprint": "071b44bf04655d530a9dd071f1f789637e9bb9d3beab72cd9ff63cb84b493fed",
-      "path": "src/harness/memory/personal-memory-repository.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { watch, type FSWatcher, type Stats } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "269e6567f1daf504abc73a83661232ad1165d0ee52afa1588c4f24824536fc3e",
-      "path": "src/harness/memory/personal-memory-repository.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8011690b0c1016eecd49c4b784056b14052c547af649813ecbd09273b998fc8d",
-      "path": "src/harness/memory/personal-memory-repository.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "858946ddaf9a2f0f488eabdf51d3399485bd68a2d99a8da4763d26a4e015bc4a",
-      "path": "src/harness/memory/personal-memory-repository.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\ncopyFile,\nlstat,\nmkdir,\nreadFile,\nreaddir,\nrealpath,\nrename,\nrm,\nunlink,\nwriteFile\n} from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "3f8327869d7a48bfb182af2a902a844dd1888da2b9b278f5818f6fab79261077",
-      "path": "src/harness/memory/secondary-memory-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readdir, readFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "42dd25ae74170f41c0a8065e2dcc57648553167bf1ca0daea7ed7e303fed8bf1",
-      "path": "src/harness/memory/secondary-memory-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9f3952db626acde7852bdcd4079475968618fe1167eae6073964c89b1b569119",
-      "path": "src/harness/memory/secondary-memory-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "335290ee1b6fbb8f7409f57309cc8741e76510e79340cb2d5fa5b4f21348fdde",
       "path": "src/harness/memory/user-profile-state.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "if ((error as NodeJS.ErrnoException).code === \"ENOENT\") {",
-      "count": 1
-    },
-    {
-      "fingerprint": "01d4fbc1518fe70181b4acf2d7c6781fd698f5bdc07dab0f07ef4077982fa0ef",
-      "path": "src/harness/memory/user-profile-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5435ebd8516b21d800a33c6f898655cec57580a2eceb0e931f319fe427cc7790",
-      "path": "src/harness/memory/user-profile-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "0a01f3ceae29182559d6889d901411fa4fd5cff7cc296074e1698b3ea086719e",
-      "path": "src/harness/pi-native/controlled-resources.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "51c877ec8328b09b2af56628331bdcb6b13022f730a6b9e5672e95892cf21662",
-      "path": "src/harness/pi-native/controlled-resources.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1d2d90bf03c30f58a44f02214a963a1150d6e1f0d5166deb61f8fb38b989ad18",
-      "path": "src/harness/pi-native/domain-receipt-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "56e2cdd290aa7bba40a98862042b3b2375538ced2ffde049e2c0537ca0cfbc05",
-      "path": "src/harness/pi-native/domain-receipt-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readdir } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f7563c96db2d3c6ae3d008bb1ad0603c81a7028aa1bf12a5ba085bb529d6915e",
-      "path": "src/harness/pi-native/domain-receipt-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
       "count": 1
     },
     {
@@ -694,60 +334,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "&& (error as NodeJS.ErrnoException).code === \"ENOENT\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "574f09285a83c68dfafcbd7bd60e590d2e644dccb721aeb0cbaab6c497c49227",
-      "path": "src/harness/pi-native/file-conversation-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a1f824f94f0ff64f31be8dd160b6c9eeabcd12a35c2a6104316bbcfcd56e521f",
-      "path": "src/harness/pi-native/file-conversation-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { copyFile, lstat, unlink } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e83b2455283ffe91438ada2c5bc6bbbf54442bf64d6e1ef051f65cf6827a722d",
-      "path": "src/harness/pi-native/file-conversation-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { constants } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9b6d72765d908a5990cb860ee51876d3e4acd251b4c1662535a63c03d9ace883",
-      "path": "src/harness/pi-native/file-product-run-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ee7978e01e185feea0752e8a958a8edd8a4bdac900cc8f5a72f945a5e600ced2",
-      "path": "src/harness/pi-native/file-product-run-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eef572c33436f4ea52941dee7581d10032be0fffeb4f3ac0b174fa2de56a11a4",
-      "path": "src/harness/pi-native/file-product-run-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readdir, stat } from \"node:fs/promises\";",
       "count": 1
     },
     {
@@ -787,33 +373,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0ae75dc2dfa36071439a80087ecd75d722da744ae1cddc49822eacc589615759",
-      "path": "src/harness/pi-native/file-store-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nmkdir,\nopen,\nreadFile,\nrename,\nunlink\n} from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "290b5dadda26725143986ab83733ead4bf872b5f14218a215333479c443b26ad",
-      "path": "src/harness/pi-native/file-store-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "3cab6b74f2421bf90f62981aaea0e29b6df1f41a89a4ff341b79f77e781db4df",
-      "path": "src/harness/pi-native/file-store-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "28818c33be9e0b0686a8226d598827fdf562ba88d19774eb56e2f49c89effe46",
       "path": "src/harness/pi-native/pi-chat-ui-projector.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -850,42 +409,6 @@
       "count": 1
     },
     {
-      "fingerprint": "6a75696a4e759529191f71114db509fdde82e7956c6157fe59e1849650ab5d01",
-      "path": "src/harness/pi-native/pi-document-context.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6570bf7cccd67893167b30c46985686d8de12e54d397e356842d2ae6a592ab59",
-      "path": "src/harness/pi-native/pi-english-diary-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7d01176d7206bb307a52c02dc5c26fac1f6536e7bf1e6adb88872f8ef58f8d00",
-      "path": "src/harness/pi-native/pi-english-diary-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e36b8e95ebe4571a420829a7c4c8029da723c8ad50e62e36aec9a94554ab0b7c",
-      "path": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
       "fingerprint": "02a915eab2b359b608e3cb845b77b37ac92adde4fabc56a157f2c809c01699c0",
       "path": "src/harness/pi-native/pi-knowledge-read-tools.ts",
       "rule": "no-undef",
@@ -910,24 +433,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "hits => Buffer.byteLength(JSON.stringify(toolResultForProvider({ ...search, hits })), \"utf8\") <= SEARCH_RESULT_LIMIT_BYTES)) });",
-      "count": 1
-    },
-    {
-      "fingerprint": "ba5b3651d018c91eebaac9116bf536deee81ced4549218cf468ade3146498764",
-      "path": "src/harness/pi-native/pi-knowledge-read-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4e2802763943ea301a87ed40f60277bf3a248b1b6e47d8e6a286707abbc889d5",
-      "path": "src/harness/pi-native/pi-mcp-custom-tool-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -964,60 +469,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "let bytes: Buffer;",
-      "count": 1
-    },
-    {
-      "fingerprint": "27171d5a97eda6692b2a7e851b500cd7e6a0e937f96c951d2d8faa2472ce7af7",
-      "path": "src/harness/pi-native/pi-native-conversation-runtime.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readFileSync } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "978f49774e9dbae93ae19b03a4b990d42a5b1bdc45bc9f3dc9ca1e8bf30216ac",
-      "path": "src/harness/pi-native/pi-native-conversation-runtime.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f09649bac4e7989d8ae9acd4343882461a22c7d2210428d80a8a412591d9162d",
-      "path": "src/harness/pi-native/pi-obsidian-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "05344d833b666012b3dfaeaf4a142048dfc3913c60b5905c368f7b2c907bcefb",
-      "path": "src/harness/pi-native/pi-pdf-reading-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e0ed425f0fed44805e1bb1320ac8fa0cfaf8a459a3b44d12fd9bd9ba0efee66d",
-      "path": "src/harness/pi-native/pi-pdf-reading-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "988f4a20fbcea543169efea955339cdc985f87a8eb2e21cbcbe7242af25a5275",
-      "path": "src/harness/pi-native/pi-personal-memory-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
       "count": 1
     },
     {
@@ -1066,147 +517,12 @@
       "count": 1
     },
     {
-      "fingerprint": "8d22868d09fa76c718b1ea385146c2376a31718c734f636f22951bcee50e55c7",
-      "path": "src/harness/pi-native/pi-session-durability.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\ncloseSync,\nexistsSync,\nfsyncSync,\nlstatSync,\nmkdirSync,\nopenSync,\nreadFileSync,\nreadSync,\nrealpathSync,\nrenameSync,\nstatSync,\nunlinkSync,\nwriteFileSync,\ntype Stats\n} from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "dd51879848746e470ea54ff486a5694abbb0f1a701f4cd3e20c0cf35c168af7e",
-      "path": "src/harness/pi-native/pi-session-durability.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eda7bd0cf2bafd710c0fcb00bc94df874319de4b07ee2d251ef9012737868ccd",
-      "path": "src/harness/pi-native/pi-session-durability.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f8ef3757682f0dc3cc41ea978272db8eb0eb48102d1edbd251f47624cd8a16d9",
-      "path": "src/harness/pi-native/pi-session-durability.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c50c1bcb5871a02c3889c882bd9e5c07fdf244673980f859cb91fc85b5d2cefe",
-      "path": "src/harness/pi-native/pi-task-plan.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4fcd03b6c060743c6a3f6067f209a50271cdb5c498198e4b25113f12e84a6e79",
-      "path": "src/harness/pi-native/pi-todo-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5f8feb6b584eaa0b03d8b0f3bc1fa7ef263993229c6a308cb506800925608c58",
-      "path": "src/harness/pi-native/pi-todo-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "24a26ed98909f251f21f906c518839cd4b8b722dd224ee956331d91adbf05894",
-      "path": "src/harness/pi-native/pi-user-question-tool.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a9121aea9f2a49837ec35acb48870f3f499676a042f8b6fe832a4cc7ba86486a",
-      "path": "src/harness/pi-native/pi-user-question-tool.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "4e0a47c7c715c9614672df0b99c2294d26fad582719ffd615090272a38be3f96",
       "path": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'knowledgeRolePath' is defined but never used.",
       "context": "import { knowledgeRolePath } from \"../../knowledge-base/root-paths\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "2a2d6fd5679e6d6bcdac9da6edcb47090330379c44c7873a69228c6735590754",
-      "path": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "71649613bb3536442a68c49aad4afa96a8218a8270f4ed0b321591c7fb8c7e68",
-      "path": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8574c05d6579b6f076da588cf1db5ae3eab3a36859b9bba6286f632d767f8ed3",
-      "path": "src/harness/pi-native/tool-authorization.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9d1979b820ae001bf8c8711ebaf38e8e47f63f386e989ee0325342976cc3af92",
-      "path": "src/harness/pi-native/tool-authorization.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readdir } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b0accd9b070da84929df3f615b16c6a6dac3668bb41f30635e80f74277bfa52f",
-      "path": "src/harness/pi-native/tool-authorization.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b2e391c0f0257f02908cf4f1f9db0a8f8dc94e05c771e6b124ba80aac11447fe",
-      "path": "src/harness/pi-native/tool-authorization.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
       "count": 1
     },
     {
@@ -1264,39 +580,12 @@
       "count": 1
     },
     {
-      "fingerprint": "fabc41d887baa836eb8d7082da42dab75a342c02ffc717dfbc982434a7f5f0ab",
-      "path": "src/harness/pi-native/vault-domain-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "fc675e7b0fdbb273bb15d165f61f85eceaafd6aa1a22bc6e1b81d62082adb4c4",
-      "path": "src/harness/pi-native/vault-domain-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "d80f7f7891ef3305a096d9a3b8ce76e8ebc9da4500640ffc1e1fb5e1faecfd2b",
       "path": "src/harness/pi-native/vault-target-resolver.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'resolveKnowledgePath' is defined but never used.",
       "context": "import { resolveKnowledgePath } from \"../../knowledge-base/root-paths\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f5f861429c3363b70aa4e992fd60b0f4a38ff69a9031b32cf98ed2228f921b7e",
-      "path": "src/harness/pi-native/vault-target-resolver.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -1336,15 +625,6 @@
       "count": 1
     },
     {
-      "fingerprint": "abf2b101a4737e840f590f2e160cb7d207996596aae6218b229263626f41635b",
-      "path": "src/harness/pi-native/vault-tool-result-safety.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
       "fingerprint": "ec1890951a9e332ad9fcda39db40c52bbdf75243b5eed11950eaab36aca72b78",
       "path": "src/harness/pi/device-credential-registry-journal.ts",
       "rule": "no-undef",
@@ -1360,87 +640,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return null;",
-      "count": 1
-    },
-    {
-      "fingerprint": "011d44dd67a6fbe6db28d4a558acf7051281b886915e19baefeeaa217968e12c",
-      "path": "src/harness/pi/device-credential-registry-journal.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "308ad64f4a618112db35781ecb0bb3abdc295aec018cda0c5b90e01c0f25e660",
-      "path": "src/harness/pi/device-credential-registry-journal.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import type { Dirent } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "56025d700f204c35f7ab90b3c8cfc93b7f60a61af5758bad2a89c25e8cb2726a",
-      "path": "src/harness/pi/device-credential-registry-journal.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a04db473d089f04a64d51e6b051f5972594b98dff9d196f32adb78f78e854cf3",
-      "path": "src/harness/pi/device-credential-registry-journal.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4ef7c09d9a19126fd129a3d0898c7d7f153b77eb157f8852cc1ee638c1d39f86",
-      "path": "src/harness/pi/device-credential-registry.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomBytes } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d3dc05aa727c7b13b364e67baa65264ab015e6da182a338fe05d039775669924",
-      "path": "src/harness/pi/provider-stream-codec.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:buffer\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { Buffer } from \"node:buffer\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1cd932ddd2a7b25c1cf80777421939f10866add1d13f01f20771c31b9eddff79",
-      "path": "src/harness/pi/provider-target-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:url\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { domainToASCII } from \"node:url\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a24fa3b2ab19cc5416ce07883acf8573ad770175c1740677a79d5823ec5acf85",
-      "path": "src/harness/pi/provider-target-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f9986f4b55b1d8ac2b46af90377a0bff24fe5d03da173ccb763579bc58daf610",
-      "path": "src/harness/pi/provider-target-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:net\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isIP } from \"node:net\";",
       "count": 1
     },
     {
@@ -1468,33 +667,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "const files = await readSupportFiles(skillRoot, input.maxBytes - Buffer.byteLength(entry, \"utf8\"));",
-      "count": 1
-    },
-    {
-      "fingerprint": "2a12a5f1dcc02744639087679a107ba884aade87a9c77814242224fed6d772e1",
-      "path": "src/harness/resources/skill-loader.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7dc7f99138c598377d67cac21d7eb842f245bb065a6e00f35b04420d1d495aa5",
-      "path": "src/harness/resources/skill-loader.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readdir, readFile, stat } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "891d15e7b96e16e870bbd4b6efab1e3ce73a236e81f08e03c353f09464d733d2",
-      "path": "src/harness/resources/skill-loader.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -1543,57 +715,12 @@
       "count": 1
     },
     {
-      "fingerprint": "40ee33e9ddf44f1cf08d645da1baa2c609e2173cf2f82413ffbddea3b2d9d92a",
-      "path": "src/harness/resources/skill-runtime.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7c3c7ca95946203593321d06b0b5e5cdd54a8ae97bc959f3dcbe1c7347158f9a",
-      "path": "src/harness/resources/skill-runtime.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nlstat,\nmkdir,\nreadFile,\nreaddir,\nrename,\nrm,\nstat,\nwriteFile\n} from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "adcd09db60d56c5e2d586f1a7ecbb81198a50d1cdaff3c54e8adddcb7853e364",
-      "path": "src/harness/resources/skill-runtime.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "3a4a3989b13d661d6a18bba4773fa86a8f2ae785411959cf09ccfae82854171c",
       "path": "src/harness/resources/vault-store.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "return (error as NodeJS.ErrnoException | null)?.code === \"ENOENT\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6307767d942699a41672a8afe6ccb34bf91c59ad14ad5e6382da558ae3ab9436",
-      "path": "src/harness/resources/vault-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readdir, readFile, stat, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9909e400ff5525a2a412802c0b70becab6f88655f4fbc016a88ce6b3760db61e",
-      "path": "src/harness/resources/vault-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -1660,75 +787,12 @@
       "count": 1
     },
     {
-      "fingerprint": "0067087c1b601fdad844f05b8ff382c9badb2553bf627c2c0cac4a629efff095",
-      "path": "src/harness/storage/durable-append-only-cas.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "10f41d22b32245f07d12458ab5e3d6db1803e175e17c4184ce9d3b477e2b2dba",
-      "path": "src/harness/storage/durable-append-only-cas.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5e9dc7ffdaada84176bd0533a028682c75c91044812fa84530f2246140505d60",
-      "path": "src/harness/storage/durable-append-only-cas.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { constants as fsConstants, type Stats } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ec9de29ac8e5bc09fe27868ea48fa009fdbd3c897b9f55e381f6ceff468c9f3d",
-      "path": "src/harness/storage/durable-append-only-cas.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "961401fc8591587d456ea869696ee0f85ab0c2e2a508c69273b5dc2105970e79",
       "path": "src/harness/usage/usage-store.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "if ((error as NodeJS.ErrnoException)?.code !== \"ENOENT\") throw error;",
-      "count": 1
-    },
-    {
-      "fingerprint": "8051a67e3af4030267da1a68f32caa0636b31b6479173349b3ec672bcbab1215",
-      "path": "src/harness/usage/usage-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { dirname } from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "dce26debc666928a8a8cf48e9d9a3af067bb26bc22e9d8501ad766a6149ff683",
-      "path": "src/harness/usage/usage-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readFile, rename, rm, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "dd6a2c31ab815df9c1920bf278796640a679558dbd8dff877ed1e37715f6b2a3",
-      "path": "src/home/home-activity-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
       "count": 1
     },
     {
@@ -1819,24 +883,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "root.state = (error as NodeJS.ErrnoException).code === \"ENOENT\" || message(error).includes(\"合法\") ? \"invalid\" : \"unavailable\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "997c0c204412062627088671e0f2aa6d894eac41d875db9049bc2ce7db41d34f",
-      "path": "src/home/knowledge-page-data.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a0da6bdd8d7c607151ac6c90af67e3752b83ec296ee56cc57929b870cf8cbc05",
-      "path": "src/home/knowledge-page-data.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
       "count": 1
     },
     {
@@ -1957,57 +1003,12 @@
       "count": 1
     },
     {
-      "fingerprint": "6b24a3f9c6679ddf7005515ddb5c6288e1ef7641eaae044d981ab0aa2b559947",
-      "path": "src/home/workbench-data.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "73ea23354008a5f9b86bff10a07df153b8da5672563778563e37e8bacb8bfedb",
-      "path": "src/home/workbench-data.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "5dccd034eb3fcb0801eea5563ec01336c5c3396b36b9f232448f44cf43492b47",
       "path": "src/home/workbench-records.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "catch (error) { if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return this.value = emptyRecords(); throw error; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "31df673071843438603e4c275c3ef77814b9b11bb20bc017d4eff5ae8710845d",
-      "path": "src/home/workbench-records.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "63d9d31c8cecb624c7e7733486a1b044b910ecf580c09778e353d4ed9a9b0656",
-      "path": "src/home/workbench-records.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b0dc71d0b5699fc8c3bcc8a6d9750817e4321cd53e90356ca6edf5d4d8a9e30f",
-      "path": "src/home/workbench-records.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -2080,15 +1081,6 @@
       "severity": 1,
       "message": "Use 'this.svg.ownerDocument.win.createSvg(\"g\")' instead of 'this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"g\")'.",
       "context": "const group = this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"g\"); group.setAttribute(\"aria-hidden\", \"true\"); this.svg.append(group);",
-      "count": 1
-    },
-    {
-      "fingerprint": "507149649e64d39936ab94f4e0b5818894355ee88edd47856938566b1eeea024",
-      "path": "src/inline-agent/controller.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -2218,24 +1210,6 @@
       "count": 1
     },
     {
-      "fingerprint": "d37fb26c64edcb2b3b6904b3adabf2aa3d80fdf48c3d5f3d8df6e371523da92e",
-      "path": "src/inline-agent/orchestrator.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "053d78daaa367dadeaa9db4343f272e794908dd185ee203881a703ea39002007",
-      "path": "src/inline-agent/service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "229331b766a1d38b1dfa9bd1a1ab2790724e92e8b80c27fc11eb198728bdf163",
       "path": "src/knowledge-base/capture.ts",
       "rule": "no-undef",
@@ -2254,129 +1228,12 @@
       "count": 1
     },
     {
-      "fingerprint": "a24274ba3037a9f15512cf4ed430f9385dbf3944195441ee7e7234a2ae9bc5f7",
-      "path": "src/knowledge-base/capture.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c54566de66fde56488ec04709db503b0dc1707c869b30ecc4d2e21fa14c31287",
-      "path": "src/knowledge-base/capture.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { constants as fsConstants } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d1523477c179a645538d60b1e692fec9703680e9b68d28755bbf4e38a1a01357",
-      "path": "src/knowledge-base/capture.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4bc2d9bbd70d2390a7f1be77bb1326e5e559bbfa4148d2f869832c1010789f45",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "cf1b0130b0f7748fb4be86cad3cf9baef844b32af363c6dc73bfcacb799a5c7c",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eaae4cde0f3ec811d1c806d09b8fd6b7406a2bc617918ef3bdc1e7e4a0ac14c6",
-      "path": "src/knowledge-base/dashboard.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eb6a733ac66f60e31fec9a5f4abb1ec119a64dd6d70e69e5b6596e378291defb",
-      "path": "src/knowledge-base/digest-evidence.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1d92dd5c496817b4811946fc6ac75fbd7874edfab096a871d114b71d89b1296e",
       "path": "src/knowledge-base/discovery.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "const content = Buffer.from(entry.searchText, \"utf8\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "4d345ccd2425f85a6dfda56d274f8c6153c747b2fd5e17c90bb769fdc8582de8",
-      "path": "src/knowledge-base/discovery.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c379bb6b58ee10311cd4b7d53b5f7d0d2468add15b90bd831feab7ccecca237d",
-      "path": "src/knowledge-base/folder-link-renames.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "42c89a67fe91ce96ddf530430d62aa2946e019e9a29ff42ad18524e658a439af",
-      "path": "src/knowledge-base/incremental-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "695d812efa1a3e99a4a777399efab440986ab9efcc716ec6811c58d272444556",
-      "path": "src/knowledge-base/incremental-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b16f12fa8ce562845ece6e052bbc359caa9d2d53fdbc0fff190b527c5ef3606e",
-      "path": "src/knowledge-base/incremental-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "deb07741f1a81288f1cdc1b7f869fb34c33c4376bab0d45ab094aaf9a40eb842",
-      "path": "src/knowledge-base/incremental-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs\";",
       "count": 1
     },
     {
@@ -2407,33 +1264,6 @@
       "count": 1
     },
     {
-      "fingerprint": "798ea2083d7d6964ea600cb4b69fce6a395af8497570af1b194896a09f6fbae5",
-      "path": "src/knowledge-base/initialization-directory-history.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7ab05b3c9cc1173dcb172abdbd9932687ed17828b0723f3367bc4a1cc4c0bbd9",
-      "path": "src/knowledge-base/initialization-directory-history.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "82cc477de9e2827c30e726368be9b7d8ddfc37e92aac705475ec2465ca461e7c",
-      "path": "src/knowledge-base/initialization-directory-history.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "5541fc433fb1be251fdfd211f4ce90061f365005efb2038b77aca47d4c2f7a58",
       "path": "src/knowledge-base/initializer.ts",
       "rule": "no-undef",
@@ -2461,48 +1291,12 @@
       "count": 1
     },
     {
-      "fingerprint": "52868bdfdccaf4bb807d79556fdae3a3bafb558e23aaf46a9d87d11698cace7e",
-      "path": "src/knowledge-base/initializer.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a66a41517ea4761b3fa66e5a00e4a505282283c41f84371c6a935ba47c1a5cae",
-      "path": "src/knowledge-base/initializer.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "da3eaa86b4c2e21e0b65d0f88d78f06af403e7f4848262fb7c6f3747fdcb1329",
-      "path": "src/knowledge-base/initializer.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "92976c6170aa7a08cd4f971913811897750a822465f3ec7f3e1588060e2061ff",
       "path": "src/knowledge-base/io-budget.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "const buffer = Buffer.alloc(length);",
-      "count": 1
-    },
-    {
-      "fingerprint": "b7dcf6fec7ece67a425dc0f5783049d8776d8417ead9894a956812d1789180f1",
-      "path": "src/knowledge-base/io-budget.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
       "count": 1
     },
     {
@@ -2533,42 +1327,6 @@
       "count": 1
     },
     {
-      "fingerprint": "47d62d2cb3aa612fcf755ffa611092ef0fd560920be23e0de3a005f08cbd2ffc",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c03b9f13b6f14ce4a54083dbbe9896fb894fd2e855f534e5ffb78fc3480251e5",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createReadStream, type Stats } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c4f771212bb6f890280cc4dbf7ee621415193ce627617868651b4124bb23f4ac",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f3dbb1b493ae6315ca7a60c637c460c9caaef4d7fa31c774fe7b4972c62e7829",
-      "path": "src/knowledge-base/knowledge-agent-index.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "dda323e1eb8c5530eeed23949eedc92432f445cd0ece2c2e42ff5d7f05ceb28b",
       "path": "src/knowledge-base/knowledge-linking-state.ts",
       "rule": "no-undef",
@@ -2578,24 +1336,6 @@
       "count": 2
     },
     {
-      "fingerprint": "079b6a6b34434a060afee161c9b99cf33e88fdfe6ba23ab6f3b44d448a687db4",
-      "path": "src/knowledge-base/knowledge-linking-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a99d9324afd54f84886dd55a37ee1450df940bdbbacb647a951340cfba413241",
-      "path": "src/knowledge-base/knowledge-linking-state.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "6d3249cbc466db36975f72b438fe2d2b50919291a62db1c45d8753be8c4f0688",
       "path": "src/knowledge-base/knowledge-linking.ts",
       "rule": "no-undef",
@@ -2603,24 +1343,6 @@
       "message": "'Buffer' is not defined.",
       "context": "if (!Buffer.from(restored, \"utf8\").equals(Buffer.from(document.content, \"utf8\"))) return reject(\"The body changed beyond the inserted link syntax.\");",
       "count": 2
-    },
-    {
-      "fingerprint": "09e55b991ca2276d519a86897a35ad83bc2f582456dff9b53177aa3e74e82851",
-      "path": "src/knowledge-base/knowledge-linking.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b44550def46f808dfd1d69735e33685d0d12776477ad2fa82613edef302305f3",
-      "path": "src/knowledge-base/knowledge-linking.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
     },
     {
       "fingerprint": "48325f2ada8f4ee991289953d432ee5e980fc9442265e0054dd65c7a30e40cd9",
@@ -2668,66 +1390,12 @@
       "count": 1
     },
     {
-      "fingerprint": "035f9c18f21231c359fff59e6e8270f876b0ecbe31d15f55b9eacdd653c9992a",
-      "path": "src/knowledge-base/knowledge-maintenance-preferences.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "044b0c877856de529a4602ab750e95110a6aecf3c2ff099d145ebcdf102d7145",
-      "path": "src/knowledge-base/knowledge-maintenance-preferences.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nlstat,\nmkdir,\nopen,\nreadFile,\nrealpath,\nrename,\nunlink\n} from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "40f3c96059348129a82faafd0cdfbd367305d47e61a12f88976a1eccece6e3b5",
-      "path": "src/knowledge-base/knowledge-maintenance-preferences.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a9a1cb0b2d9d670f5e6ed53258c3a838362248f283afe56fb5ee134fed664c8b",
-      "path": "src/knowledge-base/knowledge-maintenance-preferences.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "642162b975e25328b0322535e4c5b1c73c2545e6d672f357f7e80ca2f5afe60c",
       "path": "src/knowledge-base/knowledge-maintenance-protocol.ts",
       "rule": "@typescript-eslint/no-unused-vars",
       "severity": 1,
       "message": "'KNOWLEDGE_LINKING_INSTRUCTION' is assigned a value but never used.",
       "context": "const KNOWLEDGE_LINKING_INSTRUCTION = [",
-      "count": 1
-    },
-    {
-      "fingerprint": "373866bcabaf0765ce7ee6b27f81e71af5c50ad14c467577be10c0a639f54371",
-      "path": "src/knowledge-base/knowledge-maintenance-protocol.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d96d1e62670c5d12162c54e4f7efffe2a2ab4b11de8ba2fa67dd56e79ea3dc94",
-      "path": "src/knowledge-base/knowledge-relations.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -2830,33 +1498,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1d3debde941401161ae49c4ff12c90d32917166b0b45d97a22744f472cabfcca",
-      "path": "src/knowledge-base/maintenance-content-plan.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "43a8be38d1954031db207b910e9d26c4a30873f27619724e804cdefebf5c059b",
-      "path": "src/knowledge-base/maintenance-content-plan.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f038a4f7496c1b6a50283f6c0ae18efc96bbb9bf6d5093f107cc0ed142d09eef",
-      "path": "src/knowledge-base/maintenance-content-plan.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "4cf5b4f0bffa09aff6f1153aad796c6b64b2822e670fac77e955c76339c699d1",
       "path": "src/knowledge-base/maintenance-diagnostics.ts",
       "rule": "no-undef",
@@ -2911,15 +1552,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0b32acea2b9eaa6ce6a3b2c39365a25c0a3d8ab2096782e015f42ccdbde7f672",
-      "path": "src/knowledge-base/maintenance-knowledge-quality.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "5a752f63a35e2dfc1b06ac6f2f87096dfecdc87802a6e7358d517c95a3301f2a",
       "path": "src/knowledge-base/maintenance-p1-workflow.ts",
       "rule": "no-undef",
@@ -2935,15 +1567,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "if (text === null || rawDigestFingerprint(source.path, Buffer.from(text)) !== record.p1!.sourceFingerprints[source.path]) throw new Error(`来源已变化，停止剩余写入：${source.path}`);",
-      "count": 1
-    },
-    {
-      "fingerprint": "b675bdc0e7debdc6babe0284227c90a0cf675b0b1de7c1288e2183d3dec76684",
-      "path": "src/knowledge-base/maintenance-p1-workflow.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -3001,15 +1624,6 @@
       "count": 1
     },
     {
-      "fingerprint": "00d2c00090c99d7287991ed6d486c6b68a27453ce9a8ebc90bdf8c1e337247a5",
-      "path": "src/knowledge-base/phase3-maintenance-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "27def82afcde16fdbf779124ce8fa1d2f936fb27ece80ed4d6564007173ccb40",
       "path": "src/knowledge-base/query.ts",
       "rule": "no-undef",
@@ -3043,42 +1657,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "&& (error as NodeJS.ErrnoException).code === code;",
-      "count": 1
-    },
-    {
-      "fingerprint": "3bcbccf50467bca11b51bce5aed6d48a7add3ebdbec1642992408d90a0dc7bf8",
-      "path": "src/knowledge-base/query.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a006173abe422a4d68f48430e13fff10351013e3a654862d89ed05c3817ba643",
-      "path": "src/knowledge-base/query.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d24de56dc1701b2ad0fa817f07f3879f01b463c41f35596af7e51ec8da97cd50",
-      "path": "src/knowledge-base/query.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f636ea142c2d0bec18ae816b97dd96d517d4459be6e1b7ac0e1fed12a1193b8c",
-      "path": "src/knowledge-base/query.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -3424,39 +2002,12 @@
       "count": 1
     },
     {
-      "fingerprint": "05ad0adeafb722288c149ec1149457b6079b24c1ffcd7e02975763920ee82641",
-      "path": "src/knowledge-base/raw-digest.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "87529d1911bf0bf28a8141e567538e0f41319669290f2ad3e945ec481d338d66",
-      "path": "src/knowledge-base/raw-digest.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "fb24699e7e9f72456f3c4ff5c8aeb78f73b8250ef72c504c89b0453044d32009",
       "path": "src/knowledge-base/raw-integrity.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "export function contentFingerprint(content: Buffer): string {",
-      "count": 1
-    },
-    {
-      "fingerprint": "d64a73f66b18f13fa5128b929c8abdf0526c2d472429637c97392bbde3bc4c38",
-      "path": "src/knowledge-base/raw-integrity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -3487,24 +2038,6 @@
       "count": 1
     },
     {
-      "fingerprint": "2a0fd5d537f4a3e33da7685585ff79c14134b01b2998a835bc7ac8dea7fea983",
-      "path": "src/knowledge-base/report.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bc558cdc71613804af22256f29a70b643ba1e86e04dbc2da1e82138536c9d0e3",
-      "path": "src/knowledge-base/report.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "386c25b80ef939a7c91e9db33287cc337bd75f9e9163727bd3a5400d07194fa6",
       "path": "src/knowledge-base/root-paths.ts",
       "rule": "no-undef",
@@ -3523,24 +2056,6 @@
       "count": 1
     },
     {
-      "fingerprint": "71fc90d53fcef3f373c2d9bf7cf895237941479103f6c751fd597f9f1c4be6bc",
-      "path": "src/knowledge-base/root-paths.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readdirSync, lstatSync, realpathSync } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "72f046e665b6cc048945cdff0e4b21f313bec8654c62aef6a00d26bb30240254",
-      "path": "src/knowledge-base/root-paths.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "8c39c8775c4af1a04a94bff44bdfbe37c2ce01803677c02931493cbf5a2b17c1",
       "path": "src/knowledge-base/search/scheduling.ts",
       "rule": "obsidianmd/no-global-this",
@@ -3556,69 +2071,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "catch (error) { return (error as NodeJS.ErrnoException).code === \"ENOENT\" ? \"missing\" : \"unknown\"; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "59be36ff1bdc23eb92076a3b677f1fece1b84adceff7ab701993d792b7eedb0a",
-      "path": "src/knowledge-base/source-health.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9d9c819b5a9418cacd55b203e8bb14f706646e2665323bfd84a65ba271c0c611",
-      "path": "src/knowledge-base/source-health.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "0a78cc781bef208762f4d61178d5b8ca3fc6a9817a24b9050c86eec2863d1a71",
-      "path": "src/knowledge-base/source-media.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e7d81bf3fecf32098794c2f6956d9aec40cdd17b5bf52eae4f96c531b17d3510",
-      "path": "src/knowledge-base/structure-normalizer.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f6148d446be4dd15f05b20ea7cf854f6339c1f993c9a45463d68258268e5c649",
-      "path": "src/knowledge-base/structure-normalizer.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "72d067f28e0ccbb6ac4af803d9f8e1a52cdb6e69e7986330e1ec979918d6f669",
-      "path": "src/knowledge-base/tracker.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a4ed312330a3ab70a59bbe0b080b747c7b67c6c0287aa54ed95fd409c14ed37d",
-      "path": "src/knowledge-base/tracker.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
       "count": 1
     },
     {
@@ -3649,78 +2101,6 @@
       "count": 1
     },
     {
-      "fingerprint": "02757143fc4acfcebd56aafd423db30c4f12468ef1b2e93c870b78fc4c10a776",
-      "path": "src/knowledge-base/transaction-snapshot-core.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { tmpdir } from \"os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "4a2c8d1011a5cdb10f2e7639c71dbe4f870a45a5461eabea223df571851a7ce9",
-      "path": "src/knowledge-base/transaction-snapshot-core.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5c2e6a5d5cfd4f47b44bbf8abdb0d51c86eb338e25d4dc486a70065b78f1d4dc",
-      "path": "src/knowledge-base/transaction-snapshot-core.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "abdefbe24d0bee8978418d55d5a9b481010eb0f37f07a7ab9d01f7a33a2ce57c",
-      "path": "src/knowledge-base/transaction-snapshot-core.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "cd008b884a7e6d0e5c1a086811eb312e128d82e1eac2f715c25dbcfed8de77b1",
-      "path": "src/knowledge-base/transaction-snapshot-core.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "14c9610594d52b96c3995b30b391bf23c4442dcfe0af216650a99646bd244511",
-      "path": "src/knowledge-base/usage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "aa9e9bd745b689cce378b8229e97e6181d5399b35e30e424058de9b3f00d4418",
-      "path": "src/knowledge-base/usage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "fec8ae708e0d2a3b2a2512f345b07c7b99777c97af61dc67c6acdec69905b076",
-      "path": "src/knowledge-base/usage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readdir } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "5e877dbb172837dea07d596c7f338a93dec1a964c794a1fa71637a3c4c9a39ed",
       "path": "src/knowledge-base/utils.ts",
       "rule": "no-undef",
@@ -3736,33 +2116,6 @@
       "severity": 1,
       "message": "'process' is not defined.",
       "context": "const temp = path.join(path.dirname(absolutePath), `.${path.basename(absolutePath)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);",
-      "count": 1
-    },
-    {
-      "fingerprint": "0e907e2b92bb28c0a400c8096e07867d0176a73559622cf185df92ad232cfef6",
-      "path": "src/knowledge-base/utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6a24fcb39dd25c6a317cee97c7de3ff743aff5d9902e690fd027023d36785717",
-      "path": "src/knowledge-base/utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6ee6b5e45da145a9a25f2a4c50f62a98d2ae23eef84353e55eb9dbde790ecd05",
-      "path": "src/knowledge-base/utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
       "count": 1
     },
     {
@@ -3874,15 +2227,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5fe651e5b58227cf4e3bd85acce284ba803055d368d21f967042e86d2d35e51a",
-      "path": "src/lifestyle/service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "bc5af9f08c72bd65d763b2aff5b39d563da1b632633491e556a663c6105edc7e",
       "path": "src/lifestyle/settings-panel.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -3919,24 +2263,6 @@
       "count": 1
     },
     {
-      "fingerprint": "37a0c40f12fca33e62d1615b4e2c9eaca7c95d048d69699b6b404484812495c2",
-      "path": "src/lifestyle/store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "cccbc4f1e791b301d0263285bc839b42ae9636ed1cd561bc6cd3bfbb522c89bf",
-      "path": "src/lifestyle/store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "d6686714a27cd2528bc2f1fcd860c95ccc90070b0507fc5b2b853e9c398b5b7b",
       "path": "src/lifestyle/view.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -3955,66 +2281,12 @@
       "count": 2
     },
     {
-      "fingerprint": "738838237a29946261d2638f2060a30f999e89c7638f1312ddfe33d02d52a07d",
-      "path": "src/main.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d5fa2ec43387236db632a165355ce9c3b15fce8f1bad909d5b781a451c9f1615",
-      "path": "src/main.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ea78273edf5889f65c62016f06347910ce5a5b15f32dafe2b8cbce6e64e14650",
-      "path": "src/main.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { homedir as reportHome } from \"node:os\";",
-      "count": 1
-    },
-    {
       "fingerprint": "8fa0ea823e6ad57293fafcb6c51fcdb80da6311ee07ab1ada08c67509ae82b02",
       "path": "src/main.ts",
       "rule": "obsidianmd/ui/sentence-case",
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '无法打开 echoink 设置页'",
       "context": "if (!setting?.open || !setting.openTabById) { new Notice(\"无法打开 EchoInk 设置页\"); return; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "6a39881db746df8046580bc3dca43de69995dded6aa8039faf05d1b72c630be6",
-      "path": "src/membership/storage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as os from \"node:os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "87785397612281000bf980a9bf86fad1df0a52b3cafc31667bb021b7e0da3f9c",
-      "path": "src/membership/storage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9a916b6d6ce1eaf5d490d78afcada31dc9c36d72482e94d5ef81505619d0dbaa",
-      "path": "src/membership/storage.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -4162,42 +2434,6 @@
       "count": 1
     },
     {
-      "fingerprint": "38ab4c444e3b457d114529b297b9a160a4f48e43968f881d102c349e9caee839",
-      "path": "src/plugin/credential-device-scope.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomBytes } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9025f14e04ec2ad8c5196b3b0424bf21be44f23243926000ae4c5b4d18b1270b",
-      "path": "src/plugin/credential-device-scope.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { homedir } from \"node:os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ba0a1a215db3e7eb126be22f92017d036a5e4a203fb06cdf4c1cc122ffe2ea1a",
-      "path": "src/plugin/credential-device-scope.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f3feb78ec7c2bb4dd02b9ba7e514b6ba31126764955814f90d044e8c6d7c0a26",
-      "path": "src/plugin/credential-device-scope.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1da06647a48f97081c8dfa7ca5d882da53490dba7f26d9ad47adb21683fe5c8f",
       "path": "src/plugin/developer-mode/memory-backups.ts",
       "rule": "no-undef",
@@ -4285,60 +2521,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "private async readOptional(target: string): Promise<Buffer | null> {",
-      "count": 1
-    },
-    {
-      "fingerprint": "23d7026473a31251dfbe066f2d87657c9113de701f89a4759f6308404c6be5f0",
-      "path": "src/plugin/developer-mode/memory-backups.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6ac1a2490c35c8ad93117e4c1d01aa9ca1374c0795addea3370a9d14ba0e0016",
-      "path": "src/plugin/developer-mode/memory-backups.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d40dda84c155e9761a8f394b8435fc07e7a381d4be1e318a10458fab20efa464",
-      "path": "src/plugin/developer-mode/memory-backups.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "19d75a6f198ab6649b278d7a9d00c4fafed7d8868200e4c044504b2d615c5d43",
-      "path": "src/plugin/knowledge-linking-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "fbaddefe3508054b03b67e6243bc64aa2eb31f3f8563050b29f52ed1fb923a58",
-      "path": "src/plugin/knowledge-linking-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b93f20aa0e7b675c32880bb002944c27bdfd398fc4efbee5bc5d8898ef8a606c",
-      "path": "src/plugin/knowledge-linking-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -4459,33 +2641,6 @@
       "count": 1
     },
     {
-      "fingerprint": "098f1ea15e744957ce2c31f4f775e39ca2f51d51e6079e3e284abf8201923f14",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "33493c7d07218cc6ade695be15f80f6bcb6a7a6e5fe455076b82543e080e6e5d",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c86d7babf859e594b93a109454d664c3069c1e92ea8ef7841cface89cae1f8a4",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "f4ff2bef32acc303a8f3250244d9143761a941b3f6da2abd49ea713e82c18266",
       "path": "src/plugin/knowledge-upgrade-service.ts",
       "rule": "no-undef",
@@ -4504,33 +2659,6 @@
       "count": 1
     },
     {
-      "fingerprint": "628b8af28d3136e39ac8171602421bf2aabb51c194d22416442cc185000b7ec0",
-      "path": "src/plugin/knowledge-upgrade-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "cb30218f21e460606a01cc7cdc4765a45bc1ba65e405b8883a5f7cc3e573f5b9",
-      "path": "src/plugin/knowledge-upgrade-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e23a710d93410c096e0d1975ca04bb3ca1b19f9f4488af867949b3f8eca84b8a",
-      "path": "src/plugin/knowledge-upgrade-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "24f38fa78c58b022eb94699f0730c5ca0e5e2608e9a698f87494672fcc096792",
       "path": "src/plugin/loopback-openai-provider-adapter.ts",
       "rule": "@typescript-eslint/no-deprecated",
@@ -4540,66 +2668,12 @@
       "count": 1
     },
     {
-      "fingerprint": "7620e9f34ce83f82722b52e1132d5777e01b7720aefeab27513eeac05ad8966e",
-      "path": "src/plugin/loopback-openai-provider-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:buffer\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { Buffer } from \"node:buffer\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9ba06584795c5a05af85a112a9271f7bb9196c5ea1aafd869f92502e47e1c2b4",
-      "path": "src/plugin/loopback-openai-provider-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:http\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nrequest as httpRequest,\ntype IncomingHttpHeaders\n} from \"node:http\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bb0232c50fec9486f48caec4d3f745e5ad5dcfb8f1cf9c5f5a7d4a9097efb991",
-      "path": "src/plugin/mcp-settings-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "b43653e3b3ddf47d8617d691fbb77672905d0183a3ee861ea9772d39db16b6bf",
       "path": "src/plugin/obsidian-native-tools.ts",
       "rule": "@typescript-eslint/no-deprecated",
       "severity": 1,
       "message": "`activeLeaf` is deprecated. The use of this field is discouraged.\nThe recommended alternatives are:\n- If you need information about the current view, use {@link Workspace.getActiveViewOfType}.\n- If you need to open a new file or navigate a view, use {@link Workspace.getLeaf}.",
       "context": "return active?.path === relativePath && app.workspace.activeLeaf?.view.getViewType() === \"bases\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "105098aac3e67addadf5c38eee7c1f773b5abd1c746266af73764cbbb30413ca",
-      "path": "src/plugin/obsidian-native-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "76d3471bca9f5083292b6fd91ffaabe5a1c8e6e80e21c3f6c3a9be39792c2176",
-      "path": "src/plugin/obsidian-native-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8d37325769dc08a069f0c31793fe8ca8325e44bc6d2aed22295d0e630301c5ba",
-      "path": "src/plugin/obsidian-native-tools.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { isDeepStrictEqual } from \"node:util\";",
       "count": 1
     },
     {
@@ -4645,51 +2719,6 @@
       "severity": 1,
       "message": "'process' is not defined.",
       "context": ": [path.join(path.dirname(process.execPath), \"obsidian-cli\"), path.join(homedir(), \".local/bin/obsidian\")];",
-      "count": 1
-    },
-    {
-      "fingerprint": "2078efc59afbbcb19a32b9e44cc051307e896b3c94f7967b68b35052624c138d",
-      "path": "src/plugin/obsidian-official-cli.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { homedir } from \"node:os\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "381d890b2d1118474436d72e5b3dde848172d3adb0650a6f5c9288e4dc61f9a8",
-      "path": "src/plugin/obsidian-official-cli.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:child_process\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { execFile } from \"node:child_process\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "437585b6e13e6098b6999dd30be5baf7f0078d19412795b897afe228288f0178",
-      "path": "src/plugin/obsidian-official-cli.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { access, realpath } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bcb19bce3d42d1c33f287d6d787d7a26ad3746a3bde09258e2f817c587786b02",
-      "path": "src/plugin/obsidian-official-cli.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { constants } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bec7056360eca1b6e877726931a4de927115ff9b0eebe1f3015b18730c8fff5a",
-      "path": "src/plugin/obsidian-official-cli.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -4783,42 +2812,6 @@
       "count": 1
     },
     {
-      "fingerprint": "2083ec48a890976d67e08ac97a5a000ed1a8b454b707a5bebaa3c08beca55568",
-      "path": "src/plugin/obsidian-vault-domain-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5e57c068e1ef708c844804b2ad01704d516db87f43cff56fe250163c9b70eef9",
-      "path": "src/plugin/obsidian-vault-domain-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "830fe4e4d749f3f649984461039dd35cb1455f34b3fcb74cfb2744e72a47db8a",
-      "path": "src/plugin/obsidian-vault-domain-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "fa0022f269fbccc4c379b032e4c73b44d80b741bce19bb9b98495228f155ec11",
-      "path": "src/plugin/obsidian-vault-domain-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "0ec28023750493d8fe1621dba48c6d3a2d6d6b1e792cd36645e3dc597819b5cc",
       "path": "src/plugin/pi-knowledge-maintenance-production.ts",
       "rule": "@typescript-eslint/no-unused-vars",
@@ -4882,51 +2875,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5334a223c546cf1642e9465ce82f89270c43737fea671642dfa154fcb76f6190",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nlstat,\nmkdir,\nopen,\nreadFile,\nreaddir,\nrealpath\n} from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8b4692e760efd60ad102921296ef4732a81cf75edd37a4a4d43a7ac7c8ff0a22",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "bfe44fb5c486650d59c0d93c16a6a46071f4a24703cc2ee181fe8b4106d34d79",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ccd71215f059c255d20027b1104fc6754eaac3427d3344780e7acbf0b81760e3",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { TextDecoder } from \"node:util\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "d2cd96f2410067949f5e1a71d99d17366ded988d4627b8b8d72b21b25c260b6b",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { constants as fsConstants } from \"node:fs\";",
-      "count": 1
-    },
-    {
       "fingerprint": "53a4a4af97bc0f715925f5425debdc6d89042dc80ed9ab9ecf2f54c152d423aa",
       "path": "src/plugin/pi-local-data-service.ts",
       "rule": "no-undef",
@@ -4942,24 +2890,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "catch (error) { if ((error as NodeJS.ErrnoException).code !== \"ENOENT\") throw error; manifest = null; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "03d92b6628adccf69a3f7b01bf0e196574057f16928c3f4cf23e1bd956b5f85a",
-      "path": "src/plugin/pi-local-data-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "747a45ea00a75f61c974314905523dad03a5bcec20d352cc1693d6effe60e8bf",
-      "path": "src/plugin/pi-local-data-service.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
       "count": 1
     },
     {
@@ -5035,33 +2965,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1044716f10151a8737cd1e6a87bcde14baf60e7514feec049c6c44d33d51f540",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e14baac6c6e6d1540399ee751231777500beefb6dfb5d1c31233d1a70a608e1a",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "efdf24a8609e3853f57ed26f50edbe0ccc3c8ec2549bb4faa8f69b511ab7ab0d",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1cbcace2e69f9aeba4415a0ac455e04c802d2fdbab803423260e6ee98bc40b0f",
       "path": "src/plugin/pi-vault-tool-production.ts",
       "rule": "no-undef",
@@ -5095,15 +2998,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "byteLength: Buffer.byteLength(content, \"utf8\"),",
-      "count": 1
-    },
-    {
-      "fingerprint": "e973d0e8c1eaebb342bd32683c8a4f057f3a2e1292bef4c8eba38ee85ce92e29",
-      "path": "src/plugin/pi-vault-tool-production.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -5152,24 +3046,6 @@
       "count": 1
     },
     {
-      "fingerprint": "b5b7645399381dcb0ba8b9f321f733f01f77d1d95707d5c701bcb5a256c9669b",
-      "path": "src/plugin/plugin-data-paths.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "eb0373c9ef1de77a6092ec840311b5ea0ddb8b733dd3b7b820323be5ada73bd8",
-      "path": "src/plugin/plugin-data-paths.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "07122325846d1e5f77c819fb0add354611f4b1def4e83a3fb9bdeb51cdc274ef",
       "path": "src/plugin/quick-chat-window.ts",
       "rule": "@typescript-eslint/no-deprecated",
@@ -5197,33 +3073,6 @@
       "count": 1
     },
     {
-      "fingerprint": "30e911e467fc8b9114099b1505cb34cebf4912e47b85dd91b04c5692c1e77976",
-      "path": "src/plugin/qwen-token-plan-provider-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:http\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import type { IncomingHttpHeaders } from \"node:http\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "63b25f7ea3d3ae3228e2749c4436fdc4c4cfb34a2399b31dc5b7bee970f46a7e",
-      "path": "src/plugin/qwen-token-plan-provider-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:https\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import {\nrequest as httpsRequest\n} from \"node:https\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "edbcf83c67bd8c2f1ef6646adb6646f4603cd65a8aabfd3b9a24eacc5563e436",
-      "path": "src/plugin/qwen-token-plan-provider-adapter.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:buffer\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { Buffer } from \"node:buffer\";",
-      "count": 1
-    },
-    {
       "fingerprint": "2b123eae64b37b42135a303e3ebe9fd569d24a635e80a7a70f4f66759a35788f",
       "path": "src/plugin/settings-store.ts",
       "rule": "no-undef",
@@ -5233,75 +3082,12 @@
       "count": 1
     },
     {
-      "fingerprint": "4343be5c0fd1c322d2d9afef1bd61cf8d29567211ed05010f86ebdc73b012622",
-      "path": "src/plugin/settings-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "7bb3ddc553d4b53571fb13b633b20fe84bbaf9b22268e31ba6c90febf5e1751a",
-      "path": "src/plugin/task-resume-safety.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "b78ef2cf3c5e3e0feb075343ceb345e35cd20af79eafd20c0241928e21d346a8",
-      "path": "src/plugin/task-resume-safety.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "f795e5cd09d42574730e769e5c3cb44da542005280915c452923680e07c4c72d",
-      "path": "src/plugin/task-resume-safety.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { lstat, readFile, realpath } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "29925f934c0ba76cb53656b43fd9c1cc3f17b894a5f66be3ff565134cca87ed6",
       "path": "src/plugin/vault-identity.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === \"ENOENT\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "2130beb25fee94fb3bb8f204eb7fe2f8a1da84c44bc624ded0d7f3d02cf016f2",
-      "path": "src/plugin/vault-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "87ee0396779c259582f6f204cd8ba552839ad4022419d91f2f8022585364a78c",
-      "path": "src/plugin/vault-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c1e322404f8c9653271a5aeb1d92467318e176d57be8719d389b59c08bdf21f6",
-      "path": "src/plugin/vault-identity.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { randomUUID } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -5341,15 +3127,6 @@
       "count": 1
     },
     {
-      "fingerprint": "32c4c926bb96e6aafd47a15661e3418e3e40b506689862c7b3916123c680ef69",
-      "path": "src/resources/json-rpc-stdio-transport.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:child_process\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { spawn } from \"node:child_process\";",
-      "count": 1
-    },
-    {
       "fingerprint": "8278062071c19a550a4373a716c79e8595b00962bd631052576d0d6255fe1391",
       "path": "src/resources/mcp-broker.ts",
       "rule": "no-undef",
@@ -5377,39 +3154,12 @@
       "count": 1
     },
     {
-      "fingerprint": "134570c05643a3647753326a32b6b5d525c3d4ec0d524ab84209fbc72a2a835a",
-      "path": "src/resources/mcp-connections.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1a7b7b5e8cbfade496dd76cf9268d1954a8cb6f9652dea0c9b9bc7f7c73730d8",
-      "path": "src/resources/mcp-credential-store.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
       "fingerprint": "500cd2b515019a66b4601afabf86eec7137010ebacd288e1a3098d0f0cd9fc8a",
       "path": "src/resources/mcp-tool-catalog.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "if (!serialized || Buffer.byteLength(serialized, \"utf8\") > 256 * 1024) return null;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0212f71f74d4b870af5222a192900ead0c5e981f9b20e42fede4baab6720dd94",
-      "path": "src/resources/mcp-tool-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash } from \"node:crypto\";",
       "count": 1
     },
     {
@@ -5431,51 +3181,6 @@
       "count": 2
     },
     {
-      "fingerprint": "79feeefacf27c00cb386ae11f7bcc79b176f14abe3ae9662bd3e511ba084c531",
-      "path": "src/resources/vault-resource-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { mkdir, readFile, writeFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9d63578c4015843bcbeecd649565e14e5d9150a670cafa5ed299fcfe9dfde6af",
-      "path": "src/resources/vault-resource-catalog.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "6e45c9155967b2f75d3bd2bbab040b59643dee35d8adac15a8dac55eebf6dda1",
-      "path": "src/review/manager.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "854b41caa254e637f4b9e5a7f912cfa52fdbab70c5f2eb5066626808dce2cc6c",
-      "path": "src/review/manager.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import type { Dirent } from \"fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "fdef26696d2ef949f5b0bc26cc3a0cc3b0ef1660e3252ebf8f1269acdace189f",
-      "path": "src/review/manager.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1f4e82e8539775825858e93c4bd92aadd7b864a69aa121402ae862c166346208",
       "path": "src/review/manager.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -5485,39 +3190,12 @@
       "count": 1
     },
     {
-      "fingerprint": "55b8bb3998298611e519bab7ea4721926a0996b3e5a1147a30b29c160cc8d3ee",
-      "path": "src/review/preview-view.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fsp from \"fs/promises\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "cda330d0fa0dabde4aff5264fac618e46dd92662828d2c438da24bd3d0e655c6",
-      "path": "src/review/preview-view.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
       "fingerprint": "82d39ad277f1503e1ee370a7005f7d7bf2505d43e6adf061f7b0bd4e55b75b9c",
       "path": "src/review/preview-view.ts",
       "rule": "obsidianmd/ui/sentence-case",
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '只能打开 echoink 生成的复盘 HTML'",
       "context": "new Notice(\"只能打开 EchoInk 生成的复盘 HTML\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "419fe71f399b6b20ed14d3a067841fb0a8c97234c9e5a318cf3d2e246598339e",
-      "path": "src/run-reports/desktop-ui.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"node:path\";",
       "count": 1
     },
     {
@@ -5890,24 +3568,6 @@
       "count": 1
     },
     {
-      "fingerprint": "3a563e847d3c4c10a6a36e82cdf7243844d4c100a54b9dfca730b34065ea59ed",
-      "path": "src/ui/codex-view/attachment-resource.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { existsSync } from \"node:fs\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "683eacb868892cdd2988f5c144be0293d4764883842ec52c8f6d7fc595e282bf",
-      "path": "src/ui/codex-view/attachment-resource.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:url\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { fileURLToPath } from \"node:url\";",
-      "count": 1
-    },
-    {
       "fingerprint": "803331c706138df46b1a9efdd225ede99545f114decd9139a99de057ab32f380",
       "path": "src/ui/codex-view/attachments.ts",
       "rule": "obsidianmd/no-global-this",
@@ -6061,15 +3721,6 @@
       "count": 1
     },
     {
-      "fingerprint": "c7be82acbe75e3816f07dc3e5f8b8af204b9a43c64082bf1f25e8b71b8e78af1",
-      "path": "src/ui/codex-view/pi-conversation-support.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { existsSync } from \"node:fs\";",
-      "count": 1
-    },
-    {
       "fingerprint": "23e71a3d769f6c1989c4833e778ea92eee9535218a57ecb275d2450bc72aa4e2",
       "path": "src/ui/codex-view/pi-document-input.ts",
       "rule": "no-undef",
@@ -6133,42 +3784,6 @@
       "count": 2
     },
     {
-      "fingerprint": "2f47a06fc6cb9dec9d3ee580dd3ca95dd23740ba6dc312d5cada9650f4ae7223",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:url\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { fileURLToPath } from \"node:url\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "659e12b0aae3a69486b250ccd3c11996c42980d0fd9aa73826475c2c09323bc1",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createHash, randomUUID } from \"node:crypto\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9e7d5a982ddd9a5d86eb7cd334cdb51c9686c3f0e22b3d29158483d50b691654",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:module\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { createRequire } from \"node:module\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e49fd4c78112e5284531331687890b5f0e5904e855878f945a92521667670178",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readFile, stat } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "9f238e56064b7b85c8ab6077cd97caf6a53eb0dc2a85714e8a613cc7c2a50d3f",
       "path": "src/ui/codex-view/pi-image-input.ts",
       "rule": "no-undef",
@@ -6205,15 +3820,6 @@
       "count": 1
     },
     {
-      "fingerprint": "711235999c63d383c5d3c18475a9c3f2262dfff4d260feef79e49637f26e7682",
-      "path": "src/ui/codex-view/pi-image-input.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import { readFile } from \"node:fs/promises\";",
-      "count": 1
-    },
-    {
       "fingerprint": "f3f7d7094eb49eb3cb603cf65ab52c9a1494acd514656e29b01e1b3e5cfdf38c",
       "path": "src/ui/codex-view/selection-annotations.ts",
       "rule": "obsidianmd/prefer-create-el",
@@ -6229,24 +3835,6 @@
       "severity": 1,
       "message": "Use 'container.ownerDocument.win.createEl(\"ul\")' instead of 'container.ownerDocument.createElement(\"ul\")'.",
       "context": "const list = container.ownerDocument.createElement(\"ul\"); list.className = \"echoink-task-interruption-operations\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "07126bc8a0edfc423eadcbafef418798a49fc3d985756d956ffa534cb6344876",
-      "path": "src/ui/codex-view/workspace-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as path from \"path\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "2170157600979e3d092e3a7f8c7d67a57a6005da7c8be0a89b5979abf5e3509a",
-      "path": "src/ui/codex-view/workspace-utils.ts",
-      "rule": "obsidianmd/no-nodejs-modules",
-      "severity": 1,
-      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
-      "context": "import * as fs from \"fs\";",
       "count": 1
     },
     {

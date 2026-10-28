@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -15,7 +16,7 @@ if (!fixture.startsWith(allowed + path.sep)) throw new Error("Fixture symlinks c
 const run = await mkdtemp(path.join(fixture, "desktop-onboarding-"));
 try {
   const output = path.join(run, "tests.mjs");
-  await esbuild.build({ entryPoints: [path.join(repo, "src/tests/desktop-onboarding.ts")], bundle: true, platform: "node", target: "node22", format: "esm", outfile: output,
+  await esbuild.build({ banner: desktopNodeTestBanner, entryPoints: [path.join(repo, "src/tests/desktop-onboarding.ts")], bundle: true, platform: "node", target: "node22", format: "esm", outfile: output,
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl", ".txt": "text" },
     plugins: [{ name: "onboarding-model-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(repo, "src/tests/obsidian-shim.ts") }));

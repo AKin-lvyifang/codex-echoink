@@ -1,7 +1,7 @@
 import { maintenanceKnowledgeTypePrompt } from "./maintenance-knowledge-types";
 import * as sources from "./knowledge-maintenance-sources-core";
 import { knowledgeRolePath } from "./root-paths";
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 
 export const ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION =
@@ -51,6 +51,8 @@ export type { KnowledgeMaintenanceRawBinding, KnowledgeMaintenanceSourceEvidence
 
 import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./folder-bindings";
 import type { KnowledgeRootRole } from "./root-paths-core";
+
+const path = getDesktopPath();
 
 export const MAINTENANCE_TOOL_PARAMETER_EXAMPLES = [
   "完整JSON示例（仅展示层级）：示例路径/编号/原句/hash全部替换为本轮真实值。通常省略工具根sourcePaths，exact/batch会继承冻结批次，global必须省略；不能把根sourcePaths改为当前单页来源来缩窄批次。仅query范围按现有规则必须显式提供根sourcePaths，数组只含一条真实候选路径。decompositions[].sourcePath、evidence[].sourcePath和writingPlan[].sourcePaths逐字使用已授权真实路径，不猜缩写或按标题生成路径。",

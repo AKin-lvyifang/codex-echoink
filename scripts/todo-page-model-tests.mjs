@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -13,7 +14,7 @@ if (!testRoot.startsWith(allowed + path.sep)) throw new Error("Fixtures must sta
 const fixture = await mkdtemp(path.join(testRoot, "todo-ui-"));
 try {
   const output = path.join(fixture, "tests.mjs");
-  await esbuild.build({ stdin: { contents: 'import { runTodoPageModelTests } from "./src/tests/todo-page-model"; await runTodoPageModelTests();', resolveDir: root, loader: "ts" },
+  await esbuild.build({ banner: desktopNodeTestBanner, stdin: { contents: 'import { runTodoPageModelTests } from "./src/tests/todo-page-model"; await runTodoPageModelTests();', resolveDir: root, loader: "ts" },
     outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
     loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" },
     plugins: [{ name: "todo-ui-local-host", setup(build) {

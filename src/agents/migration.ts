@@ -1,9 +1,13 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { AGENT_IDENTITY_RELATIVE_PATH, DEFAULT_AGENT_DISPLAY_NAME, parseAgentIdentityState } from "../harness/memory/agent-identity-model";
 import { inspectLegacyAgentMarkdown } from "../harness/memory/legacy-personality-reader";
 import { GENERAL_ASSISTANT_ID, type AgentRegistry } from "./types";
 import { styleFromLegacyTemplate } from "./styles";
+
+const { readFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 /** Reads identity/template JSON only; never initializes CognitiveSystem or writes legacy files. */
 export async function migrateLegacyAgentRegistry(registry: AgentRegistry, storageRoot: string): Promise<AgentRegistry> {

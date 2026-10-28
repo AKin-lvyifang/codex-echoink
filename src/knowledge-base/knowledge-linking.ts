@@ -1,9 +1,13 @@
-import { createHash } from "node:crypto";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import { diffChars } from "diff";
 import { knowledgeBodyLinkSpans, knowledgeBodyMask } from "./knowledge-relations";
 import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingPatchResult, KnowledgeLinkingProposal, KnowledgeLinkingTarget } from "./knowledge-linking-types";
+
+const { createHash } = getDesktopCrypto();
+
+const path = getDesktopPath();
 
 interface FrontmatterRange { start: number; end: number; close: number; closed: boolean }
 

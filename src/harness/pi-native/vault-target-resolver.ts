@@ -1,5 +1,7 @@
 import { resolveKnowledgePath } from "../../knowledge-base/root-paths";
-import * as path from "node:path";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
+const path = getDesktopPath();
 
 export type VaultPathKind =
   | "file"

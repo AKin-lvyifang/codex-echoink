@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { enabledResources } from "./registry";
 import {
   mcpConnectionStatus,
@@ -16,6 +16,8 @@ import type {
   EchoInkMcpToolReadbackContract,
   EchoInkResource
 } from "./types";
+
+const { createHash } = getDesktopCrypto();
 
 export interface BuildCallableMcpToolCatalogInput {
   resources: EchoInkResource[];

@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import {
   defineTool,
   type AgentToolResult,
@@ -25,6 +25,8 @@ import {
   type EchoInkTaskPlanSnapshot,
   type EchoInkTaskPlanStatus
 } from "../../types/task-plan";
+
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_TASK_UPDATE_TOOL_ID = "task_update" as const;
 

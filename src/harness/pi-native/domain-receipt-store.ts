@@ -1,6 +1,7 @@
-import { mkdir, readdir } from "node:fs/promises";
-import { isDeepStrictEqual } from "node:util";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import {
   PI_NATIVE_FILE_SCHEMA_VERSION,
   PiNativeFileStoreError,
@@ -27,6 +28,11 @@ import {
   type SideEffectApprovalToolId,
   type WriteToolAuthorizationContext
 } from "./tool-authorization";
+
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const { mkdir, readdir } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const TEST_UNCERTAIN = "TEST_UNCERTAIN" as const;
 

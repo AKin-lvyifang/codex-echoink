@@ -1,8 +1,9 @@
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchMatchSource, type KnowledgeSearchKind } from "./search/contracts";
 import { knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeLinkCues, normalizeKnowledgeRelationPage } from "./search/markdown-navigation";
-import { isDeepStrictEqual } from "node:util";
-import { mkdir, readdir } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { KnowledgeReference } from "./types";
 import type { PersonalMemorySourceReference } from "../settings/settings";
 import { normalizeInjectedMemorySources } from "../harness/pi-native/pi-memory-sources";
@@ -21,6 +22,11 @@ import {
   stablePathToken,
   type PiNativeVaultFileLayout
 } from "../harness/pi-native/file-store-utils";
+
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const { mkdir, readdir } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const KNOWLEDGE_REFERENCE_ENTRY_DETAILS_TYPE =
   "echoink.knowledge-references.v1" as const;

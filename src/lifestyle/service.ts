@@ -1,5 +1,5 @@
 import { requireProPluginAction } from "../membership/access";
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { Notice, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
@@ -8,6 +8,8 @@ import type { LifestyleViewPort } from "./host";
 import type { LifestyleKind } from "./settings";
 import { LifestyleView, LIFE_VIEW_TYPES } from "./view";
 import { LifestyleFinanceService } from "./finance-service";
+
+const path = getDesktopPath();
 
 export class LifestyleService {
   readonly store: LifestyleStore;

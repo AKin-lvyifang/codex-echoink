@@ -1,8 +1,6 @@
-import { Buffer } from "node:buffer";
-import {
-  request as httpsRequest
-} from "node:https";
-import type { IncomingHttpHeaders } from "node:http";
+import { getDesktopBuffer } from "../platform/desktop-runtime";
+import { getDesktopHttps } from "../platform/desktop-network";
+
 import {
   createAssistantMessageEventStream,
   type Api,
@@ -35,6 +33,9 @@ import {
   isQwenTokenPlanApiProviderUrl,
   QWEN_TOKEN_PLAN_API_BASE_URL
 } from "../settings/provider-presets";
+
+const { Buffer } = getDesktopBuffer();
+const { request: httpsRequest } = getDesktopHttps();
 
 const QWEN_TOKEN_PLAN_BASE_URL = new URL(QWEN_TOKEN_PLAN_API_BASE_URL);
 const QWEN_TOKEN_PLAN_HOST = QWEN_TOKEN_PLAN_BASE_URL.hostname;
@@ -146,7 +147,7 @@ export async function requestQwenTokenPlanProvider(
       },
       maxHeaderSize: 32 * 1024
     }, (response) => {
-      const chunks: Buffer[] = [];
+      const chunks: import("node:buffer").Buffer[] = [];
       let received = 0;
       const status = response.statusCode ?? 0;
       const headers = normalizeHeaders(response.headers);
@@ -154,7 +155,7 @@ export async function requestQwenTokenPlanProvider(
         && status < 300
         && Boolean(input.onChunk);
       response.pause();
-      response.on("data", (chunk: Buffer | string) => {
+      response.on("data", (chunk: import("node:buffer").Buffer | string) => {
         const bytes = Buffer.isBuffer(chunk)
           ? chunk
           : Buffer.from(chunk, "utf8");
@@ -475,7 +476,7 @@ function qwenTokenPlanContextOverflow(body: string): boolean {
 }
 
 function normalizeHeaders(
-  headers: IncomingHttpHeaders
+  headers: import("node:http").IncomingHttpHeaders
 ): Readonly<Record<string, string>> {
   const result: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {

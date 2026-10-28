@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+
+const { createHash } = getDesktopCrypto();
 
 export const RAW_INTEGRITY_ERROR_PREFIX = "知识库任务试图改写 raw/ 原始资料文件";
 

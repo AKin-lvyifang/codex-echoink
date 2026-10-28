@@ -1,7 +1,8 @@
-import { readFile, stat } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopUrl } from "../../platform/desktop-paths";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopModule } from "../../platform/desktop-runtime";
+
 import { extractPdfText } from "./pdf-text-extractor";
 import type { PiChatPreparedDocument } from "../../harness/pi-native/contracts";
 import {
@@ -11,6 +12,12 @@ import {
 } from "../../harness/pi-native/pi-document-context";
 import { estimatePiContextTokens } from "../../harness/pi-native/pi-context-budget";
 import type { StoredAttachment } from "../../settings/settings";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+const { createRequire } = getDesktopModule();
+
+const { readFile, stat } = getDesktopFsPromises();
+const { fileURLToPath } = getDesktopUrl();
 
 export const PI_DOCUMENT_ACCEPT = [
   ".pdf",

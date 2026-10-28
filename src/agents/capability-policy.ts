@@ -1,4 +1,4 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import type { CodexForObsidianSettings } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
 import type { CapabilityAccess } from "../membership/types";
@@ -10,6 +10,8 @@ import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "./types";
 import * as core from "./capability-core";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
 import type { AgentModuleCapability, AgentCapabilityDecision, AgentMcpCapabilityTarget } from "./capability-core";
+
+const path = getDesktopPath();
 export { AGENT_MODULE_CAPABILITIES, isAgentCapabilityPathField, vaultSkillCapabilityId, mcpToolCapabilityId, agentTaskSystemPrompt, requireAgentCapability } from "./capability-core";
 export type { AgentModuleCapability, AgentCapabilityDecision, AgentMcpCapabilityTarget } from "./capability-core";
 

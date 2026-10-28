@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -18,7 +19,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 let dom;
 try {
   const output = path.join(run, "tests.mjs");
-  await esbuild.build({ entryPoints: [path.join(repo, "src/tests/user-profile-settings.ts")], bundle: true, platform: "node", target: "node22", format: "esm", outfile: output,
+  await esbuild.build({ banner: desktopNodeTestBanner, entryPoints: [path.join(repo, "src/tests/user-profile-settings.ts")], bundle: true, platform: "node", target: "node22", format: "esm", outfile: output,
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl", ".txt": "text" },
     plugins: [{ name: "profile-ui-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(repo, "src/tests/obsidian-shim.ts") }));

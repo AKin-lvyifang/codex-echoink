@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolCallEvent, type ToolDefinition, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import type { EchoInkTodoStore, TodoInput, TodoReadSnapshot } from "../../home/todo-store";
@@ -11,6 +12,9 @@ import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import { canonicalJsonStringify, normalizeJsonValue, type ApprovalOperationContract, type FileApprovalTicketStore, type JsonValue, type WriteToolAuthorizationContext } from "./tool-authorization";
 import { EchoInkVaultToolEgressPolicy, secureVaultToolResult } from "./vault-tool-result-safety";
 import { isPiTodoTool, normalizeTodoToolRequest, PI_TODO_TOOL_IDS, type PiTodoToolId, type PiTodoWriteToolId, type TodoToolFields } from "./todo-tool-policy";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 export { PI_TODO_TOOL_IDS, type PiTodoToolId } from "./todo-tool-policy";
 
 interface RunIdentity { vaultId: string; conversationId: string; piSessionId: string; productRunId: string }

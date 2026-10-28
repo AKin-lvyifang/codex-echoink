@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { mkdtemp, rm, realpath, readFile } from "node:fs/promises";
 import os from "node:os";
@@ -26,7 +27,7 @@ try {
   });
   const syncLanes = ["piTaskMetadataSyncTail", "piTaskMetadataWriteTails"].map(name => pluginClass.members.find(member => member.name?.getText(mainSource) === name));
   const legacyCatalogSource = execFileSync("git", ["show", "a1bdd5cb:src/harness/pi-native/file-conversation-catalog.ts"], { cwd: rootDir, encoding: "utf8" });
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: [
       'import { runAgentsStorageTests } from "./src/tests/agents-storage";',
       'import { applyConversationTaskMetadata, patchConversationTaskMetadata, normalizeConversationTaskMetadata } from "./src/agents/task-metadata";',
