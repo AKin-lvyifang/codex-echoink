@@ -10,6 +10,8 @@ import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
 import type { EchoInkResource } from "../resources/types";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { attachSettingsTooltip } from "../settings/settings-v2";
+import { displayedTooltipsForTests } from "./obsidian-shim";
+import { runSettingsHelpTooltipTests } from "../../tests/settings-help-tooltips";
 import { paidTestAccess } from "./membership-access";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
@@ -426,6 +428,7 @@ async function checkSettingsTooltipLifecycle(win: Window & typeof globalThis) {
 
 export async function runSettingsSearchDomTests(primary: Window & typeof globalThis, secondDocument: () => any) {
   const scheduler = prepareDocument(primary);
+  await runSettingsHelpTooltipTests(primary);
   await checkSettingsTooltipLifecycle(primary);
   globalThis.ResizeObserver = primary.ResizeObserver;
   globalThis.requestAnimationFrame = primary.requestAnimationFrame;
@@ -1006,12 +1009,10 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
       const row = check.closest(".setting-item")!;
       const help = row.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
       help.focus();
-      const panel = win.document.getElementById(help.getAttribute("aria-describedby")!)!;
-      assert.equal(panel.hidden, false);
-      assert.equal(panel.textContent, en ? "Replace Quick note on mobile with Write English diary" : "将移动端的快速记录入口改为写英文日记");
+      assert.equal(displayedTooltipsForTests.get(help), en ? "Replace Quick note on mobile with Write English diary" : "将移动端的快速记录入口改为写英文日记");
+      assert.equal(help.getAttribute("aria-label"), displayedTooltipsForTests.get(help));
       assert.equal(selections.length, 0, "reading the hint never saves a setting");
       help.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      assert.equal(panel.hidden, true);
       check.click(); await scheduler.flush();
       assert.equal(plugin.settings.englishDiary.homeShortcut, "english-diary");
       assert.equal((f.saved.at(-1) as any).englishDiary.homeShortcut, "english-diary");
@@ -1028,15 +1029,16 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
       assert.equal(auto.querySelector(".setting-item-description")!.textContent, en ? "How long conversations stay inactive before archiving" : "多久没更新的对话自动归档");
       const autoHelp = auto.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
       autoHelp.focus();
-      const autoPanel = win.document.getElementById(autoHelp.getAttribute("aria-describedby")!)!;
-      assert.equal(autoPanel.hidden, false);
-      assert.equal(autoPanel.textContent, en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
+      assert.equal(displayedTooltipsForTests.get(autoHelp), en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
+      assert.equal(auto.querySelector(".echoink-settings-help-panel"), null);
       const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
       assert.equal(archive.querySelector(".echoink-settings-navigation-description"), null, "archive navigation omits the redundant description");
-      archive.focus();
-      const archivePanel = win.document.getElementById(archive.getAttribute("aria-describedby")!)!;
-      assert.equal(archivePanel.hidden, false);
-      assert.equal(archivePanel.textContent, en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
+      const archiveName = archive.getAttribute("aria-label");
+      const archiveHelp = archive.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
+      archiveHelp.focus();
+      assert.equal(displayedTooltipsForTests.get(archiveHelp), en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
+      archiveHelp.click();
+      assert.equal(archive.getAttribute("aria-label"), archiveName, "native help preserves the navigation name");
       assert.equal(archive.querySelector("button"), null, "navigation help does not nest a button inside its navigation button");
       assert.equal(archive.tagName, "BUTTON"); assert.equal(archive.disabled, false);
       const openedDetails: string[] = [];

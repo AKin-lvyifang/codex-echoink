@@ -2,7 +2,7 @@ import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { TodoReminderStatus } from "../home/todo-reminder-service";
 import { OriginSetting } from "./origin-setting";
-import { applySettingsRow, attachSettingsTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
+import { applySettingsRow, attachSettingsHelpTooltip, createSettingsGroup, createSettingsSection } from "./settings-v2";
 import { createOriginCheck } from "./origin-controls";
 
 export function todoReminderStatusText(status: TodoReminderStatus, english: boolean): string {
@@ -41,7 +41,7 @@ export function renderTodoReminderSettings(page: HTMLElement, plugin: CodexForOb
   if (options.embedded) {
     const wrapper = reminder.nameEl.createSpan({ cls: "echoink-settings-help" });
     const help = wrapper.createEl("button", { cls: "echoink-settings-help-trigger", attr: { type: "button", "aria-label": english ? "Reminder information" : "到期提醒说明" } });
-    setIcon(help, "circle-alert"); attachSettingsTooltip(help, description, wrapper);
+    setIcon(help, "circle-alert"); attachSettingsHelpTooltip(help, description, wrapper);
     const check = createOriginCheck(reminder.controlEl, { attr: { "aria-label": name, "data-todo-reminder-toggle": "true" } });
     refreshToggle = () => { const status = service.status(); check.checked = status.enabled; check.disabled = status.busy || (status.permission === "unavailable" && !status.enabled); };
     check.onchange = () => { void service.setEnabled(check.checked).then(result => { if (!disposed && !result.ok && !result.cancelled) new Notice(todoReminderStatusText(service.status(), english)); }); };

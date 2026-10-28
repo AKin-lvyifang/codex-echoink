@@ -2,7 +2,7 @@ import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginCheck, createOriginSlider, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
-import { attachSettingsTooltip, applySettingsRow, createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
+import { attachSettingsHelpTooltip, applySettingsRow, createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
 import { renderManualDreamAction } from "./manual-dream-action";
 
 /** Desktop presentation only; existing memory/Dream settings remain authoritative. */
@@ -53,7 +53,7 @@ export class DesktopMemorySettings {
       check.checked = m.dreamEnabled; check.disabled = this.pending;
       const help = createOriginButton(dream.nameEl, { cls: "echoink-settings-help-trigger", attr: { "aria-label": zh ? "做梦说明" : "Dream information" } });
       setIcon(help, "info");
-      attachSettingsTooltip(help, zh ? "Obsidian 打开且空闲时整理已有记忆；关闭后保留原内容。" : "Consolidate memories while Obsidian is open and idle. Turning this off preserves existing content.");
+      attachSettingsHelpTooltip(help, zh ? "Obsidian 打开且空闲时整理已有记忆；关闭后保留原内容。" : "Consolidate memories while Obsidian is open and idle. Turning this off preserves existing content.");
       check.onchange = () => { const value = check.checked, old = m.dreamEnabled; void this.save(() => { m.dreamEnabled = value; }, () => { m.dreamEnabled = old; }); };
       if (m.dreamEnabled) {
         const options = content.createDiv({ cls: "echoink-dream-options" });

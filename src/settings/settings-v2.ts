@@ -1,5 +1,5 @@
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
-import { Platform, Setting, setIcon } from "obsidian";
+import { Platform, Setting, displayTooltip, setIcon, setTooltip } from "obsidian";
 import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
 
 export type SettingsStateTone = "neutral" | "error" | "success";
@@ -116,7 +116,78 @@ export function addSettingsHelp(setting: Setting, summary: string, explanation: 
     cls: "echoink-settings-help-trigger", text: "?",
     attr: { type: "button", "aria-label": helpLabel }
   });
-  attachSettingsTooltip(button, explanation, wrapper);
+  attachSettingsHelpTooltip(button, explanation, wrapper);
+}
+
+/** Setting explanations use the host tooltip on desktop and remain tappable on mobile. */
+export function attachSettingsHelpTooltip(
+  trigger: HTMLElement,
+  explanation: string,
+  wrapper = trigger,
+  options: { readonly interactive?: boolean } = {}
+): void {
+  if (!Platform.isDesktopApp || trigger.ownerDocument.body.classList.contains("is-mobile")) {
+    attachSettingsTooltip(trigger, explanation, wrapper, options);
+    return;
+  }
+  const marker = `echoink-settings-native-help-${++settingsHelpSequence}`;
+  const tooltipOptions = { placement: "top" as const, classes: [marker] };
+  const document = trigger.ownerDocument, view = document.defaultView;
+  let focused = false, hovered = false, active = false;
+  let detachObserver: MutationObserver | undefined;
+  let nativeRefresh: number | undefined;
+  const cancelNativeRefresh = () => { if (nativeRefresh !== undefined) view?.clearTimeout(nativeRefresh); nativeRefresh = undefined; };
+  const hide = () => {
+    cancelNativeRefresh();
+    // The host exposes displayTooltip but no hide API. Only remove this help's native node.
+    document.querySelectorAll(`.tooltip.${marker}`).forEach(tooltip => tooltip.remove());
+    if (!active) return;
+    active = false;
+    view?.removeEventListener("scroll", dismiss, true);
+    view?.removeEventListener("resize", dismiss);
+    view?.removeEventListener("keydown", onEscape, true);
+    detachObserver?.disconnect(); detachObserver = undefined;
+  };
+  const dismiss = () => { focused = false; hovered = false; hide(); };
+  const onEscape = (event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    dismiss(); event.preventDefault(); event.stopPropagation();
+  };
+  const watch = () => {
+    if (active || !trigger.isConnected) return;
+    active = true;
+    view?.addEventListener("scroll", dismiss, true);
+    view?.addEventListener("resize", dismiss);
+    view?.addEventListener("keydown", onEscape, true);
+    if (view?.MutationObserver) {
+      detachObserver = new view.MutationObserver(() => { if (!trigger.isConnected) dismiss(); });
+      detachObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  };
+  const scheduleNativeTooltip = () => {
+    cancelNativeRefresh();
+    nativeRefresh = view?.setTimeout(() => {
+      nativeRefresh = undefined;
+      if (active && (focused || hovered) && trigger.isConnected) displayTooltip(trigger, explanation, tooltipOptions);
+    }, 0);
+  };
+  setTooltip(trigger, explanation, tooltipOptions);
+  trigger.addEventListener("mouseenter", () => {
+    hovered = true; watch();
+    // Replace the host's delayed hover show so dismissal cannot leave a pending native tooltip.
+    scheduleNativeTooltip();
+  });
+  trigger.addEventListener("mouseleave", () => {
+    hovered = false;
+    if (!focused) { hide(); return; }
+    // Refresh after pointerout so the host cancels its pending hover hide.
+    scheduleNativeTooltip();
+  });
+  trigger.addEventListener("focus", () => {
+    focused = true; watch();
+    displayTooltip(trigger, explanation, tooltipOptions);
+  });
+  trigger.addEventListener("blur", () => { focused = false; if (!hovered) hide(); });
 }
 
 export function attachSettingsTooltip(
@@ -276,7 +347,7 @@ export function createSettingsNavigationRow(
   if (options.explanation) {
     const help = title.createSpan({ cls: "echoink-settings-navigation-help echoink-settings-help", attr: { role: "button", tabindex: "0", "aria-label": `${options.title}说明` } });
     setIcon(help, "circle-alert");
-    attachSettingsTooltip(help, options.explanation, help, { interactive: false });
+    attachSettingsHelpTooltip(help, options.explanation, help, { interactive: false });
     const show = help.onclick, hideSummary = row.onmouseleave;
     help.onclick = event => { event.preventDefault(); event.stopPropagation(); show?.call(help, event); };
     help.addEventListener("mouseenter", event => { hideSummary?.call(row, event); });

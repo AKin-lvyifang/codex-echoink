@@ -9,8 +9,10 @@ import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
 
 const root = process.cwd();
-const registered = path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台P12自动测试-20261019");
-assert.equal(process.env.ECHOINK_MODULES_TEST_ROOT, registered, "Use only the registered P12 test root");
+const registered = process.env.ECHOINK_MODULES_TEST_ROOT;
+assert.ok(registered, "Set ECHOINK_MODULES_TEST_ROOT to a disposable settings test directory");
+const testRootRelative = path.relative(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"), registered);
+assert.ok(testRootRelative && !testRootRelative.startsWith("..") && !path.isAbsolute(testRootRelative), "Use only a disposable root inside EchoInk-TestVaults/90-任务临时");
 const temporary = await mkdtemp(path.join(registered, "desktop-knowledge-"));
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://localhost" });
 const win = dom.window as any;
@@ -129,7 +131,7 @@ async function fixture(name: string) {
 try {
   const output = path.join(temporary, "knowledge-ui.mjs");
   await esbuild.build({ stdin: { contents: `
-    export { Platform, TFolder } from "obsidian";
+    export { Platform, TFolder, displayedTooltipsForTests } from "obsidian";
     export { DesktopKnowledgeSettings } from "./src/settings/desktop-knowledge-settings";
     export { EchoInkKnowledgeSurfaceService } from "./src/plugin/knowledge-surface-service";
     export { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, knowledgeFolderBindingsSignature } from "./src/knowledge-base/folder-bindings";
@@ -233,10 +235,11 @@ try {
       assert.equal(raw.querySelector("button"), null, "purpose help never nests another button");
       raw.dispatchEvent(new win.MouseEvent("mouseenter"));
       help.dispatchEvent(new win.MouseEvent("mouseenter"));
-      assert.equal(f.host.querySelectorAll('[role="tooltip"]:not([hidden])').length, 1, "purpose explanation replaces the visible summary bubble");
+      assert.equal(f.host.querySelectorAll('[role="tooltip"]:not([hidden])').length, 0, "native purpose help dismisses the custom summary bubble");
       help.focus();
       assert.equal(document.activeElement, help);
-      assert.equal(document.getElementById(help.getAttribute("aria-describedby")!)?.textContent, "保存原始收藏和材料，网页、公众号、PDF 都放这里");
+      assert.equal(help.getAttribute("aria-label"), "保存原始收藏和材料，网页、公众号、PDF 都放这里");
+      assert.equal(runtime.displayedTooltipsForTests.get(help), "保存原始收藏和材料，网页、公众号、PDF 都放这里");
       help.click();
       for (const key of ["Enter", " "]) help.dispatchEvent(new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
       assert.equal(f.view.isDetail, false, "pointer and keyboard help do not navigate");

@@ -3,7 +3,7 @@ import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { LifestyleKind } from "./settings";
 import { FinanceCatalogPanel } from "./finance-catalog-dialog";
-import { attachSettingsTooltip, createSettingsNavigationRow } from "../settings/settings-v2";
+import { attachSettingsHelpTooltip, attachSettingsTooltip, createSettingsNavigationRow } from "../settings/settings-v2";
 import { createOriginCheck, createOriginInput, createOriginSwitch, disposeOriginControls } from "../settings/origin-controls";
 
 export class LifestyleSettingsPanel {
@@ -73,19 +73,12 @@ export class LifestyleSettingsPanel {
     ] as const;
     const orderedCatalogs = this.embedded ? [catalogs[2], catalogs[0], catalogs[1]] : catalogs;
     for (const [kind, title, detail] of orderedCatalogs) {
-      const row = createSettingsNavigationRow(page, { title, description: this.embedded ? undefined : detail, value: this.embedded ? `${settings[kind].length} 个` : undefined, focusKey: `finance-catalog:${kind}`,
+      createSettingsNavigationRow(page, { title, description: this.embedded ? undefined : detail, explanation: this.embedded ? detail : undefined, value: this.embedded ? `${settings[kind].length} 个` : undefined, focusKey: `finance-catalog:${kind}`,
         onActivate: () => {
           this.financeCatalog = new FinanceCatalogPanel(this.plugin, kind,
             () => { this.financeCatalog?.dispose(); this.financeCatalog = null; this.redraw(); }, this.redraw, { embedded: this.embedded });
           this.redraw();
         } });
-      if (this.embedded) {
-        const help = row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-module-navigation-help", attr: { "aria-hidden": "true" } });
-        if (help) setIcon(help, "circle-help");
-        const activate = row.onclick;
-        attachSettingsTooltip(row, detail);
-        row.onclick = activate;
-      }
     }
     if (this.embedded) page.append(importAi, analysis);
 
@@ -97,7 +90,7 @@ export class LifestyleSettingsPanel {
     if (this.embedded) {
       const wrapper = copy.createSpan({ cls: "echoink-settings-help" });
       const help = wrapper.createEl("button", { cls: "echoink-settings-help-trigger", attr: { type: "button", "aria-label": `${title}说明` } });
-      setIcon(help, "circle-alert"); attachSettingsTooltip(help, detail, wrapper);
+      setIcon(help, "circle-alert"); attachSettingsHelpTooltip(help, detail, wrapper);
     } else copy.createEl("small", { text: detail });
     const input = (this.embedded ? createOriginCheck : createOriginSwitch)(row, { attr: { "aria-label": title } }); input.checked = checked;
     let pending = false;

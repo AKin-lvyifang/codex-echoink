@@ -143,7 +143,7 @@ import {
 import { McpServerModal } from "./mcp-server-modal";
 import {
   applySettingsRow,
-  attachSettingsTooltip,
+  attachSettingsHelpTooltip,
   addSettingsHelp,
   showSettingsInlineConfirmation,
   createSettingsCompactList,
@@ -1746,7 +1746,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const row = applySettingsRow(new OriginSetting(parent).setName(title));
     if (hint) {
       const wrapper = row.nameEl.createSpan({ cls: "echoink-settings-help" });
-      const help = createOriginButton(wrapper, { cls: "is-icon", attr: { "aria-label": `${title}说明` } }); setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint, wrapper);
+      const help = createOriginButton(wrapper, { cls: "is-icon", attr: { "aria-label": `${title}说明` } }); setIcon(help, "circle-alert"); attachSettingsHelpTooltip(help, hint, wrapper);
     }
     const check = createOriginCheck(row.controlEl, { attr: { "aria-label": title } }); check.checked = checked;
     if (focusKey) check.dataset.echoinkFocusKey = focusKey;
@@ -2220,9 +2220,9 @@ export class CodexSettingTab extends PluginSettingTab {
       const wrapper = autoArchive.nameEl.createSpan({ cls: "echoink-settings-help" });
       const help = createOriginButton(wrapper, { cls: "echoink-settings-help-trigger is-icon", attr: { "aria-label": zh ? "自动归档说明" : "Automatic archive information" } });
       setIcon(help, "circle-alert");
-      attachSettingsTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
+      attachSettingsHelpTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
     }
-    const archives = createSettingsNavigationRow(managementGroup, {
+    createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
       description: Platform.isDesktopApp
         ? undefined
@@ -2231,16 +2231,10 @@ export class CodexSettingTab extends PluginSettingTab {
         ? String(this.archivedConversations.length)
         : (zh ? "查看" : "View"),
       actionLabel: Platform.isDesktopApp ? undefined : (zh ? "打开" : "Open"),
+      explanation: Platform.isDesktopApp ? (zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.") : undefined,
       focusKey: "review:archives",
       onActivate: () => this.openSettingsDetail("review-archives")
     });
-    if (Platform.isDesktopApp) {
-      const help = archives.querySelector<HTMLElement>(".echoink-settings-navigation-title")!.createSpan({ cls: "echoink-settings-help", attr: { "aria-hidden": "true" } });
-      setIcon(help, "circle-alert");
-      const activate = archives.onclick;
-      attachSettingsTooltip(archives, zh ? "删除后无法在设置中恢复" : "Deleted conversations cannot be restored in Settings.", help);
-      archives.onclick = activate;
-    }
     if (!Platform.isDesktopApp) createSettingsNavigationRow(managementGroup, {
       title: zh ? "记忆修正" : "Memory correction",
       description: zh

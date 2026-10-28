@@ -7,7 +7,7 @@ import { readNativeJournalSettings } from "../home/native-journal";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { OriginSetting } from "./origin-setting";
 import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
-import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
+import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { applyDeleteButton } from "./amicro-buttons";
 
@@ -91,7 +91,7 @@ export class DesktopKnowledgeSettings {
   dispose(): void { this.suspend(); }
   private help(parent: HTMLElement, hint: string): void {
     const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger echoink-knowledge-help-trigger", attr: { "aria-label": hint } });
-    setIcon(help, "circle-alert"); attachSettingsTooltip(help, hint);
+    setIcon(help, "circle-alert"); attachSettingsHelpTooltip(help, hint);
   }
   private checkbox(parent: HTMLElement, title: string, checked: boolean, hint: string, save: (value: boolean) => Promise<void>): OriginSetting {
     const row = new OriginSetting(parent).setName(title);
