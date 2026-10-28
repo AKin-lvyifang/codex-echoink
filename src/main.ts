@@ -1,3 +1,4 @@
+import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
 import { RunReportModal } from "./run-reports/desktop-ui";
 import { apiVersion as reportObsidianVersion } from "obsidian";
 import { homedir as reportHome } from "node:os";
@@ -1147,7 +1148,31 @@ export default class CodexForObsidianPlugin extends Plugin {
     const safety = last ? await readTaskResumeSafety({ ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), interruptedRunId: last.productRunId }) : null;
     const stage = last?.interruption?.stage?.trim() || entry.taskStage?.trim()
       || (last ? readDurableTaskInterruptionStage({ catalogStore: local.catalog, catalog: entry, runs, productRunId: last.productRunId }) : "");
+    const detail = last?.interruption?.detail ?? last?.error;
+    const recordedDenial = knownAgentCapabilityDenial(detail);
+    const requiredCapabilities = recordedDenial ? [recordedDenial.capabilityId]
+      : last?.knowledge?.workflow === "ask" || detail === "agent_capability_knowledge_denied" ? ["knowledge"] : [];
+    let failureMessage = agentCapabilityErrorText(detail, this.settings.settingsLanguage);
+    let resumeBlocked = false;
+    if (last) {
+      const reply = this.settings.taskWorkspace?.replyDrafts[taskId];
+      try {
+        await assertTaskResumeCapabilities(this, local.catalog, taskId, {
+          permission: reply?.selectedPermission ?? this.settings.defaultPermission,
+          mode: reply?.selectedMode === "plan" ? "plan" : "agent",
+          memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal"
+        }, last.agentSnapshot, safety?.operations ?? [], requiredCapabilities);
+      } catch (error) {
+        // Only recognized policy denials change this read-only presentation.
+        // Other checks stay on the explicit resume path.
+        if (knownAgentCapabilityDenial(error)) {
+          failureMessage = agentCapabilityErrorText(error, this.settings.settingsLanguage);
+          resumeBlocked = true;
+        }
+      }
+    }
     return {
+      ...(failureMessage ? { failureMessage, resumeBlocked } : {}),
       taskId, at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.settledAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" : "process_unknown"),
       ...(last?.interruption?.retryAttempts ? { retryAttempts: last.interruption.retryAttempts } : {}),
@@ -1204,7 +1229,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const validation = validateApiProvider(provider);
     if (validation.length) throw new Error(`当前模型配置不可用：${validation.join("；")}`);
     if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
-    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations);
+    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations, last.knowledge?.workflow === "ask" ? ["knowledge"] : []);
     assertPiSubmissionActive(signal);
     const safety = await prepareTaskResumeSafety(snapshotInput);
     assertPiSubmissionActive(signal);
@@ -1357,12 +1382,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     return { available: true };
   }
-  async listAgentTaskEntries(): Promise<Readonly<PiConversationCatalogEntry>[]> {
-    const entries = (await this.listPiConversations()).filter(entry => entry.status !== "deleted");
+  async listAgentTaskEntries(includeDeleted = false): Promise<Readonly<PiConversationCatalogEntry>[]> {
+    const entries = (await this.listPiConversations()).filter(entry => includeDeleted || entry.status !== "deleted");
     const localData = await this.ensurePiLocalData();
     const visible: Readonly<PiConversationCatalogEntry>[] = [];
     for (const entry of entries) {
-      if (entry.taskStatus) { visible.push(entry); continue; }
+      if (entry.taskStatus || includeDeleted && entry.status !== "active") { visible.push(entry); continue; }
       const runs = await localData.productRuns.list(entry.conversationId);
       const last = [...runs].sort((a, b) => b.createdAt - a.createdAt || b.updatedAt - a.updatedAt)[0];
       if (!last) {

@@ -37,6 +37,7 @@ export interface CodexSessionHost {
   switchComposerDraft?(sessionId: string): void;
   resetVirtualWindow(): void;
   renderTabs(): void;
+  refreshAgentTasksAfterMutation?(): Promise<void>;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
   renderToolbar(): void;
   updateInputPlaceholder(): void;
@@ -472,6 +473,7 @@ export async function renameSession(host: CodexSessionHost, session: StoredSessi
   );
   applyPiCatalogEntryToShell(session, catalogEntry);
   await persistPiConversationShells(host);
+  await host.refreshAgentTasksAfterMutation?.();
   host.renderTabs();
 }
 
@@ -504,6 +506,7 @@ export async function archiveSession(
     fallbackGeneration
   );
   await persistPiConversationShells(host);
+  await host.refreshAgentTasksAfterMutation?.();
   renderConversationShellChange(host);
   new Notice(
     fallbackError
@@ -661,6 +664,7 @@ export async function deleteSessions(
       fallbackGeneration
     );
     await persistPiConversationShells(host);
+    await host.refreshAgentTasksAfterMutation?.();
     renderConversationShellChange(host);
     new Notice(
       fallbackError

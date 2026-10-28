@@ -2248,7 +2248,7 @@ export class PiNativeConversationRuntime {
     execution: ActiveProductRun
   ): void {
     this.runChannels.delete(execution.productRunId);
-    if (execution.generation && !execution.generation.durable) {
+    if (execution.commandKind === "ask" || execution.generation && !execution.generation.durable) {
       active.projection.messages = active.projection.messages.filter(message => message.runId !== execution.productRunId);
       active.projection.runState = "idle";
       active.projection.productRunId = undefined;

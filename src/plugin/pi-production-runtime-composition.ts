@@ -1,3 +1,5 @@
+import { AgentCapabilityDeniedError } from "../agents/capability-denial";
+import type { AgentCapabilityDecision } from "../agents/capability-core";
 import { requireInlineGeneration } from "../inline-agent/access";
 import { INLINE_PROPOSAL_CONTEXT_TYPE, INLINE_PROPOSAL_SYSTEM_PROMPT, inlineProposalContextContent, type InlineModelRequest } from "../inline-agent/protocol";
 import { estimateTokenValue } from "../harness/usage/token-estimator";
@@ -563,6 +565,7 @@ export async function createPiProductionRuntimeBundle(
     knowledgePreferences,
     processedSources: () => plugin.settings.knowledgeBase.processedSources,
     isConversationKnowledgeAllowed: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read").allowed,
+    conversationKnowledgeDecision: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read"),
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
     onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request),
@@ -833,6 +836,7 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   prepareStructure?: (input: { initialization: boolean; assertActive(): void }) => Promise<string>;
   usage: KnowledgeUsageBridge;
   isConversationKnowledgeAllowed?(conversationId: string, write: boolean): Promise<boolean>;
+  conversationKnowledgeDecision?(conversationId: string, write: boolean): Promise<AgentCapabilityDecision>;
 }>): PiKnowledgeRuntimePort {
   const retriever = new KnowledgeRetriever(input.vaultRootPath, {
     agentIndex: input.knowledgeAgentIndex
@@ -884,7 +888,10 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async retrieveAsk(request) {
-      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) throw new Error("agent_capability_knowledge_denied");
+      if (input.conversationKnowledgeDecision) {
+        const decision = await input.conversationKnowledgeDecision(request.conversationId, false);
+        if (!decision.allowed) throw new AgentCapabilityDeniedError(decision.reason, decision.capabilityId);
+      } else if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) throw new Error("agent_capability_knowledge_denied");
       const startedAt = Date.now();
       const result = await retriever.retrieve({
         signal: request.signal,
@@ -1065,7 +1072,10 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async finalizeMaintenance(request) {
-      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, true)) throw new Error("agent_capability_knowledge_denied");
+      if (input.conversationKnowledgeDecision) {
+        const decision = await input.conversationKnowledgeDecision(request.conversationId, true);
+        if (!decision.allowed) throw new AgentCapabilityDeniedError(decision.reason, decision.capabilityId);
+      } else if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, true)) throw new Error("agent_capability_knowledge_denied");
       const root = knowledgePrivateRoot(input.vaultRootPath);
       const turnEntries = request.turnEntries ?? request.entries;
       const toolReceipts = turnEntries.filter((entry) => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "knowledge_maintain");
@@ -2833,26 +2843,18 @@ async function currentAgentCapabilityContext(plugin: PiProductionPluginHost, cat
 export async function assertTaskResumeCapabilities(
   plugin: PiProductionPluginHost, catalog: FileConversationCatalog, conversationId: string,
   access: Readonly<PiWorkspaceAccess>, previousSnapshot: AgentRunSnapshot | undefined,
-  actions: readonly TaskResumePendingAction[]
+  actions: readonly TaskResumePendingAction[], requiredCapabilities: readonly string[] = []
 ): Promise<void> {
   const context = await currentAgentCapabilityContext(plugin, catalog, conversationId, access);
-  const en = plugin.settings.settingsLanguage === "en";
-  const names: Record<string, string> = { knowledge: "知识库", journal: "日记", todos: "待办", finance: "财务", "english-diary": "英文日记", "pdf-reading": "PDF 精读", review: "复盘", "web-search": "联网搜索" };
   const fail = (reason: string, capability: string): never => {
-    const label = en ? capability : names[capability] ?? (capability.startsWith("mcp:") ? "MCP 工具" : capability.startsWith("vault-skill:") ? "我的 Skill" : "这项能力");
-    const messages: Record<string, [string, string]> = {
-      agent_missing: ["负责这件事的 Agent 已不存在。", "The assigned Agent no longer exists."],
-      agent_disabled: [`${label}能力已被关闭，请开启后再继续。`, `${label} is disabled for this Agent. Enable it before continuing.`],
-      module_disabled: [`${label}已关闭，请开启后再继续。`, `${label} is disabled. Enable it before continuing.`],
-      pro_required: [`继续使用${label}需要 PRO。`, `Continuing with ${label} requires PRO.`],
-      read_only: ["当前只允许读取，不能继续这项写入。", "The current workspace is read-only; this write cannot continue."],
-      resource_disabled: ["这项工具或 Skill 已关闭，请开启后再继续。", "This tool or Skill is disabled. Enable it before continuing."],
-      scope_required: ["这项操作没有可核对的范围，无法在当前能力下继续。", "This operation has no verifiable scope under the current capabilities."]
-    };
-    throw new Error((messages[reason] ?? ["这项操作当前不可用，请检查能力和工具设置后再继续。", "This operation is unavailable. Check capability and tool settings before continuing."])[en ? 1 : 0]);
+    throw new AgentCapabilityDeniedError(reason, capability, plugin.settings.settingsLanguage);
   };
   const basic = checkAgentCapability(context, "conversation");
   if (!basic.allowed) fail(basic.reason, basic.capabilityId);
+  for (const capability of requiredCapabilities) {
+    const result = checkAgentCapability(context, capability);
+    if (!result.allowed) fail(result.reason, result.capabilityId);
+  }
   const current = resolveAgentRunSnapshot(plugin.settings, context.agentId);
   if (previousSnapshot?.agentId === current.agentId) {
     const removed = current.agentId === "sol"

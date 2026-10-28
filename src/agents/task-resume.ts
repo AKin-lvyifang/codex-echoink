@@ -16,6 +16,9 @@ export interface TaskInterruptionRecord {
 }
 export interface TaskInterruptionInfo extends TaskInterruptionRecord {
   readonly taskId: string;
+  /** Derived from current policy, never a fifth persisted task state. */
+  readonly failureMessage?: string;
+  readonly resumeBlocked?: boolean;
   readonly uncertainOperations: readonly { readonly id: string; readonly label: string }[];
 }
 /** Per-run recovery facts; never reused as the next ordinary turn's policy. */

@@ -177,6 +177,7 @@ export class ConversationRunService {
     if (source === "queue" && session.taskStatus === "interrupted" && !item.resumeContext) throw new Error("任务已中断，请先核对恢复信息后继续队列。");
     const state = this.stateFor(session.id);
     if (state.flight || state.running) throw new Error("conversation_already_running");
+    this.resumeErrors.delete(session.id);
     const frozen = cloneQueuedTurnItem(item);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
@@ -319,7 +320,7 @@ export class ConversationRunService {
         }
         onAccepted?.();
       },
-      onPiRunFailure: message => { if (item.resumeContext) this.resumeErrors.set(id, message); },
+      onPiRunFailure: message => { this.resumeErrors.set(id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },

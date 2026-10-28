@@ -177,6 +177,7 @@ import {
   derivePiConversationFromMessage as derivePiConversationFromMessageAction,
   refreshPiConversationShells as refreshPiConversationShellsAction,
   renderTabsView,
+  openSessionMenuView,
   renameSession as renameSessionAction,
   sessionById as sessionByIdAction,
   type CodexSessionHost,
@@ -421,16 +422,18 @@ export class CodexView extends ItemView {
     }
   }
   refreshAgentTasks(): void { if (this.taskUiMounted) void this.reloadTaskCatalog(); }
+  async refreshAgentTasksAfterMutation(): Promise<void> { if (this.taskUiMounted) await this.reloadTaskCatalog(); }
   private async reloadTaskCatalog(): Promise<void> {
     if (this.taskCatalogFlight) { this.taskRefreshAgain = true; return await this.taskCatalogFlight; }
     this.taskCatalogFlight = (async () => {
       do {
         this.taskRefreshAgain = false;
         try {
-          const entries = await this.plugin.listAgentTaskEntries();
+          const entries = await this.plugin.listAgentTaskEntries(true);
           if (this.viewLifecycleAbortController.signal.aborted) return;
           this.taskEntries = entries;
           for (const entry of entries) {
+            if (entry.status !== "active") continue;
             if (inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId)) continue;
             const at = Math.max(entry.updatedAt, entry.taskCompletedAt ?? 0, entry.taskStartedAt ?? 0, entry.taskInterruptedAt ?? 0);
             const resident = this.sessionById(entry.conversationId);
@@ -482,7 +485,9 @@ export class CodexView extends ItemView {
         buttonLabel: this.taskText("继续", "Continue"), onReport: () => this.openTaskRunReport(id), onResume: () => { void this.resumeInterruptedTask(id, false); } });
       return;
     }
-    const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}`;
+    const policy = JSON.stringify([this.currentTaskAgent(), this.plugin.settings.knowledgeBase.folderBindings,
+      this.plugin.settings.defaultPermission, this.plugin.settings.settingsLanguage, this.plugin.settings.resources.catalog.map(resource => [resource.id, resource.enabled])]);
+    const key = `${entry.taskInterruptedAt ?? 0}:${entry.taskStage ?? ""}:${policy}`;
     let record = this.taskInterruptions.get(id);
     if (!record || record.key !== key) {
       record = { key }; this.taskInterruptions.set(id, record);
@@ -533,7 +538,7 @@ export class CodexView extends ItemView {
     const displayEntries = projectInlineTaskEntries(this.taskEntries.map(task => {
       const activity = maintenanceActivityForTask(task, this.taskMaintenanceActivities ?? []), entry = taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []);
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
-    }), inlineHost?.service.list() ?? []);
+    }), inlineHost?.service.list() ?? []).filter(task => task.status === "active");
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
@@ -562,8 +567,9 @@ export class CodexView extends ItemView {
       retry.onclick = () => { this.taskLoadError = ""; if (page.kind === "detail") void this.openTaskDetail(page.taskId); else void this.reloadTaskCatalog(); };
     }
     if (this.taskEditor) return;
-    if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions, {
+    if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions.filter(session => !inlineHost?.service.latestForTask(session.id)), {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
+      onSessionMenu: (event, session) => openSessionMenuView(this.sessionHost(), event, session),
       summary: entry => this.taskSummaryText(entry),
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
@@ -851,7 +857,7 @@ export class CodexView extends ItemView {
         this.rehomeComposerQueue(created.id, key); this.composerConversationTargets.delete(key);
         await this.plugin.setPiConversationStatus(created.id, "deleted");
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(session => session.id !== created!.id);
-        if (outcome === "failed") this.showTaskError(this.taskText("消息尚未发送，请检查输入区提示后重试。", "The message was not sent. Check the Composer notice and try again."));
+        if (outcome === "failed") this.showTaskError(this.plugin.getTaskResumeError(created.id) ?? this.taskText("消息尚未发送，请检查输入区提示后重试。", "The message was not sent. Check the Composer notice and try again."));
       }
     } catch (error) {
       if (created && !item?.piUserEntryAccepted) {
