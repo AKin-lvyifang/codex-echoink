@@ -29,6 +29,34 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     assert.equal(state.store.session.messages.at(-1).content[0].text, "ok"); bad(); good(); state.runtime.dispose();
   });
 
+  await test("text tool invocations interrupt durably, both switch states, with code examples and actual execution preserved", async () => {
+    const call = '<tool_call>{"name":"note_read","arguments":{"path":"example.md"}}</tool_call>';
+    for (const mode of ["disabled", "enabled", "code", "executed"]) {
+      let calls = 0;
+      const text = mode === "code" ? "```xml\n" + call + "\n```" : call;
+      const state = await fixture(async request => {
+        const body = JSON.parse(request.body);
+        if (mode === "disabled") {
+          assert.equal(body.tools, undefined);
+          assert.doesNotMatch(body.messages[0].content, /写入前搜索|只能使用当前注册工具/u);
+        }
+        if (mode === "executed" && calls++ === 0) return { status: 200, json: { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: "real-read", type: "function", function: { name: "note_read", arguments: JSON.stringify({ path: "笔记/来源.md" }) } }] }, finish_reason: "tool_calls" }] } };
+        return answer("openai-completions", text);
+      }, config({ toolCalling: mode !== "disabled" }));
+      const failed = mode === "disabled" || mode === "enabled";
+      if (failed) await assert.rejects(state.runtime.send("read supplied note"), /本轮没有执行工具/u);
+      else await state.runtime.send("read supplied note");
+      const task = state.store.session;
+      assert.equal(task.taskStatus, failed ? "interrupted" : "completed");
+      assert.equal(task.messages.at(-1).content[0].text, text);
+      const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
+      const runtime = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("no replay"); });
+      assert.equal(/本轮没有执行工具/u.test(runtime.stateFor(task.id).error), failed);
+      if (failed) assert.match(reopened.session.runs.at(-1).interruption.toolCallTextFailure, /^model_tool_call_text_/u);
+      runtime.dispose(); state.runtime.dispose();
+    }
+  });
+
   await test("sendNew rejects invalid input/model/Skill/context without publishing a task or changing selection", async () => {
     for (const scenario of ["empty", "unknown", "offline", "no-model", "stale-model", "stale-provider", "budget", "skill", "context", "attachments", "annotations", "multi-notes"]) {
       let calls = 0;
