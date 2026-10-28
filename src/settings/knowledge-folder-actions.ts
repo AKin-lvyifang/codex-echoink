@@ -20,7 +20,7 @@ export function renderKnowledgeFolderActions(
   const zh = language !== "en";
   const state: OperationState = operationStates.get(service) ?? { running: null };
   operationStates.set(service, state);
-  const section = createSettingsSection(container, { title: zh ? "目录管理" : "Folder management", surface: "flat" });
+  const section = createSettingsSection(container, { surface: "flat" });
   section.addClass("standard-section", "echoink-knowledge-folder-actions");
   const group = createSettingsGroup(section);
   const optimizeOptions = () => ({

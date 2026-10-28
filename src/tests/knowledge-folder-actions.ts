@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Platform } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { renderKnowledgeFolderActions } from "../settings/knowledge-folder-actions";
 import { createSettingsNavigationRow } from "../settings/settings-v2";
@@ -7,6 +8,7 @@ import { openTestModals, openTestNoticeMessages } from "./obsidian-shim";
 
 /** Run under the folder-settings DOM so this suite is included in its existing entry. */
 export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { Event: typeof Event }): Promise<void> {
+  const previousDesktop = Platform.isDesktopApp;
   const flush = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)); };
   const button = (text: string, root: ParentNode = host) => {
     const result = [...root.querySelectorAll<HTMLButtonElement>("button")].find(el => el.textContent === text || el.querySelector(".echoink-settings-navigation-title")?.textContent === text);
@@ -35,6 +37,7 @@ export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { E
     });
   };
   try {
+    Platform.isDesktopApp = true;
     draw();
     assert(button("复原仓库").querySelector(".echoink-settings-navigation-description")?.textContent?.includes("正在读取复原记录"));
     assert.equal(button("复原仓库").querySelector(".echoink-settings-navigation-value"), null, "loading text remains a complete description");
@@ -102,6 +105,7 @@ export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { E
     assert(button("复原仓库").querySelector(".echoink-settings-navigation-description")?.textContent?.includes(restoreFailure), "operation failure stays complete across rerender");
     assert(openTestNoticeMessages.at(-1)?.includes(restoreFailure), "the result notice does not shorten an error");
   } finally {
+    Platform.isDesktopApp = previousDesktop;
     for (const modal of [...openTestModals]) modal.close();
     disposeOriginControls(host); host.empty();
   }

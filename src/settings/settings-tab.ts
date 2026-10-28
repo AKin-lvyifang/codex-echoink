@@ -28,7 +28,7 @@ import { renderObsidianCliStatus } from "./obsidian-cli-status";
 import { DESKTOP_SETTINGS_TAB_ICONS, SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { OriginSetting } from "./origin-setting";
 import { mergeKnowledgeMaintenanceHistory, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "./knowledge-maintenance-history";
-import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
+import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls, type OriginCheckElement, type OriginSelectElement } from "./origin-controls";
 import { mountSettingsEditor, type SettingsEditorHandle } from "./inline-editor";
 import { renderProviderServicePicker } from "./provider-service-picker";
 import { renderCompactAbout } from "./about-section";
@@ -245,7 +245,9 @@ export class CodexSettingTab extends PluginSettingTab {
 
   openPdfReadingDetail(): void {
     if (!this.plugin.pdfReading?.policy().canEnter) return;
-    if (Platform.isDesktopApp) { this.desktopRoute = { tab: "modules" }; this.desktopModuleExpanded.add("pdf"); this.settingsDetail = null; this.settingsFocusIntent = "explicit:module:pdf"; this.scheduleDisplay(); return; }
+    if (Platform.isDesktopApp) {
+      this.openDesktopRoute({ tab: "modules", focus: "pdf-reading:settings" }); return;
+    }
     this.openSettingsDetail("pdf-reading");
   }
   private pdfSettingsPanel: PdfReadingSettingsPanel | null = null;
@@ -327,6 +329,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.leaveDesktopAccount(() => this.openDesktopRoute(route))) return;
     if (this.leaveDesktopAgentDetail(() => this.openDesktopRoute(route))) return;
     if (this.desktopSelection?.controller?.hasUnsavedChanges()) { this.desktopSelection.controller.requestBack(() => { this.clearDesktopSelection(); this.openDesktopRoute(route); }); return; }
+    if (this.leaveKnowledgePreference(() => this.openDesktopRoute(route))) return;
     if (this.desktopKnowledge?.isDetail) { this.desktopKnowledge.requestLeave(() => this.openDesktopRoute(route)); return; }
     this.clearDesktopSelection();
     this.suspendActiveEditor(false);
@@ -342,20 +345,26 @@ export class CodexSettingTab extends PluginSettingTab {
     if (route.focus === "providers:add" && this.plugin.isEchoInkOnboardingRequested() && this.plugin.getEchoInkOnboardingStep() === "provider") this.providerPickerOpen = true;
     if (route.focus) this.settingsFocusIntent = `explicit:${route.focus.replace(/^explicit:/u, "")}`;
     if (/^knowledge:generation-template:/u.test(route.focus ?? "")) this.openGenerationTemplateEditor(route.focus!.slice("knowledge:generation-template:".length));
-    else if (route.focus === "knowledge:generation-templates") { this.desktopModuleExpanded.add("knowledge"); this.ensureGenerationTemplates().openList(); }
+    else if (route.focus === "knowledge:generation-templates") this.openSettingsDetail("generation-templates");
     else if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
     else if (/todo:categories/u.test(route.focus ?? "")) this.openSettingsDetail("todo-categories");
     else if (/knowledge:sources/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open("sources"); }
+    else if (/^knowledge:(?:collections|permissions|management)$/u.test(route.focus ?? "")) {
+      this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open(route.focus!.slice("knowledge:".length) as "collections" | "permissions" | "management");
+    }
     else if (route.resourceId) this.openSettingsDetail({ kind: "resource", resourceId: route.resourceId });
     else if (/knowledge:(?:preferences|preference)/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-preferences");
     else if (/knowledge:(?:folders|onboarding)/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-folders");
     else if (/knowledge:linking/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-linking");
-    else if (/knowledge:restore/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:module:knowledge"; }
+    else if (/knowledge:restore/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open("management"); this.settingsFocusIntent = "explicit:knowledge:restore"; }
     else if (/^inline-agent/u.test(route.focus ?? "")) {
       this.desktopModuleExpanded.add("inline-agent");
       if (!this.plugin.settings.inlineAgent.enabled || !hasProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess)) this.settingsFocusIntent = "explicit:module:inline-agent";
     }
-    else if (/^pdf-reading/u.test(route.focus ?? "")) this.openPdfReadingDetail();
+    else if (/^pdf-reading/u.test(route.focus ?? "")) {
+      if (this.plugin.pdfReading?.policy().canEnter && this.plugin.settings.pdfReading.enabled && hasProPluginAccess(this.plugin.accountService ?? unavailableCapabilityAccess)) this.openSettingsDetail("pdf-reading");
+      else this.settingsFocusIntent = "explicit:module:pdf";
+    }
     else if (/^finance/u.test(route.focus ?? "")) this.openLifestyleDetail("finance");
     else if (/^english-diary/u.test(route.focus ?? "")) {
       this.openSettingsDetail("english-diary");
@@ -667,6 +676,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderSettingsContent(): void {
     this.captureModuleInputs();
+    this.pdfSettingsPanel?.dispose();
     this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
     this.desktopKnowledge?.suspend(); this.desktopAccount?.suspend();
@@ -784,6 +794,8 @@ export class CodexSettingTab extends PluginSettingTab {
       const location = JSON.stringify([tab, this.desktopAgents?.isDetail, this.desktopProfileOpen, this.settingsDetail, this.knowledgeMaintenanceSelectedRecord?.recordId ?? null,
         tab === "resources" || tab === "capabilities" ? this.plugin.settings.resourceManagementTab : null,
         this.desktopRoute?.section ?? null, this.desktopRoute?.capabilityTab ?? null, this.providerPickerOpen, this.inlineEditor?.key ?? null,
+        tab === "modules" && !this.settingsDetail ? this.desktopKnowledge?.navigationKey() ?? null : null,
+        this.settingsDetail === "generation-template" ? this.desktopGenerationTemplates?.editorFocusKey() : null,
         typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "lifestyle"
           ? this.lifestyleSettingsPanel?.navigationKey() : null]);
       const inlineHost = this.inlineEditor?.host ?? null;
@@ -1202,10 +1214,7 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
-    if (Platform.isDesktopApp) {
-      addSettingsHelp(workbenchStartup, "", zh ? "Obsidian 启动后显示 EchoInk 工作台。" : "Show the EchoInk workbench when Obsidian starts.");
-      addSettingsHelp(sidebarStartup, "", zh ? "Obsidian 启动后自动打开 EchoInk 侧栏。" : "Open the EchoInk sidebar when Obsidian starts.");
-    } else interfaceGroup.insertBefore(sidebarStartup.settingEl, workbenchStartup.settingEl);
+    if (!Platform.isDesktopApp) interfaceGroup.insertBefore(sidebarStartup.settingEl, workbenchStartup.settingEl);
     renderObsidianCliStatus(interfaceGroup, zh);
 
     const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
@@ -1439,8 +1448,8 @@ export class CodexSettingTab extends PluginSettingTab {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const knowledge = this.ensureDesktopKnowledge();
     if (this.settingsDetail === "generation-template") { this.ensureGenerationTemplates().renderEditor(container); return; }
-    if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.settingsDetail = "knowledge-linking"; }
-    if (knowledge.isDetail) { knowledge.renderDetail(container); return; }
+    if (this.settingsDetail === "generation-templates") { this.ensureGenerationTemplates().renderList(container); return; }
+    if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.openSettingsDetail("knowledge-linking"); }
     if (this.settingsDetail === "knowledge-preferences") { this.desktopModuleExpanded.add("knowledge"); this.renderKnowledgeMaintenancePreferences(container); return; }
     if (this.settingsDetail === "knowledge-linking") { this.desktopModuleExpanded.add("knowledge"); this.knowledgeLinkingCleanup = renderKnowledgeLinkingSection(container, this.plugin, () => { void this.closeSettingsDetail(); }, this.knowledgeLinkingTaskId ?? undefined); return; }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "resource") {
@@ -1449,6 +1458,15 @@ export class CodexSettingTab extends PluginSettingTab {
       if (resource) { this.renderResourceDetail(container, resource); return; }
     }
     if (this.settingsDetail === "knowledge-folders") { this.desktopModuleExpanded.add("knowledge"); this.settingsDetail = null; knowledge.open("initialize"); return; }
+    if (this.settingsDetail === "pdf-reading") {
+      const page = createSettingsPage(container, { title: zh ? "PDF 精读 · 提取" : "PDF reading and extraction", detail: true,
+        backLabel: zh ? "返回模块" : "Back to modules", onBack: () => { void this.closeSettingsDetail(); } });
+      this.pdfSettingsPanel ??= new PdfReadingSettingsPanel(this.plugin, () => { void this.closeSettingsDetail(); });
+      this.pdfSettingsPanel.render(page, { embedded: true });
+      this.restoreModuleInputs(page, "pdf");
+      return;
+    }
+    if (knowledge.isDetail) { knowledge.renderDetail(container); return; }
     if (this.settingsDetail === "selection-ask") {
       if (!this.desktopSelection) {
         const host = container.createDiv();
@@ -1476,7 +1494,6 @@ export class CodexSettingTab extends PluginSettingTab {
       this.desktopModuleExpanded.add(module);
       this.desktopRoute = { ...this.desktopRoute!, section: undefined };
     }
-    if (this.settingsDetail === "pdf-reading") { this.desktopModuleExpanded.add("pdf"); this.settingsDetail = null; }
     if (this.settingsDetail === "english-diary") {
       this.desktopModuleExpanded.add("english"); this.settingsDetail = null;
       if (this.settingsFocusIntent !== "explicit:english-diary:home-shortcut") this.settingsFocusIntent = "explicit:module:english";
@@ -1486,6 +1503,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const page = createSettingsPage(container, { title: zh ? "模块" : "Modules", titleVisibility: "screen-reader" });
     this.desktopModuleCleanup = mountDesktopModuleSettings(page, {
       plugin: this.plugin, expanded: this.desktopModuleExpanded,
+      details: { pdf: () => this.openPdfReadingDetail() },
       summary: module => {
         if (module === "knowledge") {
           const count = this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0;
@@ -1498,7 +1516,7 @@ export class CodexSettingTab extends PluginSettingTab {
       onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
         try {
-        if (module === "knowledge") { knowledge.renderSummary(parent); this.ensureGenerationTemplates().renderDrawer(parent); }
+        if (module === "knowledge") { const summary = knowledge.renderSummary(parent); this.ensureGenerationTemplates().renderNavigation(summary); }
         else if (module === "journal") {
           this.renderJournalSettings(parent, true);
           const count = BUILT_IN_JOURNAL_TEMPLATES.length + this.journalTemplateService().listCustomTemplates().length;
@@ -1509,26 +1527,23 @@ export class CodexSettingTab extends PluginSettingTab {
         else if (module === "finance") {
           this.lifestyleSettingsPanel ??= new LifestyleSettingsPanel(this.plugin, "finance", () => { void this.closeSettingsDetail(); }, () => this.scheduleDisplay());
           this.lifestyleSettingsPanel.render(parent, { embedded: true }); return () => this.lifestyleSettingsPanel?.dispose();
-        } else if (module === "pdf") {
-          this.pdfSettingsPanel ??= new PdfReadingSettingsPanel(this.plugin, () => { void this.closeSettingsDetail(); });
-          this.pdfSettingsPanel.render(parent, { embedded: true }); return () => this.pdfSettingsPanel?.dispose();
         } else if (module === "inline-agent") renderInlineAgentSettings(parent, this.plugin);
         else this.renderEnglishDiarySettings(parent, true);
         } finally {
           const location = module === "finance" ? this.lifestyleSettingsPanel?.navigationKey() ?? "finance:root" : module;
-          parent.dataset.moduleDraftLocation = location;
-          this.moduleInputFields(parent).forEach(([key, field]) => { this.moduleInputBaselines.set(field, field.value); const value = this.moduleInputDrafts.get(`${location}:${key}`); if (value !== undefined) field.value = value; });
+          this.restoreModuleInputs(parent, location);
         }
       }
     });
   }
 
   private ensureDesktopKnowledge(): DesktopKnowledgeSettings {
-    return this.desktopKnowledge ??= new DesktopKnowledgeSettings(this.plugin, { redraw: () => this.scheduleDisplay(), openPreferences: () => this.openSettingsDetail("knowledge-preferences"), openLinking: () => this.openSettingsDetail("knowledge-linking"), openEditor: editor => this.openInlineEditor(editor, "modules") });
+    return this.desktopKnowledge ??= new DesktopKnowledgeSettings(this.plugin, { redraw: () => this.scheduleDisplay(), openPreferences: () => this.openSettingsDetail("knowledge-preferences"), openLinking: () => this.openSettingsDetail("knowledge-linking"), openEditor: editor => this.openInlineEditor(editor, "modules", () => this.ensureDesktopKnowledge().open("management")) });
   }
 
   private ensureGenerationTemplates(): GenerationTemplatesSection {
     return this.desktopGenerationTemplates ??= new GenerationTemplatesSection(this.plugin, {
+      openList: () => this.openSettingsDetail("generation-templates"), closeList: () => { void this.closeSettingsDetail(); },
       openEditor: id => this.openGenerationTemplateEditor(id), closeEditor: () => { void this.closeSettingsDetail(); }, redraw: () => this.scheduleDisplay()
     });
   }
@@ -1539,20 +1554,32 @@ export class CodexSettingTab extends PluginSettingTab {
     this.openSettingsDetail("generation-template");
   }
 
-  private moduleInputFields(parent: HTMLElement): Array<[string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement]> {
-    return Array.from(parent.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input:not([type=file]):not([type=checkbox]):not([type=hidden]),textarea,select"))
-      .map((field, index): [string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement] => [(field.getAttribute("aria-label") ?? field.id) || field.closest("label")?.textContent?.trim() || String(index), field]);
+  private moduleInputFields(parent: HTMLElement): Array<[string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | OriginSelectElement]> {
+    return Array.from(parent.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | OriginSelectElement>(`input:not([type=file]):not([type=checkbox]):not([type=hidden]),textarea,select${parent.dataset.moduleDraftLocation === "pdf" ? ",button[role=combobox]" : ""}`))
+      .map((field, index): [string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | OriginSelectElement] => [field.getAttribute("aria-label") || field.closest("label")?.querySelector(".echoink-pdf-setting-name")?.textContent?.trim() || field.id || field.closest("label")?.textContent?.trim() || String(index), field]);
+  }
+
+  private restoreModuleInputs(parent: HTMLElement, location: string): void {
+    parent.dataset.moduleDraftLocation = location;
+    this.moduleInputFields(parent).forEach(([key, field]) => {
+      this.moduleInputBaselines.set(field, field.value);
+      const value = this.moduleInputDrafts.get(`${location}:${key}`);
+      if (value !== undefined) field.value = value;
+    });
   }
 
   private captureModuleInputs(): void {
-    this.settingsBodyEl?.querySelectorAll<HTMLElement>(".echoink-module-drawer-content[data-module-draft-location]").forEach(parent => {
+    this.settingsBodyEl?.querySelectorAll<HTMLElement>("[data-module-draft-location]").forEach(parent => {
       const location = parent.dataset.moduleDraftLocation!;
       if (location.startsWith("finance:") && location !== this.lifestyleSettingsPanel?.navigationKey()) {
         for (const key of this.moduleInputDrafts.keys()) if (key.startsWith(`${location}:`)) this.moduleInputDrafts.delete(key);
         return;
       }
       for (const [key, field] of this.moduleInputFields(parent)) {
-        if (field.value === this.moduleInputBaselines.get(field)) this.moduleInputDrafts.delete(`${location}:${key}`);
+        const pdf = this.plugin.settings.pdfReading;
+        const baseline = location === "pdf" && !field.disabled ? ({ "解析方式": pdf.engine, "MinerU 专用 Token": pdf.mineruToken, "默认翻译语言": pdf.translationLanguage,
+          "原 PDF 保存位置": this.plugin.pdfReading?.defaultOriginalDirectory() ?? pdf.originalDirectory } as Record<string, string>)[key] ?? this.moduleInputBaselines.get(field) : this.moduleInputBaselines.get(field);
+        if (field.value === baseline) this.moduleInputDrafts.delete(`${location}:${key}`);
         else this.moduleInputDrafts.set(`${location}:${key}`, field.value);
       }
     });
@@ -2198,7 +2225,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const archives = createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
       description: Platform.isDesktopApp
-        ? (zh ? "查看、恢复或删除已归档的对话" : "View, restore, or delete archived conversations")
+        ? undefined
         : (zh ? "搜索、恢复或删除已归档会话；删除后无法在设置中恢复。" : "Search, restore, or delete archived conversations. Deleted conversations cannot be restored in Settings."),
       value: this.archivedConversations
         ? String(this.archivedConversations.length)
@@ -3035,25 +3062,11 @@ export class CodexSettingTab extends PluginSettingTab {
     if (Platform.isDesktopApp && this.desktopSelection?.controller?.hasUnsavedChanges()) {
       this.desktopSelection.controller.requestBack(() => { this.clearDesktopSelection(); void this.activateSettingsTab(tabId, focus); }); return;
     }
+    if (this.leaveKnowledgePreference(() => { void this.activateSettingsTab(tabId, focus); })) return;
     if (Platform.isDesktopApp && this.desktopKnowledge?.isDetail) {
       this.desktopKnowledge.requestLeave(() => { void this.activateSettingsTab(tabId, focus); }); return;
     }
     this.clearDesktopSelection();
-    if (
-      this.settingsDetail === "knowledge-preferences"
-      && knowledgeMaintenancePreferenceIsDirty(
-        this.knowledgePreferenceEditor
-      )
-    ) {
-      const discard = await this.confirmKnowledgePreferenceDiscard();
-      if (!discard) {
-        this.settingsFocusIntent =
-          "explicit:knowledge:preferences:editor";
-        this.scheduleDisplay();
-        return;
-      }
-      this.resetKnowledgePreferenceDraft();
-    }
     this.settingsDetail = null;
     this.announceSettingsStatus("");
     this.settingsTabFocusId = focus ? tabId : null;
@@ -3076,6 +3089,15 @@ export class CodexSettingTab extends PluginSettingTab {
     this.scheduleDisplay();
   }
 
+  private leaveKnowledgePreference(done: () => void): boolean {
+    if (this.settingsDetail !== "knowledge-preferences" || !knowledgeMaintenancePreferenceIsDirty(this.knowledgePreferenceEditor)) return false;
+    void this.confirmKnowledgePreferenceDiscard().then(discard => {
+      if (discard) { this.resetKnowledgePreferenceDraft(); done(); }
+      else { this.settingsFocusIntent = "explicit:knowledge:preferences:editor"; this.scheduleDisplay(); }
+    });
+    return true;
+  }
+
   private openSettingsDetail(detail: Exclude<SettingsDetail, null>): void {
     if (Platform.isDesktopApp && typeof detail === "object" && detail.kind === "resource") {
       if (detail.resourceId === "echoink:english-diary") detail = "english-diary";
@@ -3085,6 +3107,8 @@ export class CodexSettingTab extends PluginSettingTab {
       void this.openKnowledgeDataPage("history");
       return;
     }
+    if (Platform.isDesktopApp && (detail === "knowledge-preferences" || detail === "knowledge-linking")) this.ensureDesktopKnowledge().open("permissions");
+    if (Platform.isDesktopApp && (detail === "generation-templates" || detail === "generation-template")) this.desktopModuleExpanded.add("knowledge");
     this.settingsDetail = detail;
     this.settingsFocusIntent = "explicit:settings-detail:back";
     if (typeof detail === "object" && detail.kind === "resource") {
@@ -3139,6 +3163,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
       this.resetKnowledgePreferenceDraft();
     }
+    if (Platform.isDesktopApp && (detail === "knowledge-preferences" || detail === "knowledge-linking")) this.ensureDesktopKnowledge().open("permissions");
     this.settingsDetail = null;
     this.lifestyleSettingsPanel?.dispose();
     this.lifestyleSettingsPanel = null;
@@ -3154,7 +3179,12 @@ export class CodexSettingTab extends PluginSettingTab {
       this.desktopModuleExpanded.add("selection");
       this.settingsFocusIntent = "explicit:selection-ask:settings";
     } else if (detail === "generation-template") {
+      this.settingsDetail = "generation-templates";
+      this.settingsFocusIntent = `explicit:${this.ensureGenerationTemplates().editorFocusKey()}`;
+    } else if (detail === "generation-templates") {
       this.desktopModuleExpanded.add("knowledge"); this.settingsFocusIntent = "explicit:knowledge:generation-templates";
+    } else if (detail === "pdf-reading") {
+      this.settingsFocusIntent = "explicit:module:pdf";
     } else if (detail === "journal-templates") {
       this.desktopModuleExpanded.add("journal"); this.settingsFocusIntent = "explicit:journal:templates";
     } else if (detail === "todo-categories") {
@@ -3165,6 +3195,8 @@ export class CodexSettingTab extends PluginSettingTab {
       this.settingsFocusIntent = "explicit:knowledge:onboarding";
     } else if (detail === "knowledge-preferences") {
       this.settingsFocusIntent = "explicit:knowledge:preferences";
+    } else if (detail === "knowledge-linking") {
+      this.settingsFocusIntent = "explicit:knowledge:linking";
     } else if (detail === "knowledge-maintenance-history") {
       this.settingsFocusIntent = "explicit:knowledge:maintenance-history";
     } else if (detail === "review-archives") {
@@ -4855,7 +4887,7 @@ export class CodexSettingTab extends PluginSettingTab {
     let modelControls: ProPluginControls | null = null;
     const modelSetting = applySettingsRow(new OriginSetting(group)
       .setName("英文生成模型")
-      .setDesc(`当前：${this.plugin.englishDiaryProviderLabel().replace(/[。.!！]+$/u, "")}。右侧普通对话沿用对话栏选择的模型。`)
+      .setDesc(embedded ? "右侧普通对话沿用对话栏选择的模型。" : `当前：${this.plugin.englishDiaryProviderLabel().replace(/[。.!！]+$/u, "")}。右侧普通对话沿用对话栏选择的模型。`)
       .addOriginDropdown(this.app, (dropdown) => {
         if (embedded) {
           const access = this.plugin.accountService ?? unavailableCapabilityAccess;
@@ -5568,6 +5600,7 @@ type VisibleSettingsTab = SettingsTab | DesktopSettingsTab;
 type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 
 type SettingsDetail =
+  | "generation-templates"
   | "generation-template"
   | "journal-templates"
   | "todo-categories"

@@ -101,11 +101,12 @@ async function fixture(name: string) {
   service.applyDirectoryPlan = async (...args: any[]) => { calls.applies++; return await realApply(...args); };
   const host = document.createElement("div"); host.className = "echoink-settings-demo"; document.body.appendChild(host);
   let view: any;
+  const navigation = { preferences: 0, linking: 0, editors: [] as any[] };
   const redraw = () => {
     view.suspend(); runtime.disposeOriginControls(host); host.replaceChildren();
     if (view.isDetail) view.renderDetail(host); else view.renderSummary(host);
   };
-  view = new runtime.DesktopKnowledgeSettings(plugin, { redraw, openPreferences() {}, openLinking() {}, openEditor() {} });
+  view = new runtime.DesktopKnowledgeSettings(plugin, { redraw, openPreferences() { navigation.preferences++; }, openLinking() { navigation.linking++; }, openEditor(editor: any) { navigation.editors.push(editor); } });
   redraw(); await settle();
   const button = (text: string): HTMLButtonElement => {
     const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find(value => value.textContent?.trim() === text || value.getAttribute("aria-label")?.startsWith(`${text}，`));
@@ -113,12 +114,13 @@ async function fixture(name: string) {
   };
   const field = (label: string): HTMLInputElement => { const element = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`); assert(element, `field ${label}`); return element; };
   const change = (label: string, value: string) => { const element = field(label); element.value = value; element.dispatchEvent(new win.Event("input", { bubbles: true })); };
-  const initialize = async (mode: "existing" | "build") => {
-    button("重新初始化").click();
+  const initialize = async (mode: "existing" | "build", fromManagement = false) => {
+    if (fromManagement) { button("目录管理").click(); button("重新初始化").click(); }
+    else view.open("initialize");
     button(mode === "existing" ? "使用现有文件夹" : "帮我搭建").click();
     await until(() => !button("确认初始化").disabled || host.textContent!.includes("settings-error") || !!host.querySelector(".settings-error"), "initial preview settles");
   };
-  return { ...data, root: vaultRoot, bindings, service, calls, events, host, view, redraw, button, field, change, initialize,
+  return { ...data, root: vaultRoot, bindings, service, calls, events, host, view, navigation, redraw, button, field, change, initialize,
     failSave(value: boolean) { failSave = value; },
     async cleanup() { view.dispose(); runtime.disposeOriginControls(host); host.remove(); release(); await service.unload(); }
   };
@@ -219,11 +221,11 @@ try {
       const purpose = (role: string) => f.host.querySelector<HTMLButtonElement>(`[data-echoink-focus-key="knowledge:directory:${role}"]`)!;
       const raw = purpose("raw"), wiki = purpose("wiki"), inbox = purpose("inbox");
       assert(raw.querySelector(".echoink-settings-navigation-icon"));
-      assert.equal(wiki.querySelector(".echoink-settings-navigation-action")?.textContent, "更改");
-      assert.equal(wiki.querySelector(".echoink-settings-navigation-icon"), null);
+      assert.equal(wiki.querySelector(".echoink-settings-navigation-action"), null);
+      assert(wiki.querySelector(".echoink-settings-navigation-icon"));
       assert.equal(inbox.querySelector(".echoink-settings-navigation-value")?.textContent, "未启用");
-      assert.equal(inbox.querySelector(".echoink-settings-navigation-action")?.textContent, "选择");
-      assert.equal(inbox.querySelector(".echoink-settings-navigation-icon"), null);
+      assert.equal(inbox.querySelector(".echoink-settings-navigation-action"), null);
+      assert(inbox.querySelector(".echoink-settings-navigation-icon"));
       assert.equal(raw.querySelector(".echoink-knowledge-purpose-commands")?.textContent, "/ask /maintain 召回");
       assert.equal(inbox.querySelector(".echoink-knowledge-purpose-commands")?.textContent, "召回");
       const help = raw.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
@@ -254,8 +256,129 @@ try {
       assert.equal(row.querySelector(".echoink-settings-navigation-value")?.textContent, missing);
       assert(row.querySelector(".echoink-settings-navigation-value-suffix")?.textContent?.includes("原目录已失效"));
       assert(!row.textContent?.includes("未启用"));
-      assert.equal(row.querySelector(".echoink-settings-navigation-action")?.textContent, "更改");
+      assert.equal(row.querySelector(".echoink-settings-navigation-action"), null);
+      assert(row.querySelector(".echoink-settings-navigation-icon"));
       assert.equal(f.calls.saves, 0);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("module summary contains seven routes and each detail returns to its entry", async () => {
+    const f = await fixture("summary-routes");
+    try {
+      const before = await inventory(f.root);
+      const routes = [...f.host.querySelectorAll<HTMLButtonElement>(".echoink-settings-navigation-row")];
+      assert.deepEqual(routes.map(row => row.dataset.echoinkFocusKey), ["knowledge:directory:raw", "knowledge:directory:wiki", "knowledge:directory:projects", "knowledge:directory:inbox", "knowledge:collections", "knowledge:permissions", "knowledge:management"]);
+      assert.equal(f.host.querySelector(".echoink-settings-section-header"), null, "no internal purpose-directory title repeats the module hierarchy");
+      assert.equal(f.host.querySelector('[role="checkbox"], [role="combobox"]'), null, "permissions and collection controls live on their detail pages");
+      assert.equal(f.host.querySelector('[data-echoink-focus-key="knowledge:preferences"]'), null);
+      for (const [target, title] of [["collections", "收藏保存位置"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
+        f.button(title).click();
+        assert.equal(f.host.querySelector("h2")?.textContent, title);
+        assert(f.view.navigationKey().startsWith(target));
+        f.button("返回模块").click(); await settle();
+        assert.equal(f.view.navigationKey(), null);
+        assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), `knowledge:${target}`);
+        f.view.open(target);
+        assert.equal(f.host.querySelector("h2")?.textContent, title, "public routes use the same detail pages");
+        f.button("返回模块").click(); await settle();
+      }
+      assert.deepEqual(await inventory(f.root), before);
+      assert.deepEqual([f.calls.saves, f.calls.applies, f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("collection detail saves independent targets and preserves rollback and pending state", async () => {
+    const f = await fixture("collection-detail");
+    try {
+      const before = await inventory(f.root), pdf = f.plugin.settings.pdfReading.originalDirectory;
+      const raw = runtime.normalizeKnowledgeFolderBindings(f.plugin.settings.knowledgeBase.folderBindings).roles.raw;
+      f.button("收藏保存位置").click();
+      assert.equal(f.host.querySelectorAll('[role="combobox"]').length, 2);
+      const save = f.plugin.saveSettings;
+      let releaseSave!: () => void;
+      const pending = new Promise<void>(resolve => { releaseSave = resolve; });
+      f.plugin.saveSettings = async (...args: any[]) => { await pending; await save(...args); };
+      const web = f.field("网页收藏保存到");
+      web.value = "资料甲"; web.dispatchEvent(new win.Event("change", { bubbles: true }));
+      assert(web.disabled); assert(f.view.submitting);
+      f.button("返回模块").click(); assert(f.view.navigationKey().startsWith("collections"), "pending writes keep their page");
+      releaseSave(); await settle(); f.plugin.saveSettings = save;
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.web, "资料甲");
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.wechat, "资料乙");
+      const wechat = f.field("公众号文章收藏保存到");
+      wechat.value = "资料甲"; wechat.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets, { web: "资料甲", wechat: "资料甲" });
+      f.failSave(true);
+      const failed = f.field("公众号文章收藏保存到");
+      failed.value = "资料乙"; failed.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
+      assert.equal(f.field("公众号文章收藏保存到").value, "资料甲");
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.wechat, "资料甲");
+      assert(f.host.textContent?.includes("绑定未保存"));
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.raw, raw);
+      assert.equal(f.plugin.settings.pdfReading.originalDirectory, pdf);
+      assert.deepEqual(await inventory(f.root), before);
+      assert.deepEqual([f.calls.applies, f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("permission detail keeps required hints, saves and child-page parent", async () => {
+    const f = await fixture("permission-detail");
+    try {
+      f.button("Agent 权限与维护").click();
+      const check = f.field("允许 Agent 新建子文件夹");
+      const row = check.closest(".setting-item")!;
+      assert.equal(row.querySelector(".setting-item-description")?.textContent ?? "", "");
+      const hint = row.querySelector(".echoink-settings-help-trigger")!.getAttribute("aria-label")!;
+      for (const text of ["知识成果", "项目", "只新建", "不删除", "不移动"]) assert(hint.includes(text));
+      const linking = f.field("自动补链").closest(".setting-item")!;
+      assert.equal(linking.querySelector(".setting-item-description")?.textContent ?? "", "");
+      const linkingHint = linking.querySelector(".echoink-settings-help-trigger")!.getAttribute("aria-label")!;
+      for (const text of ["本批笔记", "相关老笔记", "已开始的写入会完成", "手动补全"]) assert(linkingHint.includes(text));
+      assert.equal(f.button("知识关联").querySelector(".echoink-settings-navigation-description"), null);
+      check.click(); await settle();
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.allowAgentSubfolders, true);
+      f.failSave(true); check.click(); await settle();
+      assert.equal(check.checked, true);
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.allowAgentSubfolders, true);
+      f.button("知识提炼偏好").click(); f.button("知识关联").click();
+      assert.deepEqual([f.navigation.preferences, f.navigation.linking], [1, 1]);
+      f.redraw();
+      assert.equal(f.host.querySelector("h2")?.textContent, "Agent 权限与维护", "external child pages retain this parent for their return");
+      assert.equal(f.host.querySelector('[data-echoink-focus-key="knowledge:preferences"]')?.getAttribute("data-echoink-focus-key"), "knowledge:preferences");
+      assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
+    } finally { await f.cleanup(); }
+  });
+
+  await run("management children preserve their parent through cancel, discard and completion", async () => {
+    const f = await fixture("management-parent");
+    try {
+      f.button("目录管理").click(); await settle();
+      assert(f.button("文件夹名称优化")); assert(f.button("复原仓库"));
+      assert.equal(f.button("重新初始化").querySelector(".echoink-settings-navigation-description"), null);
+      f.button("文件夹名称优化").click();
+      assert.equal(f.navigation.editors.length, 1);
+      assert(f.view.navigationKey().startsWith("management"));
+      f.redraw();
+      assert.equal(f.host.querySelector("h2")?.textContent, "目录管理", "closing the external editor redraws its existing parent");
+      f.button("重新初始化").click(); f.button("返回目录管理").click(); await settle();
+      assert.equal(f.host.querySelector("h2")?.textContent, "目录管理");
+      assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:onboarding");
+      f.button("重新初始化").click(); f.button("使用现有文件夹").click();
+      await until(() => !f.button("确认初始化").disabled, "management initialization preview settles");
+      f.change("初始化复盘输出", "未确认管理草稿");
+      f.button("返回目录管理").click(); f.button("继续编辑").click(); await settle();
+      assert.equal(f.field("初始化复盘输出").value, "未确认管理草稿");
+      assert.equal(document.activeElement?.getAttribute("aria-label"), "返回目录管理");
+      f.button("返回目录管理").click(); f.button("放弃修改").click(); await settle();
+      assert.equal(f.host.querySelector("h2")?.textContent, "目录管理"); assert.equal(f.view.hasDraft, false);
+      f.button("重新初始化").click(); f.button("使用现有文件夹").click();
+      await until(() => !f.button("确认初始化").disabled, "new management preview settles");
+      f.button("确认初始化").click();
+      await until(() => !f.view.submitting && f.view.navigationKey()?.startsWith("management"), "management initialization returns after applying");
+      assert.equal(f.host.querySelector("h2")?.textContent, "目录管理");
+      assert.equal(f.calls.applies, 1);
+      f.view.open("initialize"); f.button("返回模块").click(); await settle();
+      assert.equal(f.view.isDetail, false, "external initialization still returns to modules");
     } finally { await f.cleanup(); }
   });
 
@@ -265,8 +388,10 @@ try {
       let state = "custom", fails = false;
       f.plugin.getEchoInkKnowledgeMaintenancePreferenceState = async () => { if (fails) throw new Error("合成读取失败"); return { state }; };
       const row = () => f.host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:preferences"]')!;
-      f.redraw(); await settle();
-      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "关注维度、颗粒度、组织方式");
+      f.view.open("permissions");
+      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "正在读取偏好…");
+      await settle();
+      assert.equal(row().querySelector(".echoink-settings-navigation-description"), null);
       assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "已自定义");
       assert(row().getAttribute("aria-label")?.includes("已自定义"));
       state = "default"; f.redraw(); await settle();
@@ -274,6 +399,8 @@ try {
       fails = true; f.redraw(); await settle();
       assert(row().querySelector(".echoink-settings-navigation-description")?.textContent?.includes("知识提炼偏好读取失败"));
       assert.equal(row().querySelector(".echoink-settings-navigation-value"), null);
+      delete f.plugin.getEchoInkKnowledgeMaintenancePreferenceState; f.redraw();
+      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "知识提炼偏好状态暂不可用");
       assert.equal(f.calls.saves, 0);
     } finally { await f.cleanup(); }
   });
@@ -331,6 +458,7 @@ try {
     const f = await fixture("checkbox-rollback");
     try {
       const before = await inventory(f.root);
+      f.button("Agent 权限与维护").click();
       assert.equal(f.field("自动补链").checked, true);
       f.field("自动补链").click(); await settle();
       assert.equal(f.plugin.settings.knowledgeBase.autoLinkEnabled, false); assert.equal(f.field("自动补链").checked, false);
@@ -346,6 +474,9 @@ try {
     try {
       const before = await inventory(f.root);
       f.button("资料来源").click();
+      f.field("添加来源目录").click(); f.button("返回").click(); await settle();
+      assert.equal(f.host.querySelector("h2")?.textContent, "资料来源");
+      assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:sources:add");
       const entries = [...f.host.querySelectorAll<HTMLElement>(".echoink-knowledge-source")];
       assert.equal(entries.length, 2);
       for (const [index, entry] of entries.entries()) {
@@ -404,6 +535,9 @@ try {
     try {
       for (const [role, title] of [["wiki", "知识成果"], ["projects", "项目"], ["inbox", "收件箱"]] as const) {
         f.button(title).click();
+        f.button("更改文件夹").click(); f.button("返回").click(); await settle();
+        assert.equal(f.host.querySelector("h2")?.textContent, title);
+        assert.equal(document.activeElement?.getAttribute("data-echoink-focus-key"), "knowledge:role:picker");
         const binding = f.plugin.settings.knowledgeBase.folderBindings.roles[role];
         const entries = [...f.host.querySelectorAll<HTMLElement>(".echoink-knowledge-source")];
         assert.equal(entries.length, binding.readPaths.length);

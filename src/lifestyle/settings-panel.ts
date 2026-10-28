@@ -44,7 +44,7 @@ export class LifestyleSettingsPanel {
       attachSettingsTooltip(value, path, value, { interactive: false, describeTrigger: false,
         shouldShow: () => value.scrollWidth > value.clientWidth });
     }
-    const analysis = this.toggle(page, "AI 分析", "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
+    const analysis = this.toggle(page, "AI 分析", this.embedded ? "关闭后不影响记账和预算。" : "默认关闭；仅在开启后显示分析模块，关闭模型不影响记账和预算。", settings.aiEnabled, async (value) => {
       await this.plugin.lifestyle.finance.saveOption("aiEnabled", value);
     });
     const location = page.createDiv({ cls:"echoink-life-setting-row echoink-finance-analysis-location" });
