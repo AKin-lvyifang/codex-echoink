@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
 import { ItemView, Modal, Notice, TFile, TFolder, WorkspaceLeaf, sanitizeHTMLToDom, setIcon } from "obsidian";
@@ -41,6 +42,7 @@ function markup(el: HTMLElement, html: string): void {
   el.empty();
   el.appendChild(el.ownerDocument.importNode(sanitizeHTMLToDom(html), true));
   el.querySelectorAll<HTMLElement>("[data-icon]").forEach((node) => setIcon(node, node.dataset.icon!));
+  el.querySelectorAll<HTMLElement>("[title]").forEach(node => attachNativeTooltip(node, node.getAttribute("title") ?? ""));
 }
 const parseDate = (key: string): Date => { const [y, m, d] = key.split("-").map(Number); return new Date(y, m - 1, d); };
 
@@ -383,9 +385,9 @@ export class EchoInkHomeView extends ItemView {
     // Keep the existing icon and keyboard hint in the Home action button.
     const text = Array.from(button.childNodes).find((node) => node.nodeType === 3 && node.textContent?.trim());
     if (text) text.textContent = label;
-    button.title = english
+    attachNativeTooltip(button, english
       ? this.t("打开今天的双语日记", "Open today's bilingual diary")
-      : this.t("自己直接写，保存到 Inbox", "Write directly and save to Inbox");
+      : this.t("自己直接写，保存到 Inbox", "Write directly and save to Inbox"));
   }
   private renderFinanceCard(): void {
     this.contentEl.querySelector(".echoink-life-card-finance")?.remove();
@@ -661,8 +663,8 @@ export class EchoInkHomeView extends ItemView {
     const done = pool.filter((record) => record.done).length;
     const progress = subtitle.createSpan({ cls: "todo-progress" });
     const assist = this.t(`已完成 ${done} 项，共 ${total} 项`, `${done} of ${total} done`);
-    progress.setAttr("title", assist);
     progress.setAttr("aria-label", assist);
+    attachNativeTooltip(progress, assist, { touch: "notice" });
     const progressIcon = progress.createSpan({ cls: "todo-progress-icon", attr: { "aria-hidden": "true" } });
     setIcon(progressIcon, "check-square");
     const track = progress.createSpan({ cls: "todo-progress-track", attr: { "aria-hidden": "true" } });

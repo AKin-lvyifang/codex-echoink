@@ -136,7 +136,6 @@
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center { position: absolute; inset: 25%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 5px; pointer-events: none; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center small { color: var(--ip-secondary); font-size: .76em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center strong { font-size: 1.1em; font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-tooltip { position: absolute; inset: auto 0 0; padding: 6px; border: 1px solid var(--ip-line); border-radius: 6px; background: var(--ip-bg); color: var(--ip-ink); font-size: .8em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; width: 100%; min-height: 44px; padding: 6px 0; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; background: transparent; color: var(--ip-ink); text-align: left; font: inherit; font-size: .88em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row.is-selected, .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row:focus-visible { background: var(--ip-soft); }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-name { overflow-wrap: anywhere; }

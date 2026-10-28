@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { Scope, setIcon, type App } from "obsidian";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import type { SettingsLanguage } from "../../settings/settings";
@@ -25,7 +26,8 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
     const header = doc.createElement("div"); header.className = "echoink-annotation-card-header"; card.append(header);
     const number = doc.createElement("span"); number.className = "echoink-annotation-number"; number.textContent = String(annotation.number); header.append(number);
     const source = doc.createElement("button"); source.type = "button"; source.className = "echoink-annotation-source"; source.textContent = annotation.fileName;
-    source.title = annotation.vaultRelativePath; source.onclick = () => actions.onSource(annotation); header.append(source);
+    source.onclick = () => actions.onSource(annotation); header.append(source);
+    attachNativeTooltip(source, annotation.vaultRelativePath);
     const controls = doc.createElement("span"); controls.className = "echoink-annotation-actions"; header.append(controls);
     const button = (icon: string, zh: string, en: string, run: () => void) => {
       const element = doc.createElement("button"); element.type = "button"; element.setAttribute("aria-label", conversationUiText(language, zh, en));

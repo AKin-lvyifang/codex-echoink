@@ -41,6 +41,15 @@ import {
   normalizeSettingsData
 } from "../settings/settings";
 
+function composerAccessibleName(element: ComposerTestElement): string {
+  const direct = element.getAttribute("aria-label");
+  if (direct !== null) return direct;
+  let root = element;
+  while (root.parentElement) root = root.parentElement;
+  return (element.getAttribute("aria-labelledby") ?? "").split(/\s+/u).filter(Boolean)
+    .map((id) => root.querySelector(`#${id}`)?.textContent ?? "").join(" ");
+}
+
 export async function runComposerActionTests(): Promise<void> {
   const originalDocument = globalThis.document;
   const originalHTMLElement = (globalThis as unknown as {
@@ -104,14 +113,14 @@ export async function runComposerActionTests(): Promise<void> {
     openNoteMentionPicker(pickerHost);
     assert.equal(draftChanges, 2, "disabled input stays unchanged");
     const send = renderAction();
-    assert.equal(send.context.getAttribute("aria-label"), "查看上下文用量");
+    assert.equal(composerAccessibleName(send.context), "查看上下文用量");
     assert.equal(send.context.hasClass("is-hidden"), false);
     send.context.onclick?.({
       preventDefault: () => undefined,
       stopPropagation: () => undefined
     });
     assert.equal(send.calls.context, 1, "Composer context meter remains available without a settings gate");
-    assert.equal(send.primary.getAttribute("aria-label"), "发送");
+    assert.equal(composerAccessibleName(send.primary), "发送");
     assert.equal(send.primary.hasClass("is-send-action"), true);
     assert.equal(send.primary.querySelectorAll(".echoink-animate-icon-send-horizontal").length, 1);
     assert.equal(
@@ -123,7 +132,7 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(send.calls.send, 1, "ordinary send keeps onSendMessage");
     send.mic.click();
     assert.equal(send.calls.mic, 1, "Mic keeps onMicInput");
-    assert.equal(send.mic.getAttribute("aria-label"), "语音输入");
+    assert.equal(composerAccessibleName(send.mic), "语音输入");
     assert.equal(send.mic.querySelectorAll(".echoink-animate-icon-mic").length, 1);
     assert.equal(send.mic.querySelector("rect")?.getAttribute("rx"), "3");
 
@@ -143,7 +152,7 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(stop.calls.stop, 1);
 
     const resume = renderAction({ hasQueuedItems: true, hasDraft: false });
-    assert.equal(resume.primary.getAttribute("aria-label"), "发送");
+    assert.equal(composerAccessibleName(resume.primary), "发送");
     resume.primary.click();
     assert.equal(resume.calls.send, 1);
     assert.equal(resume.calls.resume, 0);
@@ -154,12 +163,12 @@ export async function runComposerActionTests(): Promise<void> {
 
     const disabled = renderAction({ promptEnhancerRunning: true });
     assert.equal(disabled.primary.disabled, true);
-    assert.equal(disabled.primary.getAttribute("aria-label"), "提示词增强中");
+    assert.equal(composerAccessibleName(disabled.primary), "提示词增强中");
 
     const englishSend = renderAction({ language: "en" });
-    assert.equal(englishSend.context.getAttribute("aria-label"), "View context usage");
-    assert.equal(englishSend.primary.getAttribute("aria-label"), "Send");
-    assert.equal(englishSend.mic.getAttribute("aria-label"), "Voice input");
+    assert.equal(composerAccessibleName(englishSend.context), "View context usage");
+    assert.equal(composerAccessibleName(englishSend.primary), "Send");
+    assert.equal(composerAccessibleName(englishSend.mic), "Voice input");
 
     const persistentComposerShell = new ComposerTestElement("div");
     const persistentDraft = persistentComposerShell.createEl("textarea", {
@@ -177,10 +186,10 @@ export async function runComposerActionTests(): Promise<void> {
     });
     refreshComposerShellCopy(persistentComposerShell as unknown as HTMLElement, "en");
     assert.equal(persistentDraft.value, "这段用户输入必须保持不变");
-    assert.equal(persistentDraft.getAttribute("aria-label"), "Enter a message, command, or enabled Skill");
-    assert.equal(commandMenu.getAttribute("aria-label"), "Commands and enabled Skills");
-    assert.equal(persistentResourcePanel.getAttribute("aria-label"), "Add resources");
-    assert.equal(noteMentionPanel.getAttribute("aria-label"), "Mention notes");
+    assert.equal(composerAccessibleName(persistentDraft), "Enter a message, command, or enabled Skill");
+    assert.equal(composerAccessibleName(commandMenu), "Commands and enabled Skills");
+    assert.equal(composerAccessibleName(persistentResourcePanel), "Add resources");
+    assert.equal(composerAccessibleName(noteMentionPanel), "Mention notes");
 
     const selectedBuiltinSkill: EchoInkResource = {
       id: "echoink-local:skill:knowledge-review", kind: "skill", source: "echoink-local",
@@ -362,33 +371,34 @@ export async function runComposerActionTests(): Promise<void> {
     const thumbnail = attachmentContainer.querySelector(".codex-attachment-thumbnail")!;
     const image = thumbnail.querySelector("img")!;
     assert.equal(image.src, "app://echoink-vault/cover%20%231.png");
-    assert.equal(thumbnail.getAttribute("title"), "cover #1.png");
+    assert.equal(thumbnail.getAttribute("title"), null);
+    assert.equal(composerAccessibleName(thumbnail), "图片：cover #1.png");
     assert.equal(thumbnail.getAttribute("role"), "listitem");
     assert.equal(thumbnail.querySelector(".codex-attachment-thumbnail-name"), null,
-      "a loadable image is only a real thumbnail; its filename remains in title and aria metadata");
+      "a loadable image is only a real thumbnail; its filename remains in the accessible name");
     image.onerror?.();
     assert.equal(thumbnail.hasClass("is-broken"), true, "unsupported image switches to its fallback");
     assert.ok(thumbnail.querySelector(".codex-attachment-thumbnail-fallback"));
-    assert.equal(thumbnail.getAttribute("aria-label"), "图片：cover #1.png，无法预览");
+    assert.equal(composerAccessibleName(thumbnail), "图片：cover #1.png，无法预览");
     const imageRemove = thumbnail.querySelector(".codex-attachment-thumbnail-remove")!;
-    assert.equal(imageRemove.getAttribute("aria-label"), "移除图片：cover #1.png");
+    assert.equal(composerAccessibleName(imageRemove), "移除图片：cover #1.png");
     imageRemove.click();
 
     const fileCard = attachmentContainer.querySelector(".codex-file-card-compact")!;
-    assert.equal(fileCard.getAttribute("title"), "meeting.mp4");
+    assert.equal(fileCard.getAttribute("title"), null);
     assert.equal(fileCard.getAttribute("data-attachment-kind"), "video");
     assert.ok(fileCard.querySelector(".codex-file-card-icon"));
     assert.equal(fileCard.querySelector(".codex-file-card-name")?.textContent, "meeting.mp4");
     assert.equal(fileCard.querySelector(".codex-file-card-meta")?.textContent, "大小未知");
     const fileOpen = fileCard.querySelector(".codex-file-card-open")!;
-    assert.equal(fileOpen.getAttribute("aria-label"), "打开附件：meeting.mp4");
+    assert.equal(composerAccessibleName(fileOpen), "打开附件：meeting.mp4");
     fileOpen.onclick?.({
       preventDefault: () => undefined,
       stopPropagation: () => undefined
     } as never);
     assert.deepEqual(openedAttachments, [meetingFile.path]);
     const fileRemove = fileCard.querySelector(".codex-file-card-remove")!;
-    assert.equal(fileRemove.getAttribute("aria-label"), "移除文件：meeting.mp4");
+    assert.equal(composerAccessibleName(fileRemove), "移除文件：meeting.mp4");
     fileRemove.onclick?.({
       preventDefault: () => undefined,
       stopPropagation: () => undefined
@@ -400,7 +410,7 @@ export async function runComposerActionTests(): Promise<void> {
     const thumbnails = attachmentContainer.querySelectorAll(".codex-attachment-thumbnail");
     const missingThumbnail = thumbnails[1]!;
     assert.equal(missingThumbnail.hasClass("is-broken"), true);
-    assert.equal(missingThumbnail.getAttribute("aria-label"), "图片：粘贴图片 2.png，无法预览");
+    assert.equal(composerAccessibleName(missingThumbnail), "图片：粘贴图片 2.png，无法预览");
     assert.equal(
       missingThumbnail.querySelector(".codex-attachment-thumbnail-name")?.textContent,
       "粘贴图片 2.png · 无法预览"
@@ -1041,6 +1051,7 @@ class ComposerTestDocument {
   activeElement: ComposerTestElement | null = null;
   readonly body = new ComposerTestElement("body");
   readonly documentElement = { clientWidth: 1_280, clientHeight: 800 };
+  querySelectorAll(selector: string): ComposerTestElement[] { return this.body.querySelectorAll(selector); }
   readonly defaultView = {
     addEventListener: () => undefined,
     removeEventListener: () => undefined
@@ -1064,9 +1075,11 @@ class ComposerTestElement {
   readonly style = { setProperty: () => undefined };
   readonly classList = {
     add: (...classNames: string[]) => this.addClass(...classNames),
-    remove: (...classNames: string[]) => this.removeClass(...classNames)
+    remove: (...classNames: string[]) => this.removeClass(...classNames),
+    contains: (className: string) => this.hasClass(className)
   };
   className = "";
+  id = "";
   disabled = false;
   onerror: (() => void) | null = null;
   onload: (() => void) | null = null;
@@ -1084,6 +1097,19 @@ class ComposerTestElement {
   constructor(readonly tagName: string) {}
 
   get isConnected(): boolean { return this.connected; }
+  get parentNode(): ComposerTestElement | null { return this.parentElement; }
+  get nextSibling(): ComposerTestElement | null {
+    return this.parentElement?.children[this.parentElement.children.indexOf(this) + 1] ?? null;
+  }
+  addEventListener(): void {}
+  removeEventListener(): void {}
+  insertBefore(child: ComposerTestElement, reference: ComposerTestElement | null): ComposerTestElement {
+    child.parentElement?.removeChild(child);
+    child.parentElement = this; child.setConnected(this.connected);
+    const index = reference ? this.children.indexOf(reference) : -1;
+    if (index < 0) this.children.push(child); else this.children.splice(index, 0, child);
+    return child;
+  }
   empty(): void {
     for (const child of this.children) {
       child.parentElement = null;
@@ -1137,6 +1163,7 @@ class ComposerTestElement {
   setAttribute(name: string, value: string): void {
     this.attributes.set(name, value);
     if (name === "class") this.className = value;
+    if (name === "id") this.id = value;
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/gu, (_, letter: string) => letter.toUpperCase())] = value;
   }
   getAttribute(name: string): string | null { return name === "class" ? this.className : this.attributes.get(name) ?? null; }
@@ -1172,6 +1199,7 @@ class ComposerTestElement {
     return matches;
   }
   matches(selector: string): boolean {
+    if (selector.startsWith("#")) return this.id === selector.slice(1);
     const tag = selector.match(/^[a-z][a-z0-9-]*/iu)?.[0];
     if (tag && this.tagName.toLowerCase() !== tag.toLowerCase()) return false;
     const excludedClassNames = Array.from(

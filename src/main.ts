@@ -2061,7 +2061,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       item.textContent = current.kind === "maintenance" ? maintenanceStatusBarText(current, english)
         : `EchoInk ${english ? "Knowledge links" : "知识关联"}：${maintenanceTaskStateLabel(current, english)}${current.task.total === null ? "" : ` ${current.task.processed}/${current.task.total}${english ? " pages" : " 页"}`}`;
       const detail = current.kind === "maintenance" ? maintenanceActivityText(current, english) : knowledgeLinkingProgressText(current.task, english);
-      item.setAttribute("aria-label", detail); item.title = detail;
+      item.setAttribute("aria-label", detail);
     }));
   }
   getKnowledgeActivitySource(): import("./knowledge-base/maintenance-activity").KnowledgeActivitySource | undefined { return this.knowledgeBase?.activity; }

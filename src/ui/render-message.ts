@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "./native-tooltip";
 import { Component, normalizePath, setIcon, TFile } from "obsidian";
 import type { App } from "obsidian";
 import { splitVaultNoteLinkSegments, type VaultNoteLinkSegment } from "../core/vault-note-links";
@@ -152,11 +153,11 @@ function renderVaultNoteLink(app: App, component: Component, container: HTMLElem
     text: noteName,
     attr: {
       href: "#",
-      title: segment.title,
       "aria-label": `打开笔记 ${noteName}`,
       "data-path": targetPath
     }
   });
+  attachNativeTooltip(link, segment.title);
   component.registerDomEvent(link, "click", async (event) => {
     event.preventDefault();
     event.stopPropagation();

@@ -3,11 +3,13 @@ import * as path from "path";
 import { ItemView, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { isReviewHtmlPath } from "./schedule";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export const VIEW_TYPE_REVIEW_PREVIEW = "codex-review-preview";
 
 export class ReviewPreviewView extends ItemView {
   private htmlPath = "";
+  private pathTooltip: ReturnType<typeof attachNativeTooltip> | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
@@ -38,9 +40,11 @@ export class ReviewPreviewView extends ItemView {
   async onOpen(): Promise<void> {
     await this.render();
   }
+  async onClose(): Promise<void> { this.pathTooltip?.dispose(); this.pathTooltip = null; }
 
   private async render(): Promise<void> {
     const { contentEl } = this;
+    this.pathTooltip?.dispose(); this.pathTooltip = null;
     contentEl.empty();
     contentEl.addClass("codex-review-preview");
     if (!this.htmlPath) {
@@ -56,9 +60,11 @@ export class ReviewPreviewView extends ItemView {
         sandbox: "allow-same-origin"
       }
     }) as HTMLIFrameElement;
+    const pathTooltip = attachNativeTooltip(frame, this.htmlPath); this.pathTooltip = pathTooltip;
     const absolute = path.join(this.plugin.getVaultPath(), this.htmlPath);
     const html = await fsp.readFile(absolute, "utf8").catch(() => "");
     if (!html) {
+      pathTooltip.dispose(); if (this.pathTooltip === pathTooltip) this.pathTooltip = null;
       frame.remove();
       contentEl.createDiv({ cls: "codex-resource-error", text: "HTML 文件不存在或无法读取。" });
       return;

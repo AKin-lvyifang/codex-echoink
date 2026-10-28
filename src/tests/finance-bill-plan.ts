@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { App } from "obsidian";
+import { Platform, type App } from "obsidian";
 import { parse, stringify } from "yaml";
 import { LifestyleStore, type FinanceEntry } from "../lifestyle/store";
 import { LifestyleFinanceService as ProductionFinanceService } from "../lifestyle/finance-service";
@@ -13,6 +13,7 @@ import { DEFAULT_LIFESTYLE_SETTINGS } from "../lifestyle/settings";
 import { financeEntryCsv, financeSummary } from "../lifestyle/finance-domain";
 import { financeBillPlanStats, filterFinanceBillPlanEntries, emptyFinanceBillPlanFilters, reconcileFinanceBillPlanSelection, sortFinanceBillPlanEntries } from "../lifestyle/finance-bill-plan";
 import { parseFinanceNote } from "../lifestyle/finance-ledger";
+import { displayedTooltipsForTests } from "./obsidian-shim";
 
 const entry = (id: string, amountCents: number, patch: Partial<FinanceEntry> = {}): FinanceEntry => ({ id, source: "manual", sourceId: id,
   date: "2026-09-30", merchant: `商户${id}`, category: "交通", account: "银行卡", amountCents, status: "completed", kind: "expense", currency: "CNY", description: "车票", note: "", ...patch });
@@ -181,11 +182,16 @@ export async function runFinanceBillPlanDomTests(win: Window & typeof globalThis
     click("确认关联 1 笔"); await flush(); assert.ok(host.querySelector(".echoink-finance-bill-summary"));
     assert.equal(finance.entries().filter(e => e.billPlanId === "trip").length, 3);
     const segment = host.querySelector<SVGElement>('.echoink-finance-bill-category-target[data-category="餐饮"]')!;
-    segment.dispatchEvent(new win.Event("focus")); assert.equal(host.querySelector<HTMLElement>(".echoink-finance-bill-tooltip")!.hidden, false);
-    assert.ok(host.querySelector(".echoink-finance-bill-tooltip")!.textContent?.includes("17.6%"));
-    segment.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); assert.equal(host.querySelectorAll(".echoink-finance-transaction").length, 1);
-    segment.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    segment.dispatchEvent(new win.Event("blur")); assert.equal(host.querySelector<HTMLElement>(".echoink-finance-bill-tooltip")!.hidden, true);
+    const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+    try {
+      segment.dispatchEvent(new win.Event("focus"));
+      assert.ok(String(displayedTooltipsForTests.get(segment as unknown as HTMLElement)).includes("17.6%"));
+      assert.ok(host.querySelector(".echoink-finance-donut-center")!.textContent?.includes("餐饮"), "focus still updates the donut center");
+      segment.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); assert.equal(host.querySelectorAll(".echoink-finance-transaction").length, 1);
+      segment.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      segment.dispatchEvent(new win.Event("blur"));
+      assert.equal(host.querySelector(".echoink-finance-bill-tooltip"), null, "the donut delegates its reading to the host");
+    } finally { Platform.isDesktopApp = previousDesktop; }
 
     const category = host.querySelector<HTMLButtonElement>('button[data-category="餐饮"]')!; category.click();
     assert.equal(host.querySelectorAll(".echoink-finance-transaction").length, 1); category.click();

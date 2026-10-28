@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { Platform, setIcon } from "obsidian";
 import { createOriginButton } from "../../settings/origin-controls";
 import { applyDeleteButton } from "../../settings/amicro-buttons";
@@ -346,7 +347,7 @@ export function renderComposerNoteMentionMenu(
         role: "option",
         tabindex: "-1",
         "aria-selected": String(index + (state.leadingAction ? 1 : 0) === state.activeIndex),
-        title: entry.fileName
+        "aria-label": entry.fileName
       }
     });
     const icon = row.createSpan({
@@ -380,7 +381,6 @@ export function renderPromptEnhanceReview(
     cls: "codex-composer-enhance-restore",
     attr: {
       type: "button",
-      title: conversationUiText(language, "还原", "Restore"),
       "aria-label": conversationUiText(language, "还原", "Restore")
     }
   });
@@ -450,12 +450,12 @@ export function renderComposerToolbar(
     cls: "codex-context-meter",
     attr: {
       type: "button",
-      title: conversationUiText(language, "查看最近一次模型请求的上下文用量", "View context usage for the latest model request"),
       "aria-label": conversationUiText(language, "查看上下文用量", "View context usage"),
       "aria-expanded": state.contextPanelOpen ? "true" : "false",
       "aria-haspopup": "dialog"
     }
   });
+  attachNativeTooltip(refs.contextEl, conversationUiText(language, "查看最近一次模型请求的上下文用量", "View context usage for the latest model request"));
   refs.contextRingEl = refs.contextEl.createSpan({ cls: "codex-context-ring", attr: { "aria-hidden": "true" } });
   refs.contextRingEl.createSpan({ cls: "codex-context-ring-hole" });
   refs.contextEl.onclick = (event) => {
@@ -478,8 +478,7 @@ export function renderComposerToolbar(
     cls: "codex-composer-icon-button codex-composer-mic-button",
     attr: {
       type: "button",
-      "aria-label": conversationUiText(language, "语音输入", "Voice input"),
-      title: conversationUiText(language, "语音输入", "Voice input")
+      "aria-label": conversationUiText(language, "语音输入", "Voice input")
     }
   });
   renderAnimateIcon(micButton, "mic");
@@ -496,7 +495,7 @@ export function renderComposerToolbar(
   const sendButtonView = composerActionButtonView(action, language);
   const sendButton = row.createEl("button", {
     cls: "codex-send-button codex-composer-send-button",
-    attr: { type: "button", "aria-label": sendButtonView.label, title: sendButtonView.title }
+    attr: { type: "button", "aria-label": sendButtonView.label }
   });
   sendButton.toggleClass("is-send-action", action === "send");
   sendButton.toggleClass("is-queue-action", action === "enqueue" || action === "resume-queue");
@@ -506,13 +505,15 @@ export function renderComposerToolbar(
     && state.activeRunSessionId !== state.session.id
     && !state.session.id.startsWith("agent:");
   sendButton.disabled = state.promptEnhancerRunning || anotherConversationOwnsStop;
+  let sendTooltip = sendButtonView.title;
   if (state.promptEnhancerRunning) {
     sendButton.setAttribute("aria-label", conversationUiText(language, "提示词增强中", "Enhancing prompt"));
-    sendButton.setAttribute("title", conversationUiText(language, "提示词增强完成后再发送", "Send after prompt enhancement finishes"));
+    sendTooltip = conversationUiText(language, "提示词增强完成后再发送", "Send after prompt enhancement finishes");
   } else if (anotherConversationOwnsStop) {
     sendButton.setAttribute("aria-label", conversationUiText(language, "另一个会话正在运行", "Another conversation is running"));
-    sendButton.setAttribute("title", conversationUiText(language, "切回运行中的会话后可停止", "Switch to the running conversation to stop it"));
+    sendTooltip = conversationUiText(language, "切回运行中的会话后可停止", "Switch to the running conversation to stop it");
   }
+  if (sendTooltip !== sendButton.getAttribute("aria-label")) attachNativeTooltip(sendButton, sendTooltip);
   if (action === "send" && Platform.isDesktopApp) {
     const sendIconWrap = sendButton.createSpan({
       cls: "codex-composer-send-icon-wrap",
@@ -721,7 +722,6 @@ export function renderContextPanel(
     cls: "codex-context-panel-close",
     attr: {
       type: "button",
-      title: copy("关闭", "Close"),
       "aria-label": copy("关闭上下文用量", "Close context usage")
     }
   });
@@ -849,7 +849,6 @@ export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, c
       cls: "codex-turn-queue-resume",
       attr: {
         type: "button",
-        title: conversationUiText(language, "重试恢复本地生命周期记录", "Retry local lifecycle recovery"),
         "aria-label": conversationUiText(language, "重试恢复本地生命周期记录", "Retry local lifecycle recovery")
       }
     });
@@ -860,7 +859,6 @@ export function renderTurnQueue(container: HTMLElement, state: TurnQueueState, c
       cls: "codex-turn-queue-resume",
       attr: {
         type: "button",
-        title: conversationUiText(language, "继续队列", "Resume queue"),
         "aria-label": conversationUiText(language, "继续队列", "Resume queue")
       }
     });
@@ -942,11 +940,9 @@ function renderPiConversationDiagnostics(
       text: state.piRecoveryPending
         ? conversationUiText(language, "正在恢复…", "Recovering…")
         : conversationUiText(language, "恢复可验证部分", "Recover verifiable records"),
-      attr: {
-        type: "button",
-        title: conversationUiText(language, "保留原文件，并把当前会话改绑到最后一个可验证 Entry", "Keep the original file and rebind this conversation to the last verifiable Entry")
-      }
+      attr: { type: "button" }
     });
+    attachNativeTooltip(recover, conversationUiText(language, "保留原文件，并把当前会话改绑到最后一个可验证 Entry", "Keep the original file and rebind this conversation to the last verifiable Entry"));
     recover.disabled = !state.canManagePiSupport || state.piRecoveryPending;
     recover.onclick = () => callbacks.onRecoverPiConversation(
       recovery.recoveryPath!
@@ -957,11 +953,8 @@ function renderPiConversationDiagnostics(
     const item = list.createDiv({ cls: "codex-pi-diagnostic-item" });
     item.createDiv({ cls: "codex-pi-diagnostic-message", text: diagnostic.message });
     if (diagnostic.sourcePath) {
-      item.createDiv({
-        cls: "codex-pi-diagnostic-path",
-        text: diagnostic.sourcePath,
-        attr: { title: diagnostic.sourcePath }
-      });
+      const path = item.createDiv({ cls: "codex-pi-diagnostic-path", text: diagnostic.sourcePath });
+      attachNativeTooltip(path, diagnostic.sourcePath);
     }
   }
 }
@@ -1001,18 +994,15 @@ function renderPiConversationDrafts(
     const edit = row.createEl("button", {
       cls: "codex-pi-support-action",
       text: conversationUiText(language, "继续编辑", "Continue editing"),
-      attr: {
-        type: "button",
-        title: conversationUiText(language, "放回输入框，由你确认后重新发送", "Put this back in the input so you can confirm and resend it")
-      }
+      attr: { type: "button" }
     });
+    attachNativeTooltip(edit, conversationUiText(language, "放回输入框，由你确认后重新发送", "Put this back in the input so you can confirm and resend it"));
     edit.disabled = !state.canManagePiSupport;
     edit.onclick = () => callbacks.onEditPiDraft(draft.draftId);
     const remove = row.createEl("button", {
       cls: "codex-turn-queue-remove",
       attr: {
         type: "button",
-        title: conversationUiText(language, "删除草稿", "Delete draft"),
         "aria-label": conversationUiText(language, "删除草稿", "Delete draft")
       }
     });
@@ -1055,8 +1045,7 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
     const remove = chip.createEl("button", {
       attr: {
         type: "button",
-        "aria-label": conversationUiText(language, `移除 Skill：${presentation.name}`, `Remove Skill: ${presentation.name}`),
-        title: conversationUiText(language, "移除 Skill", "Remove Skill")
+        "aria-label": conversationUiText(language, `移除 Skill：${presentation.name}`, `Remove Skill: ${presentation.name}`)
       }
     });
     setIcon(remove, "x");
@@ -1082,8 +1071,7 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
         cls: "codex-note-mention-chip-remove",
         attr: {
           type: "button",
-          "aria-label": conversationUiText(language, `移除笔记：${mention.fileName}`, `Remove note: ${mention.fileName}`),
-          title: conversationUiText(language, `移除 ${mention.fileName}`, `Remove ${mention.fileName}`)
+          "aria-label": conversationUiText(language, `移除笔记：${mention.fileName}`, `Remove note: ${mention.fileName}`)
         }
       });
       setIcon(remove, "x");
@@ -1102,14 +1090,13 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
       const thumbnail = list.createDiv({
         cls: "codex-attachment-thumbnail",
         attr: {
-          title: resource.availability === "available"
-            ? displayName
-            : conversationUiText(language, `${displayName} · 无法预览`, `${displayName} · Preview unavailable`),
           "aria-label": resource.availability === "available"
             ? conversationUiText(language, `图片：${displayName}`, `Image: ${displayName}`)
             : conversationUiText(language, `图片：${displayName}，无法预览`, `Image: ${displayName}; preview unavailable`)
         }
       });
+      let thumbnailDetail = resource.availability === "available" ? displayName : conversationUiText(language, `${displayName} · 无法预览`, `${displayName} · Preview unavailable`);
+      let thumbnailTooltip = attachNativeTooltip(thumbnail, () => thumbnailDetail);
       markAIElementsAttachmentItem(thumbnail, "image");
       const preview = thumbnail.createDiv({ cls: "codex-attachment-thumbnail-preview" });
       if (resource.resourceUri && resource.availability === "available") {
@@ -1121,8 +1108,10 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
         image.onerror = () => {
           renderComposerImageFallback(preview, displayName, language);
           thumbnail.addClass("is-broken");
-          thumbnail.setAttribute("title", conversationUiText(language, `${displayName} · 无法预览`, `${displayName} · Preview unavailable`));
+          thumbnailTooltip.dispose();
+          thumbnailDetail = conversationUiText(language, `${displayName} · 无法预览`, `${displayName} · Preview unavailable`);
           thumbnail.setAttribute("aria-label", conversationUiText(language, `图片：${displayName}，无法预览`, `Image: ${displayName}; preview unavailable`));
+          thumbnailTooltip = attachNativeTooltip(thumbnail, () => thumbnailDetail);
         };
         image.src = resource.resourceUri;
       } else {
@@ -1133,8 +1122,7 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
         cls: "codex-attachment-thumbnail-remove",
         attr: {
           type: "button",
-          "aria-label": conversationUiText(language, `移除图片：${displayName}`, `Remove image: ${displayName}`),
-          title: conversationUiText(language, `移除 ${displayName}`, `Remove ${displayName}`)
+          "aria-label": conversationUiText(language, `移除图片：${displayName}`, `Remove image: ${displayName}`)
         }
       });
       setIcon(remove, "x");
@@ -1311,7 +1299,6 @@ function renderQueuedTurnItem(
     cls: "codex-turn-queue-remove",
     attr: {
       type: "button",
-      title: conversationUiText(language, "删除队列项", "Delete queued item"),
       "aria-label": conversationUiText(language, "删除队列项", "Delete queued item")
     }
   });
@@ -1327,7 +1314,7 @@ function renderQueuedTurnItem(
 function createComposerIconButton(container: HTMLElement, iconName: string, title: string): HTMLButtonElement {
   const button = container.createEl("button", {
     cls: "codex-composer-icon-button",
-    attr: { type: "button", "aria-label": title, title }
+    attr: { type: "button", "aria-label": title }
   });
   setIcon(button, iconName);
   return button;
@@ -1349,10 +1336,10 @@ function addModelButton(
       type: "button",
       "aria-label": `${ariaLabel}：${fullModelName}`,
       "aria-haspopup": "menu",
-      "aria-expanded": "false",
-      title
+      "aria-expanded": "false"
     }
   });
+  attachNativeTooltip(modelButton, title);
   const providerIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
   renderProviderBrandIcon(providerIcon, providerBrand);
   modelButton.createSpan({ cls: "codex-composer-model-name", text: compactBrandedModelLabel(model) });
@@ -1376,15 +1363,14 @@ function addComposerSelect<T extends string>(
     ? `${label}: ${selectedLabel}`
     : `${label}：${selectedLabel}`;
   const control = container.createDiv({
-    cls: `codex-composer-select ${extraClass}`.trim(),
-    attr: { title: accessibleLabel }
+    cls: `codex-composer-select ${extraClass}`.trim()
   });
   control.dataset.value = selected;
   const icon = control.createSpan({ cls: "codex-composer-select-icon" });
   setIcon(icon, iconName);
   const select = control.createEl("select", {
     cls: "codex-select codex-composer-native-select",
-    attr: { "aria-label": accessibleLabel, title: accessibleLabel }
+    attr: { "aria-label": accessibleLabel }
   });
   for (const value of values) select.createEl("option", { text: labelFor(value, language), value });
   select.value = selected;
@@ -1408,11 +1394,11 @@ function addWorkspaceButton(
     cls: "codex-composer-model-button codex-workspace-button",
     attr: {
       type: "button",
-      title,
       "aria-label": conversationUiText(language, "选择工作区", "Choose workspace"),
       "aria-haspopup": "menu"
     }
   });
+  attachNativeTooltip(button, title);
   button.toggleClass("has-workspace", Boolean(state.workspacePath));
   button.toggleClass("is-invalid", Boolean(state.workspacePath && !state.workspaceValid));
   const icon = button.createSpan({ cls: "codex-composer-model-icon" });
@@ -1432,7 +1418,7 @@ function addPlanModeIndicator(container: HTMLElement, language: SettingsLanguage
   const label = conversationUiText(language, "关闭计划模式", "Turn off plan mode");
   const indicator = container.createEl("button", {
     cls: "codex-composer-mode-indicator",
-    attr: { type: "button", "aria-label": label, title: label }
+    attr: { type: "button", "aria-label": label }
   });
   indicator.onclick = () => onDisable?.();
   const icon = indicator.createSpan({ cls: "codex-composer-mode-indicator-icon", attr: { "aria-hidden": "true" } });

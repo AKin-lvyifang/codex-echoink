@@ -1,3 +1,4 @@
+import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
 import { Notice, setIcon } from "obsidian";
 import type { AgentDefinition } from "../../agents/types";
 import type { TaskEntry } from "../../agents/task-presentation";
@@ -128,6 +129,7 @@ export class InlineTaskDetailView {
   private editing?: { key: string; text: string; element?: HTMLTextAreaElement; composing: boolean };
   private readonly busy = new Set<string>();
   private disposed = false;
+  private pinTooltip?: NativeTooltipHandle;
   constructor(private readonly root: HTMLElement, private readonly host: () => InlineTaskHost | undefined) {
     root.classList.add("echoink-inline-task-body");
     this.source = root.createDiv({ cls: "echoink-inline-task-source" });
@@ -149,7 +151,7 @@ export class InlineTaskDetailView {
     this.renderSource(request, language); this.renderPin(request, language, comparing); this.renderThread();
     if (follow && !this.editing) this.root.scrollTop = this.root.scrollHeight;
   }
-  dispose(): void { this.disposed = true; disposeOriginControls(this.root); this.nodes.clear(); this.current = undefined; }
+  dispose(): void { this.pinTooltip?.dispose(); this.pinTooltip = undefined; this.disposed = true; disposeOriginControls(this.root); this.nodes.clear(); this.current = undefined; }
 
   private button(root: HTMLElement, text: string, operation: string, run: () => Promise<void> | void, primary = false): HTMLButtonElement {
     const button = createOriginButton(root, { cls: `echoink-inline-task-action${primary ? " is-primary" : ""}`, text, attr: { type: "button", "data-inline-action": operation } });
@@ -185,6 +187,7 @@ export class InlineTaskDetailView {
     }
   }
   private renderPin(request: InlineRequest, language: SettingsLanguage, comparing: boolean): void {
+    this.pinTooltip?.dispose(); this.pinTooltip = undefined;
     disposeOriginControls(this.pin); this.pin.empty();
     const en = english(language), host = this.host(), version = request.versions.find(item => item.id === request.currentVersionId);
     this.pin.classList.toggle("is-attention", ["clarifying", "conflict", "interrupted", "failed", "missing", "save_failed"].includes(request.status));
@@ -199,7 +202,7 @@ export class InlineTaskDetailView {
         revoke();
         const confirm = this.button(actions, en ? "Confirm" : "确认", "confirm", () => host?.service.confirm(request.id, request.currentVersionId), true);
         confirm.disabled ||= comparing || !version;
-        if (comparing) confirm.title = en ? "Show the draft before confirming" : "先切回新稿，再确认";
+        if (comparing) this.pinTooltip = attachNativeTooltip(confirm, en ? "Show the draft before confirming" : "先切回新稿，再确认");
         break;
       }
       case "preparing": case "thinking":
@@ -279,7 +282,7 @@ export class InlineTaskDetailView {
           this.editing = { key, text: message.text, composing: false }; this.signature = ""; this.refresh();
           const input = this.editing?.element; input?.focus(); input?.setSelectionRange(input.value.length, input.value.length);
         });
-        edit.classList.add("echoink-inline-task-edit-button"); edit.setAttribute("aria-label", en ? "Edit and resend" : "编辑后重发"); edit.title = en ? "Edit and resend" : "编辑后重发"; setIcon(edit, "pencil");
+        edit.classList.add("echoink-inline-task-edit-button"); edit.setAttribute("aria-label", en ? "Edit and resend" : "编辑后重发"); setIcon(edit, "pencil");
       }
       return row;
     }

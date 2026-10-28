@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import type { KnowledgePageSnapshot, KnowledgePageDirectory } from "../../home/knowledge-page-data";
 import type { KnowledgeBaseMaintenanceHistoryEntry } from "../../settings/settings";
 import type { KnowledgeMaintenanceRecord } from "../../knowledge-base/maintenance-record";
@@ -88,7 +89,7 @@ function renderActivity(view: KnowledgeReader, parent: HTMLElement, data: Knowle
     const offset = week * 7 + weekday - row, date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset, 12), key = formatMobileDate(date), activity = values.get(key), outside = offset < 0 || offset >= days, unknown = !!data.errors.activity || data.weekly.unknownCreatedAtCount > 0, value = activity?.total ?? 0;
     const cell = el(view.ctx.document, "span", `pd-knowledge-heat-cell ${outside ? "is-outside" : unknown ? "is-unknown" : `level-${Math.min(4, value)}`}`); cell.dataset.date = key;
     if (outside) cell.setAttribute("aria-hidden", "true");
-    else { const label = unknown ? t(view.ctx, `${key} · 记录尚无法核实`, `${key} · Activity unverified`) : t(view.ctx, `${key} · 新增 ${activity?.added ?? 0} · 整理 ${activity?.organized ?? 0}`, `${key} · Added ${activity?.added ?? 0} · Organized ${activity?.organized ?? 0}`); cell.title = label; cell.setAttribute("aria-label", label); }
+    else { const label = unknown ? t(view.ctx, `${key} · 记录尚无法核实`, `${key} · Activity unverified`) : t(view.ctx, `${key} · 新增 ${activity?.added ?? 0} · 整理 ${activity?.organized ?? 0}`, `${key} · Added ${activity?.added ?? 0} · Organized ${activity?.organized ?? 0}`); cell.setAttribute("aria-label", label); attachNativeTooltip(cell, label, { touch: "notice" }); }
     grid.append(cell);
   } parent.append(grid);
 }

@@ -184,7 +184,6 @@ import {
 } from "./codex-view/session-controller";
 
 export const VIEW_TYPE_CODEX = "codex-for-obsidian-view";
-export { isKnowledgeDashboardHealthTooltipHoverPoint } from "./codex-view/knowledge-dashboard";
 
 export interface HomeConversationStartInput {
   readonly title: string;

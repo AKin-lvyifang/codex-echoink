@@ -1,4 +1,5 @@
 import { money } from "./finance-domain";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export interface FinanceDonutItem { category: string; amountCents: number; color: string }
 export function financeCategoryDonut(parent: HTMLElement, items: readonly FinanceDonutItem[], options: {
@@ -10,14 +11,13 @@ export function financeCategoryDonut(parent: HTMLElement, items: readonly Financ
   svg.setAttribute("viewBox", "0 0 200 200"); svg.setAttribute("class", "echoink-finance-donut-svg"); svg.setAttribute("role", "group"); svg.setAttribute("aria-label", options.label); ring.appendChild(svg);
   const center = ring.createDiv({ cls: "echoink-finance-donut-center" });
   const name = center.createEl("small"); const amount = center.createEl("strong"); const percent = center.createEl("small");
-  const tooltip = ring.createSpan({ cls: options.bill ? "echoink-finance-bill-tooltip" : "echoink-finance-donut-tooltip", attr: { role: "tooltip" } }); tooltip.hidden = true;
+  const tooltips: ReturnType<typeof attachNativeTooltip>[] = [];
   const legend = parent.createDiv({ cls: `echoink-finance-chart-legend${options.bill ? " echoink-finance-bill-ranking" : ""}` });
   const rows = new Map<string, HTMLButtonElement>(); const sectors = new Map<string, SVGCircleElement>();
   const show = (key: string | null, transient = false) => {
     const item = items.find(item => item.category === key);
     name.setText(item ? item.category || "未分类" : options.label); amount.setText(`¥ ${money(item?.amountCents ?? total)}`);
     percent.setText(`${item && total ? (item.amountCents / total * 100).toFixed(1) : "100.0"}%`);
-    tooltip.hidden = !transient; tooltip.setText(`${name.textContent} · ${amount.textContent} · ${percent.textContent}`);
     for (const [category, sector] of sectors) sector.classList.toggle("is-hovered", transient && category === key);
     for (const [category, row] of rows) row.classList.toggle("is-hovered", transient && category === key);
   };
@@ -41,6 +41,7 @@ export function financeCategoryDonut(parent: HTMLElement, items: readonly Financ
     row.style.setProperty("--finance-chart-color", item.color);
     row.createSpan({ text: item.category || "未分类", cls: "echoink-finance-chart-name" }); row.createSpan({ text: `¥ ${money(item.amountCents)}`, cls: "echoink-finance-chart-amount" }); row.createSpan({ text: `${portion.toFixed(1)}%`, cls: "echoink-finance-chart-percent" }); rows.set(item.category, row);
     for (const control of [sector, row]) {
+      tooltips.push(attachNativeTooltip(control, `${item.category || "未分类"} · ¥ ${money(item.amountCents)} · ${portion.toFixed(1)}%`));
       control.onclick = () => choose(item.category);
       control.onkeydown = event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(item.category); } else if (event.key === "Escape") { event.preventDefault(); choose(null); } };
       control.onmouseenter = control.onfocus = () => show(item.category, true);
@@ -48,5 +49,5 @@ export function financeCategoryDonut(parent: HTMLElement, items: readonly Financ
     }
   }
   sync();
-  return { sync, clear: () => choose(null), focus: (key: string) => rows.get(key)?.focus({ preventScroll: true }) };
+  return { sync, clear: () => choose(null), focus: (key: string) => rows.get(key)?.focus({ preventScroll: true }), dispose: () => tooltips.forEach(tooltip => tooltip.dispose()) };
 }

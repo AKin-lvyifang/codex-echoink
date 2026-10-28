@@ -10,6 +10,7 @@ import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./s
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { DesktopAccountHooks, AccountFormHandle } from "./desktop-account-membership";
 import { applyDeleteButton } from "./amicro-buttons";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks };
 type PageOptions = AccountMembershipPageOptions;
@@ -81,22 +82,9 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const zh = options.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
   const page = el(parent, "div", "echoink-account");
-  const tooltip = el(page.ownerDocument.body, "div", "echoink-account-tooltip");
-  tooltip.id = `echoink-account-tooltip-${++fieldSequence}`;
-  tooltip.setAttribute("role", "tooltip"); tooltip.hidden = true;
-  const hideTip = () => { tooltip.hidden = true; };
-  const escapeTip = (event: KeyboardEvent) => { if (event.key === "Escape") hideTip(); };
-  page.ownerDocument.addEventListener("scroll", hideTip, true);
-  page.ownerDocument.addEventListener("keydown", escapeTip);
-  page.ownerDocument.defaultView?.addEventListener("resize", hideTip);
-  const showTip = (cell: HTMLElement, text: string) => {
-    if (disposed) return;
-    copyAccountTheme(page, tooltip); tooltip.textContent = text; tooltip.hidden = false;
-    const bounds = cell.getBoundingClientRect();
-    const view = page.ownerDocument.defaultView;
-    tooltip.style.left = `${Math.max(8, Math.min((view?.innerWidth ?? 320) - tooltip.offsetWidth - 8, bounds.left - tooltip.offsetWidth / 2))}px`;
-    tooltip.style.top = `${Math.max(8, bounds.top - tooltip.offsetHeight - 8)}px`;
-  };
+  const heatTooltips: ReturnType<typeof attachNativeTooltip>[] = [];
+  const actionTooltips: ReturnType<typeof attachNativeTooltip>[] = [];
+  const hideTip = () => { for (const tooltip of heatTooltips) tooltip.hide(); };
   const modals = new Set<AccountModal>();
   let disposed = false;
   let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
@@ -381,7 +369,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const footer = el(activity, "div", "heat-footer"); el(footer, "span", "", `${dates[0]} — ${dates.at(-1)}`);
   const legend = el(footer, "div", "legend", t("少", "Less")); for (let level = 0; level <= 4; level++) el(legend, "i").dataset.level = String(level); el(legend, "span", "", t("多", "More"));
   const changeHeat = (mode: typeof heatMode) => {
-    hideTip(); heatMode = mode; const previousScroll = scroll.scrollLeft; disposeOriginControls(heat); heat.replaceChildren(); months.replaceChildren();
+    for (const tooltip of heatTooltips) tooltip.dispose(); heatTooltips.length = 0;
+    heatMode = mode; const previousScroll = scroll.scrollLeft; disposeOriginControls(heat); heat.replaceChildren(); months.replaceChildren();
     heatButtons.forEach((node, i) => node.setAttribute("aria-pressed", String(i === (mode === "tokens" ? 0 : 1))));
     const leading = (new Date(`${dates[0]}T12:00:00`).getDay() + 6) % 7; for (let i = 0; i < leading; i++) el(heat, "span");
     const maximum = Math.max(1, ...dates.map(date => dayMap.get(date)?.[heatMode] ?? 0)); let lastMonth = "";
@@ -391,9 +380,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const cell = el(heat, "button", "heat-cell"); cell.type = "button"; cell.dataset.level = count == null || count === 0 ? "0" : String(Math.min(4, Math.ceil(count / maximum * 4))); cell.dataset.date = date;
       cell.tabIndex = index === dates.length - 1 ? 0 : -1;
       const label = `${date} · ${count == null ? t("暂无统计", "No statistics") : `${number(count)} ${mode === "tokens" ? "Token" : t("轮对话", "turns")}`}`;
-      cell.setAttribute("aria-label", label); cell.setAttribute("aria-describedby", tooltip.id);
-      cell.onfocus = cell.onmouseenter = () => showTip(cell, label);
-      cell.onblur = cell.onmouseleave = hideTip;
+      cell.setAttribute("aria-label", label);
+      heatTooltips.push(attachNativeTooltip(cell, label));
       cell.onclick = () => show(`${date} · ${t("使用记录", "Usage")}`, body => {
         if (!day) copy(body, missing);
         else { copy(body, `${t("完成对话", "Completed turns")} ${number(day.turns)}`); copy(body, `${t("估算输入", "Estimated input")} ${number(day.input)} Token · ${t("估算输出", "Estimated output")} ${number(day.output)} Token`); copy(body, `${t("估算合计", "Estimated total")} ${number(day.tokens)} Token`); }
@@ -666,7 +654,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const row = el(card, "div", `feature-row${blocked ? " locked" : ""}`); const label = el(row, "div", "label-group"); el(label, "strong", "", String(name)); if (pro) el(label, "span", "badge pro", "PRO");
       const action = button(row, String(actionLabel), "secondary", () => show(String(name), body => copy(body, t("请从对应插件入口使用此功能。", "Use this feature through its plugin entry."))));
       action.disabled = blocked;
-      if (blocked) { action.title = reason; const explanation = el(row, "span", "account-visually-hidden", reason); explanation.id = `echoink-feature-reason-${++fieldSequence}`; action.setAttribute("aria-describedby", explanation.id); }
+      if (blocked) actionTooltips.push(attachNativeTooltip(action, reason));
     }
     const hint = el(card, "div", "feature-hint");
     const providerMissing = vm.provider !== "configured" && (valid || vm.membership.state === "free");
@@ -682,9 +670,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     for (const timer of codeTimers) clearTimeout(timer); codeTimers.clear();
     finishFeedback?.(); finishFeedback = null;
     if (heatFrame != null) view?.cancelAnimationFrame(heatFrame);
-    page.ownerDocument.removeEventListener("scroll", hideTip, true);
-    page.ownerDocument.removeEventListener("keydown", escapeTip);
-    page.ownerDocument.defaultView?.removeEventListener("resize", hideTip); tooltip.remove();
+    for (const tooltip of [...heatTooltips, ...actionTooltips]) tooltip.dispose();
+    heatTooltips.length = 0; actionTooltips.length = 0;
     for (const modal of [...modals]) modal.close(); modals.clear(); clearDraft();
     page.querySelectorAll<HTMLInputElement>("input").forEach(input => input.value = "");
     page.querySelectorAll<HTMLElement>("*").forEach(node => { node.onclick = node.oninput = node.onchange = node.onkeydown = node.onfocus = node.onmouseenter = node.onmouseleave = node.onblur = null; if (node.tagName === "FORM") (node as HTMLFormElement).onsubmit = null; });

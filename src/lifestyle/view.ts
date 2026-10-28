@@ -76,7 +76,7 @@ export class LifestyleView extends ItemView {
   }
   private addWorkbenchBack(parent: HTMLElement): void {
     if (!this.service.plugin.activateHomeView) return;
-    const back = createOriginButton(parent, { cls: "echoink-module-back", attr: { type: "button", "aria-label": "返回工作台", title: "返回工作台" } });
+    const back = createOriginButton(parent, { cls: "echoink-module-back", attr: { type: "button", "aria-label": "返回工作台" } });
     applyAmicroButton(back, { variant: "icon" }); setIcon(back, "arrow-left");
     back.onclick = () => { void this.service.plugin.activateHomeView!({ keepRightSidebar: true }).catch(error => new Notice(`暂时无法返回工作台：${error instanceof Error ? error.message : String(error)}`)); };
   }

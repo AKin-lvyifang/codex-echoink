@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { attachNativeTooltip } from "../native-tooltip";
 import { applyDeleteButton } from "../../settings/amicro-buttons";
 import type { SettingsLanguage, StoredSession } from "../../settings/settings";
 import {
@@ -46,6 +47,7 @@ interface CodexSessionNavigatorState {
   focusRequestSequence: number;
   pendingFocusRequest: SessionNavigatorFocusRequest | null;
   trackCleanup?: () => void;
+  summaryTooltips: Array<ReturnType<typeof attachNativeTooltip>>;
 }
 
 type SessionNavigatorFocusTarget =
@@ -351,6 +353,8 @@ export function renderCodexTabs(
   state.trackScrollRestored = false;
   state.trackCleanup?.();
   state.trackCleanup = undefined;
+  for (const tooltip of state.summaryTooltips) tooltip.dispose();
+  state.summaryTooltips = [];
   const renderGeneration = state.renderGeneration + 1;
   state.renderGeneration = renderGeneration;
   const allModel = buildCodexSessionNavigatorModel(
@@ -418,25 +422,6 @@ export function renderCodexTabs(
   container.empty();
   container.addClass("codex-session-navigator");
 
-  const summaryTooltip = container.createDiv({
-    cls: "codex-session-summary-tooltip",
-    attr: {
-      role: "tooltip",
-      "aria-hidden": "true"
-    }
-  });
-  let tooltipAnchor: HTMLElement | null = null;
-  const showSummary = (tab: HTMLElement, summary: string) => {
-    tooltipAnchor = tab;
-    showSessionSummaryTooltip(container, summaryTooltip, tab, summary);
-  };
-  const hideSummary = (tab: HTMLElement) => {
-    if (tooltipAnchor !== tab) return;
-    tooltipAnchor = null;
-    summaryTooltip.removeClass("is-visible");
-    summaryTooltip.setAttribute("aria-hidden", "true");
-  };
-
   const track = container.createDiv({
     cls: "codex-session-track",
     attr: {
@@ -451,7 +436,6 @@ export function renderCodexTabs(
     const tabStop = session.id === state.trackRovingSessionId;
     const running = runningSessionIds.has(session.id);
     const unread = session.unreadAnswerAt !== undefined;
-    const summary = sessionSummaryTooltip(session, Date.now(), language);
     const tab = track.createEl("button", {
       cls: [
         "codex-session-tab",
@@ -469,23 +453,15 @@ export function renderCodexTabs(
           unread,
           language
         ),
-        "aria-description": summary,
         tabindex: tabStop ? "0" : "-1"
       }
     });
     let pointerActivationPending = false;
-    tab.onmouseenter = () => {
-      if (state.activationDismissedSummarySessionId === session.id) return;
-      state.activationDismissedSummarySessionId = "";
-      showSummary(tab, summary);
-    };
+    let summaryTooltip: ReturnType<typeof attachNativeTooltip>;
     tab.onmouseleave = () => {
       pointerActivationPending = false;
       if (state.activationDismissedSummarySessionId === session.id) {
         state.activationDismissedSummarySessionId = "";
-      }
-      if (!tab.matches(":focus-visible")) {
-        hideSummary(tab);
       }
     };
     tab.onfocus = () => {
@@ -497,20 +473,12 @@ export function renderCodexTabs(
       });
       setSessionTabStop(tabElements, tab, state);
       revealSessionTrackItemMinimally(track, tab, state);
-      if (
-        tab.matches(":focus-visible")
-        && state.activationDismissedSummarySessionId !== session.id
-      ) {
-        state.activationDismissedSummarySessionId = "";
-        showSummary(tab, summary);
-      }
     };
-    tab.onblur = () => hideSummary(tab);
     tab.onpointerdown = (event) => {
       if (!event.isPrimary || event.button !== 0) return;
       pointerActivationPending = true;
       state.activationDismissedSummarySessionId = session.id;
-      hideSummary(tab);
+      summaryTooltip.hide();
     };
     tab.onpointercancel = () => {
       pointerActivationPending = false;
@@ -537,7 +505,7 @@ export function renderCodexTabs(
         pointerActivationPending = false;
         if (pointerActivation) {
           state.activationDismissedSummarySessionId = session.id;
-          hideSummary(tab);
+          summaryTooltip.hide();
         } else {
           state.activationDismissedSummarySessionId = "";
         }
@@ -566,6 +534,12 @@ export function renderCodexTabs(
       index,
       state
     );
+    summaryTooltip = attachNativeTooltip(
+      tab,
+      () => sessionSummaryTooltip(session, Date.now(), language),
+      { shouldShow: () => state.activationDismissedSummarySessionId !== session.id }
+    );
+    state.summaryTooltips.push(summaryTooltip);
     tabElements.push(tab);
   }
 
@@ -582,7 +556,6 @@ export function renderCodexTabs(
     attr: {
       type: "button",
       "aria-label": conversationUiText(language, "向左查看更多会话", "Show earlier conversations"),
-      title: conversationUiText(language, "向左查看更多会话", "Show earlier conversations")
     }
   });
   setIcon(backwardButton, "chevron-left");
@@ -601,7 +574,6 @@ export function renderCodexTabs(
     attr: {
       type: "button",
       "aria-label": conversationUiText(language, "向右查看更多会话", "Show later conversations"),
-      title: conversationUiText(language, "向右查看更多会话", "Show later conversations")
     }
   });
   setIcon(forwardButton, "chevron-right");
@@ -647,14 +619,6 @@ export function renderCodexTabs(
     trackControls.setAttribute("aria-hidden", String(!overflow.hasOverflow));
     backwardButton.disabled = !overflow.canRetreat;
     forwardButton.disabled = !overflow.canAdvance;
-    if (tooltipAnchor) {
-      showSessionSummaryTooltip(
-        container,
-        summaryTooltip,
-        tooltipAnchor,
-        summaryTooltip.textContent ?? ""
-      );
-    }
   };
   backwardButton.onclick = () => {
     const target = previousHiddenSessionTrackOffset(
@@ -749,7 +713,6 @@ export function renderCodexTabs(
     cls: `codex-session-all ${state.open ? "is-active" : ""}`.trim(),
     attr: {
       type: "button",
-      title: conversationUiText(language, "查看全部会话", "View all conversations"),
       "aria-label": conversationUiText(
         language,
         `查看全部 ${allModel.chatCount} 个会话`,
@@ -777,7 +740,6 @@ export function renderCodexTabs(
     attr: {
       type: "button",
       "aria-label": conversationUiText(language, "新建会话", "New conversation"),
-      title: conversationUiText(language, "新建会话", "New conversation")
     }
   });
   setIcon(newButton, "plus");
@@ -879,7 +841,6 @@ function renderSessionPicker(
     attr: {
       type: "button",
       "aria-label": conversationUiText(language, "关闭全部会话", "Close all conversations"),
-      title: conversationUiText(language, "关闭", "Close")
     }
   });
   setIcon(closeButton, "x");
@@ -970,7 +931,6 @@ function renderSessionPicker(
         attr: {
           role: "option",
           tabindex: "-1",
-          title: session.title,
           "data-session-id": session.id,
           "aria-label": sessionStatusAriaLabel(
             session.title,
@@ -1036,7 +996,6 @@ function renderSessionPicker(
           attr: {
             type: "button",
             "aria-label": conversationUiText(language, `重命名 ${session.title}`, `Rename ${session.title}`),
-            title: conversationUiText(language, "重命名", "Rename")
           }
         });
         setIcon(renameButton, "pencil");
@@ -1051,9 +1010,6 @@ function renderSessionPicker(
             "aria-label": running
               ? conversationUiText(language, "运行中的会话不能归档", "A running conversation cannot be archived")
               : conversationUiText(language, `归档 ${session.title}`, `Archive ${session.title}`),
-            title: running
-              ? conversationUiText(language, "运行中的会话不能归档", "A running conversation cannot be archived")
-              : conversationUiText(language, "归档", "Archive")
           }
         });
         archiveButton.disabled = running;
@@ -1069,9 +1025,6 @@ function renderSessionPicker(
             "aria-label": running
               ? conversationUiText(language, "运行中的会话不能删除", "A running conversation cannot be deleted")
               : conversationUiText(language, `删除 ${session.title}`, `Delete ${session.title}`),
-            title: running
-              ? conversationUiText(language, "运行中的会话不能删除", "A running conversation cannot be deleted")
-              : conversationUiText(language, "删除", "Delete")
           }
         });
         deleteButton.disabled = running;
@@ -1297,7 +1250,8 @@ function navigatorStateFor(container: HTMLElement): CodexSessionNavigatorState {
     lastActiveSessionId: "",
     renderGeneration: 0,
     focusRequestSequence: 0,
-    pendingFocusRequest: null
+    pendingFocusRequest: null,
+    summaryTooltips: []
   };
   navigatorStates.set(container, state);
   return state;
@@ -1577,32 +1531,6 @@ function sessionTrackItemGeometry(
     offsetLeft: Math.max(0, item.offsetLeft - track.offsetLeft),
     offsetWidth: item.offsetWidth
   };
-}
-
-function showSessionSummaryTooltip(
-  container: HTMLElement,
-  tooltip: HTMLElement,
-  anchor: HTMLElement,
-  summary: string
-): void {
-  tooltip.setText(summary);
-  tooltip.addClass("is-visible");
-  tooltip.setAttribute("aria-hidden", "false");
-  const position = () => {
-    if (!tooltip.hasClass("is-visible")) return;
-    const containerRect = container.getBoundingClientRect();
-    const anchorRect = anchor.getBoundingClientRect();
-    const edge = 8;
-    const centered = anchorRect.left - containerRect.left
-      + (anchorRect.width - tooltip.offsetWidth) / 2;
-    const maxLeft = Math.max(edge, container.clientWidth - tooltip.offsetWidth - edge);
-    tooltip.style.left = `${Math.min(maxLeft, Math.max(edge, centered))}px`;
-  };
-  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
-    window.requestAnimationFrame(position);
-  } else {
-    position();
-  }
 }
 
 function scrollSessionTrackTo(track: HTMLElement, left: number): void {

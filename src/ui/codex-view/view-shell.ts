@@ -171,7 +171,6 @@ function mountKnowledgeProgress(host: CodexViewShellHost, mount: HTMLElement): v
 function applyViewShellCopy(host: CodexViewShellHost): void {
   const language = host.plugin.settings.settingsLanguage;
   const jumpLabel = conversationUiText(language, "跳到最新消息", "Jump to latest message");
-  host.jumpToLatestEl?.setAttribute("title", jumpLabel);
   host.jumpToLatestEl?.setAttribute("aria-label", jumpLabel);
   const jumpText = host.jumpToLatestEl?.querySelector<HTMLElement>(".codex-jump-to-latest-label");
   if (jumpText) jumpText.setText(conversationUiText(language, "跳到最新", "Jump to latest"));

@@ -139,7 +139,7 @@ export class IPadAgentPane {
       const interrupted = mine.some(task => ipadTaskStatus(task) === "interrupted"), running = mine.some(task => ipadTaskStatus(task) === "running"), unread = mine.some(ipadTaskUnread);
       const button = el(this.root.ownerDocument, "button", `pd-agent-avatar${this.currentAgent() === agent.id ? " is-selected" : ""}`); button.type = "button"; button.dataset.agentId = agent.id;
       const label = [agent.name, waiting ? `${waiting} 件等你回应` : "", interrupted ? "有中断" : "", running ? "正在进行" : "", unread ? "有新结果" : ""].filter(Boolean).join(" · ");
-      button.setAttribute("aria-label", label); button.title = label; button.setAttribute("aria-pressed", String(this.currentAgent() === agent.id)); button.append(ipadAvatar(this.root.ownerDocument, agent));
+      button.setAttribute("aria-label", label); button.setAttribute("aria-pressed", String(this.currentAgent() === agent.id)); button.append(ipadAvatar(this.root.ownerDocument, agent));
       if (waiting || interrupted || running || unread) {
         const kind = waiting ? "waiting" : interrupted ? "interrupted" : running ? "running" : "unread";
         const badge = el(this.root.ownerDocument, "span", `pd-agent-badge is-${kind}`); badge.setAttribute("aria-hidden", "true");
