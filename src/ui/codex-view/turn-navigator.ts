@@ -1,10 +1,11 @@
 /**
  * turn-navigator.ts — in-conversation turn navigation: a micro tick column on
- * the right edge of the chat shell with hover magnification, a preview
- * popover, click-to-jump and scroll-linked current-turn tracking. One tick
+ * the right edge of the chat shell with hover magnification, a native preview
+ * tooltip, click-to-jump and scroll-linked current-turn tracking. One tick
  * per real user message; the paired reply is the first visible assistant
  * answer before the next user message.
  */
+import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
 import type { ChatMessage, SettingsLanguage } from "../../settings/settings";
 import { isAgentAnswerMessage } from "./agent-turn-process";
 import type { CodexMessageHost } from "./message-controller";
@@ -27,8 +28,6 @@ const TURN_PREVIEW_HIDE_DELAY_MS = 180;
 const TURN_JUMP_TOP_OFFSET_PX = 12;
 const TURN_JUMP_DURATION_MS = 260;
 const TURN_READ_LINE_OFFSET_PX = 28;
-const TURN_PREVIEW_WIDTH_MAX_PX = 320;
-const TURN_PREVIEW_WIDTH_MIN_PX = 180;
 const TURN_TRACK_MIN_HEIGHT_PX = 96;
 const TURN_TRACK_SHELL_RATIO = 0.62;
 const TURN_COMPACT_SHELL_WIDTH_PX = 420;
@@ -94,10 +93,8 @@ export class TurnNavigator {
   private readonly shellEl: HTMLElement;
   private readonly navEl: HTMLElement;
   private readonly trackEl: HTMLElement;
-  private readonly previewEl: HTMLElement;
-  private readonly previewUserEl: HTMLElement;
-  private readonly previewReplyEl: HTMLElement;
-  private readonly previewStatusEl: HTMLElement;
+  private previewTooltip: NativeTooltipHandle | null = null;
+  private previewTarget: HTMLElement | null = null;
 
   private turns: ConversationTurn[] = [];
   private tickEls: HTMLElement[] = [];
@@ -129,11 +126,6 @@ export class TurnNavigator {
     this.navEl.setAttribute("tabindex", "0");
     this.navEl.setAttribute("role", "listbox");
     this.trackEl = this.navEl.createDiv({ cls: "codex-turn-nav-track" });
-    this.previewEl = mountEl.createDiv({ cls: "codex-turn-nav-preview" });
-    this.previewEl.setAttribute("role", "tooltip");
-    this.previewUserEl = this.previewEl.createDiv({ cls: "codex-turn-nav-preview-user" });
-    this.previewReplyEl = this.previewEl.createDiv({ cls: "codex-turn-nav-preview-reply" });
-    this.previewStatusEl = this.previewEl.createDiv({ cls: "codex-turn-nav-preview-status" });
 
     this.on(this.navEl, "mouseenter", () => this.cancelHide());
     this.on(this.navEl, "mouseleave", () => {
@@ -171,16 +163,6 @@ export class TurnNavigator {
       this.focusIndex = -1;
       this.clearMagnify();
       this.scheduleHide();
-    });
-    this.on(this.previewEl, "mouseenter", () => this.cancelHide());
-    this.on(this.previewEl, "mouseleave", () => this.scheduleHide());
-    this.on(this.previewEl, "click", () => {
-      if (this.previewIndex >= 0) this.jumpToTurn(this.previewIndex);
-    });
-    this.on(this.previewEl, "wheel", (event) => {
-      this.host.messagesEl.scrollTop += event.deltaY;
-      event.preventDefault();
-      event.stopPropagation();
     });
     const interruptJump = (): void => {
       this.userInterruptedScroll = true;
@@ -220,6 +202,7 @@ export class TurnNavigator {
   }
 
   refreshLanguage(): void {
+    this.previewTooltip?.dispose(); this.previewTooltip = null; this.previewTarget = null;
     if (this.disposed) return;
     this.navEl.setAttribute("aria-label", this.navAriaLabel());
     this.tickEls.forEach((tick, index) => tick.setAttribute("aria-label", this.tickAriaLabel(index)));
@@ -228,6 +211,7 @@ export class TurnNavigator {
 
   dispose(): void {
     this.disposed = true;
+    this.previewTooltip?.dispose(); this.previewTooltip = null; this.previewTarget = null;
     if (this.hideTimer !== null) window.clearTimeout(this.hideTimer);
     this.hideTimer = null;
     if (this.scrollFrame) window.cancelAnimationFrame(this.scrollFrame);
@@ -277,6 +261,7 @@ export class TurnNavigator {
   }
 
   private syncTicks(): void {
+    this.previewTooltip?.dispose(); this.previewTooltip = null; this.previewTarget = null;
     const signature = this.turns.map((turn) => turn.messageId).join(",");
     if (signature !== this.ticksSignature) {
       this.ticksSignature = signature;
@@ -314,11 +299,7 @@ export class TurnNavigator {
       );
       this.trackEl.style.maxHeight = `${trackMax}px`;
     }
-    if (shellWidth > 0) {
-      const width = clamp(shellWidth - 72, TURN_PREVIEW_WIDTH_MIN_PX, TURN_PREVIEW_WIDTH_MAX_PX);
-      this.previewEl.style.width = `${width}px`;
-    }
-    if (this.previewVisible && this.previewIndex >= 0) this.positionPreview(this.previewIndex);
+    if (this.previewVisible) this.previewTooltip?.show();
     if (this.shellEl.clientHeight > 0) this.updateCurrent();
   }
 
@@ -436,47 +417,27 @@ export class TurnNavigator {
   }
 
   // -------------------------------------------------------------------------
-  // preview popover
+  // native preview tooltip
   // -------------------------------------------------------------------------
 
   private showPreview(index: number): void {
-    const turn = this.turns[index];
-    if (!turn) return;
+    const turn = this.turns[index], tick = this.tickEls[index];
+    if (!turn || !tick) return;
+    if (this.previewTarget !== tick) {
+      this.previewTooltip?.dispose();
+      this.previewTarget = tick;
+      this.previewTooltip = attachNativeTooltip(tick, () => {
+        const current = this.turns[index];
+        if (!current) return "";
+        const status = current.replyState === "streaming"
+          ? conversationUiText(this.language(), "生成中…", "Generating…")
+          : current.replyState === "none" ? conversationUiText(this.language(), "尚无回复", "No reply yet") : "";
+        return [current.userLabel, current.replyLabel, status].filter(Boolean).join("\n");
+      }, { placement: "left" });
+    }
     this.previewIndex = index;
-    const language = this.language();
-    this.previewUserEl.setText(turn.userLabel);
-    if (turn.replyLabel) {
-      this.previewReplyEl.setText(turn.replyLabel);
-      this.previewReplyEl.hidden = false;
-    } else {
-      this.previewReplyEl.setText("");
-      this.previewReplyEl.hidden = true;
-    }
-    if (turn.replyState === "streaming") {
-      this.previewStatusEl.setText(conversationUiText(language, "生成中…", "Generating…"));
-      this.previewStatusEl.hidden = false;
-    } else if (turn.replyState === "none") {
-      this.previewStatusEl.setText(conversationUiText(language, "尚无回复", "No reply yet"));
-      this.previewStatusEl.hidden = false;
-    } else {
-      this.previewStatusEl.setText("");
-      this.previewStatusEl.hidden = true;
-    }
     this.previewVisible = true;
-    this.previewEl.addClass("is-visible");
-    this.positionPreview(index);
-  }
-
-  private positionPreview(index: number): void {
-    const tick = this.tickEls[index];
-    if (!tick) return;
-    const shellRect = this.shellEl.getBoundingClientRect();
-    const mountRect = this.mountEl.getBoundingClientRect();
-    const tickRect = tick.getBoundingClientRect();
-    const centerY = tickRect.top + tickRect.height / 2 - shellRect.top;
-    const height = this.previewEl.offsetHeight || 64;
-    const shellTop = clamp(centerY - height / 2, 8, Math.max(8, shellRect.height - height - 8));
-    this.previewEl.style.top = `${shellTop - (mountRect.top - shellRect.top)}px`;
+    this.previewTooltip?.show();
   }
 
   private scheduleHide(): void {
@@ -492,16 +453,11 @@ export class TurnNavigator {
     this.hideTimer = null;
   }
 
-  private hidePreview(immediate: boolean): void {
+  private hidePreview(_immediate: boolean): void {
     this.cancelHide();
     this.previewVisible = false;
     this.previewIndex = -1;
-    this.previewEl.removeClass("is-visible");
-    if (immediate) {
-      this.previewUserEl.setText("");
-      this.previewReplyEl.setText("");
-      this.previewStatusEl.setText("");
-    }
+    this.previewTooltip?.hide();
   }
 
   // -------------------------------------------------------------------------

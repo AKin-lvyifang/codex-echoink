@@ -109,8 +109,7 @@ export class AgentIdentityModal extends Modal {
       cls: "echoink-agent-identity-upload",
       attr: {
         type: "button",
-        "aria-label": zh ? "上传 SVG 头像" : "Upload SVG avatar",
-        title: zh ? "上传 SVG 头像" : "Upload SVG avatar"
+        "aria-label": zh ? "上传 SVG 头像" : "Upload SVG avatar"
       }
     });
     renderAnimateIcon(this.uploadButtonEl, "upload");

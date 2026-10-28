@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { App } from "obsidian";
-import { openTestMarkdownRenders } from "./obsidian-shim";
+import { Platform, type App } from "obsidian";
+import { displayedTooltipsForTests, openTestMarkdownRenders } from "./obsidian-shim";
 import { buildFinanceAnalysisInput, financeDailyWeeks, parseFinanceAnalysisResponse,
   FinanceAnalysisValidationError, type FinanceAnalysisErrorCode } from "../lifestyle/finance-analysis";
 import { FINANCE_ANALYSIS_OUTPUT_PROTOCOL, FINANCE_ANALYSIS_SKILL } from "../harness/resources/finance-analysis-skill";
@@ -509,24 +509,15 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.ok(fullColumns.every((column) => Boolean(column.querySelector("small")?.textContent)), "every date has its own visible day label");
     assert.equal(fullMonthParent.querySelector("output"), null, "hover does not write a persistent reading below the chart");
     assert.equal(fullColumns[30].getAttribute("tabindex"), "0");
-    assert.match(fullColumns[30].getAttribute("aria-label") ?? "", /2026-10-31.*¥ 0\.00/u);
-    const dailyPanel = fullMonthParent.querySelector(".echoink-finance-ai-chart")! as unknown as { getBoundingClientRect(): object };
-    dailyPanel.getBoundingClientRect = () => ({ left: 0, top: 200, width: 500, height: 400 });
-    (fullColumns[30] as unknown as { getBoundingClientRect(): object }).getBoundingClientRect = () => ({ left: 480, top: 250, width: 10 });
-    const tooltip = fullMonthParent.querySelector(".echoink-finance-ai-daily-tooltip")!;
-    (fullColumns[30] as unknown as { onfocus: () => void }).onfocus();
-    assert.equal(tooltip.hidden, false);
-    assert.match(tooltip.textContent, /2026-10-31.*¥ 0\.00/u);
-    assert.equal(tooltip.getAttribute("aria-hidden"), "false");
-    assert.ok(parseFloat((tooltip.style as unknown as { left: string }).left) <= 314, "tooltip is clamped inside the chart edge");
-    assert.ok(parseFloat((tooltip.style as unknown as { top: string }).top) >= 54, "tooltip remains within the visible scrollport");
-    assert.equal(document.listenerCount("keydown"), 1);
-    document.dispatchKey("Escape");
-    assert.equal(tooltip.hidden, true, "Escape closes the hover/focus reading from anywhere");
-    assert.equal(document.listenerCount("keydown"), 0, "hiding removes the document listener");
-    (fullColumns[30] as unknown as { onfocus: () => void; onblur: () => void }).onfocus();
-    (fullColumns[30] as unknown as { onblur: () => void }).onblur();
-    assert.equal(tooltip.hidden, true, "focus leaving closes the reading");
+    assert.match(fullColumns[30].accessibleName, /2026-10-31.*¥ 0\.00/u);
+    const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+    try {
+      fullColumns[30].focus();
+      assert.match(String(displayedTooltipsForTests.get(fullColumns[30] as unknown as HTMLElement)), /2026-10-31.*¥ 0\.00/u,
+        "daily readings reach the public host tooltip API with their exact date and amount");
+      assert.equal(fullMonthParent.querySelector(".echoink-finance-ai-daily-tooltip"), null, "chart no longer draws its own floating layer");
+      fullColumns[30].dispatchEvent({ type: "blur" });
+    } finally { Platform.isDesktopApp = previousDesktop; }
     (workspace as unknown as { state: { month: string } }).state.month = "2026-09";
     await Promise.resolve();
     assert.equal(openTestMarkdownRenders[0].component.unloaded, false);
@@ -539,7 +530,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     const bins = chartsParent.querySelectorAll(".echoink-finance-bin");
     assert.equal(bins.length, 5);
     assert.equal(bins[0].getAttribute("role"), "img", "amount rows are read-only details");
-    assert.match(bins[0].getAttribute("aria-label") ?? "", /合计/u, "keyboard description exposes total amount");
+    assert.match(bins[0].accessibleName, /合计/u, "keyboard description exposes total amount");
     const legend = chartsParent.querySelectorAll(".echoink-finance-chart-row");
     const sectors = chartsParent.querySelectorAll(".echoink-finance-donut-sector");
     assert.equal(legend.length, sectors.length, "every category has a matching SVG sector");
@@ -557,8 +548,8 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.equal(state.chartCategory, null, "clear restores all categories");
     const calendarParent = document.body.createDiv();
     (workspace as unknown as { dailyCalendar(parent: HTMLElement): void }).dailyCalendar(calendarParent as unknown as HTMLElement);
-    const spendingDay = calendarParent.querySelectorAll(".echoink-finance-day").find((node) => node.getAttribute("aria-label")?.includes("2026-09-20"));
-    assert.ok(spendingDay?.getAttribute("aria-label")?.includes("超额"), "daily limit reports actual overspend");
+    const spendingDay = calendarParent.querySelectorAll(".echoink-finance-day").find((node) => node.accessibleName.includes("2026-09-20"));
+    assert.ok(spendingDay?.accessibleName.includes("超额"), "daily limit reports actual overspend");
     spendingDay!.click();
     assert.equal(state.recentDate, "2026-09-20");
     assert.equal(state.page, "overview", "calendar filters the recent list without navigation");

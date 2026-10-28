@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { setIcon } from "obsidian";
 import type { ChatMessage, SettingsLanguage } from "../../settings/settings";
 import {
@@ -237,10 +238,7 @@ function renderTaskPlanDock(
     attr: {
       type: "button",
       "aria-controls": contentId,
-      "aria-expanded": String(state.expanded),
-      title: state.expanded
-        ? conversationUiText(language, "收起当前任务", "Collapse current task")
-        : conversationUiText(language, "展开当前任务", "Expand current task")
+      "aria-expanded": String(state.expanded)
     }
   });
   renderStatusIcon(
@@ -254,6 +252,9 @@ function renderTaskPlanDock(
     cls: "codex-task-plan-progress",
     text: taskPlanDockStatus(plan.status, progress.current, progress.total, language)
   });
+  attachNativeTooltip(header, state.expanded
+    ? conversationUiText(language, "收起当前任务", "Collapse current task")
+    : conversationUiText(language, "展开当前任务", "Expand current task"));
   const disclosure = header.createSpan({
     cls: "codex-task-plan-disclosure",
     attr: { "aria-hidden": "true" }

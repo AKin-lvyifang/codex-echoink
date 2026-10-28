@@ -20,6 +20,7 @@ import type { FinanceImportResult } from "./finance-ledger";
 import { financeDailyWeeks, type FinanceReportSnapshot, type FinanceChartSnapshot, type FinanceReportBlock, type FinanceTableSnapshot } from "./finance-analysis";
 import { applyAmicroButton, applyDeleteButton } from "../settings/amicro-buttons";
 import { renderAnimateIcon } from "../ui/animate-icon";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 import { disposeOriginControls } from "../settings/origin-controls";
 import { financePage, financePagination, fitFinanceList } from "./finance-pagination";
@@ -88,7 +89,7 @@ class FinanceDialog extends Modal {
   private mobileViewport?: MobileViewport;
   whenClosed?: () => void;
   private controls?: ProPluginControls;
-  bindWrite(control: HTMLButtonElement, businessDisabled: () => boolean = () => false, needsWrite?: () => boolean, capability?: Capability): void { this.controls?.bind(control, { businessDisabled, needsWrite, capability }); }
+  bindWrite(control: HTMLButtonElement, businessDisabled: () => boolean = () => false, needsWrite?: () => boolean, capability?: Capability, tooltip?: () => string): void { this.controls?.bind(control, { businessDisabled, needsWrite, capability, tooltip }); }
   refreshAccess(): void { this.controls?.refresh(); }
   constructor(private readonly service: LifestyleHost, private readonly title: string, private readonly draw: (content: HTMLElement, dialog: FinanceDialog) => void) {
     super(service.plugin.app);
@@ -116,6 +117,7 @@ export class FinanceWorkspace {
   private recentObserver: ResizeObserver | null = null;
   private recentFrame = 0;
   private analysisTooltipCleanups: Array<() => void> = [];
+  private tooltipCleanups: Array<() => void> = [];
   private ledgerPage = 1;
   private ledgerFilterKey = "";
   private stopLedgerSize: (() => void) | null = null;
@@ -134,7 +136,11 @@ export class FinanceWorkspace {
 
   private categories(month = this.state.month): string[] { const data = this.data(); return [...new Set([...financeCategoryNames(this.catalog(), this.entries(), data.budgets, month), ...Object.keys(effectiveFinanceBudget(data, month)?.allocations ?? {})])]; }
   close(scroll: number): void { this.detach(); this.state.scroll = scroll; lastClosedState = structuredClone(this.state); }
-  detach(): void { this.inlineControls?.dispose(); this.inlineControls = null; if (this.host) disposeOriginControls(this.host); this.numbers.release(); this.renderedPage = null; this.tabsObserver?.disconnect(); this.tabsObserver = null; this.billPlanView.dispose(true); this.unsubscribeAnalysis?.(); this.unsubscribeAnalysis = null; this.unsubscribeMembership?.(); this.unsubscribeMembership = null; this.disposeRecentSizer(); this.releaseMarkdown(); this.host = null; }
+  detach(): void { this.inlineControls?.dispose(); this.inlineControls = null; if (this.host) disposeOriginControls(this.host); this.numbers.release(); this.renderedPage = null; this.tabsObserver?.disconnect(); this.tabsObserver = null; this.billPlanView.dispose(true); this.unsubscribeAnalysis?.(); this.unsubscribeAnalysis = null; this.unsubscribeMembership?.(); this.unsubscribeMembership = null; this.disposeRecentSizer(); this.releaseMarkdown(); this.disposeTooltips(); this.host = null; }
+  private tooltip(trigger: HTMLElement, content: string | (() => string), options?: Parameters<typeof attachNativeTooltip>[2]): void {
+    this.tooltipCleanups.push(attachNativeTooltip(trigger, content, options).dispose);
+  }
+  private disposeTooltips(): void { for (const cleanup of this.tooltipCleanups) cleanup(); this.tooltipCleanups = []; }
   private disposeRecentSizer(): void {
     this.stopLedgerSize?.(); this.stopLedgerSize = null;
     this.recentObserver?.disconnect(); this.recentObserver = null;
@@ -172,6 +178,7 @@ export class FinanceWorkspace {
   }
   render(body: HTMLElement): void {
     this.inlineControls?.dispose(); this.inlineControls = null;
+    this.disposeTooltips();
     const entering = this.renderedPage !== this.state.page;
     this.numbers.begin(entering); if (entering) this.billPlanView.enterNumbers(); this.renderedPage = this.state.page;
     this.tabsObserver?.disconnect(); this.tabsObserver = null;
@@ -356,7 +363,7 @@ export class FinanceWorkspace {
       bar.style.flexGrow = String(item.amount);
       bar.style.backgroundColor = colors[index];
       bar.setAttribute("aria-label", `${item.label} ¥ ${money(item.amount)}`);
-      bar.title = `${item.label} ¥ ${money(item.amount)}`;
+      this.tooltip(bar, `${item.label} ¥ ${money(item.amount)}`, { touch: "notice" });
     });
     const foot = parent.createDiv({ cls: "echoink-finance-compose-foot" });
     foot.createEl("span", { text: this.state.mix === "expense" ? `支出原额 ¥ ${money(total)} · 退款另列 ¥ ${money(summary.refundCents)}` : "有效人民币收入" });
@@ -612,7 +619,7 @@ export class FinanceWorkspace {
       cell.setAttribute("data-date", date);
       cell.setAttribute("aria-pressed", String(this.state.recentDate === date));
       cell.setAttribute("aria-label", `${date}：${spent ? `消费 ¥ ${money(spent)}` : "无消费"}${spent && plan.dailyLimitCents !== null ? spent <= plan.dailyLimitCents ? `，额度剩余 ¥ ${money(plan.dailyLimitCents - spent)}` : `，超额 ¥ ${money(spent - plan.dailyLimitCents)}` : ""}`);
-      if (spent) cell.title = cell.getAttribute("aria-label") ?? "";
+      if (spent) this.tooltip(cell, cell.getAttribute("aria-label") ?? "");
     }
     card.createEl("small", { text: "绿色：有消费且未超额；红色：超额；灰色：无消费或未来日期。" });
   }
@@ -632,7 +639,10 @@ export class FinanceWorkspace {
     let donut: ReturnType<typeof financeCategoryDonut>;
     const selection = card.createDiv({ cls: "echoink-finance-chart-selection" });
     const secondary = card.createDiv({ cls: "echoink-finance-stat-secondary" });
+    const secondaryTooltips: ReturnType<typeof attachNativeTooltip>[] = [];
+    this.tooltipCleanups.push(() => { for (const tooltip of secondaryTooltips) tooltip.dispose(); });
     const drawSecondary = (): void => {
+      for (const tooltip of secondaryTooltips) tooltip.dispose(); secondaryTooltips.length = 0;
       secondary.empty(); selection.empty();
       const selected = this.state.chartCategory;
       const current = selected == null ? facts : financeSpendingFacts(facts.expenses.filter((entry) => entry.category === selected), this.state.month);
@@ -646,7 +656,8 @@ export class FinanceWorkspace {
       accountCard.createEl("small", { text: selected == null ? "占全部支出原额" : "占所选分类支出原额" });
       const accounts = accountCard.createDiv({ cls: "echoink-finance-account-list" });
       for (const [account, value] of current.accounts) {
-        const row = accounts.createDiv({ cls: "echoink-finance-account-bar", attr: { tabindex: "0", title: (account || "未指定账户") + " · " + value.count + " 笔 · ¥ " + money(value.amountCents) } });
+        const row = accounts.createDiv({ cls: "echoink-finance-account-bar", attr: { tabindex: "0" } });
+        secondaryTooltips.push(attachNativeTooltip(row, (account || "未指定账户") + " · " + value.count + " 笔 · ¥ " + money(value.amountCents), { touch: "notice" }));
         const line = row.createDiv({ cls: "echoink-finance-account-line" });
         line.createSpan({ text: account || "未指定账户" });
         line.createSpan({ text: "¥ " + money(value.amountCents) + " · " + (current.grossCents ? (value.amountCents / current.grossCents * 100).toFixed(1) : "0.0") + "%" });
@@ -660,7 +671,8 @@ export class FinanceWorkspace {
       const bins = binCard.createDiv({ cls: "echoink-finance-bin-chart" });
       for (const bin of current.bins) {
         const detail = bin.label + " · " + bin.count + " 笔 · 合计 ¥ " + money(bin.amountCents);
-        const row = bins.createDiv({ cls: "echoink-finance-bin", attr: { tabindex: "0", role: "img", "aria-label": detail, "data-tooltip": detail } });
+        const row = bins.createDiv({ cls: "echoink-finance-bin", attr: { tabindex: "0", role: "img", "aria-label": detail } });
+        secondaryTooltips.push(attachNativeTooltip(row, detail, { touch: "notice" }));
         row.createSpan({ text: bin.label, cls: "echoink-finance-bin-name" });
         const rail = row.createDiv({ cls: "echoink-finance-bin-plot" });
         if (bin.count) rail.createDiv({ cls: "echoink-finance-bin-fill" }).style.width = (bin.count / current.expenses.length * 100) + "%";
@@ -671,6 +683,7 @@ export class FinanceWorkspace {
       label: "本月支出原额", selected: () => this.state.chartCategory ?? null,
       onSelect: category => { this.state.chartCategory = category; drawSecondary(); }
     });
+    this.tooltipCleanups.push(donut.dispose);
     drawSecondary();
   }
   private aiCard(parent: HTMLElement): void {
@@ -701,9 +714,9 @@ export class FinanceWorkspace {
       this.redraw();
     }, "echoink-finance-ai-action");
     action.disabled = Boolean(busyMonth) || (!pendingSave && (!input.entryCount || !this.service.finance.access.checkCapability("finance.analysis.generate")));
-    if (notice) action.title = notice;
+    const actionTip = busyMonth && !busy ? `${busyMonth} 的分析正在生成` : notice;
+    if (actionTip) this.tooltip(action, actionTip);
     if (busy) action.setAttribute("aria-busy", "true");
-    if (busyMonth && !busy) action.title = `${busyMonth} 的分析正在生成`;
     if (report) {
       card.createEl("small", { text: `${new Date(report.createdAt).toLocaleString("zh-CN")} · ${report.provider}` });
       const snapshot = report.financeSnapshot as FinanceReportSnapshot | undefined;
@@ -827,33 +840,6 @@ export class FinanceWorkspace {
       panel.createEl("small", { text: `全部周段共用 ¥ 0—¥ ${money(max)} 的金额尺度。`, cls: "echoink-finance-ai-daily-scale" });
       const grid = panel.createDiv({ cls: "echoink-finance-ai-daily-weeks", attr: { role: "group", "aria-label": "按月内七日一组展示每日支出及每组合计" } });
       grid.style.setProperty("--finance-week-count", String(weeks.length));
-      const tooltip = panel.createDiv({ cls: "echoink-finance-ai-daily-tooltip", attr: { role: "tooltip", "aria-hidden": "true" } });
-      tooltip.hidden = true;
-      const scrollHost = panel.closest(".echoink-lifestyle-view");
-      const onEscape = (event: KeyboardEvent): void => { if (event.key === "Escape") hide(); };
-      const hide = (): void => {
-        tooltip.hidden = true; tooltip.setAttribute("aria-hidden", "true");
-        panel.ownerDocument.removeEventListener("keydown", onEscape);
-        scrollHost?.removeEventListener("scroll", hide);
-      };
-      this.analysisTooltipCleanups.push(hide);
-      const position = (column: HTMLElement, event?: MouseEvent): void => {
-        const bounds = panel.getBoundingClientRect();
-        const columnBounds = column.getBoundingClientRect();
-        const width = tooltip.offsetWidth || 180;
-        const height = tooltip.offsetHeight || 34;
-        const panelWidth = panel.clientWidth || bounds.width;
-        const x = event ? event.clientX - bounds.left : columnBounds.left + columnBounds.width / 2 - bounds.left;
-        const y = event ? event.clientY - bounds.top : columnBounds.top - bounds.top;
-        tooltip.style.left = `${Math.max(6, Math.min(x - width / 2, panelWidth - width - 6))}px`;
-        const scrollBounds = scrollHost?.getBoundingClientRect();
-        const visibleTop = Math.max(8, scrollBounds?.top ?? 8);
-        const visibleBottom = Math.min(panel.ownerDocument.defaultView?.innerHeight ?? Infinity, scrollBounds?.bottom ?? Infinity) - 8;
-        const minTop = Math.max(6, visibleTop - bounds.top + 6);
-        const maxTop = Math.max(minTop, Math.min((panel.clientHeight || bounds.height || Infinity) - height - 6, visibleBottom - bounds.top - height));
-        const above = y - height - 10;
-        tooltip.style.top = `${Math.max(minTop, Math.min(above >= minTop ? above : y + 10, maxTop))}px`;
-      };
       for (const week of weeks) {
         const group = grid.createDiv({ cls: "echoink-finance-ai-daily-week" });
         const header = group.createDiv({ cls: "echoink-finance-ai-daily-week-head" });
@@ -870,16 +856,7 @@ export class FinanceWorkspace {
           const barArea = column.createDiv({ cls: "echoink-finance-ai-daily-bar-area" });
           if (point.valueCents > 0) barArea.createDiv({ cls: "echoink-finance-ai-daily-bar" }).style.height = `${Math.max(2, point.valueCents / max * 126)}px`;
           column.createEl("small", { text: point.label.slice(-2), attr: { "aria-hidden": "true" } });
-          const show = (event?: MouseEvent): void => {
-            tooltip.setText(label); tooltip.hidden = false; tooltip.setAttribute("aria-hidden", "false");
-            panel.ownerDocument.addEventListener("keydown", onEscape);
-            scrollHost?.addEventListener("scroll", hide, { passive: true });
-            position(column, event);
-          };
-          column.onmouseenter = (event) => show(event);
-          column.onmousemove = (event) => { if (!tooltip.hidden) position(column, event); };
-          column.onfocus = () => show();
-          column.onmouseleave = column.onblur = hide;
+          this.analysisTooltipCleanups.push(attachNativeTooltip(column, label, { touch: "notice" }).dispose);
         }
       }
     } else if (chart.id === "large") {
@@ -890,14 +867,14 @@ export class FinanceWorkspace {
         const share = total ? point.valueCents / total * 100 : 0;
         const segment = stack.createDiv({ cls: index ? "is-rest" : "is-large" });
         segment.style.width = `${Math.max(0, share)}%`;
-        segment.title = `${point.label} · ¥ ${money(point.valueCents)} · ${share.toFixed(1)}%`;
+        this.analysisTooltipCleanups.push(attachNativeTooltip(segment, `${point.label} · ¥ ${money(point.valueCents)} · ${share.toFixed(1)}%`, { touch: "notice" }).dispose);
       }
       const legend = panel.createDiv({ cls: "echoink-finance-ai-legend" });
       for (const [index, point] of chart.points.entries()) {
         const share = total ? point.valueCents / total * 100 : 0;
         const row = legend.createDiv({ cls: "echoink-finance-ai-legend-item", attr: { tabindex: "0",
-          "aria-label": `${point.label} ¥ ${money(point.valueCents)}，占 ${share.toFixed(1)}%`,
-          "data-value": `¥ ${money(point.valueCents)} · ${share.toFixed(1)}%` } });
+          "aria-label": `${point.label} ¥ ${money(point.valueCents)}，占 ${share.toFixed(1)}%` } });
+        this.analysisTooltipCleanups.push(attachNativeTooltip(row, `¥ ${money(point.valueCents)} · ${share.toFixed(1)}%`, { touch: "notice" }).dispose);
         row.createSpan({ cls: index ? "is-rest" : "is-large", attr: { "aria-hidden": "true" } });
         row.createSpan({ text: point.label }); row.createEl("strong", { text: `${share.toFixed(1)}%` });
       }
@@ -912,8 +889,8 @@ export class FinanceWorkspace {
       for (const point of chart.points) {
         const negativeBudget = chart.id === "budget" && point.valueCents < 0;
         const label = `${point.label}：¥ ${money(point.valueCents)}${point.comparisonCents === undefined ? "" : `；预算 ¥ ${money(point.comparisonCents)}`}`;
-        const row = panel.createDiv({ cls: "echoink-finance-ai-chart-row", attr: { tabindex: "0", "aria-label": label, "data-value": label } });
-        row.title = label;
+        const row = panel.createDiv({ cls: "echoink-finance-ai-chart-row", attr: { tabindex: "0", "aria-label": label } });
+        this.analysisTooltipCleanups.push(attachNativeTooltip(row, label, { touch: "notice" }).dispose);
         row.createSpan({ text: point.label });
         row.createSpan({ text: `¥ ${money(point.valueCents)}${negativeBudget ? "（退款超过消费）" : ""}${point.comparisonCents === undefined ? "" : ` / 预算 ¥ ${money(point.comparisonCents)}`}` });
         const track = row.createDiv({ cls: chart.id === "flow" ? "echoink-finance-ai-chart-track is-flow" :
@@ -942,7 +919,7 @@ export class FinanceWorkspace {
     const exportButton = button(heading, "", () => this.exportCsv(), "echoink-finance-export");
     exportButton.disabled = !this.service.finance.access.checkCapability("finance.export");
     const exportNotice = capabilityMessage(this.service.finance.access, "finance.export");
-    if (exportNotice) exportButton.title = exportNotice;
+    if (exportNotice) this.tooltip(exportButton, exportNotice);
     setIcon(exportButton.createSpan({ attr: { "aria-hidden": "true" } }), "download");
     exportButton.createSpan({ text: "导出 CSV" });
     const toolbar = panel.createDiv({ cls: "echoink-finance-toolbar" });
@@ -1266,7 +1243,8 @@ export class FinanceWorkspace {
       let updated = 0;
       let noRows = true;
       let reconciliationOnly = false;
-      dialog.bindWrite(confirm, () => phase === "reading" || phase === "stopping" || phase === "ready" && noRows, () => phase === "ready");
+      let confirmTip = "";
+      dialog.bindWrite(confirm, () => phase === "reading" || phase === "stopping" || phase === "ready" && noRows, () => phase === "ready", undefined, () => confirmTip);
       const stop = (): void => {
         controller?.abort();
         if (reader?.readyState === FileReader.LOADING) reader.abort();
@@ -1281,18 +1259,18 @@ export class FinanceWorkspace {
           const icon = confirm.createSpan({ cls: "echoink-finance-import-action-icon" });
           renderAnimateIcon(icon, "circle-stop");
           confirm.createSpan({ text: "停止" });
-          confirm.setAttr("aria-label", "停止导入"); confirm.title = "停止导入";
+          confirm.setAttr("aria-label", "停止导入"); confirmTip = "停止导入";
           confirm.onclick = stop;
         } else if (state === "done") {
           confirm.addClass("is-finance-done");
           const icon = confirm.createSpan({ cls: "echoink-finance-import-action-icon" }); setIcon(icon, "check");
-          confirm.createSpan({ text: "完成" }); confirm.setAttr("aria-label", "完成并关闭"); confirm.title = "完成并关闭";
+          confirm.createSpan({ text: "完成" }); confirm.setAttr("aria-label", "完成并关闭"); confirmTip = "完成并关闭";
           confirm.onclick = () => dialog.close();
         } else {
           const readyLabel = reconciliationOnly ? "完成核对" : "开始导入";
           confirm.setText(state === "ready" ? readyLabel : "关闭");
           confirm.setAttr("aria-label", state === "ready" ? readyLabel : "关闭导入窗口");
-          confirm.title = state === "ready" ? readyLabel : "关闭导入窗口";
+          confirmTip = state === "ready" ? readyLabel : "关闭导入窗口";
           confirm.onclick = state === "ready" ? () => void run() : () => dialog.close();
         }
         cancel.hidden = state !== "ready";

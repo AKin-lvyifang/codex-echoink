@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, Platform, type App } from "obsidian";
@@ -1172,7 +1173,7 @@ export function updateContextForSession(host: CodexComposerHost, session: Stored
       ? `${view.percent}% · ${formatContextValue(view.totalTokens)} / ${formatContextValue(view.effectiveInputBudget)} context used`
       : `${view.percent}% · ${formatContextValue(view.totalTokens)} / ${formatContextValue(view.effectiveInputBudget)} 上下文已使用`;
   host.contextEl.setAttr("aria-label", tooltip);
-  host.contextEl.setAttr("title", tooltip);
+  attachNativeTooltip(host.contextEl, tooltip);
   host.contextEl.toggleClass("is-empty", view.percent === null);
   host.contextEl.toggleClass("is-warning", (view.percent ?? 0) >= 80);
   if (host.contextPanelOpen && host.contextPanelEl) {

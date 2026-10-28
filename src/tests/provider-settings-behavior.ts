@@ -2242,7 +2242,7 @@ function assertProviderBadgeReflowCssContract(): void {
   )?.[1] ?? "";
   assert.match(narrowProviderRule, /\.codex-provider-saved-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);/u);
   assert.match(narrowProviderRule, /\.codex-provider-saved-provider\s*\{[^}]*width:\s*100%;/u);
-  assert.match(narrowProviderRule, /\.codex-provider-url-tooltip\s*\{[^}]*inset-inline:\s*0;[^}]*width:\s*100%;[^}]*max-width:\s*100%;/u);
+  assert.doesNotMatch(css, /\.codex-provider-url-tooltip/u, "provider URLs use the host tooltip rather than a second custom panel");
   const narrowSettingsRule = css.match(
     /@container \(max-width:\s*560px\)\s*\{\s*\.echoink-settings-page\s*\{[\s\S]*?\n\}/u
   )?.[0] ?? "";

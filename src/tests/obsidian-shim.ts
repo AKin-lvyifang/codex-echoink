@@ -12,11 +12,23 @@ if (!testGlobal.window) {
 }
 
 export const openTestNoticeMessages: string[] = [];
+export const openTestNotices: Notice[] = [];
 
 export class Notice {
+  hidden = false;
+  readonly noticeEl?: HTMLElement;
   constructor(public readonly message: string, public readonly timeout?: number) {
     openTestNoticeMessages.push(message);
+    openTestNotices.push(this);
+    if (typeof document !== "undefined") {
+      const wrapper = document.createElement("div"); wrapper.className = "notice";
+      this.noticeEl = document.createElement("div"); this.noticeEl.className = "notice-message";
+      this.noticeEl.textContent = message; wrapper.appendChild(this.noticeEl); document.body.appendChild(wrapper);
+      wrapper.addEventListener("click", () => this.hide());
+    }
   }
+  // Real Notice begins a fade before detaching; retain connectivity to exercise that interval.
+  hide(): void { this.hidden = true; }
 }
 
 export class TFolder { path = ""; name = ""; children: (TFile | TFolder)[] = []; }

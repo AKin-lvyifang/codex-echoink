@@ -4443,18 +4443,6 @@ button.echoink-settings-navigation-row:focus-visible {
   .codex-provider-combobox-chevron {
     transition-duration: 0.01ms;
   }
-
-  .codex-provider-url-tooltip {
-    transform: none;
-    transition:
-      opacity 100ms ease,
-      visibility 0ms linear 100ms;
-  }
-
-  .codex-provider-saved-provider:hover > .codex-provider-url-tooltip,
-  .codex-provider-saved-provider:focus-visible > .codex-provider-url-tooltip {
-    transition-delay: 0ms;
-  }
 }
 
 .codex-kb-history-modal {
@@ -5033,41 +5021,6 @@ button.echoink-settings-navigation-row:focus-visible {
   outline-offset: 2px;
 }
 
-.codex-provider-url-tooltip {
-  position: absolute;
-  z-index: var(--layer-tooltip, 1000);
-  inset-inline-start: 0;
-  bottom: calc(100% + 6px);
-  box-sizing: border-box;
-  width: max-content;
-  max-width: min(320px, calc(100vw - 96px));
-  padding: 5px 7px;
-  border-radius: 5px;
-  color: var(--text-on-accent, #fff);
-  background: var(--background-modifier-message, #1f1f1f);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  visibility: hidden;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(2px);
-  transition:
-    opacity 100ms ease,
-    transform 100ms ease,
-    visibility 0ms linear 100ms;
-}
-
-.codex-provider-saved-provider:hover > .codex-provider-url-tooltip,
-.codex-provider-saved-provider:focus-visible > .codex-provider-url-tooltip {
-  visibility: visible;
-  opacity: 1;
-  transform: translateY(0);
-  transition-delay: 0ms;
-}
-
 .codex-provider-saved-meta {
   display: flex;
   flex: 0 1 auto;
@@ -5237,12 +5190,6 @@ button.echoink-settings-navigation-row:focus-visible {
 
   .codex-provider-saved-provider {
     width: 100%;
-  }
-
-  .codex-provider-url-tooltip {
-    inset-inline: 0;
-    width: 100%;
-    max-width: 100%;
   }
 
   .codex-provider-saved-meta {
@@ -9518,90 +9465,6 @@ body.theme-dark .codex-provider-brand-svg[data-provider-brand="qwen"] > path {
   outline: none;
 }
 
-.codex-kb-health-tooltip-panel {
-  position: fixed;
-  z-index: 99999;
-  left: 0;
-  top: 0;
-  width: 320px;
-  max-width: 320px;
-  min-width: 0;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  color: var(--text-normal);
-  background: var(--background-primary);
-  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
-  font-size: 12px;
-  line-height: 1.5;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-3px);
-  transition: opacity 120ms ease, transform 120ms ease;
-  visibility: hidden;
-  white-space: normal;
-}
-
-.codex-kb-health-tooltip-bridge {
-  position: fixed;
-  z-index: 99998;
-  left: 0;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  background: transparent;
-  opacity: 0;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-.codex-kb-health-tooltip-bridge.is-visible {
-  pointer-events: auto;
-  visibility: visible;
-}
-
-.codex-kb-health-tooltip-panel.is-visible {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-  visibility: visible;
-}
-
-.codex-kb-health-tooltip-title {
-  margin-bottom: 4px;
-  font-weight: 800;
-}
-
-.codex-kb-health-tooltip-summary {
-  margin-bottom: 7px;
-  color: var(--text-normal);
-}
-
-.codex-kb-health-tooltip-reasons {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.codex-kb-health-tooltip-reason {
-  color: var(--text-muted);
-}
-
-.codex-kb-health-tooltip-reason-muted,
-.codex-kb-health-tooltip-note {
-  color: var(--text-faint);
-}
-
-.codex-kb-health-tooltip-note {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding-top: 8px;
-  border-top: 1px solid var(--background-modifier-border);
-}
-
 .codex-kb-status-dot {
   display: inline-block;
   width: 7px;
@@ -13624,34 +13487,6 @@ details.codex-pi-diagnostic-panel .codex-turn-queue-title { color: var(--text-mu
   display: none;
 }
 
-.codex-session-summary-tooltip {
-  position: absolute;
-  z-index: 4;
-  top: calc(100% + 4px);
-  max-width: min(280px, calc(100% - 16px));
-  padding: 7px 9px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 7px;
-  color: var(--text-normal);
-  background: var(--background-primary);
-  box-shadow: 0 6px 18px rgb(24 24 27 / 14%);
-  font-size: 11px;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-  visibility: hidden;
-  opacity: 0;
-  transform: translateY(-2px);
-  pointer-events: none;
-  transition: opacity 100ms ease, transform 100ms ease;
-}
-
-.codex-session-summary-tooltip.is-visible {
-  visibility: visible;
-  opacity: 1;
-  transform: translateY(0);
-}
-
 .codex-session-tab {
   position: relative;
   min-width: 32px;
@@ -14530,18 +14365,17 @@ body.theme-dark .codex-session-picker {
   }
 
   .codex-session-track,
-  .codex-session-tab,
-  .codex-session-track-control,
-  .codex-session-summary-tooltip,
-  .codex-session-row,
-  .codex-session-archived-row,
-  .codex-session-archived-actions .is-spinning,
-  .codex-session-row-actions,
-  .codex-session-row-action,
-  .codex-session-picker,
-  .codex-session-picker-backdrop,
-  .codex-session-tab-running,
-  .codex-session-row-leading.is-spinning {
+.codex-session-tab,
+.codex-session-track-control,
+.codex-session-row,
+.codex-session-archived-row,
+.codex-session-archived-actions .is-spinning,
+.codex-session-row-actions,
+.codex-session-row-action,
+.codex-session-picker,
+.codex-session-picker-backdrop,
+.codex-session-tab-running,
+.codex-session-row-leading.is-spinning {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -18108,65 +17942,8 @@ details.codex-smooth-ai-reasoning[open] .codex-smooth-ai-reasoning-caret {
   background: var(--text-normal);
 }
 
-.codex-turn-nav-preview {
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 0;
-  z-index: 3;
-  box-sizing: border-box;
-  padding: 8px 10px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--echoink-conversation-radius-sm);
-  background: var(--background-primary);
-  box-shadow: var(--shadow-s);
-  opacity: 0;
-  transform: translateY(4px);
-  pointer-events: none;
-  transition: opacity 160ms ease, transform 160ms ease;
-}
-
-.codex-turn-nav-preview.is-visible {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-}
-
-.codex-turn-nav-preview-user {
-  font-size: var(--echoink-conversation-font-status);
-  font-weight: 600;
-  line-height: 1.45;
-  color: var(--text-normal);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.codex-turn-nav-preview-reply {
-  margin-top: 4px;
-  font-size: var(--echoink-conversation-font-status);
-  line-height: 1.45;
-  color: var(--text-muted);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.codex-turn-nav-preview-reply[hidden],
-.codex-turn-nav-preview-status[hidden] {
-  display: none;
-}
-
-.codex-turn-nav-preview-status {
-  margin-top: 4px;
-  font-size: var(--echoink-conversation-font-status);
-  color: var(--text-faint);
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .codex-turn-nav-tick::before,
-  .codex-turn-nav-preview {
+  .codex-turn-nav-tick::before {
     transition: none;
   }
 }
@@ -20454,7 +20231,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo main{overflow-wrap:anywhere}
 .echoink-settings-demo .settings-help{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;flex:none;border:1px solid var(--muted);border-radius:50%;color:var(--secondary);font-size:calc(var(--font-text-size, 16px) * 0.625);font-weight:500;line-height:1;cursor:help;vertical-align:middle}
 .echoink-settings-demo .settings-help:hover,.echoink-settings-demo .settings-help:focus-visible{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
-.echoink-settings-demo .settings-tooltip{position:fixed;z-index:40;width:max-content;max-width:min(330px,calc(100cqw - 24px));max-height:calc(100dvh - 24px);overflow:auto;padding:11px 13px;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--text);font-size:calc(var(--font-text-size, 16px) * 0.6875);line-height:1.85;box-shadow:0 5px 25px #1814251c;overflow-wrap:anywhere}
 .echoink-settings-demo .init-preview-bar{display:flex;align-items:center;justify-content:flex-end;gap:9px;color:var(--muted);font-size:calc(var(--font-text-size, 16px) * 0.625);margin:0 0 9px}
 .echoink-settings-demo .init-preview-bar select{background:var(--bg);border:1px solid var(--line);border-radius:5px;color:var(--secondary);font-size:calc(var(--font-text-size, 16px) * 0.625);padding:3px 6px}
 .echoink-settings-demo .init-progress{margin-top:0;margin-bottom:12px;padding:22px}
@@ -20474,7 +20250,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .init-complete{display:flex;align-items:flex-start;gap:14px;padding:22px;margin-top:0}.echoink-settings-demo .init-complete .ready-icon{margin-top:1px}.echoink-settings-demo .init-complete h3{margin-bottom:5px}.echoink-settings-demo .init-complete p{font-size:calc(var(--font-text-size, 16px) * 0.6875);color:var(--secondary);line-height:1.85;margin-bottom:17px}
 @container settings (max-width:600px){.echoink-settings-demo{padding-inline:16px}.echoink-settings-demo .init-progress,.echoink-settings-demo .init-complete{padding:16px}.echoink-settings-demo .echoink-knowledge-init-steps{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:16px}.echoink-settings-demo .echoink-knowledge-init-dirs label,.echoink-settings-demo .init-attachment{align-items:flex-start;flex-direction:column;gap:8px}.echoink-settings-demo .echoink-knowledge-init-dirs select{width:100%}.echoink-settings-demo .init-bottom{align-items:flex-end}.echoink-settings-demo .codex-settings-title{gap:8px}.echoink-settings-demo .init-bottom>span{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .init-bottom .button{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .echoink-knowledge-init-meta{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-settings-demo .setting-controls{min-width:0}}
 @container settings (max-width:380px){.echoink-settings-demo .codex-settings-title{flex-wrap:wrap}.echoink-settings-demo .codex-settings-title .preview-tools{margin-left:auto}.echoink-settings-demo{padding-inline:12px}.echoink-settings-demo .codex-settings-tabs .codex-settings-tab{font-size:calc(var(--font-text-size, 16px) * 0.6875)}.echoink-settings-demo .init-bottom{align-items:flex-start;flex-direction:column}.echoink-settings-demo .init-bottom .button{align-self:flex-end}}
-@media(max-height:600px){.echoink-settings-demo .codex-settings-tabs-slot{position:relative;padding-top:14px}.echoink-settings-demo .codex-settings-title{margin-bottom:12px}.echoink-settings-demo .settings-editor{min-height:140px}.echoink-settings-demo .settings-tooltip{max-height:60dvh}}
+@media(max-height:600px){.echoink-settings-demo .codex-settings-tabs-slot{position:relative;padding-top:14px}.echoink-settings-demo .codex-settings-title{margin-bottom:12px}.echoink-settings-demo .settings-editor{min-height:140px}}
 @media(prefers-reduced-motion:reduce){.echoink-settings-demo .echoink-knowledge-init-bar>span{transition:none}}
 
 
@@ -21067,8 +20843,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
 .echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;padding:0!important;width:13px!important;min-height:13px!important;height:13px!important;border:1px solid var(--muted);border-radius:50%;background:none;font-size:9px!important;color:var(--secondary);line-height:1}
-.echoink-settings-demo .echoink-settings-help-panel{position:absolute;top:22px;left:0;width:min(300px,65cqw);padding:11px 13px;background:var(--bg);border:1px solid var(--line);border-radius:7px;box-shadow:0 8px 24px #0002;color:var(--secondary);font-size:calc(var(--font-text-size,16px)*.6875);font-weight:400;line-height:1.85;z-index:20;overflow:auto;overflow-wrap:anywhere}
-.echoink-settings-demo .echoink-settings-help-panel.is-noninteractive{pointer-events:none}
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row:has(>.echoink-settings-inline-confirm){flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}
@@ -21414,9 +21188,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 @container account (max-width:520px){.echoink-account.echoink-account .two-columns{grid-template-columns:minmax(0,1fr)}.echoink-account.echoink-account .coming-soon{grid-column:1/-1}.echoink-account.echoink-account .section-heading{align-items:flex-start}.echoink-account.echoink-account .scope{max-width:100%}.echoink-account.echoink-account .profile-actions{flex-direction:row}.echoink-account.echoink-account .feature-row{gap:8px}.echoink-account.echoink-account .heat-footer{font-size:var(--f10)}}
 .echoink-settings-demo .codex-settings-tab[data-settings-tab="account"]{margin-left:auto}
 .echoink-account .account-visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-
-.echoink-account-tooltip{position:fixed;z-index:3000;pointer-events:none;padding:8px 11px;background:var(--raised,var(--soft));color:var(--text);border:1px solid var(--line);border-radius:6px;font:calc(var(--font-text-size,16px)*.6875)/1.85 var(--font-interface,system-ui);max-width:min(240px,calc(100vw - 16px));overflow-wrap:anywhere;box-shadow:0 5px 20px #0002}
-.echoink-account-tooltip[hidden]{display:none!important}
 .echoink-account.echoink-account .input-action{flex-wrap:wrap}
 .echoink-account.echoink-account .input-action>input{flex:1;min-width:min(120px,100%)}
 .echoink-account.echoink-account .input-action>button{flex:none}
@@ -21697,7 +21468,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-tool-controls>label,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-form-field>label>span,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resources-checkbox,
-:where(body:not(.is-mobile)) .echoink-settings-demo .settings-tooltip,
 :where(body:not(.is-mobile)) .echoink-settings-demo .init-preview-bar select,
 :where(body:not(.is-mobile)) .echoink-settings-demo .init-plan-description,
 :where(body:not(.is-mobile)) .echoink-settings-demo [aria-labelledby=echoink-knowledge-init-tab-custom]>.echoink-knowledge-init-copy,
@@ -21734,7 +21504,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 :where(body:not(.is-mobile)) .echoink-settings-demo .history-empty p,
 :where(body:not(.is-mobile)) .echoink-settings-demo .echoink-knowledge-init-step,
 :where(body:not(.is-mobile)) .echoink-settings-demo .health-explanation,
-:where(body:not(.is-mobile)) .echoink-settings-demo .echoink-settings-help-panel,
 :where(body:not(.is-mobile)) .echoink-settings-demo .codex-mcp-server-field-description,
 :where(body:not(.is-mobile)) .echoink-settings-demo .codex-provider-saved-details,
 :where(body:not(.is-mobile)) .echoink-settings-demo .resource-status-path-label,
@@ -22646,7 +22415,7 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {
   /* `inherit` on a custom property would inherit the theme's heading token.
      `initial` makes the heading's var() invalid so its font/color inherit,
      exactly as the original host's unset heading token did. */
@@ -22716,13 +22485,12 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   body:not(.is-mobile) .echoink-expression-view,body:not(.is-mobile) .echoink-chat-surface,body:not(.is-mobile) .echoink-theme-boundary,
   body:not(.is-mobile) .codex-review-preview,body:not(.is-mobile) .echoink-journal-template-modal,body:not(.is-mobile) .echoink-todo-form-modal,
   body:not(.is-mobile) .echoink-diary-modal,body:not(.is-mobile) .echoink-finance-dialog,body:not(.is-mobile) .echoink-account-modal,
-  body:not(.is-mobile) .echoink-account-tooltip,body:not(.is-mobile) .codex-kb-health-tooltip-panel,body:not(.is-mobile) .echoink-onboarding-coachmark,
-  body:not(.is-mobile) .echoink-diary-tooltip) {font-family:var(--font-interface)}
+  body:not(.is-mobile) .echoink-onboarding-coachmark) {font-family:var(--font-interface)}
 .theme-dark:not(:where(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {
   --menu-background:#282828;--menu-border-color:#3f3f3f;--modal-background:#1c1c1c;--modal-border-color:#3f3f3f;
   --dropdown-background:#333;--dropdown-background-hover:#3f3f3f;
   --input-placeholder-color:#666;
@@ -22751,7 +22519,7 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-account-tooltip,.codex-kb-health-tooltip-panel,.echoink-onboarding-coachmark,.echoink-diary-tooltip) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
 /* Both navigation levels keep their original background, accent, padding,
    corners, and active underline. The resource tabs had no shadow declaration. */
 .echoink-settings-demo.echoink-settings-demo :is(.codex-settings-tab,.codex-resource-tab) {
@@ -25157,8 +24925,6 @@ body.echoink-quick-chat-popout .codex-header .codex-title-icon {
 .theme-dark .echoink-home-workspace .echoink-todo-avatar{filter:saturate(.85) brightness(.92)}
 
 /* 作用域内 Tooltip：悬停与键盘聚焦均显示完整姓名/操作名 */
-.echoink-todo-avatar[data-tip],.echoink-todo-action[data-tip]{position:relative}
-.echoink-todo-avatar[data-tip]:hover::after,.echoink-todo-avatar[data-tip]:focus-visible::after,.echoink-todo-action[data-tip]:hover::after,.echoink-todo-action[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:3px 8px;border-radius:6px;background:var(--todo-ink,var(--text-normal));color:var(--bg,var(--background-primary));font-size:10px;font-weight:400;white-space:nowrap;z-index:50;pointer-events:none}
 
 /* 表单人员标签字段 */
 .echoink-people-field{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:36px;padding:4px 6px;border:1px solid var(--echoink-home-border,var(--background-modifier-border));border-radius:6px;background:var(--background-primary)}
@@ -25392,7 +25158,7 @@ body.theme-dark { --echoink-control-fill: #fafafa; --echoink-control-on-fill: #1
 }
 .echoink-chat-surface :is(.codex-message-checkbox.is-checked, .codex-session-checkbox.is-selected) { color: var(--echoink-control-on-fill); }
 /* Only EchoInk surfaces receive these tokens; Obsidian owns light/dark mode. */
-body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
 body.is-popout-modal:has(.modal.mod-settings) {
@@ -25412,7 +25178,7 @@ body.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-active: #f4f4f5;
   --echoink-theme-on-accent: #ffffff;
 }
-body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
 body.theme-dark.is-popout-modal:has(.modal.mod-settings) {
@@ -25432,7 +25198,7 @@ body.theme-dark.is-popout-modal:has(.modal.mod-settings) {
   --echoink-theme-active: #27272a;
   --echoink-theme-on-accent: #18181b;
 }
-body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #ffffff;
@@ -25450,7 +25216,7 @@ body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-
   --echoink-theme-active: #fff6c4;
   --echoink-theme-on-accent: #2a2a2a;
 }
-body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #1b1b1b;
@@ -25468,7 +25234,7 @@ body.theme-light[data-echoink-theme="highlighter"] :is(.echoink-iphone, .echoink
   --echoink-theme-active: #3f3a1e;
   --echoink-theme-on-accent: #1b1b1b;
 }
-body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #f3f3f3;
@@ -25486,7 +25252,7 @@ body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ip
   --echoink-theme-active: #f4ecc0;
   --echoink-theme-on-accent: #212121;
 }
-body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
+body.theme-dark[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="manifesto"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #212121;
@@ -25850,7 +25616,7 @@ body[data-echoink-theme] .echoink-settings-demo .toast {
   justify-content: flex-end;
 }
 /* Surfaces outside page containers, including body-mounted menus and dialogs. */
-body[data-echoink-theme] :is(.echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-theme-overlay, .echoink-account-modal, .echoink-account-tooltip) {
+body[data-echoink-theme] :is(.echoink-chat-surface, .echoink-theme-boundary, .echoink-expression-view, .echoink-theme-overlay, .echoink-account-modal) {
   --background-primary:var(--echoink-theme-bg);--background-primary-alt:var(--echoink-theme-raised);
   --background-secondary:var(--echoink-theme-raised);--background-secondary-alt:var(--echoink-theme-raised);
   --text-normal:var(--echoink-theme-text);--text-muted:var(--echoink-theme-secondary);--text-faint:var(--echoink-theme-muted);
@@ -26094,7 +25860,6 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-diary-alignment-note[hidden] {display:none;}
 .echoink-diary-alignment-copy {display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
 .echoink-diary-change {display:flex;flex-direction:column;gap:4px;color:var(--secondary);}
-.tooltip.echoink-diary-tooltip {max-width:320px;font-family:var(--font-interface);font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;}
 .echoink-diary-expressions {display:flex;flex-direction:column;gap:12px;}
 .echoink-diary-filters {display:flex;gap:5px;flex-wrap:wrap;}
 .echoink-diary-expression {display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;box-sizing:border-box;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--echoink-theme-card,var(--bg));}
@@ -26650,7 +26415,6 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-account-fill,.echoink-finance-bin-fill{height:100%;border-radius:5px;background:var(--finance-accent)}
 .echoink-finance-bin-chart{display:grid;gap:10px;margin-top:10px}
 .echoink-finance-bin{position:relative;display:grid;grid-template-columns:100px minmax(0,1fr) 85px;align-items:center;gap:9px;min-height:26px;font-size:.77em}
-.echoink-finance-bin:is(:hover,:focus-visible)::after{content:attr(data-tooltip);position:absolute;z-index:2;top:calc(100% + 3px);left:0;max-width:100%;padding:5px 8px;border-radius:4px;background:var(--background-primary);color:var(--text-normal);box-shadow:0 2px 10px #0003;white-space:normal}
 .echoink-finance-bin-name,.echoink-finance-bin-count{white-space:nowrap;font-variant-numeric:tabular-nums}
 .echoink-finance-bin-count{text-align:right}
 .echoink-finance-account-bar:focus-visible,.echoink-finance-bin:focus-visible{outline:2px solid var(--text-normal);outline-offset:2px}
@@ -26699,7 +26463,6 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-ai-chart-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px;margin:10px 0;color:var(--text-muted);font-size:.78em;position:relative}
 .echoink-finance-ai-chart-row>span{overflow-wrap:anywhere}
 .echoink-finance-ai-chart-row:focus-visible,.echoink-finance-ai-legend-item:focus-visible{outline:2px solid var(--interactive-accent);outline-offset:3px}
-.echoink-finance-ai-chart-row:is(:hover,:focus-visible)::after,.echoink-finance-ai-legend-item:is(:hover,:focus-visible)::after{content:attr(data-value);position:absolute;z-index:4;left:8px;top:-31px;max-width:min(260px,90%);padding:5px 8px;border:1px solid var(--finance-line);border-radius:5px;background:var(--background-primary);color:var(--text-normal);box-shadow:var(--shadow-s);font-size:.75rem;white-space:normal;pointer-events:none}
 .echoink-finance-ai-chart-track{position:relative;grid-column:1/-1;height:14px;border-radius:6px;background:var(--background-secondary)}
 .echoink-finance-ai-chart-track>div{position:absolute;top:4px;left:0;height:6px;border-radius:3px;background:var(--finance-accent)}
 .echoink-finance-ai-chart-track>div.is-negative{background:var(--text-error)}
@@ -26727,8 +26490,6 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-ai-daily-bar-area{display:flex;align-items:end;justify-content:center;width:100%;height:126px}
 .echoink-finance-ai-daily-bar{width:min(65%,18px);min-width:1px;max-height:126px;background:var(--finance-accent)}
 .echoink-finance-ai-daily-column small{display:block;height:18px;color:var(--text-muted);font-size:.68em;font-variant-numeric:tabular-nums;line-height:18px}
-.echoink-finance-ai-daily-tooltip{position:absolute;z-index:8;max-width:min(220px,calc(100% - 12px));padding:6px 9px;border:1px solid var(--finance-line);border-radius:6px;background:var(--background-primary);color:var(--text-normal);box-shadow:var(--shadow-s);font-size:.75em;line-height:1.4;overflow-wrap:anywhere;pointer-events:none}
-.echoink-finance-ai-daily-tooltip[hidden]{display:none!important}
 @container life-workspace (max-width:950px){.echoink-finance-ai-daily-weeks{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @container life-workspace (max-width:660px){.echoink-finance-ai-daily-weeks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @container life-workspace (max-width:430px){.echoink-finance-ai-daily-weeks{grid-template-columns:minmax(0,1fr)}}
@@ -26871,8 +26632,6 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 }
 @media(prefers-reduced-motion:reduce){.echoink-finance-bill-page.is-entering{animation:none}}
 /* /ECHOINK_FINANCE_BILL_PLANS */
-.echoink-finance-bill-tooltip{position:absolute;inset:60px 24px auto;z-index:1;min-height:80px;padding:10px;display:flex;align-items:center;justify-content:center;background:var(--background-primary);color:var(--text-normal);border:1px solid var(--finance-line);border-radius:6px;font-size:.85em;line-height:1.65;text-align:center;pointer-events:none;overflow-wrap:anywhere}
-.echoink-finance-bill-tooltip[hidden]{display:none}
 .echoink-finance-bill-category-target{cursor:pointer}
 .echoink-finance-bill-category-target:focus-visible{outline:0;stroke-opacity:.65}
 .echoink-finance-bill-detail-rows{min-width:0;max-width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
@@ -26888,7 +26647,6 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-finance-pagination>span{color:var(--text-muted);font-size:.78em}
 .echoink-finance-pagination>nav{margin-left:auto;max-width:100%}
 .echoink-finance-bill-detail-page{min-width:0}
-.echoink-finance-donut-tooltip{position:absolute;bottom:0;left:50%;transform:translateX(-50%);padding:5px 8px;border-radius:6px;background:var(--background-secondary);color:var(--text-normal);font-size:.75em;max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:center;pointer-events:none;z-index:2}
 :is(.echoink-finance-workspace,.echoink-finance-dialog,.echoink-finance-catalog-page) :is(input:not([type=checkbox]):not([type=radio]),select,textarea,[data-slot=select-trigger]):is(:focus,:focus-visible){border-color:var(--finance-line,var(--background-modifier-border))!important;outline:none!important;box-shadow:none!important;background:var(--background-modifier-hover)!important}
 @container life-workspace (max-width:560px){.echoink-finance-ledger-metrics{grid-template-columns:1fr;gap:6px}.echoink-finance-ledger-metrics .echoink-finance-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:3px 10px;padding:8px 12px}.echoink-finance-ledger-metrics .echoink-finance-number{font-size:18px;margin:0;grid-column:2;grid-row:1 / span 2}.echoink-finance-ledger-metrics .echoink-finance-card>p{margin:0;grid-column:1}}
 
@@ -27456,7 +27214,6 @@ body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-contr
 .echoink-task-card-status, .echoink-task-card-summary { font-size: 12px; font-weight: 400; color: var(--text-muted); }
 .echoink-task-card-status { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .echoink-task-card-status.is-waiting, .echoink-task-card-status.is-interrupted { color: var(--echoink-theme-warn, var(--text-warning)); }
-body:not(.is-mobile) .tooltip.echoink-task-card-tooltip { max-width: min(480px, calc(100vw - 24px)); white-space: pre-line; text-align: left; }
 .echoink-task-empty { color: var(--text-muted); font-size: 13px; padding: 18px 0; }
 .echoink-task-detail-header { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 8px; border-bottom: 1px solid var(--background-modifier-border); flex: 0 0 auto; }
 .echoink-task-detail-titles { flex: 1; min-width: 0; }
@@ -29689,7 +29446,6 @@ body[data-echoink-theme] .echoink-iphone {
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center { position: absolute; inset: 25%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 5px; pointer-events: none; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center small { color: var(--ip-secondary); font-size: .76em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-donut-center strong { font-size: 1.1em; font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-finance-breakdown .echoink-finance-donut-tooltip { position: absolute; inset: auto 0 0; padding: 6px; border: 1px solid var(--ip-line); border-radius: 6px; background: var(--ip-bg); color: var(--ip-ink); font-size: .8em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 8px; align-items: center; width: 100%; min-height: 44px; padding: 6px 0; border: 0; border-bottom: 1px solid var(--ip-line); border-radius: 0; background: transparent; color: var(--ip-ink); text-align: left; font: inherit; font-size: .88em; }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row.is-selected, .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-row:focus-visible { background: var(--ip-soft); }
 .echoink-iphone .ip-finance-breakdown .echoink-finance-chart-name { overflow-wrap: anywhere; }

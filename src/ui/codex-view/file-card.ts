@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../native-tooltip";
 import { setIcon } from "obsidian";
 import type { SettingsLanguage, StoredAttachment } from "../../settings/settings";
 import {
@@ -29,10 +30,7 @@ export function renderFileCard(
   const root = container.createDiv({
     cls: `codex-file-card codex-file-card-${options.variant}`,
     attr: {
-      "data-attachment-kind": kind,
-      title: available
-        ? options.displayName
-        : conversationUiText(language, `${options.displayName} · 文件不可用`, `${options.displayName} · File unavailable`)
+      "data-attachment-kind": kind
     }
   });
   root.toggleClass("is-unavailable", !available);
@@ -80,13 +78,16 @@ export function renderFileCard(
       )
   });
 
+  attachNativeTooltip(open, available
+    ? options.displayName
+    : conversationUiText(language, `${options.displayName} · 文件不可用`, `${options.displayName} · File unavailable`));
+
   if (options.onRemove) {
     const remove = root.createEl("button", {
       cls: "codex-file-card-remove",
       attr: {
         type: "button",
-        "aria-label": conversationUiText(language, `移除文件：${options.displayName}`, `Remove file: ${options.displayName}`),
-        title: conversationUiText(language, `移除 ${options.displayName}`, `Remove ${options.displayName}`)
+        "aria-label": conversationUiText(language, `移除文件：${options.displayName}`, `Remove file: ${options.displayName}`)
       }
     });
     setIcon(remove, "x");

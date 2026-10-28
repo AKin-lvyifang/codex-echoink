@@ -65,7 +65,7 @@ interface TestActivationEvent {
   stopPropagation(): void;
 }
 
-const fallbackDocument = { createElement: (tag: string) => new FakeElement(tag) };
+const fallbackDocument = { createElement: (tag: string) => new FakeElement(tag), querySelectorAll: () => [] };
 
 export class FakeElement {
   readonly attributes = new Map<string, string>();
@@ -141,6 +141,18 @@ export class FakeElement {
   }
 
   get parentElement(): FakeElement | null { return this.parent; }
+  get parentNode(): FakeElement | null { return this.parent; }
+  get nextSibling(): FakeElement | null {
+    if (!this.parent) return null;
+    return this.parent.children[this.parent.children.indexOf(this) + 1] ?? null;
+  }
+
+  appendChild(child: FakeElement): FakeElement { this.append(child); return child; }
+
+  addEventListener(event: string, handler: TestEventHandler): void { this.listeners.set(event, handler); }
+  removeEventListener(event: string, handler: TestEventHandler): void {
+    if (this.listeners.get(event) === handler) this.listeners.delete(event);
+  }
 
   replaceChildren(...children: FakeElement[]): void {
     for (const child of [...this.children]) child.remove();
@@ -384,6 +396,21 @@ export function renderedText(element: FakeElement): string {
   return element.content
     .map((item) => typeof item === "string" ? item : renderedText(item))
     .join("");
+}
+
+function fakeReferencedText(element: FakeElement, attribute: string): string {
+  let root = element;
+  while (root.parentElement) root = root.parentElement;
+  return (element.getAttribute(attribute) ?? "").split(/\s+/u).filter(Boolean)
+    .map((id) => root.querySelector<FakeElement>(`#${id}`)?.textContent ?? "").join(" ");
+}
+
+function fakeAccessibleName(element: FakeElement): string {
+  return element.getAttribute("aria-label") ?? (fakeReferencedText(element, "aria-labelledby") || renderedText(element));
+}
+
+function fakeNativeTooltipText(element: FakeElement): string {
+  return fakeReferencedText(element, "aria-describedby") || fakeAccessibleName(element);
 }
 
 export interface TestContext {
@@ -890,146 +917,113 @@ function testConversationSession(
 }
 
 function assertSessionSummaryTooltipLifecycle(): void {
-  const testGlobal = globalThis as unknown as Record<string, unknown>;
-  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-  const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
-  Object.defineProperty(testGlobal, "document", {
-    configurable: true,
-    value: testDocument
-  });
-  Object.defineProperty(testGlobal, "HTMLElement", {
-    configurable: true,
-    value: FakeElement
-  });
-
-  try {
-    const container = new FakeElement("div");
-    const sessions = [
-      testConversationSession("first", "第一会话", 1),
-      testConversationSession("second", "第二会话", 2)
-    ];
-    let activeSessionId = "first";
-    const render = () => renderCodexTabs(
-      container as unknown as HTMLElement,
-      sessions,
-      activeSessionId,
-      {
-        onActivate: (session) => {
-          activeSessionId = session.id;
-          render();
-        },
-        onContextMenu: () => undefined,
-        onRename: () => undefined,
-        onArchive: () => undefined,
-        onDeleteSessions: () => undefined,
-        onCreateSession: () => undefined
-      }
-    );
-    render();
-
-    const pointerTarget = container.findAllByClass("codex-session-tab")[1]!;
-    pointerTarget.onmouseenter?.();
-    assert.equal(
-      container.findByClass("codex-session-summary-tooltip")?.hasClass("is-visible"),
-      true,
-      "pointer hover shows the session summary"
-    );
-    pointerTarget.onpointerdown?.({
-      button: 0,
-      isPrimary: true,
-      pointerType: "mouse"
-    });
-    assert.equal(
-      container.findByClass("codex-session-summary-tooltip")?.hasClass("is-visible"),
-      false,
-      "primary pointer down dismisses the current summary before activation"
-    );
-    pointerTarget.onpointercancel?.();
-    pointerTarget.onmouseenter?.();
-    assert.equal(
-      container.findByClass("codex-session-summary-tooltip")?.hasClass("is-visible"),
-      true,
-      "a cancelled pointer activation releases the one-shot dismissal"
-    );
-    pointerTarget.onpointerdown?.({
-      button: 0,
-      isPrimary: true,
-      pointerType: "mouse"
-    });
-    pointerTarget.focus();
-    pointerTarget.onclick?.({
-      isTrusted: true,
-      detail: 1,
-      preventDefault: () => undefined,
-      stopPropagation: () => undefined
-    });
-
-    const selectedAfterPointerSwitch = container
-      .findAllByClass("codex-session-tab")
-      .find((tab) => tab.getAttribute("aria-selected") === "true")!;
-    const tooltipAfterPointerSwitch = container.findByClass("codex-session-summary-tooltip")!;
-    selectedAfterPointerSwitch.onmouseenter?.();
-    assert.equal(selectedAfterPointerSwitch.getAttribute("data-session-id"), "second");
-    assert.equal(
-      tooltipAfterPointerSwitch.hasClass("is-visible"),
-      false,
-      "pointer activation must keep the summary closed after focus restoration"
-    );
-    assert.equal(tooltipAfterPointerSwitch.getAttribute("aria-hidden"), "true");
-
-    selectedAfterPointerSwitch.onmouseleave?.();
-    selectedAfterPointerSwitch.onmouseenter?.();
-    assert.equal(tooltipAfterPointerSwitch.hasClass("is-visible"), true);
-    selectedAfterPointerSwitch.onmouseleave?.();
-    assert.equal(
-      tooltipAfterPointerSwitch.hasClass("is-visible"),
-      false,
-      "pointer-focused tabs must dismiss the summary on mouse leave"
-    );
-
-    selectedAfterPointerSwitch.blur();
-    const keyboardTarget = container.findAllByClass("codex-session-tab")[0]!;
-    keyboardTarget.focusVisible = true;
-    keyboardTarget.focus();
-    const tooltipBeforeKeyboardActivation = container.findByClass(
-      "codex-session-summary-tooltip"
-    )!;
-    assert.equal(
-      tooltipBeforeKeyboardActivation.hasClass("is-visible"),
-      true,
-      "keyboard-visible focus keeps the accessible session summary"
-    );
-    keyboardTarget.onclick?.({
-      isTrusted: true,
-      detail: 0,
-      preventDefault: () => undefined,
-      stopPropagation: () => undefined
-    });
-    const selectedAfterKeyboardSwitch = container
-      .findAllByClass("codex-session-tab")
-      .find((tab) => tab.getAttribute("aria-selected") === "true")!;
-    const tooltipAfterKeyboardSwitch = container.findByClass(
-      "codex-session-summary-tooltip"
-    )!;
-    assert.equal(selectedAfterKeyboardSwitch.getAttribute("data-session-id"), "first");
-    assert.equal(
-      tooltipAfterKeyboardSwitch.hasClass("is-visible"),
-      true,
-      "keyboard activation keeps the summary visible after focus restoration"
-    );
-    selectedAfterKeyboardSwitch.onmouseleave?.();
-    assert.equal(tooltipAfterKeyboardSwitch.hasClass("is-visible"), true);
-    selectedAfterKeyboardSwitch.blur();
-    assert.equal(tooltipAfterKeyboardSwitch.hasClass("is-visible"), false);
-  } finally {
-    if (originalDocument) Object.defineProperty(testGlobal, "document", originalDocument);
-    else delete testGlobal.document;
-    if (originalHTMLElement) {
-      Object.defineProperty(testGlobal, "HTMLElement", originalHTMLElement);
-    } else {
-      delete testGlobal.HTMLElement;
+  const { JSDOM } = require("jsdom");
+  const { setTooltipDisplayForTests, openTestNoticeMessages } = require("./obsidian-shim") as typeof import("./obsidian-shim");
+  const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  const view = dom.window as Window & typeof globalThis;
+  const original = new Map(["window", "document", "HTMLElement"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  const desktop = Platform.isDesktopApp;
+  const timers = new Map<number, () => void>();
+  let timerSequence = 0;
+  view.setTimeout = ((callback: () => void) => { const id = ++timerSequence; timers.set(id, callback); return id; }) as typeof view.setTimeout;
+  view.clearTimeout = ((id: number) => { timers.delete(id); }) as typeof view.clearTimeout;
+  view.requestAnimationFrame = (callback) => { const id = ++timerSequence; timers.set(id, () => callback(0)); return id; };
+  const flush = () => {
+    for (let attempt = 0; timers.size && attempt < 20; attempt++) {
+      const pending = [...timers.values()]; timers.clear(); pending.forEach((callback) => callback());
     }
+    assert.equal(timers.size, 0, "tooltip and track callbacks settle");
+  };
+  const create = function(this: HTMLElement, tag: string, options: { cls?: string; text?: string; attr?: Record<string, string> } = {}) {
+    const child = this.ownerDocument.createElement(tag);
+    if (options.cls) child.className = options.cls;
+    if (options.text !== undefined) child.textContent = options.text;
+    for (const [name, value] of Object.entries(options.attr ?? {})) child.setAttribute(name, value);
+    this.appendChild(child); return child;
+  };
+  Object.assign(view.HTMLElement.prototype, {
+    empty(this: HTMLElement) { this.replaceChildren(); },
+    addClass(this: HTMLElement, ...names: string[]) { this.classList.add(...names); },
+    toggleClass(this: HTMLElement, name: string, active: boolean) { this.classList.toggle(name, active); },
+    createEl: create,
+    createDiv(this: HTMLElement, options = {}) { return create.call(this, "div", options); },
+    createSpan(this: HTMLElement, options = {}) { return create.call(this, "span", options); }
+  });
+  for (const [name, value] of Object.entries({ window: view, document: view.document, HTMLElement: view.HTMLElement })) {
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+  }
+  const restoreDisplay = setTooltipDisplayForTests((trigger, content, options) => {
+    view.document.querySelectorAll(".tooltip").forEach((node) => node.remove());
+    const tooltip = view.document.createElement("div");
+    tooltip.className = `tooltip ${options?.classes?.join(" ") ?? ""}`;
+    tooltip.textContent = String(content);
+    view.document.body.appendChild(tooltip);
+    assert.equal(trigger.hasAttribute("aria-label"), false, "host hover fallbacks cannot bypass pointer dismissal");
+    assert.equal(trigger.hasAttribute("title"), false);
+  });
+  try {
+    Platform.isDesktopApp = true;
+    const container = view.document.body.createDiv();
+    const sessions = [testConversationSession("first", "第一会话", 1), testConversationSession("second", "第二会话", 2)];
+    let activeSessionId = "first";
+    const render = () => {
+      renderCodexTabs(container, sessions, activeSessionId, {
+        onActivate: (session) => { activeSessionId = session.id; render(); },
+        onContextMenu: () => undefined, onRename: () => undefined, onArchive: () => undefined,
+        onDeleteSessions: () => undefined, onCreateSession: () => undefined
+      });
+      flush();
+    };
+    const tabs = () => [...container.querySelectorAll<HTMLButtonElement>(".codex-session-tab")];
+    const visibleTooltip = () => view.document.querySelector<HTMLElement>(".tooltip");
+    const hover = (tab: HTMLElement) => { tab.dispatchEvent(new view.MouseEvent("mouseenter")); flush(); };
+    const leave = (tab: HTMLElement) => { tab.dispatchEvent(new view.MouseEvent("mouseleave")); flush(); };
+    const pointerDown = (tab: HTMLElement) => {
+      const event = new view.MouseEvent("pointerdown", { button: 0 });
+      Object.defineProperty(event, "isPrimary", { value: true });
+      tab.onpointerdown?.call(tab, event as unknown as PointerEvent);
+    };
+    const name = (tab: HTMLElement) => view.document.getElementById(tab.getAttribute("aria-labelledby")!)?.textContent;
+    render();
+    assert.equal(container.querySelector(".codex-session-summary-tooltip"), null, "session tabs create no custom tooltip panel");
+    const pointerTarget = tabs()[1]!;
+    assert.equal(name(pointerTarget), "第二会话");
+    hover(pointerTarget);
+    assert.match(visibleTooltip()?.textContent ?? "", /第二会话\n首条提问：/u, "native hover retains the real session summary");
+    pointerDown(pointerTarget);
+    assert.equal(visibleTooltip(), null, "primary pointer down dismisses the summary before activation");
+    pointerTarget.onpointercancel?.call(pointerTarget, new view.Event("pointercancel") as PointerEvent); hover(pointerTarget);
+    assert.ok(visibleTooltip(), "cancelled pointer activation releases dismissal");
+    pointerDown(pointerTarget); pointerTarget.focus();
+    pointerTarget.dispatchEvent(new view.MouseEvent("click", { detail: 1 }));
+    const selectedAfterPointerSwitch = tabs().find((tab) => tab.getAttribute("aria-selected") === "true")!;
+    hover(selectedAfterPointerSwitch);
+    assert.equal(selectedAfterPointerSwitch.dataset.sessionId, "second");
+    assert.equal(visibleTooltip(), null, "pointer activation stays dismissed across redraw and focus restoration");
+    leave(selectedAfterPointerSwitch); hover(selectedAfterPointerSwitch);
+    assert.ok(visibleTooltip()); leave(selectedAfterPointerSwitch);
+    assert.equal(visibleTooltip(), null, "pointer-focused tabs dismiss their summary on leave");
+    selectedAfterPointerSwitch.blur();
+    const keyboardTarget = tabs()[0]!; keyboardTarget.focus();
+    assert.ok(visibleTooltip(), "keyboard focus shows the native summary");
+    keyboardTarget.dispatchEvent(new view.MouseEvent("click", { detail: 0 })); flush();
+    const selectedAfterKeyboardSwitch = tabs().find((tab) => tab.getAttribute("aria-selected") === "true")!;
+    assert.equal(selectedAfterKeyboardSwitch.dataset.sessionId, "first");
+    assert.ok(visibleTooltip(), "keyboard activation retains its summary after focus restoration");
+    leave(selectedAfterKeyboardSwitch); assert.ok(visibleTooltip());
+    selectedAfterKeyboardSwitch.blur(); assert.equal(visibleTooltip(), null);
+    const noticeCount = openTestNoticeMessages.length;
+    Platform.isDesktopApp = false;
+    selectedAfterKeyboardSwitch.dispatchEvent(new view.MouseEvent("click", { detail: 1 })); flush();
+    assert.equal(openTestNoticeMessages.length, noticeCount, "touch conversation navigation never adds an explanatory Notice");
+    assert.equal(activeSessionId, "first", "touch still activates the selected conversation");
+    container.remove();
+  } finally {
+    restoreDisplay(); Platform.isDesktopApp = desktop;
+    for (const [name, descriptor] of original) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name);
+    }
+    dom.window.close();
   }
 }
 
@@ -1037,7 +1031,11 @@ function assertSessionPickerArchiveActions(): void {
   const testGlobal = globalThis as unknown as Record<string, unknown>;
   const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
   const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
-  const testDocument = { activeElement: null as FakeElement | null, body: new FakeElement("body"), createElement: (tag: string) => new FakeElement(tag) };
+  const testDocument = {
+    activeElement: null as FakeElement | null, body: new FakeElement("body"),
+    createElement: (tag: string) => new FakeElement(tag),
+    querySelectorAll: (selector: string) => testDocument.body.querySelectorAll(selector)
+  };
   Object.defineProperty(testGlobal, "document", {
     configurable: true,
     value: testDocument
@@ -1083,12 +1081,13 @@ function assertSessionPickerArchiveActions(): void {
     assert.ok(unreadTab && runningTab);
     assert.equal(unreadTab.findByClass("codex-session-tab-title")?.textContent, "1");
     assert.ok(unreadTab.findByClass("codex-session-tab-unread"));
-    assert.equal(unreadTab.getAttribute("aria-label"), "可归档会话，有未读答案");
+    const accessibleName = (tab: FakeElement) => tab.parentElement?.querySelector<FakeElement>(`#${tab.getAttribute("aria-labelledby")}`)?.textContent;
+    assert.equal(accessibleName(unreadTab), "可归档会话，有未读答案");
     assert.equal(runningTab.findByClass("codex-session-tab-title")?.textContent, "2");
     assert.ok(runningTab.findByClass("codex-session-tab-running"));
     assert.equal(runningTab.findByClass("codex-session-tab-unread"), null);
     assert.equal(
-      runningTab.getAttribute("aria-label"),
+      accessibleName(runningTab),
       "运行会话，正在运行",
       "running status must take precedence over unread status"
     );
@@ -1120,8 +1119,8 @@ function assertSessionPickerArchiveActions(): void {
     const idleActions = idleRow.findAllByClass("codex-session-row-action");
     const runningActions = runningRow.findAllByClass("codex-session-row-action");
     assert.deepEqual(
-      idleActions.map((button) => button.getAttribute("title")),
-      ["重命名", "归档", "删除"],
+      idleActions.map((button) => button.getAttribute("aria-label")),
+      ["重命名 可归档会话", "归档 可归档会话", "删除 可归档会话"],
       "row actions keep rename, archive, and delete in that order"
     );
     assert.equal(runningActions.length, 3);
@@ -1802,12 +1801,12 @@ export async function runSmoothConversationUiTests(): Promise<void> {
   assert.match(renderedText(englishDockHost), /更新界面/u,
     "plan titles and steps remain verbatim while dock chrome is localized");
   assert.equal(
-    englishDockHost.findByClass("codex-task-plan-header")?.attributes.get("title"),
+    fakeNativeTooltipText(englishDockHost.findByClass("codex-task-plan-header")!),
     "Expand current task"
   );
   clickElement(englishDockHost.findByClass("codex-task-plan-header")!);
   assert.equal(
-    englishDockHost.findByClass("codex-task-plan-header")?.attributes.get("title"),
+    fakeNativeTooltipText(englishDockHost.findByClass("codex-task-plan-header")!),
     "Collapse current task"
   );
   assert.equal(
@@ -2357,7 +2356,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.ok(normalLink);
     assert.equal(normalLink!.textContent, "Alpha", "resolved links display the note name, not aliases or paths");
     assert.equal(normalLink!.attributes.get("data-path"), "projects/Alpha.md");
-    assert.equal(normalLink!.attributes.get("aria-label"), "打开笔记 Alpha");
+    assert.equal(fakeAccessibleName(normalLink!), "打开笔记 Alpha");
     await clickRegistered(normalLink!);
 
     const imageAttachments = renderMessage(renderer, {
@@ -2400,7 +2399,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(imageAttachments.findAllByClass("codex-message-attachment-item").length, 3);
     const imagePreview = imageAttachments.findByClass("codex-message-attachment-preview")!;
     assert.equal(imagePreview.tag, "button");
-    assert.equal(imagePreview.attributes.get("aria-label"), "打开图片：粘贴图片 1.png");
+    assert.equal(fakeAccessibleName(imagePreview), "打开图片：粘贴图片 1.png");
     assert.equal(
       imagePreview.findAllByTag("img")[0]?.src,
       "app://echoink-vault/images/cover%20%231.png",
@@ -2410,13 +2409,13 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     const imageOverlay = imageOverlayBody.findByClass("codex-image-overlay")!;
     assert.equal(imageOverlay.findAllByTag("img")[0]?.src, "app://echoink-vault/images/cover%20%231.png");
     const videoCard = imageAttachments.findByClass("codex-file-card-message")!;
-    assert.equal(videoCard.attributes.get("title"), "meeting.mp4");
+    assert.equal(videoCard.getAttribute("title"), null);
     assert.equal(videoCard.attributes.get("data-attachment-kind"), "video");
     assert.ok(videoCard.findByClass("codex-file-card-icon"));
     assert.equal(videoCard.findByClass("codex-file-card-name")?.textContent, "meeting.mp4");
     assert.equal(videoCard.findByClass("codex-file-card-meta")?.textContent, "大小未知");
     const videoOpen = videoCard.findByClass("codex-file-card-open")!;
-    assert.equal(videoOpen.attributes.get("aria-label"), "打开附件：meeting.mp4");
+    assert.equal(fakeAccessibleName(videoOpen), "打开附件：meeting.mp4");
     clickElement(videoOpen);
     assert.deepEqual(electronOpenedPaths, ["/test-vault/videos/meeting.mp4"]);
     assert.deepEqual(
@@ -2428,7 +2427,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     assert.equal(unavailableImages.length, 1, "duplicate or missing images render one unavailable state");
     assert.equal(unavailableImages[0]?.attributes.get("role"), "status");
     assert.equal(
-      unavailableImages[0]?.attributes.get("aria-label"),
+      fakeAccessibleName(unavailableImages[0]!),
       "粘贴图片 2.png：图片附件不可在本地打开"
     );
     assert.doesNotMatch(renderedText(imageAttachments), /clipboard-/u);
@@ -2450,9 +2449,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }, { showAgentFooter: false, showAgentHeader: false });
     assert.match(renderedText(englishImageAttachment), /用户输入保持原样/u);
     assert.equal(
-      englishImageAttachment
-        .findByClass("codex-message-attachment-unavailable")
-        ?.attributes.get("aria-label"),
+      fakeAccessibleName(englishImageAttachment.findByClass("codex-message-attachment-unavailable")!),
       "Pasted image 1.png: Image attachment cannot be opened locally"
     );
 
@@ -4028,8 +4025,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       knowledgeReferences: [{ ...sourceBase, referenceId: "long-source", vaultRelativePath: longPath, lineStart: 13, lineEnd: 16 }] });
     const longTitle = longSource.findByClass("codex-ai-elements-source-title")!;
     assert.equal(longTitle.textContent, longName, "ellipsis styling never truncates the stored note name");
-    assert.equal(longTitle.attributes.get("aria-label"), `打开笔记 ${longName}`);
-    assert.match(longTitle.attributes.get("title")!, new RegExp(longName, "u"));
+    assert.equal(fakeAccessibleName(longTitle), `打开笔记 ${longName}`);
+    assert.match(fakeNativeTooltipText(longTitle), new RegExp(longName, "u"));
     assert.equal(longSource.findByClass("codex-source-line-link")?.textContent, "第 13–16 行", "long titles keep their full independent range label");
     context.app.vault.getAbstractFileByPath = originalGetFile;
     context.app.workspace.getLeaf = originalGetLeaf;
@@ -4826,7 +4823,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     const readAction = ledgerActions.find((action) =>
       action.dataset.messageId === "ledger-read"
     )!;
-    assert.equal(readAction.findByClass("codex-action-item-file")?.attributes.get("title"), "Foo.md");
+    assert.equal(fakeAccessibleName(readAction.findByClass("codex-action-item-file")!), "打开 Foo");
+    assert.equal(fakeNativeTooltipText(readAction.findByClass("codex-action-item-file")!), "Foo.md");
     const editAction = ledgerActions.find((action) =>
       action.dataset.messageId === "ledger-edit"
     )!;
@@ -5149,7 +5147,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     );
     assert.ok(
       englishRoot.findAllByClass("codex-action-item-head")
-        .some((head) => head.attributes.get("title") === "View file changes"),
+        .some((head) => fakeNativeTooltipText(head) === "View file changes"),
       "English action details expose English accessible chrome"
     );
     assert.equal(englishRoot.findAllByClass("codex-assistant-turn-node-marker").length, 0,

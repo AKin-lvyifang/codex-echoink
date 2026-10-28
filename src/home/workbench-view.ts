@@ -1,3 +1,4 @@
+import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
 import { WorkbenchStarters } from "./workbench-starters";
@@ -303,8 +304,8 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private button(parent: HTMLElement, text: string, key: string, action: () => unknown, variant: "primary" | "secondary" | "tertiary" | "icon" = "secondary", icon?: string): HTMLButtonElement {
-    const button = createOriginButton(parent, { cls: `wb-button is-${variant}`, text, attr: { "data-wb-focus": key, ...(variant === "icon" ? { "aria-label": text, title: text } : {}) } });
-    if (variant === "icon") button.textContent = "";
+    const button = createOriginButton(parent, { cls: `wb-button is-${variant}`, text, attr: { "data-wb-focus": key, ...(variant === "icon" ? { "aria-label": text } : {}) } });
+    if (variant === "icon") { button.textContent = ""; attachNativeTooltip(button, text); }
     applyAmicroButton(button, { variant });
     if (icon) { const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } }); setIcon(node, icon); button.prepend(node); }
     button.onclick = () => { void Promise.resolve().then(action).catch(error => new Notice(message(error))); };
@@ -682,7 +683,7 @@ export class EchoInkWorkbenchView extends ItemView {
         for (const option of question.options) {
           const button = this.button(options, option.label, `${key}-${option.optionId}`,
             () => this.runAction(key, async () => { await answerWorkbenchQuestion(this.plugin, entry, question.questionId, option.optionId); }), "secondary");
-          button.classList.add("is-small"); button.title = option.description ?? option.label;
+          button.classList.add("is-small"); attachNativeTooltip(button, option.description ?? option.label);
           button.disabled = !!this.taskError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
           button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "tasks";
         }

@@ -70,7 +70,6 @@
 .echoink-diary-alignment-note[hidden] {display:none;}
 .echoink-diary-alignment-copy {display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
 .echoink-diary-change {display:flex;flex-direction:column;gap:4px;color:var(--secondary);}
-.tooltip.echoink-diary-tooltip {max-width:320px;font-family:var(--font-interface);font-size:calc(var(--font-text-size,16px)*.75);line-height:1.8;}
 .echoink-diary-expressions {display:flex;flex-direction:column;gap:12px;}
 .echoink-diary-filters {display:flex;gap:5px;flex-wrap:wrap;}
 .echoink-diary-expression {display:flex;flex-direction:column;gap:10px;width:100%;min-width:0;box-sizing:border-box;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--echoink-theme-card,var(--bg));}

@@ -5,6 +5,7 @@ import type { ParsedTodoRecord } from "./todo-markdown";
 import { parsePeopleNames, personColorIndex, personInitial, TODO_AVATAR_PALETTE_SIZE } from "./todo-people";
 import { todoDueState, type EchoInkTodoDueState } from "./home-todos";
 import { resolveTodoProject, type TodoProject } from "./todo-projects";
+import { attachNativeTooltip } from "../ui/native-tooltip";
 
 export interface TodoTableCallbacks {
   onToggle(record: ParsedTodoRecord, done: boolean): void;
@@ -122,9 +123,10 @@ function renderRow(
     else {
       setIcon(cell.createSpan({ cls: "echoink-todo-project-icon", attr: { "aria-hidden": "true" } }), "folder");
       const zh = copy.projectHead === "项目";
-      cell.createSpan({ text: resolved.status === "resolved" ? resolved.label
+      const project = cell.createSpan({ text: resolved.status === "resolved" ? resolved.label
         : resolved.status === "ambiguous" ? (zh ? "有同名项目，请重新选择" : "Duplicate project names; select again")
-        : (zh ? "项目已不存在" : "Project no longer exists"), attr: { title: record.project ?? "" } });
+        : (zh ? "项目已不存在" : "Project no longer exists") });
+      attachNativeTooltip(project, record.project ?? "", { touch: "notice" });
     }
   }
 
@@ -149,30 +151,32 @@ function renderRow(
 
   const categoryName = record.categoryName || copy.uncategorized;
   const categoryCell = row.createEl("td", { cls: "echoink-todo-category" });
-  categoryCell.createEl("span", {
+  const category = categoryCell.createEl("span", {
     cls: "echoink-todo-category-text",
-    text: categoryName,
-    attr: { title: categoryName }
+    text: categoryName
   });
+  attachNativeTooltip(category, categoryName, { touch: "notice" });
 
   const actionsCell = row.createEl("td", { cls: "echoink-todo-actions" });
   const editButton = actionsCell.createEl("button", {
     cls: "echoink-todo-action echoink-todo-action-edit",
-    attr: { type: "button", "aria-label": copy.edit, "data-tip": copy.edit }
+    attr: { type: "button", "aria-label": copy.edit }
   });
+  attachNativeTooltip(editButton, copy.edit);
   setIcon(editButton, "pencil");
   editButton.addEventListener("click", () => callbacks.onEdit(record));
   const deleteButton = actionsCell.createEl("button", {
     cls: "echoink-todo-action echoink-todo-action-delete",
-    attr: { type: "button", "aria-label": copy.remove, "data-tip": copy.remove }
+    attr: { type: "button", "aria-label": copy.remove }
   });
+  attachNativeTooltip(deleteButton, copy.remove);
   setIcon(deleteButton, "trash-2");
   deleteButton.addEventListener("click", () => callbacks.onDelete(record));
   return row;
 }
 
 /** Circular text avatars with slight overlap; "+N" carries the remainder.
- *  Hover or keyboard focus reveals the full name via a scoped CSS tooltip. */
+ *  Hover, keyboard focus or touch reveals the full name via the host. */
 function renderPeopleAvatars(cell: HTMLElement, names: readonly string[]): void {
   if (!names.length) {
     cell.createSpan({ cls: "echoink-todo-none", text: "—" });
@@ -180,19 +184,21 @@ function renderPeopleAvatars(cell: HTMLElement, names: readonly string[]): void 
   }
   const group = cell.createDiv({ cls: "echoink-todo-avatars" });
   for (const name of names.slice(0, 3)) {
-    group.createEl("span", {
+    const avatar = group.createEl("span", {
       cls: `echoink-todo-avatar echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
       text: personInitial(name),
-      attr: { tabindex: "0", role: "img", "aria-label": name, "data-tip": name }
+      attr: { tabindex: "0", role: "img", "aria-label": name }
     });
+    attachNativeTooltip(avatar, name, { touch: "notice" });
   }
   const rest = names.slice(3);
   if (rest.length) {
     const restLabel = rest.join("、");
-    group.createEl("span", {
+    const avatar = group.createEl("span", {
       cls: "echoink-todo-avatar echoink-todo-avatar-more",
       text: `+${rest.length}`,
-      attr: { tabindex: "0", role: "img", "aria-label": restLabel, "data-tip": restLabel }
+      attr: { tabindex: "0", role: "img", "aria-label": restLabel }
     });
+    attachNativeTooltip(avatar, restLabel, { touch: "notice" });
   }
 }
