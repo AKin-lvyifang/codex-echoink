@@ -1449,6 +1449,7 @@ export class CodexMessageListRenderer {
     if (message.rawRef) this.renderRawMessageExpander(content, message);
     if (message.itemType === "knowledgeBase" && message.details) this.renderKnowledgeBaseContextNote(wrapper, message.details);
     this.renderKnowledgeUsageCards(wrapper, message.id, knowledgeUsageMessageData(message), message.citations);
+    this.renderKnowledgeVerificationNote(wrapper, message.knowledgeVerificationSkipped);
     if (message.role === "user") this.renderMessageCopyAction(wrapper, message, true);
     const footerActions = options.showAgentFooter
       ? this.renderAgentFooter(wrapper, message)
@@ -2112,6 +2113,12 @@ export class CodexMessageListRenderer {
     ));
   }
 
+  private renderKnowledgeVerificationNote(container: HTMLElement, skipped: ChatMessage["knowledgeVerificationSkipped"]): void {
+    if (skipped !== "knowledge_permission_revoked") return;
+    container.createDiv({ cls: "codex-kb-no-evidence", text: conversationUiText(this.requireEnv().settingsLanguage,
+      "权限关闭，引用未重新核验。", "Knowledge permission was disabled; references were not rechecked.") });
+  }
+
   private renderKnowledgeUsageCards(
     container: HTMLElement,
     messageId: string,
@@ -2170,13 +2177,15 @@ export class CodexMessageListRenderer {
       counts: { wiki: 0, journal: 0, outputs: 0 },
       citations
     } : undefined;
-    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount]);
+    const verificationSkipped = turn.messages.find(message => message.knowledgeVerificationSkipped)?.knowledgeVerificationSkipped;
+    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount, verificationSkipped]);
     const previous = container.querySelector<HTMLElement>(".codex-answer-sources");
     if (previous?.dataset.signature === signature) return;
     previous?.remove();
     const host = container.createDiv({ cls: "codex-answer-sources" });
     host.dataset.signature = signature;
     this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount, true);
+    this.renderKnowledgeVerificationNote(host, verificationSkipped);
     const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
     if (footer) container.insertBefore(host, footer);
   }

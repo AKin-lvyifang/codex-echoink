@@ -995,7 +995,12 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       });
     },
     async verifyAskReferences(request) {
-      if (input.isConversationKnowledgeAllowed && !await input.isConversationKnowledgeAllowed(request.conversationId, false)) throw new Error("agent_capability_knowledge_denied");
+      if (request.references.length === 0) return Object.freeze({ status: "valid" as const, references: Object.freeze([]) });
+      if (input.isConversationKnowledgeAllowed && await input.isConversationKnowledgeAllowed(request.conversationId, false) === false) return Object.freeze({
+        status: "verification_skipped" as const,
+        reason: "knowledge_permission_revoked" as const,
+        references: request.references
+      });
       // Freshness annotates the exact delivered snapshots; it never discards the
       // entire answer or automatically starts another model turn.
       const changed = new Set<string>();
@@ -2343,6 +2348,10 @@ async function createProductionAgentSession(input: {
   };
   const knowledgeReadSecurity = new PiKnowledgeReadToolSecurity({
     currentRunIdentity: () => input.input.currentToolExecutionContext(),
+    prepareWorkflow: async (toolName, args) => {
+      await assertToolAllowed(toolName, { ...args });
+      if (!input.input.currentKnowledgeTurnContext()) await input.input.ensureKnowledgeReadWorkflow?.();
+    },
     onSourceRead: (reference, bodyFingerprint) => {
       recordMaintenanceSourceBodyFingerprint(sourceBodyFingerprints, reference.vaultRelativePath, bodyFingerprint, input.plugin.getVaultPath());
       reportMaintenanceReadProgress(reference.vaultRelativePath);

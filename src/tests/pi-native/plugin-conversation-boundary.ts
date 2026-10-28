@@ -47,10 +47,12 @@ import {
 } from "../../settings/settings";
 import { ProductActivityGate } from "../../plugin/api-provider-activation-service";
 import { readDurablePiConversationProjection } from "../../harness/pi-native/pi-native-conversation-runtime";
+import { openTestNoticeMessages } from "../obsidian-shim";
 
 const pluginPrototype = CodexForObsidianPlugin.prototype as any;
 
 export async function runPiPluginConversationBoundaryTests(): Promise<void> {
+  await runPiUsageFinalizationErrorTests();
   await runPiConversationTitleEntryTests();
   await runPiKnowledgePromptBoundaryTests();
   await runtimeBundleInitializesConversationShellsWithoutBodyReads();
@@ -73,6 +75,33 @@ export async function runPiPluginConversationBoundaryTests(): Promise<void> {
   await localManagementAndMemoryStayProviderIndependent();
   await releaseClearsPluginActivationStateEvenWhenRuntimeReleaseFails();
   await chatPropagatesTheMissingApiKeyError();
+}
+
+export async function runPiUsageFinalizationErrorTests(): Promise<void> {
+  for (const runFails of [true, false]) {
+    let usageWrites = 0;
+    const logs: unknown[][] = [];
+    const oldError = console.error;
+    const result = runFails ? Promise.reject(new Error("agent_capability_knowledge_denied")) : Promise.resolve({ terminalState: "completed", productRunId: "usage-error", updatedAt: 1 });
+    // The real submit method must attach the correct rejection handler.
+    void result.catch(() => undefined);
+    const host: any = {
+      piSubmittingConversations: new Set(), piRunConversations: new Map(), productActivity: { run: (work: () => unknown) => work() },
+      readPiConversationCatalogEntry: async () => null, waitForPiConversationActivation: async () => undefined,
+      ensurePiProductionRuntime: async () => ({ runtime: { submit: async () => ({ productRunId: "usage-error", conversationId: "usage-error", result }) } }),
+      usageStore: { recordCompletedTurn: async () => { usageWrites++; throw new Error("usage counter unavailable"); } }
+    };
+    const noticesBefore = openTestNoticeMessages.length;
+    console.error = (...args) => { logs.push(args); };
+    try {
+      await pluginPrototype.submitPiChat.call(host, { conversationId: "usage-error" });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(usageWrites, runFails ? 0 : 1);
+      assert.deepEqual(logs.map(args => args[0]), [runFails ? "EchoInk conversation run could not settle" : "EchoInk conversation usage could not be recorded"]);
+      assert.equal(openTestNoticeMessages.length, noticesBefore);
+    } finally { console.error = oldError; }
+  }
+  console.log("PASS usage errors: real submit isolates run rejection from optional counters; neither emits a Notice");
 }
 
 /** Exercise the public plugin create/accept entry points, not hand-built Catalog rows. */
