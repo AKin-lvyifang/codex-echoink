@@ -49,6 +49,14 @@ export function setIcon(element: HTMLElement, name: string) {
   element.replaceChildren(svg);
 }
 
+export function setTooltip(element: HTMLElement, content: string, options?: { placement?: string; classes?: string[] }): void {
+  element.setAttribute("aria-label", content);
+  if (options?.placement) element.setAttribute("data-tooltip-position", options.placement);
+  if (options?.classes) element.setAttribute("data-tooltip-class", options.classes.join(" "));
+}
+// Mobile help uses its tappable panel. Desktop native rendering requires Obsidian.
+export function displayTooltip(_element: HTMLElement, _content: string | DocumentFragment): void {}
+
 export { FixtureTFile as TFile } from "./host.mjs";
 export { parse as parseYaml } from "yaml";
 export class TFolder {

@@ -357,10 +357,25 @@ export function setIcon(_element: Element, _icon: string): void {}
 export function setTooltip(
   element: HTMLElement,
   tooltip: string,
-  options?: { classes?: string[] }
+  options?: { classes?: string[]; placement?: string }
 ): void {
   element.setAttribute("aria-label", tooltip);
   if (options?.classes) element.setAttribute("data-tooltip-class", options.classes.join(" "));
+  if (options?.placement) element.setAttribute("data-tooltip-position", options.placement);
+}
+
+/** Records use of the public host API; native rendering/lifecycle need real-host acceptance. */
+export const displayedTooltipsForTests = new WeakMap<HTMLElement, string | DocumentFragment>();
+type TooltipDisplayForTests = (element: HTMLElement, content: string | DocumentFragment, options?: { classes?: string[]; placement?: string }) => void;
+let tooltipDisplayForTests: TooltipDisplayForTests | undefined;
+export function setTooltipDisplayForTests(handler: TooltipDisplayForTests): () => void {
+  const previous = tooltipDisplayForTests;
+  tooltipDisplayForTests = handler;
+  return () => { tooltipDisplayForTests = previous; };
+}
+export function displayTooltip(element: HTMLElement, content: string | DocumentFragment, options?: { classes?: string[]; placement?: string }): void {
+  displayedTooltipsForTests.set(element, content);
+  tooltipDisplayForTests?.(element, content, options);
 }
 
 type RequestUrlHandler = (request: RequestUrlParam | string) => RequestUrlResponse | Promise<RequestUrlResponse>;

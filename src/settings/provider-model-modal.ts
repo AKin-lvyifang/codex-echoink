@@ -48,7 +48,7 @@ import {
   type ProviderPreflightService
 } from "./provider-preflight";
 import { applyAmicroButton, applyDeleteButton } from "./amicro-buttons";
-import { attachSettingsTooltip, showSettingsInlineConfirmation } from "./settings-v2";
+import { attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { captureSettingsScrollSnapshot, restoreSettingsScrollSnapshot } from "./settings-scroll";
 
 type ProviderFormField =
@@ -1855,7 +1855,7 @@ export class ProviderModelModal extends Modal {
   private addOptionalHelp(parent: HTMLElement, label: string, description: string): void {
     const help = createOriginButton(parent, { cls: "echoink-settings-help-trigger echoink-provider-form-help", attr: { type: "button", "aria-label": this.zh ? `${label}说明` : `${label} information` } });
     setIcon(help, "info");
-    attachSettingsTooltip(help, description, help, { interactive: false });
+    attachSettingsHelpTooltip(help, description, help, { interactive: false });
   }
 
   private createField(container: HTMLElement, label: string, controlId: string): HTMLElement {
