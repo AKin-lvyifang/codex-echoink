@@ -1,3 +1,4 @@
+import { runErrors } from "../run-reports/recent-errors";
 import { bindVaultBodySearchEvents, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import { Notice, type App } from "obsidian";
@@ -507,6 +508,7 @@ export class MobileRuntime {
       if (run.candidate && !run.accepted) {
         const cached = this.searches.get(id); cached?.release(); cached?.search.dispose(); this.searches.delete(id); this.pausedTasks.delete(id);
       }
+      if (failed) runErrors.record("mobile.runtime", failure, { conversationId: id, runId: turn.id });
       if (failed) { if (!run.candidate || run.accepted) this.errors.set(id, errorText(failure)); run.admission.reject(failure); run.completion.reject(failure); }
       else { run.admission.resolve(); run.completion.resolve(); }
       if (saveFailed || run.persistenceFailed) run.finished.reject(saveFailed ? persistenceFailure : run.persistenceError);

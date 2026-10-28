@@ -1,3 +1,4 @@
+import { mobileReportActions } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -26,6 +27,7 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
   let disposed = false, messagesKey = "", lastRead = 0;
   const task = host.store.getSession(taskId);
   const page: MobileShellPage = { id: `task:${taskId}`, title: task?.title ?? "任务详情", content, footer: composer.element, canLeave: composer.canLeave };
+  page.actions = mobileReportActions(ctx, taskId, "iphone");
   const markRead = () => {
     const task = host.store.getSession(taskId);
     if (!task?.unreadAnswerAt || task.unreadAnswerAt <= (task.lastReadAt ?? 0) || task.unreadAnswerAt <= lastRead) return;

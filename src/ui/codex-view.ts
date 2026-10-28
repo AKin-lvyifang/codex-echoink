@@ -1,3 +1,4 @@
+import { RunReportModal, exportDesktopRunReport } from "../run-reports/desktop-ui";
 import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
 import { GenerationModal } from "../generation/modal";
@@ -561,7 +562,10 @@ export class CodexView extends ItemView {
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
     else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
-      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined);
+      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined, {
+        export: async () => exportDesktopRunReport(this.app, this.plugin.getVaultPath(), await this.plugin.captureRunReport(entry.conversationId), this.plugin.settings.settingsLanguage === "en"),
+        report: async () => { const snapshot = await this.plugin.captureRunReport(entry.conversationId); new RunReportModal(this.app, snapshot, this.plugin.getVaultPath(), this.plugin.accountService, this.plugin.settings.settingsLanguage === "en").open(); }
+      });
     else {
       disposeOriginControls(this.taskDetailHeaderEl!); this.taskDetailHeaderEl!.empty();
       this.taskDetailHeaderEl!.createDiv({ cls: "echoink-task-detail-header", text: this.taskText("任务详情", "Task details") });

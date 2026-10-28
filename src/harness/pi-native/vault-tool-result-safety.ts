@@ -2,25 +2,13 @@ import { TextDecoder } from "node:util";
 
 export const ECHOINK_LOCAL_SECRETS_V1 =
   "echoink-local-secrets-v1" as const;
-export const REDACTED_SECRET = "[REDACTED_SECRET]" as const;
+import { REDACTED_SECRET, redactEchoInkLocalSecretsV1 } from "../../security/local-secrets";
+export { REDACTED_SECRET, redactEchoInkLocalSecretsV1 } from "../../security/local-secrets";
 export const VAULT_READ_TOOL_RESULT_LIMIT_BYTES = 32_000;
 export const VAULT_WRITE_TOOL_RESULT_LIMIT_BYTES = 8_000;
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 const TRUNCATION_MARKER = "\n[TRUNCATED]";
-
-const VALUE_SECRET_PATTERNS: readonly RegExp[] = [
-  /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/giu,
-  /\bsk-[A-Za-z0-9_-]{12,}\b/gu,
-  /\bghp_[A-Za-z0-9]{12,}\b/gu,
-  /\bgithub_pat_[A-Za-z0-9_]{12,}\b/gu,
-  /\bxox[baprs]-[A-Za-z0-9-]{12,}\b/gu,
-  /\bAKIA[A-Z0-9]{16}\b/gu,
-  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{8,}\b/gu
-];
-
-const CREDENTIAL_FIELD =
-  /((?:["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|credential(?:value)?|client[_-]?secret|password|secret)["']?)\s*[:=]\s*)(["']?)((?!\[REDACTED_SECRET\])[^\s,"'}\]]+)(["']?)/giu;
 
 export interface VaultToolResultEgressContext {
   readonly toolId: string;
@@ -78,22 +66,6 @@ export async function secureVaultToolResult(
     truncated: limited.truncated,
     redactionPolicy: ECHOINK_LOCAL_SECRETS_V1
   });
-}
-
-export function redactEchoInkLocalSecretsV1(value: string): string {
-  let redacted = value;
-  for (const pattern of VALUE_SECRET_PATTERNS) {
-    redacted = redacted.replace(pattern, (match) => {
-      const scheme = /^(?:Bearer|Basic)\s+/iu.exec(match)?.[0] ?? "";
-      return `${scheme}${REDACTED_SECRET}`;
-    });
-  }
-  redacted = redacted.replace(
-    CREDENTIAL_FIELD,
-    (_match, prefix: string, openingQuote: string) =>
-      `${prefix}${openingQuote}${REDACTED_SECRET}${openingQuote}`
-  );
-  return redacted;
 }
 
 /** Default local-to-configured-provider policy used by the seven Vault Tools. */

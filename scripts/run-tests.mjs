@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const suites = [
+  "test:run-reports",
   "test:plan-mode",
   "test:inline-agent",
   "test:inline-agent-ranges",

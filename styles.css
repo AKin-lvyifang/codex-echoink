@@ -27332,6 +27332,42 @@ body.is-tablet :is(.echoink-mobile-finance.echoink-lifestyle-view,.echoink-mobil
 .echoink-mobile-identity-modal .echoink-agent-identity-avatar-header { flex-wrap:wrap; }
 
 /* ECHOINK_AGENT_WORKBENCH_CSS_START */
+.echoink-run-report-modal { width: min(560px, calc(100vw - 32px)); }
+.echoink-run-report-modal .modal-content { display: flex; flex-direction: column; min-height: 0; max-height: 75vh; overflow: hidden; gap: 18px; }
+.echoink-run-report-form { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 16px; overflow-y: auto; color: var(--text-normal); }
+.echoink-run-report-field { display: flex; flex-direction: column; gap: 8px; font-size: 13px; font-weight: 500; }
+.echoink-run-report-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); color: var(--text-normal); font: inherit; font-weight: 400; line-height: 1.55; }
+textarea.echoink-run-report-input { min-height: 110px; resize: vertical; }
+.echoink-run-report-input:focus, .echoink-run-report-input:focus-visible { outline: none; box-shadow: none; border-color: var(--background-modifier-border); background: var(--background-modifier-hover); }
+.echoink-run-report-disclosure { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.echoink-run-report-preview { min-width: 0; font-size: 13px; }
+.echoink-run-report-preview > summary { min-height: 32px; display: list-item; cursor: pointer; padding: 6px 0; }
+.echoink-run-report-json { margin: 8px 0 0; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-monospace); background: var(--background-primary); }
+.echoink-run-report-footer { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
+.echoink-run-report-result { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; user-select: text; }
+.echoink-run-report-result:empty { display: none; }
+.echoink-run-report-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.echoink-run-report-actions button { min-height: 32px; padding: 7px 10px; font-size: 12px; border-radius: 6px; box-shadow: none; }
+body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-control[data-slot=button].mod-cta { background: var(--echoink-control-fill, var(--text-normal)); border-color: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-text, var(--background-primary)); }
+.echoink-run-report-modal .echoink-run-report-actions button:focus-visible { outline: none; box-shadow: none; }
+.echoink-run-report-form[hidden], .echoink-run-report-actions button[hidden] { display: none !important; }
+.echoink-run-report-header-actions { display: flex; align-items: center; }
+.echoink-run-report-menu { display: flex; flex-direction: column; }
+.echoink-run-report-button { position: relative; isolation: isolate; min-height: 44px; padding: 8px 12px; height: auto; border: 0; border-radius: 6px; color: var(--text-normal); background: transparent; box-shadow: none; font: inherit; font-size: .9em; white-space: normal; }
+.echoink-run-report-button::before { content: ""; position: absolute; z-index: -1; inset: 6px 0; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: var(--background-primary); }
+.echoink-run-report-button.is-primary { color: var(--echoink-control-text, var(--background-primary)); }
+.echoink-run-report-button.is-primary::before { background: var(--echoink-control-fill, var(--text-normal)); border-color: transparent; }
+.echoink-run-report-button:disabled { opacity: .45; }
+.echoink-run-report-menu .echoink-run-report-button { text-align: left; min-height: 54px; }
+.echoink-run-report-menu .echoink-run-report-button::before { border: 0; background: transparent; }
+.echoink-shell-sheet .echoink-run-report-field { font-size: .88em; }
+.echoink-shell-sheet .echoink-run-report-input { font-size: max(16px, 1em); min-height: 44px; padding: 10px; border-radius: 9px; }
+.echoink-shell-sheet .echoink-run-report-disclosure { font-size: .76em; line-height: 1.8; }
+.echoink-shell-sheet .echoink-run-report-preview > summary { min-height: 44px; }
+.echoink-shell-sheet .echoink-run-report-actions button { min-height: 44px; font-size: .9em; }
+.echoink-shell-sheet .echoink-run-report-form { overflow: visible; }
+.echoink-ipad .echoink-run-report-button::before { inset: 8px 0; }
+
 /* Desktop task navigation. Existing message/composer/dock styles remain in use. */
 .echoink-agent-tasks { container-type: inline-size; --interactive-accent: var(--echoink-theme-accent); --text-on-accent: var(--echoink-theme-on-accent); }
 .echoink-agent-tasks [hidden] { display: none !important; }

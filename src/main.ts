@@ -1,3 +1,11 @@
+import { apiVersion as reportObsidianVersion } from "obsidian";
+import { homedir as reportHome } from "node:os";
+import { FileConversationCatalog as ReportCatalog } from "./harness/pi-native/file-conversation-catalog";
+import { FileProductRunStore as ReportRuns } from "./harness/pi-native/file-product-run-store";
+import { readVaultIdentity as readReportVaultIdentity } from "./plugin/vault-identity";
+import { collectDesktopRunReport } from "./run-reports/desktop-collector";
+import { configuredReportSecrets, freezeReport } from "./run-reports/report";
+import { runErrors } from "./run-reports/recent-errors";
 import { generateConversationTitle } from "./plugin/conversation-title";
 import { webSearchAvailable } from "./tools/web-search-settings";
 import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
@@ -255,6 +263,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
   private appearance: EchoInkAppearance | null = null;
   async onload(): Promise<void> {
+    runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: this.getVaultPath(), homePath: reportHome() }));
     this.registerEvent(this.app.workspace.on("quit", tasks => {
       this.applicationQuitObserved = true;
       tasks.add(async () => { await this.conversationRunService?.dispose("app_closed"); });
@@ -1073,6 +1082,19 @@ export default class CodexForObsidianPlugin extends Plugin {
       console.warn("EchoInk task metadata could not sync; loading the existing conversation list.", error);
     }
     return (await localData.listConversations(statuses)).filter(entry => !entry.conversationId.startsWith("knowledge-linking-"));
+  }
+  async captureRunReport(conversationId: string) {
+    const root = pluginDataDir(this.getVaultPath(), this.getPluginDataDirName());
+    const identity = this.piLocalData?.vaultIdentity ?? await readReportVaultIdentity(root);
+    if (!identity) throw new Error("会话存储标识缺失，无法采集运行记录。");
+    const storageRootPath = path.join(root, "pi-agent-product-v1");
+    const catalog = this.piLocalData?.catalog ?? new ReportCatalog({ storageRootPath, vaultId: identity.vaultId });
+    const productRuns = this.piLocalData?.productRuns ?? new ReportRuns({ storageRootPath, vaultId: identity.vaultId, catalog });
+    const report = await collectDesktopRunReport({ catalog, productRuns, conversationId, recentErrors: runErrors.snapshot(),
+      environment: { pluginVersion: this.manifest.version, obsidianVersion: reportObsidianVersion,
+        platform: process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : "linux", surface: "desktop",
+        language: this.settings.settingsLanguage === "en" ? "en" : "zh", membership: this.accountService?.read().membership.planId || "free" } });
+    return freezeReport(report, { secrets: configuredReportSecrets(this.settings), vaultPath: this.getVaultPath(), homePath: reportHome() });
   }
   async readPiConversationCatalogEntry(conversationId: string): Promise<Readonly<PiConversationCatalogEntry> | null> {
     return await (await this.ensurePiLocalData()).catalog.get(conversationId);

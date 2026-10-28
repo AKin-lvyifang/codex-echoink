@@ -1,3 +1,4 @@
+import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
 import { IPhoneShell } from "./shell";
 import { createAgentPage, createHomePage } from "./workbench-pages";
@@ -109,6 +110,6 @@ export class IPhoneWorkbench {
     if (module === "finance") return openIPhoneFinance(this.context);
     if (module === "english-diary") return openIPhoneEnglishDiary(this.context);
   }
-  private error(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
   dispose(): void { this.closed = true; this.shell.dispose(); }
 }

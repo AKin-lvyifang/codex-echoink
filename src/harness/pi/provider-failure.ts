@@ -1,3 +1,4 @@
+import { replaceKnownSecrets } from "../../security/local-secrets";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 export interface ProviderFailureDetail {
@@ -58,10 +59,7 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
 }
 
 function sanitizeProviderMessage(value: string, secrets: readonly string[]): string {
-  let message = value;
-  for (const secret of secrets) {
-    if (secret) message = message.split(secret).join("[已隐藏凭据]");
-  }
+  const message = replaceKnownSecrets(value, secrets, "[已隐藏凭据]");
   return message
     .replace(/\bauthorization\s*:\s*[^;\r\n]+/giu, "[已隐藏凭据]")
     .replace(/\bBearer\s+[^\s,;]+/giu, "[已隐藏凭据]")

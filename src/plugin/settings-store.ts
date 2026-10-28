@@ -1,3 +1,4 @@
+import { runErrors } from "../run-reports/recent-errors";
 import { Notice, Platform } from "obsidian";
 import path from "node:path";
 import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
@@ -400,6 +401,7 @@ export class EchoInkSettingsStore {
       : error instanceof ResourceMutationError
         ? "resource_mutation_failed"
         : "settings_save_failed";
+    runErrors.record("settings.save", error, { code });
     console.error("[EchoInk] settings save failed:", code);
     new Notice(this.plugin.settings.settingsLanguage === "en" ? "EchoInk settings save failed" : "EchoInk 设置保存失败，请稍后重试");
   }

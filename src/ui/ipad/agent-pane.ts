@@ -1,3 +1,4 @@
+import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import { IPadShell } from "./shell";
@@ -171,7 +172,7 @@ export class IPadAgentPane {
     this.activeSync = { id: pageId, promise }; return promise;
   }
 
-  private error(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
   dispose(): void {
     if (this.closed) return; this.closed = true; this.observer?.disconnect(); this.unsubscribe.forEach(unsubscribe => unsubscribe());
     this.shell.dispose(); this.strip.remove(); this.pane.remove(); this.root.classList.remove("echoink-ipad", "pd-agent-pane");

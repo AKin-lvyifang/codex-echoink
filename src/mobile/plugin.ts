@@ -1,3 +1,5 @@
+import { runErrors } from "../run-reports/recent-errors";
+import { configuredReportSecrets } from "../run-reports/report";
 import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -50,6 +52,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   private taskLifecycleRegistered = false;
   private unloaded = false;
   async onload(): Promise<void> {
+    runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: (this.app.vault.adapter as typeof this.app.vault.adapter & { getBasePath?: () => string }).getBasePath?.() }));
     try {
       const saved: unknown = await this.loadData();
       this.settings = loadMobileSettings(saved);
@@ -195,7 +198,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (registry) { this.settings.agentRegistry = registry; this.retainedRegistry = undefined; }
     });
     this.settingsWrites = write;
-    await write;
+    try { await write; } catch (error) { runErrors.record("settings.save", error, { code: "settings_save_failed" }); throw error; }
     this.services?.settingsChanged();
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
     this.workbench?.invalidate();
