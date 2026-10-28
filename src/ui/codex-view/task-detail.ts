@@ -1,3 +1,4 @@
+import { Menu, Notice } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
 import type { AgentDefinition } from "../../agents/types";
 import { localDateLabel, localTaskTime, maintenanceActivityForTask, taskEntryWithMaintenance, taskState, taskStateLabel, type TaskEntry } from "../../agents/task-presentation";
@@ -7,7 +8,8 @@ import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro
 import { renderTaskAvatar, taskIconButton } from "./agent-roster";
 
 export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition, original: TaskEntry, onBack: () => void, language: SettingsLanguage = "zh-CN", maintenance: readonly Readonly<MaintenanceActivity>[] = [], onStopUpgrade?: () => Promise<void> | void,
-  display?: { subtitle: string; status: string; state: ReturnType<typeof taskState> }): void {
+  display?: { subtitle: string; status: string; state: ReturnType<typeof taskState> },
+  reports?: { export: () => Promise<void>; report: () => Promise<void> }): void {
   const entry = taskEntryWithMaintenance(original, maintenance);
   const activity = maintenanceActivityForTask(original, maintenance), title = activity ? maintenanceTaskTitle(activity, language === "en") : entry.title;
   disposeOriginControls(root); root.empty();
@@ -29,6 +31,16 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
     };
   }
   header.createSpan({ cls: `echoink-task-card-status is-${display?.state ?? taskState(entry)}`, text: display?.status ?? taskStateLabel(entry, language) });
+  if (reports) {
+    const more = taskIconButton(header, language === "en" ? "Session run records" : "会话运行记录", "ellipsis", () => {
+      const menu = new Menu().setUseNativeMenu(false);
+      const perform = (action: () => Promise<void>) => { if (more.disabled) return; more.disabled = true; void action().catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { more.disabled = false; }); };
+      menu.addItem(item => item.setTitle(language === "en" ? "Export run records" : "导出运行记录").setIcon("download").onClick(() => perform(reports.export)));
+      menu.addItem(item => item.setTitle(language === "en" ? "Report a problem" : "上报问题").setIcon("send").onClick(() => perform(reports.report)));
+      const bounds = more.getBoundingClientRect(); menu.showAtPosition({ x: bounds.right, y: bounds.bottom }, root.ownerDocument);
+    });
+  }
+
 }
 const entered = new WeakMap<HTMLElement, number>();
 export function animateTaskDetailEntry(root: HTMLElement, navigationToken: number): void {

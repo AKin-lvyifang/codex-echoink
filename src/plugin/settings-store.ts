@@ -1,3 +1,5 @@
+import { settingsReportNoticeContent } from "../run-reports/notice";
+import { runErrors } from "../run-reports/recent-errors";
 import { Notice, Platform } from "obsidian";
 import path from "node:path";
 import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
@@ -416,12 +418,15 @@ export class EchoInkSettingsStore {
       : error instanceof ResourceMutationError
         ? "resource_mutation_failed"
         : "settings_save_failed";
+    runErrors.record("settings.save", error, { code });
     console.error("[EchoInk] settings save failed:", code, settingsSaveErrorDetail(error));
     if (this.reportedSettingsSaveErrors.has(code)) return;
     this.reportedSettingsSaveErrors.add(code);
-    new Notice(this.plugin.settings.settingsLanguage === "en"
-      ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
-      : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹");
+    const english = this.plugin.settings.settingsLanguage === "en";
+    const message = english ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
+      : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹";
+    const doc = this.plugin.app?.workspace?.containerEl?.ownerDocument;
+    new Notice(doc ? settingsReportNoticeContent(doc, message, () => this.plugin.openRunReport(), english) : message, 15000);
   }
 
   private async flushRawWrites(): Promise<void> {

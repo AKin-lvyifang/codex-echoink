@@ -183,6 +183,12 @@ export class AccountService implements CapabilityAccess {
   /** An opaque in-memory session revision; no token or PRO/device lease is exposed. */
   checkInSession(): number | null { return !this.closed && this.state.token ? this.generation : null; }
 
+  /** Voluntary upload; credentials remain inside the account transport. */
+  async submitRunReport(report: unknown): Promise<unknown> {
+    const operation = this.operation();
+    return await this.call("/api/run-reports", "POST", { report }, operation);
+  }
+
   async getCheckIns(date: string): Promise<CheckInSummary> {
     const result = await this.checkInRequest(`/api/check-ins?date=${encodeURIComponent(date)}`, "GET");
     const value = result as CheckInSummary;

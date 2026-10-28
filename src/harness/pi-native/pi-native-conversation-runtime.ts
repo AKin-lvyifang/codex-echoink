@@ -1,3 +1,5 @@
+import { runErrors } from "../../run-reports/recent-errors";
+import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
 import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
@@ -61,6 +63,7 @@ import {
   type PiChatUiViewModel
 } from "./pi-chat-ui-projector";
 import { appendSavedAnswerNote } from "./pi-answer-save";
+import { diagnoseToolCallText, TOOL_CALLING_DISABLED_MESSAGE, toolCallTextFailureMessage } from "../tool-call-text";
 import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
 import {
   PiSessionDurabilityError,
@@ -399,6 +402,7 @@ export type PiNativeKnowledgeTurnContext =
     }>;
 
 export interface PiNativeAgentSessionFactoryResult {
+  supportsToolCalling?: boolean;
   generationInputBudget?: number;
   /** Exact saved Provider used when activation selected the global default. */
   providerSettingsId?: string;
@@ -649,6 +653,7 @@ export class PiNativeConversationRuntimeError extends Error {
   ) {
     super(message, options);
     this.name = "PiNativeConversationRuntimeError";
+    runErrors.record("desktop.runtime", this, { code });
     this.piUserEntryAccepted = options?.piUserEntryAccepted === true;
     this.piUserEntryId = options?.piUserEntryId;
   }
@@ -699,6 +704,7 @@ ReadonlySet<string> = new Set<PiNativeFileStoreErrorCode>([
 ]);
 
 interface ActiveConversation {
+  supportsToolCalling: boolean;
   generationInputBudget?: number;
   lastPersistedLeafId: string | null;
   providerSettingsId?: string;
@@ -1568,6 +1574,9 @@ export class PiNativeConversationRuntime {
     if (request.englishDiarySourcePath && !normalizeEnglishDiarySourcePath(request.englishDiarySourcePath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记原稿位置无效，请从英文日记页重新选择。");
     if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
     if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
+    if (!active.supportsToolCalling && (mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
+      throw new PiNativeConversationRuntimeError("agent_session_invalid", TOOL_CALLING_DISABLED_MESSAGE);
+    }
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
       throw new PiNativeConversationRuntimeError(
         "agent_session_invalid",
@@ -2201,6 +2210,7 @@ export class PiNativeConversationRuntime {
     memoryMode: PiConversationMemoryMode
   ): void {
     if (active.currentRun?.inlineProposal || active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
+    if (!active.supportsToolCalling) { active.session.setActiveToolsByName([]); return; }
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
       englishDiary: Boolean(active.currentRun?.englishDiarySourcePath),
@@ -3310,6 +3320,7 @@ export class PiNativeConversationRuntime {
       await this.loadKnowledgeDecorations(catalog, branchEntries)
     ));
     const active: ActiveConversation = {
+      supportsToolCalling: created.supportsToolCalling !== false,
       lastPersistedLeafId: opened.restoredActiveLeafId,
       providerSettingsId: created.providerSettingsId ?? options.providerSettingsId,
       catalog,
@@ -3615,6 +3626,14 @@ export class PiNativeConversationRuntime {
       }
       const tailFailed = terminalState === "failed" && maintenanceResult?.kind === "trusted_success";
       if (tailFailed && !execution.abortRequested && (execution.outputContinuation?.noProgress ?? 0) < 2) terminalState = "completed";
+      const toolCallTextFailure = terminalState === "completed" && !execution.inlineProposal && !execution.generation
+        ? diagnoseToolCallText(execution.outputContinuation?.text ?? (lastAssistantEntry(runEntries) ? publicMessageText(lastAssistantEntry(runEntries)!.message) : ""), execution.toolCallIds.size > 0, active.supportsToolCalling)
+        : undefined;
+      if (toolCallTextFailure) {
+        terminalState = "failed";
+        promptError = new Error(toolCallTextFailure);
+        execution.interruption = { at: this.now(), reason: "run_failed", stage: "模型回复", detail: "工具未执行" };
+      }
       let maintenanceSummary = execution.commandKind === "maintain" ? maintenanceOutcome(execution, runEntries, terminalState, collectMaintenanceReadPaths(active.sessionManager.getBranch()), active.cwd) : undefined;
       if (maintenanceSummary && tailFailed) (maintenanceSummary.warnings as string[]).push(`最后回复未完成：${safeProductRunErrorCode(promptError, runEntries)}；已确认的内容结果保留。`);
       await this.closeRemainingProviderReasoning(
@@ -4029,10 +4048,12 @@ export class PiNativeConversationRuntime {
       await this.emitRuntimeEvent(active, execution, {
         type: "product_run_settled",
         terminalState,
+        ...(toolCallTextFailure ? { toolCallTextFailure } : {}),
         assistantEntryId
       });
       return inlineProposalResult ? Object.freeze({ ...settled, inlineProposalResult }) : settled;
     } catch (settlementError) {
+      runErrors.record("desktop.runtime.settlement", settlementError, { conversationId: active.catalog.conversationId, runId: execution.productRunId });
       let providerReasoningCloseError: unknown = null;
       try {
         await this.closeRemainingProviderReasoning(
@@ -4384,6 +4405,12 @@ export class PiNativeConversationRuntime {
           steering: event.steering,
           followUp: event.followUp
         });
+        break;
+      case "auto_retry_end":
+        if (!event.success && event.attempt > 0 && !execution.interruption) {
+          execution.interruption = { at: this.now(), reason: "run_failed", stage: taskInterruptionStage(active),
+            retryAttempts: event.attempt, detail: interruptionErrorDetail(event.finalError ?? safeProductRunErrorCode(undefined, active.sessionManager.getEntries())) };
+        }
         break;
       case "agent_end":
         await this.emitRuntimeEvent(active, execution, {
@@ -6864,6 +6891,7 @@ function runIdentity(run: Readonly<PiProductRunRecord>): PiChatUiRunIdentity {
     assistantEntryId: run.assistantEntryId,
     toolCallIds: run.toolCallIds,
     updatedAt: run.updatedAt,
+    ...(toolCallTextFailureMessage(run.error) ? { toolCallTextFailure: run.error } : {}),
     ...(run.knowledge
       ? { knowledgeWorkflow: run.knowledge.workflow }
       : {})

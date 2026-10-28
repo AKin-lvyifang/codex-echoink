@@ -1567,7 +1567,7 @@ export class ProviderModelModal extends Modal {
       source,
       input,
       unknown && model.discovery?.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined && !(this.providerId === "deepseek" && model.discovery)
-        ? this.label("工具能力未声明", "Tool capability undeclared")
+        ? (model.toolCalling ? this.label("工具调用（默认开启）", "Tool calling (enabled by default)") : this.label("工具能力未声明", "Tool capability undeclared"))
         : model.toolCalling
         ? (this.providerId === "deepseek" && model.discovery && model.discovery.toolCalling === undefined && model.capabilityOverrides?.toolCalling === undefined
           ? this.label("工具调用（官方兼容）", "Tool calling (official compatibility)")

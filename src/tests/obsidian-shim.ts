@@ -1,3 +1,4 @@
+export const apiVersion = "1.14.4";
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import { StateField } from "@codemirror/state";
 export const editorInfoField = StateField.define({ create: () => ({ file: null }), update: value => value });
@@ -119,6 +120,7 @@ export class ItemView extends Component {
 export class MarkdownView extends ItemView {}
 
 export class Menu {
+  setUseNativeMenu(): this { return this; }
   addItem(callback: (item: any) => void): this {
     callback({
       setTitle: () => ({
