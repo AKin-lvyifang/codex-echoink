@@ -143,11 +143,17 @@ export class WorkbenchStarters {
     card.createEl("h3", { text: data[this.options.english() ? 1 : 0] });
     const actions = card.createDiv({ cls: "wb-starter-actions" });
     const locked = index >= 5 && !this.options.hasPro();
-    this.button(actions, locked ? this.t("了解 PRO", "About PRO") : data[this.options.english() ? 3 : 2], () => {
+    const button = this.button(actions, locked ? this.t("了解 PRO", "About PRO") : data[this.options.english() ? 3 : 2], () => {
       if (index !== this.index || this.moving) { this.go(index); return; }
       if (index >= 5 && !this.options.hasPro()) { this.locked = index; this.layout(false); return; }
       return this.options.act(index);
     }, true);
+    const icon = locked ? "lock" : index < 2 ? "arrow-right" : undefined;
+    if (icon) {
+      const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } });
+      setIcon(node, icon);
+      if (locked) button.prepend(node);
+    }
     return card;
   }
   private renderLock(card: HTMLElement): void {
