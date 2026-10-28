@@ -33,6 +33,13 @@ export function settingsRow(ctx: IPadSettingsContext, parent: HTMLElement, title
   if (value) row.append(el(ctx.document, "span", "pd-settings-value", value));
   if (action && navigation) row.append(ipadIcon(ctx.document, "chevron-right")); parent.append(row); return row;
 }
+export function settingsSelect(ctx: IPadSettingsContext, parent: HTMLElement, title: string, choices: readonly (readonly [string, string])[], value: string, change: (value: string) => void, leading?: HTMLElement): HTMLSelectElement {
+  const row = settingsRow(ctx, parent, title), control = el(ctx.document, "span", "pd-settings-select-value"), select = el(ctx.document, "select", "pd-settings-input pd-settings-select");
+  select.setAttribute("aria-label", title);
+  for (const [id, label] of choices) { const option = el(ctx.document, "option", "", label); option.value = id; select.append(option); }
+  select.value = value; select.addEventListener("change", () => change(select.value));
+  if (leading) control.append(leading); control.append(select); row.append(control); return select;
+}
 export function settingsAction(ctx: IPadSettingsContext, label: string, action: () => void | Promise<unknown>, primary = false): HTMLButtonElement {
   const button = el(ctx.document, "button", `pd-settings-action${primary ? " is-primary" : ""}`); button.type = "button";
   button.append(el(ctx.document, "span", "pd-settings-action-visible", t(ctx, label)));
