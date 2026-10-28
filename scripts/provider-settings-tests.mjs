@@ -277,7 +277,7 @@ await esbuild.build({
   plugins: [{
     name: "provider-settings-test-shims",
     setup(build) {
-      build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
+      build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$|jsdom$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-controls-shim.ts") }));
       build.onResolve({ filter: /(?:^|\/)origin-setting$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-setting-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({

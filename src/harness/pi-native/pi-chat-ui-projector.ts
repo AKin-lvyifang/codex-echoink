@@ -6,6 +6,7 @@ import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
 import { assistantProviderFailureText } from "../pi/provider-failure";
+import { toolCallTextFailureMessage } from "../tool-call-text";
 import {
   extractProcessFileRefs,
   stableHashedIdentity,
@@ -196,6 +197,7 @@ export type PiChatUiRunState =
 
 /** Optional ProductRun identities let a durable rebuild retain UI turn groups. */
 export interface PiChatUiRunIdentity {
+  readonly toolCallTextFailure?: string;
   readonly productRunId: string;
   readonly userEntryId: string;
   readonly assistantEntryId?: string;
@@ -419,6 +421,10 @@ export class PiChatUiProjector {
       ...diagnostics.map((diagnostic) => diagnostic.createdAt)
     );
     const projectionTime = finiteTime(input.now, durableUpdatedAt);
+    for (const run of input.runIdentities ?? []) {
+      const text = toolCallTextFailureMessage(run.toolCallTextFailure);
+      if (text) upsertToolCallTextFailure(messages, scope, run.productRunId, text, run.updatedAt ?? projectionTime);
+    }
     appendRehydratedTerminalMarker(
       messages,
       scope,
@@ -572,6 +578,7 @@ export class PiChatUiProjector {
         break;
       case "product_run_settled":
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
+        if (toolCallTextFailureMessage(event.toolCallTextFailure)) upsertToolCallTextFailure(view.messages, scope, event.productRunId, toolCallTextFailureMessage(event.toolCallTextFailure)!, event.occurredAt);
         break;
     }
     view.messages = positionReasoningMessages(positionGenerationMessages(dedupeMessages(view.messages), event.productRunId));
@@ -2490,6 +2497,23 @@ function diagnosticFromCustomEntry(
   };
 }
 
+
+function upsertToolCallTextFailure(messages: ChatMessage[], scope: string, runId: string, text: string, at: number): void {
+  const id = terminalMessageId(scope, runId);
+  const existing = messages.findIndex(message => message.id === id);
+  if (existing >= 0) messages.splice(existing, 1);
+  let answerIndex = -1;
+  messages.forEach((message, index) => {
+    if (message.runId === runId && message.role === "assistant" && message.itemType === "assistant") {
+      message.status = "failed";
+      message.details = text;
+      answerIndex = index;
+    }
+  });
+  const marker: ChatMessage = { id, role: "system", itemType: "error", title: "工具未执行", text,
+    status: "failed", runId, turnId: runId, createdAt: at, completedAt: at };
+  messages.splice(answerIndex >= 0 ? answerIndex + 1 : messages.length, 0, marker);
+}
 
 function appendRehydratedTerminalMarker(
   messages: ChatMessage[],

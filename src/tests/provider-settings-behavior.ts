@@ -1,3 +1,5 @@
+import { runCustomModelToolCallingTests } from "./custom-model-tool-calling";
+import { runCustomToolCallingRuntimeTests } from "./pi-native/pi-native-conversation-runtime";
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
 import { runSettingsSaveResilienceTests } from "./settings-save-resilience";
 import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
@@ -3792,10 +3794,10 @@ function assertSettingsV53MigrationContract(): void {
     assert.deepEqual(twice.apiProviders, once.apiProviders);
   });
 
-  check("unknown model metadata defaults to deep reasoning while other capabilities stay conservative", () => {
+  check("unknown model metadata defaults to tools and deep reasoning while image input stays conservative", () => {
     const unknown = createApiProviderModelConfig("custom", "undocumented-model");
     assert.deepEqual(unknown.input, ["text"]);
-    assert.equal(unknown.toolCalling, false);
+    assert.equal(unknown.toolCalling, true);
     assert.equal(unknown.reasoning, true);
     assert.equal(unknown.reasoningEnabled, true);
     assert.equal(unknown.metadataSource, "unknown");
@@ -3938,7 +3940,7 @@ function assertSettingsV53MigrationContract(): void {
     );
     assert.equal(sameIdWrongProvider.metadataSource, "unknown");
     assert.deepEqual(sameIdWrongProvider.input, ["text"]);
-    assert.equal(sameIdWrongProvider.toolCalling, false);
+    assert.equal(sameIdWrongProvider.toolCalling, true);
     assert.equal(sameIdWrongProvider.reasoning, true);
     assert.equal(sameIdWrongProvider.reasoningEnabled, true);
   });
@@ -11490,6 +11492,9 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-retry") {
   await assertFreshCustomModelDiscoveryLifecycle();
   await runProviderModelDiscoveryRegression(installProviderModalDomFixture);
   console.log("PASS relevant Provider settings, activation, limits, reasoning, request/failure/partial and dynamic discovery regressions");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "custom-tool-calling") {
+  await runCustomModelToolCallingTests();
+  await runCustomToolCallingRuntimeTests();
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "dynamic-discovery") {
   await runProviderModelDiscoveryRegression(installProviderModalDomFixture);
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "english-diary") {
@@ -11566,5 +11571,7 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-retry") {
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "builtin-skill") {
   await runBuiltinSkillSettingsBehaviorTests();
 } else {
+  await runCustomModelToolCallingTests();
+  await runCustomToolCallingRuntimeTests();
   await runProviderSettingsBehaviorTests();
 }
