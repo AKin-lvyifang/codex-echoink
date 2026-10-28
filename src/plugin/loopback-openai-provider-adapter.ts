@@ -27,6 +27,7 @@ import type {
 } from "../harness/pi/production-pi-model-resolver";
 import {
   preventProviderRetryAfterPartial,
+  isProviderQuotaExhausted,
   safeProviderFailureCode
 } from "../harness/pi/provider-failure";
 import {
@@ -326,6 +327,8 @@ async function executeLoopbackCompletion(input: {
     if (responseStatus < 200 || responseStatus >= 300) {
       throw new Error(responseStatus === 401 || responseStatus === 403
         ? "provider_auth_failed"
+        : isProviderQuotaExhausted(response.body)
+          ? "provider_request_rejected"
         : "provider_http_failed");
     }
     if (!decoder) throw new Error("loopback_provider_stream_not_ready");
@@ -406,7 +409,9 @@ function loopbackFailureMessage(
     ? "controlled_transport_aborted"
     : /response_(?:aborted|incomplete)/iu.test(message)
       ? "provider_network_error_http_incomplete"
-      : status === 429
+      : message === "provider_request_rejected"
+        ? message
+        : status === 429
         ? "provider_rate_limited"
         : status !== null && status >= 500
           ? "provider_service_unavailable"

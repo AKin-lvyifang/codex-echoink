@@ -533,6 +533,7 @@ interface PiChatRuntimeEventBase {
 }
 
 export type PiChatRuntimeEvent =
+  | (PiChatRuntimeEventBase & { type: "model_progress" })
   | (PiChatRuntimeEventBase & {
       type: "reasoning_summary";
       summary: Readonly<EchoInkReasoningSummarySnapshot>;

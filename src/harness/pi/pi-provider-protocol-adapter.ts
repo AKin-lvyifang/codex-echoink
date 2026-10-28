@@ -37,6 +37,7 @@ import {
 } from "../../settings/pi-model-catalog";
 import {
   assistantHasPartialOutput,
+  isProviderQuotaExhausted,
   sanitizeProviderFailureDetail,
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
@@ -362,6 +363,11 @@ export function classifyPiProviderConnectionFailure(
     case "provider_sse_json_invalid": return "protocol";
     case "provider_service_unavailable":
     case "provider_service_failed": return "provider";
+  }
+  // Some providers return 429 for exhausted billing/account quota. Retrying
+  // cannot restore that balance; keep ordinary rate limits retryable below.
+  if (isProviderQuotaExhausted(message)) {
+    return "request";
   }
   if (status === 429 || /rate[ _-]?limit|usage[ _-]?limit|quota|too many requests/u.test(normalized)) {
     return "rate_limit";

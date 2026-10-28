@@ -116,6 +116,10 @@
 .echoink-settings-aligned .echoink-memory-settings button.echoink-module-drawer-trigger.echoink-origin-control[data-slot=button] { min-height: 64px; padding: 16px 0 16px 18px; gap: 12px; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-title { font-size: calc(var(--font-text-size, 16px) * .8125); font-weight: 500; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-summary { font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.6; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-chevron { transform: none; }
+.echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer.is-expanded .echoink-module-drawer-chevron { transform: rotate(180deg); }
+.echoink-settings-aligned .echoink-generation-template-row .echoink-settings-navigation-copy { gap: 1px; }
+.echoink-settings-aligned .echoink-generation-template-row :is(.echoink-settings-navigation-title, .echoink-settings-navigation-description) { line-height: 1.55; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content { padding: 0; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-dream-options { display: contents; margin: 0; padding: 0; }
 .echoink-settings-aligned .echoink-memory-settings .echoink-module-drawer-content .setting-item,

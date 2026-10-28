@@ -97,7 +97,7 @@ function copy() {
     assert.ok(en.title); assert.ok(en.description); assert.equal(en.steps.length, 5);
   }
   assert.equal(onboardingCoachmarkCopy("settings", true).step, "认识 EchoInk · 01 / 05", "legacy copy never exposes step 00 or a sixth step");
-  assert.equal(onboardingCompletionCopy(true).title, "准备好了，从一句话开始"); assert.equal(onboardingCompletionCopy(true).previousLabel, "再看一遍");
+  assert.equal(onboardingCompletionCopy(true).title, "准备好了，从一件事开始"); assert.equal(onboardingCompletionCopy(true).previousLabel, "再看一遍");
 }
 
 async function savedSettingsRoundTrip(root: string) {

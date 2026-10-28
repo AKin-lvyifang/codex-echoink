@@ -9,6 +9,11 @@ export interface ProviderFailureDetail {
   reason?: "unsupported" | "invalid" | "required" | "out_of_range";
 }
 
+/** Billing/account exhaustion can arrive as HTTP 429, without being a throttle. */
+export function isProviderQuotaExhausted(message: string): boolean {
+  return /insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted)|out of (?:budget|credits?)|insufficient (?:balance|credits?)|billing|gousagelimiterror|freeusagelimiterror|monthly usage limit reached|available balance|余额不足|额度(?:不足|用尽|耗尽)/iu.test(message.slice(0, 8_192));
+}
+
 export type AssistantProviderFailure = AssistantMessage & {
   echoInkProviderFailure?: ProviderFailureDetail;
 };

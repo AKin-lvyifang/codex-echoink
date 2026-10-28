@@ -1,4 +1,5 @@
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
+import { runSettingsSaveResilienceTests } from "./settings-save-resilience";
 import { emptyWorkspaceResourceSnapshot } from "../core/workspace-resources";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
@@ -252,6 +253,7 @@ import { resolvePiProductionSkillById } from "../plugin/pi-production-runtime-co
 import { runEnglishDiaryProviderTests } from "./english-diary-provider";
 
 export async function runProviderSettingsBehaviorTests(): Promise<void> {
+  await runSettingsSaveResilienceTests();
   await runEnglishDiaryProviderTests(installProviderModalDomFixture);
   await runSettingsWindowRefreshTest();
   await assertInlineEditorAsyncRetirement();
@@ -2199,8 +2201,7 @@ async function assertSettingsPersistenceReadbackOutcomes(): Promise<void> {
       store.withResourceMutation(async () => undefined),
       (error: unknown) => {
         assert.ok(firstError);
-        assert.ok(error instanceof SettingsPersistenceError);
-        assert.equal(error.persistenceStatus, "unknown");
+        assert.equal(error, firstError, "the separate unsafe resource-mutation guard remains in force");
         return true;
       }
     );
@@ -6135,7 +6136,8 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   mutableTab.knowledgePreferenceState = preference;
   mutableTab.knowledgePreferenceEditor = createKnowledgeMaintenancePreferenceEditor(preference);
   const knowledge = new DesktopKnowledgeSettings(host as never, {
-    redraw() {}, openLinking() {}, openEditor() {},
+    redraw() { tab.containerEl.empty(); if (knowledge.isDetail) knowledge.renderDetail(tab.containerEl); else knowledge.renderSummary(tab.containerEl); },
+    openLinking() {}, openEditor() {},
     openPreferences() { tab.containerEl.empty(); mutableTab.renderKnowledgeMaintenancePreferences(tab.containerEl); }
   });
   knowledge.renderSummary(tab.containerEl);
@@ -6146,6 +6148,10 @@ async function assertKnowledgeSettingsDetailRetiresLegacyControls(): Promise<voi
   assert.equal(tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:provider"]'), null,
     "Knowledge uses the global model page");
   assertLegacyKnowledgeControlsAbsent(tab.containerEl.textContent);
+  assert.equal(tab.containerEl.querySelector('[data-echoink-focus-key="knowledge:preferences"]'), null, "refinement preferences live under Agent permissions and maintenance");
+  const permissionsNavigation = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:permissions"]');
+  assert.ok(permissionsNavigation); permissionsNavigation.click();
+  assert.equal(tab.containerEl.querySelector("h2")?.textContent, "Agent 权限与维护");
   const preferenceNavigation = tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:preferences"]');
   assert.ok(preferenceNavigation);
   preferenceNavigation.click();
@@ -7829,6 +7835,9 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
 }
 
 async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
+  const productionRetry = SettingsManager.inMemory({ retry: { enabled: true, provider: { maxRetries: 0 } } }).getRetrySettings();
+  assert.deepEqual(productionRetry, { enabled: true, maxRetries: 3, baseDelayMs: 2_000 });
+  let retryEvents: Array<{ attempt: number; delayMs: number }> = [];
   const baseUrl = QWEN_TOKEN_PLAN_API_BASE_URL;
   const catalogModel = resolveEchoInkPiCatalogModel(
     "qwen-token-plan-cn",
@@ -7872,6 +7881,7 @@ async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
       typeof createQwenTokenPlanOpenAICompletionsAdapter
     >[0]
   ): Promise<AssistantMessage[]> => {
+    retryEvents = [];
     const dispatcher = new PiProviderProtocolDispatcher({
       "openai-completions": createQwenTokenPlanOpenAICompletionsAdapter(
         requestImpl
@@ -7908,7 +7918,7 @@ async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
       compaction: { enabled: true },
       retry: {
         enabled: true,
-        maxRetries: 2,
+        maxRetries: productionRetry.maxRetries,
         baseDelayMs: 1,
         provider: { maxRetries: 0 }
       },
@@ -7935,6 +7945,9 @@ async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
       settingsManager,
       resourceLoader
     });
+    const retrySubscription = session.subscribe(event => {
+      if (event.type === "auto_retry_start") retryEvents.push({ attempt: event.attempt, delayMs: event.delayMs });
+    });
     try {
       await session.prompt("测试 partial-aware retry");
       return sessionManager.getBranch()
@@ -7944,6 +7957,7 @@ async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
           message.role === "assistant"
         );
     } finally {
+      retrySubscription();
       session.dispose();
     }
   };
@@ -8036,6 +8050,48 @@ async function assertPiAgentSessionPartialAwareRetryContract(): Promise<void> {
     "Pi's existing zero-output transient-network retry must remain available"
   );
   assert.equal(zeroOutputMessages.at(-1)?.stopReason, "stop");
+
+  const failureResponse = (status: number, code: string, message: string) => ({
+    status, headers: { "content-type": "application/json" },
+    body: JSON.stringify({ error: { code, message } }), transportComplete: true
+  });
+  let transientCalls = 0;
+  const transientMessages = await runSession(async () => {
+    const status = [429, 500, 503][transientCalls++];
+    if (status) return failureResponse(status, "temporary_failure", status === 429 ? "Too many requests" : "Service unavailable");
+    return { status: 200, headers: streamingHeaders, body: successBody, transportComplete: true };
+  });
+  assert.equal(transientCalls, 4, "only the AgentSession layer retries the three temporary failures");
+  assert.equal(transientMessages.at(-1)?.stopReason, "stop");
+  assert.deepEqual(retryEvents, [{ attempt: 1, delayMs: 1 }, { attempt: 2, delayMs: 2 }, { attempt: 3, delayMs: 4 }]);
+  let exhaustedCalls = 0;
+  const exhausted = await runSession(async () => { exhaustedCalls++; return failureResponse(503, "temporary_failure", "Service unavailable"); });
+  assert.equal(exhaustedCalls, 4);
+  assert.equal(exhausted.at(-1)?.stopReason, "error");
+  for (const failure of [
+    { status: 401, code: "invalid_api_key", message: "Unauthorized" },
+    { status: 429, code: "insufficient_quota", message: "quota exceeded" },
+    { status: 404, code: "model_not_found", message: "Model not found" }
+  ]) {
+    let calls = 0;
+    const messages = await runSession(async () => { calls++; return failureResponse(failure.status, failure.code, failure.message); });
+    assert.equal(calls, 1, `${failure.code} must fail without retrying`);
+    assert.equal(messages.at(-1)?.stopReason, "error");
+    assert.deepEqual(retryEvents, []);
+  }
+  assert.equal(classifyPiProviderConnectionFailure(429, '{"error":{"code":"insufficient_quota"}}'), "request");
+  const loopbackModel = { ...model, provider: "ollama", id: "fixture-loopback-retry", baseUrl: "http://127.0.0.1:11434/v1" };
+  for (const [code, expected] of [["insufficient_quota", "provider_request_rejected"], ["rate_limit_exceeded", "provider_rate_limited"]]) {
+    let calls = 0;
+    const adapter = createLoopbackOpenAICompletionsAdapter(async () => {
+      calls++; return failureResponse(429, code, code === "insufficient_quota" ? "quota exceeded" : "Too many requests");
+    });
+    const failure = await adapter.streamSimple(loopbackModel, { messages: [{ role: "user", content: "test", timestamp: 1 }] }, { maxTokens: 64 }).result();
+    assert.equal(calls, 1, "the adapter never adds a second retry layer");
+    assert.equal(failure.errorMessage, expected);
+    assert.equal(isRetryableAssistantError(failure), code !== "insufficient_quota");
+  }
+  console.log("PASS provider retry: temporary 429/500/503 recover in 4 attempts; exhaustion stops after 4; auth/quota/missing model stop after 1 (test backoff scaled to 1/2/4ms; production 2/4/8s)");
 
   const classifierMessage = (errorMessage: string): AssistantMessage => ({
     role: "assistant",
@@ -11353,7 +11409,11 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
 
 
 Platform.isDesktopApp = false;
-if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p16-settings") {
+if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-retry") {
+  await assertPiAgentSessionPartialAwareRetryContract();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "settings-save-resilience") {
+  await runSettingsSaveResilienceTests();
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "p16-settings") {
   await assertKnowledgeSettingsDetailRetiresLegacyControls();
   await assertKnowledgeInitNotePickerModalContract();
   await assertPersonalMemoryDtoAndRegistryIdentity();

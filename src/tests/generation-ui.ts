@@ -17,10 +17,11 @@ export async function runGenerationUiTests(): Promise<void> {
   const host = document.body.createDiv({ cls: "echoink-settings-demo echoink-settings-aligned" });
   const plugin = { settings: { settingsLanguage: "zh", generationTemplates: defaultGenerationTemplates() }, saves: 0, failSave: false,
     async saveSettings() { this.saves++; if (this.failSave) throw new Error("测试保存失败"); } };
-  let editor = false;
-  const draw = () => { disposeOriginControls(host); host.empty(); if (editor) section.renderEditor(host); else section.renderDrawer(host); };
+  let editor = false, list = false;
+  const draw = () => { disposeOriginControls(host); host.empty(); if (editor) section.renderEditor(host); else if (list) section.renderList(host); else section.renderNavigation(host); };
   const open = (id: string | null) => { section.open(id); editor = true; draw(); };
-  const section = new GenerationTemplatesSection(plugin, { openEditor: open, closeEditor: () => { editor = false; draw(); }, redraw: draw });
+  const section = new GenerationTemplatesSection(plugin, { openList: () => { list = true; draw(); }, closeList: () => { list = false; draw(); },
+    openEditor: open, closeEditor: () => { editor = false; list = true; draw(); }, redraw: draw });
   const button = (label: string) => {
     const element = [...host.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent?.trim() === label || item.getAttribute("aria-label") === label);
     assert.ok(element, `button ${label} exists`); return element;
@@ -32,13 +33,19 @@ export async function runGenerationUiTests(): Promise<void> {
   const flush = async () => { for (let count = 0; count < 4; count++) await new Promise(resolve => setTimeout(resolve, 0)); };
   draw();
   assert.equal(host.querySelector('[role="switch"]'), null, "generation templates have no enable switch");
-  assert.equal(host.querySelector<HTMLElement>(".echoink-generation-template-list")!.hidden, true);
-  button("生成模板4 个模板").click();
-  assert.equal(host.querySelector<HTMLElement>(".echoink-generation-template-list")!.hidden, false);
+  assert.equal(host.querySelector(".echoink-generation-template-list"), null, "module summary only navigates to the list");
+  host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:generation-templates"]')!.click();
+  assert.ok(host.querySelector(".echoink-generation-template-list"));
+  assert.equal(host.querySelector(".echoink-module-drawer"), null, "the independent list has no nested drawer");
   assert.equal(host.querySelectorAll(".echoink-generation-template-row").length, 4);
   for (const row of host.querySelectorAll(".echoink-generation-template-row")) assert.ok(row.lastElementChild?.classList.contains("echoink-settings-navigation-trailing"), "arrow stays at the right edge");
   button("新增模板").click();
   assert.equal(host.querySelector(".modal-container"), null, "editor stays inside settings");
+  button("返回生成模板").click();
+  assert.equal(host.querySelectorAll(".echoink-generation-template-row").length, 4, "editor returns to the independent list");
+  button("返回知识库").click(); assert.equal(list, false);
+  host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:generation-templates"]')!.click();
+  button("新增模板").click();
   button("保存").click();
   assert.equal(plugin.saves, 0);
   assert.match(host.textContent!, /名称不能为空/); assert.match(host.textContent!, /写作要求不能为空/);

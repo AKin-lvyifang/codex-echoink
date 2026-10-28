@@ -2,18 +2,17 @@ import { Notice, setIcon } from "obsidian";
 import type { GenerationOutputKind, GenerationTemplate } from "../generation/types";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "./amicro-buttons";
 import { createOriginButton, createOriginInput, createOriginRadioGroup } from "./origin-controls";
-import { createSettingsNavigationRow, createSettingsPage, showSettingsInlineConfirmation } from "./settings-v2";
+import { createSettingsGroup, createSettingsNavigationRow, createSettingsPage, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 import { defaultGenerationTemplates, generationTemplateIsEdited, normalizeGenerationTemplates, uniqueGenerationTemplateName, validateGenerationTemplate } from "./generation-templates";
 
 interface GenerationTemplateSettingsHost {
   settings: { settingsLanguage: string; generationTemplates: GenerationTemplate[] };
   saveSettings(): Promise<void>;
 }
-interface SectionOptions { openEditor(id: string | null): void; closeEditor(): void; redraw(): void }
+interface SectionOptions { openList(): void; closeList(): void; openEditor(id: string | null): void; closeEditor(): void; redraw(): void }
 
 /** The settings tab owns navigation; this controller owns unsaved fields across redraws. */
 export class GenerationTemplatesSection {
-  private expanded = false;
   private draft: GenerationTemplate | null = null;
   private editingId: string | null = null;
   private pending = false;
@@ -22,33 +21,30 @@ export class GenerationTemplatesSection {
   private text(zh: string, en: string): string { return this.english ? en : zh; }
   private templates(): GenerationTemplate[] { return normalizeGenerationTemplates(this.plugin.settings.generationTemplates); }
 
-  openList(): void { this.expanded = true; }
-
   open(id: string | null): void {
-    this.expanded = true;
     this.editingId = id;
     const saved = id ? this.templates().find(item => item.id === id) : null;
     this.draft = saved ? { ...saved } : { id: `custom-${crypto.randomUUID()}`, name: "", description: "", instructions: "", outputKind: "markdown" };
   }
 
-  renderDrawer(parent: HTMLElement): void {
+  editorFocusKey(): string { return this.editingId ? `knowledge:generation-template:${this.editingId}` : "knowledge:generation-template:add"; }
+
+  renderNavigation(parent: HTMLElement): void {
     const templates = this.templates();
-    const drawer = parent.createDiv({ cls: "echoink-module-drawer echoink-generation-template-drawer" });
-    const header = drawer.createDiv({ cls: "echoink-module-drawer-header" });
-    const trigger = createOriginButton(header, { cls: "echoink-module-drawer-trigger", attr: { "aria-expanded": String(this.expanded), "data-echoink-focus-key": "knowledge:generation-templates" } });
-    setIcon(trigger.createSpan({ cls: "echoink-module-drawer-icon", attr: { "aria-hidden": "true" } }), "layout-template");
-    const copy = trigger.createSpan({ cls: "echoink-module-drawer-copy" });
-    copy.createSpan({ cls: "echoink-module-drawer-title", text: this.text("生成模板", "Generation templates") });
-    copy.createSpan({ cls: "echoink-module-drawer-summary", text: this.text(`${templates.length} 个模板`, `${templates.length} templates`) });
-    setIcon(trigger.createSpan({ cls: "echoink-module-drawer-chevron", attr: { "aria-hidden": "true" } }), "chevron-down");
-    const body = drawer.createDiv({ cls: "echoink-module-drawer-content echoink-generation-template-list" });
-    const update = () => { body.hidden = !this.expanded; drawer.toggleClass("is-expanded", this.expanded); trigger.setAttr("aria-expanded", String(this.expanded)); };
-    trigger.onclick = () => { this.expanded = !this.expanded; update(); };
-    const heading = body.createDiv({ cls: "echoink-generation-template-list-heading" });
-    heading.createSpan({ text: this.text("模板", "Templates") });
-    const add = createOriginButton(heading, { cls: "icon-button", attr: { "aria-label": this.text("新增模板", "Add template") } });
+    createSettingsNavigationRow(parent, { title: this.text("生成模板", "Generation templates"),
+      value: this.text(`${templates.length} 个`, String(templates.length)), focusKey: "knowledge:generation-templates", onActivate: () => this.options.openList() });
+  }
+
+  renderList(parent: HTMLElement): void {
+    const page = createSettingsPage(parent, { title: this.text("生成模板", "Generation templates"), detail: true,
+      backLabel: this.text("返回模块", "Back to modules"), onBack: () => this.options.closeList() });
+    page.addClass("echoink-generation-templates-page");
+    const heading = page.querySelector<HTMLElement>(".echoink-settings-page-header")!;
+    const add = createOriginButton(heading, { cls: "icon-button is-icon", attr: { "aria-label": this.text("新增模板", "Add template"), "data-echoink-focus-key": "knowledge:generation-template:add" } });
     setIcon(add, "plus"); add.onclick = () => this.options.openEditor(null);
-    for (const template of templates) {
+    const body = createSettingsGroup(createSettingsSection(page, { surface: "flat" }));
+    body.addClass("echoink-generation-template-list");
+    for (const template of this.templates()) {
       const row = createSettingsNavigationRow(body, { title: template.name, description: template.description || undefined,
         focusKey: `knowledge:generation-template:${template.id}`, onActivate: () => this.options.openEditor(template.id) });
       row.addClass("echoink-generation-template-row");
@@ -56,7 +52,6 @@ export class GenerationTemplatesSection {
       setIcon(icon, template.outputKind === "canvas" ? "layout-dashboard" : "file-text"); row.prepend(icon);
       if (generationTemplateIsEdited(template)) row.querySelector(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-generation-template-edited", text: this.text("已修改", "Edited") });
     }
-    update();
   }
 
   renderEditor(parent: HTMLElement): void {
@@ -103,7 +98,7 @@ export class GenerationTemplatesSection {
       duplicate.onclick = () => { if (this.pending) return; this.editingId = null; this.draft = { ...draft, id: `custom-${crypto.randomUUID()}`, name: uniqueGenerationTemplateName(this.templates(), draft.name), builtin: false }; this.options.redraw(); };
       const remove = createOriginButton(secondary, { cls: "button settings-danger", text: this.text("删除", "Delete") }); applyDeleteButton(remove);
       remove.onclick = () => showSettingsInlineConfirmation(form, remove, { message: this.text(`删除模板「${saved.name}」？`, `Delete “${saved.name}”?`), confirmLabel: this.text("删除", "Delete"), cancelLabel: this.text("取消", "Cancel"), deleteAction: true,
-        onConfirm: () => this.persist(this.templates().filter(item => item.id !== saved.id), status, () => this.options.closeEditor()) });
+        onConfirm: () => this.persist(this.templates().filter(item => item.id !== saved.id), status, () => { this.editingId = null; this.options.closeEditor(); }) });
     }
     const primary = footer.createDiv({ cls: "echoink-generation-template-primary" });
     const cancel = createOriginButton(primary, { cls: "button", text: this.text("取消", "Cancel") }); cancel.onclick = () => { if (!this.pending) this.options.closeEditor(); };
@@ -120,7 +115,7 @@ export class GenerationTemplatesSection {
       const templates = this.templates();
       const updated = templates.some(item => item.id === next.id) ? templates.map(item => item.id === next.id ? next : item) : [...templates, next];
       save.disabled = true; save.setText(this.text("保存中…", "Saving…")); setAmicroButtonPending(save, true);
-      void this.persist(updated, status, () => { new Notice(this.text(`已保存模板「${next.name}」`, `Saved “${next.name}”`)); this.options.closeEditor(); }).finally(() => { save.disabled = false; save.setText(this.text("保存", "Save")); setAmicroButtonPending(save, false); });
+      void this.persist(updated, status, () => { this.editingId = next.id; new Notice(this.text(`已保存模板「${next.name}」`, `Saved “${next.name}”`)); this.options.closeEditor(); }).finally(() => { save.disabled = false; save.setText(this.text("保存", "Save")); setAmicroButtonPending(save, false); });
     };
   }
 

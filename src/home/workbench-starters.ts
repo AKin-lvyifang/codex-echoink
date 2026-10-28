@@ -140,7 +140,6 @@ export class WorkbenchStarters {
     const data = cards[index]; const art = card.createDiv({ cls: "wb-starter-art" });
     art.append(index === 0 ? avatarWheelArt(card.ownerDocument, this.options.avatar()) : inlineWorkbenchArt(card.ownerDocument, WORKBENCH_ART[data[4]]));
     if (index >= 5 && !this.options.hasPro()) card.createSpan({ cls: "wb-starter-pro", text: "PRO" });
-    card.createSpan({ cls: "wb-starter-chip", text: index === 0 ? this.t("第一步", "First step") : index < 3 ? this.t("设置", "Settings") : index >= 5 ? this.t("PRO 功能", "PRO feature") : this.t("交给总助", "Ask your assistant") });
     card.createEl("h3", { text: data[this.options.english() ? 1 : 0] });
     const actions = card.createDiv({ cls: "wb-starter-actions" });
     const locked = index >= 5 && !this.options.hasPro();

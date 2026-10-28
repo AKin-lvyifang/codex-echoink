@@ -27,6 +27,7 @@ import type {
 } from "../harness/pi/production-pi-model-resolver";
 import {
   preventProviderRetryAfterPartial,
+  isProviderQuotaExhausted,
   safeProviderFailureCode
 } from "../harness/pi/provider-failure";
 import {
@@ -382,6 +383,7 @@ function qwenTokenPlanHttpFailureCode(
     return "context_length_exceeded";
   }
   if (status === 401 || status === 403) return "provider_auth_failed";
+  if (isProviderQuotaExhausted(body)) return "provider_request_rejected";
   if (status === 429) return "provider_rate_limited";
   if (
     status === 400

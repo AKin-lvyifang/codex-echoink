@@ -362,14 +362,8 @@ export class FinanceWorkspace {
     foot.createEl("span", { text: this.state.mix === "expense" ? `支出原额 ¥ ${money(total)} · 退款另列 ¥ ${money(summary.refundCents)}` : "有效人民币收入" });
     foot.createEl("span", { text: this.state.mix === "expense" ? `净支出 ¥ ${money(summary.netExpenseCents)}` : `合计 ¥ ${money(total)}` });
   }
-  private intro(body: HTMLElement, title: string, description: string): HTMLElement {
-    const intro = body.createDiv({ cls: "echoink-finance-intro" });
-    const copy = intro.createDiv(); copy.createEl("h2", { text: title }); copy.createEl("p", { text: description });
-    return intro;
-  }
   private overview(body: HTMLElement): void {
     const summary = this.summary();
-    this.intro(body, "每一笔，都有自己的去处。", "把这个月的收支与计划放在一起看。");
     const layout = body.createDiv({ cls: "echoink-finance-overview" });
     const main = layout.createDiv({ cls: "echoink-finance-main" });
     const hero = main.createDiv({ cls: "echoink-finance-hero" });
@@ -942,11 +936,9 @@ export class FinanceWorkspace {
   }
   private ledger(body: HTMLElement): void {
     if (this.state.returnScroll !== undefined) button(body, "← 返回概览", () => this.returnFromLedger(), "echoink-finance-ledger-return");
-    this.intro(body, "每笔收支，都能查清。", "搜索、筛选和导出当前月的账目。");
     body.createDiv({ cls: "echoink-finance-metrics echoink-finance-ledger-metrics" });
     const panel = body.createDiv({ cls: "echoink-finance-card echoink-finance-ledger" });
     const heading = panel.createDiv({ cls: "echoink-finance-ledger-heading" });
-    heading.createEl("h3", { text: "每一笔，都有来处" });
     const exportButton = button(heading, "", () => this.exportCsv(), "echoink-finance-export");
     exportButton.disabled = !this.service.finance.access.checkCapability("finance.export");
     const exportNotice = capabilityMessage(this.service.finance.access, "finance.export");
@@ -1059,10 +1051,9 @@ export class FinanceWorkspace {
 
   private budget(body: HTMLElement): void {
     const summary = this.summary(); const plan = this.plan();
-    const intro = this.intro(body, "花得有数，也留得从容。", "看看每一类支出，还剩下多少空间。");
-    const actions = intro.createDiv({ cls: "echoink-finance-budget-page-actions" });
-    this.writeButton(actions, plan ? "调整预算" : "设置预算", () => this.budgetDialog(), "echoink-finance-primary");
+    const actions = body.createDiv({ cls: "echoink-finance-budget-page-actions" });
     if (plan) actions.createSpan({ cls: "echoink-finance-budget-source", text: this.data().budgets.some(budget => budget.month === this.state.month) ? "本月独立" : "沿用每月默认" });
+    this.writeButton(actions, plan ? "调整预算" : "设置预算", () => this.budgetDialog(), "echoink-finance-primary");
     if (!plan) { body.createEl("p", { text: "还没有为这个月设置预算。", cls: "echoink-finance-empty" }); return; }
     const overview = body.createDiv({ cls: "echoink-finance-budget-overview" });
     const total = this.card(overview, "本月总预算", plan.totalCents, `已使用 ¥ ${money(summary.netExpenseCents)} · ${Math.max(0, summary.netExpenseCents / plan.totalCents * 100).toFixed(1)}%`);
@@ -1526,11 +1517,10 @@ export class FinanceWorkspace {
           }
         }
         current = scope === "default" ? editor.defaultDraft : editor.months.get(month);
-        if (!current) { panel.createEl("p", { cls: "echoink-finance-budget-hint", text: "暂无独立月份。选择月份后新增，或编辑每月默认预算。" }); validateAll(); return; }
+        if (!current) { panel.createEl("p", { cls: "echoink-finance-budget-hint", text: "暂无独立月份。" }); validateAll(); return; }
         const draft = current;
         const categoryNotice = capabilityMessage(this.service.finance.access, "finance.category_budget.write");
         if (categoryNotice) panel.createEl("p", { cls: "echoink-finance-budget-hint", text: `总预算免费，分类分配：${categoryNotice}` });
-        panel.createEl("p", { cls: "echoink-finance-budget-editing", text: scope === "default" ? "每月默认" : `${month} 独立预算` });
         const total = field(panel, "月度总预算 · 元", "number", draft.total); total.parentElement?.addClass("echoink-finance-budget-total");
         total.min = "1"; total.max = "99999999"; total.step = "0.01";
         const modeRow = panel.createDiv({ cls: "echoink-finance-budget-mode-row" }); modeRow.createEl("span", { text: "分类分配" });
