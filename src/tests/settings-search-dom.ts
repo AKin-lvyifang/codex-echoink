@@ -2,6 +2,7 @@ import { renderTavilySettings } from "../settings/tavily-settings";
 import { type WebSearchSettings, type searchWeb } from "../tools/web-search";
 import * as assert from "node:assert/strict";
 import { App, Platform, Setting } from "obsidian";
+import { openTestModals } from "./obsidian-shim";
 import { CodexSettingTab } from "../settings/settings-tab";
 import { DEFAULT_SETTINGS, createApiProviderConfig, activateApiProvider, type SettingsLanguage, type SettingsTab } from "../settings/settings";
 import { settingsCopy } from "../settings/i18n";
@@ -564,6 +565,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   try {
     await checkDesktopSettings(primary, scheduler, secondDocument);
     await checkDesktopMemoryConflict(primary);
+    await checkDesktopMemoryPages(primary, scheduler);
     await checkDesktopEnableSwitches(primary, scheduler);
     await checkDesktopInlineProModule(primary, scheduler);
     await checkDesktopSettingPolish(primary, scheduler);
@@ -938,11 +940,75 @@ async function checkDesktopMemoryConflict(win: Window & typeof globalThis) {
   disk = { revision: 3, records: [], forgottenIds: [newer.id] };
   await assert.rejects(controller.actions.generate("Retained after forgetting"), /已失效/);
   const host = win.document.createElement("div"); win.document.body.appendChild(host);
-  state.renderPersonalMemoryCorrectionRecords(host, "facts");
-  assert.ok(host.querySelector('.echoink-memory-correction-inline'), "invalidated target retains mounted correction card so navigation can leave");
+  state.renderDesktopMemoryCorrection(host);
+  assert.ok(host.querySelector('.echoink-memory-correction-page'), "invalidated target retains its settings page so navigation can leave");
   assert.match(host.textContent ?? "", /这条记忆已失效/);
   state.desktopCorrection = null; controller.close(); host.remove(); f.tab.containerEl.remove();
   console.log("PASS P13 correction conflict: superseded target refreshes, explicit regeneration freezes new ID/revision, forgotten target keeps accessible draft card");
+}
+
+async function checkDesktopMemoryPages(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  const f = fixture(win, "zh-CN"), state = f.state, plugin = f.plugin as any;
+  const old = { id: "page-memory", kind: "fact", status: "current", title: "会议时间", content: "上午开会", recallWhen: "安排会议", revision: 1, date: "2026-10-27" };
+  let disk: any = { revision: 1, records: [old], forgottenIds: [] };
+  let writes = 0, reopen = 0;
+  plugin.getEchoInkPersonalMemoryState = async () => disk;
+  plugin.generateEchoInkPersonalMemoryCorrection = async () => ({ title: "会议时间", content: "下午开会", recallWhen: "安排会议" });
+  plugin.applyEchoInkPersonalMemoryCorrection = async (input: any) => {
+    writes++; assert.equal(input.expectedRevision, disk.revision);
+    disk = { revision: 2, records: [{ ...old, status: "superseded" }, { ...old, id: "page-memory-new", status: "current", supersedes: old.id, revision: 2, content: input.content }], forgottenIds: [] };
+  };
+  state.personalMemoryState = disk;
+  const mount = mountDefinitions(f.tab);
+  const root = f.tab.containerEl;
+  Object.defineProperties(root, { scrollHeight: { configurable: true, value: 1600 }, clientHeight: { configurable: true, value: 500 } });
+  const button = (text: string) => {
+    const result = [...root.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === text && !item.closest("[hidden], .is-hidden"));
+    assert.ok(result, text); return result;
+  };
+  const sourceKey = "review:memory:facts:correct:page-memory";
+  const sourceButton = () => root.querySelector<HTMLButtonElement>(`[data-echoink-focus-key="${sourceKey}"]`)!;
+  const edit = async () => { sourceButton().focus(); sourceButton().click(); await scheduler.flush(); };
+  const type = (text: string) => { const input = root.querySelector<HTMLTextAreaElement>("textarea")!; input.value = text; input.dispatchEvent(new win.Event("input", { bubbles: true })); };
+  try {
+    await scheduler.flush();
+    f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
+    state.openSettingsDetail({ kind: "review-memory-category", category: "facts" }); await scheduler.flush();
+    root.scrollTop = 280;
+    await edit();
+    assert.equal(root.querySelector("h2")?.textContent, "修正记忆");
+    assert.equal(root.querySelector(".echoink-memory-record-list"), null, "correction replaces the category list");
+    assert.equal(root.scrollTop, 0, "the edit page starts at its heading");
+    assert.equal(openTestModals.length, 0);
+    type("改成下午，其余不变"); root.scrollTop = 120;
+    button("生成预览").click(); await scheduler.flush();
+    assert.equal(root.querySelector("h2")?.textContent, "预览修正"); assert.equal(root.scrollTop, 0);
+    assert.match(root.textContent!, /上午开会/); assert.match(root.textContent!, /下午开会/); assert.match(root.textContent!, /改成下午，其余不变/);
+    button("返回修改").click(); await scheduler.flush();
+    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
+    assert.equal(root.scrollTop, 120, "returning from preview restores the edit scroll");
+    root.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.click(); await scheduler.flush();
+    assert.ok(root.querySelector(".echoink-settings-inline-confirm"), "switching tabs asks before discarding");
+    button("继续编辑").click(); await scheduler.flush();
+    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
+    Object.assign(plugin.app, { setting: { open: () => { reopen++; }, openTabById: () => { mountDefinitions(f.tab); }, close: () => {} } });
+    f.tab.hide();
+    await new Promise(resolve => setTimeout(resolve, 5)); await scheduler.flush();
+    assert.equal(reopen, 1); assert.ok(root.querySelector(".echoink-settings-inline-confirm"), "native close remounts the same draft and asks");
+    button("继续编辑").click(); await scheduler.flush();
+    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
+    button("取消").click(); button("放弃修改").click(); await scheduler.flush();
+    assert.equal(root.querySelector(".echoink-memory-correction-page"), null);
+    assert.equal(win.document.activeElement, sourceButton()); assert.equal(root.scrollTop, 280);
+    await edit(); type("正式改为下午");
+    button("生成预览").click(); await scheduler.flush();
+    button("确认保存").click(); await scheduler.flush();
+    assert.equal(writes, 1); assert.equal(root.querySelector(".echoink-memory-correction-page"), null);
+    assert.match(root.querySelector(".echoink-memory-record-list")!.textContent!, /下午开会/);
+    assert.equal(win.document.activeElement?.getAttribute("data-echoink-focus-key"), "review:memory:facts:correct:page-memory-new", "saved replacement restores focus to its new version");
+    assert.equal(root.scrollTop, 280);
+  } finally { mount.cleanup(); f.registrations.forEach(cleanup => cleanup()); root.remove(); await scheduler.flush(); }
+  console.log("PASS desktop memory pages: edit/preview, draft/back, tab/close confirmation, saved replacement and original row scroll/focus");
 }
 
 async function checkDesktopEnableSwitches(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {

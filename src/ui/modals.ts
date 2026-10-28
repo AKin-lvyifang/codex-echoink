@@ -1,5 +1,5 @@
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
-import { showSettingsInlineConfirmation } from "../settings/settings-v2";
+import { createSettingsPage, showSettingsInlineConfirmation } from "../settings/settings-v2";
 import { applyDeleteButton } from "../settings/amicro-buttons";
 import { App, Modal, Setting } from "obsidian";
 
@@ -255,6 +255,12 @@ export class MemoryCorrectionModal extends Modal {
   private inlineEl: HTMLElement | null = null;
   private pendingInlineLeave: (() => void) | null = null;
   private inlineOptions: { onCancel?: () => void; onConflict?: () => void } = {};
+  private settingsPageOptions: {
+    backLabel: string;
+    unavailable?: string;
+    onNavigate: () => void;
+  } | null = null;
+  private pageStep: "editing" | "preview" = "editing";
   private inlineExitButton: HTMLButtonElement | null = null;
   private inlineConflict = false;
   private completed = false;
@@ -278,7 +284,7 @@ export class MemoryCorrectionModal extends Modal {
 
   constructor(
     app: App,
-    private readonly record: Readonly<MemoryCorrectionModalRecord>,
+    private record: Readonly<MemoryCorrectionModalRecord>,
     private readonly language: "zh-CN" | "en",
     private readonly actions: Readonly<MemoryCorrectionModalActions>,
     private readonly done: (value: MemoryCorrectionModalResult) => void
@@ -294,8 +300,23 @@ export class MemoryCorrectionModal extends Modal {
 
   get hasDraft(): boolean { return !this.completed && (!!this.correction.trim() || this.preview !== null); }
   get submitting(): boolean { return this.saving || this.state === "generating"; }
+  get settingsPageStep(): "editing" | "preview" { return this.pageStep; }
+  updateSettingsRecord(record: Readonly<MemoryCorrectionModalRecord>): void { this.record = record; }
+  mountSettingsPage(container: HTMLElement, options: {
+    backLabel: string;
+    unavailable?: string;
+    onNavigate: () => void;
+  }): void {
+    this.settingsPageOptions = options;
+    this.mountEmbedded(container);
+  }
   mountInline(container: HTMLElement, options?: { onCancel?: () => void; onConflict?: () => void }): void {
-    this.suspend(); this.embedded = true; this.disposed = false; if (options) this.inlineOptions = options;
+    this.settingsPageOptions = null;
+    if (options) this.inlineOptions = options;
+    this.mountEmbedded(container);
+  }
+  private mountEmbedded(container: HTMLElement): void {
+    this.suspend(); this.embedded = true; this.disposed = false;
     this.inlineEl = container.createDiv({ cls: "echoink-memory-correction-inline" });
     this.renderContent(this.inlineEl);
     if (this.pendingInlineLeave) {
@@ -307,7 +328,8 @@ export class MemoryCorrectionModal extends Modal {
     if (this.submitting) return;
     if (!this.hasDraft) { done(); return; }
     if (!this.inlineEl) { this.pendingInlineLeave = done; return; }
-    showSettingsInlineConfirmation(this.inlineEl, this.inlineExitButton ?? this.cancelButton, {
+    const trigger = this.settingsPageOptions && this.pageStep === "preview" ? this.cancelButton : this.inlineExitButton ?? this.cancelButton;
+    showSettingsInlineConfirmation(this.inlineEl, trigger, {
       message: this.language !== "en" ? "还有未保存的修正，要放弃吗？" : "Discard this unsaved correction?",
       confirmLabel: this.language !== "en" ? "放弃修改" : "Discard", cancelLabel: this.language !== "en" ? "继续编辑" : "Keep editing",
       onConfirm: async () => { this.correction = ""; this.preview = null; this.inlineConflict = false; this.state = "editing"; this.finish("cancelled"); done(); }
@@ -322,9 +344,33 @@ export class MemoryCorrectionModal extends Modal {
   private exitInline(): void {
     this.requestLeave(() => { this.finish("cancelled"); this.suspend(); this.inlineOptions.onCancel?.(); });
   }
+  private backSettingsPage(): void {
+    if (this.submitting) return;
+    if (this.pageStep === "preview") this.setSettingsPageStep("editing");
+    else this.exitInline();
+  }
+  private setSettingsPageStep(step: "editing" | "preview"): void {
+    this.pageStep = step;
+    if (!this.settingsPageOptions) return;
+    // Let the settings host capture the previous page's scroll before remounting.
+    this.settingsPageOptions.onNavigate();
+  }
   private renderContent(contentEl: HTMLElement): void {
     const zh = this.language !== "en";
+    const settingsPage = this.settingsPageOptions;
+    const previewPage = !!settingsPage && this.pageStep === "preview";
     contentEl.empty();
+    if (settingsPage) {
+      const page = createSettingsPage(contentEl, {
+        title: previewPage ? (zh ? "预览修正" : "Preview correction") : (zh ? "修正记忆" : "Correct memory"),
+        detail: true,
+        backLabel: previewPage ? (zh ? "修正记忆" : "Correct memory") : settingsPage.backLabel,
+        onBack: () => this.backSettingsPage()
+      });
+      page.addClass("echoink-memory-correction-page");
+      if (settingsPage.unavailable) page.createDiv({ cls: "echoink-memory-correction-status is-error", text: settingsPage.unavailable });
+      contentEl = page.createDiv({ cls: "echoink-memory-correction-page-card" });
+    }
     if (!this.embedded) {
       contentEl.createEl("h2", {
         text: zh
@@ -337,7 +383,8 @@ export class MemoryCorrectionModal extends Modal {
           ? "说明哪里不准确，以及正确内容是什么"
           : "Explain what is inaccurate and what the correct information is"
       });
-
+    }
+    if (!this.embedded || settingsPage) {
       const current = contentEl.createDiv({
         cls: "echoink-memory-correction-card echoink-memory-correction-current"
       });
@@ -349,13 +396,14 @@ export class MemoryCorrectionModal extends Modal {
       this.addReadOnlyField(current, zh ? "正文" : "Content", this.record.content);
       this.addReadOnlyField(
         current,
-        zh ? "何时可能想起" : "When it may be recalled",
+        zh ? (settingsPage ? "召回时机" : "何时可能想起") : "When it may be recalled",
         this.record.recallWhen
       );
     }
 
     const editor = contentEl.createDiv({ cls: "echoink-memory-correction-card echoink-memory-correction-editor" });
-    editor.createDiv({ cls: "echoink-memory-correction-card-title", text: zh ? "你的修正" : "Your correction" });
+    editor.hidden = previewPage;
+    if (!settingsPage) editor.createDiv({ cls: "echoink-memory-correction-card-title", text: zh ? "你的修正" : "Your correction" });
     const label = editor.createEl("label", {
       cls: "echoink-memory-correction-label",
       text: zh ? "修正说明" : "Correction"
@@ -363,7 +411,7 @@ export class MemoryCorrectionModal extends Modal {
     this.textarea = editor.createEl("textarea", {
       cls: "echoink-memory-correction-textarea",
       attr: {
-        rows: "7",
+        rows: settingsPage ? "2" : "7",
         placeholder: zh
           ? "可分多行说明：哪些内容不准确、正确事实是什么、何时需要想起。"
           : "You can use multiple lines to explain what is inaccurate, the correct information, and when it matters.",
@@ -371,15 +419,21 @@ export class MemoryCorrectionModal extends Modal {
       }
     });
     this.textarea.id = this.embedded ? this.inlineInputId : "echoink-memory-correction-input";
+    if (settingsPage) this.textarea.setAttribute("data-echoink-focus-key", "memory-correction:input");
     label.setAttribute("for", this.textarea.id);
     this.textarea.value = this.correction;
+    if (previewPage) {
+      const instruction = contentEl.createDiv({ cls: "echoink-memory-correction-instruction" });
+      instruction.createDiv({ cls: "echoink-memory-correction-card-title", text: zh ? "你的修正" : "Your correction" });
+      instruction.createDiv({ cls: "echoink-memory-correction-field-value", text: this.correction });
+    }
     this.previewEl = contentEl.createDiv({
       cls: "echoink-memory-correction-card echoink-memory-correction-preview is-hidden",
       attr: { role: "region", "aria-label": zh ? "修正后预览" : "Corrected preview" }
     });
-    this.previewBodyEl = this.previewEl.createDiv();
+    this.previewBodyEl = this.previewEl.createDiv({ cls: settingsPage ? "echoink-memory-correction-preview-body" : undefined });
 
-    this.statusEl = editor.createDiv({
+    this.statusEl = (settingsPage ? contentEl : editor).createDiv({
       cls: "echoink-memory-correction-status",
       attr: {
         role: "status",
@@ -390,22 +444,30 @@ export class MemoryCorrectionModal extends Modal {
     const actions = editor.createDiv({ cls: "echoink-memory-correction-actions" });
     if (this.embedded) {
       this.inlineExitButton = createOriginButton(actions, { text: zh ? "取消" : "Cancel", attr: { type: "button" } });
+      if (settingsPage) this.inlineExitButton.setAttribute("data-echoink-focus-key", "memory-correction:cancel");
       this.inlineExitButton.onclick = () => this.exitInline();
-      contentEl.onkeydown = event => { if (event.key === "Escape" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); this.exitInline(); } };
+      this.inlineEl!.onkeydown = event => { if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); if (settingsPage) this.backSettingsPage(); else this.exitInline(); } };
     }
     this.correctButton = createOriginButton(actions, {
       cls: "mod-cta",
       text: zh ? "生成预览" : "Generate preview",
       attr: { type: "button" }
     });
+    if (settingsPage) this.correctButton.setAttribute("data-echoink-focus-key", "memory-correction:generate");
     const previewActions = this.previewEl.createDiv({ cls: "echoink-memory-correction-actions" });
-    this.cancelButton = createOriginButton(previewActions, { text: zh ? "取消" : "Cancel", attr: { type: "button" } });
-    this.cancelButton.onclick = () => { if (!this.saving) { if (this.embedded) this.exitInline(); else this.close(); } };
+    this.cancelButton = createOriginButton(previewActions, { text: settingsPage ? (zh ? "返回修改" : "Back to edit") : zh ? "取消" : "Cancel", attr: { type: "button" } });
+    if (settingsPage) this.cancelButton.setAttribute("data-echoink-focus-key", "memory-correction:edit");
+    this.cancelButton.onclick = () => { if (!this.saving) { if (settingsPage) this.backSettingsPage(); else if (this.embedded) this.exitInline(); else this.close(); } };
     this.saveButton = createOriginButton(previewActions, {
       cls: "mod-cta",
       text: zh ? "确认保存" : "Confirm save",
       attr: { type: "button" }
     });
+    if (settingsPage) this.saveButton.setAttribute("data-echoink-focus-key", "memory-correction:save");
+    if (settingsPage) {
+      const activeActions = previewPage ? previewActions : actions;
+      activeActions.before(this.statusEl);
+    }
     this.textarea.oninput = () => {
       if (this.state === "generating" || this.saving) return;
       this.correction = this.textarea.value;
@@ -435,7 +497,10 @@ export class MemoryCorrectionModal extends Modal {
     };
     this.setStatus(this.statusMessage, this.statusError);
     this.renderState();
-    this.textarea.focus();
+    if (settingsPage) {
+      if (previewPage) this.cancelButton.focus({ preventScroll: true });
+      else this.textarea.focus({ preventScroll: true });
+    } else this.textarea.focus();
   }
 
   onClose(): void {
@@ -474,6 +539,7 @@ export class MemoryCorrectionModal extends Modal {
       this.setStatus(this.language !== "en"
         ? "修正后预览已生成，确认无误后可保存。"
         : "The corrected preview is ready. Review it before saving.");
+      if (this.settingsPageOptions) { this.setStatus(""); this.setSettingsPageStep("preview"); }
     } catch (error) {
       if (
         this.disposed
@@ -548,10 +614,10 @@ export class MemoryCorrectionModal extends Modal {
     if (this.inlineExitButton) this.inlineExitButton.disabled = this.submitting;
     this.cancelButton.disabled = this.saving;
     this.correctButton.disabled = this.saving || this.completed
-      || (!generating && !this.correction.trim());
+      || (!generating && (!this.correction.trim() || !!this.settingsPageOptions?.unavailable));
     this.saveButton.disabled = this.saving
       || this.state !== "preview"
-      || !this.preview || this.inlineConflict || this.completed;
+      || !this.preview || this.inlineConflict || this.completed || !!this.settingsPageOptions?.unavailable;
     this.correctButton.empty();
     if (generating) {
       this.correctButton.createSpan({
@@ -565,7 +631,7 @@ export class MemoryCorrectionModal extends Modal {
     this.saveButton.setText(this.saving
       ? (zh ? "保存中…" : "Saving…")
       : (zh ? "确认保存" : "Confirm save"));
-    if (this.embedded) this.correctButton.toggleClass("mod-cta", !this.preview);
+    if (this.embedded) this.correctButton.toggleClass("mod-cta", !!this.settingsPageOptions || !this.preview);
     this.modalEl.toggleClass("is-generating", generating);
     this.modalEl.toggleClass("is-saving", this.saving);
     this.renderPreview();
@@ -574,18 +640,18 @@ export class MemoryCorrectionModal extends Modal {
   private renderPreview(): void {
     const preview = this.preview;
     this.previewBodyEl.empty();
-    this.previewEl.toggleClass("is-hidden", !preview);
+    this.previewEl.toggleClass("is-hidden", !preview || !!this.settingsPageOptions && this.pageStep !== "preview");
     if (!preview) return;
     const zh = this.language !== "en";
     this.previewBodyEl.createDiv({
       cls: "echoink-memory-correction-card-title",
-      text: zh ? "修正后预览" : "Corrected preview"
+      text: this.settingsPageOptions ? (zh ? "修正后" : "After correction") : zh ? "修正后预览" : "Corrected preview"
     });
     this.addReadOnlyField(this.previewBodyEl, zh ? "标题" : "Title", preview.title);
     this.addReadOnlyField(this.previewBodyEl, zh ? "正文" : "Content", preview.content);
     this.addReadOnlyField(
       this.previewBodyEl,
-      zh ? "何时可能想起" : "When it may be recalled",
+      zh ? (this.settingsPageOptions ? "召回时机" : "何时可能想起") : "When it may be recalled",
       preview.recallWhen
     );
   }

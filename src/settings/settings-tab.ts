@@ -310,7 +310,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private desktopMemory: DesktopMemorySettings | null = null;
   private desktopProfile: UserProfileSettingsController | null = null;
   private desktopProfileOpen = false;
-  private desktopCorrection: { id: string; record: Readonly<PersonalMemoryRecord>; invalidated: boolean; controller: MemoryCorrectionModal } | null = null;
+  private desktopCorrection: { id: string; category: PersonalMemoryCorrectionCategory; invalidated: boolean; controller: MemoryCorrectionModal } | null = null;
   private desktopSelection: { host: HTMLElement; controller: SelectionAnnotationSettingsController | undefined } | null = null;
   private desktopTemplate: { host: HTMLElement; dispose: () => void } | null = null;
   private desktopGenerationTemplates: GenerationTemplatesSection | null = null;
@@ -675,6 +675,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSettingsContent(): void {
+    const correctionScrollSnapshot = this.desktopCorrection ? captureSettingsScrollSnapshot(this.containerEl) : null;
+    if (this.desktopCorrection) this.captureSettingsFocusIntent();
     this.captureModuleInputs();
     this.pdfSettingsPanel?.dispose();
     this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
@@ -696,7 +698,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.captureTabFocusIntent();
     this.captureSettingsFocusIntent();
     const copy = this.copy;
-    const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
+    const settingsScrollSnapshot = correctionScrollSnapshot ?? captureSettingsScrollSnapshot(this.containerEl);
     try {
       this.clearResourceSearchDebounceTimer();
       const titleEl = this.settingsTitleEl;
@@ -791,7 +793,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     } finally {
       const tab = this.activeSettingsTab();
-      const location = JSON.stringify([tab, this.desktopAgents?.isDetail, this.desktopProfileOpen, this.settingsDetail, this.knowledgeMaintenanceSelectedRecord?.recordId ?? null,
+      const location = JSON.stringify([tab, this.desktopAgents?.isDetail, this.desktopProfileOpen, this.settingsDetail, this.desktopCorrection?.controller.settingsPageStep ?? null, this.knowledgeMaintenanceSelectedRecord?.recordId ?? null,
         tab === "resources" || tab === "capabilities" ? this.plugin.settings.resourceManagementTab : null,
         this.desktopRoute?.section ?? null, this.desktopRoute?.capabilityTab ?? null, this.providerPickerOpen, this.inlineEditor?.key ?? null,
         tab === "modules" && !this.settingsDetail ? this.desktopKnowledge?.navigationKey() ?? null : null,
@@ -1161,9 +1163,9 @@ export class CodexSettingTab extends PluginSettingTab {
     appearanceSection.setAttribute("tabindex", "-1");
     const appearanceRow = applySettingsRow(new OriginSetting(Platform.isDesktopApp ? createSettingsGroup(appearanceSection) : appearanceSection)
       .setName(Platform.isDesktopApp ? (zh ? "配色" : "Color theme") : zh ? "外观" : "Appearance")
-      .setDesc(zh
-        ? Platform.isDesktopApp ? "跟随 Obsidian 明暗" : "选择主题颜色，浅色与深色跟随 Obsidian。"
-        : Platform.isDesktopApp ? "Follows Obsidian light and dark modes" : "Choose a color theme. Light and dark modes follow Obsidian."));
+      .setDesc(Platform.isDesktopApp ? "" : zh
+        ? "选择主题颜色，浅色与深色跟随 Obsidian。"
+        : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
     renderCompanionThemeRecommendation(appearanceSection, zh);
     const interfaceSection = createSettingsSection(page, {
@@ -1407,6 +1409,7 @@ export class CodexSettingTab extends PluginSettingTab {
     }
     if (agents.isDetail) { agents.renderDetail(container); return; }
     if (this.desktopProfileOpen) { this.ensureDesktopProfile().render(container); return; }
+    if (this.desktopCorrection) { this.renderDesktopMemoryCorrection(container); return; }
     if (this.settingsDetail === "review-archives" || this.settingsDetail === "review-memory"
       || typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "review-memory-category") {
       this.renderReviewSettings(container); return;
@@ -2521,9 +2524,6 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const records = [...this.currentPersonalMemoryRecords(category.id)];
-    const editing = this.desktopCorrection;
-    if (editing && !records.some(item => item.id === editing.id)
-      && category.kinds.includes(editing.record.kind)) records.unshift(editing.record);
     if (!records.length) {
       createSettingsState(list, zh ? "这一类暂无当前记录。" : "No current records in this category.");
       return;
@@ -2540,12 +2540,12 @@ export class CodexSettingTab extends PluginSettingTab {
         attr: {
           type: "button",
           "aria-label": `${zh ? "修正" : "Correct"} ${record.title}`,
-          "data-echoink-focus-key": `review:memory:${category.id}:correct:${recordIndex}`
+          "data-echoink-focus-key": `review:memory:${category.id}:correct:${Platform.isDesktopApp ? record.id : recordIndex}`
         }
       });
       correct.disabled = this.memoryActionRunning;
       correct.onclick = () => {
-        if (Platform.isDesktopApp) this.openDesktopMemoryCorrection(record);
+        if (Platform.isDesktopApp) this.openDesktopMemoryCorrection(record, category.id);
         else void this.correctPersonalMemoryRecord(record);
       };
       correct.disabled = this.memoryActionRunning || !!this.desktopCorrection && this.desktopCorrection.id !== record.id;
@@ -2585,32 +2585,49 @@ export class CodexSettingTab extends PluginSettingTab {
         text: zh ? "召回时机" : "Recall when"
       });
       recall.createDiv({ cls: "echoink-memory-card-body", text: record.recallWhen });
-      if (Platform.isDesktopApp && this.desktopCorrection?.id === record.id) {
-        correct.hidden = true; forget.disabled = true;
-        if (this.desktopCorrection.invalidated) createSettingsState(row, zh ? "这条记忆已失效，修正文字仍保留在这里。" : "This memory is no longer current. Your correction is retained here.", "error");
-        this.desktopCorrection.controller.mountInline(row.createDiv({ cls: "echoink-memory-inline-editor" }));
-      }
     }
   }
 
-  private openDesktopMemoryCorrection(record: Readonly<PersonalMemoryRecord>): void {
+  private renderDesktopMemoryCorrection(container: HTMLElement): void {
+    const editing = this.desktopCorrection;
+    if (!editing) return;
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const category = personalMemoryCorrectionCategory(editing.category);
+    editing.controller.mountSettingsPage(container, {
+      backLabel: zh ? category.labelZh : category.labelEn,
+      unavailable: editing.invalidated ? (zh ? "这条记忆已失效，无法保存修正；你的文字已保留。" : "This memory is no longer current. Your correction cannot be saved; your text is retained.") : undefined,
+      onNavigate: () => {
+        this.settingsFocusIntent = `explicit:memory-correction:${editing.controller.settingsPageStep === "preview" ? "save" : "input"}`;
+        this.scheduleDisplay();
+      }
+    });
+  }
+
+  private openDesktopMemoryCorrection(record: Readonly<PersonalMemoryRecord>, categoryId: PersonalMemoryCorrectionCategory = "facts"): void {
     if (this.desktopCorrection || this.memoryActionRunning || !this.personalMemoryState) return;
     const zh = this.plugin.settings.settingsLanguage !== "en";
     let expectedRevision = this.personalMemoryState.revision;
     let targetId = record.id;
-    const refreshTarget = async () => {
-      const state = await this.plugin.getEchoInkPersonalMemoryState();
-      this.personalMemoryState = state;
+    const originalIndex = this.currentPersonalMemoryRecords(categoryId).findIndex(item => item.id === record.id);
+    const latestRecord = (state: PersonalMemoryControlState) => {
       let candidate = state.records.find(item => item.id === record.id);
       const seen = new Set<string>();
       while (candidate && candidate.status !== "current" && !seen.has(candidate.id)) {
         seen.add(candidate.id);
         candidate = state.records.find(item => item.supersedes === candidate!.id);
       }
-      const latest = candidate?.status === "current" ? candidate : undefined;
+      return candidate?.status === "current" ? candidate : undefined;
+    };
+    const refreshTarget = async () => {
+      const state = await this.plugin.getEchoInkPersonalMemoryState();
+      this.personalMemoryState = state;
+      const latest = latestRecord(state);
       if (this.desktopCorrection) {
         this.desktopCorrection.invalidated = !latest;
-        if (latest) { this.desktopCorrection.id = latest.id; this.desktopCorrection.record = latest; }
+        if (latest) {
+          this.desktopCorrection.id = latest.id;
+          this.desktopCorrection.controller.updateSettingsRecord({ memoryType: personalMemoryKindLabel(latest.kind, zh), title: latest.title, content: latest.content, recallWhen: latest.recallWhen });
+        }
       }
       this.scheduleDisplay();
       return { state, latest };
@@ -2637,11 +2654,20 @@ export class CodexSettingTab extends PluginSettingTab {
         catch { this.personalMemoryState = null; this.personalMemoryError = zh ? "已保存，暂时读不到新内容" : "Saved; new content is temporarily unavailable"; }
       }
     }, result => {
-      if (this.desktopCorrection?.controller === controller) this.desktopCorrection = null;
+      if (this.desktopCorrection?.controller === controller) {
+        this.desktopCorrection = null;
+        this.settingsDetail = { kind: "review-memory-category", category: categoryId };
+        const records = this.currentPersonalMemoryRecords(categoryId);
+        const latest = this.personalMemoryState ? latestRecord(this.personalMemoryState) : undefined;
+        const target = records.find(item => item.id === latest?.id) ?? records[Math.max(0, Math.min(originalIndex, records.length - 1))];
+        this.settingsFocusIntent = target ? `explicit:review:memory:${categoryId}:correct:${target.id}` : "explicit:settings-detail:back";
+      }
       if (result === "saved") new Notice(zh ? "记忆已保存为新版本" : "Memory saved as a new version");
       this.scheduleDisplay();
     });
-    this.desktopCorrection = { id: record.id, record, invalidated: false, controller }; this.scheduleDisplay();
+    this.desktopCorrection = { id: record.id, category: categoryId, invalidated: false, controller };
+    this.settingsFocusIntent = "explicit:memory-correction:input";
+    this.scheduleDisplay();
   }
 
   private currentPersonalMemoryRecords(
@@ -3273,7 +3299,7 @@ export class CodexSettingTab extends PluginSettingTab {
     );
     const modelSetting = applySettingsRow(new OriginSetting(runGroup)
       .setName(Platform.isDesktopApp ? (zh ? "EchoInk 默认模型" : "EchoInk default model") : (zh ? "EchoInk 当前模型" : "Current EchoInk model"))
-      .setDesc(Platform.isDesktopApp ? (zh ? "所有 Agent 默认使用" : "Default for all Agents") : zh
+      .setDesc(Platform.isDesktopApp ? "" : zh
         ? "普通聊天、/ask、/maintain 与选区翻译共用这个模型。"
         : "Chat, /ask, /maintain, and selection translation share this model.")
       .addOriginDropdown(this.app, (dropdown) => {

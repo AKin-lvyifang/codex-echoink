@@ -18,3 +18,17 @@
 .echoink-memory-correction-inline :is(.echoink-memory-correction-textarea, .echoink-memory-correction-field-value) { width: 100%; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .echoink-memory-correction-inline :is(button, textarea):focus-visible { outline: none; box-shadow: none; background-color: var(--background-modifier-hover); }
 .echoink-memory-correction-inline textarea:focus { outline: none; box-shadow: none; border-color: var(--background-modifier-border); background-color: var(--background-modifier-hover); }
+.echoink-settings-aligned .echoink-memory-correction-page-card { display: grid; gap: 12px; min-width: 0; padding: 14px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-card { min-width: 0; margin: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-card:is([hidden], .is-hidden) { display: none; }
+.echoink-settings-aligned .echoink-memory-correction-page :is(.echoink-memory-correction-card-title, .echoink-memory-correction-label, .echoink-memory-correction-field-label) { display: block; margin: 0; color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .75); font-weight: 400; line-height: 1.55; }
+.echoink-settings-aligned .echoink-memory-correction-page :is(.echoink-memory-correction-editor, .echoink-memory-correction-preview, .echoink-memory-correction-preview-body) { display: grid; gap: 12px; }
+.echoink-settings-aligned .echoink-memory-correction-page :is(.echoink-memory-correction-current, .echoink-memory-correction-instruction, .echoink-memory-correction-field) { display: grid; gap: 6px; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-field { min-width: 0; margin: 0; padding: 0; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-current .echoink-memory-correction-field { grid-template-columns: 52px minmax(0, 1fr); align-items: start; column-gap: 12px; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-field-value { color: var(--text); font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-textarea { display: block; width: 100%; max-width: 100%; height: auto; min-height: 64px; max-height: none; resize: vertical; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--text); background: var(--bg); font: inherit; font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.5; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-actions { margin: 0; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-status { font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-status:empty { display: none; }
+.echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-status.is-error { color: var(--text-error); }

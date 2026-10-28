@@ -31,7 +31,7 @@ export class IPhoneModelPages {
     const render = () => {
       body.replaceChildren(); const current = selectedModel(ctx.host.settings());
       const defaults = settingsGroup(ctx, body, "默认模型");
-      settingsRow(ctx, defaults, current?.model.displayName || current?.model.id || "选择默认模型", { literal: !!current, leading: current ? settingsBrand(ctx, current.provider.providerId) : iphoneIcon(ctx.document, "sparkles"), detail: current ? `${current.provider.name} · 所有 Agent 默认使用` : undefined, action: () => this.defaults() });
+      settingsRow(ctx, defaults, current?.model.displayName || current?.model.id || "选择默认模型", { literal: !!current, leading: current ? settingsBrand(ctx, current.provider.providerId) : iphoneIcon(ctx.document, "sparkles"), detail: current?.provider.name, literalDetail: true, action: () => this.defaults() });
       const providers = settingsGroup(ctx, body, "模型服务");
       for (const provider of ctx.host.settings().apiProviders) settingsRow(ctx, providers, provider.name, {
         literal: true, leading: settingsBrand(ctx, provider.providerId), detail: mobileAvailable(provider) ? `${provider.models.length} 个模型` : unavailable(provider),
