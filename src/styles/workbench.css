@@ -215,7 +215,6 @@
 .echoink-workbench .wb-header.is-weather-condensed .wb-sky-feedback { position: absolute; right: 0; bottom: 8px; max-width: 100%; padding: 0; }
 .echoink-workbench .wb-weather-copy:disabled { cursor: default; opacity: 1; }
 .echoink-workbench .wb-weather-name { display: flex; align-items: baseline; gap: 6px; font-size: calc(var(--font-text-size, 16px) * .75); }
-.echoink-workbench .wb-weather-name em { font: inherit; font-family: Georgia, serif; color: var(--wb-muted); }
 .echoink-workbench .wb-weather-count { font-size: calc(var(--font-text-size, 16px) * .75); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-weather-stage { display: block; flex: 0 0 auto; width: 180px; height: 85px; padding: 0; border: 0; border-radius: 8px; color: var(--wb-text); background: transparent; cursor: grab; touch-action: none; box-shadow: none; overflow: visible; }
 .echoink-workbench .wb-weather-stage:active { cursor: grabbing; }
@@ -242,7 +241,6 @@
 .echoink-workbench .wb-starter-art { height: 120px; flex: 0 0 120px; background: var(--wb-hover); border-radius: 10px; color: var(--wb-text); --bg: var(--wb-hover); }
 .echoink-workbench .wb-starter-art > svg { display: block; width: 100%; height: 100%; }
 .echoink-workbench .wb-starter-card h3 { margin: 0; font-size: inherit; font-weight: 600; line-height: 1.45; }
-.echoink-workbench .wb-starter-chip { align-self: flex-start; font-size: calc(var(--font-text-size, 16px) * .6875); color: var(--wb-secondary); border: 1px solid var(--wb-line); padding: 1px 8px; border-radius: 999px; }
 .echoink-workbench .wb-starter-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-top: auto; }
 .echoink-workbench .wb-starter-pro { position: absolute; top: 22px; right: 22px; font-size: calc(var(--font-text-size, 16px) * .6875); background: var(--wb-bg); border: 1px solid var(--wb-line); border-radius: 4px; padding: 1px 5px; }
 .echoink-workbench .wb-starter-lock { position: absolute; inset: auto 8px 8px; padding: 12px; background: var(--wb-bg); border: 1px solid var(--wb-line); border-radius: 10px; z-index: 20; }

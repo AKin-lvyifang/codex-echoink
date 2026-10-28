@@ -25,9 +25,10 @@
 .echoink-iphone .ip-knowledge-copy { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1 1 100px; }
 .echoink-iphone .ip-knowledge-row-title { font-size: .92em; font-weight: 500; overflow-wrap: anywhere; }
 .echoink-iphone .ip-knowledge-number { max-width: 40%; color: var(--ip-secondary); font-size: .8em; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.echoink-iphone .ip-knowledge-issue-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 8px; border-bottom: 1px solid var(--ip-line); }
-.echoink-iphone .ip-knowledge-issue-row > .ip-knowledge-row { flex: 1 1 180px; width: auto; border: 0; }
-.echoink-iphone .ip-knowledge-issue-row > .ip-button { margin-left: auto; }
+.echoink-iphone .ip-knowledge-issue-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; align-items: center; gap: 0 8px; padding-right: 12px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-knowledge-issue-row > .ip-knowledge-row { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; grid-row: 1; width: auto; border: 0; padding-right: 0; }
+.echoink-iphone .ip-knowledge-issue-row > .ip-knowledge-row > .ip-icon:last-child { grid-column: 3; }
+.echoink-iphone .ip-knowledge-issue-row > .ip-button { grid-column: 2; grid-row: 1; z-index: 1; margin-left: auto; }
 .echoink-iphone .ip-knowledge-region-error, .echoink-iphone .ip-knowledge-feedback[role="alert"] { color: var(--text-error); overflow-wrap: anywhere; line-height: 1.7; }
 .echoink-iphone .ip-knowledge-region-error { grid-column: 1 / -1; margin: 8px 0; font-size: .8em; }
 .echoink-iphone .ip-knowledge-empty { padding: 18px 0; margin: 0; color: var(--ip-secondary); font-size: .88em; }
@@ -45,7 +46,7 @@
 .echoink-iphone .ip-knowledge-group, .echoink-iphone .ip-knowledge-list { min-width: 0; border: 1px solid var(--ip-line); border-radius: 12px; overflow: hidden; }
 .echoink-iphone .ip-knowledge-group > :last-child, .echoink-iphone .ip-knowledge-list > :last-child { border-bottom: 0; }
 .echoink-iphone .ip-knowledge-group > .ip-knowledge-empty, .echoink-iphone .ip-knowledge-group > .ip-knowledge-region-error, .echoink-iphone .ip-knowledge-list > .ip-knowledge-empty, .echoink-iphone .ip-knowledge-list > .ip-knowledge-region-error { padding: 12px 14px; margin: 0; }
-.echoink-iphone .ip-knowledge-issue-row > .ip-button { margin-right: 12px; }
+.echoink-iphone .ip-knowledge-issue-row > .ip-button { margin-right: 0; }
 
 .echoink-iphone .ip-knowledge-section-head > .ip-button { margin-left: auto; }
 .echoink-iphone .ip-knowledge-heat-cell.is-outside { visibility: hidden; }
