@@ -148,10 +148,15 @@ export function refreshViewShellCopy(host: CodexViewShellHost): void {
 /** Keep the same mounted progress and subscription below the real task header. */
 export function moveKnowledgeProgressToTaskDetail(messagesShell: HTMLElement, taskDetail: HTMLElement): void {
   const slot = Array.from(messagesShell.children).find(node => node.classList.contains("echoink-knowledge-activity-slot"));
-  if (slot) taskDetail.append(slot);
+  if (slot) {
+    taskDetail.append(slot);
+    messagesShell.classList.remove("has-knowledge-activity-slot");
+    taskDetail.classList.add("has-knowledge-activity-slot");
+  }
 }
 
 function mountKnowledgeProgress(host: CodexViewShellHost, mount: HTMLElement): void {
+  mount.parentElement?.classList.add("has-knowledge-activity-slot");
   host.knowledgeLinkingProgressDispose?.();
   host.knowledgeLinkingProgressDispose = undefined;
   const source = host.plugin.getKnowledgeActivitySource();

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 806,
+  "total": 732,
   "findings": [
     {
       "fingerprint": "a04af517ad4b5cee766b5e5752b2794f1b23ebee5d76ad66058ee8096f9e5af8",
@@ -157,15 +157,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0d15a25e758e14ec74f426deb2b9be3cbc8540b27b339917058821fce32e4b42",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-roster-item { position: relative; flex: 0 0 auto; border: 0 !important; padding: 4px !important; border-radius: 10px !important; background: transparent !important; box-shadow: none !important; height: auto !important; }",
-      "count": 6
-    },
-    {
       "fingerprint": "3345c88911cef56f177f8b08352d372e36e5e25c6b654e6e9a8cf15c59fabfd3",
       "path": "src/styles/agent-tasks.css",
       "rule": "declaration-no-important",
@@ -182,33 +173,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-agent-tasks [hidden] { display: none !important; }",
       "count": 1
-    },
-    {
-      "fingerprint": "a25f0c053247134be1c859e0e4f33317441007291a13ae19cf07a12da305808f",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-task-card { display: flex !important; flex-direction: column; align-items: stretch !important; width: 100%; height: auto !important; gap: 4px; padding: 10px 12px !important; margin: 0 0 6px; border: 1px solid var(--background-modifier-border) !important; border-radius: 10px !important; background: transparent !important; box-shadow: none !important; text-align: left; color: var(--text-normal); }",
-      "count": 8
-    },
-    {
-      "fingerprint": "dd177d1ac709a4b03a8715d4e3bdfdc7d8c9ec7336861ee8fb11f5dcd5db3492",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-roster-item:hover, .echoink-agent-roster-item:focus-visible, .echoink-agent-roster-item.is-selected, .echoink-task-icon:hover, .echoink-task-icon:focus-visible, .echoink-task-card:hover, .echoink-task-card:focus-visible { background: var(--background-modifier-hover) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 3
-    },
-    {
-      "fingerprint": "df202f9ccf501f90a9b24388c6cfc09c9d1c0d45a38ddcf9334aabdc9787de74",
-      "path": "src/styles/agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-task-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px !important; flex: 0 0 auto; padding: 0 !important; border: 0 !important; box-shadow: none !important; background: transparent !important; color: var(--text-muted); }",
-      "count": 5
     },
     {
       "fingerprint": "fdaa55c985260aecd33f110571138d95361a7c3bcbf65a867be1ea0352273149",
@@ -337,15 +301,6 @@
       "count": 1
     },
     {
-      "fingerprint": "3ac8c448fe4b008e631775173124ad620681f98a9bcaa8fe61bd97b7e76ea8e0",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot=\"button\"]:is(:hover, :active) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
-    },
-    {
       "fingerprint": "49d4721976cf2c23a39b013941acc7cb29c25a1384c95fb16731ab83fbd2c454",
       "path": "src/styles/inline-agent-tasks.css",
       "rule": "declaration-no-important",
@@ -362,15 +317,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; }",
       "count": 2
-    },
-    {
-      "fingerprint": "9aa990a29e315fa81c96906c0df675008898e7504e1999c89daa9bc1f7497a96",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot=\"button\"]:focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
     },
     {
       "fingerprint": "a024794317204744a5d445d62540cf0fa93f0c6a941602f09c9dcf33532aba86",
@@ -398,15 +344,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".has-inline-task .codex-input-wrap > .codex-attachments:not(:has(.echoink-composer-annotation-slot)) { display: none !important; }",
       "count": 1
-    },
-    {
-      "fingerprint": "cb69612a99184a4994b308bd751f58cc70031aa5035eb8fb585b8134d7fbad66",
-      "path": "src/styles/inline-agent-tasks.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks .echoink-inline-task-source button.echoink-inline-task-source-link.echoink-origin-control[data-slot=\"button\"] { min-height: 24px; height: auto; padding: 1px 3px; border: 0 !important; background: transparent; color: var(--text-muted); text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; outline: none !important; box-shadow: none !important; }",
-      "count": 3
     },
     {
       "fingerprint": "fad2d3bbe6b1b98daee0a5c761748b3be9127fc7c59a660d4544790e4a2dd259",
@@ -874,42 +811,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-workbench .wb-header.is-weather-condensed:has(.wb-sky.is-feedback) { padding-bottom: 54px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "4931e404e2539b75699060cb01f785936d77f73024ee770a6bbef0e968fd2c87",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".codex-messages-shell:has(> .echoink-knowledge-activity-slot) { display: flex; flex-direction: column; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "6e900cae99e46e6aab427869542c58f1690b652729af7cbccf29ef911340592d",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".codex-messages-shell:has(> .echoink-knowledge-activity-slot) > .codex-messages { height: auto; flex: 1 1 0; min-height: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "9aafaa862cfbce4b8990ea1c86facf6ef81c396e681de7bc7730673c83e0e2cc",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-task-detail:has(> .echoink-knowledge-activity-slot) > .codex-messages-shell { overflow: hidden; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "cbb999d82052d41aa02756830da60c67dbac56e150858214a9c4bf76e48a067b",
-      "path": "src/styles/workbench.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-task-detail:has(> .echoink-knowledge-activity-slot) { overflow-y: auto; }",
       "count": 1
     },
     {
@@ -1795,15 +1696,6 @@
       "count": 1
     },
     {
-      "fingerprint": "287f79eb26b64a551ac8a1955ded4cc0abf2560845fb45c0f6a8665103bb16a2",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-roster-item { position: relative; flex: 0 0 auto; border: 0 !important; padding: 4px !important; border-radius: 10px !important; background: transparent !important; box-shadow: none !important; height: auto !important; }",
-      "count": 6
-    },
-    {
       "fingerprint": "2ad2963fbd4d7688c60ee742c73112fe06c0a4d1b7fec4b5cc8d1bb541ec098d",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -1993,15 +1885,6 @@
       "count": 2
     },
     {
-      "fingerprint": "4f63839f174b7f8a2e3eba56bb5244f7d6e22f18b5c119cd7c86ec2513e51b4b",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-task-icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px !important; flex: 0 0 auto; padding: 0 !important; border: 0 !important; box-shadow: none !important; background: transparent !important; color: var(--text-muted); }",
-      "count": 5
-    },
-    {
       "fingerprint": "4f699ff37558f8df948892bc70424628e03b8f5da69c50b9b25fdb3aec1100c5",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2101,15 +1984,6 @@
       "count": 41
     },
     {
-      "fingerprint": "5e3507e4c6cc4428713684de1fc1052af375ff852f66403e9473c76dee0a61a2",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-roster-item:hover, .echoink-agent-roster-item:focus-visible, .echoink-agent-roster-item.is-selected, .echoink-task-icon:hover, .echoink-task-icon:focus-visible, .echoink-task-card:hover, .echoink-task-card:focus-visible { background: var(--background-modifier-hover) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 3
-    },
-    {
       "fingerprint": "5fda46b69dca4268852376ff71bc41fb3fcc8440fb11ed48fdcbb82b1c1ac9ac",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2180,15 +2054,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: color-mix(in srgb, var(--interactive-accent) 4%, var(--background-primary)) !important;",
       "count": 1
-    },
-    {
-      "fingerprint": "6a750fc803e64b00e66bc43ab79c8416290e855c272f6de92d5219683da601df",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot=\"button\"]:is(:hover, :active) { background: var(--echoink-control-fill, var(--text-normal)) !important; color: var(--echoink-control-on-fill, var(--background-primary)) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
     },
     {
       "fingerprint": "6c9aab4bf7106debf1e8ced772798c6551e304be03f83230d2acb42c1afaa8ab",
@@ -2605,15 +2470,6 @@
       "count": 1
     },
     {
-      "fingerprint": "aec360af29ffb5ffdaeea1c6d88b31200a5d76185c26f2baba659c7dbea66786",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks .echoink-inline-task-source button.echoink-inline-task-source-link.echoink-origin-control[data-slot=\"button\"] { min-height: 24px; height: auto; padding: 1px 3px; border: 0 !important; background: transparent; color: var(--text-muted); text-align: left; white-space: normal; overflow-wrap: anywhere; font: inherit; outline: none !important; box-shadow: none !important; }",
-      "count": 3
-    },
-    {
       "fingerprint": "b6eef49bd1da68015151fe31abb90e09e7f7505d69c7deeaae33f789972e6269",
       "path": "styles.css",
       "rule": "declaration-no-important",
@@ -2621,15 +2477,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "padding: 3px 8px !important;",
       "count": 1
-    },
-    {
-      "fingerprint": "bbc14e7da2acb84c917b0341f1c4b2f464f34c217829337286a1413396e31bcc",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-agent-tasks button.echoink-inline-task-action.is-primary.echoink-origin-control[data-slot=\"button\"]:focus-visible { background: var(--background-modifier-hover) !important; color: var(--text-normal) !important; outline: none !important; box-shadow: none !important; }",
-      "count": 4
     },
     {
       "fingerprint": "bcf9ff458f7dd55774fbfade1fbe571d9f2acd50dc2dd19bf2798ac54c46545e",
@@ -2810,15 +2657,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "border-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-modifier-border)) !important;",
       "count": 1
-    },
-    {
-      "fingerprint": "dfcfb9e59605c798378312793c8e9b0d7f43a8659d58e441000eeb0fee3f7eb6",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": ".echoink-task-card { display: flex !important; flex-direction: column; align-items: stretch !important; width: 100%; height: auto !important; gap: 4px; padding: 10px 12px !important; margin: 0 0 6px; border: 1px solid var(--background-modifier-border) !important; border-radius: 10px !important; background: transparent !important; box-shadow: none !important; text-align: left; color: var(--text-normal); }",
-      "count": 8
     },
     {
       "fingerprint": "e0979530b8a7c9252bd00a3ce448cc7bb58a3a9a47b9bf4ec22d6a7b18dbc5e7",
@@ -3667,15 +3505,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5e96e512590b798d2932812244936b673e1ad90c3637d1b715cb7e01353bd263",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".codex-messages-shell:has(> .echoink-knowledge-activity-slot) > .codex-messages { height: auto; flex: 1 1 0; min-height: 0; }",
-      "count": 1
-    },
-    {
       "fingerprint": "5eb575f3b89237fc97fe5552edc638cdc4062eec2a6969a0ef7363f75ff77417",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -4054,15 +3883,6 @@
       "count": 1
     },
     {
-      "fingerprint": "c8cd7177bbc95a38f090ba336a0e03db8228bb924fcb3def0d814d999317fcf0",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".codex-messages-shell:has(> .echoink-knowledge-activity-slot) { display: flex; flex-direction: column; }",
-      "count": 1
-    },
-    {
       "fingerprint": "cb20a95a0868cb06833d47c66f41fd97bc64bd859e961ba91fdb61d7e10a899d",
       "path": "styles.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -4087,15 +3907,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch),",
-      "count": 1
-    },
-    {
-      "fingerprint": "d48fecba3666c68f73a77053b8018bd32be6f8418bb758be9c4de732df0692c5",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-task-detail:has(> .echoink-knowledge-activity-slot) { overflow-y: auto; }",
       "count": 1
     },
     {
@@ -4141,15 +3952,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-ipad .pd-knowledge-route:has(:checked) { background: var(--background-modifier-hover); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "deebd37b01a60ac41cec1cd9221b42a0e8e1867d93945697e598476dd6c10074",
-      "path": "styles.css",
-      "rule": "selector-pseudo-class-disallowed-list",
-      "severity": 1,
-      "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
-      "context": ".echoink-task-detail:has(> .echoink-knowledge-activity-slot) > .codex-messages-shell { overflow: hidden; }",
       "count": 1
     },
     {
