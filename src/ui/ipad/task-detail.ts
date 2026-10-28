@@ -1,4 +1,6 @@
 import { taskInterruptionExplanation, interruptionErrorDetail } from "../../agents/task-interruption-copy";
+import { toolCallRecoveryGuidance } from "../../agents/tool-call-recovery";
+import { toolCallTextFailureMessage } from "../../harness/tool-call-text";
 import { mobileReportActions, openMobileRunReport } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon } from "obsidian";
@@ -90,8 +92,11 @@ export function createTaskPage(ctx: IPadPageContext, taskId: string): MobileShel
     const heading = panel?.querySelector<HTMLElement>(".echoink-ipad-title"); if (heading) heading.textContent = page.title;
     const subtitle = panel?.querySelector<HTMLElement>(".echoink-ipad-subtitle"); if (subtitle) subtitle.textContent = page.subtitle;
     messages(task.messages); tail.replaceChildren();
-    const explanation = taskInterruptionExplanation(state.interruption, host.settings().settingsLanguage ?? "zh");
-    const repeatedError = !!explanation && !!state.error && interruptionErrorDetail(state.error) === state.interruption?.detail;
+    const draft = task.draftContext;
+    const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
+    const recovery = toolCallRecoveryGuidance(state.interruption, host.settings().apiProviders, "ipad", selected);
+    const explanation = recovery?.message ?? taskInterruptionExplanation(state.interruption, host.settings().settingsLanguage ?? "zh");
+    const repeatedError = !!explanation && !!state.error && (interruptionErrorDetail(state.error) === state.interruption?.detail || !!recovery && state.error === toolCallTextFailureMessage(state.interruption?.toolCallTextFailure));
     errors.textContent = repeatedError ? "" : state.error; errors.hidden = repeatedError || !state.error;
     if (task.taskStatus === "interrupted" || state.interruption && !state.busy) {
       const box = shellElement(document, "section", "pd-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
@@ -104,7 +109,8 @@ export function createTaskPage(ctx: IPadPageContext, taskId: string): MobileShel
       const actions = shellElement(document, "div", "pd-task-actions");
       const report = iPadAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "ipad", { document, open: config => ctx.shell.openSheet(config) }));
       report.dataset.action = "report-task"; actions.append(report);
-      const resume = iPadAction(ctx, state.resuming ? "准备中…" : "继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("pd-resume-task")); }, undefined, true);
+      report.disabled = !!state.resuming || state.busy;
+      const resume = iPadAction(ctx, state.resuming ? "准备中…" : recovery?.buttonLabel ?? "继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("pd-resume-task")); }, undefined, true);
       resume.dataset.action = "resume-task";
       resume.disabled = !!state.resuming || state.busy; actions.append(resume); box.append(actions); tail.append(box);
     } else if (state.busy && state.interaction?.status !== "pending") {

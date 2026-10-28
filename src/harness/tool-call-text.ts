@@ -3,7 +3,7 @@ export type ToolCallTextFailureCode = "model_tool_call_text_disabled" | "model_t
 
 export function toolCallTextFailureMessage(code: unknown): string | undefined {
   if (code === "model_tool_call_text_disabled") return "模型把工具调用写成了文字，本轮没有执行工具。请在模型服务中开启工具调用。";
-  if (code === "model_tool_call_text_incompatible") return "模型返回了工具调用文本，本轮没有执行工具。请检查代理接口的工具调用兼容性，或更换模型。";
+  if (code === "model_tool_call_text_incompatible") return "模型返回了工具调用文本，本轮没有执行工具。请检查代理接口的工具调用兼容性，或在 设置 → 模型服务 中更换模型。";
   return undefined;
 }
 

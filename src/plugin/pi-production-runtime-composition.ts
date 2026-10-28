@@ -35,7 +35,7 @@ import type { PdfReadingController } from "../pdf-reading/controller";
 import { buildPiSelectionAnnotationContextMessage, PI_SELECTION_CONTEXT_KEY } from "../harness/pi-native/pi-selection-annotations";
 import type { DiscoveredProviderModel } from "../settings/provider-model-discovery";
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
-import { TOOL_CALLING_DISABLED_MESSAGE } from "../harness/tool-call-text";
+import { toolCallingDisabledMessage } from "../agents/tool-call-recovery";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
 import { knowledgeRolePath } from "../knowledge-base/root-paths";
 import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
@@ -2074,7 +2074,7 @@ async function createProductionAgentSession(input: {
     modelSelection: input.input
   });
   const { configured, binding, controlledConfig, provider } = preparedProvider;
-  if (linkingBatch && !configured.toolCalling) throw new Error(TOOL_CALLING_DISABLED_MESSAGE);
+  if (linkingBatch && !configured.toolCalling) throw new Error(toolCallingDisabledMessage("desktop", configured.provider.name, configured.modelRef));
   const productProviderId = normalizeApiProviderId(
     configured.provider.providerId,
     configured.baseUrl,
@@ -2713,6 +2713,7 @@ async function createProductionAgentSession(input: {
     .map((warning) => redactEchoInkLocalSecretsV1(warning));
   return {
     providerSettingsId: configured.provider.id,
+    providerDisplayName: configured.provider.name,
     supportsToolCalling: configured.toolCalling,
     isToolCurrentlyEnabled: (name) => {
       if (!configured.toolCalling) return false;

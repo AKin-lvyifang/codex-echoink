@@ -6,7 +6,7 @@ import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro
 /** The interruption card is UI-only; it never becomes a session message. */
 export function renderTaskInterruption(
   container: HTMLElement,
-  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void; onReport?(): void | Promise<void> }
+  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; explanation?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void; onReport?(): void | Promise<void> }
 ): void {
   disposeOriginControls(container);
   container.replaceChildren();
@@ -16,7 +16,7 @@ export function renderTaskInterruption(
   };
   if (input.userCopy) text("div", "echoink-task-interruption-copy", input.userCopy);
   else if (info) {
-    const explanation = taskInterruptionExplanation(info, input.language);
+    const explanation = input.explanation ?? taskInterruptionExplanation(info, input.language);
     const time = new Date(info.at).toLocaleString(en ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", ...(new Date(info.at).getFullYear() !== new Date().getFullYear() ? { year: "numeric" as const } : {}) });
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
       app_closed: ["关闭 Obsidian 时中断", "interrupted when Obsidian closed"],
@@ -46,6 +46,7 @@ export function renderTaskInterruption(
   if (input.onReport) {
     const report = createOriginButton(actions, { text: en ? "Report a problem" : "上报问题", attr: { type: "button" } });
     applyAmicroButton(report, { variant: "secondary" }); report.dataset.action = "report-task";
+    report.disabled = input.pending;
     report.onclick = event => { event.stopPropagation(); if (report.disabled) return; report.disabled = true; void Promise.resolve().then(() => input.onReport?.()).finally(() => { report.disabled = false; }); };
   }
   const button = createOriginButton(actions, { text: input.pending ? (en ? "Checking…" : "正在核对…") : input.buttonLabel ?? (en ? "Continue" : "继续"), attr: { type: "button" } });

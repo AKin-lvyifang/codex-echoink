@@ -1,3 +1,4 @@
+import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
 import { RunReportModal } from "./run-reports/desktop-ui";
 import { apiVersion as reportObsidianVersion } from "obsidian";
 import { homedir as reportHome } from "node:os";
@@ -1129,6 +1130,11 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   isTaskResuming(taskId: string): boolean { return this.knowledgeBase?.upgrade?.ownsTask(taskId) ? this.knowledgeBase.upgrade.running : this.conversationRunService?.isResuming(taskId) ?? false; }
   getTaskResumeError(taskId: string): string | undefined { return this.conversationRunService?.getResumeError(taskId); }
+  taskToolCallRecovery(taskId: string, info?: TaskInterruptionInfo | null) {
+    const draft = this.settings.taskWorkspace?.replyDrafts[taskId];
+    const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
+    return toolCallRecoveryGuidance(info ?? undefined, this.settings.apiProviders, "desktop", selected);
+  }
   get activeTaskResumeSafety(): ReadonlyMap<string, Readonly<TaskResumeContext>> {
     return this.getConversationRunService().activeResumeContexts;
   }
@@ -1151,6 +1157,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       taskId, at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.settledAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" : "process_unknown"),
       ...(last?.interruption?.retryAttempts ? { retryAttempts: last.interruption.retryAttempts } : {}),
+      ...toolCallFailureInfo(last?.interruption, last?.error),
       stage,
       ...(last?.interruption?.detail ? { detail: last.interruption.detail } : last?.error ? { detail: last.error } : {}),
       uncertainOperations: (safety?.operations ?? []).filter(operation => operation.status === "uncertain").map(operation => ({ id: operation.operationIdentity, label: operation.label }))
@@ -1162,6 +1169,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Only the run service calls this after synchronously taking its resume lease. */
   async prepareTaskResume(taskId: string, message?: string, frozenItem?: QueuedTurnItem, signal?: AbortSignal): Promise<QueuedTurnItem> {
     assertPiSubmissionActive(signal);
+    if (frozenItem && frozenItem.sessionId !== taskId) throw new Error("这份文字和附件不属于当前任务，请重新发送。");
+    if (frozenItem && message !== undefined && message !== frozenItem.text) throw new Error("发送内容与已保存的快照不一致，请重新发送。");
     const reply = this.settings.taskWorkspace?.replyDrafts[taskId];
     const choice = reply ? { providerId: reply.selectedProviderSettingsId, model: reply.selectedModel, permission: reply.selectedPermission, mode: reply.selectedMode } : undefined;
     const local = await this.ensurePiLocalData();
@@ -1181,18 +1190,24 @@ export default class CodexForObsidianPlugin extends Plugin {
     const snapshotInput = { ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), ...(last ? { interruptedRunId: last.productRunId } : {}) };
     const inspected = await readTaskResumeSafety(snapshotInput);
     assertPiSubmissionActive(signal);
+    const failure = toolCallFailureInfo(last.interruption, last.error);
+    const selected = frozenItem ? { providerSettingsId: frozenItem.turnOptions.providerSettingsId, modelId: frozenItem.turnOptions.model }
+      : choice?.providerId && choice.model ? { providerSettingsId: choice.providerId, modelId: choice.model } : undefined;
+    const recoveryTarget = toolCallRecoveryTarget(failure, this.settings.apiProviders, selected);
+    if (recoveryTarget && !this.settings.apiProviders.find(provider => provider.id === recoveryTarget.providerSettingsId)?.models.find(model => model.id === recoveryTarget.modelId)?.toolCalling) {
+      await this.activateApiProviderSettings(settings => { assertPiSubmissionActive(signal); enableTargetToolCalling(settings.apiProviders, recoveryTarget); });
+      assertPiSubmissionActive(signal);
+    }
     let item: QueuedTurnItem;
     if (frozenItem) {
-      if (frozenItem.sessionId !== taskId) throw new Error("这份文字和附件不属于当前任务，请重新发送。");
       item = cloneQueuedTurnItem(frozenItem);
-      if (message !== undefined && message !== frozenItem.text) throw new Error("发送内容与已保存的快照不一致，请重新发送。");
     } else {
-      const providerId = choice?.providerId ?? this.settings.activeApiProviderId;
-      const modelId = choice?.model ?? this.settings.defaultModel;
+      const providerId = recoveryTarget?.providerSettingsId ?? choice?.providerId ?? this.settings.activeApiProviderId;
+      const modelId = recoveryTarget?.modelId ?? choice?.model ?? this.settings.defaultModel;
       const provider = this.settings.apiProviders.find(provider => provider.id === providerId);
       const model = provider && getApiProviderModel(provider, modelId);
       if (!provider || !model) throw new Error("没有可用模型，请先在设置中选择模型。");
-      item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。", attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
+      item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || (failure.toolCallTextFailure ? TOOL_CALL_RESUME_PROMPT : "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
           reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
           permission: choice?.permission ?? this.settings.defaultPermission, mode: choice?.mode ?? "agent", mcpEnabled: true }, clearComposerAfterPiAcceptance: false };
@@ -1210,6 +1225,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     assertPiSubmissionActive(signal);
     if (safety.fileConflicts.length) throw new Error(`文件已被修改，本次没有继续，也不会覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
     const interruption = {
+      ...failure,
       at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.updatedAt ?? entry.updatedAt,
       reason: last?.interruption?.reason ?? (last?.terminalState === "failed" ? "run_failed" as const : "process_unknown" as const),
       stage: last?.interruption?.stage ?? entry.taskStage ?? "",

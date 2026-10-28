@@ -63,7 +63,8 @@ import {
   type PiChatUiViewModel
 } from "./pi-chat-ui-projector";
 import { appendSavedAnswerNote } from "./pi-answer-save";
-import { diagnoseToolCallText, TOOL_CALLING_DISABLED_MESSAGE, toolCallTextFailureMessage } from "../tool-call-text";
+import { diagnoseToolCallText, toolCallTextFailureMessage } from "../tool-call-text";
+import { toolCallingDisabledMessage } from "../../agents/tool-call-recovery";
 import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
 import {
   PiSessionDurabilityError,
@@ -402,6 +403,7 @@ export type PiNativeKnowledgeTurnContext =
     }>;
 
 export interface PiNativeAgentSessionFactoryResult {
+  providerDisplayName?: string;
   supportsToolCalling?: boolean;
   generationInputBudget?: number;
   /** Exact saved Provider used when activation selected the global default. */
@@ -704,6 +706,7 @@ ReadonlySet<string> = new Set<PiNativeFileStoreErrorCode>([
 ]);
 
 interface ActiveConversation {
+  providerDisplayName?: string;
   supportsToolCalling: boolean;
   generationInputBudget?: number;
   lastPersistedLeafId: string | null;
@@ -1575,7 +1578,7 @@ export class PiNativeConversationRuntime {
     if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
     if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
     if (!active.supportsToolCalling && (mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
-      throw new PiNativeConversationRuntimeError("agent_session_invalid", TOOL_CALLING_DISABLED_MESSAGE);
+      throw new PiNativeConversationRuntimeError("agent_session_invalid", toolCallingDisabledMessage("desktop", active.providerDisplayName, active.session.model?.name ?? active.session.model?.id));
     }
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
       throw new PiNativeConversationRuntimeError(
@@ -3321,6 +3324,7 @@ export class PiNativeConversationRuntime {
     ));
     const active: ActiveConversation = {
       supportsToolCalling: created.supportsToolCalling !== false,
+      providerDisplayName: created.providerDisplayName,
       lastPersistedLeafId: opened.restoredActiveLeafId,
       providerSettingsId: created.providerSettingsId ?? options.providerSettingsId,
       catalog,
@@ -3632,7 +3636,9 @@ export class PiNativeConversationRuntime {
       if (toolCallTextFailure) {
         terminalState = "failed";
         promptError = new Error(toolCallTextFailure);
-        execution.interruption = { at: this.now(), reason: "run_failed", stage: "模型回复", detail: "工具未执行" };
+        execution.interruption = { at: this.now(), reason: "run_failed", stage: "模型回复", detail: "工具未执行", toolCallTextFailure,
+          ...(active.providerSettingsId ? { providerSettingsId: active.providerSettingsId } : {}),
+          ...(active.session.model?.id ? { modelId: active.session.model.id } : {}) };
       }
       let maintenanceSummary = execution.commandKind === "maintain" ? maintenanceOutcome(execution, runEntries, terminalState, collectMaintenanceReadPaths(active.sessionManager.getBranch()), active.cwd) : undefined;
       if (maintenanceSummary && tailFailed) (maintenanceSummary.warnings as string[]).push(`最后回复未完成：${safeProductRunErrorCode(promptError, runEntries)}；已确认的内容结果保留。`);

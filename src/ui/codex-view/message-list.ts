@@ -1536,7 +1536,7 @@ export class CodexMessageListRenderer {
     const existing = container.querySelector<HTMLElement>(
       ":scope > .codex-assistant-turn-failure-reason"
     );
-    const text = message.status === "failed"
+    const text = message.status === "failed" && !message.toolCallTextFailure
       ? firstPartyMessageDetail(
         message,
         message.details?.trim() ?? "",

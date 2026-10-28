@@ -349,8 +349,10 @@ export class CodexView extends ItemView {
     this.attachments = draft.attachments.map(attachment => ({ ...attachment })); this.selectedSkill = draft.selectedSkill ?? null;
     clearComposerNoteMentions(this.inputEl);
     for (const mention of draft.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
-    this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? this.plugin.settings.activeApiProviderId;
-    this.selectedModel = draft.selectedModel ?? this.plugin.settings.defaultModel;
+    const page = this.taskNavigation.page;
+    const recovery = page.kind === "detail" ? this.plugin.taskToolCallRecovery?.(page.taskId, this.taskInterruptions.get(page.taskId)?.info) : undefined;
+    this.selectedProviderSettingsId = draft.selectedProviderSettingsId ?? recovery?.target?.providerSettingsId ?? this.plugin.settings.activeApiProviderId;
+    this.selectedModel = draft.selectedModel ?? recovery?.target?.modelId ?? this.plugin.settings.defaultModel;
     this.selectedPermission = draft.selectedPermission ?? this.plugin.settings.defaultPermission;
     this.selectedMode = draft.selectedMode ?? "agent";
     this.renderAttachments(); this.renderToolbar(); this.updateInputPlaceholder();
@@ -405,6 +407,18 @@ export class CodexView extends ItemView {
       rememberPiConversationProjection(this.plugin, projection);
       applyPiConversationProjectionToShell(this.sessionHost(), session, projection);
       this.taskEntries = [...this.taskEntries.filter(entry => entry.conversationId !== taskId), projection.catalog];
+      if (projection.catalog.taskStatus === "interrupted") {
+        const key = `${projection.catalog.taskInterruptedAt ?? 0}:${projection.catalog.taskStage ?? ""}`;
+        try {
+          const info = await this.plugin.readTaskInterruption(taskId);
+          if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+          this.taskInterruptions.set(taskId, { key, info });
+          this.restoreTaskComposerDraft();
+        } catch (error) {
+          if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+          this.taskInterruptions.set(taskId, { key, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
       this.plugin.settings.activeSessionId = taskId;
       this.resetVirtualWindow(); this.virtualListEl.empty();
       this.renderTaskPlanDock(session); this.renderInteractionDock(session);
@@ -488,7 +502,17 @@ export class CodexView extends ItemView {
       record = { key }; this.taskInterruptions.set(id, record);
       const current = record;
       // Opening a task only reads local records. It never starts recovery or a model.
-      void this.plugin.readTaskInterruption(id).then(info => { current.info = info; }).catch(error => {
+      void this.plugin.readTaskInterruption(id).then(info => {
+        current.info = info;
+        const draft = this.plugin.settings.taskWorkspace?.replyDrafts[id];
+        // Loading an old task must not turn the current global default into an explicit choice.
+        if (!this.viewLifecycleAbortController.signal.aborted && this.currentTaskEntry()?.conversationId === id
+          && !draft?.selectedProviderSettingsId && !draft?.selectedModel
+          && this.selectedProviderSettingsId === this.plugin.settings.activeApiProviderId && this.selectedModel === this.plugin.settings.defaultModel) {
+          const target = this.plugin.taskToolCallRecovery?.(id, info)?.target;
+          if (target) { this.selectedProviderSettingsId = target.providerSettingsId; this.selectedModel = target.modelId; this.renderToolbar(); }
+        }
+      }).catch(error => {
         current.error = this.taskText("读取中断记录失败：", "Could not read interruption details: ") + (error instanceof Error ? error.message : String(error));
       }).finally(() => {
         if (this.viewLifecycleAbortController.signal.aborted || this.currentTaskEntry()?.conversationId !== id || this.taskInterruptions.get(id) !== current) return;
@@ -498,7 +522,9 @@ export class CodexView extends ItemView {
       });
     }
     const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
+    const recovery = this.plugin.taskToolCallRecovery?.(id, record.info);
     renderTaskInterruption(element, { info: record.info, error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
+      ...(recovery ? { explanation: recovery.message, buttonLabel: recovery.enable ? this.taskText("开启工具调用并继续", "Enable tools and continue") : this.taskText("继续", "Continue") } : {}),
       pending, language: this.plugin.settings.settingsLanguage, onReport: () => this.openTaskRunReport(id),
       onResume: () => { void this.resumeInterruptedTask(id, false); } });
   }

@@ -197,6 +197,8 @@ export interface ChatMessageApprovalSnapshot {
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
 export interface ChatMessage {
+  /** The durable interruption card owns this failure's visible guidance. */
+  toolCallTextFailure?: import("../harness/tool-call-text").ToolCallTextFailureCode;
   /** A completed planning turn without a structured plan; projected from Pi history. */
   planMissing?: boolean;
   /** Manual save receipt projected from this conversation's durable Pi Session. */

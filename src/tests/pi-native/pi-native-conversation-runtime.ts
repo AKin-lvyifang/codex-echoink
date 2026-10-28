@@ -851,7 +851,7 @@ export async function runCustomToolCallingRuntimeTests(): Promise<void> {
     await withFixture([`tool-text-${scenario}`], async fixture => {
       fixture.configureFactoryTools({ registered: ["note_read"], defaults: ["note_read"], planAllowed: ["note_read"], supportsToolCalling: scenario !== "disabled" });
       const conversationId = `tool-text-${scenario}`;
-      const handle = await fixture.submit({ conversationId, text: "read supplied note", submittedAt: 1 });
+      const handle = await fixture.submit({ conversationId, providerSettingsId: "tool-text-service", modelId: "fixture-model", text: "read supplied note", submittedAt: 1 });
       const session = fixture.latestSession();
       if (scenario === "disabled") assert.deepEqual(session.activeToolSelections.at(-1), []);
       if (scenario === "executed") session.finishTool("real-read", "note_read", { content: [{ type: "text", text: "read result" }] }, false);
@@ -870,6 +870,13 @@ export async function runCustomToolCallingRuntimeTests(): Promise<void> {
       assert.equal((await fixture.productRuns.read(handle.productRunId))?.terminalState, failed ? "failed" : "completed");
       assert.equal(cold.messages.some(message => message.itemType === "error" && /本轮没有执行工具/u.test(message.text)), failed, "cold read restores specific failure");
       if (failed) assert.match(cold.messages.find(message => message.itemType === "assistant")!.details!, /本轮没有执行工具/u);
+      if (failed) {
+        const persisted = await fixture.productRuns.read(handle.productRunId);
+        assert.equal(persisted!.interruption!.toolCallTextFailure, result.error);
+        assert.equal(persisted!.interruption!.providerSettingsId, "tool-text-service");
+        assert.equal(persisted!.interruption!.modelId, "fixture-model");
+        assert.equal(cold.messages.find(message => message.itemType === "assistant")!.toolCallTextFailure, result.error, "the card owns visible failure guidance after reopening");
+      }
       console.log(`PASS tool text runtime: ${scenario}; settlement, original answer and cold projection`);
     });
   }

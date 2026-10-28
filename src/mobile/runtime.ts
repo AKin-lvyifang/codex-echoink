@@ -2,7 +2,9 @@ import { runErrors } from "../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../agents/task-interruption-copy";
 import { bindVaultBodySearchEvents, type KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
 import { Agent, type AgentEvent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
-import { Notice, type App } from "obsidian";
+import { Notice, Platform, type App } from "obsidian";
+import { toolCallRecoveryTarget, toolCallingDisabledMessage, TOOL_CALL_RESUME_PROMPT, type ToolCallRecoveryTarget } from "../agents/tool-call-recovery";
+import { MobileModelConfiguration } from "./model-configuration";
 import { Type } from "typebox";
 import type { CapabilityAccess } from "../membership/types";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
@@ -14,7 +16,7 @@ import { parseMobileWorkbenchSource } from "../home/workbench-source";
 import { MobileStore, newId, newSession, type MobileSession, type MobilePermission } from "./store";
 import { mobileStream, piModel, type MobileRequest, type MobileUsageObserver } from "./transport";
 import { selectedModel, validateMobileProvider, type MobileSettings } from "./settings";
-import { diagnoseToolCallText, TOOL_CALLING_DISABLED_MESSAGE, toolCallTextFailureMessage, type ToolCallTextFailureCode } from "../harness/tool-call-text";
+import { diagnoseToolCallText, toolCallTextFailureMessage, type ToolCallTextFailureCode } from "../harness/tool-call-text";
 import { mobileTools, searchMemories } from "./tools";
 import { createScopedMobileBodySearch, MobileCapabilityPolicy } from "./capability-policy";
 import { prepareMobileTaskContext, interruptedMobileRequestMessages } from "./task-context";
@@ -156,7 +158,7 @@ export class MobileRuntime {
   private interruptRun(run: ActiveTask, reason: MobileInterruptionReason, detail?: string): void {
     if (!run.interruption) {
       run.interruption = { at: Date.now(), reason, stage: run.stage, ...(detail ? { detail } : {}),
-        ...(run.toolCallTextFailure ? { toolCallTextFailure: run.toolCallTextFailure } : {}) };
+        ...(run.toolCallTextFailure ? { toolCallTextFailure: run.toolCallTextFailure, providerSettingsId: run.provider.id, modelId: run.model.id } : {}) };
       if (run.agent) run.frozenMessages = structuredClone(run.promptRecorded
         ? [...run.prefix, ...run.agent.state.messages]
         : this.store.getSession(run.taskId)?.messages ?? []);
@@ -215,13 +217,25 @@ export class MobileRuntime {
     const active = this.runs.get(id);
     if (active?.interruption) { await active.finished.promise; check(); }
     else if (active) { await active.admission.promise; return { taskId: id, queued: false, completion: active.completion.promise }; }
+    const task = this.store.getSession(id), draft = task?.draftContext;
+    if (!task) throw new Error("任务不存在。");
+    if (task.taskStatus !== "interrupted") throw new Error("任务没有中断，无需继续。");
+    const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
+    const target = toolCallRecoveryTarget(task?.interruption, this.settings().apiProviders, selected);
+    if (text?.trim()) {
+      await this.store.updateSession(id, task => { check(); if (task.taskStatus !== "interrupted") throw new Error("任务没有中断，无需继续。"); task.draft = text; });
+      check();
+    }
+    if (target) {
+      await new MobileModelConfiguration(this.settings, this.persistSettings, this.request).enableToolCalling(target);
+      check();
+    }
     let prepared: ReturnType<MobileRuntime["inputFor"]> | undefined, failure: unknown;
     await this.store.update(latest => {
       check(); const task = latest.sessions.find(task => task.id === id); if (!task) throw new Error("任务不存在。");
       if (task.taskStatus !== "interrupted") throw new Error("任务没有中断，无需继续。");
-      if (text?.trim()) task.draft = text;
-      const prompt = task.draft.trim() ? task.draft : "请基于已核实的当前事实继续这项任务，禁止重放旧写入。";
-      try { prepared = this.inputFor(task, prompt); } catch (error) { failure = error; }
+      const prompt = task.draft.trim() ? task.draft : task.interruption?.toolCallTextFailure ? TOOL_CALL_RESUME_PROMPT : "请基于已核实的当前事实继续这项任务，禁止重放旧写入。";
+      try { prepared = this.inputFor(task, prompt, target); } catch (error) { failure = error; }
     });
     check(); if (!prepared) throw failure;
     const { input, policy } = prepared;
@@ -320,20 +334,20 @@ export class MobileRuntime {
     await running.admission.promise;
     return { taskId: id, queued: false, completion: input.completion.promise };
   }
-  private inputFor(session: MobileSession, text: string): { input: TurnInput; policy: MobileCapabilityPolicy } {
+  private inputFor(session: MobileSession, text: string, target?: ToolCallRecoveryTarget): { input: TurnInput; policy: MobileCapabilityPolicy } {
     if (this.blockedAgents.has(session.agentId)) throw new Error("Agent 已停止接收新任务。");
     if (!this.settings().agentRegistry.agents.some(agent => agent.id === session.agentId)) throw new Error("Agent 无效，未创建或受理任务。");
     const draft = session.draftContext;
     if (draft?.attachments.length || draft?.annotations?.length || (draft?.noteMentions?.length ?? 0) > 1) throw new Error("当前移动任务尚不支持附件、标注或多篇笔记引用，原稿已保留。");
     const settings = this.settings(); const fallback = selectedModel(settings);
-    const provider = draft?.selectedProviderSettingsId !== undefined ? settings.apiProviders.find(provider => provider.id === draft.selectedProviderSettingsId)
+    const provider = target ? settings.apiProviders.find(provider => provider.id === target.providerSettingsId) : draft?.selectedProviderSettingsId !== undefined ? settings.apiProviders.find(provider => provider.id === draft.selectedProviderSettingsId)
       : settings.apiProviders.find(provider => provider.id === settings.activeApiProviderId);
     if (!provider) throw new Error(draft?.selectedProviderSettingsId !== undefined ? "已选提供商失效，原稿已保留。" : "请先在设置中添加模型与提供商。");
-    const model = draft?.selectedModel !== undefined ? provider.models.find(model => model.id === draft.selectedModel)
+    const model = target ? provider.models.find(model => model.id === target.modelId) : draft?.selectedModel !== undefined ? provider.models.find(model => model.id === draft.selectedModel)
       : draft?.selectedProviderSettingsId !== undefined ? provider.models.find(model => model.id === provider.defaultModelId) : fallback?.model;
     if (!model) throw new Error(draft?.selectedModel !== undefined ? "已选模型失效，原稿已保留。" : "请先在设置中添加模型与提供商。");
     validateMobileProvider(provider);
-    if (draft?.selectedMode === "plan" && !model.toolCalling) throw new Error(TOOL_CALLING_DISABLED_MESSAGE);
+    if (draft?.selectedMode === "plan" && !model.toolCalling) throw new Error(toolCallingDisabledMessage(Platform?.isTablet ? "ipad" : "iphone", provider.name, model.displayName));
     const requested: MobilePermission = draft?.selectedMode === "plan" ? "read-only" : draft?.selectedPermission === "danger-full-access" ? "full-access" : draft?.selectedPermission ?? this.store.permission;
     const permission: MobilePermission = requested === "read-only" || this.store.permission === "read-only" ? "read-only"
       : requested === "workspace-write" || this.store.permission === "workspace-write" ? "workspace-write" : "full-access";
