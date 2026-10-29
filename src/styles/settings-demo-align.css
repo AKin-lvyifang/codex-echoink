@@ -32,7 +32,7 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
   display: inline-flex; align-items: center; justify-content: flex-start; gap: 7px;
   flex: none; width: auto; min-width: 0; height: auto; min-height: 34px; margin: 0; padding: 8px 13px;
   border: 0; border-radius: 6px; background: transparent; color: var(--secondary); font-size: 13px;
-  transform: none; clip-path: none; box-shadow: none; transition: background-color 150ms, color 150ms;
+  transform: none; box-shadow: none; transition: background-color 150ms, color 150ms;
 }
 .echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::before,
 .echoink-settings-demo.echoink-settings-aligned .codex-settings-tabs button.codex-settings-tab::after { display: none; }
@@ -48,7 +48,7 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header.is-title-hidden,
 .echoink-settings-demo.echoink-settings-aligned .codex-resource-summary {
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
-  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap;
 }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-page { --settings-page-gap: 0px; --settings-intro-content: 16px; --settings-page-title-size: 17px; --settings-tabs-toolbar: 16px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-page-header { margin: 0 0 16px; }

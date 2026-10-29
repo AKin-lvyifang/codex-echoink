@@ -36,7 +36,7 @@
 .echoink-ipad.pd-settings .pd-account-comparison .pd-icon { width: 16px; height: 16px; }
 .echoink-ipad.pd-settings .pd-account-comparison .is-included { color: var(--em-green, var(--interactive-accent)); }
 .echoink-ipad.pd-settings .pd-account-comparison .is-excluded { color: var(--text-faint); }
-.echoink-ipad.pd-settings .pd-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-ipad.pd-settings .pd-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .echoink-ipad.pd-settings .pd-account-plans { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .echoink-ipad.pd-settings .pd-account-plan { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin: 0; padding: 12px 14px 4px; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
 .echoink-ipad.pd-settings .pd-account-plan.is-early { background: var(--pd-account-gold-bg); border-color: color-mix(in srgb, var(--pd-account-gold) 35%, var(--pd-settings-line)); }

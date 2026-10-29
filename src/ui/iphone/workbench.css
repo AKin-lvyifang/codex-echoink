@@ -101,7 +101,7 @@
 @keyframes ip-workbench-spin { to { transform: rotate(360deg); } }
 .echoink-iphone .ip-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .echoink-iphone .ip-task-step { color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); overflow-wrap: anywhere; }
-.echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+.echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: normal 8px; }
 .echoink-iphone .ip-card-actions > .ip-grow { flex-basis: 120px; }
 .echoink-iphone .ip-task-card > .ip-inline-question { padding-top: 8px; border-top: 1px solid var(--ip-line); }
 .echoink-iphone .ip-rows { overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; }

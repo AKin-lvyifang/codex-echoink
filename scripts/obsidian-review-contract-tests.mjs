@@ -82,6 +82,11 @@ check(compareBaseline(createCssBaseline([]), cssBaseline).reductions.length === 
 const cssSentinels = await runCssBehaviorSentinels();
 check(CSS_REVIEW_CONFIG.rules["selector-type-no-unknown"][1].severity === "error", "unknown CSS types are a hard error");
 check(cssSentinels.errors.length === 0, `CSS behavior sentinels pass: ${cssSentinels.errors.join(", ")}`);
+for (const feature of ["css-clip-path", "multicolumn"]) {
+  const hardFeature = { ...cssFinding, rule: "plugin/no-unsupported-browser-features", message: `Unexpected browser feature "${feature}" is only partially supported.` };
+  check(isHardFinding(hardFeature), `${feature} is a cleared hard feature`);
+  assert.throws(() => createCssBaseline([hardFeature])); checks += 1;
+}
 
 for (const rule of [...Object.keys(SOURCE_HARD_RULES), "obsidianmd/platform", "obsidianmd/object-assign", "import/no-extraneous-dependencies", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
   "@typescript-eslint/no-floating-promises", "depend/ban-dependencies", "no-unsanitized/method", "no-unsanitized/property",

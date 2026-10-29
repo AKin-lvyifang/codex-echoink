@@ -198,7 +198,7 @@
 
 /* Home refresh: the content page owns its own breakpoints. */
 .echoink-workbench .wb-page { width: min(1200px, 80cqi, calc(100cqi - 32px)); max-width: none; padding: 28px 0 40px; container: wb-page / inline-size; }
-.echoink-workbench .wb-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto 30px; align-items: end; column-gap: 16px; row-gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-line); margin-bottom: 24px; }
+.echoink-workbench .wb-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto 30px; align-items: end; gap: normal 16px; row-gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-line); margin-bottom: 24px; }
 .echoink-workbench .wb-heading { grid-column: 1; grid-row: 1; display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; min-width: 0; }
 .echoink-workbench .wb-date { margin: 0; white-space: nowrap; }
 .echoink-workbench .wb-header-actions { width: auto; grid-column: 3; grid-row: 2; flex-wrap: nowrap; gap: 6px; margin: 0; }
@@ -266,7 +266,7 @@
   .echoink-workbench .wb-sky-feedback { position: absolute; right: 0; bottom: 8px; max-width: 100%; padding: 0; }
 }
 @container wb-page (max-width: 559px) {
-  .echoink-workbench .wb-header { column-gap: 8px; grid-template-rows: auto auto; }
+  .echoink-workbench .wb-header { gap: 12px 8px; grid-template-rows: auto auto; }
   .echoink-workbench .wb-header-actions { gap: 0; }
   .echoink-workbench .wb-heading { grid-column: 1 / 4; }
   .echoink-workbench .wb-sky { grid-row: 2; }

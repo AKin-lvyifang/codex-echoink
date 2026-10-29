@@ -56,7 +56,7 @@
 .echoink-iphone .ip-todo-toolbar .ip-module-segment { min-width: 56px; }
 .echoink-iphone .ip-todo-toolbar .ip-module-segment .ip-button-visible { white-space: nowrap; }
 .echoink-iphone .ip-todo-project { position: relative; flex: 0 1 140px; min-width: 0; max-width: 100%; margin: 0 0 0 auto; }
-.echoink-iphone .ip-todo-project > .ip-settings-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-iphone .ip-todo-project > .ip-settings-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .echoink-iphone .ip-todo-project > select { width: 100%; }
 .echoink-iphone .ip-todo-more-filters > summary { box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: max-content; min-height: 44px; padding: 10px 0; color: var(--ip-secondary); font-size: .8em; list-style: none; cursor: pointer; }
 .echoink-iphone .ip-todo-more-filters > summary::-webkit-details-marker { display: none; }

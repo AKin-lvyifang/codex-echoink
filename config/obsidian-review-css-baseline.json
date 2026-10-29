@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "stylelint-config-obsidianmd production warnings",
-  "total": 379,
+  "total": 339,
   "findings": [
     {
       "fingerprint": "1207a06152e71ffed5586abe70a1e9db16918db1ae6bc737bac73917a4480589",
@@ -265,24 +265,6 @@
       "count": 1
     },
     {
-      "fingerprint": "2ffb19d75d5c07ac785ec9a392198501e95dc35c0d74b6e9803e3f2e57314cbd",
-      "path": "src/styles/settings-demo-align.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "transform: none; clip-path: none; box-shadow: none; transition: background-color 150ms, color 150ms;",
-      "count": 1
-    },
-    {
-      "fingerprint": "3f02255d48f10cccc1971d8c8bf5d60a44dc0a70288e773822c879fe64dac029",
-      "path": "src/styles/settings-demo-align.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "overflow: hidden; clip-path: inset(50%); white-space: nowrap;",
-      "count": 1
-    },
-    {
       "fingerprint": "2396d546040753ded147882fca9ce50cd90be01cb5793e8a6565164b12cfe99a",
       "path": "src/styles/settings-demo-align.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -418,15 +400,6 @@
       "count": 1
     },
     {
-      "fingerprint": "010387bced96169adf34a0aa5b8d17ee3edbb303948fb1b4206852ccf3c12bc9",
-      "path": "src/styles/user-profile-settings.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-current .echoink-memory-correction-field { grid-template-columns: 52px minmax(0, 1fr); align-items: start; column-gap: 12px; }",
-      "count": 1
-    },
-    {
       "fingerprint": "9fdb4485dd2a3bd96e36d7e307cc7ee89b1fafd44e5240e73c050c7cdcc8c9c3",
       "path": "src/styles/workbench.css",
       "rule": "declaration-no-important",
@@ -452,24 +425,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": ".echoink-workbench *, .echoink-workbench *::before, .echoink-workbench *::after { animation: none !important; transition: none !important; }",
       "count": 2
-    },
-    {
-      "fingerprint": "1592100f6c70aac2e9c195e7565892b8a5e0bd33cefb26d98027802378024577",
-      "path": "src/styles/workbench.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-workbench .wb-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto 30px; align-items: end; column-gap: 16px; row-gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-line); margin-bottom: 24px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "b717edd0df311604dcb42036ca0bbd5d8cab1c556d214971f62f0043d86c857a",
-      "path": "src/styles/workbench.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-workbench .wb-header { column-gap: 8px; grid-template-rows: auto auto; }",
-      "count": 1
     },
     {
       "fingerprint": "325c4b3f8e061113fc6ed8f689dee95a7bf31af1a0c7d6d128a69033c3ccb69c",
@@ -661,39 +616,12 @@
       "count": 2
     },
     {
-      "fingerprint": "22d15c3064669850a00c02bffa88a477d88009436454c9dc66503aa5d31ba001",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-demo .directory-planner{margin:16px 0 20px}.echoink-settings-demo .directory-plan{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}.echoink-settings-demo .directory-plan-heading,.echoink-settings-demo .directory-row{display:grid;grid-template-columns:minmax(0,1fr) 48px 118px;align-items:center;column-gap:12px}.echoink-settings-demo .directory-plan-heading{padding:10px 14px 10px 18px;background:var(--soft);font-size:calc(var(--font-text-size,16px)*0.625);color:var(--muted)}.echoink-settings-demo .directory-plan-heading>span:nth-child(2){text-align:center}.echoink-settings-demo .directory-plan-heading>span:last-child{text-align:right;padding-right:12px}.echoink-settings-demo .directory-item+.directory-item{border-top:1px solid var(--line)}.echoink-settings-demo .directory-row{padding:0 14px 0 0;min-height:58px;transition:background .16s}.echoink-settings-demo .directory-row:hover,.echoink-settings-demo .directory-row:focus-within{background:var(--soft)}.echoink-settings-demo .directory-reveal{min-width:0;width:100%;justify-self:stretch;display:flex;justify-content:flex-start;align-items:center;gap:10px;align-self:stretch;padding:12px 10px 12px 15px;border-radius:0;text-align:left;color:var(--text)}.echoink-settings-demo .directory-chevron{display:flex;color:var(--muted);transition:transform .18s}.echoink-settings-demo .directory-chevron svg{width:12px;height:12px}.echoink-settings-demo .directory-reveal[aria-expanded=true] .directory-chevron{transform:rotate(90deg)}.echoink-settings-demo .directory-icon{display:grid;place-items:center;width:29px;height:29px;border:1px solid var(--line);border-radius:6px;color:var(--accent);background:var(--bg);flex:none}.echoink-settings-demo .directory-icon svg{width:15px;height:15px}.echoink-settings-demo .directory-name{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:calc(var(--font-text-size,16px)*0.75);font-weight:550;min-width:0}.echoink-settings-demo .directory-name small{font-size:calc(var(--font-text-size,16px)*0.625);font-weight:400;color:var(--muted)}.echoink-settings-demo .directory-count{justify-self:center;min-width:24px;padding:3px 6px;border-radius:5px;background:var(--soft);text-align:center;font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--secondary);font-variant-numeric:tabular-nums}.echoink-settings-demo .directory-add{justify-self:end;white-space:nowrap;min-height:30px;padding:5px 9px;font-size:calc(var(--font-text-size,16px)*0.6875);background:var(--bg)}.echoink-settings-demo .directory-add svg{width:13px;height:13px}.echoink-settings-demo .directory-notes{padding:0 18px 8px 46px;max-height:212px;overflow:auto;overscroll-behavior:contain;background:var(--soft)}.echoink-settings-demo .directory-notes[hidden]{display:none}.echoink-settings-demo .directory-purpose,.echoink-settings-demo .directory-none{color:var(--muted);font-size:calc(var(--font-text-size,16px)*0.625);line-height:1.8;padding:9px 0}.echoink-settings-demo .directory-notes>div{display:flex;align-items:center;gap:8px;min-height:32px;border-top:1px solid var(--line);font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--secondary)}.echoink-settings-demo .directory-file-icon{display:flex;flex:none;width:13px;height:13px}.echoink-settings-demo .directory-notes>div>.directory-note-path{min-width:0;overflow-wrap:anywhere;flex:1;padding:6px 0}.echoink-settings-demo .directory-notes .icon-button{width:25px;height:25px;flex:none}.echoink-settings-demo .directory-attachments{display:flex;align-items:center;gap:10px;padding:13px 18px;border-top:1px solid var(--line);font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--muted)}.echoink-settings-demo .directory-attachments strong{font-size:calc(var(--font-text-size,16px)*0.6875);font-weight:500;color:var(--secondary)}.echoink-settings-demo .directory-attachments>span>svg{width:14px;height:14px}.echoink-settings-demo .directory-attachments .settings-help{margin-left:auto}.echoink-settings-demo .directory-summary{display:flex;align-items:flex-start;gap:7px;color:var(--muted);font-size:calc(var(--font-text-size,16px)*0.625);line-height:1.85;margin-top:11px}.echoink-settings-demo .directory-summary>span:first-child{display:flex;flex:none;width:13px;height:13px;margin-top:3px}",
-      "count": 1
-    },
-    {
       "fingerprint": "34a1f3ece92c9bfdef59eec42ee107e6ea80bf738e4fb2b8857b35aa5e6da3e1",
       "path": "src/styles/workspace-settings.css",
       "rule": "plugin/no-unsupported-browser-features",
       "severity": 1,
       "message": "Unexpected browser feature \"css-display-contents\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-detail{display:contents}",
-      "count": 1
-    },
-    {
-      "fingerprint": "5394b8bbc513b7804d793e5d7e25107c42ae6b8b1f8cdc8c0d5621c32fed39a4",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-demo .echoink-obsidian-cli-status.setting-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px}",
-      "count": 1
-    },
-    {
-      "fingerprint": "7de89206ea19d99c00ab701d4cc0bdc367cb5c6f290f2271dc1b1ef073bc3ee1",
-      "path": "src/styles/workspace-settings.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-account.echoink-account .two-columns{display:grid;grid-template-columns:1fr 1fr;gap:18px}.echoink-account.echoink-account .preferences{margin-bottom:18px}.echoink-account.echoink-account .rank-list{display:flex;flex-direction:column;gap:15px}.echoink-account.echoink-account .rank-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;column-gap:9px;row-gap:5px;align-items:center}.echoink-account.echoink-account .rank-icon{width:25px;height:25px;background:var(--raised);border-radius:6px;display:grid;place-items:center;font-size:var(--f10);color:var(--secondary);grid-row:1/3}.echoink-account.echoink-account .rank-title{font-size:var(--f12)}.echoink-account.echoink-account .rank-count{font-size:var(--f10);color:var(--muted);font-variant-numeric:tabular-nums}.echoink-account.echoink-account .rank-bar{height:4px;border-radius:4px;background:var(--raised);grid-column:2/4;overflow:hidden}.echoink-account.echoink-account .rank-bar i{display:block;height:100%;border-radius:4px;background:var(--chart);opacity:.75}.echoink-account.echoink-account .rank-row:nth-child(2) .rank-bar i{opacity:.55}.echoink-account.echoink-account .rank-row:nth-child(3) .rank-bar i{opacity:.38}.echoink-account.echoink-account .assets-panel{margin-bottom:30px}.echoink-account.echoink-account .assets-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.echoink-account.echoink-account .asset{display:flex;align-items:center;gap:11px;text-align:left;border:0;background:transparent;border-radius:6px;padding:5px 3px;min-width:0}.echoink-account.echoink-account .asset:hover{background:var(--active)}.echoink-account.echoink-account .asset>[data-icon]{color:var(--muted);width:26px}.echoink-account.echoink-account .asset svg{width:18px;height:18px}.echoink-account.echoink-account .asset strong{display:block;font-size:var(--f19);font-weight:500;line-height:1.5;font-variant-numeric:tabular-nums}.echoink-account.echoink-account .asset small{color:var(--muted);display:block}.echoink-account.echoink-account .asset .chevron{margin-left:auto;opacity:.5}.echoink-account.echoink-account .asset .chevron svg{width:12px;height:12px}",
       "count": 1
     },
     {
@@ -769,15 +697,6 @@
       "count": 1
     },
     {
-      "fingerprint": "ba381b68c621ebd5a3025d57672f6dc6d1a84e864ac55f9db6dcf5e7ca8143db",
-      "path": "src/ui/ipad/account-pages.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad.pd-settings .pd-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
-      "count": 1
-    },
-    {
       "fingerprint": "503e14b3a03746824dbf83cc1a38d2b4af74315227ab8d4b59976f22bc58ad2b",
       "path": "src/ui/ipad/agent-pane.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -793,15 +712,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": "@media (hover: hover) { .echoink-ipad.pd-settings .pd-cap-skill-row:has(.pd-cap-skill-main:hover) { background: var(--pd-settings-soft); } }",
-      "count": 1
-    },
-    {
-      "fingerprint": "60c7fa7f162cf6c9b70122a5b65b3306e5573fa6ff62eb612235c16cf3585832",
-      "path": "src/ui/ipad/modules.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
       "count": 1
     },
     {
@@ -859,30 +769,12 @@
       "count": 1
     },
     {
-      "fingerprint": "010dea035fbc0af893ad9df2dfeca5029c26c2f2b688968d6193cbaabcc1fb22",
-      "path": "src/ui/ipad/workbench.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad .pd-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }",
-      "count": 1
-    },
-    {
       "fingerprint": "62feb3b133801cab8294a864478bb22b32f0f0cfc41c8b03ba73042971925e54",
       "path": "src/ui/ipad/workbench.css",
       "rule": "selector-pseudo-class-disallowed-list",
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-ipad .echoink-ipad-page:has(> .echoink-ipad-content > .pd-agent-form) > .echoink-ipad-header { border-bottom: 1px solid var(--pd-line); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "b535c30b93534eb3262b71e54f98d5cfb76d8a4c2f6120d20d5f909269b744d6",
-      "path": "src/ui/iphone/account-pages.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
       "count": 1
     },
     {
@@ -931,15 +823,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8774571eb759c5fc604ae1cf08dc02cdc3890db1eb3b31adf021155c0ccc5372",
-      "path": "src/ui/iphone/modules.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-todo-project > .ip-settings-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
-      "count": 1
-    },
-    {
       "fingerprint": "b614f193bc8d09084328bb978a01137a5a273087756bfec83dcb6fd00189bd07",
       "path": "src/ui/iphone/settings.css",
       "rule": "selector-pseudo-class-disallowed-list",
@@ -955,15 +838,6 @@
       "severity": 1,
       "message": "Avoid :has() — it can cause significant performance issues due to broad selector invalidation. (selector-pseudo-class-disallowed-list)",
       "context": ".echoink-iphone .ip-settings-row > .ip-settings-label:not(:has(.ip-settings-name)) { font-size: .92em; font-weight: 500; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "108e006fca577c7f747cbf57d990bea7f653fde540caf7b2dfc2ebd60cd558c2",
-      "path": "src/ui/iphone/workbench.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }",
       "count": 1
     },
     {
@@ -1019,15 +893,6 @@
       "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
       "context": "background: var(--background-modifier-border) !important;",
       "count": 1
-    },
-    {
-      "fingerprint": "1cb65111fa9cbec05640248125e57a5c68ea052fe89caa0965eb3fe80ea8b6b1",
-      "path": "styles.css",
-      "rule": "declaration-no-important",
-      "severity": 1,
-      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead. (declaration-no-important)",
-      "context": "@media(prefers-reduced-motion:reduce){.echoink-home-workspace *,.echoink-home-workspace *:before,.echoink-home-workspace *:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}@media print{.echoink-home-workspace .start-strip,.echoink-home-workspace .heading-right,.echoink-home-workspace .page-footer,.echoink-home-workspace .dialog{display:none}.echoink-home-workspace .home-content{max-width:none;padding:15px}.echoink-home-workspace .bento{break-inside:avoid}}",
-      "count": 3
     },
     {
       "fingerprint": "1ef31ae336201f5b3244c0074fa1acb905b1f9a5c85bbb11204b33171c64d839",
@@ -1723,57 +1588,12 @@
       "count": 2
     },
     {
-      "fingerprint": "0946c18d518853f22adcee288fb4d6264217f99bd430ff6d6df254378e56e554",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-demo .echoink-obsidian-cli-status.setting-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;column-gap:12px}",
-      "count": 1
-    },
-    {
-      "fingerprint": "0a44b8139dcdda8cfe7005a94529346b5a85ea5826308449984750ca88669b0d",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "transform: none; clip-path: none; box-shadow: none; transition: background-color 150ms, color 150ms;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0d8f64c988c0fa42329c1a7ea526885484f0d6a984e765204b6d57ac662707da",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }",
-      "count": 1
-    },
-    {
       "fingerprint": "1080c9a8c14221d8db3e705f6e3e29e15d6f57b9cb1046b04c555130ab5cceb8",
       "path": "styles.css",
       "rule": "plugin/no-unsupported-browser-features",
       "severity": 1,
       "message": "Unexpected browser feature \"text-decoration\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": "text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);",
-      "count": 1
-    },
-    {
-      "fingerprint": "17578523f2e846f8bfe04753943126fa124de50597f94b3548fea83188fc33bb",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "@media(prefers-reduced-motion:reduce){.echoink-home-workspace *,.echoink-home-workspace *:before,.echoink-home-workspace *:after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}@media print{.echoink-home-workspace .start-strip,.echoink-home-workspace .heading-right,.echoink-home-workspace .page-footer,.echoink-home-workspace .dialog{display:none}.echoink-home-workspace .home-content{max-width:none;padding:15px}.echoink-home-workspace .bento{break-inside:avoid}}",
-      "count": 1
-    },
-    {
-      "fingerprint": "190832bdddbe07be2a6d8ae6a6ed953ceed50d717ac061f5411b671df9671e06",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
       "count": 1
     },
     {
@@ -1786,66 +1606,12 @@
       "count": 1
     },
     {
-      "fingerprint": "238898eb349052c0aefc2df231cd92413b433c80e6572247066f8331efbdf4c9",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "clip-path: inset(50%);",
-      "count": 3
-    },
-    {
-      "fingerprint": "2df1357d7cbff2d98605f8dcea68d12b7b3c8d57e483032f00b5423cf9fbf0d9",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad .pd-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "428ead465a9efbb24aad34d803424f708ee4e2b3b230def76a7e2bf1b0e75d4a",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-demo .directory-planner{margin:16px 0 20px}.echoink-settings-demo .directory-plan{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}.echoink-settings-demo .directory-plan-heading,.echoink-settings-demo .directory-row{display:grid;grid-template-columns:minmax(0,1fr) 48px 118px;align-items:center;column-gap:12px}.echoink-settings-demo .directory-plan-heading{padding:10px 14px 10px 18px;background:var(--soft);font-size:calc(var(--font-text-size,16px)*0.625);color:var(--muted)}.echoink-settings-demo .directory-plan-heading>span:nth-child(2){text-align:center}.echoink-settings-demo .directory-plan-heading>span:last-child{text-align:right;padding-right:12px}.echoink-settings-demo .directory-item+.directory-item{border-top:1px solid var(--line)}.echoink-settings-demo .directory-row{padding:0 14px 0 0;min-height:58px;transition:background .16s}.echoink-settings-demo .directory-row:hover,.echoink-settings-demo .directory-row:focus-within{background:var(--soft)}.echoink-settings-demo .directory-reveal{min-width:0;width:100%;justify-self:stretch;display:flex;justify-content:flex-start;align-items:center;gap:10px;align-self:stretch;padding:12px 10px 12px 15px;border-radius:0;text-align:left;color:var(--text)}.echoink-settings-demo .directory-chevron{display:flex;color:var(--muted);transition:transform .18s}.echoink-settings-demo .directory-chevron svg{width:12px;height:12px}.echoink-settings-demo .directory-reveal[aria-expanded=true] .directory-chevron{transform:rotate(90deg)}.echoink-settings-demo .directory-icon{display:grid;place-items:center;width:29px;height:29px;border:1px solid var(--line);border-radius:6px;color:var(--accent);background:var(--bg);flex:none}.echoink-settings-demo .directory-icon svg{width:15px;height:15px}.echoink-settings-demo .directory-name{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:calc(var(--font-text-size,16px)*0.75);font-weight:550;min-width:0}.echoink-settings-demo .directory-name small{font-size:calc(var(--font-text-size,16px)*0.625);font-weight:400;color:var(--muted)}.echoink-settings-demo .directory-count{justify-self:center;min-width:24px;padding:3px 6px;border-radius:5px;background:var(--soft);text-align:center;font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--secondary);font-variant-numeric:tabular-nums}.echoink-settings-demo .directory-add{justify-self:end;white-space:nowrap;min-height:30px;padding:5px 9px;font-size:calc(var(--font-text-size,16px)*0.6875);background:var(--bg)}.echoink-settings-demo .directory-add svg{width:13px;height:13px}.echoink-settings-demo .directory-notes{padding:0 18px 8px 46px;max-height:212px;overflow:auto;overscroll-behavior:contain;background:var(--soft)}.echoink-settings-demo .directory-notes[hidden]{display:none}.echoink-settings-demo .directory-purpose,.echoink-settings-demo .directory-none{color:var(--muted);font-size:calc(var(--font-text-size,16px)*0.625);line-height:1.8;padding:9px 0}.echoink-settings-demo .directory-notes>div{display:flex;align-items:center;gap:8px;min-height:32px;border-top:1px solid var(--line);font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--secondary)}.echoink-settings-demo .directory-file-icon{display:flex;flex:none;width:13px;height:13px}.echoink-settings-demo .directory-notes>div>.directory-note-path{min-width:0;overflow-wrap:anywhere;flex:1;padding:6px 0}.echoink-settings-demo .directory-notes .icon-button{width:25px;height:25px;flex:none}.echoink-settings-demo .directory-attachments{display:flex;align-items:center;gap:10px;padding:13px 18px;border-top:1px solid var(--line);font-size:calc(var(--font-text-size,16px)*0.6875);color:var(--muted)}.echoink-settings-demo .directory-attachments strong{font-size:calc(var(--font-text-size,16px)*0.6875);font-weight:500;color:var(--secondary)}.echoink-settings-demo .directory-attachments>span>svg{width:14px;height:14px}.echoink-settings-demo .directory-attachments .settings-help{margin-left:auto}.echoink-settings-demo .directory-summary{display:flex;align-items:flex-start;gap:7px;color:var(--muted);font-size:calc(var(--font-text-size,16px)*0.625);line-height:1.85;margin-top:11px}.echoink-settings-demo .directory-summary>span:first-child{display:flex;flex:none;width:13px;height:13px;margin-top:3px}",
-      "count": 1
-    },
-    {
-      "fingerprint": "51687615a3310a64f708bc8b1110df9dd839f902e73d25b6f76c41f75e7cc117",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "5d1f0360e1b60f309917303d1fbf502ec67c9079a8b6cdbd0924b390fd6141d2",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-workbench .wb-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-rows: auto 30px; align-items: end; column-gap: 16px; row-gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--wb-line); margin-bottom: 24px; }",
-      "count": 1
-    },
-    {
       "fingerprint": "5d5acf36509c5f4345bd307590ae4ae6385a9ae5a6904554b509cf952759011f",
       "path": "styles.css",
       "rule": "plugin/no-unsupported-browser-features",
       "severity": 1,
       "message": "Unexpected browser feature \"css-display-contents\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-identity { display: contents; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "5dcceb658a85da27a47e53cff4e975a442e1772a0133a333294036fafa28a40a",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "column-gap: 10px;",
       "count": 1
     },
     {
@@ -1858,15 +1624,6 @@
       "count": 1
     },
     {
-      "fingerprint": "5f0f4762b13260bea1d2f5db52b25419731800368356d6784ba1e7cdd63811a6",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-settings-aligned .echoink-memory-correction-page .echoink-memory-correction-current .echoink-memory-correction-field { grid-template-columns: 52px minmax(0, 1fr); align-items: start; column-gap: 12px; }",
-      "count": 1
-    },
-    {
       "fingerprint": "69aec0d7a3f8f41502ca031e05aa398de6f64315b9697b5a2ea65f915e771091",
       "path": "styles.css",
       "rule": "plugin/no-unsupported-browser-features",
@@ -1876,24 +1633,6 @@
       "count": 3
     },
     {
-      "fingerprint": "79b527f47645959d25db0bede035522457b21e62594a85b8e07a7cdad8eeb5da",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "column-gap: 12px;",
-      "count": 1
-    },
-    {
-      "fingerprint": "7ebf1d0b4aa2a4624d06d1828cc76abd37c4902de7c0959f8950a692e21ea761",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "overflow: hidden; clip-path: inset(50%); white-space: nowrap;",
-      "count": 1
-    },
-    {
       "fingerprint": "8e1ada89a9e4d08a8f0488efc3707feaed544851c08c3f7fa83f5c7b8f5fba26",
       "path": "styles.css",
       "rule": "plugin/no-unsupported-browser-features",
@@ -1901,33 +1640,6 @@
       "message": "Unexpected browser feature \"text-decoration\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-diary-mark.is-translation {text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}",
       "count": 2
-    },
-    {
-      "fingerprint": "8e600365c42ea14d606a7551acab59a63701b81074dc034208244e94eb2e0987",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-home-workspace .sr-only { position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "98b141797134922ce81bc87cc44b49c387e4505bb7f896cfc43c9b995f887483",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-iphone .ip-todo-project > .ip-settings-field-label { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "99fefc22b285dce5e2a39c8843beb7693eb4dc1e3d90c7c43ece6b762a3ba597",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-account.echoink-account .two-columns{display:grid;grid-template-columns:1fr 1fr;gap:18px}.echoink-account.echoink-account .preferences{margin-bottom:18px}.echoink-account.echoink-account .rank-list{display:flex;flex-direction:column;gap:15px}.echoink-account.echoink-account .rank-row{display:grid;grid-template-columns:26px minmax(0,1fr) auto;column-gap:9px;row-gap:5px;align-items:center}.echoink-account.echoink-account .rank-icon{width:25px;height:25px;background:var(--raised);border-radius:6px;display:grid;place-items:center;font-size:var(--f10);color:var(--secondary);grid-row:1/3}.echoink-account.echoink-account .rank-title{font-size:var(--f12)}.echoink-account.echoink-account .rank-count{font-size:var(--f10);color:var(--muted);font-variant-numeric:tabular-nums}.echoink-account.echoink-account .rank-bar{height:4px;border-radius:4px;background:var(--raised);grid-column:2/4;overflow:hidden}.echoink-account.echoink-account .rank-bar i{display:block;height:100%;border-radius:4px;background:var(--chart);opacity:.75}.echoink-account.echoink-account .rank-row:nth-child(2) .rank-bar i{opacity:.55}.echoink-account.echoink-account .rank-row:nth-child(3) .rank-bar i{opacity:.38}.echoink-account.echoink-account .assets-panel{margin-bottom:30px}.echoink-account.echoink-account .assets-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px}.echoink-account.echoink-account .asset{display:flex;align-items:center;gap:11px;text-align:left;border:0;background:transparent;border-radius:6px;padding:5px 3px;min-width:0}.echoink-account.echoink-account .asset:hover{background:var(--active)}.echoink-account.echoink-account .asset>[data-icon]{color:var(--muted);width:26px}.echoink-account.echoink-account .asset svg{width:18px;height:18px}.echoink-account.echoink-account .asset strong{display:block;font-size:var(--f19);font-weight:500;line-height:1.5;font-variant-numeric:tabular-nums}.echoink-account.echoink-account .asset small{color:var(--muted);display:block}.echoink-account.echoink-account .asset .chevron{margin-left:auto;opacity:.5}.echoink-account.echoink-account .asset .chevron svg{width:12px;height:12px}",
-      "count": 1
     },
     {
       "fingerprint": "b386bc622d2c0a49b88a9002d95c3bff479216281d8599eff71ef7aebc470afb",
@@ -1948,39 +1660,12 @@
       "count": 1
     },
     {
-      "fingerprint": "c7e0d2d3887e882e0e9fa36d3b641df451dba9efd23ae10304ab39b2353c6fc9",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "@container (max-width: 590px){.echoink-home-workspace .home-content{padding:22px 18px 18px}.echoink-home-workspace .heading-right .date-caption{display:none}.echoink-home-workspace .page-heading{gap:10px}.echoink-home-workspace .logo{height:32px;width:32px;border-radius:8px}.echoink-home-workspace .logo svg{width:19px;height:19px}.echoink-home-workspace .page-identity{gap:9px}.echoink-home-workspace h1{font-size:calc(var(--font-text-size, 16px) * 1.25)}.echoink-home-workspace .eyebrow{font-size:calc(var(--font-text-size, 16px) * 0.5)}.echoink-home-workspace .heading-right{gap:1px}.echoink-home-workspace .start-actions .button{font-size:calc(var(--font-text-size, 16px) * 0.625);padding:7px 9px}.echoink-home-workspace .start-actions kbd{display:none}.echoink-home-workspace .thought-button{font-size:calc(var(--font-text-size, 16px) * 0.625)}.echoink-home-workspace .return-grid{grid-template-columns:minmax(0,1fr)}.echoink-home-workspace .recent-notes{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}.echoink-home-workspace .small-note-list{flex-direction:column}.echoink-home-workspace .small-note+.small-note{border-left:0;border-top:1px solid var(--line)}.echoink-home-workspace .note-feature h3{font-size:calc(var(--font-text-size, 16px) * 1)}.echoink-home-workspace .note-feature p{font-size:calc(var(--font-text-size, 16px) * 0.5625)}.echoink-home-workspace .note-feature{min-height:158px}.echoink-home-workspace .footprint-body{grid-template-columns:145px 1fr}.echoink-home-workspace .footprint-numbers{display:block}.echoink-home-workspace .trace-legend{margin-top:9px;font-size:calc(var(--font-text-size, 16px) * 0.4375);gap:6px}.echoink-home-workspace .footprint-caption{justify-content:space-between}.echoink-home-workspace .footprint-caption>span{display:flex;font-size:calc(var(--font-text-size, 16px) * 0.5)}.echoink-home-workspace .calendar{margin-top:5px;display:grid;grid-template-columns:minmax(0,1fr) 155px;column-gap:17px;padding:13px 14px;position:relative}.echoink-home-workspace .calendar-heading{grid-column:1;grid-row:1}.echoink-home-workspace .month-navigation{grid-column:1;grid-row:2;margin:7px 0}.echoink-home-workspace .calendar-weekdays{grid-column:1;grid-row:3}.echoink-home-workspace .calendar-days{grid-column:1;grid-row:4}.echoink-home-workspace .calendar-days>button{height:24px;min-height:24px}.echoink-home-workspace .calendar-key{grid-column:1;grid-row:5;padding:8px 0 0;font-size:calc(var(--font-text-size, 16px) * 0.4375)}.echoink-home-workspace .calendar-journal{grid-column:2;grid-row:1/6;align-self:stretch;margin:0;padding:16px 13px;border:1px solid var(--line);border-radius:7px;flex-direction:column;align-items:flex-start;justify-content:center;gap:13px;background:#f6f8f2}.echoink-home-workspace .calendar-journal>i{margin:2px 0 0}.echoink-home-workspace .calendar-journal strong{font-size:calc(var(--font-text-size, 16px) * 0.75)}.echoink-home-workspace .calendar-journal small{font-size:calc(var(--font-text-size, 16px) * 0.5625);line-height:1.8;margin-top:5px}.echoink-home-workspace .bento-grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:112px 112px 112px 112px;grid-template-areas:\"wiki outputs\" \"wiki inbox\" \"projects journal\" \"review journal\"}.echoink-home-workspace .bento{padding:13px 14px}.echoink-home-workspace .bento-line{font-size:calc(var(--font-text-size, 16px) * 0.6875)}.echoink-home-workspace .bento-meta{font-size:calc(var(--font-text-size, 16px) * 0.5625)}.echoink-home-workspace .projects .bento-meta{font-size:calc(var(--font-text-size, 16px) * 0.5)}.echoink-home-workspace .wiki-art{transform:scale(.9);top:29px}.echoink-home-workspace .wiki-count{font-size:calc(var(--font-text-size, 16px) * 2.1875)}.echoink-home-workspace .bento-name{font-size:calc(var(--font-text-size, 16px) * 0.75)}.echoink-home-workspace .bento-kicker{font-size:calc(var(--font-text-size, 16px) * 0.5625)}.echoink-home-workspace .bento-name>span{font-size:calc(var(--font-text-size, 16px) * 0.5625)}.echoink-home-workspace .review-score{display:none}.echoink-home-workspace .review .bento-meta{font-size:calc(var(--font-text-size, 16px) * 0.5)}.echoink-home-workspace .journal-date{font-size:calc(var(--font-text-size, 16px) * 1.625)}.echoink-home-workspace .health{font-size:calc(var(--font-text-size, 16px) * 0.5)}.echoink-home-workspace .knowledge-section{margin-top:24px}.echoink-home-workspace .page-footer>div{gap:9px}.echoink-home-workspace .dialog{padding:20px}}",
-      "count": 1
-    },
-    {
-      "fingerprint": "d571868744b7f89cd6bf827613dc20d46d2cea318cc2913a760573eb26e365e2",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-workbench .wb-header { column-gap: 8px; grid-template-rows: auto auto; }",
-      "count": 1
-    },
-    {
       "fingerprint": "d9ffcffc194d5801852f65042e92b905464ce3e883dd55742f7dba79ffc0ea62",
       "path": "styles.css",
       "rule": "plugin/no-unsupported-browser-features",
       "severity": 1,
       "message": "Unexpected browser feature \"css-display-contents\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-settings-aligned .echoink-memory-settings .echoink-dream-options { display: contents; margin: 0; padding: 0; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "dbf09583679c089b84b8c1ce554c5f01481cc1b2404cf85d4aecdec396a499da",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": "column-gap: var(--echoink-settings-space-4);",
       "count": 1
     },
     {
@@ -2000,15 +1685,6 @@
       "message": "Unexpected browser feature \"text-decoration\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
       "context": ".echoink-diary-mark.is-connection {text-decoration:underline dotted;text-decoration-color:var(--muted);text-underline-offset:4px;text-decoration-thickness:1px;}",
       "count": 3
-    },
-    {
-      "fingerprint": "f6310ddf8997ebcee3612ab71fdb333eb57b8ab69ea836a9a98c8cbd7f1f5bd8",
-      "path": "styles.css",
-      "rule": "plugin/no-unsupported-browser-features",
-      "severity": 1,
-      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Chrome 142,144,146,148,150,152,156,158 (plugin/no-unsupported-browser-features)",
-      "context": ".echoink-ipad.pd-settings .pd-account-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }",
-      "count": 1
     },
     {
       "fingerprint": "f840d9724a601c11d5c4e5921cd09987d42f50c653918e41a31bdf36fdcc1de0",

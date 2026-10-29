@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import stylelint from "stylelint";
 import obsidian from "stylelint-config-obsidianmd";
-import { CSS_HARD_RULES } from "./obsidian-review-contract.mjs";
+import { CSS_HARD_RULES, CSS_HARD_FEATURES, isHardCssFeature } from "./obsidian-review-contract.mjs";
 
 // Obsidian 1.11.4 uses Electron 39. Only the four Community CSS rules in
 // scope are selected; the full contents of every production CSS file are read.
@@ -61,7 +61,8 @@ export async function lintProductionCss(rootDir) {
     const lines = fs.readFileSync(file.source, "utf8").split(/\r?\n/u);
     for (const invalid of file.invalidOptionWarnings ?? []) errors.push(`${relative}: ${invalid.text}`);
     for (const warning of file.warnings) {
-      if (warning.severity !== "warning" || !selectedRules.includes(warning.rule)) {
+      if (warning.severity !== "warning" || !selectedRules.includes(warning.rule)
+        || isHardCssFeature({ rule: warning.rule, message: warning.text })) {
         errors.push(`${relative}:${warning.line}:${warning.column} ${warning.rule}: ${warning.text}`);
         continue;
       }
@@ -74,10 +75,16 @@ export async function lintProductionCss(rootDir) {
 }
 
 export async function runCssBehaviorSentinels() {
-  const source = 'article:has(span) { color: red !important; column-gap: 1px; }\nechoink-unknown-type { display: block; }';
+  const source = 'article:has(span) { color: red !important; column-gap: 1px; clip-path: inset(50%); }\nechoink-unknown-type { display: block; }';
   const result = await stylelint.lint({ code: source, codeFilename: "src/css-review-sentinel.css", config: CSS_REVIEW_CONFIG });
   const found = new Set(result.results.flatMap(item => item.warnings.map(warning => warning.rule)));
   const errors = selectedRules.filter(rule => !found.has(rule)).map(rule => `CSS sentinel: ${rule} did not detect its bad sample.`);
+  for (const feature of CSS_HARD_FEATURES) {
+    if (!result.results.some(item => item.warnings.some(warning => warning.text.includes(`feature "${feature}"`)
+      && isHardCssFeature({ rule: warning.rule, message: warning.text })))) {
+      errors.push(`CSS sentinel: ${feature} must reject its bad sample as a hard feature.`);
+    }
+  }
   for (const rule of CSS_HARD_RULES) {
     if (!result.results.some(item => item.warnings.some(warning => warning.rule === rule && warning.severity === "error"))) {
       errors.push(`CSS sentinel: ${rule} must reject its bad sample as an error.`);

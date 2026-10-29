@@ -83,7 +83,7 @@
 .echoink-ipad .pd-todo-range { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; margin: 10px 0; color: var(--text-muted); font-size: .8125em; font-variant-numeric: tabular-nums; }
 .echoink-ipad .pd-todo-toolbar > .pd-todo-project { position: relative; flex: 0 1 170px; max-width: 100%; margin-left: auto; }
 .echoink-ipad .pd-todo-toolbar > .pd-module-segments { flex: none; }
-.echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .echoink-ipad .pd-todo-more-filters > summary { box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: max-content; min-height: 44px; padding: 10px 0; color: var(--text-muted); font-size: .8125em; list-style: none; cursor: pointer; }
 .echoink-ipad .pd-todo-more-filters > summary::-webkit-details-marker { display: none; }
 .echoink-ipad .pd-todo-more-filters > summary .pd-icon svg { width: 16px; height: 16px; }
