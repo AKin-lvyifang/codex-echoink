@@ -11,6 +11,7 @@ installObsidianDom(first.window);
 const second = new JSDOM('<body class="theme-dark"></body>');
 installObsidianDom(second.window);
 for (const owner of [first.window, second.window]) {
+  owner.document.documentElement.style.setProperty("--echoink-companion-theme", "1");
   owner.HTMLElement.prototype.createEl = function (tag: string) {
     const element = this.ownerDocument.createElement(tag);
     this.appendChild(element); return element;
@@ -39,6 +40,9 @@ renderAppearancePicker(detached.body, host, true);
 assert.ok([...detached.body.querySelectorAll("*")].every(element => element.ownerDocument === detached), "detached-document settings retain their owner document");
 renderCompanionThemeRecommendation(detached.body, true);
 assert.ok([...detached.body.querySelectorAll("*")].every(element => element.ownerDocument === detached), "detached-document recommendations retain their owner document");
+const pendingPage = doc.createElement("section");
+renderCompanionThemeRecommendation(pendingPage, true, ".obsidian");
+assert.equal(pendingPage.querySelector<HTMLElement>("[data-echoink-theme-recommendation]")!.hidden, true, "unmounted settings pages know the companion is already loaded");
 const input = (value: string) => doc.querySelector<HTMLInputElement>(`input[value="${value}"]`)!;
 assert.equal(doc.body.dataset.echoinkTheme,"minimal"); assert.equal(host.settings.colorTheme,"manifesto"); assert.ok(input("minimal").checked);
 assert.equal(doc.querySelectorAll('[data-plugin-edition="pro"]').length,2);
@@ -58,6 +62,23 @@ fail = true; input("minimal").click(); await settle(); assert.equal(host.setting
 assert.equal(effectiveEchoInkColorTheme("unknown",access),"minimal"); assert.equal(effectiveEchoInkColorTheme("manifesto",null),"minimal");
 renderCompanionThemeRecommendation(doc.body,true,".obsidian"); assert.equal(doc.querySelector<HTMLAnchorElement>('[data-echoink-theme-recommendation] > a')!.href,"https://echoink.cn/theme");
 doc.documentElement.style.setProperty("--echoink-companion-theme","1"); pro = false; appearance.refresh(); assert.equal(doc.body.dataset.echoinkTheme,"minimal","Installing the companion never grants PRO"); assert.equal(doc.querySelector<HTMLElement>('[data-echoink-theme-recommendation]')!.hidden,true);
+// Missing companion locks every choice, keeps saved preference, and stays per document.
+pro = true; host.settings.colorTheme = "manifesto";
+doc.documentElement.style.removeProperty("--echoink-companion-theme"); appearance.refresh();
+assert.equal(doc.body.dataset.echoinkTheme, "host");
+assert.equal(second.window.document.body.dataset.echoinkTheme, "manifesto");
+assert.ok([...doc.querySelectorAll<HTMLInputElement>("input[type=radio]")].every(i => i.disabled));
+const savesBeforeMissing = saves;
+input("minimal").checked = true; input("minimal").dispatchEvent(new first.window.Event("change", { bubbles: true }));
+assert.equal(host.settings.colorTheme, "manifesto"); assert.equal(saves, savesBeforeMissing);
+assert.ok(doc.querySelector(".echoink-theme-required")?.textContent?.includes("安装配套主题后生效"));
+// Head stylesheet hot replacement is observed without an explicit refresh.
+const themeStyle = doc.head.createEl("style"); themeStyle.textContent = ":root { --echoink-companion-theme: 1; }";
+await settle(); await settle();
+assert.equal(doc.body.dataset.echoinkTheme, "manifesto"); assert.equal(input("minimal").disabled, false);
+themeStyle.remove(); await settle(); await settle();
+assert.equal(doc.body.dataset.echoinkTheme, "host");
+doc.documentElement.style.setProperty("--echoink-companion-theme", "1"); pro = false; appearance.refresh();
 second.window.dispatchEvent(new second.window.Event("pagehide"));
 assert.equal(second.window.document.body.hasAttribute("data-echoink-theme"),false);
 assert.equal(doc.body.dataset.echoinkTheme,"minimal","closing a popout leaves the main document active");

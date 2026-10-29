@@ -19,6 +19,8 @@ async function run() {
   };
   const app = { workspace: { containerEl: document.body, iterateAllLeaves(callback: Function) { callback({ view: { containerEl: secondary.body } }); } } };
   const appearance = new EchoInkAppearance(app as any, () => host.settings.colorTheme, () => host.accountService);
+  document.documentElement.style.setProperty("--echoink-companion-theme", "1");
+  secondary.documentElement.style.setProperty("--echoink-companion-theme", "1");
   appearance.refresh();
   renderAppearancePicker(document.querySelector("#picker")!, host, true);
   // A settings window may render before workspace leaves know about its document.
@@ -26,7 +28,7 @@ async function run() {
   detached.body.classList.add("theme-light");
   const detachedPicker = detached.body.appendChild(detached.createElement("div"));
   renderAppearancePicker(detachedPicker, host, true);
-  assert(detached.body.dataset.echoinkTheme === "minimal", "Rendering registers an otherwise undiscovered settings document");
+  assert(detached.body.dataset.echoinkTheme === "host", "Rendering registers an otherwise undiscovered settings document");
   const manifesto = document.querySelector<HTMLInputElement>('input[value="manifesto"]')!;
   const minimal = document.querySelector<HTMLInputElement>('input[value="minimal"]')!;
   assert(manifesto.getAttribute("aria-label") === "黄白宣言" && minimal.getAttribute("aria-label") === "极简黑白", "Color-only choices retain accessible names");
@@ -36,7 +38,7 @@ async function run() {
   assert(host.saved === "manifesto", "Selection must persist");
   assert(manifesto.checked && !minimal.checked, "Exactly one choice is selected");
   assert(document.body.dataset.echoinkTheme === "manifesto" && secondary.body.dataset.echoinkTheme === "manifesto", "All open windows update");
-  assert(detached.body.dataset.echoinkTheme === "manifesto", "Registered settings documents update even before they belong to a workspace leaf");
+  assert(detached.body.dataset.echoinkTheme === "host", "Registered settings documents update even before they belong to a workspace leaf");
   assert(document.body.classList.contains("theme-dark"), "Theme choice must preserve host appearance mode");
   assert(detached.body.classList.contains("theme-light"), "Detached settings keep their own host appearance mode");
   host.fail = true;
@@ -45,8 +47,9 @@ async function run() {
   assert(host.settings.colorTheme === "manifesto" && manifesto.checked && !minimal.disabled, "Save failure restores selection and enables retry");
   const popup = document.implementation.createHTMLDocument("new window");
   appearance.applyToDocument(popup);
-  assert(popup.body.dataset.echoinkTheme === "manifesto", "New windows inherit current theme");
-  renderCompanionThemeRecommendation(document.body, true);
+  assert(popup.body.dataset.echoinkTheme === "host", "New windows inherit current theme");
+  document.documentElement.style.removeProperty("--echoink-companion-theme");
+  renderCompanionThemeRecommendation(document.body, true, ".obsidian");
   const recommendation = document.querySelector<HTMLElement>("[data-echoink-theme-recommendation]")!;
   assert(!recommendation.hidden, "Recommendation appears without companion CSS");
   document.documentElement.style.setProperty("--echoink-companion-theme", "1"); appearance.refresh();

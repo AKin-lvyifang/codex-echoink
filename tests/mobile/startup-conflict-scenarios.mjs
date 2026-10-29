@@ -64,7 +64,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
         assert.equal(plugin.settings.colorTheme,"minimal");
         assert.equal(f.saved.colorTheme,"minimal","startup persists migration even when folder bindings already exist");
         assert.equal(f.saved.settingsLanguage,"en","migration preserves unrelated settings");
-        assert.equal(dom.window.document.body.dataset.echoinkTheme,"minimal","appearance is applied before any view opens");
+        assert.equal(dom.window.document.body.dataset.echoinkTheme,"host","host appearance is applied before any view opens");
       } finally { await close(plugin); }
       assert.equal(dom.window.document.body.hasAttribute("data-echoink-theme"),false,"unload restores the standalone theme default");
     });
@@ -72,6 +72,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
   for (const tablet of [false,true]) for (const theme of ["highlighter","manifesto"]) {
     await test(`production PRO appearance preference survives fallback and entitlement restoration: ${tablet ? "iPad" : "iPhone"}/${theme}`, async () => {
       const { f } = await seed(tablet); f.saved = { ...f.saved, colorTheme: theme };
+      dom.window.document.documentElement.style.setProperty("--echoink-companion-theme", "1");
       const plugin = f.create();
       try {
         await plugin.onload();
@@ -82,7 +83,12 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
           account.checkCapability = () => false; account.emit(); assert.equal(dom.window.document.body.dataset.echoinkTheme,"minimal");
           assert.equal(plugin.settings.colorTheme,theme); assert.equal(f.saved.colorTheme,theme);
           account.checkCapability = () => true; account.emit(); assert.equal(dom.window.document.body.dataset.echoinkTheme,theme);
-        } finally { account.checkCapability = original; }
+          dom.window.document.documentElement.style.removeProperty("--echoink-companion-theme");
+          dom.window.dispatchEvent(new dom.window.Event("pageshow"));
+          await new Promise(resolve => setTimeout(resolve, 0));
+          assert.equal(dom.window.document.body.dataset.echoinkTheme,"host");
+          assert.equal(plugin.settings.colorTheme,theme); assert.equal(f.saved.colorTheme,theme);
+        } finally { account.checkCapability = original; dom.window.document.documentElement.style.removeProperty("--echoink-companion-theme"); }
       } finally { await close(plugin); }
     });
   }

@@ -1,6 +1,6 @@
 import { ownedDiv, ownedEl } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
-import { ECHOINK_COLOR_THEMES, ECHOINK_APPEARANCE_REFRESH, effectiveEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
+import { readCompanionTheme, ECHOINK_COLOR_THEMES, ECHOINK_APPEARANCE_REFRESH, effectiveEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { decorateProAppearanceChoice } from "../ui/appearance-pro";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
@@ -58,21 +58,23 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
     options.appendChild(label);
     inputs.push(input);
     if (theme.id !== "minimal") locks.push(decorateProAppearanceChoice(label, options, {
-      zh, allowed: hasPro, blocked: () => sync(), upgrade: () => { void host.openEchoInkAccountSettings?.("benefits"); }
+      zh, enabled: () => readCompanionTheme(doc).active, allowed: hasPro, blocked: () => sync(), upgrade: () => { void host.openEchoInkAccountSettings?.("benefits"); }
     }));
     input.addEventListener("change", () => {
       if (input.checked) void select(theme.id, input);
     });
   }
   const sync = () => {
+    const active = readCompanionTheme(doc).active;
+    options.disabled = busy || !active;
     const effective = effectiveEchoInkColorTheme(host.settings.colorTheme, host.accountService);
-    for (const input of inputs) { input.checked = input.value === effective; input.disabled = busy; input.setAttribute("aria-disabled", String(input.value !== "minimal" && !hasPro())); }
+    for (const input of inputs) { input.checked = input.value === effective; input.disabled = busy || !active; input.setAttribute("aria-disabled", String(!active || input.value !== "minimal" && !hasPro())); }
     locks.forEach(update => update());
   };
   picker.addEventListener(ECHOINK_APPEARANCE_REFRESH, sync); sync();
 
   async function select(theme: EchoInkColorTheme, selected: HTMLInputElement): Promise<void> {
-    if (busy || theme !== "minimal" && !hasPro()) { sync(); return; }
+    if (!readCompanionTheme(doc).active || busy || theme !== "minimal" && !hasPro()) { sync(); return; }
     if (host.settings.colorTheme === theme) { sync(); return; }
     const previous = host.settings.colorTheme;
     busy = true; sync();

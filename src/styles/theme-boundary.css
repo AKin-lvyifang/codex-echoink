@@ -1,3 +1,5 @@
+/* Typography and control geometry remain stable in both modes. Only color
+   isolation is conditional on the companion stylesheet. */
 /* Semantic host defaults, taken from the unmodified Obsidian stylesheet.
    EchoInk's minimal/highlighter/manifesto page mappings still own their page colors.
    These declarations stop theme tokens changing otherwise unstyled controls;
@@ -10,9 +12,7 @@
   /* `inherit` on a custom property would inherit the theme's heading token.
      `initial` makes the heading's var() invalid so its font/color inherit,
      exactly as the original host's unset heading token did. */
-  --h1-color:initial;--h2-color:initial;--h3-color:initial;--h4-color:initial;--h5-color:initial;--h6-color:initial;
   --h1-font:initial;--h2-font:initial;--h3-font:initial;--h4-font:initial;--h5-font:initial;--h6-font:initial;
-  --bold-color:initial;--italic-color:initial;--strong-color:initial;--em-color:initial;
   --h1-size:1.618em;--h2-size:1.462em;--h3-size:1.318em;--h4-size:1.188em;--h5-size:1.076em;--h6-size:1em;
   --h1-letter-spacing:-.015em;--h2-letter-spacing:-.011em;--h3-letter-spacing:-.008em;--h4-letter-spacing:-.005em;--h5-letter-spacing:-.002em;--h6-letter-spacing:0em;
   --h1-line-height:1.2;--h2-line-height:1.2;--h3-line-height:1.3;--h4-line-height:1.4;--h5-line-height:1.5;--h6-line-height:1.5;
@@ -27,16 +27,24 @@
   --font-monospace:var(--font-monospace-override),var(--font-monospace-theme),var(--font-monospace-default);
   --font-ui-smaller:12px;--font-ui-small:13px;--font-ui-medium:15px;--font-ui-large:20px;
   /* These aliases originally resolve on body, before page color mappings.
-     Keep those resolved host defaults instead of recomputing with page tokens. */
-  --menu-background:#f6f6f6;--menu-border-color:#dadada;--menu-radius:var(--radius-m);--menu-shadow:var(--shadow-s);
-  --modal-background:#fff;--modal-border-color:#dadada;--modal-radius:var(--radius-l);--modal-shadow:none;
-  --dropdown-background:#fff;--dropdown-background-hover:#fafafa;
-  --input-placeholder-color:#ababab;
-  --echoink-host-macos-control-bg:#e4e4e4;
-  --tooltip-background:color-mix(in oklch,black 90%,transparent);--tooltip-color:#fafafa;--tooltip-radius:var(--radius-l);--tooltip-shadow:var(--shadow-s);
+     Keep those resolved host defaults instead of recomputing with page tokens. */--menu-radius:var(--radius-m);--modal-radius:var(--radius-l);--tooltip-radius:var(--radius-l);
   --radius-s:4px;--radius-m:8px;--radius-l:12px;--radius-xl:24px;
   --input-height:30px;--input-radius:5px;--input-border-width:1px;
   --input-border-width-focus:2px;
+}
+:where(body:not(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+    .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
+    .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
+    .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {
+  --h1-color:initial;--h2-color:initial;--h3-color:initial;--h4-color:initial;--h5-color:initial;--h6-color:initial;
+  --bold-color:initial;--italic-color:initial;--strong-color:initial;--em-color:initial;
+  --menu-background:#f6f6f6;--menu-border-color:#dadada;--menu-shadow:var(--shadow-s);
+  --modal-background:#fff;--modal-border-color:#dadada;--modal-shadow:none;
+  --dropdown-background:#fff;--dropdown-background-hover:#fafafa;
+  --input-placeholder-color:#ababab;
+  --echoink-host-macos-control-bg:#e4e4e4;
+  --tooltip-background:color-mix(in oklch,black 90%,transparent);--tooltip-color:#fafafa;--tooltip-shadow:var(--shadow-s);
   --color-base-00:#fff;--color-base-05:#fcfcfc;--color-base-10:#fafafa;
   --color-base-20:#f6f6f6;--color-base-25:#efefef;--color-base-30:#e4e4e4;
   --color-base-35:#dadada;--color-base-40:#bdbdbd;--color-base-50:#ababab;
@@ -77,7 +85,7 @@
   body:not(.is-mobile) .codex-review-preview,body:not(.is-mobile) .echoink-journal-template-modal,body:not(.is-mobile) .echoink-todo-form-modal,
   body:not(.is-mobile) .echoink-diary-modal,body:not(.is-mobile) .echoink-finance-dialog,body:not(.is-mobile) .echoink-account-modal,
   body:not(.is-mobile) .echoink-onboarding-coachmark) {font-family:var(--font-interface)}
-.theme-dark:not(:where(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+.theme-dark:not(:where(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
@@ -110,26 +118,31 @@
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
-    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m)}
+.mod-macos:not(:where(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+    .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
+    .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
+    .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
+    .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
 /* Both navigation levels keep their original background, accent, padding,
    corners, and active underline. The resource tabs had no shadow declaration. */
-.echoink-settings-demo.echoink-settings-demo :is(.codex-settings-tab,.codex-resource-tab) {
+.echoink-settings-demo.echoink-settings-demo:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.codex-settings-tab,.codex-resource-tab) {
   box-shadow:none;
 }
 
 /* The conversation itself stays transparent; its owned view supplies the same
    default host background instead of exposing the third-party leaf color. */
-.echoink-chat-surface,.codex-review-preview{background:var(--background-primary)}
+.echoink-chat-surface:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *),.codex-review-preview:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *){background:var(--background-primary)}
 /* This search wrapper is the real picker field, not a whole setting row. */
-.modal.echoink-knowledge-note-picker .picker-search:focus-within{border-color:var(--line);box-shadow:none}
+.modal.echoink-knowledge-note-picker:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) .picker-search:focus-within{border-color:var(--line);box-shadow:none}
 /* Owned UI image primitives only: keep existing avatar clipping/rounding and
    finance icon size/object-fit. Markdown images and report iframes are outside
    these selectors, as are images belonging to the host or another plugin. */
-:where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
+:where(body:not(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
 :where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-profile-avatar) img {border-radius:0}
 
 /* The approved PRO identity is black/gold on both mobile page roots. */
-:is(.echoink-iphone, .echoink-ipad) {
+:is(.echoink-iphone, .echoink-ipad):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {
   --echoink-pro-badge-text: #f3d995;
   --echoink-pro-badge-background: #1f1b13;
   --echoink-pro-badge-border: #786334;

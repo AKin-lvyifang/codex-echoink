@@ -169,6 +169,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       void this.runtime.shutdown(reason).catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
     };
     const foreground = () => {
+      this.applyAppearanceTheme();
       this.workbench?.invalidate();
       this.archiveMobileTasks();
       void this.runtime.foreground().catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));

@@ -1,6 +1,6 @@
 import { attachNativeTooltip } from "../native-tooltip";
 import { Notice } from "obsidian";
-import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
+import { documentEchoInkColorTheme, readCompanionTheme, effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
 import { decorateProAppearanceChoice } from "../appearance-pro";
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
@@ -81,7 +81,7 @@ export class IPadSettings {
   }
   private refresh(): void {
     if (this.disposed) return;
-    this.root.ownerDocument.body.setAttribute("data-echoink-theme", effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService));
+    this.root.ownerDocument.body.setAttribute("data-echoink-theme", documentEchoInkColorTheme(this.root.ownerDocument, this.host.settings().colorTheme, this.host.accountService));
     for (const [id, , label] of CATEGORIES) {
       const text = this.root.querySelector(`[data-category-id="${id}"] .echoink-ipad-settings-category-label`); if (text) text.textContent = t(this.context, label);
     }
@@ -105,7 +105,7 @@ export class IPadSettings {
     const ctx = this.context, content = settingsContent(ctx); let signature = "", busy = false;
     const render = () => {
       if (busy) return;
-      const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
+      const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([readCompanionTheme(this.root.ownerDocument).active, hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
       if (key === signature) return; signature = key; content.replaceChildren();
       const appearance = settingsGroup(ctx, content, t(ctx, "外观")), row = settingsRow(ctx, appearance, t(ctx, "配色"));
       const track = el(ctx.document, "div", "pd-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", t(ctx, "配色"));
@@ -113,14 +113,14 @@ export class IPadSettings {
       track.classList.add("echoink-appearance-pro-surface");
       track.append(el(ctx.document, "span", "pd-settings-segment-thumb"));
       for (const { id: value, zh: label } of ECHOINK_COLOR_THEMES) {
-        const button = el(ctx.document, "button", "pd-settings-segment", t(ctx, label)); button.type = "button";
+        const button = el(ctx.document, "button", "pd-settings-segment", t(ctx, label)); button.type = "button"; button.disabled = !readCompanionTheme(this.root.ownerDocument).active;
         button.setAttribute("aria-pressed", String(track.dataset.value === value));
-        button.addEventListener("click", () => { if (busy || value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService) === value) return; busy = true;
+        button.addEventListener("click", () => { if (!readCompanionTheme(this.root.ownerDocument).active || busy || value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(this.host.settings().colorTheme, this.host.accountService) === value) return; busy = true;
           track.dataset.value = value;
-          this.root.ownerDocument.body.setAttribute("data-echoink-theme", effectiveEchoInkColorTheme(value, this.host.accountService));
+          this.root.ownerDocument.body.setAttribute("data-echoink-theme", documentEchoInkColorTheme(this.root.ownerDocument, value, this.host.accountService));
           content.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>("button,input,select").forEach(control => { control.disabled = true; });
           track.querySelectorAll("button").forEach(control => { control.setAttribute("aria-pressed", String(control === button)); });
-          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
+          void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", enabled: () => readCompanionTheme(this.root.ownerDocument).active, allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
       }
       row.classList.add("has-segments"); row.append(track);
       renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en", this.host.app.vault.configDir);
