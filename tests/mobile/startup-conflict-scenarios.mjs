@@ -32,7 +32,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
         if (["@codemirror/state", "@codemirror/view", "@codemirror/commands"].includes(id)) return editorRequire(id);
         assert.equal(id, "obsidian");
         return { Platform: { isMobileApp: true, isMobile: !tablet, isTablet: tablet }, Plugin,
-          ItemView: class {}, Component: class {}, Modal: class {}, TFile: FixtureTFile,
+          ItemView: class {}, Component: class {}, Modal: class {}, TFile: FixtureTFile, TFolder: class {},
           Notice: class { constructor(message) { notices.push(String(message)); } }, requestUrl() { throw new Error("unexpected startup Provider request"); } };
       }
     });
