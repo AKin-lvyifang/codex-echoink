@@ -203,7 +203,7 @@ function mergeBuiltinSkillSnapshots(
         resourceId: snapshot.id,
         builtin: snapshot.source !== "user",
         contentSource: snapshot.source ?? "builtin",
-        ...(snapshot.source === "official-remote" ? { tier: "pro", compareUrl: snapshot.compareUrl ?? null, remoteVersion: snapshot.remoteVersion ?? "" } : {}),
+        ...(snapshot.source === "official-remote" ? { tier: "pro", compareUrl: snapshot.compareUrl ?? null, remoteVersion: snapshot.remoteVersion ?? "", remoteCatalog: snapshot.remoteCatalog ?? null } : {}),
         userModified: snapshot.userModified,
         fileStatus: snapshot.fileStatus,
         lifecycleStatus: snapshot.lifecycleStatus,

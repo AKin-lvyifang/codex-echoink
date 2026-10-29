@@ -8,6 +8,7 @@ export interface MobileSkillSummary {
   agentsVersion: string;
   usageCount?: number; lastUsedAt?: number | null;
   remote?: boolean; locked?: boolean; readonly?: boolean; compareUrl?: string | null; contentVersion?: string;
+  deliveryStatus?: string;
 }
 export interface MobileSkillSnapshot extends MobileSkillSummary { content: string; version: string }
 export type MobileMcpStatus = "missing" | "configured" | "connected" | "failed" | "desktop-only" | "credential-required";
@@ -24,6 +25,7 @@ export interface MobileMcpDraft {
 }
 export interface MobileTavilySnapshot extends TavilySettings { version: string }
 export interface MobileCapabilitiesPort {
+  subscribeSkillDelivery?(listener: () => void): () => void;
   listSkills(): Promise<MobileSkillSummary[]>;
   readSkill(id: string): Promise<MobileSkillSnapshot>;
   setSkillEnabled(id: string, enabled: boolean): Promise<MobileSkillSummary>;

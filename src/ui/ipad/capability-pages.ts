@@ -1,7 +1,4 @@
-import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
-import { attachNativeTooltip } from "../native-tooltip";
-import { shellIconButton } from "../mobile/shell-controls";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -54,7 +51,8 @@ function resourcePage<T>(ctx: IPadSettingsContext, id: string, title: string, lo
       content.append(settingsAction(ctx, "重试", () => { key = undefined; refresh(); }));
     }).finally(() => { if (!disposed && generation === ticket) content.setAttribute("aria-busy", "false"); });
   };
-  return liveSettingsPage(ctx, { id, title, content, dispose: () => { disposed = true; generation++; } }, refresh);
+  const unsubscribe = capabilities(ctx).subscribeSkillDelivery?.(() => { key = undefined; refresh(); });
+  return liveSettingsPage(ctx, { id, title, content, dispose: () => { disposed = true; generation++; unsubscribe?.(); } }, refresh);
 }
 
 export function createCapabilityPage(ctx: IPadSettingsContext, editAgent: EditAgent): MobileShellPage {
@@ -95,6 +93,7 @@ function createSkillList(ctx: IPadSettingsContext, category: "builtin" | "pro" |
       const row = el(ctx.document, "div", "pd-cap-skill-row"), button = el(ctx.document, "button", "pd-cap-skill-main"); button.type = "button"; button.dataset.skillId = skill.id;
       const copy = el(ctx.document, "span", "pd-settings-copy"), count = skill.agents.filter(agent => agent.allowed).length;
       copy.append(el(ctx.document, "span", "pd-settings-name", skill.name), el(ctx.document, "span", "pd-settings-description", skill.locked ? skill.description : !skill.mobileAvailable ? t(ctx, skill.unavailableReason || "只能在电脑上用") : `${ctx.host.settings().settingsLanguage === "en" ? `${count} Agents can use` : `${count} 个 Agent 能用`} · ${skill.description}`));
+      if (skill.deliveryStatus) copy.append(el(ctx.document, "span", "pd-settings-description", skill.deliveryStatus));
       button.append(tile(ctx, skill.locked ? "lock" : skillIcon(skill.id)), copy);
       button.addEventListener("click", () => { void ctx.push(createSkillDetail(ctx, skill.id, editAgent)).catch(error => ctx.error(error)); }); row.append(button);
       if (skill.mobileAvailable) {
@@ -134,16 +133,12 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
     copy.append(el(ctx.document, "div", "pd-cap-skill-title", snapshot.name), el(ctx.document, "div", "pd-cap-skill-description", snapshot.description)); head.append(tile(ctx, skillIcon(id), true), copy); content.append(head);
     if (snapshot.remote || snapshot.readonly) {
       const english = ctx.host.settings().settingsLanguage === "en";
-      const state = el(ctx.document, "div", "pd-settings-group pd-cap-detail-state"); content.append(state);
-      settingsRow(ctx, state, "PRO", snapshot.locked ? (english ? "PRO required" : "需要 PRO") : (snapshot.contentVersion ?? "PRO"));
+      content.append(el(ctx.document, "span", "pd-status", "PRO"));
+      const message = snapshot.locked ? (english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。") : snapshot.deliveryStatus;
+      if (message) content.append(el(ctx.document, "p", "pd-settings-description", message));
       const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
-      if (compareUrl) settingsRow(ctx, state, english ? "View examples" : "查看对比示例", "", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); });
-      else settingsRow(ctx, state, english ? "Comparison examples are not available yet." : "对比示例尚未提供。");
-      const helpLabel = english ? "Downloads and offline use" : "下载与离线使用";
-      const help = settingsRow(ctx, state, helpLabel);
-      const helpButton = shellIconButton(ctx.document, helpLabel, "circle-alert", () => {}); help.append(helpButton);
-      attachNativeTooltip(helpButton, skillDeliveryNotice(english), { touch: "notice" });
-      if (!snapshot.locked) { const body = el(ctx.document, "div", "pd-cap-skill-body"); ctx.host.renderMarkdown(snapshot.content, body); content.append(body); }
+      if (compareUrl) content.append(textAction(ctx, english ? "View comparison" : "查看对比", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); }));
+      if (!snapshot.locked && snapshot.content) { const body = el(ctx.document, "div", "pd-cap-skill-body"); ctx.host.renderMarkdown(snapshot.content, body); content.append(body); }
       content.append(error, leaveArea); return;
     }
     const state = el(ctx.document, "div", "pd-settings-group pd-cap-detail-state"); content.append(state);

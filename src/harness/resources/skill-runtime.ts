@@ -73,6 +73,7 @@ export interface BuiltinSkillRuntimeSnapshot {
   readonly source?: "builtin" | "official-remote" | "user";
   readonly compareUrl?: string | null;
   readonly remoteVersion?: string;
+  readonly remoteCatalog?: { name: string; nameEn: string; summary: string; summaryEn: string };
   readonly error?: string;
 }
 
@@ -538,7 +539,7 @@ export class SkillRuntimeCoordinator {
       if (!userCopy) {
         const metadata = this.options.content?.catalogEntry(skillId);
         return { snapshot: { ...builtinSkillSnapshot(definition, state.records[skillId], { fileStatus: "ready", content: "" }),
-          userModified: false, source: "official-remote", compareUrl: metadata?.compareUrl ?? null, remoteVersion: metadata?.version }, changed: false };
+          userModified: false, source: "official-remote", compareUrl: metadata?.compareUrl ?? null, remoteVersion: metadata?.version, remoteCatalog: metadata }, changed: false };
       }
       const probe = await probeBuiltinSkill(this.vaultPath, skillId);
       return { snapshot: { ...builtinSkillSnapshot(definition, state.records[skillId], probe),

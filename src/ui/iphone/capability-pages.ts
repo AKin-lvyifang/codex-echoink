@@ -1,7 +1,4 @@
-import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
-import { attachNativeTooltip } from "../native-tooltip";
-import { shellIconButton } from "../mobile/shell-controls";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -63,6 +60,7 @@ export class IPhoneCapabilityPages {
           main.append(this.tile(skill.locked ? "lock" : skill.builtin ? skillIcon(skill.id) : "sparkles"));
           const label = el(ctx.document, "span", "ip-settings-label");
           label.append(el(ctx.document, "span", "ip-settings-name", skill.name), el(ctx.document, "span", "ip-settings-detail", this.skillDescription(skill)));
+          if (skill.deliveryStatus) label.append(el(ctx.document, "span", "ip-settings-detail", skill.deliveryStatus));
           main.append(label); main.addEventListener("click", () => { void this.skill(skill.id).catch(ctx.error); }); row.append(main); group.append(row);
           if (skill.mobileAvailable) settingsSwitch(ctx, group, skill.name, () => skill.enabled, async value => {
             busy++;
@@ -73,7 +71,8 @@ export class IPhoneCapabilityPages {
       } catch (failure) { if (!disposed && current === revision) this.loadFailure(body, failure, render); }
     };
     this.loading(body); this.refreshers.add(render);
-    await pushSettingsPage(ctx, { id, title: category === "pro" ? "PRO" : category === "builtin" ? "内置技能" : "我的 Skill", content: body, canLeave: () => busy === 0, dispose: () => { disposed = true; revision++; this.refreshers.delete(render); } });
+    const unsubscribe = this.service.subscribeSkillDelivery?.(() => { void render(); });
+    await pushSettingsPage(ctx, { id, title: category === "pro" ? "PRO" : category === "builtin" ? "内置技能" : "我的 Skill", content: body, canLeave: () => busy === 0, dispose: () => { disposed = true; revision++; unsubscribe?.(); this.refreshers.delete(render); } });
     if (!disposed) await render();
   }
 
@@ -105,16 +104,12 @@ export class IPhoneCapabilityPages {
       labels.append(el(ctx.document, "div", "ip-cap-skill-title", snapshot.name), el(ctx.document, "div", "ip-cap-skill-description", snapshot.description)); head.append(labels); body.append(head);
       if (snapshot.remote || snapshot.readonly) {
         const english = ctx.host.settings().settingsLanguage === "en";
-        const info = settingsGroup(ctx, body);
-        settingsRow(ctx, info, "PRO", { literal: true, value: snapshot.locked ? (english ? "PRO required" : "需要 PRO") : (snapshot.contentVersion ?? "PRO"), literalValue: true });
+        body.append(el(ctx.document, "span", "ip-status", "PRO"));
+        const message = snapshot.locked ? (english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。") : snapshot.deliveryStatus;
+        if (message) body.append(el(ctx.document, "p", "ip-settings-detail", message));
         const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
-        if (compareUrl) settingsRow(ctx, info, english ? "View examples" : "查看对比示例", { literal: true, action: () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); } });
-        else settingsRow(ctx, info, english ? "Comparison examples are not available yet." : "对比示例尚未提供。", { literal: true });
-        const helpLabel = english ? "Downloads and offline use" : "下载与离线使用";
-        const help = settingsRow(ctx, info, helpLabel, { literal: true });
-        const helpButton = shellIconButton(ctx.document, helpLabel, "circle-alert", () => {}); help.append(helpButton);
-        attachNativeTooltip(helpButton, skillDeliveryNotice(english), { touch: "notice" });
-        if (!snapshot.locked) { const content = el(ctx.document, "div", "ip-cap-skill-body markdown-rendered"); body.append(content); ctx.host.renderMarkdown(snapshot.content, content); }
+        if (compareUrl) body.append(settingsButton(ctx, english ? "View comparison" : "查看对比", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); }, "is-quiet"));
+        if (!snapshot.locked && snapshot.content) { const content = el(ctx.document, "div", "ip-cap-skill-body markdown-rendered"); body.append(content); ctx.host.renderMarkdown(snapshot.content, content); }
         return;
       }
       const info = settingsGroup(ctx, body);

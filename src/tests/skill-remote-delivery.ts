@@ -1,4 +1,6 @@
 import { requiresProductFreshnessVerification } from "../harness/resources/skill-routing";
+import { resourcePresentation } from "../resources/resource-presentation";
+import { skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, rename, mkdir, stat } from "node:fs/promises";
 import os from "node:os";
@@ -60,6 +62,16 @@ export async function runRemoteSkillDeliveryTests(): Promise<void> {
       assert.equal((await coordinator.read()).records["knowledge-review"].userModified, false, "using the enhancement does not mark the free base as edited");
     });
     let first = await content.resolve("deep-understanding"); const issuedAt = f.now();
+    await test("catalog copy wins in both languages with local fallback; normal delivery has no status", () => {
+      const local = { id: "echoink-local:skill:two-layer-explanation", kind: "skill" as const, source: "echoink-local" as const, name: "Local", description: "Local description", enabled: true, bridgeMode: "prompt-only" as const,
+        metadata: { resourceId: "two-layer-explanation", contentSource: "official-remote", remoteCatalog: { name: "目录名称", nameEn: "Catalog title", summary: "目录简介", summaryEn: "Catalog summary" } } };
+      assert.equal(resourcePresentation(local, "zh-CN").description, "目录简介");
+      assert.equal(resourcePresentation(local, "en").name, "Catalog title");
+      assert.equal(resourcePresentation(local, "en").description, "Catalog summary");
+      assert.ok(resourcePresentation({ ...local, metadata: { resourceId: "two-layer-explanation" } }, "zh-CN").description);
+      assert.equal(content.deliveryState("deep-understanding"), null);
+      assert.equal(skillDeliveryStateText(null, false), "");
+    });
     await test("Review keeps the full free procedure when its remote enhancement is unavailable offline", async () => {
       const isolated = new SkillContentResolver({ files: nodeSkillFiles(path.join(root, "offline-review")), cacheRoot: ".config/plugins/echoink/skill-cache", account: () => f.service, pluginVersion: "2.8.8", platform: "desktop", now: f.now });
       // Retain public directory metadata, but do not cache paid Review text.
@@ -77,16 +89,21 @@ export async function runRemoteSkillDeliveryTests(): Promise<void> {
       assert.ok(f.calls.filter(call => call.path.endsWith("/content")).some(call => (call.body as { knownVersion?: string }).knownVersion === "fixture-1"));
       f.offline(true); content = resolver(); const offline = await content.resolve("deep-understanding");
       assert.equal(offline.path, first.path); offline.assertAvailable();
+      const state = content.deliveryState("deep-understanding"); assert.equal(state?.kind, "offline");
+      assert.ok(state?.kind === "offline" && state.until <= issuedAt + 7 * 86400000 && state.until <= f.service.skillAuthorization()!.validUntil);
+      assert.match(skillDeliveryStateText(state, false), /离线中，可用到/u);
       f.offline(false);
     });
     await test("cache stops after 7 days even with a freshly renewed valid device lease", async () => {
       f.at(issuedAt + 6 * 86400000); await f.service.refresh(true);
       f.at(issuedAt + 7 * 86400000 + 1); assert.ok(f.service.skillAuthorization());
       f.offline(true);
+      assert.equal(content.deliveryState("deep-understanding")?.kind, "refresh");
       await assert.rejects(resolver().resolve("deep-understanding"));
       assert.throws(() => first.assertAvailable(), /到期/u);
       f.offline(false);
       const fresh = await content.resolve("deep-understanding"); assert.notEqual(fresh.path, first.path); first = fresh;
+      assert.equal(content.deliveryState("deep-understanding"), null, "successful refresh removes the temporary warning");
       const last = f.calls.filter(call => call.path.endsWith("/content")).at(-1)!;
       assert.equal("knownVersion" in (last.body as object), false, "expired cache requests a full response");
     });
@@ -167,6 +184,7 @@ export async function runRemoteSkillDeliveryTests(): Promise<void> {
       await assert.rejects(blocked.resolve("two-layer-explanation"), /PRO/u);
       const selected = await content.resolve("two-layer-explanation"); await f.service.actions.signOut!();
       assert.throws(() => selected.assertAvailable()); await assert.rejects(content.resolve("two-layer-explanation"), /PRO/u);
+      assert.equal(content.deliveryState("two-layer-explanation"), null, "sign-out cannot expose a previous authorization's delivery state");
     });
     await test("account switches cancel a delayed download before it can become a cache pointer", async () => {
       const switched = await account(), switchedFiles = nodeSkillFiles(path.join(root, "switch"));
