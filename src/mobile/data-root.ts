@@ -1,9 +1,9 @@
 import type { DataAdapter } from "obsidian";
 
 /** Match desktop's legacy data-root selection without loading Node modules. */
-export async function mobilePluginDataRoot(adapter: DataAdapter, install: string, id: string, manifestDirectory?: string): Promise<string> {
+export async function mobilePluginDataRoot(adapter: DataAdapter, install: string, id: string, configDir: string, manifestDirectory?: string): Promise<string> {
   const legacyDirectory = (manifestDirectory?.trim() || id).replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
-  const previous = legacyDirectory.startsWith(".obsidian/plugins/") ? legacyDirectory : `.obsidian/plugins/${legacyDirectory}`;
+  const previous = legacyDirectory.startsWith(`${configDir}/plugins/`) ? legacyDirectory : `${configDir}/plugins/${legacyDirectory}`;
   if (previous === install) return install;
   const containsData = async (path: string): Promise<boolean> => {
     const stat = await adapter.stat(path);

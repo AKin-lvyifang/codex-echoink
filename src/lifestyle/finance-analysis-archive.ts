@@ -22,11 +22,11 @@ const inside = (value: string, root: string) => value === root || value.startsWi
 function recordField(value: unknown, key: string): unknown {
   return value !== null && typeof value === "object" && key in value ? (value as Record<string, unknown>)[key] : undefined;
 }
-export function validateFinanceAnalysisDirectory(value: string, root: string, transactions: string, config = ".obsidian"): string {
+export function validateFinanceAnalysisDirectory(value: string, root: string, transactions: string, config: string): string {
   const result = value.trim() || `${root}/分析记录`;
   if (result.startsWith("/") || result.includes("\\") || /[:\p{Cc}]/u.test(result)
     || result.split("/").some(part => !part || part === "." || part === "..")) throw new Error("分析保存位置须为 Vault 内的相对目录，不能越界");
-  if ([config, ".obsidian", transactions].some(path => inside(result, path))) throw new Error("分析保存位置不能使用插件配置或账目目录及其子目录");
+  if ([config, transactions].some(path => inside(result, path))) throw new Error("分析保存位置不能使用插件配置或账目目录及其子目录");
   return result;
 }
 const pad = (value: number, width = 2) => String(value).padStart(width, "0");

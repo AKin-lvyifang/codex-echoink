@@ -43,7 +43,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   const targetFor = async (relativePath: string, mustExist = true, expectedKind: "file" | "directory" = "file") => await resolver.resolve({ vaultId: adapter.vaultId, relativePath, mustExist, expectedKind, allowRoot: expectedKind === "directory", allowMissingParentDirectories: !mustExist });
   const recallCandidateAllowed = (relativePath: string) => knowledgeRecallCandidateAllowed(options.knowledgeBindings?.() ?? getKnowledgeFolderBindings(adapter.vaultRootPath), relativePath);
   const assertNoteSource = (relativePath: string) => {
-    if (isPrivateNoteSourcePath(relativePath)) throw new Error("obsidian_cli_private_note_source");
+    if (isPrivateNoteSourcePath(relativePath, [], app.vault.configDir)) throw new Error("obsidian_cli_private_note_source");
   };
   const ordinaryTargetFor: typeof targetFor = async (relativePath, mustExist = true, expectedKind = "file") => {
     assertNoteSource(relativePath);

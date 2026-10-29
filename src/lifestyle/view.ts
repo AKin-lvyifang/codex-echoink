@@ -54,7 +54,7 @@ export class LifestyleView extends ItemView {
     const identity = header.createDiv({ cls: Platform.isDesktopApp ? "echoink-module-identity" : "" });
     if (Platform.isDesktopApp) this.addWorkbenchBack(identity);
     const title = Platform.isDesktopApp ? identity.createDiv() : identity;
-    title.createEl("small", { text: "ECHOINK / LIFE" });
+    title.createEl("small", { text: "EchoInk / life" });
     title.createEl("h1", { text: "财务" });
     const actions = header.createDiv({ cls: "echoink-life-header-actions" });
     const back = actions.createEl("button", { text: "设置" });

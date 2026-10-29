@@ -79,7 +79,7 @@ export class IPhoneSettingsPages {
       const button = el(ctx.document, "button", "ip-settings-segment"); button.append(settingsMessage(ctx, el(ctx.document, "span", "echoink-theme-choice-title"), label)); button.type = "button";
       button.addEventListener("click", () => { if (value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService) === value) return; void persist("colorTheme", value).then(sync).catch(error.show); }); if (value !== "minimal") locks.push(decorateProAppearanceChoice(button, track, { zh: ctx.host.settings().settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void this.accountPages.open(); } })); track.append(button); return button;
     });
-    renderCompanionThemeRecommendation(appearance, ctx.host.settings().settingsLanguage !== "en");
+    renderCompanionThemeRecommendation(appearance, ctx.host.settings().settingsLanguage !== "en", ctx.host.app.vault.configDir);
     const language = settingsSelect(ctx, appearance, "界面语言", [["zh-CN", "简体中文"], ["en", "English"]], ctx.host.settings().settingsLanguage, value => {
       if (value !== ctx.host.settings().settingsLanguage) void persist("settingsLanguage", value).catch(error.show);
     });

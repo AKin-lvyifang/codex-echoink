@@ -29,7 +29,8 @@ try {
       require: name => name === 'obsidian' ? { Platform: { isDesktop: true } } : name === 'node:path' ? flavor : require(name)
     });
     const { pluginDataDir, pluginInstallDir } = module.exports;
-    assert.equal(pluginDataDir(vault), flavor.join(vault, '.obsidian/plugins/codex-echoink'));
+    assert.throws(() => pluginDataDir(vault), /must be prepared/);
+    assert.equal(pluginDataDir(vault, undefined, '.obsidian'), flavor.join(vault, '.obsidian/plugins/codex-echoink'));
     for (const configDir of ['.obsidian-work', 'Config']) {
       const dir = pluginInstallDir({ id: 'codex-echoink' }, configDir);
       assert.equal(pluginDataDir(vault, dir), flavor.join(vault, configDir, 'plugins/codex-echoink'));

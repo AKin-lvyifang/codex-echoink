@@ -91,8 +91,12 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     if (signature !== this.indexedScope) { this.indexedScope = signature; this.generation += 1; this.memory.clear(); }
     return signature;
   }
-  allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.options.excludedRoots?.()) !== null; }
-  scopeKey(): string { return JSON.stringify([this.bindings(), this.options.excludedRoots?.() ?? []]); }
+  private excludedRoots(): readonly string[] {
+    const config = this.app.vault.configDir;
+    return [...(this.options.excludedRoots?.() ?? []), ...(config ? [`${config}/plugins`] : [])];
+  }
+  allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.excludedRoots()) !== null; }
+  scopeKey(): string { return JSON.stringify([this.bindings(), this.excludedRoots() ?? []]); }
   private containsPath(directory: string, path: string): boolean { return !directory || directory === path || path.startsWith(`${directory}/`); }
   private relevantEvent(path: string): boolean {
     if (this.allowsPath(path)) return true;
@@ -105,7 +109,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   }
   private allowed(filePath: string): KnowledgeSearchKind {
     this.assertOpen();
-    const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.options.excludedRoots?.());
+    const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.excludedRoots());
     if (!kind) throw Object.assign(new Error("Knowledge path is outside the search scope"), { code: "invalid_path" });
     return kind;
   }
@@ -148,7 +152,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
     const generation = this.generation;
     const bindingSignature = JSON.stringify(this.bindings());
-    const excludedRoots = [...(this.options.excludedRoots?.() ?? [])];
+    const excludedRoots = [...(this.excludedRoots() ?? [])];
     const files = this.app.vault.getMarkdownFiles();
     const canonicalPaths = new Map<string, string>();
     const failedSourcePaths = new Set<string>();

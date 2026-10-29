@@ -78,6 +78,7 @@ export async function nativeJournalFixture(root: string) {
     },
     cli: { handlers },
     vault: {
+      configDir: ".obsidian",
       on: () => ({}),
       adapter: { getBasePath: () => root },
       getName: () => "offline-journal-fixture",

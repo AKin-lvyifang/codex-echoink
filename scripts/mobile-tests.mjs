@@ -523,23 +523,19 @@ await test("memory tools fix source task when constructed and deduplicate agains
   assert.equal(first.details.source, `mobile:${taskA}:from-a-1`); assert.equal(first.details.file, state.store.statePath); assert.equal(state.store.session.id, taskB.id);
   state.runtime.dispose();
 });
-await test("desktop legacy data root is selected without merging stores", async () => {
-  const host = createHost({ ".obsidian/plugins/custom/plugins/codex-echoink/pi-agent-product-v1/knowledge/preferences.md": "legacy", "custom/plugins/codex-echoink/pi-agent-product-v1/knowledge/preferences.md": "new" });
-  assert.equal(await mobilePluginDataRoot(host.adapter, "custom/plugins/codex-echoink", "codex-echoink", "custom/plugins/codex-echoink"), ".obsidian/plugins/custom/plugins/codex-echoink");
-  assert.equal(await mobilePluginDataRoot(host.adapter, ".obsidian/plugins/codex-echoink", "codex-echoink"), ".obsidian/plugins/codex-echoink");
-  host.files.set(".obsidian/plugins/codex-echoink/pi-agent-product-v1/knowledge/preferences.md", "legacy without manifest.dir");
-  assert.equal(await mobilePluginDataRoot(host.adapter, "custom/plugins/codex-echoink", "codex-echoink"), ".obsidian/plugins/codex-echoink");
-  for (const manifestDir of [undefined, "custom/plugins/codex-echoink"]) {
-    const oldRoot = `.obsidian/plugins/${manifestDir ?? "codex-echoink"}`;
-    const currentRoot = "custom/plugins/codex-echoink";
-    const financeOnly = createHost({ [`${oldRoot}/lifestyle.json`]: JSON.stringify({ budgets: [{ totalCents: 12345 }], goals: [{ id: "old-goal" }], reports: [{ id: "old-report" }] }) });
-    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), oldRoot);
-    financeOnly.files.set(`${currentRoot}/lifestyle.json`, "new-finance-preserved");
-    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), oldRoot, "do not merge two finance roots");
-    financeOnly.files.set(`${oldRoot}/lifestyle.json`, "");
-    assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", manifestDir), currentRoot, "empty finance file is not durable state");
-    assert.equal(financeOnly.files.get(`${currentRoot}/lifestyle.json`), "new-finance-preserved");
-  }
+await test("current-config migration preserves data and does not read ancient default roots", async () => {
+  const host = createHost({ ".obsidian/plugins/codex-echoink/lifestyle.json": "ancient" });
+  assert.equal(await mobilePluginDataRoot(host.adapter, "custom/plugins/codex-echoink", "codex-echoink", "custom"), "custom/plugins/codex-echoink");
+  assert.equal(host.files.get(".obsidian/plugins/codex-echoink/lifestyle.json"), "ancient");
+  assert.equal(await mobilePluginDataRoot(host.adapter, ".obsidian/plugins/codex-echoink", "codex-echoink", ".obsidian"), ".obsidian/plugins/codex-echoink");
+  const manifestDir = "custom/install", currentRoot = manifestDir, oldRoot = `custom/plugins/${manifestDir}`;
+  const financeOnly = createHost({ [`${oldRoot}/lifestyle.json`]: JSON.stringify({ budgets: [{ totalCents: 12345 }], goals: [{ id: "old-goal" }] }) });
+  assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", "custom", manifestDir), oldRoot);
+  financeOnly.files.set(`${currentRoot}/lifestyle.json`, "new-finance-preserved");
+  assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", "custom", manifestDir), oldRoot, "do not merge two finance roots");
+  financeOnly.files.set(`${oldRoot}/lifestyle.json`, "");
+  assert.equal(await mobilePluginDataRoot(financeOnly.adapter, currentRoot, "codex-echoink", "custom", manifestDir), currentRoot);
+  assert.equal(financeOnly.files.get(`${currentRoot}/lifestyle.json`), "new-finance-preserved");
 });
 await test("mobile default preferences match the complete desktop runtime value and preserve custom content", async () => {
   const desktopBuild = await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,

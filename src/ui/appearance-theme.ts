@@ -33,7 +33,7 @@ export function refreshCompanionThemeRecommendations(doc: Document): void {
   doc.querySelectorAll<HTMLElement>("[data-echoink-theme-recommendation]").forEach(node => { node.hidden = active; });
 }
 
-export function renderCompanionThemeRecommendation(container: HTMLElement, zh: boolean): void {
+export function renderCompanionThemeRecommendation(container: HTMLElement, zh: boolean, configDir: string): void {
   const doc = container.ownerDocument;
   const note = ownedDiv(doc);
   note.className = "echoink-theme-recommendation";
@@ -46,8 +46,8 @@ export function renderCompanionThemeRecommendation(container: HTMLElement, zh: b
   summary.textContent = zh ? "安装说明" : "Installation";
   const text = details.createEl("p");
   text.textContent = zh
-    ? "将 echoink-theme 文件夹放入当前库的 .obsidian/themes/，再到 Obsidian 设置 → 外观 → 主题中选择 echoink-theme。主题尚未上架。"
-    : "Place the echoink-theme folder in this vault’s .obsidian/themes/, then select echoink-theme in Obsidian Settings → Appearance → Themes. It is not listed in the theme directory yet.";
+    ? `将 echoink-theme 文件夹放入当前库的 ${configDir}/themes/，再到 Obsidian 设置 → 外观 → 主题中选择 echoink-theme。主题尚未上架。`
+    : `Place the echoink-theme folder in this vault’s ${configDir}/themes/, then select echoink-theme in Obsidian Settings → Appearance → Themes. It is not listed in the theme directory yet.`;
   const comparison = details.createEl("img"); comparison.src = galleryComparison;
   comparison.alt = zh ? "前后对比：普通插图逐张显示，三张图片组排成一大两小" : "Before and after: separate images versus a three-image gallery";
   comparison.className = "echoink-gallery-comparison";

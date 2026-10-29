@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createRoot } from "react-dom/client";
 import { MorphingShape } from "./amicro/morphing-shape";
 import { OrigamiShape } from "./amicro/origami-shape";
@@ -56,7 +56,7 @@ function HomeConversationActions({ actions }: { actions: readonly HomeConversati
   );
 }
 
-function useHomeMotionState(ref: React.RefObject<HTMLElement | null>): {
+function useHomeMotionState(ref: RefObject<HTMLElement | null>): {
   active: boolean;
   reducedMotion: boolean;
 } {

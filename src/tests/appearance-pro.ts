@@ -55,7 +55,7 @@ for (const state of ["free","expired","signed-out","unavailable"]) {
 }
 fail = true; input("minimal").click(); await settle(); assert.equal(host.settings.colorTheme,"highlighter"); assert.ok(input("highlighter").checked); assert.equal(input("minimal").disabled,false);
 assert.equal(effectiveEchoInkColorTheme("unknown",access),"minimal"); assert.equal(effectiveEchoInkColorTheme("manifesto",null),"minimal");
-renderCompanionThemeRecommendation(doc.body,true); assert.equal(doc.querySelector<HTMLAnchorElement>('[data-echoink-theme-recommendation] > a')!.href,"https://echoink.cn/theme");
+renderCompanionThemeRecommendation(doc.body,true,".obsidian"); assert.equal(doc.querySelector<HTMLAnchorElement>('[data-echoink-theme-recommendation] > a')!.href,"https://echoink.cn/theme");
 doc.documentElement.style.setProperty("--echoink-companion-theme","1"); pro = false; appearance.refresh(); assert.equal(doc.body.dataset.echoinkTheme,"minimal","Installing the companion never grants PRO"); assert.equal(doc.querySelector<HTMLElement>('[data-echoink-theme-recommendation]')!.hidden,true);
 appearance.dispose(); assert.equal(doc.body.hasAttribute("data-echoink-theme"),false); assert.equal(second.window.document.body.hasAttribute("data-echoink-theme"),false);
 first.window.close(); second.window.close();

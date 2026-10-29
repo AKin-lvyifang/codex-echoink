@@ -16,14 +16,15 @@ interface PluginLocation {
 // root selected once at plugin startup, including its canonical-path alias.
 const activeRoots = new Map<string, { rootPath: string; pluginDir: string; id: string }>();
 
-export function pluginInstallDir(manifest: PluginLocation, configDir = ".obsidian"): string {
+export function pluginInstallDir(manifest: PluginLocation, configDir: string): string {
   return normalizePluginDir(manifest.dir?.trim()
     || `${configDir}/plugins/${manifest.id}`);
 }
 
 export function pluginDataDir(
   vaultPath: string,
-  pluginDir?: string
+  pluginDir?: string,
+  configDir?: string
 ): string {
   const normalized = normalizePluginDir(pluginDir ?? CURRENT_PLUGIN_ID);
   const active = activeRoots.get(path.resolve(vaultPath));
@@ -34,7 +35,8 @@ export function pluginDataDir(
   if (normalized.includes("/")) {
     return path.join(vaultPath, normalized);
   }
-  return path.join(vaultPath, ".obsidian", "plugins", normalized);
+  if (!configDir) throw new Error("Plugin data root must be prepared with the current Vault configuration directory");
+  return path.join(vaultPath, configDir, "plugins", normalized);
 }
 
 export async function preparePluginDataRoot(
@@ -52,9 +54,9 @@ export async function preparePluginDataRoot(
   const pluginDir = pluginInstallDir(manifest, configDir);
   const installRootPath = path.join(canonicalVaultPath, pluginDir);
   const previousDir = normalizePluginDir(manifest.dir?.trim() || manifest.id);
-  const previousRootPath = previousDir.startsWith(".obsidian/plugins/")
+  const previousRootPath = previousDir.startsWith(`${configDir}/plugins/`)
     ? path.join(canonicalVaultPath, previousDir)
-    : path.join(canonicalVaultPath, ".obsidian", "plugins", previousDir);
+    : path.join(canonicalVaultPath, configDir, "plugins", previousDir);
   const usingPreviousRoot = previousRootPath !== installRootPath
     && await hasCurrentPluginData(previousRootPath);
   const installRootHasData = usingPreviousRoot && await hasCurrentPluginData(installRootPath);
