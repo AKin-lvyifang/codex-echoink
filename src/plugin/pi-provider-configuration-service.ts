@@ -13,6 +13,7 @@ import {
 } from "../harness/pi/pi-provider-protocol-adapter";
 import {
   sanitizeProviderFailureDetail,
+  type AssistantProviderFailure,
   type ProviderFailureDetail,
   providerFailureCodeFromError
 } from "../harness/pi/provider-failure";
@@ -471,7 +472,8 @@ export async function testProviderConnection(input: {
     ) {
       return { status: "available" };
     }
-    const detail = sanitizeProviderFailureDetail(responseStatus, message.errorMessage, [input.apiKey]);
+    const detail = sanitizeProviderFailureDetail(responseStatus,
+      (message as AssistantProviderFailure).echoInkProviderFailure ?? message.errorMessage, [input.apiKey]);
     return {
       status: "failed",
       ...(detail ? { detail } : {}),

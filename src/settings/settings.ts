@@ -1071,11 +1071,11 @@ export function createApiProviderModelConfig(
     displayName: id,
     input: ["text"],
     toolCalling: DEFAULT_UNDECLARED_TOOL_CALLING,
-    // Provider discovery often returns models newer than the pinned Pi
-    // catalog. Product default assumes deep reasoning until the user turns it
-    // off; an explicit catalog/preset `false` above still wins.
-    reasoning: true,
-    reasoningEnabled: true,
+    // Ollama's OpenAI model list only declares IDs, not thinking support.
+    // Guessing true makes ordinary tagged/quantized models reject chat with
+    // HTTP 400. Explicit discovery/manual declarations still take precedence.
+    reasoning: providerId !== "ollama",
+    reasoningEnabled: providerId !== "ollama",
     contextWindow: 64_000,
     modelMaxTokens: 8_192,
     maxOutputTokens: 8_192,

@@ -37,6 +37,7 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
     }
   }
   if (candidate?.error && typeof candidate.error === "object" && !Array.isArray(candidate.error)) candidate = candidate.error as Record<string, unknown>;
+  else if (typeof candidate?.error === "string") candidate = { message: candidate.error };
   const safeField = (value: unknown): string | undefined => {
     if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9_.[\]-]{0,63}$/u.test(value)) return undefined;
     if (secrets.some((secret) => secret && value.includes(secret)) || /^(?:authorization|api.?key|access_token|refresh_token|secret|password|prompt|messages|request|content|body)$/iu.test(value)) return undefined;
