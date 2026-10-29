@@ -4278,7 +4278,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const locked = remoteSkillLocked(resource, this.plugin.accountService);
       const id = (typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id);
       createPluginEditionBadge(page, "pro", this.plugin.settings.settingsLanguage);
-      if (locked) createSettingsState(page, english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。");
+      if (locked) createSettingsState(createSettingsSection(page), english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。");
       const comparison = createSettingsSection(page, { title: english ? "Skill access" : "Skill 使用范围", surface: "group" });
       const info = createSettingsGroup(comparison);
       new OriginSetting(info).setName(english ? "Free" : "免费").setDesc(english ? "Built-in basic Skills and basic knowledge review" : "内置基础 Skill 与知识复盘基础版");
@@ -4289,6 +4289,10 @@ export class CodexSettingTab extends PluginSettingTab {
         const link = createOriginButton(examples.controlEl, { cls: "text-button", text: english ? "View" : "查看" });
         link.onclick = () => window.open(compareUrl, "_blank", "noopener,noreferrer");
       } else examples.setDesc(english ? "Not available yet" : "尚未提供");
+      const help = new OriginSetting(info).setName(english ? "Downloads and offline use" : "下载与离线使用");
+      const helpButton = createOriginButton(help.controlEl, { cls: "is-icon", attr: { "aria-label": english ? "Downloads and offline use" : "下载与离线使用" } });
+      setIcon(helpButton, "circle-alert");
+      attachSettingsHelpTooltip(helpButton, skillDeliveryNotice(english));
       if (!locked) {
         const read = createOriginButton(page, { cls: "text-button", text: english ? "Read official instructions" : "查看官方指令" });
         const body = page.createDiv({ cls: "markdown-rendered" });
@@ -4307,8 +4311,6 @@ export class CodexSettingTab extends PluginSettingTab {
           finally { read.disabled = false; }
         };
       }
-      const help = page.createEl("details"); help.createEl("summary", { text: english ? "Downloads and offline use" : "下载与离线使用" });
-      help.createEl("p", { cls: "settings-note", text: skillDeliveryNotice(english) });
       return;
     }
     this.renderSettingsActionError(page, "resources");
@@ -5134,11 +5136,6 @@ export class CodexSettingTab extends PluginSettingTab {
         lifeKind: "finance"
       });
     }
-    if (activeTab === "skills") {
-      const help = container.createEl("details");
-      help.createEl("summary", { text: this.plugin.settings.settingsLanguage === "en" ? "Downloads and offline use" : "下载与离线使用" });
-      help.createEl("p", { cls: "settings-note", text: skillDeliveryNotice(this.plugin.settings.settingsLanguage === "en") });
-    }
     const query = this.resourceSearchQuery[activeTab];
     const enabled = rows.filter((row) => row.enabled).length;
     const filtered = filterWorkspaceResourceRows(rows, query);
@@ -5167,10 +5164,10 @@ export class CodexSettingTab extends PluginSettingTab {
     const groups = new Map<string, HTMLElement>();
     const groupFor = (row: typeof rows[number]): HTMLElement => {
       if (!Platform.isDesktopApp || activeTab === "plugins") return container;
-      const key = activeTab === "mcp" ? "mcp" : row.resource && builtinSkillIdForResource(row.resource) ? "builtin" : "custom";
+      const key = activeTab === "mcp" ? "mcp" : row.resource && isOfficialRemoteSkill(row.resource) ? "pro" : row.resource && builtinSkillIdForResource(row.resource) ? "builtin" : "custom";
       let group = groups.get(key);
       if (!group) {
-        const section = createSettingsSection(container, { title: key === "mcp" ? undefined : key === "builtin"
+        const section = createSettingsSection(container, { title: key === "mcp" ? undefined : key === "pro" ? "PRO" : key === "builtin"
           ? (this.plugin.settings.settingsLanguage === "en" ? "Built-in" : "内置")
           : (this.plugin.settings.settingsLanguage === "en" ? "My Skills" : "我的 Skill"), surface: "flat" });
         section.setAttr("data-resource-group", key);
@@ -5179,7 +5176,9 @@ export class CodexSettingTab extends PluginSettingTab {
       return group;
     };
     const ordered = Platform.isDesktopApp && activeTab === "skills"
-      ? [...rows.filter(row => row.resource && builtinSkillIdForResource(row.resource)), ...rows.filter(row => !row.resource || !builtinSkillIdForResource(row.resource))] : rows;
+      ? [...rows.filter(row => row.resource && !isOfficialRemoteSkill(row.resource) && builtinSkillIdForResource(row.resource)),
+        ...rows.filter(row => row.resource && isOfficialRemoteSkill(row.resource)),
+        ...rows.filter(row => !row.resource || !isOfficialRemoteSkill(row.resource) && !builtinSkillIdForResource(row.resource))] : rows;
     for (const row of ordered) {
       const target = groupFor(row);
       if (row.lifeKind) this.renderBuiltinPluginRow(target, row.lifeKind, visibleKeys.has(row.key), row);
@@ -5361,8 +5360,10 @@ export class CodexSettingTab extends PluginSettingTab {
         const locked = remoteSkillLocked(resource, this.plugin.accountService);
         badge.empty();
         if (locked) setIcon(badge.createSpan({ attr: { "aria-hidden": "true" } }), "lock");
-        badge.createSpan({ text: locked ? (this.plugin.settings.settingsLanguage === "en" ? "PRO required" : "需要 PRO") : "PRO" });
+        badge.setAttr("aria-label", this.plugin.settings.settingsLanguage === "en" ? "PRO required" : "需要 PRO");
+        badge.hidden = !locked;
         toggle.disabled = locked;
+        toggle.hidden = locked;
       };
       update();
       this.membershipRowsDisposers.push((this.plugin.accountService ?? unavailableCapabilityAccess).subscribe(update));

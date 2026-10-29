@@ -1,5 +1,7 @@
 import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
+import { attachNativeTooltip } from "../native-tooltip";
+import { shellIconButton } from "../mobile/shell-controls";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -69,10 +71,11 @@ export function createCapabilityPage(ctx: IPadSettingsContext, editAgent: EditAg
   const page = resourcePage(ctx, "ipad-settings-caps", "能力", async () => {
     const [skills, mcp] = await Promise.all([api.listSkills(), api.listMcp()]); return { skills, mcp, tavily: api.readTavily() };
   }, (content, data) => {
-    const builtin = data.skills.filter(skill => skill.builtin), mine = data.skills.filter(skill => !skill.builtin);
+    const builtin = data.skills.filter(skill => skill.builtin && !skill.remote), pro = data.skills.filter(skill => skill.remote), mine = data.skills.filter(skill => !skill.builtin && !skill.remote);
     const skills = settingsGroup(ctx, content, "Skills");
-    settingsRow(ctx, skills, t(ctx, "内置技能"), enabledCount(ctx, builtin.filter(skill => skill.enabled && skill.mobileAvailable).length), () => ctx.push(createSkillList(ctx, true, editAgent)), tile(ctx, "sparkles"));
-    settingsRow(ctx, skills, t(ctx, "我的 Skill"), enabledCount(ctx, mine.filter(skill => skill.enabled && skill.mobileAvailable).length, mine.length), () => ctx.push(createSkillList(ctx, false, editAgent)), tile(ctx, "sparkles"));
+    settingsRow(ctx, skills, t(ctx, "内置技能"), enabledCount(ctx, builtin.filter(skill => skill.enabled && skill.mobileAvailable).length), () => ctx.push(createSkillList(ctx, "builtin", editAgent)), tile(ctx, "sparkles"));
+    settingsRow(ctx, skills, "PRO", ctx.host.settings().settingsLanguage === "en" ? `${pro.length}` : `${pro.length} 个`, () => ctx.push(createSkillList(ctx, "pro", editAgent)), tile(ctx, "sparkles"));
+    settingsRow(ctx, skills, t(ctx, "我的 Skill"), enabledCount(ctx, mine.filter(skill => skill.enabled && skill.mobileAvailable).length, mine.length), () => ctx.push(createSkillList(ctx, "mine", editAgent)), tile(ctx, "sparkles"));
     const mcp = settingsGroup(ctx, content, "MCP");
     for (const service of data.mcp) settingsRow(ctx, mcp, service.name, t(ctx, service.statusLabel), () => openMcp(service), tile(ctx, "plug"));
     settingsRow(ctx, mcp, t(ctx, "添加 MCP 服务"), "", () => openMcp(), tile(ctx, "plus"));
@@ -83,10 +86,10 @@ export function createCapabilityPage(ctx: IPadSettingsContext, editAgent: EditAg
   const dispose = page.dispose; page.dispose = () => { disposed = true; dispose?.(); }; return page;
 }
 
-function createSkillList(ctx: IPadSettingsContext, builtin: boolean, editAgent: EditAgent): MobileShellPage {
+function createSkillList(ctx: IPadSettingsContext, category: "builtin" | "pro" | "mine", editAgent: EditAgent): MobileShellPage {
   const api = capabilities(ctx);
-  return resourcePage(ctx, `ipad-skills-${builtin ? "builtin" : "mine"}`, builtin ? "内置技能" : "我的 Skill", () => api.listSkills(), (content, all) => {
-    const list = all.filter(skill => skill.builtin === builtin), group = el(ctx.document, "div", "pd-settings-group pd-cap-skill-list"), error = settingsError(ctx); content.append(group, error);
+  return resourcePage(ctx, `ipad-skills-${category}`, category === "pro" ? "PRO" : category === "builtin" ? "内置技能" : "我的 Skill", () => api.listSkills(), (content, all) => {
+    const list = all.filter(skill => category === "pro" ? skill.remote : !skill.remote && skill.builtin === (category === "builtin")), group = el(ctx.document, "div", "pd-settings-group pd-cap-skill-list"), error = settingsError(ctx); content.append(group, error);
     if (!list.length) { group.append(el(ctx.document, "div", "pd-settings-empty", t(ctx, "还没有我的 Skill"))); return; }
     for (const skill of list) {
       const row = el(ctx.document, "div", "pd-cap-skill-row"), button = el(ctx.document, "button", "pd-cap-skill-main"); button.type = "button"; button.dataset.skillId = skill.id;
@@ -136,7 +139,10 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
       const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
       if (compareUrl) settingsRow(ctx, state, english ? "View examples" : "查看对比示例", "", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); });
       else settingsRow(ctx, state, english ? "Comparison examples are not available yet." : "对比示例尚未提供。");
-      const disclosure = el(ctx.document, "details", ""); disclosure.append(el(ctx.document, "summary", "", english ? "Downloads and offline use" : "下载与离线使用"), el(ctx.document, "p", "pd-settings-description", skillDeliveryNotice(english))); content.append(disclosure);
+      const helpLabel = english ? "Downloads and offline use" : "下载与离线使用";
+      const help = settingsRow(ctx, state, helpLabel);
+      const helpButton = shellIconButton(ctx.document, helpLabel, "circle-alert", () => {}); help.append(helpButton);
+      attachNativeTooltip(helpButton, skillDeliveryNotice(english), { touch: "notice" });
       if (!snapshot.locked) { const body = el(ctx.document, "div", "pd-cap-skill-body"); ctx.host.renderMarkdown(snapshot.content, body); content.append(body); }
       content.append(error, leaveArea); return;
     }
