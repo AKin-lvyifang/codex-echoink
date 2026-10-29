@@ -1,4 +1,4 @@
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
 import type { KnowledgeFolderBindings } from "./folder-bindings";
@@ -112,9 +112,9 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   private file(filePath: string): TFile {
     this.allowed(filePath);
     const file = this.app.vault.getAbstractFileByPath(filePath);
-    if (!file || !("extension" in file)) throw Object.assign(new Error("Source not found"), { code: "not_found" });
+    if (!(file instanceof TFile)) throw Object.assign(new Error("Source not found"), { code: "not_found" });
     this.allowed(file.path);
-    return file as TFile;
+    return file;
   }
   private async sourcePath(filePath: string): Promise<string> {
     this.allowed(filePath);

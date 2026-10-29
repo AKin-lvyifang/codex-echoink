@@ -2,7 +2,8 @@ import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance,
 import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
 import { RunReportModal } from "./run-reports/desktop-ui";
 import { apiVersion as reportObsidianVersion } from "obsidian";
-import { homedir as reportHome } from "node:os";
+import { getDesktopOs, getDesktopPath } from "./platform/desktop-paths";
+import { getDesktopFsPromises } from "./platform/desktop-filesystem";
 import { FileConversationCatalog as ReportCatalog } from "./harness/pi-native/file-conversation-catalog";
 import { FileProductRunStore as ReportRuns } from "./harness/pi-native/file-product-run-store";
 import { readVaultIdentity as readReportVaultIdentity } from "./plugin/vault-identity";
@@ -55,8 +56,7 @@ import { EchoInkWorkbenchView } from "./home/workbench-view";
 import { LifestyleService } from "./lifestyle/service";
 import type { LifestyleKind } from "./lifestyle/settings";
 import type { CodexSettingTab } from "./settings/settings-tab";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+
 import { Notice, Platform, Plugin, TFile } from "obsidian";
 import { DeveloperModeAccess } from "./plugin/developer-mode/access";
 import { DeveloperModeService } from "./plugin/developer-mode/service";
@@ -187,6 +187,10 @@ import {
   OpenAICodexOAuthService,
   type OpenAICodexAuthStatus
 } from "./plugin/openai-codex-oauth-service";
+
+const { homedir: reportHome } = getDesktopOs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 interface PiConversationActivationTask {
   readonly generation: number;

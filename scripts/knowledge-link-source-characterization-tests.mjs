@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,7 @@ try {
   // the already-installed repository dependencies, reached through this temp link.
   await symlink(path.join(rootDir, "node_modules"), path.join(outputDir, "node_modules"), "dir");
   const outputFile = path.join(outputDir, "knowledge-link-source-characterization.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: {
       contents: 'import { runKnowledgeLinkSourceCharacterizationTests } from "./src/tests/knowledge-link-source-characterization";\nawait runKnowledgeLinkSourceCharacterizationTests();',
       resolveDir: rootDir, sourcefile: "knowledge-link-source-characterization-entry.ts", loader: "ts"

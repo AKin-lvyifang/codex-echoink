@@ -1,12 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  mkdir,
-  open,
-  readFile,
-  rename,
-  unlink
-} from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+
+const { mkdir, open, readFile, rename, unlink } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const PI_NATIVE_FILE_SCHEMA_VERSION = 1 as const;
 

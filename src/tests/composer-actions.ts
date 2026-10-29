@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installMockObsidianDom } from "./obsidian-dom";
 import { readFileSync } from "node:fs";
 import { Platform, TFile, type App } from "obsidian";
 import { openTestNoticeMessages } from "./obsidian-shim";
@@ -1057,6 +1058,7 @@ class ComposerTestDocument {
     removeEventListener: () => undefined
   };
   constructor() {
+    installMockObsidianDom(this);
     this.body.setConnected(true);
   }
   createElement(tagName: string): ComposerTestElement {

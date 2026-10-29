@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import {
   LARGE_MESSAGE_THRESHOLD,
   countLines,
@@ -11,6 +11,8 @@ import type {
 } from "../settings/settings";
 import { buildKnowledgeBaseFallbackReportPayload } from "../knowledge-base/maintain-report-card";
 import type { KnowledgeBaseCommandUiMode } from "../knowledge-base/types";
+
+const { createHash } = getDesktopCrypto();
 
 export interface PendingRunTerminalRecovery {
   runId: string;

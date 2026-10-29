@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { openTestNoticeMessages } from "obsidian";
@@ -8,6 +9,7 @@ import type { PdfNavigationData, PdfNavigationEntry, PdfNavigationStart } from "
 /** Real page/form classes with local host and Origin stubs; no provider or Vault writes. */
 export async function runPdfReadingPageTests(): Promise<void> {
   const dom = new JSDOM("<body><main></main><button id=upload>Upload</button></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const win = dom.window;
   Object.assign(globalThis, { window: win, document: win.document, HTMLElement: win.HTMLElement });
   const proto = win.HTMLElement.prototype as any;

@@ -1,3 +1,4 @@
+import { ownedDiv, ownedEl } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
 import { ECHOINK_COLOR_THEMES, ECHOINK_APPEARANCE_REFRESH, effectiveEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { decorateProAppearanceChoice } from "../ui/appearance-pro";
@@ -17,18 +18,16 @@ let pickerSequence = 0;
 export function renderAppearancePicker(container: HTMLElement, host: AppearanceHost, zh: boolean): void {
   const doc = container.ownerDocument;
   host.applyAppearanceTheme(doc);
-  const picker = doc.createElement("div");
+  const picker = ownedDiv(doc);
   picker.className = "echoink-theme-picker";
   picker.classList.add("echoink-appearance-pro-surface"); picker.dataset.echoinkAppearancePicker = "";
   const textSegments = container.closest(".echoink-settings-aligned") !== null;
   picker.classList.toggle("is-text-segments", textSegments);
-  const options = doc.createElement("fieldset");
+  const options = picker.createEl("fieldset");
   options.className = "echoink-theme-options";
-  const legend = doc.createElement("legend");
+  const legend = options.createEl("legend");
   legend.className = "sr-only";
   legend.textContent = zh ? "主题颜色" : "Color theme";
-  options.appendChild(legend);
-  picker.appendChild(options);
   container.appendChild(picker);
   const name = `echoink-color-theme-${++pickerSequence}`;
   const inputs: HTMLInputElement[] = [];
@@ -37,26 +36,24 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
   let busy = false;
   const themes = ECHOINK_COLOR_THEMES.map(theme => ({ id: theme.id, title: zh ? theme.zh : theme.en }));
   for (const theme of themes) {
-    const label = doc.createElement("label");
+    const label = ownedEl(doc, "label");
     label.className = "echoink-theme-choice";
     label.dataset.theme = theme.id;
-    const input = doc.createElement("input");
+    const input = label.createEl("input");
     input.type = "radio";
     input.name = name;
     input.value = theme.id;
     input.checked = theme.id === effectiveEchoInkColorTheme(host.settings.colorTheme, host.accountService);
     input.setAttribute("aria-label", theme.title);
     if (theme.id === "minimal") setTooltip(label, theme.title, { placement: "top" });
-    const swatch = doc.createElement("span");
+    const swatch = label.createSpan();
     swatch.className = "echoink-theme-swatch";
     swatch.setAttribute("aria-hidden", "true");
     setIcon(swatch, "check");
-    label.append(input, swatch);
     if (textSegments) {
-      const title = doc.createElement("span");
+      const title = label.createSpan();
       title.className = "echoink-theme-choice-title";
       title.textContent = theme.title;
-      label.appendChild(title);
     }
     options.appendChild(label);
     inputs.push(input);

@@ -1,3 +1,4 @@
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { providerFailureDetailText } from "../harness/pi/provider-failure";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, createOriginSelect, createOriginRadioGroup, disposeOriginControls } from "./origin-controls";
 import { App, Modal, setIcon, setTooltip } from "obsidian";
@@ -90,6 +91,7 @@ export interface ProviderModelModalOptions {
 }
 
 export class ProviderModelModal extends Modal {
+  private stopImeTracking?: () => void;
   private draft: ApiProviderConfig;
   private apiKeyInput = "";
   private readonly preflight: ProviderPreflightSession;
@@ -127,7 +129,7 @@ export class ProviderModelModal extends Modal {
     }
   };
   private readonly handleEscapeCapture = (event: KeyboardEvent): void => {
-    if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+    if (event.key !== "Escape" || isImeKeyEvent(event)) return;
     const openPicker = this.modalEl.querySelector<HTMLElement>(
       ".codex-provider-combobox.is-open"
     );
@@ -177,6 +179,7 @@ export class ProviderModelModal extends Modal {
   }
 
   onOpen(): void {
+    this.stopImeTracking?.(); this.stopImeTracking = watchImeComposition(this.modalEl);
     this.closed = false;
     this.inlineSuspended = false;
     this.modalEl.addClass("codex-provider-model-modal");
@@ -265,6 +268,7 @@ export class ProviderModelModal extends Modal {
   }
 
   onClose(): void {
+    this.stopImeTracking?.(); this.stopImeTracking = undefined;
     this.closed = true;
     this.authGeneration += 1;
     this.codexAuthLoading = false;
@@ -602,7 +606,7 @@ export class ProviderModelModal extends Modal {
       groupButtons.set(group.key, button);
       button.onclick = (event) => { event.stopPropagation(); activeGroup = group.key; search.value = ""; applyProviderFilter(""); this.positionCombobox(picker, trigger); };
       button.onkeydown = (event) => {
-        if (event.isComposing || event.keyCode === 229) return;
+        if (isImeKeyEvent(event)) return;
         const buttons = Array.from(groupButtons.values());
         const index = buttons.indexOf(button);
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -2282,7 +2286,7 @@ function bindComboboxKeyboard(binding: ComboboxKeyboardBinding): void {
   });
 
   trigger.onkeydown = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       event.stopPropagation();
@@ -2297,7 +2301,7 @@ function bindComboboxKeyboard(binding: ComboboxKeyboardBinding): void {
   };
 
   search.onkeydown = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     const visible = visibleComboboxOptions(options);
     if (event.key === "Escape") {
       event.preventDefault();
@@ -2324,7 +2328,7 @@ function bindComboboxKeyboard(binding: ComboboxKeyboardBinding): void {
   };
 
   options.onkeydown = (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if (event.key === "ArrowLeft" && binding.focusGroups) {
       event.preventDefault(); event.stopPropagation(); binding.focusGroups(); return;
     }

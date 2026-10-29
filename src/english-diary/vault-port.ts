@@ -213,7 +213,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
       if (!hiddenPath(path)) await flushNativeEditorsUnlocked(this.app, path);
       if (await this.read(path) !== expected) conflict();
       const file = this.app.vault.getAbstractFileByPath(path);
-      if (!hiddenPath(path) && file instanceof TFile) await this.app.vault.trash(file, false);
+      if (!hiddenPath(path) && file instanceof TFile) await this.app.fileManager.trashFile(file);
       else await this.app.vault.adapter.remove(path);
     });
   }

@@ -1,8 +1,10 @@
 import { backgroundMaintenancePageWrite } from "../knowledge-base/maintenance-page-lock";
-import { createHash, randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { buildKnowledgeLinkingTargets, scanKnowledgeLinkingMentions, buildKnowledgeLinkingPatch, selectKnowledgeLinkingMentions } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask, KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
+
+const { createHash, randomUUID } = getDesktopCrypto();
 
 export interface KnowledgeLinkingHost {
   readonly vaultRootPath?: string;
@@ -18,7 +20,7 @@ export interface KnowledgeLinkingHost {
 }
 const running = (task: KnowledgeLinkingTask | null) => !!task && ["scanning", "judging", "writing", "awaiting-confirmation", "interrupted"].includes(task.phase);
 const revision = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
-const yieldUI = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+const yieldUI = () => new Promise<void>(resolve => window.setTimeout(resolve, 0));
 
 /** Vault-owned lifecycle. A view subscribes; it never owns this controller. */
 export class KnowledgeLinkingService {
@@ -27,7 +29,7 @@ export class KnowledgeLinkingService {
   private controller: AbortController | null = null;
   private flight: Promise<void> | null = null;
   private disposed = false;
-  private notifyTimer: ReturnType<typeof setTimeout> | null = null;
+  private notifyTimer: number | null = null;
   private starts: Promise<void> = Promise.resolve();
   private handoffStops = 0;
   private readonly blockedOrigins = new Set<string>();
@@ -200,7 +202,7 @@ export class KnowledgeLinkingService {
   async dispose(): Promise<void> {
     this.disposed = true; this.controller?.abort(); await this.flight; await this.host.release?.();
     if (this.task && ["scanning", "judging", "writing"].includes(this.task.phase)) { this.task.phase = "interrupted"; await this.persist(); }
-    if (this.notifyTimer) clearTimeout(this.notifyTimer);
+    if (this.notifyTimer) window.clearTimeout(this.notifyTimer);
     this.listeners.clear();
   }
   async waitForIdle(): Promise<void> { await this.ready; await this.flight; }
@@ -347,6 +349,6 @@ export class KnowledgeLinkingService {
   }
   private notify(): void {
     if (this.notifyTimer || this.disposed) return;
-    this.notifyTimer = setTimeout(() => { this.notifyTimer = null; this.publish(this.snapshot()); }, 80);
+    this.notifyTimer = window.setTimeout(() => { this.notifyTimer = null; this.publish(this.snapshot()); }, 80);
   }
 }

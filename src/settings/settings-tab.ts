@@ -1,3 +1,5 @@
+import { ownedDiv } from "../ui/owned-dom";
+import { isImeKeyEvent } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
@@ -145,7 +147,6 @@ import { McpServerModal } from "./mcp-server-modal";
 import {
   applySettingsRow,
   attachSettingsHelpTooltip,
-  addSettingsHelp,
   showSettingsInlineConfirmation,
   createSettingsCompactList,
   createSettingsFeatureCard,
@@ -1222,7 +1223,7 @@ export class CodexSettingTab extends PluginSettingTab {
 
     const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
     const quickDrawer = Platform.isDesktopApp ? quickChatSection.createEl("details", { cls: "echoink-quick-chat-drawer" }) : quickChatSection;
-    if (quickDrawer instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement) {
+    if (quickDrawer.instanceOf(this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement)) {
       quickDrawer.open = this.plugin.settings.quickChat.enabled && (this.quickChatExpanded ?? true);
       quickDrawer.addEventListener("toggle", () => { this.quickChatExpanded = quickDrawer.open; });
     }
@@ -1299,7 +1300,7 @@ export class CodexSettingTab extends PluginSettingTab {
             input.blur();
             return;
           }
-          if (event.isComposing || event.keyCode === 229) return;
+          if (isImeKeyEvent(event)) return;
           const recorded = recordAcceleratorFromEvent(event);
           if (!recorded.valid) return;
           const normalized = normalizeAccelerator(recorded.accelerator);
@@ -2902,7 +2903,6 @@ export class CodexSettingTab extends PluginSettingTab {
     container: HTMLElement,
     activeTab: VisibleSettingsTab
   ): void {
-    const copy = this.copy;
     const navigation = this.nativeSettingsNavigation;
     const tabs = navigation?.listEl ?? container.createDiv({ cls: "codex-settings-tabs" });
     tabs.addClass("codex-settings-tabs");
@@ -3644,7 +3644,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.renderSettingsContent();
       return;
     }
-    const host = this.containerEl.ownerDocument.createElement("div");
+    const host = ownedDiv(this.containerEl.ownerDocument);
     host.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     const modelEditor = tab === "providers" || tab === "models";
     const zh = this.plugin.settings.settingsLanguage !== "en";
@@ -5294,7 +5294,11 @@ export class CodexSettingTab extends PluginSettingTab {
       setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), connectionStatus === "verified" ? "check-circle-2" : connectionStatus === "failed" ? "circle-alert" : "circle-help");
       status.createSpan({ text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage) });
     }
-    if (Platform.isDesktopApp && resource.kind !== "tool-bundle") row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
+    if (Platform.isDesktopApp && resource.kind !== "tool-bundle") {
+      // Assignment presence is fixed for this row; rebuilding/removing the row owns cleanup.
+      row.classList.add("has-agent-assignment");
+      row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
+    }
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",
       attr: {
@@ -5473,7 +5477,7 @@ export class CodexSettingTab extends PluginSettingTab {
       new Notice(message);
       this.announceSettingsStatus(message);
       await this.loadWorkspaceResources(true, "mcp");
-    } catch (error) {
+    } catch {
       const message = this.plugin.settings.settingsLanguage === "en"
         ? "Connection test did not finish. Review the visible error, then retry."
         : "连接测试未完成。请查看页面中的错误后重试。";

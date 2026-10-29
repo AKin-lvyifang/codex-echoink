@@ -1,4 +1,5 @@
 import { runCustomModelToolCallingTests } from "./custom-model-tool-calling";
+import { installMockObsidianDom } from "./obsidian-dom";
 import { runCustomToolCallingRuntimeTests } from "./pi-native/pi-native-conversation-runtime";
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
 import { runSettingsSaveResilienceTests } from "./settings-save-resilience";
@@ -819,6 +820,8 @@ async function assertMemoryCorrectionModalContract(): Promise<void> {
 
 function assertMemoryComposerVisualCssContract(): void {
   const css = readFileSync(path.resolve("styles.css"), "utf8");
+  // Geometry and scoped overrides may occupy separate cascade rules.
+  const blocks = (pattern: RegExp): string => Array.from(css.matchAll(new RegExp(pattern.source, "gu")), match => match[1]).join("\n");
   const currentRule = css.match(
     /\.echoink-memory-correction-current\s*\{([^}]*)\}/u
   )?.[1] ?? "";
@@ -828,21 +831,22 @@ function assertMemoryComposerVisualCssContract(): void {
   const hiddenPreviewRule = css.match(
     /\.echoink-memory-correction-preview\.is-hidden\s*\{([^}]*)\}/u
   )?.[1] ?? "";
-  const disabledSaveRule = css.match(
-    /\.echoink-memory-correction-actions button\.mod-cta:disabled\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
-  const sendButtonRule = css.match(
+  const disabledSaveRules = Array.from(css.matchAll(
+    /((?:\.echoink-memory-correction-actions)+ button\.mod-cta:disabled)\s*\{([^}]*)\}/gu
+  ));
+  const disabledSaveRule = disabledSaveRules.map(match => match[2]).join("\n");
+  const sendButtonRule = blocks(
     /\.codex-composer-send-button\.codex-send-button\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
+  );
   const sendIconRule = css.match(
     /\.codex-composer-send-icon-wrap svg,\s*\.codex-composer-send-button \.echoink-animate-icon-send-horizontal,\s*\.codex-composer-send-button \.echoink-animate-icon-circle-stop\s*\{([^}]*)\}/u
   )?.[1] ?? "";
-  const stopButtonRule = css.match(
+  const stopButtonRule = blocks(
     /\.codex-composer-send-button\.codex-send-button\.is-stop-action\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
-  const permissionKeyboardFocusRule = css.match(
+  );
+  const permissionKeyboardFocusRule = blocks(
     /\.codex-permission-control \.codex-composer-native-select\.codex-select:is\(:focus, :focus-visible\)\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
+  );
 
   assert.match(currentRule, /background:\s*var\(--background-secondary\);/u);
   assert.match(previewRule, /--echoink-memory-preview-cyan:\s*#70d7df;/u);
@@ -859,23 +863,39 @@ function assertMemoryComposerVisualCssContract(): void {
   assert.match(disabledSaveRule, /color:\s*var\(--text-faint\);/u);
   assert.match(
     disabledSaveRule,
-    /background:\s*var\(--background-modifier-border\)\s*!important;/u
+    /background:\s*var\(--background-modifier-border\)\s*;/u
   );
   assert.match(disabledSaveRule, /cursor:\s*not-allowed;/u);
+  assert.match(disabledSaveRule, /opacity:\s*0\.62;/u);
+  assert.match(disabledSaveRule, /box-shadow:\s*none;/u);
+  const disabledBackgroundRule = disabledSaveRules.find(match => /background:\s*var\(--background-modifier-border\)\s*;/u.test(match[2]));
+  assert.ok(disabledBackgroundRule, "the scoped disabled-save rule retains its original background token");
+  const disabledBackgroundSelector = disabledBackgroundRule[1];
+  assert.equal(
+    disabledBackgroundSelector.replace(/(?:\.echoink-memory-correction-actions)+/u, ".echoink-memory-correction-actions"),
+    ".echoink-memory-correction-actions button.mod-cta:disabled",
+    "specificity promotion must keep the exact disabled memory-save target"
+  );
+  // All these selectors have one button type and no IDs. Classes plus
+  // pseudo-classes decide their specificity: the base has 3; host CTA rules
+  // button.mod-cta:disabled and .modal button.mod-cta:disabled have 2 and 3.
+  const promotedSpecificity = (disabledBackgroundSelector.match(/\./gu)?.length ?? 0) + 1;
+  assert.ok(promotedSpecificity > 3, "the enhanced background rule beats both the base and host disabled CTA selectors without relying on source order");
+  assert.doesNotMatch(disabledBackgroundRule[2], /!important/u, "disabled save uses scoped specificity instead of important declarations");
   assert.match(sendButtonRule, /width:\s*34px;/u);
   assert.match(sendButtonRule, /height:\s*34px;/u);
   assert.match(sendButtonRule, /flex:\s*0 0 34px;/u);
   assert.match(sendButtonRule, /color:\s*var\(--text-normal\);/u);
-  assert.match(sendButtonRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(sendButtonRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(sendButtonRule, /interactive-accent|text-on-accent/u);
   assert.match(sendIconRule, /width:\s*20px;/u);
   assert.match(sendIconRule, /height:\s*20px;/u);
   assert.match(stopButtonRule, /color:\s*var\(--text-normal\);/u);
-  assert.match(stopButtonRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(stopButtonRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(stopButtonRule, /text-error|status-danger/u);
-  assert.match(permissionKeyboardFocusRule, /outline:\s*none\s*!important;/u);
-  assert.match(permissionKeyboardFocusRule, /border:\s*0\s*!important;/u);
-  assert.match(permissionKeyboardFocusRule, /box-shadow:\s*none\s*!important;/u);
+  assert.match(permissionKeyboardFocusRule, /outline:\s*none;/u);
+  assert.match(permissionKeyboardFocusRule, /border:\s*0;/u);
+  assert.match(permissionKeyboardFocusRule, /box-shadow:\s*none;/u);
   assert.doesNotMatch(permissionKeyboardFocusRule, /interactive-accent|currentColor/u);
   assert.doesNotMatch(
     css,
@@ -10964,6 +10984,8 @@ function installProviderModalDomFixture(): void {
   const scope = globalThis as unknown as Record<string, unknown>;
   scope.document = providerModalTestDocument;
   scope.window = globalThis;
+  scope.createEl = (tag: string) => providerModalTestDocument.createElement(tag);
+  scope.createSvg = (tag: string) => providerModalTestDocument.createElementNS("http://www.w3.org/2000/svg", tag);
   scope.Element = ProviderModalTestElement;
   scope.HTMLElement = ProviderModalTestElement;
   scope.SVGElement = ProviderModalTestSvgElement;
@@ -11004,6 +11026,7 @@ class ProviderModalTestMouseEvent {
 }
 
 class ProviderModalTestDocument {
+  constructor() { installMockObsidianDom(this); }
   hasFocus(): boolean { return true; }
   activeElement: ProviderModalTestElement | null = null;
   prefersReducedMotion = false;
@@ -11138,6 +11161,7 @@ class ProviderModalTestStyle {
 }
 
 class ProviderModalTestElement {
+  instanceOf(type: new (...args: any[]) => unknown): boolean { return this instanceof type; }
   readonly children: ProviderModalTestElement[] = [];
   readonly dataset: Record<string, string> = {};
   readonly classList = new ProviderModalTestClassList(this);

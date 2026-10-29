@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import type { ChatMessage } from "../../settings/settings";
 import { projectDurableKnowledgeBaseUi } from "./conversation-content-projection";
+
+const { createHash } = getDesktopCrypto();
 
 export function createConversationProductMessageRevision(
   message: ChatMessage

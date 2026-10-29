@@ -1,3 +1,4 @@
+import { ownedFragment, ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
@@ -90,7 +91,6 @@ import {
   renderAIElementsToolStatus
 } from "./ai-elements-dom";
 import {
-  createAIElementsDocumentSources,
   createAIElementsTask,
   createSmoothAIApprovalCard,
   createSmoothAIArtifact,
@@ -513,7 +513,7 @@ export class CodexMessageListRenderer {
     if (messagesEl.clientHeight === 0) return false;
     let changed = false;
     for (const child of Array.from(virtualListEl.children)) {
-      if (!(child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue;
+      if (!(child.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue;
       const id = child.dataset.rowId;
       if (!id) continue;
       const measuredHeight = child.getBoundingClientRect().height;
@@ -722,7 +722,7 @@ export class CodexMessageListRenderer {
     this.viewportHeight = Math.max(0, messagesEl.clientHeight);
     const ownerWindow = messagesEl.ownerDocument?.defaultView as (Window & { ResizeObserver?: typeof ResizeObserver }) | null;
     const ResizeObserverCtor = ownerWindow?.ResizeObserver
-      ?? (typeof globalThis.ResizeObserver === "function" ? globalThis.ResizeObserver : null);
+      ?? (typeof window.ResizeObserver === "function" ? window.ResizeObserver : null);
     if (!ResizeObserverCtor) return;
     this.viewportResizeObserver = new ResizeObserverCtor(() => {
       if (this.observedMessagesEl !== messagesEl) return;
@@ -763,7 +763,7 @@ export class CodexMessageListRenderer {
       ResizeObserver?: typeof ResizeObserver;
     }) | null;
     const ResizeObserverCtor = ownerWindow?.ResizeObserver
-      ?? (typeof globalThis.ResizeObserver === "function" ? globalThis.ResizeObserver : null);
+      ?? (typeof window.ResizeObserver === "function" ? window.ResizeObserver : null);
     if (!ResizeObserverCtor) return;
     this.visibleRowsResizeObserver = new ResizeObserverCtor(() => {
       if (!this.env || this.env.messagesEl !== messagesEl || this.env.virtualListEl !== virtualListEl) return;
@@ -771,7 +771,7 @@ export class CodexMessageListRenderer {
       this.measureVisibleVirtualRows(messagesEl, virtualListEl, forceBottom);
     });
     for (const child of Array.from(virtualListEl.children)) {
-      if (child instanceof (child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)) this.visibleRowsResizeObserver.observe(child);
+      if (child.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)) this.visibleRowsResizeObserver.observe(child);
     }
   }
 
@@ -1874,13 +1874,13 @@ export class CodexMessageListRenderer {
         } catch (error) {
           receiptError = error instanceof Error ? error.message : String(error);
         }
-        const notice = env.messagesEl.ownerDocument.createDocumentFragment();
+        const notice = ownedFragment(env.messagesEl.ownerDocument);
         notice.append(receiptError
           ? conversationUiText(env.settingsLanguage,
             `已存为 ${path}，但保存状态未能写入对话，重开后可能无法识别：${receiptError}\u3000`,
             `Saved as ${path}, but the conversation could not remember it after reopening: ${receiptError} `)
           : conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
-        const open = env.messagesEl.ownerDocument.createElement("button");
+        const open = ownedEl(env.messagesEl.ownerDocument, "button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
         open.onclick = () => { void this.openSavedAnswerNote(env, path); };
         notice.append(open);
@@ -3293,7 +3293,7 @@ export class CodexMessageListRenderer {
     const ref = findProcessFileRef(item.source.files ?? [], path)
       ?? normalizeProcessFileRef(path, this.requireEnv().vaultPath);
     if (!this.actionFileExists(ref)) return;
-    const link = withNativeMessageTooltip(container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createSpan({
       cls: "codex-action-open-note",
       text: this.copy().details.openFullNote,
       attr: {
@@ -3996,7 +3996,7 @@ export class CodexMessageListRenderer {
         attr: { title: this.copy().details.cannotOpenPath(file.displayPath) }
       }));
     }
-    const link = withNativeMessageTooltip(container.createEl("span", {
+    const link = withNativeMessageTooltip(container.createSpan({
       cls: `codex-process-file-link codex-process-file-link-${file.kind} ${extraClass}`.trim(),
       text: displayLabel,
       attr: {
@@ -4089,9 +4089,9 @@ export class CodexMessageListRenderer {
     const text = await this.requireEnv().readRawMessageText(message.rawRef);
     this.rawTextCache.set(message.rawRef, text);
     while (this.rawTextCache.size > 5) {
-      const oldest = this.rawTextCache.keys().next().value;
-      if (!oldest) break;
-      this.rawTextCache.delete(oldest);
+      const oldest = this.rawTextCache.keys().next();
+      if (oldest.done || !oldest.value) break;
+      this.rawTextCache.delete(oldest.value);
     }
     return text;
   }
@@ -4876,34 +4876,7 @@ function localDocumentSources(
   return documents;
 }
 
-function localDocumentMetadata(
-  document: LocalVaultDocumentSource,
-  evidenceStatus?: KnowledgeBaseCitationSummary["status"],
-  language: SettingsLanguage = "zh-CN"
-): string[] {
-  const copy = conversationCopy(language);
-  const labels = new Set<string>();
-  for (const citation of document.citations) labels.add(copy.sources.bucketLabel(citation.bucket));
-  if (document.citations.length && evidenceStatus) {
-    labels.add(copy.sources.evidenceStatus(evidenceStatus));
-  }
-  for (const reference of document.references) {
-    labels.add(copy.sources.lineRange(reference.lineStart, reference.lineEnd));
-  }
-  return Array.from(labels);
-}
 
-function localDocumentExcerpts(document: LocalVaultDocumentSource): string[] {
-  const excerpts = new Set<string>();
-  for (const citation of document.citations) {
-    const excerpt = citation.excerptLines.join("\n");
-    if (excerpt) excerpts.add(excerpt);
-  }
-  for (const reference of document.references) {
-    if (reference.excerpt) excerpts.add(reference.excerpt);
-  }
-  return Array.from(excerpts);
-}
 
 function hasRenderableDiff(files: ParsedDiffFile[]): boolean {
   return files.some((file) => file.lines.some((line) =>

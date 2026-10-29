@@ -1,10 +1,11 @@
 import { getKnowledgeFolderBindings, knowledgeRolePath } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 import { isPrivateNoteSourcePath } from "../knowledge-base/note-source-policy";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizePath, type App, type TFile } from "obsidian";
 import {
   VaultDomainAdapterError,
@@ -21,6 +22,12 @@ import {
   type ResolvedVaultTarget,
   type VaultPathStat
 } from "../harness/pi-native/vault-target-resolver";
+
+const { createHash } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const SEARCH_SCAN_LIMIT_BYTES = 32_000;
 const SEARCH_EXCERPT_LIMIT_BYTES = 2_000;
@@ -41,7 +48,8 @@ export function createPhase3MaintenanceVaultDomainAdapter(
   options: Readonly<CreatePhase3MaintenanceVaultDomainAdapterOptions>
 ): VaultDomainAdapter {
   const trackerRelativePath = normalizeManagedHiddenPath(
-    options.trackerRelativePath
+    options.trackerRelativePath,
+    options.base.configDir
   );
   return Object.freeze(new Phase3MaintenanceVaultDomainAdapter(
     options.base,
@@ -68,6 +76,8 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
     this.vaultRootPath = path.resolve(vaultRootPath);
     this.resolver = new VaultTargetResolver(this);
   }
+
+  get configDir(): string { return this.app.vault.configDir; }
 
   async lstat(absolutePath: string): Promise<Readonly<VaultPathStat> | null> {
     let stats: Awaited<ReturnType<typeof fsp.lstat>>;
@@ -545,12 +555,14 @@ class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
   }
 }
 
-function normalizeManagedHiddenPath(value: string): string {
+function normalizeManagedHiddenPath(value: string, configDir?: string): string {
   const relativePath = normalizeVaultRelativePath(value);
   const segments = relativePath.split("/");
+  const configuredRoot = configDir?.trim() ? normalizeVaultRelativePath(configDir) : null;
   if (
     !hasHiddenPathSegment(relativePath)
     || segments[0] === ".obsidian"
+    || (configuredRoot !== null && (relativePath === configuredRoot || relativePath.startsWith(`${configuredRoot}/`)))
     || segments[0] === ".echoink"
   ) {
     throw new TypeError("managed_hidden_update_path_invalid");

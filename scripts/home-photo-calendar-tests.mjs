@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
@@ -9,7 +10,7 @@ import { JSDOM } from 'jsdom';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "home-photo-calendar-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: { contents: 'export { EchoInkHomeView } from "./src/home/home-view"; export { homeWorkspaceMarkup } from "./src/home/home-workspace-template";',
     resolveDir: root, loader: 'ts' },
   bundle: true, platform: 'node', target: 'node22', format: 'esm', outfile: output,

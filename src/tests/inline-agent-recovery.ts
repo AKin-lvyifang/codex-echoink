@@ -1,3 +1,4 @@
+import "./inline-timer-host";
 import assert from "node:assert/strict";
 import { paidTestAccess } from "./membership-access";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -11,7 +12,7 @@ const testRoot = await realpath(disposableTestRoot(path.join(os.homedir(), "Echo
 const fixture = await mkdtemp(path.join(testRoot, "knowledge-ui-"));
 try {
   const output = path.join(fixture, "tests.mjs");
-  await esbuild.build({ stdin: { contents: 'import {runKnowledgePageUiTests} from "./src/tests/knowledge-page-ui"; await runKnowledgePageUiTests();', resolveDir: root, loader: "ts" }, outfile: output,
+  await esbuild.build({ banner: desktopNodeTestBanner, stdin: { contents: 'import {runKnowledgePageUiTests} from "./src/tests/knowledge-page-ui"; await runKnowledgePageUiTests();', resolveDir: root, loader: "ts" }, outfile: output,
     bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent", loader: { ".md": "text", ".svg": "text", ".webp": "dataurl", ".txt": "text" },
     plugins: [{ name: "knowledge-page-local-host", setup(build) {
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(root, "src/tests/origin-controls-shim.ts") }));

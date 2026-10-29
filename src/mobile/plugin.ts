@@ -5,7 +5,7 @@ import { configuredReportSecrets } from "../run-reports/report";
 import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
-import { ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
+import { View, ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
 import { isMobileDataConflict, MobileDataConflictError, MobileStore } from "./store";
 import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
@@ -187,7 +187,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   openRunReport(): void {
     const types = Platform.isTablet ? [IPAD_SHELL_AGENT_VIEW, IPAD_SHELL_HOME_VIEW] : [IPHONE_SHELL_VIEW];
     const leaves = types.flatMap(type => this.app.workspace.getLeavesOfType(type));
-    const active = this.app.workspace.activeLeaf;
+    const active = this.app.workspace.getActiveViewOfType(View)?.leaf;
     leaves.sort((left, right) => Number(right === active) - Number(left === active));
     let taskId: string | undefined;
     for (const leaf of leaves) {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { App, TFile } from "obsidian";
+import { type App, TFile } from "obsidian";
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as path from "node:path";
@@ -34,7 +34,7 @@ export async function runVaultBodySearchWorkflowNavigationTests(root: string): P
     Object.assign(bindings.roles[role], { enabled: true, searchEnabled: true, readPaths: [folder], writePath: folder });
   }
   let unavailableNotesTarget = false;
-  const file = (name: string) => ({ path: name, basename: path.basename(name, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: path.basename(name, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => {
@@ -163,7 +163,7 @@ export async function runVaultBodySearchPrivateBoundaryTests(): Promise<void> {
   const publicPaths = ["私有记忆备份/公开.md", "笔记/私有记忆/公开.md", "普通/公开.md"];
   const bodies = new Map([...privatePaths, ...publicPaths].map(name => [name, `---\naliases: [BOUNDARY_ALIAS_TOKEN]\ntags: [boundary-tag]\n---\n# Boundary\nBOUNDARY_SHARED_TOKEN ${name}\n`]));
   const reads: string[] = [], metadata: string[] = [];
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : name === "alias.md" ? file(privatePaths[0]) : null,
     read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } },
@@ -212,7 +212,7 @@ export async function runVaultBodySearchPrivateBoundaryTests(): Promise<void> {
   for (const code of ["EACCES", "ELOOP"]) {
     let failed = true;
     const sourceReads: string[] = [], sourceMetadata: string[] = [];
-    const files = ["notes/broken.md", "notes/public.md"].map(name => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, size: 20 } }));
+    const files = ["notes/broken.md", "notes/public.md"].map(name => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, size: 20 } }));
     const sourceApp = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => files.find(file => file.path === name), read: async (file: { path: string }) => { sourceReads.push(file.path); return "SOURCE_ERROR_PUBLIC_TOKEN"; } },
       metadataCache: { getFileCache: (file: { path: string }) => { sourceMetadata.push(file.path); return null; } } } as unknown as App;
     const resolveSourcePath = async (name: string) => { if (failed && name.endsWith("/broken.md")) throw Object.assign(new Error(code), { code }); return name; };
@@ -252,7 +252,7 @@ export async function runVaultBodySearchLinkCueTests(): Promise<void> {
   const reads = new Map<string, number>();
   let pause: { entered: () => void; wait: Promise<void> } | undefined;
   let activePath: string | undefined;
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => {
       assert.ok(!entry.path.startsWith("private/") && !entry.path.startsWith("disabled/") && !entry.path.startsWith(".obsidian/"));
@@ -349,7 +349,7 @@ export async function runVaultBodySearchSourceRevisionTests(): Promise<void> {
   let sourceWait: { entered: () => void; wait: Promise<void> } | undefined;
   let sourceReads = 0;
   let targetUnavailable = false;
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => {
       if (entry.path === sourcePath && sourceWait && ++sourceReads === 2) { sourceWait.entered(); await sourceWait.wait; }
@@ -419,7 +419,7 @@ export async function runVaultBodySearchExplicitAnchorTests(): Promise<void> {
   const reads: string[] = [];
   const bindings = emptyKnowledgeFolderBindings();
   bindings.roles.projects.enabled = true; bindings.roles.projects.readPaths = ["projects"];
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => { reads.push(entry.path); return bodies.get(entry.path)!; } }, metadataCache: { getFileCache: () => null } } as unknown as App;
   const port = new VaultBodySearch(app, () => bindings);
@@ -515,7 +515,7 @@ export async function runVaultBodySearchAnchorTests(): Promise<void> {
   let clock = 10;
   let reads = 0;
   let pause: { entered: () => void; wait: Promise<void> } | undefined;
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(name)?.length ?? 0 } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(name)?.length ?? 0 } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => {
       reads++;
@@ -643,7 +643,7 @@ export async function runVaultBodySearchOutlineTests(): Promise<void> {
   const bodies = new Map([[sourcePath, content]]);
   let clock = 10;
   let reads = 0;
-  const file = (path: string) => ({ path, basename: "guide", extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: "guide", extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
     read: async (source: TFile) => { reads++; return bodies.get(source.path)!; } },
   metadataCache: { getFileCache: () => ({ headings: [{ heading: "Stale fake", level: 1, position: { start: { line: 0 } } }] }) },
@@ -720,7 +720,7 @@ async function runVaultBodySearchMetadataDedupTests(): Promise<void> {
     [companionPath, `${metadata}# Target\n${paragraph}\n\n## reserve-batch\nEarlier background only.`]
   ]);
   let activePath: string | undefined;
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
@@ -800,7 +800,7 @@ export async function runVaultBodySearchMetadataTests(): Promise<void> {
   const bodies = new Map([
     ["notes/Field kit.md", `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Archive\nThe earlier packing list is obsolete.`]
   ]);
-  const file = (path: string) => ({ path, basename: "Field kit", extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: "Field kit", extension: "md", stat: { mtime: 20, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
@@ -871,7 +871,7 @@ export async function runVaultBodySearchReferenceTests(): Promise<void> {
   let activePath: string | undefined = currentPath;
   let recentPaths = [recentPath];
   const reads: string[] = [];
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
@@ -974,7 +974,7 @@ export async function runVaultBodySearchTests(): Promise<void> {
   ]);
   const events = new EventEmitter();
   let clock = 10;
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: clock, ctime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
@@ -1083,7 +1083,7 @@ export async function runVaultBodySearchCacheTests(): Promise<void> {
   let reads = 0;
   const failed = new Set<string>();
   let pause: (() => Promise<void>) | undefined;
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
   const hostEvents = (events: EventEmitter) => ({
     on: (name: string, callback: (...args: unknown[]) => void) => { events.on(name, callback); return { name, callback }; },
     offref: ({ name, callback }: { name: string; callback: (...args: unknown[]) => void }) => { events.off(name, callback); }
@@ -1203,7 +1203,7 @@ export async function runVaultBodySearchConcurrencyTests(): Promise<void> {
     const vaultEvents = new EventEmitter(), metadataEvents = new EventEmitter();
     let eventCount = 0, activeReads = 0, maxActiveReads = 0;
     let pause: Promise<void> | undefined;
-    const file = (relativePath: string) => ({ path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)?.length ?? 0 } }) as TFile;
+    const file = (relativePath: string) => Object.assign(new TFile(), { path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)?.length ?? 0 } }) as TFile;
     const hostEvents = (events: EventEmitter) => ({
       on: (name: string, callback: (...args: unknown[]) => void) => { events.on(name, callback); return { name, callback }; },
       offref: ({ name, callback }: { name: string; callback: (...args: unknown[]) => void }) => { events.off(name, callback); },
@@ -1294,7 +1294,7 @@ export async function runVaultBodySearchConcurrencyTests(): Promise<void> {
       const started = new Promise<void>(resolve => { entered = resolve; });
       const gate = new Promise<void>(resolve => { resume = resolve; });
       let blocked = !warm;
-      const file = (relativePath: string) => ({ path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)!.length } }) as TFile;
+      const file = (relativePath: string) => Object.assign(new TFile(), { path: relativePath, basename: relativePath.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 1, size: bodies.get(relativePath)!.length } }) as TFile;
       const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (relativePath: string) => bodies.has(relativePath) ? file(relativePath) : null,
         read: async (source: TFile) => { if (blocked) { entered(); await gate; } return bodies.get(source.path)!; },
       }, metadataCache: { getFileCache: () => null } } as unknown as App;

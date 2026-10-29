@@ -187,7 +187,7 @@ export function createBrowserAvatarRenderer(): AvatarRenderer {
         // Some browser engines decode SVG through <img> but reject SVG blobs
         // in createImageBitmap. The same validated, normalized SVG stays local.
         imageUrl = URL.createObjectURL(safeBlob);
-        const image = document.createElement("img");
+        const image = window.createEl("img");
         source = await new Promise<HTMLImageElement>((resolve, reject) => {
           image.onload = () => resolve(image);
           image.onerror = () => reject(new Error("avatar_decode_failed"));
@@ -198,7 +198,7 @@ export function createBrowserAvatarRenderer(): AvatarRenderer {
       const sourceHeight = bitmap ? bitmap.height : (source as HTMLImageElement).naturalHeight;
       validateCanvas({ width: sourceWidth, height: sourceHeight });
 
-      const output = document.createElement("canvas");
+      const output = window.createEl("canvas");
       output.width = AGENT_AVATAR_OUTPUT_EDGE;
       output.height = AGENT_AVATAR_OUTPUT_EDGE;
       const context = output.getContext("2d");

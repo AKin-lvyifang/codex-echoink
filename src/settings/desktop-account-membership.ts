@@ -1,3 +1,4 @@
+import { ownedDiv } from "../ui/owned-dom";
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, showSettingsInlineConfirmation } from "./settings-v2";
 import type { AccountActions, AccountMembershipViewModel } from "./account-membership-model";
@@ -69,7 +70,7 @@ export class DesktopAccountMembershipController implements DesktopAccountMembers
     if (this.closed) return;
     this.refresh();
     if (!this.root) {
-      this.root = parent.ownerDocument.createElement("div"); this.root.className = "echoink-desktop-account-settings";
+      this.root = ownedDiv(parent.ownerDocument); this.root.className = "echoink-desktop-account-settings";
       this.overview = this.root.createDiv(); this.detail = this.root.createDiv({ cls: "desktop-account-detail" }); this.detail.hidden = true;
       this.root.addEventListener("click", event => {
         this.lastTrigger = (event.target as Element | null)?.closest<HTMLElement>("button, [role=button]") ?? null;

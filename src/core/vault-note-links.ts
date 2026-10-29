@@ -1,9 +1,8 @@
-import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
+
 export type VaultNoteLinkSegment =
   | { kind: "text"; text: string }
   | { kind: "noteLink"; text: string; original: string; targetPath: string; title: string; heading?: string };
 
-const VAULT_NOTE_ROOTS = new Set(["wiki", "journal", "outputs", "raw", "inbox", "projects", "work", "templates", "archive", "testing", "assets"]);
 const COMPACT_PARENT_LABEL_NAMES = new Set(["index", "00-索引", ".ingest-tracker"]);
 
 export function splitVaultNoteLinkSegments(text: string, vaultBasePathValue = ""): VaultNoteLinkSegment[] {

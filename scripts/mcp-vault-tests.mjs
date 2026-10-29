@@ -34,6 +34,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
+  banner: { js: `import { createRequire as createMcpTestRequire } from "node:module"; const require = createMcpTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
   external: [
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",

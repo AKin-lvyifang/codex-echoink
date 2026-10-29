@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type { App } from "obsidian";
 import { EchoInkMcpBrokerError, closeMcpBrokerConnectionPool } from "../resources/mcp-broker";
 import { EchoInkMcpCredentialStore } from "../resources/mcp-credential-store";
@@ -22,6 +22,8 @@ import {
   resourceMutationRollbackIsSafe,
   runResourceMutationWithReload
 } from "./resource-mutation-authority";
+
+const { createHash, randomUUID } = getDesktopCrypto();
 
 export interface EchoInkMcpServerDraft {
   readonly resourceId?: string;

@@ -37,7 +37,7 @@ export class KnowledgeLinkHealthService {
       for (const [target, count] of Object.entries(destinations)) if (count > 0 && target !== source && markdown.has(target)) {
         connected.add(source); connected.add(target);
       }
-      if (++batch % 200 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (++batch % 200 === 0) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     return { state: "ready", candidatePaths: candidates, isolatedPaths: candidates.filter(file => !connected.has(file)) };
   }

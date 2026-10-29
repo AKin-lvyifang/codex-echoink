@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
@@ -14,7 +15,7 @@ try {
   const memoryRoot = path.join(base, "memory"); await mkdir(memoryRoot, { recursive: true });
   await symlink(path.join(root, "node_modules"), path.join(temporary, "node_modules"), "dir");
   const output = path.join(temporary, "tests.mjs");
-  await build({ entryPoints: [path.join(root, "src/tests/inline-agent-concurrency.ts")], outfile: output,
+  await build({ banner: desktopNodeTestBanner, entryPoints: [path.join(root, "src/tests/inline-agent-concurrency.ts")], outfile: output,
     bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml", "jsdom"],
     loader: { ".md": "text", ".svg": "text", ".webp": "dataurl" },

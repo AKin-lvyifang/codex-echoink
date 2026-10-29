@@ -1,11 +1,13 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import type { StoredAttachment } from "../../settings/settings";
 import {
   normalizeApiProviderBaseUrl,
   type ApiProviderProtocol
 } from "../../settings/provider-presets";
 import type { PiChatPreparedDocument } from "./contracts";
+
+const { createHash } = getDesktopCrypto();
 
 export const PI_DOCUMENT_CONTEXT_CUSTOM_TYPE =
   "echoink-document-context-v1";

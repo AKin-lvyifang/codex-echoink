@@ -1,7 +1,13 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type { ResourceRef } from "../../resources/types";
+
+const { createHash } = getDesktopCrypto();
+
+const { readdir, readFile, stat } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface LoadVaultSkillInput {
   vaultPath: string;
@@ -169,7 +175,7 @@ function parseFrontmatter(text: string): VaultSkillFrontmatter {
       continue;
     }
     if (key in data && typeof data[key] === "string") {
-      (data[key] as string) = value;
+      data[key] = value;
     }
   }
   return data;

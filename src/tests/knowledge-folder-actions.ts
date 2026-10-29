@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { Platform } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
@@ -8,6 +9,7 @@ import { displayedTooltipsForTests, openTestModals, openTestNoticeMessages } fro
 
 /** Run under the folder-settings DOM so this suite is included in its existing entry. */
 export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { Event: typeof Event }): Promise<void> {
+  installObsidianDom(host.ownerDocument.defaultView);
   const previousDesktop = Platform.isDesktopApp;
   const flush = async () => { for (let index = 0; index < 8; index++) await Promise.resolve(); await new Promise(resolve => setTimeout(resolve, 0)); };
   const button = (text: string, root: ParentNode = host) => {

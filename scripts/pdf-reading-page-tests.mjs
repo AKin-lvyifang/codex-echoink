@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -11,7 +12,7 @@ const testRoot = await realpath(disposableTestRoot(path.join(os.homedir(), "Echo
 const fixture = await mkdtemp(path.join(testRoot, "pdf-page-ui-"));
 try {
   const output = path.join(fixture, "tests.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import { runPdfReadingPageTests } from "./src/tests/pdf-reading-page"; await runPdfReadingPageTests();', resolveDir: root, loader: "ts" },
     outfile: output, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent",
     plugins: [{ name: "pdf-page-local-host", setup(build) {

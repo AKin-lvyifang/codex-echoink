@@ -83,7 +83,7 @@
 .echoink-ipad .pd-todo-range { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 12px; margin: 10px 0; color: var(--text-muted); font-size: .8125em; font-variant-numeric: tabular-nums; }
 .echoink-ipad .pd-todo-toolbar > .pd-todo-project { position: relative; flex: 0 1 170px; max-width: 100%; margin-left: auto; }
 .echoink-ipad .pd-todo-toolbar > .pd-module-segments { flex: none; }
-.echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.echoink-ipad .pd-todo-project > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .echoink-ipad .pd-todo-more-filters > summary { box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: max-content; min-height: 44px; padding: 10px 0; color: var(--text-muted); font-size: .8125em; list-style: none; cursor: pointer; }
 .echoink-ipad .pd-todo-more-filters > summary::-webkit-details-marker { display: none; }
 .echoink-ipad .pd-todo-more-filters > summary .pd-icon svg { width: 16px; height: 16px; }
@@ -112,9 +112,9 @@
 .echoink-ipad .pd-todo-checkbox-hit { position: relative; display: grid; place-items: center; width: 44px; min-height: 44px; cursor: pointer; }
 .echoink-ipad .pd-todo-checkbox-hit::before { content: ""; box-sizing: border-box; width: 18px; height: 18px; border: 1.5px solid var(--text-muted); border-radius: 5px; }
 .echoink-ipad .pd-todo-checkbox-hit::after { position: absolute; display: grid; place-items: center; width: 18px; height: 18px; color: var(--pd-on-accent); font-size: 14px; font-weight: 600; line-height: 1; content: none; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::before { border-color: var(--pd-accent); background: var(--pd-accent); }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:checked)::after { content: "✓"; }
-.echoink-ipad .pd-todo-checkbox-hit:has(input:focus-visible)::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::before { border-color: var(--pd-accent); background: var(--pd-accent); }
+.echoink-ipad label.pd-todo-checkbox-hit.is-checked::after { content: "✓"; }
+.echoink-ipad label.pd-todo-checkbox-hit.has-visible-focus::before { outline: 2px solid var(--pd-accent); outline-offset: 3px; }
 .echoink-ipad .pd-todo-checkbox-hit input { position: absolute; inset: 0; width: 44px; height: 44px; margin: 0; opacity: 0; cursor: pointer; }
 .echoink-ipad .pd-module-check-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 0; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-ipad .pd-module-check-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

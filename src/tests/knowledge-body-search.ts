@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import type { App, TFile } from "obsidian";
+import { type App, TFile } from "obsidian";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -1042,6 +1042,20 @@ export async function runKnowledgeBodySearchSchedulingTests(): Promise<void> {
     assertReleased();
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(activeHandles().filter(handle => !previousHandles.has(handle) && handle.constructor.name === "MessagePort"), [], "no new active MessagePort handles remain");
+    // The scheduler also runs in standalone test and worker hosts without Window.
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    try {
+      Reflect.deleteProperty(globalThis, "window");
+      setGlobal("scheduler", undefined); setGlobal("MessageChannel", undefined);
+      const beforeFallback = timerCalls;
+      await yieldSearchTask();
+      assert.equal(timerCalls, beforeFallback + 1, "host without Window still completes a cancellable timer task");
+      const cancelled = new AbortController();
+      const waiting = yieldSearchTask(cancelled.signal); cancelled.abort();
+      await assert.rejects(waiting, { name: "AbortError" });
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    }
   } finally {
     afterMessage = undefined;
     for (const channel of channels) for (const port of channel.ports) port.close();
@@ -1091,7 +1105,7 @@ export async function runKnowledgeBodySearchInvalidationTests(): Promise<void> {
   ]);
   let journalPause: (() => Promise<void>) | undefined;
   let readPause: ((path: string) => Promise<void>) | undefined;
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md",
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md",
     stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),

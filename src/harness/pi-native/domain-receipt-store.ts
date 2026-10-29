@@ -1,6 +1,7 @@
-import { mkdir, readdir } from "node:fs/promises";
-import { isDeepStrictEqual } from "node:util";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import {
   PI_NATIVE_FILE_SCHEMA_VERSION,
   PiNativeFileStoreError,
@@ -27,6 +28,11 @@ import {
   type SideEffectApprovalToolId,
   type WriteToolAuthorizationContext
 } from "./tool-authorization";
+
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const { mkdir, readdir } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const TEST_UNCERTAIN = "TEST_UNCERTAIN" as const;
 
@@ -936,9 +942,17 @@ function normalizePersistReceiptInput(
   );
   const failureInjection = object.failureInjection;
   if (failureInjection !== undefined && failureInjection !== TEST_UNCERTAIN) {
+    let description: unknown;
+    switch (typeof failureInjection) {
+      case "string": case "number": case "boolean": case "bigint": case "symbol":
+        description = String(failureInjection);
+        break;
+      default:
+        description = Object.prototype.toString.call(failureInjection);
+    }
     throw new PiNativeFileStoreError(
       "invalid-input",
-      `不支持的 Receipt failureInjection ${String(failureInjection)}`
+      `不支持的 Receipt failureInjection ${typeof description === "string" ? description : "unknown"}`
     );
   }
   return cloneAndFreeze({

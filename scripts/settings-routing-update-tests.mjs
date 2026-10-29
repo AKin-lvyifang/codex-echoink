@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { mkdir, realpath, rm } from "node:fs/promises";
@@ -17,7 +18,7 @@ await mkdir(output, { recursive: true });
 let dom;
 try {
   const entry = path.join(output, "test.mjs");
-  await esbuild.build({ entryPoints: ["src/tests/settings-routing-update.ts"], absWorkingDir: repo, bundle: true, platform: "node", format: "esm", outfile: entry,
+  await esbuild.build({ banner: desktopNodeTestBanner, entryPoints: ["src/tests/settings-routing-update.ts"], absWorkingDir: repo, bundle: true, platform: "node", format: "esm", outfile: entry,
     plugins: [{ name: "offline-obsidian", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian", namespace: "offline-host" }));
       build.onLoad({ filter: /.*/, namespace: "offline-host" }, () => ({ contents: `

@@ -3,8 +3,9 @@ import type { MaintenanceSourceFields } from "../../knowledge-base/maintenance-p
 import { knowledgePathRole } from "../../knowledge-base/root-paths";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { isPrivateNoteSourcePath } from "../../knowledge-base/note-source-policy";
-import { createHash } from "node:crypto";
-import { TextDecoder } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
   VaultTargetResolver,
@@ -12,6 +13,9 @@ import {
   type ResolvedVaultTarget,
   type VaultTargetAdapter
 } from "./vault-target-resolver";
+
+const { createHash } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
 
 export const VAULT_SEARCH_RESULT_LIMIT = 20;
 export const VAULT_READ_RESULT_LIMIT_BYTES = 32_000;

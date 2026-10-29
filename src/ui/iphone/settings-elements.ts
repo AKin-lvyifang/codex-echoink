@@ -38,7 +38,7 @@ export function settingsRow(ctx: IPhonePageContext, parent: HTMLElement, name: s
 }
 export function settingsSelect(ctx: IPhonePageContext, parent: HTMLElement, name: string, choices: readonly (readonly [string, string])[], value: string, change: (value: string) => void, leading?: HTMLElement): HTMLSelectElement {
   const row = settingsRow(ctx, parent, name), control = el(ctx.document, "span", "ip-settings-select-value"), select = el(ctx.document, "select", "ip-settings-input ip-settings-select");
-  select.setAttribute("aria-label", settingsText(ctx, name));
+  row.classList.add("has-select-value"); select.setAttribute("aria-label", settingsText(ctx, name));
   for (const [id, label] of choices) { const option = el(ctx.document, "option", "", label); option.value = id; select.append(option); }
   select.value = value; select.addEventListener("change", () => change(select.value));
   if (leading) control.append(leading); control.append(select); row.append(control); return select;

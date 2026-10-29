@@ -85,7 +85,10 @@ function fixture() {
       createFolder: async (path: string) => { folders.add(path); },
       trash: async (entry: TFile) => { calls.push(`trash:${entry.path}`); data.delete(entry.path); files.delete(entry.path); }
     },
-    fileManager: { renameFile: async (entry: TFile, to: string) => { await adapter.rename(entry.path, to); files.delete(entry.path); file(to, data.get(to)!); } }
+    fileManager: {
+      renameFile: async (entry: TFile, to: string) => { await adapter.rename(entry.path, to); files.delete(entry.path); file(to, data.get(to)!); },
+      trashFile: async (entry: TFile) => { calls.push(`fileManager.trashFile:${entry.path}`); data.delete(entry.path); files.delete(entry.path); }
+    }
   } as unknown as App;
   return { app, data, files, views, calls, hooks, file, editor, port: new EnglishDiaryVaultPort(app, ["English", "Expressions", ".state", ".echoink/english-diary/expressions"]) };
 }
@@ -235,6 +238,27 @@ export async function runEnglishDiaryVaultPortTests(): Promise<void> {
     f.hooks.beforeCreate = (path) => { f.file(path, "user created this"); };
     await assert.rejects(f.port.write("English/new.md", "generated", null));
     assert.equal(f.data.get("English/new.md"), "user created this");
+  }
+
+  // Visible files use the host's deletion preference; a later restore can recreate the same file.
+  {
+    const f = fixture();
+    f.file("English/today.md", "generated");
+    await f.port.remove("English/today.md", "generated");
+    assert.ok(f.calls.includes("fileManager.trashFile:English/today.md"));
+    assert.equal(f.calls.some((call) => call.startsWith("trash:")), false);
+    assert.equal(await f.port.read("English/today.md"), null);
+    await f.port.write("English/today.md", "generated", null);
+    assert.equal(await f.port.read("English/today.md"), "generated");
+  }
+
+  // Deletion still refuses a changed file before invoking the host's trash operation.
+  {
+    const f = fixture();
+    f.file("English/today.md", "edited");
+    await conflict(f.port.remove("English/today.md", "stale"));
+    assert.equal(await f.port.read("English/today.md"), "edited");
+    assert.equal(f.calls.some((call) => call.startsWith("fileManager.trashFile:")), false);
   }
 
   // Hidden Markdown is fully managed through adapter APIs, even if a stale native file exists.

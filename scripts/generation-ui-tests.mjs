@@ -35,7 +35,7 @@ try {
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".png": "dataurl", ".md": "text" },
     plugins: [{ name: "generation-ui-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "generation-host" }));
-      build.onLoad({ filter: /.*/, namespace: "generation-host" }, () => ({ resolveDir: root, loader: "ts", contents: 'export {Scope,Setting} from "./src/tests/origin-obsidian-dom-shim"; import {Modal as HostModal} from "./src/tests/provider-discovery-dom-host"; import {Scope} from "./src/tests/origin-obsidian-dom-shim"; export class Modal extends HostModal { scope = new Scope(); } export {setIcon,setTooltip,Notice} from "./src/tests/provider-discovery-dom-host"; export const Platform = {isDesktopApp:true,isMobile:false}; export class TFile{}; export class Menu{}; export function normalizePath(path){return path;}' }));
+      build.onLoad({ filter: /.*/, namespace: "generation-host" }, () => ({ resolveDir: root, loader: "ts", contents: 'export {Scope,Setting} from "./src/tests/origin-obsidian-dom-shim"; import {Modal as HostModal} from "./src/tests/provider-discovery-dom-host"; import {Scope} from "./src/tests/origin-obsidian-dom-shim"; export class Modal extends HostModal { scope = new Scope(); } export {setIcon,setTooltip,Notice} from "./src/tests/provider-discovery-dom-host"; export const Platform = {isDesktop:true,isDesktopApp:true,isMobile:false}; export class TFile{}; export class Menu{}; export function normalizePath(path){return path;}' }));
     } }]
   });
   const testModule = { exports: {} };

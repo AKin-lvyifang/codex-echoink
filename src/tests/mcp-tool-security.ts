@@ -47,6 +47,7 @@ import type {
 
 export async function runMcpToolSecurityTests(): Promise<void> {
   await assertHttpMcpTransportLifecycle();
+  await assertMcpListShapeAndStdioNotification();
   await assertSharedHttpInitializationWaiterCancellation();
   assertSavedGlobalResourceStateOverridesRuntimeDiscovery();
   await assertResourceCatalogServiceDistinguishesFailureFromDeletion();
@@ -62,6 +63,42 @@ export async function runMcpToolSecurityTests(): Promise<void> {
   await assertExplicitTrustAndPolicyAreRequired();
   await assertChangedContractRequiresRetrust();
   await assertMcpAgentApprovalUsesExistingTicketChain();
+}
+
+async function assertMcpListShapeAndStdioNotification(): Promise<void> {
+  await closeMcpBrokerConnectionPool();
+  const resource = mcpResource();
+  const connection = normalizeMcpConnectionRecord({ transport: "http", url: "https://fixture.invalid/mcp" })!;
+  const tool = { name: "preserved" };
+  const value = new Proxy({}, { has: () => false, get: (_target, key) => key === "tools" ? [tool] : undefined });
+  let initialized = false;
+  const broker = new EchoInkMcpBroker({ connections: { [resource.id]: connection }, transportFactory: async () => ({
+    async request(method) { return method === "tools/list" ? value : {}; },
+    async notify() { await Promise.resolve(); initialized = true; },
+    async close() {}
+  }) });
+  try {
+    assert.deepEqual(await broker.listTools(resource), { tools: [tool] }, "tools are read without narrowing supported object behavior");
+    assert.equal(initialized, true, "asynchronous initialization notification completes before listing tools");
+  } finally { await closeMcpBrokerConnectionPool(); }
+
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcp-stdio-notify-"));
+  const script = path.join(directory, "server.mjs");
+  await writeFile(script, String.raw`import readline from "node:readline";
+let initialized = false;
+for await (const line of readline.createInterface({input: process.stdin})) {
+  const message = JSON.parse(line);
+  if (message.method === "notifications/initialized") { initialized = true; continue; }
+  if (message.id !== undefined) process.stdout.write(JSON.stringify({jsonrpc:"2.0", id:message.id, result:message.method === "tools/list" ? {tools:[{name:initialized ? "ready" : "not-ready"}]} : {}}) + "\n");
+}
+`);
+  const stdio = new EchoInkMcpBroker({ connections: { [resource.id]: normalizeMcpConnectionRecord({ transport: "stdio", command: process.execPath, args: [script] })! } });
+  try {
+    assert.deepEqual(await stdio.listTools(resource, 5_000), { tools: [{ name: "ready" }] }, "real stdio notification reaches the child before tools/list");
+  } finally {
+    await closeMcpBrokerConnectionPool();
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 async function assertSharedHttpInitializationWaiterCancellation(): Promise<void> {

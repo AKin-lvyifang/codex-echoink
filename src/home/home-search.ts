@@ -71,7 +71,7 @@ export class HomeSearchService {
         }
         if (terms.every((t) => searchable.includes(t))) matches.push({ path: file.path, title: file.basename, mtime: file.stat.mtime, snippet: "" });
       } catch { failed++; }
-      if (i % 100 === 99) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (i % 100 === 99) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
     matches.sort((a, b) => b.mtime - a.mtime);
     const visible = matches.slice(0, 6);

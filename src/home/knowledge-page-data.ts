@@ -1,16 +1,20 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { KnowledgeLinkHealth } from "../knowledge-base/link-health";
 import { knowledgePagePathStat, loadKnowledgeSourceHealth, type KnowledgeSourceHealth } from "../knowledge-base/source-health";
 import { mergeKnowledgeMaintenanceHistory } from "../knowledge-base/maintenance-history-core";
 import { aggregateKnowledgePageActivity, type KnowledgePageDirectory, type KnowledgePageDirectoryRole, type KnowledgePageDirectoryRoot, type PageFile, type KnowledgePageHost, type KnowledgePageSnapshot } from "./knowledge-page-core";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 export * from "./knowledge-page-core";
 
 interface DirectoryScan { directory: KnowledgePageDirectory; files: PageFile[]; }
 const RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const markdown = (file: string): boolean => /\.(?:md|markdown)$/iu.test(file);
-const yieldFrame = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 0));
+const yieldFrame = (): Promise<void> => new Promise(resolve => window.setTimeout(resolve, 0));
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, role: KnowledgePageDirectoryRole): Promise<DirectoryScan> {

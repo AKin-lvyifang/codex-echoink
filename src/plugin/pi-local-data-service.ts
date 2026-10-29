@@ -1,7 +1,8 @@
 import { registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import {
   CURRENT_SESSION_VERSION,
   SessionManager
@@ -56,6 +57,9 @@ import { loadPiVaultToolProductState } from "./pi-vault-tool-production";
 import { prepareVaultIdentity, repairVaultMemory } from "./vault-identity";
 import { type VaultIdentity, type VaultMemoryNotice } from "../storage/vault-identity";
 import { parseCanonicalMemoryManifest, PersonalMemoryIdentityMismatchError } from "../harness/memory/personal-memory-core";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface PiLocalDataPluginHost {
   getVaultPath(): string;

@@ -433,13 +433,20 @@ export async function acceptedMetadataFailureConsumesDraftAndQueue(): Promise<vo
 
 async function concurrentViewRunsRemainIndependent(): Promise<void> {
   const dom = installTurnRunnerMessageDom();
+  // Only fake the long watchdogs: production also uses window timers for
+  // short refresh/save work, which must retain their normal event-loop behavior.
   const timers = new Map<number, () => void>();
-  let timerId = 0;
-  window.setTimeout = ((callback: () => void) => {
+  const nativeSetTimeout = window.setTimeout.bind(window);
+  const nativeClearTimeout = window.clearTimeout.bind(window);
+  let timerId = 1_000_000_000;
+  window.setTimeout = ((callback: () => void, delay = 0) => {
+    if (delay < 1_000) return nativeSetTimeout(callback, delay);
     timers.set(++timerId, callback);
     return timerId;
   }) as typeof window.setTimeout;
-  window.clearTimeout = (id) => { timers.delete(id); };
+  window.clearTimeout = (id) => {
+    if (!timers.delete(id)) nativeClearTimeout(id);
+  };
   const settings = structuredClone(DEFAULT_SETTINGS);
   const sessions = ["A", "B", "C"].map(piSessionShell);
   settings.sessions = sessions;
@@ -3328,6 +3335,8 @@ function installTurnRunnerMessageDom(): Readonly<{
   } | null = null;
   let restoreCalls = 0;
   const fakeWindow = {
+    createEl: (tag: string) => fakeDocument.createElement(tag),
+    createSvg: (tag: string) => fakeDocument.createElementNS("http://www.w3.org/2000/svg", tag),
     NodeFilter: { SHOW_TEXT: 4 },
     setTimeout: () => 1,
     clearTimeout: () => undefined,

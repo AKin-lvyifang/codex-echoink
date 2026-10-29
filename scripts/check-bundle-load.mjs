@@ -57,7 +57,7 @@ if (!caseName) {
       if (property === "__esModule") return true;
       if (property === "default") return shim;
       if (property === "StateEffect" || property === "StateField") return { define: () => ({}) };
-      if (property === "Platform") return { isMobileApp: false, isMobile: false, isTablet: false };
+      if (property === "Platform") return { isDesktop: true, isMobileApp: false, isMobile: false, isTablet: false };
       return class {};
     }
   });

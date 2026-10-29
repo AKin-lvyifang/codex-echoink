@@ -87,12 +87,12 @@
   .echoink-journal-template-management :is(.echoink-journal-template-grid, .echoink-journal-custom-list) { grid-template-columns: minmax(0, 1fr); }
 }
 /* Boolean labels and their controls stay together at narrow desktop widths. */
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) {
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox {
   flex-direction: row;
   align-items: center;
 }
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) > .setting-item-info { flex: 1; width: auto; min-width: 0; }
-.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item:has([role="checkbox"]) > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-info { flex: 1; width: auto; min-width: 0; }
+.echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }
 .echoink-module-drawer-content .echoink-life-setting-row > .echoink-module-boolean-copy { display: flex; flex-direction: row; align-items: center; }
 @container (max-width: 520px) {
   .echoink-module-drawer-content .echoink-life-setting-row:has(form) { flex-direction: column; align-items: stretch; }

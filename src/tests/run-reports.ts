@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { taskInterruptionExplanation } from "../agents/task-interruption-copy";
 import assert from "node:assert/strict";
@@ -20,6 +21,7 @@ const environment: RunReport["environment"] = { pluginVersion: "2.8.6", obsidian
 function report(): RunReport { return { format: "echoink-run-report", formatVersion: 1, createdAt: "2026-10-28T10:00:00.000Z", description: "", contact: "", environment,
   conversation: { id: "session", title: "测试/会话", agent: "sol", provider: "test", model: "test", catalogStatus: "active", activeLeafId: null }, runs: [], diagnostics: [], recentErrors: [], entries: [], missing: [], redaction: { applied: true, rules: "v1" } }; }
 export async function runReportTests(document: Document): Promise<void> {
+  installObsidianDom(document.defaultView);
   let passed = 0;
   const test = async (name: string, run: () => void | Promise<void>) => { await run(); passed++; console.log(`OK run reports: ${name}`); };
   await test("persisted interruption facts select localized copy without inventing retry attempts", () => {

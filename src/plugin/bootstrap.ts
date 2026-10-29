@@ -62,7 +62,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   });
   plugin.addCommand({
     id: "open-codex-sidebar",
-    name: "打开 EchoInk Agent 侧栏",
+    name: "打开侧栏",
     callback: () => void plugin.activateView()
   });
   plugin.addCommand({

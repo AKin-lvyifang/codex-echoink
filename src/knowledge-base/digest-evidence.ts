@@ -1,4 +1,4 @@
-import * as path from "path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { normalizePath } from "obsidian";
 import type { KnowledgeBaseProcessedSource } from "../settings/settings";
 import { readFreshKnowledgeBaseReportExcerpt } from "./report";
@@ -10,6 +10,8 @@ import {
   type KnowledgeTransactionSnapshot,
   type KnowledgeTransactionSnapshotEntry
 } from "./transaction-snapshot-core";
+
+const path = getDesktopPath();
 
 export type { KnowledgeTransactionSnapshot, KnowledgeTransactionSnapshotEntry } from "./transaction-snapshot-core";
 
@@ -932,7 +934,7 @@ function isSubstantiveDigestLine(line: string): boolean {
   const text = normalized
     .replace(/^[-*+]\s+/, "")
     .replace(/^\d+[.)、]\s+/, "")
-    .replace(/[*_`>#\[\]()（）:：，。,.!！?？\s|\-]/g, "");
+    .replace(/[*_`>#[\]()（）:：，。,.!！?？\s|-]/g, "");
   return text.length >= 12 && /[A-Za-z0-9\u4e00-\u9fff]/.test(text);
 }
 

@@ -3,10 +3,14 @@ import { RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_SCHEMA_VERSION, RAW_DIGEST_FIELDS,
   type RawDigestFrontmatterRecord, type RawDigestRegistryEntry, type RawDigestRegistry } from "./raw-digest-core";
 export * from "./raw-digest-core";
 import { resolveKnowledgePath, knowledgeRootEntries, knowledgeRootRole, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { contentFingerprint } from "./raw-integrity";
 import { writeFileAtomic, isMissingPathError } from "./utils";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export function rawDigestFingerprint(relativePath: string, content: Buffer): string {
   if (!isRawMarkdownPath(relativePath)) return contentFingerprint(content);

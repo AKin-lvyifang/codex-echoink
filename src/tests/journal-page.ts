@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,6 +12,7 @@ import { EchoInkHomeView } from "../home/home-view";
 
 export async function runJournalPageTests(root: string): Promise<void> {
   const dom = new JSDOM("<body><main></main></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const win = dom.window;
   Object.assign(globalThis, { window: win, document: win.document, HTMLElement: win.HTMLElement });
   const proto = win.HTMLElement.prototype as any;

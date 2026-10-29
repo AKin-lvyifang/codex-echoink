@@ -1,3 +1,4 @@
+import { watchImeComposition } from "../ui/ime-composition";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import type { CSSProperties, ReactNode } from "react";
@@ -12,7 +13,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGr
 import { OriginPagination } from "../ui/components/origin/pagination";
 
 type ElementOptions = { cls?: string; text?: string; attr?: Record<string, string | number | boolean>; type?: string; value?: string };
-type Island = { root: Root; element: HTMLElement | null; document: Document; disposed: boolean; cleanup?: () => void };
+type Island = { root: Root; element: HTMLElement | null; document: Document; disposed: boolean; stopIme: () => void; cleanup?: () => void };
 const islands = new Set<Island>();
 const windowCleanup = new Map<Document, () => void>();
 
@@ -20,7 +21,7 @@ const windowCleanup = new Map<Document, () => void>();
 function createIsland(parent: HTMLElement) {
   const document = parent.ownerDocument;
   const fragment = new document.defaultView!.DocumentFragment();
-  const island: Island = { root: createRoot(fragment), element: null, document, disposed: false };
+  const island: Island = { root: createRoot(fragment), element: null, document, disposed: false, stopIme: watchImeComposition(parent) };
   islands.add(island);
   if (!windowCleanup.has(document)) {
     const cleanup = () => disposeOriginControls(document.documentElement);
@@ -42,6 +43,7 @@ export function disposeOriginControls(container: HTMLElement): void {
     if (island.document !== container.ownerDocument || !island.element || !container.contains(island.element)) continue;
     islands.delete(island);
     island.disposed = true;
+    island.stopIme();
     island.cleanup?.();
     island.root.unmount();
   }
@@ -111,6 +113,30 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
     : <Checkbox ref={island.ref} className="echoink-origin-control" checked={indeterminate ? "indeterminate" : checked} disabled={disabled} onCheckedChange={onCheckedChange} />);
   render();
   const element = island.element() as OriginCheckElement;
+  const row = parent.closest<HTMLElement>(".setting-item, .echoink-life-setting-row");
+  if (row) {
+    const state = kind === "checkbox" ? "has-origin-checkbox" : "has-origin-switch";
+    row.classList.add(state);
+    if (kind === "checkbox" && element.parentElement === row) row.classList.add("has-origin-direct-checkbox");
+    if (kind === "switch" && element.parentElement?.classList.contains("setting-item-control") && element.parentElement.parentElement === row) row.classList.add("has-origin-direct-switch");
+    let disposed = false;
+    const syncFocus = () => {
+      if (!disposed) row.classList.toggle(`has-origin-${kind}-focus`, Array.from(row.querySelectorAll(`[data-slot="${kind}"]`)).some(control => control.matches(":focus-visible")));
+    };
+    const feedback = () => queueMicrotask(syncFocus);
+    const events = ["focusin", "focusout", "keydown", "pointerdown", "pointerup"];
+    for (const event of events) row.addEventListener(event, feedback, true);
+    syncFocus();
+    island.onDispose(() => {
+      disposed = true;
+      for (const event of events) row.removeEventListener(event, feedback, true);
+      const others = Array.from(row.querySelectorAll(`[data-slot="${kind}"]`)).filter(control => control !== element);
+      if (!others.length) row.classList.remove(state);
+      if (kind === "checkbox" && !others.some(control => control.parentElement === row)) row.classList.remove("has-origin-direct-checkbox");
+      if (kind === "switch" && !others.some(control => control.parentElement?.classList.contains("setting-item-control") && control.parentElement.parentElement === row)) row.classList.remove("has-origin-direct-switch");
+      row.classList.toggle(`has-origin-${kind}-focus`, others.some(control => control.matches(":focus-visible")));
+    });
+  }
   Object.defineProperty(element, "checked", { get: () => checked, set: (value: boolean) => { checked = Boolean(value); render(); } });
   Object.defineProperty(element, "indeterminate", { get: () => indeterminate, set: (value: boolean) => { indeterminate = kind === "checkbox" && Boolean(value); render(); } });
   Object.defineProperty(element, "disabled", { get: () => disabled, set: (value: boolean) => { disabled = Boolean(value); render(); } });

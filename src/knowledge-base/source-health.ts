@@ -1,10 +1,14 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "./folder-bindings";
 import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 
 export type { KnowledgeMissingSource, KnowledgeSourceHealth } from "./source-health-core";
 import { loadKnowledgeSourceHealthCore, type KnowledgeSourceHealth } from "./source-health-core";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 /** Never follow a symbolic link, including one in a parent directory. */
 export async function knowledgePagePathStat(vaultPath: string, relativePath: string): Promise<import("node:fs").Stats> {

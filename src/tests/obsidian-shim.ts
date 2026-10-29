@@ -1,6 +1,7 @@
 export const apiVersion = "1.14.4";
 import type { RequestUrlParam, RequestUrlResponse } from "obsidian";
 import { StateField } from "@codemirror/state";
+import { installCurrentObsidianDom } from "./obsidian-dom";
 export const editorInfoField = StateField.define({ create: () => ({ file: null }), update: value => value });
 export const editorLivePreviewField = StateField.define({ create: () => false, update: value => value });
 export { Scope } from "./origin-obsidian-dom-shim";
@@ -10,6 +11,7 @@ const testGlobal = globalThis as unknown as { window?: Window };
 if (!testGlobal.window) {
   testGlobal.window = globalThis as unknown as Window;
 }
+installCurrentObsidianDom();
 
 export const openTestNoticeMessages: string[] = [];
 export const openTestNotices: Notice[] = [];
@@ -38,6 +40,7 @@ export class TFile {
 }
 
 export class App {
+  constructor() { installCurrentObsidianDom(); }
   vault = {
     getAllLoadedFiles: (): Array<TFile | TFolder> => []
   };
@@ -50,6 +53,7 @@ export class PluginSettingTab {
   readonly containerEl: HTMLElement;
 
   constructor(app: App, readonly plugin: unknown) {
+    installCurrentObsidianDom();
     this.app = app;
     this.containerEl = document.createElement("div");
   }
@@ -112,7 +116,7 @@ export class WorkspaceTabs {
   children: unknown[] = [];
 }
 
-export class ItemView extends Component {
+export class View extends Component {
   containerEl = {
     children: [
       { empty: () => undefined },
@@ -122,6 +126,7 @@ export class ItemView extends Component {
   app = new App() as any;
   constructor(public readonly leaf: WorkspaceLeaf) {
     super();
+    installCurrentObsidianDom();
   }
   getViewType(): string { return "test-view"; }
   getDisplayText(): string { return "Test View"; }
@@ -129,6 +134,7 @@ export class ItemView extends Component {
   async onClose(): Promise<void> {}
 }
 
+export class ItemView extends View {}
 export class MarkdownView extends ItemView {}
 
 export class Menu {
@@ -161,6 +167,7 @@ export class Modal {
   contentEl = document.createElement("div");
   private opened = false;
   constructor(public readonly app: App) {
+    installCurrentObsidianDom();
     this.modalEl.append(this.titleEl, this.contentEl);
     this.containerEl.appendChild(this.modalEl);
   }
@@ -356,6 +363,7 @@ export function normalizePath(value: string): string {
 }
 
 export const Platform = {
+  isDesktop: true,
   isDesktopApp: false
 };
 

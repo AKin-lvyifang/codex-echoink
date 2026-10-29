@@ -4,10 +4,11 @@ import type { KnowledgeBodySearchPort } from "./vault-body-search";
 import type { KnowledgeRelationPage } from "./knowledge-relations";
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "./source-span";
 import { extractMarkdownAnchorLinks, knowledgeAnchorCoversSpan, normalizeKnowledgeAnchorLocation, normalizeKnowledgeDocumentOutline, normalizeKnowledgeLinkCues, verifyKnowledgeAnchorLines, verifyKnowledgeOutlineLines } from "./search/markdown-navigation";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import { TextDecoder } from "node:util";
-import * as path from "path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type {
   KnowledgeBaseCitation,
   KnowledgeBaseCitationBucket,
@@ -27,6 +28,12 @@ import {
   type KnowledgeAgentSearchRequest,
   type KnowledgeAgentSearchResult
 } from "./knowledge-agent-index";
+
+const { createHash } = getDesktopCrypto();
+const { TextDecoder } = getDesktopUtil();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface KnowledgeBaseAskMatch extends KnowledgeBaseSource {
   bucket: KnowledgeBaseCitationBucket;
@@ -1148,7 +1155,7 @@ async function resolveKnowledgeVaultRoot(vaultPath: string): Promise<string> {
   let realVaultPath: string;
   try {
     realVaultPath = await fsp.realpath(resolved);
-  } catch (error) {
+  } catch {
     throw new KnowledgeRetrievalError(
       "invalid-path",
       `当前 Vault 路径不可用：${resolved}`

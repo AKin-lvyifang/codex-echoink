@@ -7,7 +7,7 @@ import {
   type SessionEntry,
   type SessionManager
 } from "@earendil-works/pi-coding-agent";
-import type { Context, Message, Model } from "@earendil-works/pi-ai";
+import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
 import { estimateTokenValue, ESTIMATED_IMAGE_TOKENS } from "../usage/token-estimator";
 import {
   calculatePiEffectiveInputBudget,
@@ -138,7 +138,7 @@ export interface BuildPiContextLedgerInput {
   readonly requestSequence: number;
   readonly requestLeafId: string | null;
   readonly recordedAt: number;
-  readonly model: Pick<Model<any>, "provider" | "id">;
+  readonly model: Pick<Model<Api>, "provider" | "id">;
   readonly budget: Readonly<PiEffectiveInputBudget>;
   readonly context: Readonly<Context>;
   /** Native attachments added to the wire payload outside text Context. */
@@ -160,7 +160,7 @@ export interface PiContextLedgerRecorderOptions {
   readonly conversationId: string;
   readonly piSessionId: string;
   readonly sessionManager: SessionManager;
-  readonly model: Pick<Model<any>, "provider" | "id" | "contextWindow">;
+  readonly model: Pick<Model<Api>, "provider" | "id" | "contextWindow">;
   readonly budget: Readonly<PiEffectiveInputBudget>;
   readonly vaultToolNames: readonly string[];
   readonly memoryToolNames?: readonly string[];

@@ -190,7 +190,7 @@ export class FinanceCatalogPanel {
     let colorValue = this.kind === "categories" ? (existing as FinanceCategorySetting | null)?.color ?? categoryColors[0][1] : "";
     const iconPickerButton = (label: string, scope: FinanceIconScope): void => {
       const row = form.createDiv({ cls: "echoink-finance-icon-field" });
-      row.createEl("span", { text: label });
+      row.createSpan({ text: label });
       const trigger = row.createEl("button", { cls: "echoink-finance-icon-trigger", attr: { type: "button" } });
       const art = trigger.createSpan({ cls: "echoink-finance-icon-art", attr: { "aria-hidden": "true" } });
       const text = trigger.createSpan(); trigger.createSpan({ text: "›", attr: { "aria-hidden": "true" } });
@@ -214,7 +214,7 @@ export class FinanceCatalogPanel {
       iconValue = category?.icon ?? "package";
       iconPickerButton("分类图标", "category");
       const colorField = form.createDiv({ cls: "echoink-finance-color-field" });
-      colorField.createEl("span", { text: "分类颜色" });
+      colorField.createSpan({ text: "分类颜色" });
       const palette = colorField.createDiv({ cls: "echoink-finance-color-palette", attr: { role: "group", "aria-label": "分类颜色预设" } });
       const options = categoryColors.some(([, color]) => color.toLowerCase() === colorValue.toLowerCase())
         ? categoryColors : [["当前颜色", colorValue] as const, ...categoryColors];

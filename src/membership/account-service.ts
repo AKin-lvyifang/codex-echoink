@@ -44,6 +44,10 @@ const ERRORS: Record<string, string> = {
   OPERATION_CANCELLED: "账号已切换，本次操作已取消。",
 };
 
+function hasTimerUnref(value: unknown): value is { unref(): void } {
+  return value !== null && typeof value === "object" && "unref" in value && typeof value.unref === "function";
+}
+
 export class MembershipApiError extends Error {
   readonly retryAfter?: number;
   constructor(readonly code: string, retryAfter?: number) {
@@ -85,7 +89,7 @@ export class AccountService implements CapabilityAccess {
   private products: MembershipProduct[] = [];
   private salesOpen = false;
   private betaOffer: MembershipRights["betaOffer"] = null;
-  private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private expiryTimer: number | null = null;
   private statisticsSource: AccountStatisticsSource | null = null;
   private unsubscribeStatistics: (() => void) | null = null;
   readonly actions: AccountActions;
@@ -349,19 +353,20 @@ export class AccountService implements CapabilityAccess {
     this.scheduleExpiry();
   }
   private scheduleExpiry(): void {
-    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    if (this.expiryTimer) window.clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     if (!this.claims || this.closed) return;
     const remaining = this.claims.exp - this.now();
     if (remaining > 0) {
-      this.expiryTimer = setTimeout(
+      this.expiryTimer = window.setTimeout(
         () => {
           this.expiryTimer = null;
           this.emit();
         },
         Math.min(remaining + 10, 2147483647),
       );
-      this.expiryTimer.unref?.();
+      const handle: unknown = this.expiryTimer;
+      if (hasTimerUnref(handle)) handle.unref();
     }
   }
   private trustedNow(): number {
@@ -699,7 +704,7 @@ export class AccountService implements CapabilityAccess {
     this.unsubscribeStatistics?.();
     this.unsubscribeStatistics = null;
     this.statisticsSource = null;
-    if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    if (this.expiryTimer) window.clearTimeout(this.expiryTimer);
     this.expiryTimer = null;
     ++this.generation;
     this.listeners.clear();

@@ -110,7 +110,15 @@ export function selectInputModal(
   });
 }
 
-export function requestUserInputModal(app: App, questions: any[]): Promise<Record<string, { answers: string[] }>> {
+interface RequestInputQuestion {
+  id: string;
+  header?: string;
+  question: string;
+  options?: Array<{ label: string }> | null;
+  isSecret?: boolean;
+}
+
+export function requestUserInputModal(app: App, questions: RequestInputQuestion[]): Promise<Record<string, { answers: string[] }>> {
   return new Promise((resolve) => {
     const modal = new RequestInputModal(app, questions, resolve);
     modal.open();
@@ -760,7 +768,7 @@ class RequestInputModal extends Modal {
   private answers: Record<string, string[]> = {};
   private settled = false;
 
-  constructor(app: App, private readonly questions: any[], private readonly done: (answers: Record<string, { answers: string[] }>) => void) {
+  constructor(app: App, private readonly questions: RequestInputQuestion[], private readonly done: (answers: Record<string, { answers: string[] }>) => void) {
     super(app);
   }
 

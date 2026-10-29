@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -24,7 +25,7 @@ try {
   const viewClass = viewSource.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexView");
   const viewMembers = ["onClose", "pendingInteractionsBySession", "settleTaskUiReady"].map(name => viewClass.members.find(member => member.name?.getText(viewSource) === name).getText(viewSource));
   const output = path.join(runRoot, "agent-runs.mjs");
-  await esbuild.build({ stdin: { contents: [
+  await esbuild.build({ banner: desktopNodeTestBanner, stdin: { contents: [
     'import { runAgentRunTests } from "./src/tests/agent-runs";',
     'import { ConversationRunService } from "./src/plugin/conversation-run-service";',
     'import { consumeAcceptedTaskDraft } from "./src/agents/task-workspace";',

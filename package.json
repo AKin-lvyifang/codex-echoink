@@ -1,6 +1,6 @@
 {
   "name": "echoink-agent",
-  "version": "2.8.7",
+  "version": "2.8.8",
   "description": "A personal knowledge agent for Obsidian that builds editable memory and grows to understand you better.",
   "main": "dist/main.js",
   "scripts": {
@@ -84,6 +84,9 @@
   "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@codemirror/commands": "6.8.1",
+    "@codemirror/language": "6.13.1",
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
     "@eslint/js": "^9.39.5",
     "@eslint/json": "^0.14.0",
     "@tailwindcss/postcss": "4.1.13",
@@ -98,6 +101,8 @@
     "obsidian": "^1.8.7",
     "postcss": "8.5.6",
     "postcss-prefix-selector": "2.1.1",
+    "stylelint": "17.16.0",
+    "stylelint-config-obsidianmd": "0.1.0",
     "tailwindcss": "4.1.13",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.64.0",
@@ -114,7 +119,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "diff": "8.0.4",
-    "fflate": "^0.8.2",
+    "fflate": "^0.8.3",
     "framer-motion": "12.23.24",
     "js-tiktoken": "1.0.21",
     "number-flow": "0.2.3",
@@ -128,6 +133,7 @@
     "word-extractor": "1.0.4"
   },
   "overrides": {
+    "zod@^4.0.0": "4.6.6",
     "eslint-plugin-json-schema-validator": {
       "brace-expansion": "2.1.7"
     },

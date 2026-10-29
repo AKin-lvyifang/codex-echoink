@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import * as assert from "node:assert/strict";
 import { App, Platform, openTestModals } from "obsidian";
 import { mountAccountMembership, appendAccountComingSoon } from "../settings/account-membership";
@@ -9,6 +10,7 @@ import { runAccountMembershipSubscriptionTests } from "./account-membership-subs
 import { displayedTooltipsForTests } from "./obsidian-shim";
 
 export async function runAccountMembershipTests(win: Window & typeof globalThis) {
+  installObsidianDom(win);
   runAccountMembershipPricingTests();
   const scheduler = prepareDocument(win);
   const adapter = createUnavailableAccountAdapter();

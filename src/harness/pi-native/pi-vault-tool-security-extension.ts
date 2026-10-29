@@ -1,11 +1,12 @@
-import { knowledgeRolePath } from "../../knowledge-base/root-paths";
+
 import {
   type InlineExtension,
   type ToolCallEvent,
   type ToolResultEvent
 } from "@earendil-works/pi-coding-agent";
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import type { PiKnowledgeReference } from "./contracts";
 import { piToolAccessFailure, type PiToolAccessDecision } from "./pi-workspace-access";
 import {
@@ -31,6 +32,9 @@ import {
   secureVaultToolResult,
   type VaultToolResultEgressPort
 } from "./vault-tool-result-safety";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export type PiVaultToolBlockReason =
   | "approval_denied"

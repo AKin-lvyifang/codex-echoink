@@ -1,9 +1,13 @@
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { ItemView, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { isReviewHtmlPath } from "./schedule";
 import { attachNativeTooltip } from "../ui/native-tooltip";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const VIEW_TYPE_REVIEW_PREVIEW = "codex-review-preview";
 
@@ -59,7 +63,7 @@ export class ReviewPreviewView extends ItemView {
         title: this.htmlPath,
         sandbox: "allow-same-origin"
       }
-    }) as HTMLIFrameElement;
+    });
     const pathTooltip = attachNativeTooltip(frame, this.htmlPath); this.pathTooltip = pathTooltip;
     const absolute = path.join(this.plugin.getVaultPath(), this.htmlPath);
     const html = await fsp.readFile(absolute, "utf8").catch(() => "");

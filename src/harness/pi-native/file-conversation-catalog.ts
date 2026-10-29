@@ -1,7 +1,8 @@
-import { copyFile, lstat, unlink } from "node:fs/promises";
-import { constants } from "node:fs";
+import { getDesktopFsPromises, getDesktopFs } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import { CONVERSATION_TASK_METADATA_KEYS, normalizeConversationTaskMetadata, applyConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
-import * as path from "node:path";
+
 import type {
   PiConversationCatalogEntry,
   PiConversationCatalogStatus,
@@ -25,6 +26,10 @@ import {
   type PiNativeVaultFileLayout
 } from "./file-store-utils";
 import { normalizedJournalDirectoryOrNull } from "../../home/journal-directory";
+
+const { copyFile, lstat, unlink } = getDesktopFsPromises();
+const { constants } = getDesktopFs();
+const path = getDesktopPath();
 
 const CATALOG_STATUSES = new Set<PiConversationCatalogStatus>([
   "active",

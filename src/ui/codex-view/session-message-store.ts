@@ -258,7 +258,11 @@ export class SessionMessageStore {
     if (type === "commandExecution") {
       await this.upsertProcessItem(session, id, "commandExecution", `${stringPayload(payload.command)}\n\n${stringPayload(payload.aggregatedOutput)}`.trim(), status, payload);
     } else if (type === "fileChange") {
-      const changes = Array.isArray(payload.changes) ? payload.changes : [];
+      const rawChanges: readonly unknown[] = Array.isArray(payload.changes) ? payload.changes : [];
+      const changes = rawChanges.map(value => {
+        const change = value && typeof value === "object" ? value as { path?: unknown; kind?: unknown; diff?: unknown } : {};
+        return { path: typeof change.path === "string" ? change.path : undefined, kind: change.kind, diff: typeof change.diff === "string" ? change.diff : undefined };
+      });
       const diffSummary = buildDiffSummary(changes);
       const text = serializeFileChanges(changes);
       await this.upsertProcessItem(session, id, "fileChange", text || status, status, payload, diffSummary);

@@ -1,6 +1,8 @@
-import * as fsp from "node:fs/promises";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { writeFileAtomic, isMissingPathError } from "../knowledge-base/utils";
 import { HomeActivityCore } from "./home-activity-core";
+
+const fsp = getDesktopFsPromises();
 export * from "./home-activity-core";
 
 /** Desktop storage adapter; the shared activity model also runs on mobile. */

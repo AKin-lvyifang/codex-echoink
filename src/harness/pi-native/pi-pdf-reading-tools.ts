@@ -1,9 +1,10 @@
 import type { PdfDependencies } from "../../pdf-reading/service";
 import { pdfReadingPage } from "../../pdf-reading/reading-page";
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import { defineTool, type ToolCallEvent, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { isDeepStrictEqual } from "node:util";
+
 import type { PdfReadingController } from "../../pdf-reading/controller";
 import type { PiWorkspaceAccess } from "./pi-workspace-access";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
@@ -17,6 +18,9 @@ import type { PdfJob, PdfOptions, PdfStartIntent, PdfTaskRequest } from "../../p
 import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import { normalizeJsonValue, type ApprovalOperationContract, type FileApprovalTicketStore, type JsonValue, type WriteToolAuthorizationContext } from "./tool-authorization";
 import { requireProPlugin, unavailableCapabilityAccess } from "../../membership/access";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PDF_TOOL_NAMES = ["pdf_reading_query", "pdf_reading_process"] as const;
 type PdfArgs = { path?: string; attachmentId?: string; jobId?: string; enhanced?: boolean; reading?: boolean; summary?: boolean; translation?: boolean; translationLanguage?: string; readingOffset?: number };

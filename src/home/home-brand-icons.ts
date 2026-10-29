@@ -1,6 +1,5 @@
+import { ownedSvg } from "../ui/owned-dom";
 import type { HomeEntryId } from "./home-workbench-model";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
 
 export interface HomeBrandIconShape {
   tag: "circle" | "path" | "rect";
@@ -40,7 +39,7 @@ export const HOME_ENTRY_ICON_SHAPES: Record<HomeEntryId, readonly HomeBrandIconS
 
 /** Render the brand-manual 24px icon paths as self-contained SVG nodes. */
 export function renderHomeEntryIcon(container: HTMLElement, id: HomeEntryId): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, "svg");
+  const svg = ownedSvg(container.ownerDocument, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("fill", "none");
   svg.setAttribute("stroke", "currentColor");
@@ -49,7 +48,7 @@ export function renderHomeEntryIcon(container: HTMLElement, id: HomeEntryId): SV
   svg.setAttribute("stroke-linejoin", "round");
   svg.setAttribute("aria-hidden", "true");
   for (const shape of HOME_ENTRY_ICON_SHAPES[id]) {
-    const element = document.createElementNS(SVG_NS, shape.tag);
+    const element = ownedSvg(container.ownerDocument, shape.tag);
     for (const [name, value] of Object.entries(shape.attrs)) element.setAttribute(name, value);
     svg.appendChild(element);
   }

@@ -1,4 +1,5 @@
-import { Notice, Platform, WorkspaceTabs, WorkspaceWindow, type WorkspaceLeaf, type WorkspaceSplit, type WorkspaceWindowInitData } from "obsidian";
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
+import { View, Notice, Platform, WorkspaceTabs, WorkspaceWindow, type WorkspaceLeaf, type WorkspaceSplit, type WorkspaceWindowInitData } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { CodexView, VIEW_TYPE_CODEX, type CodexViewMigrationState } from "../ui/codex-view";
 import { normalizeAccelerator } from "../core/quick-hotkey";
@@ -479,7 +480,7 @@ export class QuickChatWindowController {
           const type = typeof leaf.view?.getViewType === "function"
             ? leaf.view.getViewType()
             : "";
-          if (type === "empty" && leaf !== workspace.activeLeaf) {
+          if (type === "empty" && leaf !== workspace.getActiveViewOfType(View)?.leaf) {
             tabsNode.removeChild?.(child);
           }
         }
@@ -521,17 +522,18 @@ export class QuickChatWindowController {
     this.escapeCleanup?.();
     this.escapeCleanup = null;
     if (!doc) return;
+    const stopImeTracking = watchImeComposition(doc.body);
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       // IME composition and popups/menus handle their own Escape first: they
       // either set isComposing or preventDefault in earlier phases.
-      if (event.isComposing || event.keyCode === 229) return;
+      if (isImeKeyEvent(event)) return;
       if (event.defaultPrevented) return;
       event.preventDefault();
       this.hide();
     };
     doc.addEventListener("keydown", onKeyDown);
-    this.escapeCleanup = () => doc.removeEventListener("keydown", onKeyDown);
+    this.escapeCleanup = () => { stopImeTracking(); doc.removeEventListener("keydown", onKeyDown); };
   }
 
   private clearAdoptedState(): void {

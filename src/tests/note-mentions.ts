@@ -136,6 +136,10 @@ export async function runNoteMentionTests(): Promise<void> {
   assert.equal(handleComposerNoteMentionKeyDown(keyEvent("Enter", true), input), false,
     "IME composition Enter never selects a note");
   assert.equal(selectedPath, "");
+  for (const key of ["Process", "Unidentified"]) {
+    assert.equal(handleComposerNoteMentionKeyDown(keyEvent(key), input), false, `${key} never selects or navigates a note`);
+    assert.equal(selectedPath, "");
+  }
   assert.equal(handleComposerNoteMentionKeyDown(keyEvent("Enter"), input), true);
   assert.equal(selectedPath, catalog[1]?.vaultRelativePath);
   assert.equal(handleComposerNoteMentionKeyDown(keyEvent("Escape"), input), true);
@@ -222,7 +226,6 @@ export async function runNoteMentionTests(): Promise<void> {
 function keyEvent(key: string, isComposing = false): KeyboardEvent {
   return {
     key,
-    keyCode: isComposing ? 229 : 0,
     isComposing,
     preventDefault: () => undefined,
     stopPropagation: () => undefined

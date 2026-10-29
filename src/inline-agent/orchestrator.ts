@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 import type CodexForObsidianPlugin from "../main";
 import { getActiveApiProviderModel } from "../settings/settings";
@@ -9,6 +9,8 @@ import { buildInlineCandidates, proposalTarget, sectionForRange } from "./candid
 import type { InlineDraftSubmission } from "./mention";
 import { InlineRequestService, type InlineEditorPort } from "./service";
 import type { InlineModelSelection, InlineRequest } from "./types";
+
+const { randomUUID } = getDesktopCrypto();
 
 export interface InlineOrchestratorHost { editor(path: string): Promise<InlineEditorPort>; openTask(taskId: string): Promise<void> }
 interface InlineFlight { id: string; token?: string; abort: AbortController; completion?: Promise<void> }

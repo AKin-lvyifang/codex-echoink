@@ -312,7 +312,6 @@ export function renderQueue(host: CodexComposerHost): void {
   if (!host.queueEl) return;
   const session = host.ensureSession();
   const knowledgeManager = host.plugin.getKnowledgeSurfaceService();
-  const maintenanceReady = (knowledgeManager?.maintenanceRecoveryStatus?.state ?? "ready") === "ready";
   const maintenanceRecoveryBlocksHead = false;
   const piSupport = session.bodyAuthority === "pi_session_only"
     ? piConversationSupport(host.plugin, session.id)

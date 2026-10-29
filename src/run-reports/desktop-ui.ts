@@ -1,5 +1,6 @@
+import { ownedFragment, ownedEl } from "../ui/owned-dom";
 import { Modal, Notice, type App } from "obsidian";
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import type { AccountService } from "../membership/account-service";
 import { showItemInFinder } from "../core/electron";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
@@ -8,11 +9,13 @@ import type { ReportSnapshot } from "./report";
 import { saveRunReport } from "./vault-export";
 import { uploadRunReport } from "./upload";
 
+const path = getDesktopPath();
+
 export async function exportDesktopRunReport(app: App, vaultPath: string, snapshot: ReportSnapshot, english = false): Promise<void> {
   const file = await saveRunReport(app, snapshot);
   const doc = app.workspace.containerEl.ownerDocument;
-  const fragment = doc.createDocumentFragment(); fragment.append(`${english ? "Exported to Vault" : "已导出到笔记库"}：${file} `);
-  const reveal = doc.createElement("button"); reveal.type = "button"; reveal.textContent = english ? "Show in folder" : "在文件夹中显示";
+  const fragment = ownedFragment(doc); fragment.append(`${english ? "Exported to Vault" : "已导出到笔记库"}：${file} `);
+  const reveal = ownedEl(doc, "button"); reveal.type = "button"; reveal.textContent = english ? "Show in folder" : "在文件夹中显示";
   reveal.onclick = () => { if (!showItemInFinder(path.join(vaultPath, file))) new Notice(english ? "Cannot open the folder" : "无法打开文件夹"); }; fragment.append(reveal);
   new Notice(fragment, 15000);
 }

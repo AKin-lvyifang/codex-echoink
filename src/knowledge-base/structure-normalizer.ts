@@ -1,5 +1,6 @@
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type {
   StructureNormalizationMove,
@@ -9,6 +10,9 @@ import type {
   StructureNormalizationUpdatedLink
 } from "./types";
 import { exists, normalizeSlashes, walkFiles } from "./utils";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface StructureNormalizationOptions {
   lastReportPath?: string;

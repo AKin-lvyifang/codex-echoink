@@ -1,11 +1,15 @@
-import { createHash } from "node:crypto";
-import path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopPath } from "../../platform/desktop-paths";
 import {
   cognitivePathExists,
   cognitiveReadJsonOrNull
 } from "./cognitive-file-utils";
 import { AGENT_MD_HARD_MAX_BYTES, stableSelfKey, type AgentSelfHabit } from "./agent-self";
 import { AGENT_TEMPLATES, type AgentTemplateId } from "./agent-templates";
+
+const { createHash } = getDesktopCrypto();
+
+const path = getDesktopPath();
 
 const LEGACY_PERSONALITY_SCHEMAS = new Set([
   "echoink.personality.v1",

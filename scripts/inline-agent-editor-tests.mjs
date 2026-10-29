@@ -23,7 +23,7 @@ try {
         import { StateField } from "@codemirror/state";
         export const editorInfoField = StateField.define({create: () => ({file: {path: "合成正文.md"}}), update: value => value});
         export const editorLivePreviewField = StateField.define({create: () => true, update: value => value});
-        export const Platform = {isMobile: false, isDesktopApp: true};
+        export const Platform = {isDesktop: true, isMobile: false, isDesktopApp: true};
         export class Notice { constructor(message) { this.message = message; } }
         export class Component { load() {} unload() {} }
         export class Scope { register() {} }

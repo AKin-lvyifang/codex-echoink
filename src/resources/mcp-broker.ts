@@ -76,11 +76,11 @@ export class EchoInkMcpBrokerError extends Error {
 }
 
 export function mcpBrokerConnectionConfig(resource: EchoInkResource): EchoInkMcpConnectionConfig | null {
-  return resolveMcpConnectionConfig(resource, { mcpConnections: {} } as any);
+  return resolveMcpConnectionConfig(resource, { mcpConnections: {} });
 }
 
 export function isMcpBrokerConnectable(resource: EchoInkResource, connections?: EchoInkMcpConnectionRecords): boolean {
-  return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} } as any));
+  return Boolean(resolveMcpConnectionConfig(resource, { mcpConnections: connections ?? {} }));
 }
 
 export function mcpBrokerResourceStatus(resource: EchoInkResource, connections?: EchoInkMcpConnectionRecords): "connectable" | "imported-only" | "not-mcp" {
@@ -96,7 +96,7 @@ export class EchoInkMcpBroker {
     timeoutMs = 30000,
     signal?: AbortSignal
   ): Promise<EchoInkMcpToolListResult> {
-    const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} } as any);
+    const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} });
     if (!publicConfig) throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
     const config = await this.resolveRuntimeConfig(resource, publicConfig);
     throwIfMcpAborted(signal);
@@ -116,10 +116,11 @@ export class EchoInkMcpBroker {
         timeoutMs,
         signal
       );
-      if (!result || typeof result !== "object" || !Array.isArray((result as any).tools)) {
+      if (!result || typeof result !== "object") {
         throw brokerError("schema_invalid", "MCP tools/list 返回了非法 Schema。");
       }
-      const tools = (result as any).tools;
+      const tools: unknown = Reflect.get(result, "tools");
+      if (!Array.isArray(tools)) throw brokerError("schema_invalid", "MCP tools/list 返回了非法 Schema。");
       return { tools };
     } catch (error) {
       if (transport) await closePooledMcpTransport(config, "close MCP broker transport after listTools failure", this.poolKey(resource, publicConfig));
@@ -128,7 +129,7 @@ export class EchoInkMcpBroker {
   }
 
   async callTool(invocation: EchoInkMcpBrokerInvocation): Promise<EchoInkMcpBrokerResult> {
-    const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} } as any);
+    const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} });
     if (!publicConfig) {
       throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
     }
@@ -371,14 +372,14 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
       const finish = (action: () => void) => {
         if (settled) return;
         settled = true;
-        clearTimeout(timer);
+        window.clearTimeout(timer);
         signal?.removeEventListener("abort", onAbort);
         this.pending.delete(onClose);
         action();
       };
       const onAbort = () => finish(() => reject(mcpAbortError()));
       const onClose = () => finish(() => reject(brokerError("disconnected", "MCP Server 已断线。")));
-      const timer = setTimeout(() => finish(() => reject(
+      const timer = window.setTimeout(() => finish(() => reject(
         brokerError("timeout", `MCP 请求超时：${message.method}。`)
       )), timeoutMs);
       this.pending.add(onClose);
@@ -495,7 +496,7 @@ class StdioMcpTransport extends JsonRpcStdioTransport implements EchoInkMcpBroke
     signal?: AbortSignal
   ): Promise<void> {
     throwIfMcpAborted(signal);
-    super.notify(method, params ?? {});
+    await super.notify(method, params ?? {});
   }
 
   async close(): Promise<void> {
@@ -518,7 +519,7 @@ function mcpHttpHeader(response: RequestUrlResponse, name: string): string {
   return Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1] ?? "";
 }
 
-function parseMcpHttpResponse(response: RequestUrlResponse): any {
+function parseMcpHttpResponse(response: RequestUrlResponse): unknown {
   const contentType = mcpHttpHeader(response, "content-type").toLowerCase();
   const text = response.text;
   if (!text.trim()) {

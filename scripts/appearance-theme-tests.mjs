@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -60,7 +61,7 @@ for (const dark of [false, true]) {
 }
 fixture.window.close();
 console.log("Settings neutral palette: PASS; 6 appearances, nested surfaces, settings portals, unknown identifiers, workbench isolation.");
-await esbuild.build({ ...common, entryPoints: ["src/tests/appearance-pro.ts"], platform: "node", format: "esm", outfile: path.join(out,"pro.mjs"), external: ["jsdom"] });
+await esbuild.build({ banner: desktopNodeTestBanner, ...common, entryPoints: ["src/tests/appearance-pro.ts"], platform: "node", format: "esm", outfile: path.join(out,"pro.mjs"), external: ["jsdom"] });
 const proChecks = spawnSync(process.execPath,[path.join(out,"pro.mjs")],{stdio:"inherit"});
 if (proChecks.status !== 0) process.exit(proChecks.status ?? 1);
 

@@ -1,7 +1,11 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { StoredAttachment } from "../settings/settings";
 import { pluginDataDir } from "../plugin/plugin-data-paths";
+
+const { mkdir, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 interface ClipboardItemLike {
   kind?: string;

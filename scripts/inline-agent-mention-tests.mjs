@@ -19,7 +19,7 @@ try {
           import { StateField } from "@codemirror/state";
           export const editorInfoField = StateField.define({create: () => ({file: {path: "合成正文.md"}}), update: value => value});
           export const editorLivePreviewField = StateField.define({create: () => true, update: value => value});
-          export const Platform = {isMobile: false};
+          export const Platform = {isDesktop: true, isMobile: false};
           export const mentionTestNotices = [];
           export class Notice { constructor(message) { mentionTestNotices.push(message); } }
           export function setIcon(element, icon) { const svg = element.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("data-icon", icon); element.append(svg); }

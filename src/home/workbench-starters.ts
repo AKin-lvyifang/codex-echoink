@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import { animate, type AnimationPlaybackControlsWithThen } from "framer-motion";
 import { setIcon } from "obsidian";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
@@ -54,7 +55,7 @@ export class WorkbenchStarters {
     this.update();
   }
   private t(zh: string, en: string): string { return this.options.english() ? en : zh; }
-  private listen(target: EventTarget, event: string, action: (e: any) => void): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }
+  private listen(target: EventTarget, event: string, action: EventListener): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }
   private button(parent: HTMLElement, text: string, action: () => unknown, primary = false): HTMLButtonElement {
     const button = createOriginButton(parent, { text, cls: `wb-button ${primary ? "is-primary" : "is-secondary"}`, attr: { type: "button" } }); applyAmicroButton(button, { variant: primary ? "primary" : "secondary" });
     button.onclick = e => { e.stopPropagation(); void Promise.resolve().then(action).catch(error => this.options.error(error)); }; return button;
@@ -134,7 +135,7 @@ export class WorkbenchStarters {
     this.dots.forEach((dot, i) => { dot.classList.toggle("is-current", i === this.index); dot.setAttribute("aria-current", String(i === this.index)); });
   }
   private card(index: number): HTMLElement {
-    const card = this.deck.ownerDocument.createElement("article"); card.className = "wb-starter-card"; card.dataset.starter = String(index);
+    const card = ownedEl(this.deck.ownerDocument, "article"); card.className = "wb-starter-card"; card.dataset.starter = String(index);
     card.setAttribute("aria-label", `${index + 1} / ${cards.length}`);
     card.onclick = () => { if (this.dragged) { this.dragged = false; return; } if (index !== this.index || this.moving) this.go(index); };
     const data = cards[index]; const art = card.createDiv({ cls: "wb-starter-art" });

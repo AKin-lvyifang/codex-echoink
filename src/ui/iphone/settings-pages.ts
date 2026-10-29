@@ -69,7 +69,7 @@ export class IPhoneSettingsPages {
   private general(): MobileShellPage {
     const { ctx } = this, body = settingsBody(ctx), appearance = settingsGroup(ctx, body, "外观");
     const color = settingsRow(ctx, appearance, "配色"), track = el(ctx.document, "div", "ip-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", "配色");
-    const slider = el(ctx.document, "span", "ip-settings-segment-slider"); slider.setAttribute("aria-hidden", "true"); track.append(slider); color.append(track);
+    const slider = el(ctx.document, "span", "ip-settings-segment-slider"); slider.setAttribute("aria-hidden", "true"); track.append(slider); color.classList.add("has-segments"); color.append(track);
     const choices = ECHOINK_COLOR_THEMES.map(theme => [theme.id, theme.zh] as const);
     const error = settingsError(ctx, body); let busy = false;
     const hasPro = () => hasProPluginAccess(ctx.host.accountService ?? unavailableCapabilityAccess);

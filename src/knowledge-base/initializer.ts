@@ -1,11 +1,17 @@
 import { knowledgeRootRole, knowledgeRolePath, rebaseKnowledgePathRecords, type KnowledgeFolderBindings, type KnowledgeRootRole } from "./root-paths";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
-import { createHash, randomUUID } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import knowledgeGuideBody from "./assets/guide/knowledge-guide.zh-CN.md";
 import knowledgeFlowImageDataUrl from "./assets/guide/knowledge-flow-v1.webp";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const KNOWLEDGE_BASE_TEMPLATE_VERSION = "onboarding-v1";
 export const KNOWLEDGE_INITIALIZATION_GUIDE_PATH = "wiki/开始使用 EchoInk 知识库.md";
@@ -1325,10 +1331,6 @@ function nodeErrorCode(error: unknown): string {
   return typeof code === "string" || typeof code === "number"
     ? String(code)
     : "";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function stableJson(value: unknown): string {

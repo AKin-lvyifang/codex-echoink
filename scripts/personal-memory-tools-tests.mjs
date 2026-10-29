@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -11,7 +12,7 @@ const outputFile = path.join(outputDir, "personal-memory-tools-tests.mjs");
 const obsidianShimPath = path.join(rootDir, "src", "tests", "obsidian-shim.ts");
 
 await mkdir(outputDir, { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: {
     contents: [
       'import { runPersonalMemoryToolContractScenarios } from "./src/tests/personal-memory-tools";',

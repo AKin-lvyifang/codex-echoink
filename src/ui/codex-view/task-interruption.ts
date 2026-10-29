@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import type { TaskInterruptionInfo } from "../../agents/task-resume";
 import { taskInterruptionExplanation } from "../../agents/task-interruption-copy";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
@@ -11,9 +12,8 @@ export function renderTaskInterruption(
   disposeOriginControls(container);
   container.replaceChildren();
   const en = input.language === "en", info = input.info;
-  const text = (tag: string, className: string, value: string) => {
-    const node = container.ownerDocument.createElement(tag); node.className = className; node.textContent = value; container.append(node); return node;
-  };
+  const text = (tag: keyof HTMLElementTagNameMap, className: string, value: string) =>
+    container.createEl(tag, { cls: className, text: value });
   if (info?.failureMessage) text("div", "echoink-task-interruption-copy", info.failureMessage);
   else if (input.userCopy) text("div", "echoink-task-interruption-copy", input.userCopy);
   else if (info) {
@@ -36,9 +36,9 @@ export function renderTaskInterruption(
   } else if (!input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (info?.uncertainOperations.length) {
     text("div", "echoink-task-interruption-warning", en ? "The result of this operation is uncertain. Check it before continuing." : "这个操作结果不确定，继续前请先核对");
-    const list = container.ownerDocument.createElement("ul"); list.className = "echoink-task-interruption-operations";
+    const list = ownedEl(container.ownerDocument, "ul"); list.className = "echoink-task-interruption-operations";
     for (const operation of info.uncertainOperations) {
-      const item = container.ownerDocument.createElement("li"); item.textContent = operation.label; list.append(item);
+      list.createEl("li", { text: operation.label });
     }
     container.append(list);
   }

@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import { describeSnapshot, RUN_REPORT_LIMIT, type ReportSnapshot } from "./report";
 
 export interface ReportFormOptions {
@@ -8,7 +9,7 @@ export interface ReportFormOptions {
 export function createRunReportForm(options: ReportFormOptions): { content: HTMLElement; footer: HTMLElement; dispose: () => void } {
   const { document: doc, snapshot, button } = options;
   const t = (zh: string, en: string) => options.english ? en : zh;
-  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] => { const node = doc.createElement(tag); node.className = cls; if (text !== undefined) node.textContent = text; return node; };
+  const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] => { const node = ownedEl(doc, tag); node.className = cls; if (text !== undefined) node.textContent = text; return node; };
   const content = el("div", "echoink-run-report-form"), footer = el("div", "echoink-run-report-footer");
   const descriptionLabel = el("label", "echoink-run-report-field", t("问题描述", "Problem description"));
   const description = el("textarea", "echoink-run-report-input"); description.required = true; description.minLength = 5; description.placeholder = t("请描述遇到的问题（至少 5 个字）", "Describe the problem (at least 5 characters)"); description.rows = 4; descriptionLabel.append(description);

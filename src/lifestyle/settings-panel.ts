@@ -10,7 +10,11 @@ export class LifestyleSettingsPanel {
   private controls: ProPluginControls | null = null;
   private page: HTMLElement | null = null;
   private embedded = false;
-  dispose(): void { this.controls?.dispose(); this.controls = null; this.financeCatalog?.dispose(); if (this.page) disposeOriginControls(this.page); }
+  private detailAncestors: HTMLElement[] = [];
+  dispose(): void {
+    for (const ancestor of this.detailAncestors.splice(0)) ancestor.classList.remove("has-module-detail");
+    this.controls?.dispose(); this.controls = null; this.financeCatalog?.dispose(); if (this.page) disposeOriginControls(this.page);
+  }
   private financeCatalog: FinanceCatalogPanel | null = null;
   constructor(private readonly plugin: CodexForObsidianPlugin, private readonly kind: LifestyleKind,
     private readonly back: () => void, private readonly redraw: () => void) {}
@@ -19,7 +23,14 @@ export class LifestyleSettingsPanel {
     this.dispose();
     this.embedded = options.embedded === true;
     const page = this.page = container.createDiv({ cls: "echoink-life-settings-page" });
-    if (this.embedded && this.financeCatalog) page.addClass("echoink-module-detail");
+    if (this.embedded && this.financeCatalog) {
+      page.addClass("echoink-module-detail");
+      for (let ancestor: HTMLElement | null = container; ancestor; ancestor = ancestor.parentElement) {
+        if (ancestor.matches(".echoink-desktop-modules, .echoink-module-group, .echoink-module-drawer, .echoink-module-drawer-content")) {
+          ancestor.classList.add("has-module-detail"); this.detailAncestors.push(ancestor);
+        }
+      }
+    }
     if (!this.embedded || this.financeCatalog) {
     const back = page.createEl("button", { cls: "echoink-life-settings-back", text: `‹ ${this.financeCatalog?.backLabel() ?? "返回插件列表"}` });
     back.onclick = this.financeCatalog ? () => this.financeCatalog?.back() : this.back;

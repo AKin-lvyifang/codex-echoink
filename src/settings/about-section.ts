@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
 import { openExternalInElectron } from "../core/electron";
 import { createOriginButton } from "./origin-controls";
@@ -16,9 +17,9 @@ function renderMorphIcon(button: HTMLElement, idle: string, hover: string): void
 function renderStarIcon(button: HTMLElement): void {
   const wrap = button.createSpan({ cls: "echoink-sparkle-icon-wrap", attr: { "aria-hidden": "true" } });
   const github = wrap.createSpan({ cls: "echoink-sparkle-icon-default" });
-  const svg = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = ownedSvg(button.ownerDocument, "svg");
   for (const [key, value] of Object.entries({ width: "14", height: "14", viewBox: "0 0 24 24", fill: "currentColor", focusable: "false" })) svg.setAttribute(key, value);
-  const path = button.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+  const path = ownedSvg(button.ownerDocument, "path");
   path.setAttribute("d", GITHUB_MARK_PATH); svg.appendChild(path); github.appendChild(svg);
   setIcon(wrap.createSpan({ cls: "echoink-sparkle-icon-hover" }), "star");
   for (const particle of ["p1", "p2"]) setIcon(wrap.createSpan({ cls: `echoink-sparkle-particle echoink-sparkle-${particle}` }), "star");

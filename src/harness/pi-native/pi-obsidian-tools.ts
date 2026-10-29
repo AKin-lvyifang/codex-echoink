@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolCallEvent, type ToolResultEvent, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
@@ -10,6 +10,8 @@ import { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, obsidianCliEffect, 
 import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, hasDirectFinanceIntent, type PiFinanceToolId } from "./finance-tool-policy";
 import { createPiFinanceToolDefinitions } from "./pi-finance-tool-definitions";
 import { financeValueVersion } from "../../lifestyle/finance-operation-types";
+
+const { isDeepStrictEqual } = getDesktopUtil();
 export { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, type ObsidianCliRequest } from "./obsidian-cli-policy";
 
 export const PI_OBSIDIAN_TOOL_IDS = ["obsidian_context", "obsidian_cli", "obsidian_plugin_search", ...PI_FINANCE_TOOL_IDS] as const;

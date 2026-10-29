@@ -187,9 +187,13 @@ function resolveVaultNoteFile(app: App, targetPath: string): { file: TFile; targ
   return null;
 }
 
+function hasBasePath(adapter: object): adapter is { getBasePath(): unknown } {
+  return typeof Reflect.get(adapter, "getBasePath") === "function";
+}
+
 function vaultBasePath(app: App): string {
-  const adapter = app.vault.adapter as any;
-  const basePath = typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
+  const adapter = app.vault.adapter;
+  const basePath = hasBasePath(adapter) ? adapter.getBasePath() : "";
   return typeof basePath === "string" ? normalizeFsPath(basePath) : "";
 }
 

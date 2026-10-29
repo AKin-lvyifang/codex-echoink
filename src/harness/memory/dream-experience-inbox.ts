@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopPath } from "../../platform/desktop-paths";
 import {
   cognitiveJsonText,
   cognitivePathExists,
@@ -7,6 +7,10 @@ import {
   cognitiveWriteJson,
   normalizeTextForDedupe
 } from "./cognitive-file-utils";
+
+const { createHash } = getDesktopCrypto();
+
+const path = getDesktopPath();
 
 export const DREAM_EXPERIENCE_INBOX_SCHEMA = "echoink.dream-experience-inbox.v1" as const;
 export const DREAM_EXPERIENCE_INBOX_RELATIVE_PATH = path.posix.join(

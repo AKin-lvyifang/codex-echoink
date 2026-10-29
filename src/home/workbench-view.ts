@@ -1,3 +1,5 @@
+import { ownedEl, ownedDiv } from "../ui/owned-dom";
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
@@ -118,6 +120,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private interruptionRevisions = new Map<string, string>();
   private interruptionErrors = new Set<string>();
   private readonly completedPreviews = new Map<string, { revision: string; text?: string; type?: WorkbenchResultType; error?: string }>();
+  private readonly taskCardBodies = new Map<HTMLElement, HTMLElement>();
   private taskError = "";
   private dataError = "";
   private selectedTask = "";
@@ -146,6 +149,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private active(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
 
   async onOpen(): Promise<void> {
+    this.register(watchImeComposition(this.contentEl));
     this.closed = false;
     this.contentEl.addClass("echoink-workbench");
     this.contentEl.tabIndex = -1;
@@ -170,6 +174,10 @@ export class EchoInkWorkbenchView extends ItemView {
     this.registerDomEvent(this.contentEl.ownerDocument, "pointerdown", event => {
       if (!this.field("search").contains(event.target as Node) && !this.field("search-trigger").contains(event.target as Node)) this.closeSearch(false);
     });
+    for (const event of ["pointerover", "pointerout", "pointerdown", "pointerup", "focusin", "focusout", "keydown"] as const) {
+      this.registerDomEvent(this.contentEl, event, () => queueMicrotask(() => this.syncTaskCardFeedback()));
+    }
+    this.registerDomEvent(this.contentEl, "scroll", () => this.syncTaskCardFeedback(), true);
     this.scheduleRefresh(0);
   }
   async onClose(): Promise<void> {
@@ -179,7 +187,7 @@ export class EchoInkWorkbenchView extends ItemView {
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear();
     this.clearTimers(); this.stopSearchWork();
-    disposeOriginControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
+    this.disposeControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
   }
   private clearTimers(): void {
     const win = this.contentEl.ownerDocument.defaultView;
@@ -313,7 +321,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private renderShell(): void {
     this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
-    disposeOriginControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
+    this.disposeControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
     const page = this.contentEl.createDiv({ cls: "wb-page", attr: { "data-wb": "page" } });
     const header = page.createEl("header", { cls: "wb-header" });
     const titles = header.createDiv({ cls: "wb-heading" });
@@ -355,7 +363,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private scheduleNav(): void {
     if (this.closed || this.navFrame !== undefined) return;
-    this.navFrame = this.contentEl.ownerDocument.defaultView?.requestAnimationFrame(() => { this.navFrame = undefined; this.fitNavigation(); });
+    this.navFrame = this.contentEl.ownerDocument.defaultView?.requestAnimationFrame(() => { this.navFrame = undefined; this.fitNavigation(); this.syncTaskCardFeedback(); });
   }
   private fitNavigation(): void {
     if (this.closed || !this.active()) return;
@@ -417,7 +425,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private showModuleLock(id: typeof WORKBENCH_MODULES[number]["id"]): void {
     this.closeSearch(false);
     const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
-    if (previous) { disposeOriginControls(previous); previous.remove(); }
+    if (previous) { this.disposeControls(previous); previous.remove(); }
     this.lockedModule = id;
     this.weatherStage?.setActive(false); this.starters?.setActive(false);
     this.field("page").hidden = true;
@@ -432,7 +440,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private closeModuleLock(): void {
     const id = this.lockedModule;
     const page = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
-    if (page) { disposeOriginControls(page); page.remove(); }
+    if (page) { this.disposeControls(page); page.remove(); }
     this.lockedModule = null; this.modulePageState = "";
     this.field("page").hidden = false;
     this.field("page").inert = false;
@@ -500,7 +508,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const previewErrors = [...this.completedPreviews.values()].flatMap(preview => preview.error ? [preview.error] : []);
     const signature = JSON.stringify([this.language, !!this.entries, !!this.snapshot, this.taskError, this.dataError, this.memoryError, this.snapshot?.issues, previewErrors]);
     if (host.dataset.signature === signature) return;
-    disposeOriginControls(host); host.empty(); host.dataset.signature = signature;
+    this.disposeControls(host); host.empty(); host.dataset.signature = signature;
     if (!this.entries && !this.taskError) host.createDiv({ text: this.t("正在读取任务…", "Reading tasks…"), attr: { "aria-busy": "true" } });
     if (!this.snapshot && !this.dataError) host.createDiv({ text: this.t("正在查看本地事项…", "Checking local items…"), attr: { "aria-busy": "true" } });
     if (this.taskError || this.dataError || this.memoryError || this.snapshot?.issues.length || previewErrors.length) {
@@ -539,13 +547,13 @@ export class EchoInkWorkbenchView extends ItemView {
     const error = taskGroup ? this.taskError : this.dataError;
     const uncertain = !taskGroup && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
     const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count ? "ready" : "empty";
-    if (status === "empty") { disposeOriginControls(section); section.remove(); return null; }
+    if (status === "empty") { this.disposeControls(section); section.remove(); return null; }
     section.dataset.state = status;
     const counter = section.querySelector<HTMLElement>(".wb-count")!;
     counter.hidden = status === "loading" || status === "error" || status === "unconfirmed";
     counter.textContent = counter.hidden ? "" : String(count);
     const feedback = section.querySelector<HTMLElement>(".wb-group-status")!;
-    disposeOriginControls(feedback); feedback.empty();
+    this.disposeControls(feedback); feedback.empty();
     feedback.hidden = status === "ready";
     feedback.setAttribute("aria-busy", String(status === "loading"));
     if (status === "loading") feedback.createSpan({ text: this.t("正在读取…", "Reading…") });
@@ -562,17 +570,30 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private syncRows<T>(host: HTMLElement, items: readonly T[], key: (item: T) => string, signature: (item: T) => string, build: (item: T) => HTMLElement): void {
     const wanted = new Set(items.map(key));
-    for (const node of Array.from(host.children) as HTMLElement[]) if (!wanted.has(node.dataset.key!)) { disposeOriginControls(node); node.remove(); }
+    for (const node of Array.from(host.children) as HTMLElement[]) if (!wanted.has(node.dataset.key!)) { this.disposeControls(node); node.remove(); }
     items.forEach((item, index) => {
       const id = key(item), version = signature(item);
       let node = Array.from(host.children).find(node => (node as HTMLElement).dataset.key === id) as HTMLElement | undefined;
       if (!node || node.dataset.signature !== version) {
         const replacement = build(item); replacement.dataset.key = id; replacement.dataset.signature = version;
-        if (node) { disposeOriginControls(node); node.replaceWith(replacement); }
+        if (node) { this.disposeControls(node); node.replaceWith(replacement); }
         node = replacement;
       }
       if (host.children[index] !== node) host.insertBefore(node, host.children[index] ?? null);
     });
+    this.syncTaskCardFeedback();
+  }
+  private syncTaskCardFeedback(): void {
+    if (this.closed) return;
+    for (const [card, body] of this.taskCardBodies) {
+      card.classList.toggle("has-active-task-body", body.matches(":hover") || body.matches(":focus-visible"));
+    }
+  }
+  private disposeControls(root: HTMLElement): void {
+    for (const card of this.taskCardBodies.keys()) if (root === card || root.contains(card)) {
+      card.classList.remove("has-active-task-body"); this.taskCardBodies.delete(card);
+    }
+    disposeOriginControls(root);
   }
   private taskGroup(state: keyof TaskGroups, title: string, entries: readonly TaskEntry[], now: number): void {
     const section = this.group(state, title, entries.length, state === "completed");
@@ -623,7 +644,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (missing.length && this.active() && version === this.refreshVersion) this.render(now);
   }
   private taskCard(entry: TaskEntry): HTMLElement {
-    const card = this.contentEl.ownerDocument.createElement("article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
+    const card = ownedEl(this.contentEl.ownerDocument, "article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
     card.onclick = event => {
       if ((event.target as Element).closest("button, input, textarea, select, label, a, summary")) return;
       void this.openTask(entry.conversationId).catch(error => new Notice(message(error)));
@@ -631,17 +652,18 @@ export class EchoInkWorkbenchView extends ItemView {
     const activity = this.maintenance.get(entry.conversationId), state = this.taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
     body.classList.add("wb-task-body");
+    this.taskCardBodies.set(card, body);
     const title = activity ? maintenanceTaskTitle(activity, this.language === "en") : entry.title;
     setTooltip(body, `${title}\n${taskCardHintSummary(this.summary(entry))}`, { classes: ["echoink-task-card-tooltip"] });
     const header = body.createSpan({ cls: "wb-task-header" }); renderTaskAvatar(header, agent);
     header.createSpan({ cls: "wb-agent-name", text: agent.name });
     const status = header.createSpan({ cls: `wb-task-status is-${state}` });
     if (state === "running") {
-      const spinner = status.createSpan({ cls: "wb-spinner", attr: { "aria-hidden": "true" } }); setIcon(spinner, "loader-circle");
+      const spinner = status.createSpan({ cls: "wb-spinner wb-status-icon", attr: { "aria-hidden": "true" } }); setIcon(spinner, "loader-circle");
       status.createSpan({ text: this.t("进行中", "Running") });
       const started = !activity && (this.plugin.getConversationRunService().runs.get(entry.conversationId)?.turnStartedAt || entry.taskStartedAt);
       if (started) status.createSpan({ attr: { "data-started-at": String(started) } });
-    } else { setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
+    } else { setIcon(status.createSpan({ cls: "wb-status-icon", attr: { "aria-hidden": "true" } }), state === "waiting" ? "message-circle" : "circle-pause"); status.createSpan({ text: taskStateLabel({ ...entry, taskStatus: state, ...(state !== "waiting" ? { pendingResponse: undefined } : {}) }, this.language) }); }
     body.createSpan({ cls: "wb-task-title", text: title });
     const inline = state === "waiting" ? workbenchInlineQuestion(entry, this.pending(entry)) : undefined;
     const recovery = state === "interrupted" ? this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)) : undefined;
@@ -709,7 +731,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private interruptionRevision(entry: TaskEntry): string { return JSON.stringify([entry.updatedAt, entry.taskMetadataUpdatedAt, entry.taskInterruptedAt, entry.taskStage]); }
   private completedRow(entry: TaskEntry): HTMLElement {
-    const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
+    const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
     const button = this.button(row, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary"); button.classList.add("wb-completed-body");
     const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId);
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
@@ -744,12 +766,12 @@ export class EchoInkWorkbenchView extends ItemView {
       }
       toggle.textContent = this.signalsExpanded ? this.t("收起", "Collapse") : this.t(`还有 ${signals.length - 5} 条`, `${signals.length - 5} more`);
       toggle.setAttribute("aria-expanded", String(this.signalsExpanded)); toggle.setAttribute("aria-controls", `${this.id}-signals`);
-    } else if (toggle) { disposeOriginControls(toggle); toggle.remove(); }
+    } else if (toggle) { this.disposeControls(toggle); toggle.remove(); }
     const host = section.lastElementChild as HTMLElement; host.id = `${this.id}-signals`;
     this.syncRows(host, this.signalsExpanded ? signals : signals.slice(0, 5), signal => signal.key,
       signal => JSON.stringify([this.language, signal, this.plugin.settings.agentRegistry, !!this.dataError]),
       signal => {
-        const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-row";
+        const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
         row.createSpan({ cls: "wb-grow", text: signal.description });
         const registry = this.plugin.settings.agentRegistry;
@@ -775,7 +797,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const heading = section.firstElementChild as HTMLElement;
     if (!heading.querySelector("button")) this.button(heading, this.t("全部待办", "All to-dos"), "all-todos", () => openWorkbenchModule(this.plugin, "todos"), "tertiary", "chevron-right");
     this.syncRows(section.lastElementChild as HTMLElement, todos, todo => this.todoKey(todo), todo => JSON.stringify([this.language, todo, resolveTodoProject(todo.project, projects), !!this.dataError]), todo => {
-      const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-row wb-todo";
+      const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row wb-todo";
       const key = this.todoKey(todo);
       const check = createOriginCheck(row, { cls: "wb-todo-check", attr: { "aria-label": this.t(`完成：${todo.title}`, `Complete: ${todo.title}`), "data-wb-focus": key } });
       check.checked = todo.done; check.disabled = !!this.dataError || this.busy.has(key);
@@ -849,7 +871,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private scheduleSearch(): void {
     if (!this.searchOpen || !this.active()) return;
     this.searchAbort?.abort(); this.searchResolvedQuery = null; this.searchMatches = []; this.searchIndex = -1;
-    this.field("search-input").removeAttribute("aria-activedescendant"); disposeOriginControls(this.field("search-results")); this.field("search-results").empty(); this.field("search-empty").hidden = true;
+    this.field("search-input").removeAttribute("aria-activedescendant"); this.disposeControls(this.field("search-results")); this.field("search-results").empty(); this.field("search-empty").hidden = true;
     this.field("search-heading").textContent = this.t("正在查找…", "Searching…");
     const win = this.contentEl.ownerDocument.defaultView;
     if (this.searchTimer !== null) win?.clearTimeout(this.searchTimer);
@@ -863,13 +885,13 @@ export class EchoInkWorkbenchView extends ItemView {
       const result = await this.searchService.search(query, abort.signal);
       if (abort.signal.aborted || !this.searchOpen || !this.active() || query !== (this.field("search-input") as HTMLInputElement).value) return;
       this.searchResolvedQuery = query; this.searchMatches = result.matches; this.searchIndex = -1;
-      const host = this.field("search-results"); disposeOriginControls(host); host.empty();
+      const host = this.field("search-results"); this.disposeControls(host); host.empty();
       this.field("search-heading").textContent = this.t(`找到 ${result.count} 篇笔记`, `${result.count} notes found`);
       result.matches.forEach((match, index) => {
         const option = this.button(host, "", `search-${index}`, async () => { this.closeSearch(true); await this.openNote(match.path); }, "tertiary");
         option.classList.add("wb-search-result"); option.dataset.searchIndex = String(index); option.id = `${this.id}-option-${index}`; option.tabIndex = -1;
         option.setAttribute("role", "option"); option.setAttribute("aria-selected", "false");
-        const icon = option.createSpan({ attr: { "aria-hidden": "true" } }); setIcon(icon, "file-text");
+        const icon = option.createSpan({ cls: "wb-result-icon", attr: { "aria-hidden": "true" } }); setIcon(icon, "file-text");
         const copy = option.createSpan({ cls: "wb-grow" }); copy.createEl("strong", { text: match.title });
         copy.createSpan({ text: match.snippet || match.path }); copy.createSpan({ cls: "wb-secondary", text: `${match.path} · ${formatHomeRelativeTime(match.mtime, this.language)}` });
       });
@@ -878,7 +900,7 @@ export class EchoInkWorkbenchView extends ItemView {
     } catch { if (!abort.signal.aborted && this.active()) this.field("search-heading").textContent = this.t("搜索失败，请重试", "Search failed. Try again."); }
   }
   private handleKeys(event: KeyboardEvent): void {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if (this.lockedModule) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeModuleLock(); }
       return;

@@ -1,3 +1,4 @@
+import { ownedDiv, ownedSvg } from "../ui/owned-dom";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import type { Capability } from "../membership/types";
 import { capabilityMessage } from "../membership/access";
@@ -69,7 +70,7 @@ function button(parent: HTMLElement, label: string, action: () => void, cls = ""
 
 function field(parent: HTMLElement, label: string, type = "text", value = ""): HTMLInputElement {
   const row = parent.createEl("label", { cls: "echoink-finance-field" });
-  row.createEl("span", { text: label });
+  row.createSpan({ text: label });
   const input = row.createEl("input", { attr: { type } });
   input.value = value;
   return input;
@@ -77,7 +78,7 @@ function field(parent: HTMLElement, label: string, type = "text", value = ""): H
 
 function select(parent: HTMLElement, label: string, choices: readonly [string, string][], value: string, onChange: (value: string) => void): HTMLSelectElement {
   const row = parent.createEl("label", { cls: "echoink-finance-select" });
-  row.createEl("span", { text: label });
+  row.createSpan({ text: label });
   const element = row.createEl("select");
   for (const [key, text] of choices) element.createEl("option", { value: key, text });
   element.value = value;
@@ -164,7 +165,7 @@ export class FinanceWorkspace {
       if (ticket === this.reportRenderTicket && container.isConnected) {
         for(const table of Array.from(container.querySelectorAll<HTMLTableElement>("table"))) {
           if(!table.parentElement?.classList.contains("echoink-finance-ai-table-scroll")) {
-            const scroll=container.ownerDocument.createElement("div");scroll.className="echoink-finance-ai-table-scroll";
+            const scroll=ownedDiv(container.ownerDocument);scroll.className="echoink-finance-ai-table-scroll";
             table.parentElement?.insertBefore(scroll,table);scroll.appendChild(table);
           }
           for(const row of Array.from(table.rows)) for(const [index,cell] of Array.from(row.cells).entries()) {
@@ -317,8 +318,8 @@ export class FinanceWorkspace {
     const number = card.createEl("strong");
     if (typeof value === "number") this.numbers.mount(number, `metric:${label}`, value); else number.setText(value);
     const foot = card.createDiv();
-    foot.createEl("span", { text: note });
-    foot.createEl("span", { text: detail });
+    foot.createSpan({ text: note });
+    foot.createSpan({ text: detail });
   }
   private balanceInfo(): void {
     new FinanceDialog(this.service, "收支差额是什么？", (content, dialog) => {
@@ -366,8 +367,8 @@ export class FinanceWorkspace {
       this.tooltip(bar, `${item.label} ¥ ${money(item.amount)}`, { touch: "notice" });
     });
     const foot = parent.createDiv({ cls: "echoink-finance-compose-foot" });
-    foot.createEl("span", { text: this.state.mix === "expense" ? `支出原额 ¥ ${money(total)} · 退款另列 ¥ ${money(summary.refundCents)}` : "有效人民币收入" });
-    foot.createEl("span", { text: this.state.mix === "expense" ? `净支出 ¥ ${money(summary.netExpenseCents)}` : `合计 ¥ ${money(total)}` });
+    foot.createSpan({ text: this.state.mix === "expense" ? `支出原额 ¥ ${money(total)} · 退款另列 ¥ ${money(summary.refundCents)}` : "有效人民币收入" });
+    foot.createSpan({ text: this.state.mix === "expense" ? `净支出 ¥ ${money(summary.netExpenseCents)}` : `合计 ¥ ${money(total)}` });
   }
   private overview(body: HTMLElement): void {
     const summary = this.summary();
@@ -376,7 +377,7 @@ export class FinanceWorkspace {
     const hero = main.createDiv({ cls: "echoink-finance-hero" });
     const heroMain = hero.createDiv({ cls: "echoink-finance-hero-main" });
     const label = heroMain.createDiv({ cls: "echoink-finance-hero-label" });
-    label.createEl("span", { text: "本月收支差额" });
+    label.createSpan({ text: "本月收支差额" });
     button(label, "ⓘ", () => this.balanceInfo()).setAttribute("aria-label", "了解收支差额");
     this.numbers.mount(heroMain.createEl("strong"), "overview.balance", summary.balanceCents);
     const previous = financeSummary(this.entries(), monthShift(this.state.month, -1));
@@ -480,10 +481,10 @@ export class FinanceWorkspace {
     amount.createEl("small", { text: `本月总预算 ¥ ${money(plan.totalCents)}` });
     const percent = Math.max(0, expense / plan.totalCents * 100);
     const gauge = card.createDiv({ cls: "echoink-finance-gauge", attr: { "aria-label": `已使用预算 ${percent.toFixed(1)}%` } });
-    const svg = gauge.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const svg = ownedSvg(gauge.ownerDocument, "svg");
     svg.setAttribute("viewBox", "0 0 240 135"); svg.setAttribute("aria-hidden", "true");
     for (const [className, fill] of [["is-track", 100], [remaining < 0 ? "is-over" : "is-fill", Math.min(100, percent)]] as const) {
-      const path = gauge.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+      const path = ownedSvg(gauge.ownerDocument, "path");
       path.setAttribute("d", "M15 126 A108 108 0 0 1 231 126"); path.setAttribute("pathLength", "100");
       path.setAttribute("stroke-dasharray", `${fill} 100`); path.setAttribute("class", className);
       svg.appendChild(path);
@@ -1156,7 +1157,7 @@ export class FinanceWorkspace {
       for (const name of [...new Set(this.entries().map((item) => item.merchant))]) candidates.createEl("option", { value: name });
       merchant.setAttribute("list", "echoink-finance-merchants");
       const descriptionRow = form.createEl("label", { cls: "echoink-finance-field" });
-      descriptionRow.createEl("span", { text: "消费说明" });
+      descriptionRow.createSpan({ text: "消费说明" });
       const description = descriptionRow.createEl("textarea");
       description.value = entry.description; description.maxLength = 200;
       const categoryChoices = this.categories(entry.date.slice(0, 7)).map((item): [string, string] => [item, item]);
@@ -1437,7 +1438,7 @@ export class FinanceWorkspace {
     }
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();
+    const anchor = window.createEl("a"); anchor.href = url; anchor.download = `EchoInk-财务-${this.state.month}.csv`; anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
   }
   private budgetDialog(focusCategory?: FinanceCategory): void {
@@ -1501,7 +1502,7 @@ export class FinanceWorkspace {
         if (categoryNotice) panel.createEl("p", { cls: "echoink-finance-budget-hint", text: `总预算免费，分类分配：${categoryNotice}` });
         const total = field(panel, "月度总预算 · 元", "number", draft.total); total.parentElement?.addClass("echoink-finance-budget-total");
         total.min = "1"; total.max = "99999999"; total.step = "0.01";
-        const modeRow = panel.createDiv({ cls: "echoink-finance-budget-mode-row" }); modeRow.createEl("span", { text: "分类分配" });
+        const modeRow = panel.createDiv({ cls: "echoink-finance-budget-mode-row" }); modeRow.createSpan({ text: "分类分配" });
         const segment = modeRow.createDiv({ cls: "echoink-finance-segment echoink-finance-budget-segment", attr: { role: "group", "aria-label": "预算分配方式" } });
         const switchMode = (next: BudgetMode): void => {
           if (next === draft.mode) return;

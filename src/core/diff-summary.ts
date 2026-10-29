@@ -154,7 +154,8 @@ function splitFileChangeText(text: string, summary?: DiffSummary): Array<{ path:
 function normalizeChangeKind(kind: unknown): DiffFileSummary["kind"] {
   if (typeof kind === "string") return kind === "add" || kind === "delete" || kind === "update" || kind === "move" ? kind : "unknown";
   if (!kind || typeof kind !== "object") return "unknown";
-  const type = String((kind as { type?: unknown }).type ?? "");
+  const rawType = (kind as { type?: unknown }).type;
+  const type = typeof rawType === "string" ? rawType : "";
   if (type === "update" && previousPathFromKind(kind)) return "move";
   return type === "add" || type === "delete" || type === "update" ? type : "unknown";
 }

@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import { setIcon } from "obsidian";
 import { applyDeleteButton } from "../settings/amicro-buttons";
 import type { SettingsLanguage } from "../settings/settings";
@@ -102,7 +103,7 @@ function renderRow(
   ownerDocument: Document,
   projects?: readonly TodoProject[]
 ): HTMLTableRowElement {
-  const row = ownerDocument.createElement("tr");
+  const row = ownedEl(ownerDocument, "tr");
   row.className = record.done ? "is-done" : "";
   row.dataset.todoId = record.id;
 
@@ -114,7 +115,7 @@ function renderRow(
   checkbox.addEventListener("change", () => callbacks.onToggle(record, checkbox.checked));
 
   const titleCell = row.createEl("td", { cls: "echoink-todo-title" });
-  titleCell.createEl("span", { text: record.title });
+  titleCell.createSpan({ text: record.title });
 
   if (projects) {
     const cell = row.createEl("td", { cls: "echoink-todo-project" });
@@ -139,7 +140,7 @@ function renderRow(
     // Completed items show a plain date: no overdue/today warning.
     const emphasized = !record.done && (state === "overdue" || state === "today");
     const label = record.done ? "" : copy.dueLabels[state];
-    dueCell.createEl("span", {
+    dueCell.createSpan({
       cls: emphasized ? `echoink-due echoink-due-${state}` : "echoink-due",
       text: label ? `${label} · ${record.dueDate}` : record.dueDate
     });
@@ -151,7 +152,7 @@ function renderRow(
 
   const categoryName = record.categoryName || copy.uncategorized;
   const categoryCell = row.createEl("td", { cls: "echoink-todo-category" });
-  const category = categoryCell.createEl("span", {
+  const category = categoryCell.createSpan({
     cls: "echoink-todo-category-text",
     text: categoryName
   });
@@ -184,7 +185,7 @@ function renderPeopleAvatars(cell: HTMLElement, names: readonly string[]): void 
   }
   const group = cell.createDiv({ cls: "echoink-todo-avatars" });
   for (const name of names.slice(0, 3)) {
-    const avatar = group.createEl("span", {
+    const avatar = group.createSpan({
       cls: `echoink-todo-avatar echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
       text: personInitial(name),
       attr: { tabindex: "0", role: "img", "aria-label": name }
@@ -194,7 +195,7 @@ function renderPeopleAvatars(cell: HTMLElement, names: readonly string[]): void 
   const rest = names.slice(3);
   if (rest.length) {
     const restLabel = rest.join("、");
-    const avatar = group.createEl("span", {
+    const avatar = group.createSpan({
       cls: "echoink-todo-avatar echoink-todo-avatar-more",
       text: `+${rest.length}`,
       attr: { tabindex: "0", role: "img", "aria-label": restLabel }

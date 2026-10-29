@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import { createRequire } from "node:module";
 const requireEditorLibrary = createRequire(import.meta.url);
 const editorLibraries = new Set(["@codemirror/state", "@codemirror/view", "@codemirror/commands"]);
@@ -20,8 +21,11 @@ import { mobileStartupConflictScenarios } from "../tests/mobile/startup-conflict
 
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/entry.ts"), metafile: true });
 assert.ok(!Object.keys(build.metafile.inputs).some(name => name.includes("node_modules/@codemirror/")), "Mobile must use the host editor libraries, not bundle another copy");
+assert.ok(!Object.keys(build.metafile.inputs).some(name => name.startsWith("src/platform/desktop-")), "Mobile fixtures must not import desktop Node adapters");
 // Bootstrap checks must cover this checkout, independent of shared dist artifacts.
-const productionCode = (await esbuild.build(mobileBuildOptions())).outputFiles[0].text;
+const productionBuild = await esbuild.build({ ...mobileBuildOptions(), metafile: true });
+assert.ok(!Object.keys(productionBuild.metafile.inputs).some(name => name.startsWith("src/platform/desktop-")), "Production mobile graph must not include desktop Node adapters");
+const productionCode = productionBuild.outputFiles[0].text;
 const dom = new JSDOM("<!doctype html><body><div id=app></div>", { pretendToBeVisual: true, url: "https://fixture.example" });
 dom.window.SVGElement.prototype.addClass = function (...names) { this.classList.add(...names); };
 dom.window.HTMLElement.prototype.setAttr = function (name, value) { this.setAttribute(name, String(value)); };
@@ -538,7 +542,7 @@ await test("desktop legacy data root is selected without merging stores", async 
   }
 });
 await test("mobile default preferences match the complete desktop runtime value and preserve custom content", async () => {
-  const desktopBuild = await esbuild.build({
+  const desktopBuild = await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,
     stdin: { contents: 'export { ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES as default } from "./src/knowledge-base/knowledge-maintenance-preferences";', resolveDir: process.cwd(), loader: "ts" },
     bundle: true, platform: "node", format: "esm", write: false, logLevel: "silent"
   });

@@ -28,9 +28,8 @@ import { recordMaintenanceSourceBodyFingerprint } from "../harness/pi-native/pi-
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../knowledge-base/search/contracts";
 import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
-import { readPrivateMaintenanceRecords, FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
+import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
-import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { PiPdfReadingSecurity, createPdfReadingTools, PDF_TOOL_NAMES } from "../harness/pi-native/pi-pdf-reading-tools";
 import type { PdfReadingController } from "../pdf-reading/controller";
@@ -39,13 +38,12 @@ import type { DiscoveredProviderModel } from "../settings/provider-model-discove
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { toolCallingDisabledMessage } from "../agents/tool-call-recovery";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
-import { knowledgeRolePath } from "../knowledge-base/root-paths";
-import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
 import { isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { piWorkspaceToolDecision, piToolAccessFailure, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   ModelRuntime,
@@ -142,7 +140,6 @@ import {
 } from "../harness/pi-native/pi-mcp-custom-tool-adapter";
 import { createPiMcpToolSecurity } from "../harness/pi-native/pi-mcp-tool-security";
 import {
-  PI_TASK_UPDATE_TOOL_ID,
   PiTaskPlanToolSecurity,
   createPiTaskPlanToolDefinition
 } from "../harness/pi-native/pi-task-plan";
@@ -287,6 +284,11 @@ import {
   mcpToolIsAdmitted,
   resolveMcpConnectionRecord
 } from "../resources/mcp-connections";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface PiProductionPluginHost {
   getKnowledgeSurfaceService?(): { activity: import("./knowledge-activity-service").KnowledgeActivityService } | null;
@@ -517,7 +519,6 @@ export async function createPiProductionRuntimeBundle(
   const localData = localDataInput ?? await PiLocalDataService.create(plugin);
   const {
     vaultRootPath,
-    pluginDataRootPath,
     piNativeStorageRootPath,
     deviceScope,
     storeScope,
@@ -1380,7 +1381,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           let recallVisible = false;
           let recallStats: Readonly<PersonalMemoryRecallSafeStats> | undefined;
           let recallObservation: Readonly<PiPersonalMemoryRecallEvidence> | undefined;
-          let recallTimer: ReturnType<typeof setTimeout> | undefined;
+          let recallTimer: number | undefined;
           const progressDelay = input.personalMemoryRecallProgressDelayMs ?? 300;
           const publishProgress = async (
             stage: PersonalMemoryRecallStage,
@@ -1390,7 +1391,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             if (stats) recallStats = Object.freeze({ ...stats });
             if (!input.onPersonalMemoryRecallProgress) return;
             if (!recallTimer && !recallVisible) {
-              recallTimer = setTimeout(() => {
+              recallTimer = window.setTimeout(() => {
                 recallTimer = undefined;
                 recallVisible = true;
                 void input.onPersonalMemoryRecallProgress?.({
@@ -1444,7 +1445,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               exhausted: false
             });
           } finally {
-            if (recallTimer) clearTimeout(recallTimer);
+            if (recallTimer) window.clearTimeout(recallTimer);
             const elapsedMs = Math.max(0, Date.now() - recallStartedAt);
             if (recallStats) {
               recallObservation = Object.freeze({
@@ -2083,7 +2084,7 @@ async function createProductionAgentSession(input: {
     ...input,
     modelSelection: input.input
   });
-  const { configured, binding, controlledConfig, provider } = preparedProvider;
+  const { configured, binding, controlledConfig } = preparedProvider;
   if (linkingBatch && !configured.toolCalling) throw new Error(toolCallingDisabledMessage("desktop", configured.provider.name, configured.modelRef));
   const productProviderId = normalizeApiProviderId(
     configured.provider.providerId,

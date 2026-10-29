@@ -24,7 +24,7 @@ export function renderCodexHeader(
 ): void {
   const header = rootEl.createDiv({ cls: "codex-header" });
   const title = header.createDiv({ cls: "codex-title" });
-  const icon = title.createSpan({ cls: "codex-title-icon codex-title-icon-codex", attr: { "aria-hidden": "true" } });
+  title.createSpan({ cls: "codex-title-icon codex-title-icon-codex", attr: { "aria-hidden": "true" } });
   title.createSpan({ cls: "codex-title-text" });
   updateCodexHeaderIdentity(header, identity);
 

@@ -1781,14 +1781,6 @@ function legacyResourceDecisions(
   });
 }
 
-function normalizePermissionMode(value: unknown, fallback: PermissionMode): PermissionMode {
-  return value === "read-only" || value === "workspace-write" || value === "danger-full-access" ? value : fallback;
-}
-
-function normalizeUiMode(value: unknown, fallback: UiMode): UiMode {
-  return value === "agent" || value === "plan" ? value : fallback;
-}
-
 function normalizeSetupSettings(input: unknown): SetupSettings {
   const value = settingsRecord(input) ?? {};
   const tutorialStep = value?.tutorialStep;
@@ -2553,13 +2545,6 @@ function normalizeText(value: unknown, fallback: string): string {
 
 function normalizeOptionalText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function normalizeComparablePath(value: unknown): string {
-  return normalizeOptionalText(value)
-    .replace(/^file:\/\//, "")
-    .replace(/\\/g, "/")
-    .replace(/\/+$/, "");
 }
 
 function normalizePositiveInteger(value: unknown, fallback: number, min: number, max: number): number {

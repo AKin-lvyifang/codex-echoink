@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
@@ -8,6 +9,7 @@ import type { ExpressionEntry, SavedDiaryEntry } from "../english-diary/types";
 /** Actual page/browser/heatmap components, synthetic repository; native layout is separate. */
 export async function runEnglishDiaryNavigationUiTests(): Promise<void> {
   const dom = new JSDOM("<body><main></main></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const win = dom.window;
   Object.assign(globalThis, { window: win, document: win.document, HTMLElement: win.HTMLElement });
   const proto = win.HTMLElement.prototype as any;

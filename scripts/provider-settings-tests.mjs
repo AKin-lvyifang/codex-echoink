@@ -77,7 +77,7 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "theme-isolation") {
             constructor(app){super(app);if(app.fixtureDocument) app.fixtureDocument.adoptNode(this.containerEl);}
             open(){this.modalEl.ownerDocument.body.append(this.containerEl);this.onOpen();}
           }
-          export function setIcon(){}; export class TFile{}; export const Platform={isMobile:false}; export function normalizePath(path){return path;}; export function requestUrl(){throw new Error("Fixture cannot request network");}`,resolveDir:rootDir,loader:"js"};
+          export function setIcon(){}; export class TFile{}; export const Platform={isDesktop:true,isMobile:false}; export function normalizePath(path){return path;}; export function requestUrl(){throw new Error("Fixture cannot request network");}`,resolveDir:rootDir,loader:"js"};
       });
     }}]
   });

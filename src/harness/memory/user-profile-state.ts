@@ -1,7 +1,11 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import { USER_PROFILE_STATE_SCHEMA } from "./personal-memory-contracts";
 import { USER_PROFILE_STATE_RELATIVE_PATH, parseUserProfileState, migrateLegacyUserProfileState, type UserProfileState, type UserProfileStateInspection } from "./user-profile-core";
+
+const { readFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 export * from "./user-profile-core";
 const LEGACY_USER_PROFILE_STATE_SCHEMA = "echoink.user-profile.v1" as const;
 

@@ -1,6 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -22,6 +23,11 @@ import { ObsidianVaultDomainAdapter } from "./obsidian-vault-domain-adapter";
 import { confirmAndConsumeApprovalTicket, createOperationIdentity, type ApprovalOperationContract } from "../harness/pi-native/tool-authorization";
 import { classifyKnowledgeUpgradePage, KnowledgeUpgradeClassificationError } from "./pi-production-runtime-composition";
 import { isUnknownArray } from "../utils/unknown-array";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const fs = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const version = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 const localDateKey = (now: number) => {

@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { createRequire } from "node:module";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +16,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 let dom;
 try {
   const output = path.join(run, "settings-editors.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     entryPoints: [path.join(root, "src/tests/settings-editors.ts")], bundle: true, platform: "node", format: "esm", target: "node22", outfile: output, logLevel: "silent", sourcemap: "inline",
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text", ".txt": "text" },
     plugins: [{ name: "settings-editor-host", setup(build) {

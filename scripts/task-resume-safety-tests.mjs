@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -12,7 +13,7 @@ const fixture = await realpath(process.env.ECHOINK_TASK_RESUME_TEST_ROOT);
 if (!fixture.startsWith(allowed + path.sep)) throw new Error("Task resume fixtures must stay in 90-任务临时");
 const output = await mkdtemp(path.join(fixture, "run-task-resume-safety-"));
 try {
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import { runTaskResumeSafetyTests } from "./src/tests/task-resume-safety"; await runTaskResumeSafetyTests(process.env.ECHOINK_P4_SAFETY_TEST_ROOT);', resolveDir: root, loader: "ts" },
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: path.join(output, "run.mjs"), logLevel: "silent",
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },

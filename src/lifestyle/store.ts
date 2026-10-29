@@ -1,6 +1,10 @@
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { LifestyleStoreCore, type LifestyleFilePort } from "./store-core";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 export * from "./store-core";
 
 /** Desktop file adapter; shared transactions and normalization live in store-core. */

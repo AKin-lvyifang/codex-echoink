@@ -138,7 +138,7 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
       const copy = dreamRow.querySelector<HTMLElement>(".pd-settings-copy")!, dreamLink = el(ctx.document, "button", "pd-agent-dream-link"); dreamLink.type = "button";
       dreamLink.append(...Array.from(copy.childNodes), el(ctx.document, "span", "pd-settings-description", en(ctx) ? `Up to ${settings.dreamRunsPerDay} per day` : `每天最多 ${settings.dreamRunsPerDay} 次`)); copy.replaceWith(dreamLink);
       dreamLink.disabled = !settings.dreamEnabled; dreamLink.setAttribute("aria-expanded", String(dreamExpanded && settings.dreamEnabled));
-      const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(settingsToggle(ctx, t(ctx, "做梦"), settings.dreamEnabled, enabled => saveSetting({ dreamEnabled: enabled }))); dreamRow.append(hit);
+      const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(settingsToggle(ctx, t(ctx, "做梦"), settings.dreamEnabled, enabled => saveSetting({ dreamEnabled: enabled }))); dreamRow.classList.add("has-switch-control"); dreamRow.append(hit);
       if (settings.dreamEnabled) {
         const area = el(ctx.document, "div", "pd-agent-dream"); area.hidden = !dreamExpanded; group.append(area);
         dreamLink.addEventListener("click", () => { dreamExpanded = !dreamExpanded; area.hidden = !dreamExpanded; dreamLink.setAttribute("aria-expanded", String(dreamExpanded)); });

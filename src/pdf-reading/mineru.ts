@@ -15,8 +15,8 @@ export const minerTransport: MinerTransport = {
     return { status: response.status, json, bytes: response.arrayBuffer };
   },
   wait: signal => new Promise((resolve, reject) => {
-    const onAbort = () => { clearTimeout(timer); reject(new Error("处理已取消。")); };
-    const timer = setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, 2500);
+    const onAbort = () => { window.clearTimeout(timer); reject(new Error("处理已取消。")); };
+    const timer = window.setTimeout(() => { signal.removeEventListener("abort", onAbort); resolve(); }, 2500);
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
   })

@@ -50,7 +50,6 @@ export interface CodexMessageHost {
   isMessagesAtBottom(): boolean;
 }
 
-const CHAT_SESSION_SAVE_DEBOUNCE_MS = 500;
 const sessionMessageStores = new WeakMap<object, SessionMessageStore>();
 
 export function sessionMessageStoreFor(host: CodexMessageHost): SessionMessageStore {

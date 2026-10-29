@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+
+const { createHash } = getDesktopCrypto();
 
 export const CONVERSATION_V2_SCHEMA_VERSION = 2 as const;
 export const CONVERSATION_PRESENTATION_SCHEMA_VERSION = 1 as const;

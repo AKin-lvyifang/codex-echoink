@@ -1,6 +1,6 @@
 import { patchMaintenanceSourceFrontmatter } from "./maintenance-source-frontmatter";
 import { knowledgeRolePath } from "./root-paths";
-import { createHash, randomUUID } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type {
   VaultDomainService,
   VaultOperationResult,
@@ -15,6 +15,8 @@ import {
   knowledgeMaintenanceNoteFromReadback,
   type KnowledgeMaintenanceResultNote
 } from "./knowledge-maintenance-result";
+
+const { createHash, randomUUID } = getDesktopCrypto();
 
 export const PHASE3_MAINTENANCE_SOURCE_LIMIT = 20;
 export const PHASE3_MAINTENANCE_TRACKER_PATH =

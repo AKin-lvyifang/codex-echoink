@@ -1,7 +1,8 @@
 import { isPiTodoTool, normalizeTodoToolRequest } from "../harness/pi-native/todo-tool-policy";
-import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { DomainOperationJournal, FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import type { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
@@ -10,6 +11,11 @@ import type { PiPdfResumeOperation } from "../harness/pi-native/pi-pdf-reading-t
 import { canonicalJsonStringify, type FileApprovalTicketStore, type JsonValue } from "../harness/pi-native/tool-authorization";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import { maintenanceScopeContextFromEntries, type MaintenanceScopeContext } from "../harness/pi-native/maintenance-scope-context";
+
+const { createHash } = getDesktopCrypto();
+
+const { lstat, readFile, realpath } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface TaskResumeOperation {
   readonly operationIdentity: string;

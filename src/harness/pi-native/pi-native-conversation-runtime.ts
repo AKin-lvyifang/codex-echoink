@@ -5,7 +5,7 @@ import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
 import { GenerationOutputValidationError, prepareGenerationOutput } from "../../generation/output";
 import { GENERATION_ATTEMPT_ENTRY, GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../../generation/projection";
-import type { GenerationAttempt, GenerationRequest, GenerationResult } from "../../generation/types";
+import type { GenerationAttempt, GenerationRequest } from "../../generation/types";
 import type { GenerationSourceAssessment } from "../../generation/sources";
 import type { GenerationRuntimePort, GenerationStage, GenerationExecutionIdentity } from "../../generation/runtime";
 import { freezePdfTaskRequest, pdfTaskRequestFromEntries } from "../../pdf-reading/task-context";
@@ -22,8 +22,8 @@ import { knowledgeRolePath, resolveKnowledgePath } from "../../knowledge-base/ro
 import { knowledgeErrorDetail } from "../../knowledge-base/initialization-error";
 import { maintenanceRequestsAdviceOnly } from "../../knowledge-base/wiki-folder-names";
 import { normalizePiWorkspacePermission, piWorkspaceAllowsTool, type PiWorkspaceAccess } from "./pi-workspace-access";
-import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFs } from "../../platform/desktop-filesystem";
 import type {
   AgentSession,
   AgentSessionEvent,
@@ -132,7 +132,7 @@ import {
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION
 } from "../../knowledge-base/knowledge-maintenance-protocol";
-import { PI_KNOWLEDGE_READ_TOOL_IDS } from "./pi-knowledge-read-tools";
+
 import {
   piModelSupportsImageInput,
   type PiNativeProviderExecutionContext
@@ -189,6 +189,10 @@ import type {
   DreamPublicExperienceInput,
   DreamTaskResultSummary
 } from "../memory/dream-experience-inbox";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const { readFileSync } = getDesktopFs();
 
 const BUILTIN_TOOL_NAMES = new Set([
   "bash",
@@ -784,7 +788,7 @@ interface ActiveProductRun {
   skillTurnContext: Readonly<PiNativeSkillTurnContext> | null;
   memoryRecall?: PiMemoryRecallObservation;
   providerStartedAt?: number;
-  providerWaitTimer?: ReturnType<typeof setInterval>;
+  providerWaitTimer?: number;
   firstAssistantTextSeen: boolean;
   providerReasoningBlocks: Map<string, MutableProviderReasoningBlock>;
   providerReasoningExposedMessageKeys: Set<string>;
@@ -2982,7 +2986,7 @@ export class PiNativeConversationRuntime {
             startedAt: providerStartedAt,
             updatedAt: providerStartedAt
           });
-          run.providerWaitTimer = setInterval(() => {
+          run.providerWaitTimer = window.setInterval(() => {
             if (active.currentRun !== run || run.firstAssistantTextSeen
               || run.knowledgeAbort.signal.aborted || run.reasoningSummary.terminalAt !== undefined) {
               this.finishProviderWait(run);
@@ -4716,7 +4720,7 @@ export class PiNativeConversationRuntime {
     status: EchoInkReasoningActivityStatus = "completed"
   ): void {
     if (execution.providerWaitTimer !== undefined) {
-      clearInterval(execution.providerWaitTimer);
+      window.clearInterval(execution.providerWaitTimer);
       delete execution.providerWaitTimer;
     }
     const provider = execution.reasoningSummary.activities.find((activity) =>

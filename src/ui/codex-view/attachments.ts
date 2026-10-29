@@ -1,3 +1,4 @@
+import { getElectronFilePath } from "../../core/electron";
 import { composerSelectionAnnotations, removeSelectionAnnotation, editAnnotationQuestion } from "../../selection-ask/draft";
 import { renderSelectionAnnotationSummary } from "./selection-annotations";
 import { Notice, TFile, type App } from "obsidian";
@@ -134,7 +135,7 @@ export function currentDisplayedMarkdownFile(app: App): TFile | null {
 }
 
 export function pickFiles(host: CodexAttachmentHost, imagesOnly: boolean): void {
-  const input = document.createElement("input");
+  const input = window.createEl("input");
   input.type = "file";
   input.multiple = true;
   input.accept = imagesOnly
@@ -151,7 +152,7 @@ export function pickFiles(host: CodexAttachmentHost, imagesOnly: boolean): void 
 }
 
 export function pickKnowledgeBaseFiles(host: CodexAttachmentHost): void {
-  const input = document.createElement("input");
+  const input = window.createEl("input");
   input.type = "file";
   input.multiple = true;
   input.accept = ".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain";
@@ -196,9 +197,7 @@ function appendPiChatFile(host: CodexAttachmentHost, file: File): void {
   // New Electron versions removed File.path; the host-owned picker still
   // supplies a local path through its public webUtils API.
   if (!filePath) {
-    const electronRequire = window.require ?? globalThis.require;
-    try { filePath = (electronRequire?.("electron") as { webUtils?: { getPathForFile(file: File): string } } | undefined)?.webUtils?.getPathForFile(file); }
-    catch { /* The ordinary unavailable-attachment notice below remains authoritative. */ }
+    filePath = getElectronFilePath(file);
   }
   if (!filePath) {
     const name = file.name || conversationUiText(host.plugin.settings.settingsLanguage, "未命名文件", "Unnamed file");

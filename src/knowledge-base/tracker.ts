@@ -1,7 +1,11 @@
 import { resolveKnowledgePath, knowledgeRolePath } from "./root-paths";
 import { isMissingPathError } from "./utils";
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface KnowledgeBaseTrackableFile {
   path: string;

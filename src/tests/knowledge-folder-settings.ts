@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { createHash } from "node:crypto";
 import { renderKnowledgeLinkingSection } from "../settings/knowledge-linking-section";
 import { KnowledgeLinkingService } from "../plugin/knowledge-linking-service";
@@ -23,6 +24,7 @@ function bound() {
 
 function prepareDOM() {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const win = dom.window;
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLFormElement", "HTMLInputElement", "Element", "Node", "Event", "MouseEvent", "KeyboardEvent", "MutationObserver", "DocumentFragment", "getComputedStyle"]) {

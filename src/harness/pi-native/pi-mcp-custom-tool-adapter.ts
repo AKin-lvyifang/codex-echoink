@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import {
   defineTool,
   type AgentToolResult,
@@ -14,6 +14,8 @@ import type {
 } from "../../resources/types";
 import { createMcpApprovalToolId, type McpApprovalToolId } from "./tool-authorization";
 import { redactEchoInkLocalSecretsV1 } from "./vault-tool-result-safety";
+
+const { createHash } = getDesktopCrypto();
 
 const DEFAULT_MCP_TIMEOUT_MS = 30_000;
 const MAX_PI_TOOL_NAME_LENGTH = 64;

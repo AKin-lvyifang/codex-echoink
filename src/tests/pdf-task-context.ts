@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -319,6 +320,7 @@ async function deliveryAndApproval(root: string): Promise<void> {
     assert.match(visible, /保存原 PDF|提取原文|精读|摘要|当前模型/); assert.doesNotMatch(visible, /sourceFingerprint|jobId|SHA|"files"/);
     assert.doesNotMatch(visible, new RegExp(choice.sourceFingerprint));
     const dom = new JSDOM("<!doctype html><body></body>"); installComposerMenuDomHelpers(dom.window.document);
+    installObsidianDom(dom.window);
     try {
       const host = dom.window.document.body.createDiv(); renderApprovalPresentation(host, presentation);
       assert.equal(host.querySelector("details")!.open, false);

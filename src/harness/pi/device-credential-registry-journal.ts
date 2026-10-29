@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
-import type { Dirent } from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import {
   DEVICE_CREDENTIAL_REGISTRY_DIGEST_PATTERN,
   parseDeviceCredentialRegistry,
@@ -22,6 +22,11 @@ import {
   resolveDurableAppendOnlyLayout,
   resolveDurablePlainRoot
 } from "../storage/durable-append-only-cas";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 const REGISTRY_DIRECTORY = "credential-registry-v1";
 const JOURNAL_NAMESPACE = "registry-journal-v1";
@@ -191,7 +196,7 @@ implements CredentialRegistryPort, DeviceCredentialRegistryReaderPort {
       layout,
       this.chainToken()
     );
-    let entries: Dirent[];
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await fsp.readdir(chainRootPath, {
         withFileTypes: true

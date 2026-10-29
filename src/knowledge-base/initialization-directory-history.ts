@@ -1,8 +1,14 @@
 import type { KnowledgeFolderBindings } from "./folder-bindings";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { knowledgeErrorDetail } from "./initialization-error";
+
+const { randomUUID } = getDesktopCrypto();
+
+const fs = getDesktopFsPromises();
+const path = getDesktopPath();
 
 interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }

@@ -1,5 +1,7 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import type { AgentInputModality } from "./types";
+
+const path = getDesktopPath();
 
 export function mimeForKnowledgeFile(filePath: string): string {
   const ext = path.extname(filePath).toLowerCase();

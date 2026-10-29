@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { Component, MarkdownRenderer, TFile, type App } from "obsidian";
 import { normalizeMarkdownMath } from "../core/markdown-math";
@@ -38,6 +39,7 @@ export async function runAnswerMarkdownTests(): Promise<void> {
 
   const { JSDOM } = require("jsdom");
   const dom = new JSDOM("<!doctype html><body></body>");
+  installObsidianDom(dom.window);
   const document = dom.window.document as Document;
   const proto = dom.window.HTMLElement.prototype;
   Object.assign(proto, {

@@ -97,7 +97,7 @@ function createSkillList(ctx: IPadSettingsContext, builtin: boolean, editAgent: 
           error.hidden = true;
           try { await api.setSkillEnabled(skill.id, enabled); ctx.refresh(); }
           catch (failure) { showSettingsError(error, failure); throw failure; }
-        }); const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(toggle); row.append(hit);
+        }); const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(toggle); row.classList.add("has-switch-control"); row.append(hit);
       }
       group.append(row);
     }

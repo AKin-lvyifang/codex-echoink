@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +9,7 @@ import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const target = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "finance-tests.mjs");
 await mkdir(path.dirname(target), { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: { contents: 'import { runFinanceAnalysisHistoryTests } from "./src/tests/finance-analysis-history"; import { runFinanceAnalysisArchiveTests } from "./src/tests/finance-analysis-archive"; import { runFinanceBillPlanTests } from "./src/tests/finance-bill-plan"; import { runFinanceThemeIntegrationTests } from "./src/tests/finance-theme-integration"; import { runLifestyleFinanceTests } from "./src/tests/lifestyle-finance"; import { runLifestyleFinanceLedgerTests } from "./src/tests/lifestyle-finance-ledger"; import { runLifestyleFinanceUiTests } from "./src/tests/lifestyle-finance-ui"; import { runLifestyleFinanceAnalysisTests } from "./src/tests/lifestyle-finance-analysis"; import { runLifestyleFinanceIntegrationTests } from "./src/tests/lifestyle-finance-integration"; await runFinanceAnalysisHistoryTests(); await runFinanceAnalysisArchiveTests(); await runFinanceBillPlanTests(); await runLifestyleFinanceTests(); await runLifestyleFinanceLedgerTests(); await runLifestyleFinanceUiTests(); await runLifestyleFinanceAnalysisTests(); await runLifestyleFinanceIntegrationTests(); await runFinanceThemeIntegrationTests();', resolveDir: root, sourcefile: "finance-test-entry.ts", loader: "ts" },
   bundle: true, platform: "node", target: "node22", format: "esm", outfile: target,
   external: ["read-excel-file/node", "yaml", "postcss"],

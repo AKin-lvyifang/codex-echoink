@@ -1,9 +1,13 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type { ResourceRef } from "../../resources/types";
 import { parseResourceUri, resourceRefToUri } from "./resource-ref";
 import { loadVaultSkill } from "./skill-loader";
 import { installBuiltinSkillFiles } from "./skill-runtime";
+
+const { mkdir, readdir, readFile, stat, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface VaultResourceManifest {
   version: 1;
@@ -206,7 +210,7 @@ async function loadVaultMcpConnections(filePath: string): Promise<Record<string,
 async function loadVaultResourceBindings(filePath: string): Promise<VaultResourceBinding[]> {
   const data = await readJsonFile<{ bindings?: RawBinding[] }>(filePath, { bindings: [] });
   return (data.bindings ?? []).map((binding) => {
-    const ref = parseResourceUri(String(binding.ref ?? ""));
+    const ref = parseResourceUri(typeof binding.ref === "string" ? binding.ref : "");
     return {
       ref,
       uri: resourceRefToUri(ref),

@@ -1,3 +1,4 @@
+import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
 import { Notice, setIcon } from "obsidian";
 import type { AgentDefinition } from "../../agents/types";
@@ -259,7 +260,7 @@ export class InlineTaskDetailView {
   }
   private messageNode(item: ThreadItem, key: string, lastUser: boolean, lastAssistant: boolean): HTMLElement {
     const { request, message } = item, { agent, language } = this.current!, en = english(language);
-    const row = this.root.ownerDocument.createElement("div"); row.className = `echoink-inline-task-message is-${message.role}`;
+    const row = ownedDiv(this.root.ownerDocument); row.className = `echoink-inline-task-message is-${message.role}`;
     if (message.role === "user") {
       if (this.editing?.key === key) {
         row.classList.add("is-editing");

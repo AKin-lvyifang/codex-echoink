@@ -224,11 +224,11 @@ export class MobileModelConfiguration {
 
   private async timed<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     try {
       return await Promise.race([operation(controller.signal), new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(new Error("模型服务请求超时，请重试。")); }, MOBILE_MODEL_REQUEST_TIMEOUT_MS);
+        timer = window.setTimeout(() => { controller.abort(); reject(new Error("模型服务请求超时，请重试。")); }, MOBILE_MODEL_REQUEST_TIMEOUT_MS);
       })]);
-    } finally { if (timer !== undefined) clearTimeout(timer); }
+    } finally { if (timer !== undefined) window.clearTimeout(timer); }
   }
 }

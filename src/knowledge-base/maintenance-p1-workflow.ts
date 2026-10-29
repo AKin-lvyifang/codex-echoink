@@ -2,10 +2,10 @@ import { isUnknownArray } from "../utils/unknown-array";
 import { maintenanceInspection, type MaintenanceInspectionView } from "./maintenance-p2-receipt";
 import { Phase3MaintenanceError } from "./phase3-maintenance-service";
 import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
 import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
-import type { MaintenanceP1State, MaintenanceSectionSnapshot, MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
+import type { MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
 import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock, appendMaintenanceManagedBlock, assertMaintenanceQuoteSectionsPreserved } from "./maintenance-section-patch";
 import { appendMaintenanceAliases, maintenancePageTitle } from "./maintenance-page-metadata";
@@ -19,6 +19,8 @@ import type { MaintenanceDomainMapDraft, MaintenanceDomainMapEntry, MaintenanceK
 import { assertMaintenanceShortTitle, assertMaintenanceShortTarget, MAINTENANCE_SHORT_TITLE_POLICY } from "./maintenance-title";
 import { maintenanceReceiptForRecord } from "./maintenance-activity";
 import { maintenanceFailureText } from "./maintenance-user-copy";
+
+const { createHash } = getDesktopCrypto();
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const revision = (s: string) => `sha256:${hash(s)}`;

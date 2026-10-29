@@ -1,8 +1,12 @@
-import { lstat, readFile } from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import type { ChatMessage } from "../settings/settings";
 import { knowledgeUsageMessageData } from "../knowledge-base/usage";
 import type { GenerationReadFailure, GenerationSource } from "./types";
+
+const { lstat, readFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const GENERATION_MAX_NOTES = 20;
 export const GENERATION_MAX_NOTE_BYTES = 32_000;

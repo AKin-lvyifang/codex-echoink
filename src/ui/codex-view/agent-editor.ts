@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
 import { setIcon } from "obsidian";
@@ -138,7 +139,7 @@ export class AgentEditorController {
     const current = this.host.settings.agentRegistry.agents.find(agent => agent.id === agentId);
     const saved = formDrafts.get(this.host.draftCacheKey)?.get(this.cacheKey);
     this.draft = saved ? structuredClone(saved) : { agent: current ? structuredClone(current) : {
-      id: `agent-${globalThis.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: []
+      id: `agent-${window.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: []
     }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) : [],
     baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) } : undefined,
     presetId: "", dirty: false, revision: 0 };
@@ -201,7 +202,7 @@ export class AgentEditorController {
   }
 
   private el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, cls = "", text?: string): HTMLElementTagNameMap[K] {
-    const element = parent.ownerDocument.createElement(tag);
+    const element = ownedEl(parent.ownerDocument, tag);
     if (cls) element.className = cls;
     if (text !== undefined) element.textContent = text;
     parent.append(element); return element;

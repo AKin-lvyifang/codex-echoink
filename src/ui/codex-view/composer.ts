@@ -1,3 +1,4 @@
+import { isImeKeyEvent } from "../ime-composition";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Platform, setIcon } from "obsidian";
 import { createOriginButton } from "../../settings/origin-controls";
@@ -239,7 +240,7 @@ export function renderComposerShell(
   });
   inputEl.addEventListener("paste", callbacks.onPasteFiles);
   inputEl.addEventListener("keydown", (event) => {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if (handleComposerNoteMentionKeyDown(event, inputEl)) return;
     if (handleKnowledgeCommandMenuKeyDown(event, inputEl, knowledgeCommandMenuEl)) return;
     if (event.key === "Enter" && !event.shiftKey) {

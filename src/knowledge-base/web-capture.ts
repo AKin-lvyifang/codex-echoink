@@ -37,7 +37,7 @@ export function extractArticleMarkdown(html: string, url: string): { title: stri
 }
 
 export function sanitizeWebCaptureFileName(value: string): string {
-  return cleanInlineText(value).replace(/[\\/:*?"<>|#\[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "未命名资料";
+  return cleanInlineText(value).replace(/[\\/:*?"<>|#[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "未命名资料";
 }
 
 function domNodeToMarkdown(node: Node): string {

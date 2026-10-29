@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import * as os from "os";
-import * as path from "path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopOs, getDesktopPath } from "../platform/desktop-paths";
+
 import type {
   PermissionMode,
   ProcessEventSummary,
@@ -15,6 +15,11 @@ import type { PiContextLedger } from "../harness/pi-native/pi-context-budget";
 import type { StoredAttachment } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
 import { normalizeSlashes } from "./path-utils";
+
+const { createHash } = getDesktopCrypto();
+
+const os = getDesktopOs();
+const path = getDesktopPath();
 
 export const DEFAULT_REPLY_STYLE_INSTRUCTION =
   "回复格式要求：使用中文；先给结论，再给关键依据；短段落；能用列表就用列表；对比、取舍、验收项优先用 Markdown 表格；避免整段长文。";
@@ -314,11 +319,12 @@ export function extractProcessFileRefs(value: unknown, vaultPath: string, basePa
   return refs.slice(0, 8);
 }
 
-export function summarizeProcessEvent(itemType: string, payload: any, vaultPath: string, basePath?: string): ProcessEventSummary {
+export function summarizeProcessEvent(itemType: string, payload: unknown, vaultPath: string, basePath?: string): ProcessEventSummary {
+  const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const files = extractProcessFileRefs(payload, vaultPath, basePath);
   if (itemType === "reasoning") {
     const text = reasoningTextFromPayload(payload);
-    const running = payload?.status === "running" || payload?.status === "in_progress" || payload?.status === "inProgress";
+    const running = record.status === "running" || record.status === "in_progress" || record.status === "inProgress";
     return {
       title: running ? "正在思考" : "已思考",
       detail: compactText(text || (running ? "正在接收思考过程" : "整理了思考过程")),
@@ -346,31 +352,32 @@ export function summarizeProcessEvent(itemType: string, payload: any, vaultPath:
     };
   }
   if (itemType === "mcpToolCall") {
-    const toolName = [payload?.server, payload?.tool].filter(Boolean).join(".");
+    const toolName = [record.server, record.tool].filter(Boolean).join(".");
     return {
       title: toolName ? `使用工具：${toolName}` : "使用工具",
-      detail: compactText(payload?.message ?? payload?.status ?? "调用外部工具"),
+      detail: compactText(record.message ?? record.status ?? "调用外部工具"),
       files,
       defaultOpen: false,
       kind: "tool"
     };
   }
   if (itemType === "dynamicToolCall" || itemType === "collabAgentToolCall") {
-    const toolName = [payload?.namespace, payload?.tool].filter(Boolean).join(".");
+    const toolName = [record.namespace, record.tool].filter(Boolean).join(".");
     return {
       title: toolName ? `使用工具：${toolName}` : "使用工具",
-      detail: compactText(payload?.message ?? payload?.status ?? "调用工具"),
+      detail: compactText(record.message ?? record.status ?? "调用工具"),
       files,
       defaultOpen: false,
       kind: "tool"
     };
   }
   if (itemType === "commandExecution") {
-    const commandText = String(payload?.command ?? payload?.text ?? payload ?? "");
+    const commandInput: unknown = record.command ?? record.text ?? payload ?? "";
+    const commandText = String(commandInput);
     const command = commandSummary(commandText);
     return {
       title: command.title,
-      detail: command.detail || compactText(commandText || payload?.status || "执行命令"),
+      detail: command.detail || compactText(commandText || record.status || "执行命令"),
       files,
       defaultOpen: false,
       kind: command.kind
@@ -378,7 +385,7 @@ export function summarizeProcessEvent(itemType: string, payload: any, vaultPath:
   }
   return {
     title: "处理过程",
-    detail: compactText(payload?.message ?? payload?.status ?? "记录执行过程"),
+    detail: compactText(record.message ?? record.status ?? "记录执行过程"),
     files,
     defaultOpen: false,
     kind: "other"
@@ -391,8 +398,15 @@ export function processGroupStateId(items: Array<{ id?: string; runId?: string }
   return `group-${first?.runId ?? "none"}-${first?.id ?? "process"}-${last?.id ?? first?.id ?? "process"}-${items.length}`;
 }
 
-export function reasoningTextFromPayload(payload: any): string {
-  return joinTextFragments([payload?.text, payload?.summary, payload?.content]);
+export function reasoningTextFromPayload(payload: unknown): string {
+  return joinTextFragments([payloadField(payload, "text"), payloadField(payload, "summary"), payloadField(payload, "content")]);
+}
+
+/** Preserve ordinary JavaScript property access for unknown protocol payloads. */
+function payloadField(value: unknown, name: string): unknown {
+  if (value === null || value === undefined) return undefined;
+  const field: unknown = Reflect.get(Object(value) as object, name);
+  return field;
 }
 
 function commandSummary(command: string): { title: string; detail: string; kind: ProcessEventSummary["kind"] } {
@@ -458,8 +472,9 @@ function joinTextFragments(values: unknown[]): string {
   return fragments.join("\n").trim();
 }
 
-function compactText(value: string): string {
-  const compacted = String(value || "").replace(/\s+/g, " ").trim();
+function compactText(value: unknown): string {
+  const text = String(value);
+  const compacted = (value ? text : "").replace(/\s+/g, " ").trim();
   if (!compacted) return "";
   return compacted.length > 96 ? `${compacted.slice(0, 95)}...` : compacted;
 }

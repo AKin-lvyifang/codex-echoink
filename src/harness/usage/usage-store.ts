@@ -1,9 +1,13 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import type { AccountStatistics } from "../../settings/account-membership-model";
 import { USAGE_TOKEN_STANDARD } from "./token-estimator";
 import type { UsageRequestEvent } from "./usage-stream";
 import { parseDocument, parseRequest, usageStatistics, type UsageDocument } from "./usage-core";
+
+const { mkdir, readFile, rename, rm, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 export type { UsageRequestEvent, UsageSource } from "./usage-stream";
 
 /** Vault-local numeric evidence. Account changes never reset this store. */
@@ -64,8 +68,8 @@ export class UsageStore {
   }
 
   private async persist(document: UsageDocument): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.${globalThis.crypto.randomUUID()}.tmp`;
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    const temporary = `${this.filePath}.${crypto.randomUUID()}.tmp`;
     try {
       await writeFile(temporary, JSON.stringify(document), { encoding: "utf8", mode: 0o600 });
       await rename(temporary, this.filePath);

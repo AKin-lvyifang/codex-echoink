@@ -1,8 +1,9 @@
 import { normalizeJsonValue as normalizePureJsonValue, JsonValueValidationError, type JsonValue } from "./json-value-core";
-import { createHash } from "node:crypto";
-import { mkdir, readdir } from "node:fs/promises";
-import { isDeepStrictEqual } from "node:util";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import {
   PI_NATIVE_FILE_SCHEMA_VERSION,
   PiNativeFileStoreError,
@@ -17,6 +18,12 @@ import {
   stablePathToken,
   type PiNativeVaultFileLayout
 } from "./file-store-utils";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
+
+const { mkdir, readdir } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const APPROVAL_WRITE_TOOL_IDS = [
   "note_create",

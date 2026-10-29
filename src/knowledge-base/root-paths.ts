@@ -1,9 +1,12 @@
-import { readdirSync, lstatSync, realpathSync } from "node:fs";
-import * as path from "node:path";
+import { getDesktopFs } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
 
 import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, resolveKnowledgePathFromRoots, type KnowledgeRootRole } from "./root-paths-core";
 import { knowledgeRolePath } from "./root-paths-core";
 import type { KnowledgeFolderBindings, KnowledgeFolderStatus } from "./folder-bindings";
+
+const { readdirSync, lstatSync, realpathSync } = getDesktopFs();
+const path = getDesktopPath();
 export * from "./root-paths-core";
 export * from "./folder-bindings";
 

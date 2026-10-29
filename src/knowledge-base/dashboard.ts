@@ -3,17 +3,20 @@ import { buildKnowledgeStructureHealth } from "./health-core";
 import { getKnowledgeFolderBindings, knowledgePrivateRoot, knowledgePathRole, knowledgeRoleStatus, knowledgeRolePath, resolveKnowledgePath, knowledgeRoleRoots, type KnowledgeRootRole } from "./root-paths";
 import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import { wikiCategoryLabel } from "./wiki-folder-names";
-import * as fs from "fs";
-import * as fsp from "fs/promises";
-import * as path from "path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { emptyArrayOnMissingPathOrWarn } from "../core/error-handling";
 import type { KnowledgeBaseHealthHistoryEntry, KnowledgeBaseMaintenanceHistoryEntry, KnowledgeBaseMaintenanceMode, KnowledgeBaseSettings } from "../settings/settings";
-import { rawDigestStateForRecord, rawDigestStateLabel } from "./digest-status";
-import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent, type KnowledgeBaseIoBudget } from "./io-budget";
-import { isKnowledgeMaintenanceSourcePath, isRawMarkdownPath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
+import { rawDigestStateLabel } from "./digest-status";
+import { createKnowledgeBaseIoBudget, type KnowledgeBaseIoBudget } from "./io-budget";
+import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry, type RawDigestFrontmatterRecord, type RawDigestRegistryEntry } from "./raw-digest";
 import { readKnowledgeBaseTrackerHints } from "./tracker";
 import type { KnowledgeBaseRawDigestState, KnowledgeBaseRawDigestStatus, KnowledgeBaseRunCompletion } from "./types";
 import { isMissingPathError, exists, normalizeSlashes, walkFiles } from "./utils";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export interface KnowledgeBaseDashboardFile {
   path: string;
@@ -472,27 +475,6 @@ async function attachRawFingerprints(
   return result;
 }
 
-function isDashboardRawTextPath(relativePath: string): boolean {
-  return isRawMarkdownPath(relativePath) || /\.txt$/i.test(relativePath);
-}
-
-function cachedRawFingerprint(
-  file: KnowledgeBaseDashboardFile,
-  processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
-  registryEntries: Record<string, RawDigestRegistryEntry>
-): string {
-  const registry = registryEntries[file.path];
-  if (registry?.fingerprint && rawFileMetadataMatches(file, registry)) return registry.fingerprint;
-  if (isRawMarkdownPath(file.path)) return "";
-  const previous = processed[file.path];
-  if (previous?.fingerprint && rawFileMetadataMatches(file, previous)) return previous.fingerprint;
-  return "";
-}
-
-function rawFileMetadataMatches(file: KnowledgeBaseDashboardFile, cached: { size: number; mtime: number }): boolean {
-  return file.size === cached.size && Math.abs(file.mtime - cached.mtime) < 1;
-}
-
 function buildRawDigestStatus(
   files: KnowledgeBaseDashboardFile[],
   processed: Record<string, { size: number; mtime: number; fingerprint?: string }>,
@@ -892,7 +874,7 @@ async function resolveLatestReportPath(vaultPath: string, configuredPath: string
 }
 
 async function countImmediateDirectories(root: string): Promise<number> {
-  const entries: fs.Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read dashboard report directory"));
+  const entries: import("node:fs").Dirent[] = await fsp.readdir(root, { withFileTypes: true }).catch(emptyArrayOnMissingPathOrWarn("read dashboard report directory"));
   return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).length;
 }
 
@@ -1044,10 +1026,6 @@ function formatLocalDateKey(value: number): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function isRawProcessingSource(file: KnowledgeBaseDashboardFile): boolean {
-  return isKnowledgeMaintenanceSourcePath(file.path);
 }
 
 function buildWarnings(input: { rawExists: boolean; wikiExists: boolean; trackerExists: boolean; lastError: string; scanLimited: boolean }): string[] {

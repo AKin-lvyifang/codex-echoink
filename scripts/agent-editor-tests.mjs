@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { createRequire } from "node:module";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import path from "node:path";
@@ -15,7 +16,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 let dom;
 try {
   const output = path.join(run, "agent-editor.mjs");
-  await esbuild.build({ entryPoints: [path.join(root, "src/tests/agent-editor.ts")], bundle: true, platform: "node", format: "esm", target: "node22", outfile: output, logLevel: "silent",
+  await esbuild.build({ banner: desktopNodeTestBanner, entryPoints: [path.join(root, "src/tests/agent-editor.ts")], bundle: true, platform: "node", format: "esm", target: "node22", outfile: output, logLevel: "silent",
     loader: { ".svg": "dataurl", ".md": "text", ".txt": "text" },
     plugins: [{ name: "agent-editor-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, "src/tests/obsidian-shim.ts") }));

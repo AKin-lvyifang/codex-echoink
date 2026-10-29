@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 import { MorphingShape } from "./amicro/morphing-shape";
 import { OrigamiShape } from "./amicro/origami-shape";
 import { TextShimmerWave } from "./amicro/text-shimmer-wave";

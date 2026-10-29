@@ -2,7 +2,7 @@ import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, 
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchInclusionReason, type BodySearchMatchSource, type KnowledgeDocumentOutline } from "../../knowledge-base/search/contracts";
 import { fitKnowledgeNavigation, locateKnowledgeAnchor, normalizeKnowledgeDocumentOutline } from "../../knowledge-base/search/markdown-navigation";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import {
   defineTool,
   type AgentToolResult,
@@ -29,6 +29,8 @@ import {
   secureVaultToolResult,
   type VaultToolResultEgressPort
 } from "./vault-tool-result-safety";
+
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_KNOWLEDGE_READ_TOOL_IDS = [
   "knowledge_search",

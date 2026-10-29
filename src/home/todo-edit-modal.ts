@@ -1,3 +1,4 @@
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { App, Modal, Notice, setIcon } from "obsidian";
 import type { TodoHost } from "./home-host";
 import { newId } from "../core/new-id";
@@ -8,6 +9,7 @@ import { joinPeopleNames, parsePeopleNames, personColorIndex, personInitial, TOD
 
 /** The form reuses settings' native date input and Origin/Radix selection. */
 export class EchoInkTodoFormModal extends Modal {
+  private stopImeTracking?: () => void;
   private titleValue = "";
   private peopleNames: string[] = [];
   private peopleInputEl: HTMLInputElement | null = null;
@@ -39,6 +41,7 @@ export class EchoInkTodoFormModal extends Modal {
   }
 
   onOpen(): void {
+    this.stopImeTracking?.(); this.stopImeTracking = watchImeComposition(this.modalEl);
     this.modalEl.addClass("echoink-todo-form-modal");
     const nativeClose = this.modalEl.querySelector(".modal-header-button");
     if (nativeClose) nativeClose.setAttribute("aria-label", this.t("关闭", "Close"));
@@ -46,6 +49,7 @@ export class EchoInkTodoFormModal extends Modal {
   }
 
   onClose(): void {
+    this.stopImeTracking?.(); this.stopImeTracking = undefined;
     disposeOriginControls(this.contentEl);
     this.peopleInputEl = null;
     this.dueInputEl = null;
@@ -112,12 +116,12 @@ export class EchoInkTodoFormModal extends Modal {
       peopleBox.empty();
       for (const name of this.peopleNames) {
         const tag = peopleBox.createDiv({ cls: "echoink-people-tag" });
-        tag.createEl("span", {
+        tag.createSpan({
           cls: `echoink-todo-avatar echoink-todo-avatar-sm echoink-todo-avatar-c${personColorIndex(name, TODO_AVATAR_PALETTE_SIZE)}`,
           text: personInitial(name),
           attr: { "aria-hidden": "true" }
         });
-        tag.createEl("span", { cls: "echoink-people-tag-name", text: name });
+        tag.createSpan({ cls: "echoink-people-tag-name", text: name });
         const remove = createOriginButton(tag, {
           cls: "echoink-people-tag-remove is-icon",
           attr: { "aria-label": this.t(`移除 ${name}`, `Remove ${name}`) }
@@ -136,7 +140,7 @@ export class EchoInkTodoFormModal extends Modal {
       this.peopleInputEl = input;
       input.value = draft;
       input.onkeydown = (event) => {
-        if (event.isComposing || event.keyCode === 229) return;
+        if (isImeKeyEvent(event)) return;
         if (event.key === "Enter" || event.key === ",") {
           event.preventDefault();
           this.addPeopleFromInput(input);
@@ -233,7 +237,7 @@ export class EchoInkTodoFormModal extends Modal {
       categorySelect.element.focus();
     };
     categoryInput.onkeydown = (event) => {
-      if (event.isComposing || event.keyCode === 229 || event.key !== "Enter") return;
+      if (isImeKeyEvent(event) || event.key !== "Enter") return;
       event.preventDefault();
       confirm.click();
     };

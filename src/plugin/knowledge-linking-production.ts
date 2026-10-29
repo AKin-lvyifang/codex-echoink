@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KnowledgeLinkingService, type KnowledgeLinkingHost } from "./knowledge-linking-service";
@@ -13,6 +13,10 @@ import { pluginDataDir } from "./plugin-data-paths";
 import { checkAgentCapability, checkAgentTool, requireAgentCapability } from "../agents/capability-policy";
 import { createPiAgentCapabilityContext } from "./pi-production-runtime-composition";
 import type { KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const path = getDesktopPath();
 
 export function createProductionKnowledgeLinkingService(plugin: CodexForObsidianPlugin): KnowledgeLinkingService {
   const root = plugin.getVaultPath();

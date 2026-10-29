@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import { setIcon } from "obsidian";
 import type { MobileShellSheet } from "./shell-types";
 
@@ -5,7 +6,7 @@ import type { MobileShellSheet } from "./shell-types";
 export function shellElement<K extends keyof HTMLElementTagNameMap>(
   document: Document, tag: K, className: string, text?: string
 ): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
+  const element = ownedEl(document, tag);
   element.className = className;
   if (text !== undefined) element.textContent = text;
   return element;

@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { clearGalleryMarkup, observeGalleryMarkup, validateGalleryMarkup } from '../gallery/markup';
@@ -6,6 +7,7 @@ import { nativeGalleryPair, nativeGalleryEmpty } from './fixtures/gallery-live-c
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 export async function runGalleryMarkupTests(): Promise<void> {
   const dom = new JSDOM('<body><div class="markdown-source-view"></div></body>'), doc = dom.window.document, root = doc.querySelector<HTMLElement>('.markdown-source-view')!;
+  installObsidianDom(dom.window);
   try {
     // Actual native structures: span-based photos and a title-only empty Callout.
     root.innerHTML = nativeGalleryPair; validateGalleryMarkup(root);

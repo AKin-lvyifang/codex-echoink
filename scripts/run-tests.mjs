@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const ownedDomImeResult = spawnSync(process.execPath, ["scripts/owned-dom-ime-tests.mjs"], { stdio: "inherit" });
+if (ownedDomImeResult.status !== 0) process.exit(ownedDomImeResult.status ?? 1);
 const suites = [
   "test:run-reports",
   "test:plan-mode",
@@ -42,6 +44,9 @@ const desktopDataResult = spawnSync(process.execPath, ["scripts/desktop-string-p
   stdio: "inherit"
 });
 if (desktopDataResult.status !== 0) process.exit(desktopDataResult.status ?? 1);
+
+const desktopNodeResult = spawnSync(process.execPath, ["scripts/desktop-node-modules-tests.mjs"], { stdio: "inherit" });
+if (desktopNodeResult.status !== 0) process.exit(desktopNodeResult.status ?? 1);
 
 const codexTransportResult = spawnSync(process.execPath, ["scripts/codex-desktop-transport-tests.mjs"], {
   stdio: "inherit"

@@ -1,6 +1,8 @@
-import * as path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { type App, type ReferenceCache, type TFile } from "obsidian";
 import { rebaseKnowledgePath } from "./root-paths";
+
+const path = getDesktopPath();
 
 interface LinkEdit { original: string; replacement: string; start: number; end: number }
 export interface FolderLinkRenamePlan { path: string; content: string; edits: LinkEdit[]; replacementCounts: Record<string, number> }
@@ -112,7 +114,7 @@ export async function captureFolderLinkRenames(app: App, from: string, to: strin
       const content = await app.vault.read(file);
       if (edits.some((edit) => content.slice(edit.start, edit.end) !== edit.original)) {
         if (attempt === 19) throw new Error(`目录引用索引尚未就绪：${file.path}，请稍后重试`);
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
         continue;
       }
       const replacementCounts = Object.fromEntries(edits.map((edit) => [edit.replacement, refs.filter((ref) => ref.original === edit.replacement).length]));
@@ -142,7 +144,7 @@ export async function applyFolderLinkRenames(app: App, plans: readonly FolderLin
           if (current.length !== expected.length + plan.replacementCounts[expected[0].replacement]) { valid = false; break; }
           for (const ref of current) if (ref.original === original) edits.push({ ...expected[0], start: ref.position.start.offset, end: ref.position.end.offset });
         }
-        if (!valid) { await new Promise((resolve) => setTimeout(resolve, 50)); continue; }
+        if (!valid) { await new Promise((resolve) => window.setTimeout(resolve, 50)); continue; }
       }
       await app.vault.process(file, (latest) => {
         if (latest !== content) return latest; // Retry from current content, never overwrite a concurrent edit.
@@ -164,7 +166,7 @@ export async function applyFolderLinkRenames(app: App, plans: readonly FolderLin
           indexed = refs.every((ref) => latest.slice(ref.position.start.offset, ref.position.end.offset) === ref.original)
             && [...new Set(edits.map((edit) => edit.replacement))].every((replacement) =>
               refs.filter((ref) => ref.original === replacement).length >= edits.filter((edit) => edit.replacement === replacement).length);
-          if (!indexed) await new Promise((resolve) => setTimeout(resolve, 50));
+          if (!indexed) await new Promise((resolve) => window.setTimeout(resolve, 50));
         }
         if (!indexed) throw new Error(`目录引用已更新，索引尚未就绪：${plan.path}，请稍后重试`);
       }

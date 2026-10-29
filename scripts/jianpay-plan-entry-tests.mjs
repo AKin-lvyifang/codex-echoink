@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -17,7 +18,7 @@ try {
   globalThis.ResizeObserver=class {observe(){} unobserve(){} disconnect(){}};
   win.matchMedia=()=>({matches:false,addEventListener(){},removeEventListener(){}});
   const output=path.join(run,"tests.mjs");
-  await build({stdin:{resolveDir:root,loader:"ts",contents:`
+  await build({ banner: desktopNodeTestBanner,stdin:{resolveDir:root,loader:"ts",contents:`
     import assert from 'node:assert/strict';
     import {App} from './src/tests/obsidian-shim';
     import {AccountService} from './src/membership/account-service';

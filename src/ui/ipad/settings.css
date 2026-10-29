@@ -7,9 +7,8 @@
 .echoink-ipad.pd-settings .pd-settings-group { overflow: hidden; border: 1px solid var(--pd-settings-line); border-radius: 12px; }
 .echoink-ipad.pd-settings .pd-settings-row { appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 48px; height: auto; margin: 0; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--pd-settings-line); border-radius: 0; background: transparent; color: var(--text-normal); font: inherit; text-align: left; line-height: 1.5; box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-row:last-child { border-bottom: 0; }
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch),
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-switch-hit),
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-segments) { padding-top: 0; padding-bottom: 0; }
+.echoink-ipad.pd-settings .pd-settings-row.has-switch-control,
+.echoink-ipad.pd-settings .pd-settings-row.has-segments { padding-top: 0; padding-bottom: 0; }
 .echoink-ipad.pd-settings button.pd-settings-row { cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-settings-row:focus-visible,
 .echoink-ipad.pd-settings button.pd-settings-action:focus-visible { outline: none; background: var(--pd-settings-soft); }
@@ -37,7 +36,7 @@
 .echoink-ipad.pd-settings .pd-settings-field-label { font-size: .88em; font-weight: 500; }
 .echoink-ipad.pd-settings .pd-settings-input { width: 100%; min-width: 0; min-height: 44px; height: auto; padding: 10px; border: 1px solid var(--pd-settings-line); border-radius: 9px; background: var(--background-primary); color: var(--text-normal); font: inherit; font-size: max(16px, 1em); box-shadow: none; }
 .echoink-ipad.pd-settings .pd-settings-input:focus { outline: none; border-color: var(--pd-settings-line); box-shadow: none; }
-.echoink-ipad.pd-settings .pd-settings-row:has(> .pd-settings-select-value) { padding-top: 0; padding-bottom: 0; }
+.echoink-ipad.pd-settings .pd-settings-row.has-select-value { padding-top: 0; padding-bottom: 0; }
 .echoink-ipad.pd-settings .pd-settings-select-value { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 60%; }
 .echoink-ipad.pd-settings select.pd-settings-select { appearance: auto; flex: 1 1 auto; width: auto; max-width: 100%; padding-right: 24px; line-height: 1.5; text-overflow: ellipsis; }
 .echoink-ipad.pd-settings select.pd-settings-select:focus-visible { background: var(--pd-settings-soft); }

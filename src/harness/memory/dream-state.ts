@@ -1,6 +1,8 @@
-import path from "node:path";
+import { getDesktopPath } from "../../platform/desktop-paths";
 import { cognitiveReadJsonOrNull, cognitiveWriteJson } from "./cognitive-file-utils";
 import { DREAM_STATE_RELATIVE_PATH, defaultDreamState, parseDreamState, type DreamState } from "./dream-state-core";
+
+const path = getDesktopPath();
 export * from "./dream-state-core";
 
 export class DreamStateStore {

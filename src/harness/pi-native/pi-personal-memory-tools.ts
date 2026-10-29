@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
 import {
   defineTool,
   type AgentToolResult,
@@ -26,6 +26,8 @@ import {
   USER_PROFILE_ITEM_HARD_MAX_CHARS
 } from "../memory/user-profile-state";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
+
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_PERSONAL_MEMORY_TOOL_IDS = [
   "memory_search",

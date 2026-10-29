@@ -18,14 +18,14 @@ export function createMembershipTransport(apiUrl: string, request = requestUrl):
       const multipart = new Response(body);
       payload = await multipart.arrayBuffer(); contentType = multipart.headers.get("content-type")!;
     } else if (body !== undefined) payload = JSON.stringify(body);
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: number | undefined;
     try {
       const response = await Promise.race([
         request({ url: new URL(endpoint, apiUrl).href, method, headers: {
           "Content-Type": contentType, "X-EchoInk-Client": "plugin",
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         }, body: payload, throw: false }),
-        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("会员服务连接超时，请重试。")), 15000); })
+        new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error("会员服务连接超时，请重试。")), 15000); })
       ]);
       const result: unknown = response.json;
       if (response.status >= 400) {
@@ -36,6 +36,6 @@ export function createMembershipTransport(apiUrl: string, request = requestUrl):
         throw new MembershipApiError(error?.error || "REQUEST_FAILED", seconds);
       }
       return result;
-    } finally { if (timer !== undefined) clearTimeout(timer); }
+    } finally { if (timer !== undefined) window.clearTimeout(timer); }
   };
 }

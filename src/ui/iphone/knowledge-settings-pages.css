@@ -14,7 +14,7 @@
 .echoink-iphone .ip-knowledge-default:empty { display: none; }
 .echoink-iphone .ip-knowledge-routes { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
 .echoink-iphone .ip-knowledge-route { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; padding: 14px 12px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
-.echoink-iphone .ip-knowledge-route:has(:checked) { background: var(--ip-soft); }
+.echoink-iphone .ip-knowledge-route.is-selected { background: var(--ip-soft); }
 .echoink-iphone .ip-knowledge-route input { flex: 0 0 20px; width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--ip-accent); }
 .echoink-iphone .ip-knowledge-route > span { min-width: 0; }
 .echoink-iphone .ip-knowledge-route-title { display: block; font-size: .92em; font-weight: 500; }

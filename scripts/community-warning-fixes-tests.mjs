@@ -1,4 +1,5 @@
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import assert from 'node:assert/strict';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -16,17 +17,16 @@ const shortcutOnly = process.argv.includes('--shortcut-only');
 await mkdir(directory, { recursive: true });
 try {
   // Run the production path resolver against all three OS path semantics.
-  const source = await readFile(path.join(root, 'src/plugin/plugin-data-paths.ts'), 'utf8');
-  const compiled = await esbuild.transform(source, { loader: 'ts', format: 'cjs' });
+  const compiled = await esbuild.build({ entryPoints: [path.join(root, 'src/plugin/plugin-data-paths.ts')], bundle: true, write: false, platform: 'node', format: 'cjs', external: ['obsidian'] });
   for (const [os, flavor, vault] of shortcutOnly ? [] : [
     ['macOS', path.posix, '/Users/test/Vault'],
     ['Linux', path.posix, '/home/test/Vault'],
     ['Windows', path.win32, 'C:\\Users\\test\\Vault']
   ]) {
     const module = { exports: {} };
-    vm.runInNewContext(compiled.code, {
+    vm.runInNewContext(compiled.outputFiles[0].text, {
       module, exports: module.exports,
-      require: name => name === 'node:path' ? flavor : require(name)
+      require: name => name === 'obsidian' ? { Platform: { isDesktop: true } } : name === 'node:path' ? flavor : require(name)
     });
     const { pluginDataDir, pluginInstallDir } = module.exports;
     assert.equal(pluginDataDir(vault), flavor.join(vault, '.obsidian/plugins/codex-echoink'));
@@ -45,7 +45,7 @@ try {
   await esbuild.build({
     entryPoints: ['src/tests/community-warning-fixes.ts'], absWorkingDir: root,
     bundle: true, platform: 'node', target: 'node22', format: 'esm', outfile: entry,
-    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
+    banner: desktopNodeTestBanner,
     loader: { '.md': 'text', '.svg': 'dataurl', '.webp': 'dataurl' },
     external: ['@earendil-works/pi-agent-core', '@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'yaml'],
     alias: { obsidian: path.join(root, 'src/tests/obsidian-shim.ts') },
@@ -54,6 +54,12 @@ try {
   const first = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   const second = new JSDOM('<!doctype html><html><body></body></html>', { pretendToBeVisual: true });
   try {
+    for (const owner of [first.window, second.window]) {
+      owner.Node.prototype.instanceOf = function (type) {
+        const local = owner[type.name] ?? type;
+        return this instanceof local;
+      };
+    }
     for (const name of ['window', 'document', 'navigator', 'Element', 'Node', 'HTMLElement', 'HTMLButtonElement', 'MutationObserver']) {
       Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? first.window : first.window[name] });
     }

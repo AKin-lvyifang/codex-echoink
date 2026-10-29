@@ -378,7 +378,8 @@ function cloneProviderContext(
       : { systemPrompt: context.systemPrompt }),
     messages: context.messages.map((message) => {
       if (message.role !== "toolResult") return structuredClone(message);
-      const { details: _runtimeDetails, ...providerMessage } = message;
+      const providerMessage = { ...message };
+      Reflect.deleteProperty(providerMessage, "details");
       return structuredClone(providerMessage);
     }),
     ...(!supportsToolCalling || context.tools === undefined

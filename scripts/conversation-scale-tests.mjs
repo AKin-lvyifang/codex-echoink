@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
@@ -10,7 +11,7 @@ const outputDir = disposableTestOutputRoot(path.join(rootDir, ".tmp"));
 const outputFile = path.join(outputDir, "conversation-scale-tests.mjs");
 
 await mkdir(outputDir, { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: {
     contents: [
       'import { runProductRunScaleTests } from "./src/tests/pi-native/product-run-scale";',

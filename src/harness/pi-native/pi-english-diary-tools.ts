@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolCallEvent, type ToolDefinition, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
 import { fingerprint, normalizePrivacy, splitDiaryBlocks } from "../../english-diary/model";
@@ -11,6 +12,9 @@ import type { PiWorkspaceAccess } from "./pi-workspace-access";
 import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import { canonicalJsonStringify, normalizeJsonValue, type ApprovalOperationContract, type FileApprovalTicketStore, type JsonValue, type WriteToolAuthorizationContext } from "./tool-authorization";
 import { EchoInkVaultToolEgressPolicy, secureVaultToolResult } from "./vault-tool-result-safety";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_ENGLISH_DIARY_TOOL_ID = "english_diary_generate" as const;
 interface RunIdentity { vaultId: string; conversationId: string; piSessionId: string; productRunId: string }

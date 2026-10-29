@@ -1,4 +1,4 @@
-import { knowledgeRolePath, resolveKnowledgePath } from "./root-paths";
+import { knowledgeRolePath } from "./root-paths";
 import { knowledgeErrorDetail } from "./initialization-error";
 import type { KnowledgeBaseMaintainReportPayload } from "./maintain-report-card";
 import { maintenanceFailureText, maintenancePageLabel, maintenanceUserReceiptFromResult, maintenanceVisibleCopyIsSafe } from "./maintenance-user-copy";

@@ -1,11 +1,13 @@
 import { resolveKnowledgePath } from "./root-paths";
-import * as path from "path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { mimeForKnowledgeFile, requiredModalityForMime } from "./source-media";
 import { createKnowledgeBaseIoBudget, shouldReadKnowledgeBaseFileContent } from "./io-budget";
 import { isRawMarkdownPath, rawDigestRecordFromMarkdown, rawDigestRecordIsTrusted, readRawDigestRegistry } from "./raw-digest";
 import { refreshKnowledgeBaseIndex } from "./incremental-index";
 import type { KnowledgeBaseDiscovery, KnowledgeBaseRunMode, KnowledgeBaseSkippedSource, KnowledgeBaseSource } from "./types";
 import { formatDateForFile } from "./utils";
+
+const path = getDesktopPath();
 
 export const SUPPORTED_RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 

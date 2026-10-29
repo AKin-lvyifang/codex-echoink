@@ -34,7 +34,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
   let mode: Mode = state.dataset[`${stateKey}RangeMode`] === "month" ? "month" : "year";
   let start = state.dataset[`${stateKey}RangeStart`] || String(now.getFullYear());
   let end = state.dataset[`${stateKey}RangeEnd`] || start;
-  const period = heading.createEl("span", { cls: "history-period activity-heatmap-period" });
+  const period = heading.createSpan({ cls: "history-period activity-heatmap-period" });
   const controls = heading.createDiv({ cls: "activity-heatmap-controls" });
   const rangeClass = (name: string) => `activity-range-${name}`;
   const scope = options.app ? new Scope(options.app.scope) : null;
@@ -48,7 +48,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
   const acquireScope = () => { if (visible && !scopeActive && !editor.hidden && scope && options.app) { options.app.keymap.pushScope(scope); scopeActive = true; } };
   activityScopes.set(body, active => { visible = active; if (active) acquireScope(); else releaseScope(); });
   const fields = editor.createDiv({ cls: rangeClass("fields") });
-  const field = (name: string) => { const el = fields.createEl("label", { cls: rangeClass("field") }); el.createEl("span", { text: name }); return el; };
+  const field = (name: string) => { const el = fields.createEl("label", { cls: rangeClass("field") }); el.createSpan({ text: name }); return el; };
   const modeSelector = createOriginSelect(field(zh ? "范围单位" : "Period"), { cls: rangeClass("mode"), attr: { "aria-label": zh ? "范围单位" : "Period" } },
     [{ value: "year", label: zh ? "按年" : "Years" }, { value: "month", label: zh ? "按月" : "Months" }], mode, options.app).element;
   const startInput = createOriginInput(field(zh ? "开始" : "From"), { cls: rangeClass("start") });
@@ -90,9 +90,9 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
   const legend = footer.createDiv({ cls: "heatmap-legend todo-heatmap-legend", attr: { "aria-label": title } });
   const levels = options.legend ?? ["0", `1–${low - 1}`, `${low}–${high - 1}`, `${high}+`].map((label, level) => ({ level: String(level), label }));
   for (const { level, label: text } of levels) {
-    const item = legend.createEl("span");
+    const item = legend.createSpan();
     item.createEl("b", { cls: `todo-heatmap-swatch todo-level-${level}`, attr: { "aria-hidden": "true" } });
-    item.createEl("span", { text });
+    item.createSpan({ text });
   }
   let calendar: HTMLElement | undefined;
   const renderDays = () => {
@@ -108,8 +108,8 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
       days.push(byDate.get(date) ?? { date, count: 0, level: options.emptyLevel });
     }
     const format = (value: string) => !zh ? value : mode === "year" ? `${value} 年` : `${value.slice(0, 4)} 年 ${Number(value.slice(5))} 月`;
-    trigger.empty(); setIcon(trigger.createEl("span", { attr: { "aria-hidden": "true" } }), "calendar-days");
-    trigger.createEl("span", { text: start === end ? format(start) : `${format(start)} — ${format(end)}` });
+    trigger.empty(); setIcon(trigger.createSpan({ attr: { "aria-hidden": "true" } }), "calendar-days");
+    trigger.createSpan({ text: start === end ? format(start) : `${format(start)} — ${format(end)}` });
     period.setText(options.summary?.(days) ?? "");
     calendar?.remove();
     calendar = body.createDiv({ cls: "activity-heatmap-calendar" });
@@ -120,7 +120,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
     const first = new Date(`${days[0].date}T12:00:00`);
     grid.style.setProperty("--todo-heatmap-weeks", String(Math.ceil((days.length + first.getDay()) / 7)));
     for (const [weekday, cn, en] of [[1, "一", "Mon"], [3, "三", "Wed"], [5, "五", "Fri"]] as const) {
-      weekdays.createEl("span", { cls: "todo-heatmap-weekday", text: zh ? cn : en }).style.gridRow = String(weekday + 2);
+      weekdays.createSpan({ cls: "todo-heatmap-weekday", text: zh ? cn : en }).style.gridRow = String(weekday + 2);
     }
     const cells: HTMLButtonElement[] = [];
     let focused: HTMLButtonElement | undefined;
@@ -128,7 +128,7 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
       const date = new Date(`${day.date}T12:00:00`);
       const column = Math.floor((index + first.getDay()) / 7) + 1;
       if (date.getDate() === 1) {
-        const monthLabel = grid.createEl("span", { cls: "todo-heatmap-month", text: start.slice(0, 4) !== end.slice(0, 4) && (!index || date.getMonth() === 0) ? `${date.getFullYear()}/${date.getMonth() + 1}` : date.toLocaleString(zh ? "zh-CN" : "en-US", { month: "short" }) });
+        const monthLabel = grid.createSpan({ cls: "todo-heatmap-month", text: start.slice(0, 4) !== end.slice(0, 4) && (!index || date.getMonth() === 0) ? `${date.getFullYear()}/${date.getMonth() + 1}` : date.toLocaleString(zh ? "zh-CN" : "en-US", { month: "short" }) });
         monthLabel.style.gridColumn = String(column);
       }
       const count = day.count ?? 0;

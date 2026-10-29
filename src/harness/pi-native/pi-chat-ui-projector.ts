@@ -2397,7 +2397,6 @@ function assistantFailure(message: PiSessionMessageView): {
     };
   }
   if (stopReason === "aborted" || stopReason === "cancelled" || stopReason === "canceled") {
-    const errorMessage = visibleText(message.errorMessage);
     return {
       itemType: "error",
       status: "interrupted",

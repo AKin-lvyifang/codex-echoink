@@ -1,15 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  stat,
-  writeFile
-} from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
+import { getDesktopPath } from "../../platform/desktop-paths";
+
 import { writeFileAtomic } from "../../knowledge-base/utils";
 import {
   BUILTIN_SKILLS,
@@ -24,6 +16,11 @@ import {
   parseVaultSkillDocument,
   type LoadedVaultSkill
 } from "./skill-loader";
+
+const { createHash, randomUUID } = getDesktopCrypto();
+
+const { lstat, mkdir, readFile, readdir, rename, rm, stat, writeFile } = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const SKILL_RUNTIME_STATE_SCHEMA = "echoink.skill-runtime.v1" as const;
 export const SKILL_RUNTIME_STATE_RELATIVE_PATH = path.posix.join(

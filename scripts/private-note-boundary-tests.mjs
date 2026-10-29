@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
@@ -8,7 +9,7 @@ import esbuild from 'esbuild';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "private-boundary-20261018/private-note-boundary-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
-await esbuild.build({
+await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: { contents: `import { runVaultBodySearchPrivateBoundaryTests } from './src/tests/vault-body-search';
 import { runVaultPrivateBoundaryTests, runVaultDomainServiceTests, runVaultBodySearchCanonicalBoundaryTests, runVaultBodySearchCanonicalPerformanceTests } from './src/tests/pi-native/vault-domain-service';
 import { runObsidianCliPrivateBoundaryTests, runOfficialCliTests } from './src/tests/obsidian-cli';

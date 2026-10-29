@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { Notice, type App } from "obsidian";
 import {
   TEST_UNCERTAIN,
@@ -60,6 +60,8 @@ import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from ".
 import { canonicalRawMarkdownForDigest } from "../knowledge-base/raw-digest";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import type { PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
+
+const { createHash } = getDesktopCrypto();
 
 const APPROVAL_TTL_MS = 5 * 60 * 1000;
 const APPROVAL_DIFF_LIMIT_BYTES = 12_000;

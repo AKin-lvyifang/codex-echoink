@@ -85,7 +85,7 @@
 .echoink-iphone .ip-section-heading { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
 .echoink-iphone .ip-section-heading h2 { margin: 0; font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 600; }
 .echoink-iphone .ip-count { color: var(--ip-muted); font-size: calc(var(--ip-ui-font) * 0.75); font-variant-numeric: tabular-nums; }
-.echoink-iphone .ip-section-more { margin-left: auto !important; }
+.echoink-iphone .ip-section-heading > button.ip-section-more { margin-left: auto; }
 .echoink-iphone .ip-cards { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-task-card { display: flex; flex-direction: column; gap: 8px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-task-card:hover,
@@ -101,7 +101,7 @@
 @keyframes ip-workbench-spin { to { transform: rotate(360deg); } }
 .echoink-iphone .ip-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .echoink-iphone .ip-task-step { color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); overflow-wrap: anywhere; }
-.echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; }
+.echoink-iphone .ip-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: normal 8px; }
 .echoink-iphone .ip-card-actions > .ip-grow { flex-basis: 120px; }
 .echoink-iphone .ip-task-card > .ip-inline-question { padding-top: 8px; border-top: 1px solid var(--ip-line); }
 .echoink-iphone .ip-rows { overflow: hidden; border: 1px solid var(--ip-line); border-radius: 12px; }
@@ -161,7 +161,7 @@
 .echoink-iphone .ip-styles { display: flex; flex-direction: column; gap: 8px; }
 .echoink-iphone .ip-style-choice { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; padding: 12px 14px; border: 1px solid var(--ip-line); border-radius: 12px; cursor: pointer; }
 .echoink-iphone .ip-style-choice:hover,
-.echoink-iphone .ip-style-choice:has(input:checked) { background: var(--ip-soft); }
+.echoink-iphone label.ip-style-choice.is-selected { background: var(--ip-soft); }
 .echoink-iphone .ip-style-choice input[type=radio] { appearance: none; width: 20px; height: 20px; margin: 1px 0 0; flex: 0 0 auto; border: 1.5px solid var(--ip-muted); border-radius: 50%; background: transparent; }
 .echoink-iphone .ip-style-choice input[type=radio]:checked { border-color: var(--ip-accent); background: radial-gradient(circle, var(--ip-accent) 0 4px, transparent 4.5px); }
 .echoink-iphone .ip-style-copy { min-width: 0; }

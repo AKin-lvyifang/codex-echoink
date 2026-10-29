@@ -156,7 +156,7 @@ export function renderProviderBrandIcon(
 
   const importedSvg = ownerDocument.importNode(parsedSvg, true);
   const OwnerSVGSVGElement = ownerDocument.defaultView?.SVGSVGElement ?? SVGSVGElement;
-  if (!(importedSvg instanceof OwnerSVGSVGElement)) {
+  if (!(importedSvg.instanceOf(OwnerSVGSVGElement))) {
     throw new Error(`Invalid bundled Provider brand SVG element: ${providerId}`);
   }
   const svg = importedSvg;

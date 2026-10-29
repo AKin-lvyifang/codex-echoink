@@ -6,8 +6,10 @@ import { history, undo, redo, insertNewline } from "@codemirror/commands";
 import { editorInfoField, editorLivePreviewField, mentionTestNotices } from "obsidian";
 import { InlineMentionController, findInlineMention, inlineDraftText, inlineMentionKeyAction, mapInlineDraft, type InlineMentionDraft, type InlineDraftSubmission, type InlineMentionHost } from "../inline-agent/mention";
 import type { AgentDefinition } from "../agents/types";
+import { installObsidianDom } from "./obsidian-dom";
 
 const browser = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+installObsidianDom(browser.window);
 Object.assign(globalThis, { window: browser.window, document: browser.window.document,
   MutationObserver: browser.window.MutationObserver, HTMLElement: browser.window.HTMLElement, Node: browser.window.Node,
   getComputedStyle: browser.window.getComputedStyle });
@@ -75,10 +77,10 @@ await check("CM change sets invalidate damaged mention and preserve exact comman
   assert.equal(broken.newDoc.toString(), "正文 @林墨 要求 后缀");
 });
 
-await check("IME, keyCode 229 and modified Enter are never claimed by picker", () => {
-  const event = { key: "Enter", isComposing: false, keyCode: 13, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
+await check("IME, Process, Unidentified and modified Enter are never claimed by picker", () => {
+  const event = { key: "Enter", isComposing: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false };
   assert.equal(inlineMentionKeyAction(event, false), "select");
-  for (const extra of [{ isComposing: true }, { keyCode: 229 }, { metaKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }]) assert.equal(inlineMentionKeyAction({ ...event, ...extra }, false), null);
+  for (const extra of [{ isComposing: true }, { key: "Process" }, { key: "Unidentified" }, { metaKey: true }, { ctrlKey: true }, { altKey: true }, { shiftKey: true }]) assert.equal(inlineMentionKeyAction({ ...event, ...extra }, false), null);
   assert.equal(inlineMentionKeyAction(event, true), null);
   assert.equal(inlineMentionKeyAction({ ...event, key: "ArrowDown" }, false), "next");
   assert.equal(inlineMentionKeyAction({ ...event, key: "Escape" }, false), "close");

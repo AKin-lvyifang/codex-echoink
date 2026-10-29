@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 import { animate, type AnimationPlaybackControlsWithThen } from "framer-motion";
 import type CodexForObsidianPlugin from "../main";
 import { MembershipApiError } from "../membership/account-service";
@@ -38,6 +39,8 @@ export class WorkbenchWeatherStage {
     this.win = parent.ownerDocument.defaultView!;
     this.checkins = workbenchCheckin(plugin);
     this.element = parent.createDiv({ cls: "wb-sky" });
+    parent.classList.remove("has-weather-feedback");
+    this.cleanups.push(() => parent.classList.remove("has-weather-feedback"));
     this.element.classList.toggle("is-checkin-disabled", !WORKBENCH_CHECKIN_ENABLED);
     const details = this.element.createDiv({ cls: "wb-weather-details" });
     this.text = details.createEl("button", { cls: "wb-weather-copy", attr: { type: "button" } });
@@ -90,7 +93,7 @@ export class WorkbenchWeatherStage {
   }
   private t(zh: string, en: string): string { return this.plugin.settings.settingsLanguage === "en" ? en : zh; }
   private layer(name: string): SVGElement { return this.svg.querySelector<SVGElement>(`[data-layer="${name}"]`)!; }
-  private listen(target: EventTarget, name: string, listener: (event: any) => void): void {
+  private listen(target: EventTarget, name: string, listener: EventListener): void {
     target.addEventListener(name, listener); this.cleanups.push(() => target.removeEventListener(name, listener));
   }
   private signed(): boolean { return this.checkins.snapshot().checkedIn; }
@@ -177,13 +180,13 @@ export class WorkbenchWeatherStage {
   }
   private say(text: string, login = false): void {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
-    this.feedbackText.textContent = text; this.login.hidden = !login; this.element.classList.add("is-feedback");
+    this.feedbackText.textContent = text; this.login.hidden = !login; this.element.classList.add("is-feedback"); this.element.parentElement?.classList.add("has-weather-feedback");
     if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer);
     this.feedbackTimer = this.win.setTimeout(() => { this.clearFeedback(); }, 4500);
     this.layoutChanged();
   }
   private clearFeedback(): void {
-    this.feedbackText.textContent = ""; this.login.hidden = true; this.element.classList.remove("is-feedback");
+    this.feedbackText.textContent = ""; this.login.hidden = true; this.element.classList.remove("is-feedback"); this.element.parentElement?.classList.remove("has-weather-feedback");
     this.layoutChanged();
   }
   private hint(): void {
@@ -233,9 +236,9 @@ export class WorkbenchWeatherStage {
     } else { this.pull(0); this.paintTag(); }
   }
   private sparkle(): void {
-    const group = this.svg.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g"); group.setAttribute("aria-hidden", "true"); this.svg.append(group);
+    const group = ownedSvg(this.svg.ownerDocument, "g"); group.setAttribute("aria-hidden", "true"); this.svg.append(group);
     for (let i = 0; i < 10; i++) {
-      const star = this.svg.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path"); star.setAttribute("d", "M-2 0H2M0-2V2"); group.append(star);
+      const star = ownedSvg(this.svg.ownerDocument, "path"); star.setAttribute("d", "M-2 0H2M0-2V2"); group.append(star);
       const a = i * Math.PI / 5;
       this.motion(0, 1, v => { star.setAttribute("transform", `translate(${181 + Math.cos(a) * v * 30} ${45 + Math.sin(a) * v * 26})`); star.setAttribute("opacity", String(1 - v)); }, { duration: .75 });
     }

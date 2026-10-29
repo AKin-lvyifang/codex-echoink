@@ -1,6 +1,12 @@
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
+const { createHash } = getDesktopCrypto();
+
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 export interface MaintenanceWorkflowCasMissing {
   kind: "missing";
 }

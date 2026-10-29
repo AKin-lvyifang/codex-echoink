@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { Scope, type App } from "obsidian";
 import { attachTestConversationRunService } from "./conversation-run-host";
 import { EchoInkViewService } from "../plugin/view-service";
@@ -33,6 +34,7 @@ export function annotationFixture(number = 1): SelectionAnnotation {
 const capture = (path = "notes/source.md", from = 0): SelectionCapture => ({ selectedText: "选中文本", vaultRelativePath: path, fileName: path.split("/").at(-1)!, anchor: { mode: "editor", from, to: from + 4, before: "", after: "" } });
 export async function runSelectionAnnotationTests(): Promise<void> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://localhost" });
+  installObsidianDom(dom.window);
   const win = dom.window as unknown as Window & typeof globalThis;
   const saved = new Map<string, PropertyDescriptor | undefined>();
   for (const key of ["window", "document", "HTMLElement", "HTMLFormElement", "HTMLInputElement", "HTMLButtonElement", "HTMLTextAreaElement", "Element", "Node", "MutationObserver", "navigator", "getComputedStyle", "ResizeObserver"]) {
@@ -347,6 +349,7 @@ async function summaryBehavior(win: Window & typeof globalThis): Promise<void> {
 }
 async function adoptedSummaryUsesItsCurrentWindow(first: Window & typeof globalThis): Promise<void> {
   const secondDom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  installObsidianDom(secondDom.window);
   const second = secondDom.window;
   const host = first.document.createElement("div"); first.document.body.append(host);
   renderSelectionAnnotationSummary(host, [annotationFixture()], "zh-CN", { onSource() {} });
@@ -383,6 +386,7 @@ async function hoverEscapeDoesNotDismissQuickWindow(win: Window & typeof globalT
 }
 async function relayedEscapeKeepsQuickWindowFocus(main: Window & typeof globalThis): Promise<void> {
   const childDom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  installObsidianDom(childDom.window);
   const child = childDom.window as unknown as Window & typeof globalThis;
   const host = main.document.createElement("div"), mainInput = main.document.createElement("textarea");
   main.document.body.append(host, mainInput);

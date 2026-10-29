@@ -1,10 +1,12 @@
 import { isUnknownArray } from "../utils/unknown-array";
-import { createHash } from "node:crypto";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
 import type { MaintenanceKnowledgeEvidence, MaintenanceKnowledgeSource, MaintenanceKnowledgeType, MaintenanceKnowledgeUnit } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
 import { assertMaintenanceShortTarget, MAINTENANCE_SHORT_TITLE_POLICY, type MaintenanceTitlePolicy } from "./maintenance-title";
 import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
+
+const { createHash } = getDesktopCrypto();
 
 function nonempty(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;

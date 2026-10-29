@@ -106,14 +106,14 @@ export class MobileHttpMcpClient {
     const id = ++this.sequence;
     const headers = { ...this.endpoint.headers, "Content-Type": "application/json", Accept: "application/json, text/event-stream", "MCP-Protocol-Version": this.protocol,
       ...(this.session ? { "Mcp-Session-Id": this.session } : {}) };
-    let timer: ReturnType<typeof setTimeout> | undefined, abort: (() => void) | undefined;
+    let timer: number | undefined, abort: (() => void) | undefined;
     const cancel = () => {
       // requestUrl has no physical abort. MCP cancellation stops server work where supported.
       void this.request({ url: this.endpoint.url, method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason: "Client stopped" } }), throw: false }).catch(() => {});
     };
     try {
       const interrupted = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => { cancel(); reject(new MobileMcpError("timeout", "MCP 连接超时，未自动重试。")); }, this.timeoutMs);
+        timer = window.setTimeout(() => { cancel(); reject(new MobileMcpError("timeout", "MCP 连接超时，未自动重试。")); }, this.timeoutMs);
         abort = () => { cancel(); reject(new MobileMcpError("cancelled", "MCP 操作已停止。")); };
         signal?.addEventListener("abort", abort, { once: true });
       });
@@ -144,6 +144,6 @@ export class MobileHttpMcpClient {
       // Keep live permission failures; never expose upstream network errors or credentials.
       assertAllowed();
       throw new MobileMcpError("network", "MCP 服务连接失败。" );
-    } finally { if (timer !== undefined) clearTimeout(timer); if (abort) signal?.removeEventListener("abort", abort); }
+    } finally { if (timer !== undefined) window.clearTimeout(timer); if (abort) signal?.removeEventListener("abort", abort); }
   }
 }

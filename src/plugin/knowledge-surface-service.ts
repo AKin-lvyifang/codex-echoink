@@ -4,10 +4,10 @@ import { validateDirectoryModuleSettings } from "../knowledge-base/initializatio
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { KnowledgeActivityService } from "./knowledge-activity-service";
 import { createProductionKnowledgeUpgradeService, type KnowledgeUpgradeService } from "./knowledge-upgrade-service";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole, knowledgeRoleRoots } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole } from "../knowledge-base/root-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -18,9 +18,10 @@ import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base
 import { resolveKnowledgePath, knowledgeRootRole, rebaseKnowledgePath, rebaseKnowledgePathRecords } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { InitializationDirectoryHistory, type DirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
-import { createHash } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { normalizePath, Notice, TFolder, type TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
@@ -29,20 +30,13 @@ import {
   type KnowledgeBaseDashboardSnapshot
 } from "../knowledge-base/dashboard";
 import type {
-  CodexForObsidianSettings,
   StoredAttachment
 } from "../settings/settings";
 import {
-  apiProviderHasUsableCredential,
   getActiveApiProviderModel,
   newId
 } from "../settings/settings";
-import {
-  isEchoInkPiReasoningEffortSupported,
-  normalizeEchoInkReasoningEffort,
-  resolveEchoInkPiReasoningCapabilities
-} from "../settings/pi-model-catalog";
-import type { ReasoningEffort } from "../types/app-server";
+
 import {
   KnowledgeBaseInitializer,
   knowledgeMaintenanceBatchPrompt,
@@ -75,6 +69,11 @@ export type KnowledgeMaintenanceSurfaceStatus = Readonly<{
 
 export { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
 import { resolveKnowledgeMaintenanceSubmitSnapshot } from "../settings/knowledge-maintenance-submit";
+
+const { createHash } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 /** Current Knowledge dashboard and capture surfaces. Pi owns agent execution. */
 export class EchoInkKnowledgeSurfaceService {
@@ -386,7 +385,7 @@ export class EchoInkKnowledgeSurfaceService {
     const file = this.plugin.app.vault.getAbstractFileByPath(source);
     if (!file) throw new Error(`源路径不存在：${source}`);
     if (this.plugin.app.vault.getAbstractFileByPath(target)) throw new Error(`目标已存在：${target}`);
-    const isFolder = file instanceof TFolder;
+
     const folderLinks = await captureFolderLinkRenames(this.plugin.app, source, target);
     const key = `${source}→${target}`;
     this.ownedRenames.add(key);

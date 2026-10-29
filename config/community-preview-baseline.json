@@ -1,0 +1,7977 @@
+{
+  "schemaVersion": 1,
+  "commit": "664f9ed8d04a21b3975234a50471d3899d8e2446",
+  "scan": "completed 2.8.7 Preview",
+  "verifiedAt": "2026-10-28T17:16:13.976Z",
+  "dashboardGroupCounts": {
+    "Error": 0,
+    "Pass": 0,
+    "Recommendation": 90,
+    "Risk": 0,
+    "Warning": 56
+  },
+  "groups": [
+    {
+      "section": "LICENSE",
+      "severity": "Warning",
+      "message": "The repository does not have a recognized license.",
+      "locations": [],
+      "locationCount": 0,
+      "uniqueFileCount": 0
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/agents/capability-policy.ts",
+          "line": 1
+        },
+        {
+          "file": "src/agents/migration.ts",
+          "line": 2
+        },
+        {
+          "file": "src/core/clipboard-images.ts",
+          "line": 2
+        },
+        {
+          "file": "src/core/raw-message-store.ts",
+          "line": 2
+        },
+        {
+          "file": "src/generation/sources.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/memory/cognitive-file-utils.ts",
+          "line": 9
+        },
+        {
+          "file": "src/harness/memory/dream-experience-inbox.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/memory/dream-state.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/memory/legacy-personality-reader.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/memory/personal-memory-repository.ts",
+          "line": 17
+        },
+        {
+          "file": "src/harness/memory/secondary-memory-store.ts",
+          "line": 16
+        },
+        {
+          "file": "src/harness/memory/user-profile-state.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/controlled-resources.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/domain-receipt-store.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/pi-native/file-conversation-catalog.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/pi-native/file-product-run-store.ts",
+          "line": 7
+        },
+        {
+          "file": "src/harness/pi-native/file-store-utils.ts",
+          "line": 9
+        },
+        {
+          "file": "src/harness/pi-native/pi-session-durability.ts",
+          "line": 18
+        },
+        {
+          "file": "src/harness/pi-native/tool-authorization.ts",
+          "line": 5
+        },
+        {
+          "file": "src/harness/pi-native/vault-target-resolver.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi/device-credential-registry-journal.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/resources/skill-loader.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/resources/skill-runtime.ts",
+          "line": 12
+        },
+        {
+          "file": "src/harness/resources/vault-store.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/storage/durable-append-only-cas.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/usage/usage-store.ts",
+          "line": 2
+        },
+        {
+          "file": "src/home/knowledge-page-data.ts",
+          "line": 2
+        },
+        {
+          "file": "src/home/workbench-data.ts",
+          "line": 3
+        },
+        {
+          "file": "src/home/workbench-records.ts",
+          "line": 4
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/folder-link-renames.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/incremental-index.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/initialization-directory-history.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/initializer.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 9
+        },
+        {
+          "file": "src/knowledge-base/knowledge-linking-state.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/knowledge-linking.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-preferences.ts",
+          "line": 11
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-protocol.ts",
+          "line": 4
+        },
+        {
+          "file": "src/knowledge-base/knowledge-relations.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/maintenance-content-plan.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/root-paths.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/source-health.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/source-media.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/usage.ts",
+          "line": 5
+        },
+        {
+          "file": "src/lifestyle/service.ts",
+          "line": 2
+        },
+        {
+          "file": "src/lifestyle/store.ts",
+          "line": 2
+        },
+        {
+          "file": "src/main.ts",
+          "line": 59
+        },
+        {
+          "file": "src/membership/storage.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/credential-device-scope.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/developer-mode/memory-backups.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/knowledge-linking-production.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 23
+        },
+        {
+          "file": "src/plugin/knowledge-upgrade-service.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/obsidian-native-tools.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/obsidian-official-cli.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/obsidian-vault-domain-adapter.ts",
+          "line": 6
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 39
+        },
+        {
+          "file": "src/plugin/pi-local-data-service.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 48
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/task-resume-safety.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/vault-identity.ts",
+          "line": 2
+        },
+        {
+          "file": "src/resources/vault-resource-catalog.ts",
+          "line": 2
+        },
+        {
+          "file": "src/run-reports/desktop-ui.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 66,
+      "uniqueFileCount": 66
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/agents/migration.ts",
+          "line": 1
+        },
+        {
+          "file": "src/core/clipboard-images.ts",
+          "line": 1
+        },
+        {
+          "file": "src/core/raw-message-store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/generation/sources.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/memory/cognitive-file-utils.ts",
+          "line": 8
+        },
+        {
+          "file": "src/harness/memory/personal-memory-repository.ts",
+          "line": 5
+        },
+        {
+          "file": "src/harness/memory/secondary-memory-store.ts",
+          "line": 42
+        },
+        {
+          "file": "src/harness/memory/user-profile-state.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/controlled-resources.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/domain-receipt-store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/file-conversation-catalog.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/file-product-run-store.ts",
+          "line": 6
+        },
+        {
+          "file": "src/harness/pi-native/file-store-utils.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/tool-authorization.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/pi/device-credential-registry-journal.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/resources/skill-loader.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/resources/skill-runtime.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/resources/vault-store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/storage/durable-append-only-cas.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/usage/usage-store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/home/home-activity-service.ts",
+          "line": 1
+        },
+        {
+          "file": "src/home/knowledge-page-data.ts",
+          "line": 1
+        },
+        {
+          "file": "src/home/workbench-data.ts",
+          "line": 2
+        },
+        {
+          "file": "src/home/workbench-records.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/incremental-index.ts",
+          "line": 5
+        },
+        {
+          "file": "src/knowledge-base/initialization-directory-history.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/initializer.ts",
+          "line": 5
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 8
+        },
+        {
+          "file": "src/knowledge-base/knowledge-linking-state.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-preferences.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/maintenance-content-plan.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/query.ts",
+          "line": 8
+        },
+        {
+          "file": "src/knowledge-base/source-health.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/usage.ts",
+          "line": 4
+        },
+        {
+          "file": "src/lifestyle/store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/main.ts",
+          "line": 58
+        },
+        {
+          "file": "src/membership/storage.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/credential-device-scope.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/developer-mode/memory-backups.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 22
+        },
+        {
+          "file": "src/plugin/knowledge-upgrade-service.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/obsidian-official-cli.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/obsidian-vault-domain-adapter.ts",
+          "line": 5
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 31
+        },
+        {
+          "file": "src/plugin/pi-local-data-service.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 47
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/task-resume-safety.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/vault-identity.ts",
+          "line": 1
+        },
+        {
+          "file": "src/resources/vault-resource-catalog.ts",
+          "line": 1
+        },
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 1
+        },
+        {
+          "file": "src/ui/codex-view/pi-image-input.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 52,
+      "uniqueFileCount": 52
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "This assertion is unnecessary since it does not change the type of the expression.",
+      "locations": [
+        {
+          "file": "src/core/electron.ts",
+          "line": 79
+        },
+        {
+          "file": "src/english-diary/expression-view.ts",
+          "line": 252
+        },
+        {
+          "file": "src/harness/resources/skill-loader.ts",
+          "line": 172
+        },
+        {
+          "file": "src/home/home-view.ts",
+          "line": 139
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 160
+        },
+        {
+          "file": "src/knowledge-base/search/scheduling.ts",
+          "line": 63
+        },
+        {
+          "file": "src/knowledge-base/search/tokenize.ts",
+          "line": 171
+        },
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 200
+        },
+        {
+          "file": "src/review/preview-view.ts",
+          "line": 56
+        },
+        {
+          "file": "src/settings/inline-editor.ts",
+          "line": 42
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 655
+        },
+        {
+          "file": "src/settings/selection-annotation-settings.ts",
+          "line": 80
+        },
+        {
+          "file": "src/settings/selection-annotation-settings.ts",
+          "line": 174
+        },
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 2318
+        },
+        {
+          "file": "src/ui/codex-view/view-shell.ts",
+          "line": 93
+        },
+        {
+          "file": "src/ui/codex-view/view-shell.ts",
+          "line": 94
+        },
+        {
+          "file": "src/ui/codex-view/view-shell.ts",
+          "line": 95
+        },
+        {
+          "file": "src/ui/mobile/settings-pages.ts",
+          "line": 454
+        },
+        {
+          "file": "src/ui/native-tooltip.ts",
+          "line": 118
+        }
+      ],
+      "locationCount": 19,
+      "uniqueFileCount": 16
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
+      "locations": [
+        {
+          "file": "src/core/electron.ts",
+          "line": 80
+        },
+        {
+          "file": "src/core/electron.ts",
+          "line": 80
+        },
+        {
+          "file": "src/harness/usage/usage-store.ts",
+          "line": 68
+        },
+        {
+          "file": "src/harness/usage/usage-stream.ts",
+          "line": 43
+        },
+        {
+          "file": "src/home/pdf-reading-upload-modal.ts",
+          "line": 118
+        },
+        {
+          "file": "src/knowledge-base/search/scheduling.ts",
+          "line": 17
+        },
+        {
+          "file": "src/pdf-reading/service.ts",
+          "line": 114
+        },
+        {
+          "file": "src/ui/codex-view/agent-editor.ts",
+          "line": 141
+        },
+        {
+          "file": "src/ui/codex-view/attachments.ts",
+          "line": 199
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 725
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 725
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 766
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 766
+        },
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 377
+        },
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 377
+        }
+      ],
+      "locationCount": 15,
+      "uniqueFileCount": 10
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:crypto\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 1
+        },
+        {
+          "file": "src/core/message-state.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/contracts/conversation-v2.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/conversation/conversation-message-product.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/memory/cognitive-file-utils.ts",
+          "line": 7
+        },
+        {
+          "file": "src/harness/memory/dream-engine.ts",
+          "line": 27
+        },
+        {
+          "file": "src/harness/memory/dream-experience-inbox.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/memory/legacy-personality-reader.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/memory/personal-memory-repository.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/memory/secondary-memory-store.ts",
+          "line": 15
+        },
+        {
+          "file": "src/harness/pi-native/file-store-utils.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-document-context.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/pi-english-diary-tools.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-mcp-custom-tool-adapter.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 25
+        },
+        {
+          "file": "src/harness/pi-native/pi-pdf-reading-tools.ts",
+          "line": 3
+        },
+        {
+          "file": "src/harness/pi-native/pi-session-durability.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-todo-tools.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-user-question-tool.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
+          "line": 7
+        },
+        {
+          "file": "src/harness/pi-native/tool-authorization.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/vault-domain-service.ts",
+          "line": 6
+        },
+        {
+          "file": "src/harness/pi/device-credential-registry-journal.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi/device-credential-registry.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi/provider-target-identity.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/resources/skill-loader.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/resources/skill-runtime.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/storage/durable-append-only-cas.ts",
+          "line": 1
+        },
+        {
+          "file": "src/home/workbench-records.ts",
+          "line": 5
+        },
+        {
+          "file": "src/inline-agent/orchestrator.ts",
+          "line": 1
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/incremental-index.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/initialization-directory-history.ts",
+          "line": 4
+        },
+        {
+          "file": "src/knowledge-base/initializer.ts",
+          "line": 4
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/knowledge-linking.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-preferences.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/maintenance-content-plan.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/maintenance-knowledge-quality.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/maintenance-p1-workflow.ts",
+          "line": 5
+        },
+        {
+          "file": "src/knowledge-base/phase3-maintenance-service.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/query.ts",
+          "line": 7
+        },
+        {
+          "file": "src/knowledge-base/raw-integrity.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/transaction-snapshot-core.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/credential-device-scope.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/developer-mode/memory-backups.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/knowledge-linking-production.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/knowledge-linking-service.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 21
+        },
+        {
+          "file": "src/plugin/knowledge-upgrade-service.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/mcp-settings-service.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/obsidian-native-tools.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/obsidian-vault-domain-adapter.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 29
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 46
+        },
+        {
+          "file": "src/plugin/pi-vault-tool-production.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/task-resume-safety.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/vault-identity.ts",
+          "line": 3
+        },
+        {
+          "file": "src/resources/mcp-connections.ts",
+          "line": 1
+        },
+        {
+          "file": "src/resources/mcp-credential-store.ts",
+          "line": 1
+        },
+        {
+          "file": "src/resources/mcp-tool-catalog.ts",
+          "line": 1
+        },
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 62,
+      "uniqueFileCount": 62
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 2
+        },
+        {
+          "file": "src/core/path-utils.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/transaction-snapshot-core.ts",
+          "line": 4
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"path\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 3
+        },
+        {
+          "file": "src/core/path-utils.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/capture.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 8
+        },
+        {
+          "file": "src/knowledge-base/digest-evidence.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/discovery.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/query.ts",
+          "line": 10
+        },
+        {
+          "file": "src/knowledge-base/raw-digest.ts",
+          "line": 7
+        },
+        {
+          "file": "src/knowledge-base/report.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/structure-normalizer.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/tracker.ts",
+          "line": 4
+        },
+        {
+          "file": "src/knowledge-base/transaction-snapshot-core.ts",
+          "line": 5
+        },
+        {
+          "file": "src/knowledge-base/utils.ts",
+          "line": 3
+        },
+        {
+          "file": "src/review/manager.ts",
+          "line": 4
+        },
+        {
+          "file": "src/review/preview-view.ts",
+          "line": 2
+        },
+        {
+          "file": "src/ui/codex-view/workspace-utils.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 16,
+      "uniqueFileCount": 16
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unexpected any. Specify a different type.",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 317
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 394
+        },
+        {
+          "file": "src/harness/pi-native/pi-context-budget.ts",
+          "line": 141
+        },
+        {
+          "file": "src/harness/pi-native/pi-context-budget.ts",
+          "line": 163
+        },
+        {
+          "file": "src/home/workbench-starters.ts",
+          "line": 57
+        },
+        {
+          "file": "src/home/workbench-weather.ts",
+          "line": 93
+        },
+        {
+          "file": "src/plugin/view-service.ts",
+          "line": 212
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 79
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 83
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 99
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 119
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 122
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 131
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 521
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 113
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 697
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 191
+        }
+      ],
+      "locationCount": 17,
+      "uniqueFileCount": 8
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unsafe member access on an error or any typed value",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 321
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 321
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 321
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 349
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 349
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 352
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 352
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 359
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 359
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 362
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 362
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 369
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 369
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 373
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 381
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 381
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 395
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 395
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 395
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 345
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 128
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 141
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 141
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 155
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 181
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 182
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 119
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 122
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 707
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 707
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 708
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 708
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 708
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 709
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 710
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 710
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 710
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 712
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 712
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 714
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 714
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 718
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 718
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 720
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 722
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 722
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 192
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 192
+        }
+      ],
+      "details": [
+        "@typescript-eslint/no-unsafe-member-access"
+      ],
+      "locationCount": 51,
+      "uniqueFileCount": 6
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Passes unsafe values into typed parameters",
+      "locations": [
+        {
+          "file": "src/core/mapping.ts",
+          "line": 352
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 362
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 373
+        },
+        {
+          "file": "src/core/mapping.ts",
+          "line": 381
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 79
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 83
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 99
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 131
+        },
+        {
+          "file": "src/ui/codex-view/session-message-store.ts",
+          "line": 262
+        },
+        {
+          "file": "src/ui/codex-view/session-message-store.ts",
+          "line": 263
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 708
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 708
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 712
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 712
+        }
+      ],
+      "details": [
+        "@typescript-eslint/no-unsafe-argument"
+      ],
+      "locationCount": 14,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "This assertion is unnecessary since the receiver accepts the original type of the expression.",
+      "locations": [
+        {
+          "file": "src/core/workspace-resources.ts",
+          "line": 26
+        },
+        {
+          "file": "src/core/workspace-resources.ts",
+          "line": 77
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 79
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 99
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 131
+        }
+      ],
+      "locationCount": 5,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Uses document.createElement instead of Obsidian's createEl helpers",
+      "locations": [
+        {
+          "file": "src/english-diary/activity.ts",
+          "line": 26
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 73
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 74
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 89
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 109
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 159
+        },
+        {
+          "file": "src/english-diary/reading-renderer.ts",
+          "line": 165
+        },
+        {
+          "file": "src/english-diary/view.ts",
+          "line": 272
+        },
+        {
+          "file": "src/english-diary/view.ts",
+          "line": 307
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 55
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 154
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 157
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 166
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 167
+        },
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 168
+        },
+        {
+          "file": "src/home/home-view.ts",
+          "line": 345
+        },
+        {
+          "file": "src/home/home-view.ts",
+          "line": 395
+        },
+        {
+          "file": "src/home/home-view.ts",
+          "line": 459
+        },
+        {
+          "file": "src/home/home-view.ts",
+          "line": 482
+        },
+        {
+          "file": "src/home/photo-calendar.ts",
+          "line": 18
+        },
+        {
+          "file": "src/home/photo-calendar.ts",
+          "line": 32
+        },
+        {
+          "file": "src/home/photo-calendar.ts",
+          "line": 39
+        },
+        {
+          "file": "src/home/photo-calendar.ts",
+          "line": 41
+        },
+        {
+          "file": "src/home/todo-edit-modal.ts",
+          "line": 115
+        },
+        {
+          "file": "src/home/todo-edit-modal.ts",
+          "line": 120
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 105
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 117
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 142
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 154
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 187
+        },
+        {
+          "file": "src/home/todo-table.ts",
+          "line": 197
+        },
+        {
+          "file": "src/home/workbench-artwork.ts",
+          "line": 42
+        },
+        {
+          "file": "src/home/workbench-artwork.ts",
+          "line": 45
+        },
+        {
+          "file": "src/home/workbench-starters.ts",
+          "line": 137
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 626
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 712
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 752
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 778
+        },
+        {
+          "file": "src/home/workbench-weather.ts",
+          "line": 236
+        },
+        {
+          "file": "src/home/workbench-weather.ts",
+          "line": 238
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 254
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 289
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 303
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 259
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 267
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 271
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 285
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 288
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 289
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 298
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 311
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 311
+        },
+        {
+          "file": "src/lifestyle/finance-catalog-dialog.ts",
+          "line": 193
+        },
+        {
+          "file": "src/lifestyle/finance-catalog-dialog.ts",
+          "line": 217
+        },
+        {
+          "file": "src/lifestyle/finance-category-donut.ts",
+          "line": 10
+        },
+        {
+          "file": "src/lifestyle/finance-number.ts",
+          "line": 67
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 72
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 80
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 167
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 320
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 321
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 369
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 370
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 379
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 483
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 486
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 1159
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 1440
+        },
+        {
+          "file": "src/lifestyle/finance-view.ts",
+          "line": 1504
+        },
+        {
+          "file": "src/pdf-reading/local-extractor.ts",
+          "line": 59
+        },
+        {
+          "file": "src/run-reports/desktop-ui.ts",
+          "line": 14
+        },
+        {
+          "file": "src/run-reports/desktop-ui.ts",
+          "line": 15
+        },
+        {
+          "file": "src/run-reports/form.ts",
+          "line": 11
+        },
+        {
+          "file": "src/run-reports/notice.ts",
+          "line": 3
+        },
+        {
+          "file": "src/run-reports/notice.ts",
+          "line": 4
+        },
+        {
+          "file": "src/run-reports/notice.ts",
+          "line": 5
+        },
+        {
+          "file": "src/run-reports/notice.ts",
+          "line": 6
+        },
+        {
+          "file": "src/run-reports/notice.ts",
+          "line": 11
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 17
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 197
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 213
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 215
+        },
+        {
+          "file": "src/settings/about-section.ts",
+          "line": 19
+        },
+        {
+          "file": "src/settings/about-section.ts",
+          "line": 21
+        },
+        {
+          "file": "src/settings/account-membership.ts",
+          "line": 19
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 37
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 51
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 93
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 95
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 111
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 112
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 123
+        },
+        {
+          "file": "src/settings/activity-heatmap.ts",
+          "line": 131
+        },
+        {
+          "file": "src/settings/amicro-buttons.ts",
+          "line": 59
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 20
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 25
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 27
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 40
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 43
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 50
+        },
+        {
+          "file": "src/settings/appearance-picker.ts",
+          "line": 56
+        },
+        {
+          "file": "src/settings/desktop-account-membership.ts",
+          "line": 72
+        },
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 3621
+        },
+        {
+          "file": "src/settings/todo-statistics.ts",
+          "line": 24
+        },
+        {
+          "file": "src/settings/todo-statistics.ts",
+          "line": 25
+        },
+        {
+          "file": "src/ui/agent-avatar-processor.ts",
+          "line": 190
+        },
+        {
+          "file": "src/ui/agent-avatar-processor.ts",
+          "line": 201
+        },
+        {
+          "file": "src/ui/answer-markdown.ts",
+          "line": 138
+        },
+        {
+          "file": "src/ui/answer-markdown.ts",
+          "line": 162
+        },
+        {
+          "file": "src/ui/answer-markdown.ts",
+          "line": 175
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 10
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 14
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 16
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 37
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 40
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 43
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 44
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 46
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 50
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 53
+        },
+        {
+          "file": "src/ui/codex-icon.ts",
+          "line": 19
+        },
+        {
+          "file": "src/ui/codex-icon.ts",
+          "line": 27
+        },
+        {
+          "file": "src/ui/codex-icon.ts",
+          "line": 35
+        },
+        {
+          "file": "src/ui/codex-icon.ts",
+          "line": 45
+        },
+        {
+          "file": "src/ui/codex-icon.ts",
+          "line": 49
+        },
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 644
+        },
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 751
+        },
+        {
+          "file": "src/ui/codex-view/agent-editor.ts",
+          "line": 204
+        },
+        {
+          "file": "src/ui/codex-view/attachments.ts",
+          "line": 137
+        },
+        {
+          "file": "src/ui/codex-view/attachments.ts",
+          "line": 154
+        },
+        {
+          "file": "src/ui/codex-view/inline-task.ts",
+          "line": 262
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 19
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 21
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 23
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 24
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 44
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 48
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 51
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 70
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 72
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 73
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 74
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 76
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 78
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 79
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 80
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 83
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 85
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 119
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 120
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 121
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 132
+        },
+        {
+          "file": "src/ui/codex-view/knowledge-linking-progress.ts",
+          "line": 135
+        },
+        {
+          "file": "src/ui/codex-view/menus.ts",
+          "line": 474
+        },
+        {
+          "file": "src/ui/codex-view/menus.ts",
+          "line": 632
+        },
+        {
+          "file": "src/ui/codex-view/menus.ts",
+          "line": 716
+        },
+        {
+          "file": "src/ui/codex-view/menus.ts",
+          "line": 745
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 1877
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 1883
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 3296
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 3999
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 18
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 19
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 22
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 25
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 26
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 27
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 28
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 31
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 33
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 38
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 39
+        },
+        {
+          "file": "src/ui/codex-view/selection-annotations.ts",
+          "line": 42
+        },
+        {
+          "file": "src/ui/codex-view/task-interruption.ts",
+          "line": 15
+        },
+        {
+          "file": "src/ui/codex-view/task-interruption.ts",
+          "line": 39
+        },
+        {
+          "file": "src/ui/codex-view/task-interruption.ts",
+          "line": 41
+        },
+        {
+          "file": "src/ui/mobile/mobile-ui.ts",
+          "line": 50
+        },
+        {
+          "file": "src/ui/mobile/mobile-ui.ts",
+          "line": 252
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 9
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 14
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 31
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 42
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 43
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 46
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 48
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 48
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 52
+        },
+        {
+          "file": "src/ui/mobile/origin-controls.ts",
+          "line": 60
+        },
+        {
+          "file": "src/ui/mobile/settings-pages.ts",
+          "line": 42
+        },
+        {
+          "file": "src/ui/mobile/shell-controls.ts",
+          "line": 8
+        },
+        {
+          "file": "src/ui/native-tooltip.ts",
+          "line": 42
+        },
+        {
+          "file": "src/ui/native-tooltip.ts",
+          "line": 42
+        },
+        {
+          "file": "src/ui/native-tooltip.ts",
+          "line": 129
+        },
+        {
+          "file": "src/ui/onboarding-coachmark.ts",
+          "line": 189
+        },
+        {
+          "file": "src/ui/selection-ask-popover.ts",
+          "line": 5
+        },
+        {
+          "file": "src/ui/selection-ask-popover.ts",
+          "line": 10
+        },
+        {
+          "file": "src/ui/selection-ask-popover.ts",
+          "line": 11
+        }
+      ],
+      "details": [
+        "obsidianmd/prefer-create-el"
+      ],
+      "locationCount": 197,
+      "uniqueFileCount": 52
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use 'FileManager.trashFile()' instead of 'Vault.trash()' to respect the user's file deletion preference.",
+      "locations": [
+        {
+          "file": "src/english-diary/vault-port.ts",
+          "line": 216
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "'@codemirror/state' should be listed in the project's dependencies. Run 'npm i -S @codemirror/state' to add it",
+      "locations": [
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 2
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 2
+        },
+        {
+          "file": "src/inline-agent/document.ts",
+          "line": 1
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 1
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 3
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 5
+        }
+      ],
+      "locationCount": 6,
+      "uniqueFileCount": 6
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "'@codemirror/view' should be listed in the project's dependencies. Run 'npm i -S @codemirror/view' to add it",
+      "locations": [
+        {
+          "file": "src/gallery/controller.ts",
+          "line": 3
+        },
+        {
+          "file": "src/inline-agent/controller.ts",
+          "line": 4
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 3
+        },
+        {
+          "file": "src/selection-ask/controller.ts",
+          "line": 6
+        }
+      ],
+      "locationCount": 4,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use 'window.setInterval()' instead of 'setInterval()' for popout window compatibility.",
+      "locations": [
+        {
+          "file": "src/harness/memory/dream-scheduler.ts",
+          "line": 55
+        },
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 2985
+        },
+        {
+          "file": "src/plugin/conversation-auto-archive.ts",
+          "line": 31
+        },
+        {
+          "file": "src/plugin/maintenance-activity-controller.ts",
+          "line": 217
+        }
+      ],
+      "locationCount": 4,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use 'window.clearInterval()' instead of 'clearInterval()' for popout window compatibility.",
+      "locations": [
+        {
+          "file": "src/harness/memory/dream-scheduler.ts",
+          "line": 65
+        },
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 4719
+        },
+        {
+          "file": "src/plugin/conversation-auto-archive.ts",
+          "line": 27
+        },
+        {
+          "file": "src/plugin/conversation-auto-archive.ts",
+          "line": 66
+        },
+        {
+          "file": "src/plugin/maintenance-activity-controller.ts",
+          "line": 222
+        }
+      ],
+      "locationCount": 5,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/harness/memory/personal-memory-repository.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/pi-native/file-conversation-catalog.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 26
+        },
+        {
+          "file": "src/harness/pi-native/pi-session-durability.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi/device-credential-registry-journal.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/storage/durable-append-only-cas.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/capture.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/incremental-index.ts",
+          "line": 4
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 7
+        },
+        {
+          "file": "src/knowledge-base/root-paths.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/obsidian-official-cli.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 30
+        },
+        {
+          "file": "src/ui/codex-view/attachment-resource.ts",
+          "line": 1
+        },
+        {
+          "file": "src/ui/codex-view/pi-conversation-support.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 14,
+      "uniqueFileCount": 14
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:util\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/domain-receipt-store.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/file-product-run-store.ts",
+          "line": 5
+        },
+        {
+          "file": "src/harness/pi-native/pi-english-diary-tools.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
+          "line": 6
+        },
+        {
+          "file": "src/harness/pi-native/pi-knowledge-read-tools.ts",
+          "line": 5
+        },
+        {
+          "file": "src/harness/pi-native/pi-obsidian-tools.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-pdf-reading-tools.ts",
+          "line": 6
+        },
+        {
+          "file": "src/harness/pi-native/pi-personal-memory-tools.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-session-durability.ts",
+          "line": 19
+        },
+        {
+          "file": "src/harness/pi-native/pi-task-plan.ts",
+          "line": 1
+        },
+        {
+          "file": "src/harness/pi-native/pi-todo-tools.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/pi-user-question-tool.ts",
+          "line": 2
+        },
+        {
+          "file": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
+          "line": 8
+        },
+        {
+          "file": "src/harness/pi-native/tool-authorization.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/pi-native/vault-domain-service.ts",
+          "line": 7
+        },
+        {
+          "file": "src/harness/pi-native/vault-tool-result-safety.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-preferences.ts",
+          "line": 12
+        },
+        {
+          "file": "src/knowledge-base/query.ts",
+          "line": 9
+        },
+        {
+          "file": "src/knowledge-base/usage.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/obsidian-native-tools.ts",
+          "line": 4
+        },
+        {
+          "file": "src/plugin/obsidian-vault-domain-adapter.ts",
+          "line": 7
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 40
+        }
+      ],
+      "locationCount": 22,
+      "uniqueFileCount": 22
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unsafe assignment of an error or any typed value",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-native-controlled-provider.ts",
+          "line": 381
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 335
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 140
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 181
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 182
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 122
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 123
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 707
+        },
+        {
+          "file": "src/ui/modals.ts",
+          "line": 710
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 191
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 192
+        }
+      ],
+      "details": [
+        "@typescript-eslint/no-unsafe-assignment"
+      ],
+      "locationCount": 11,
+      "uniqueFileCount": 6
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:buffer\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/harness/pi/provider-stream-codec.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/loopback-openai-provider-adapter.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/qwen-token-plan-provider-adapter.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:net\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/harness/pi/provider-target-identity.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:url\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/harness/pi/provider-target-identity.ts",
+          "line": 3
+        },
+        {
+          "file": "src/ui/codex-view/attachment-resource.ts",
+          "line": 2
+        },
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 4
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use 'window.clearTimeout()' instead of 'clearTimeout()' for popout window compatibility.",
+      "locations": [
+        {
+          "file": "src/home/home-activity-core.ts",
+          "line": 123
+        },
+        {
+          "file": "src/home/home-activity-core.ts",
+          "line": 154
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 398
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 404
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 407
+        },
+        {
+          "file": "src/knowledge-base/search/scheduling.ts",
+          "line": 101
+        },
+        {
+          "file": "src/membership/account-service.ts",
+          "line": 352
+        },
+        {
+          "file": "src/membership/account-service.ts",
+          "line": 702
+        },
+        {
+          "file": "src/membership/transport.ts",
+          "line": 39
+        },
+        {
+          "file": "src/mobile/model-configuration.ts",
+          "line": 232
+        },
+        {
+          "file": "src/mobile/remote-tools.ts",
+          "line": 147
+        },
+        {
+          "file": "src/pdf-reading/mineru.ts",
+          "line": 18
+        },
+        {
+          "file": "src/plugin/conversation-run-service.ts",
+          "line": 88
+        },
+        {
+          "file": "src/plugin/conversation-run-service.ts",
+          "line": 282
+        },
+        {
+          "file": "src/plugin/knowledge-linking-service.ts",
+          "line": 203
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 1447
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 270
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 357
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 497
+        },
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 150
+        },
+        {
+          "file": "src/resources/json-rpc-stdio-transport.ts",
+          "line": 75
+        },
+        {
+          "file": "src/resources/json-rpc-stdio-transport.ts",
+          "line": 133
+        },
+        {
+          "file": "src/resources/json-rpc-stdio-transport.ts",
+          "line": 147
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 374
+        },
+        {
+          "file": "src/settings/account-membership.ts",
+          "line": 669
+        },
+        {
+          "file": "src/settings/account-membership.ts",
+          "line": 670
+        },
+        {
+          "file": "src/tools/deepseek-search.ts",
+          "line": 47
+        },
+        {
+          "file": "src/tools/tavily-search.ts",
+          "line": 61
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 22
+        }
+      ],
+      "locationCount": 29,
+      "uniqueFileCount": 19
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use 'window.setTimeout()' instead of 'setTimeout()' for popout window compatibility.",
+      "locations": [
+        {
+          "file": "src/home/home-activity-core.ts",
+          "line": 155
+        },
+        {
+          "file": "src/home/home-search.ts",
+          "line": 74
+        },
+        {
+          "file": "src/home/knowledge-page-data.ts",
+          "line": 13
+        },
+        {
+          "file": "src/home/workbench-data.ts",
+          "line": 315
+        },
+        {
+          "file": "src/inline-agent/service.ts",
+          "line": 405
+        },
+        {
+          "file": "src/knowledge-base/folder-link-renames.ts",
+          "line": 115
+        },
+        {
+          "file": "src/knowledge-base/folder-link-renames.ts",
+          "line": 145
+        },
+        {
+          "file": "src/knowledge-base/folder-link-renames.ts",
+          "line": 167
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 442
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 581
+        },
+        {
+          "file": "src/knowledge-base/link-health.ts",
+          "line": 40
+        },
+        {
+          "file": "src/knowledge-base/search/scheduling.ts",
+          "line": 100
+        },
+        {
+          "file": "src/membership/account-service.ts",
+          "line": 357
+        },
+        {
+          "file": "src/membership/transport.ts",
+          "line": 28
+        },
+        {
+          "file": "src/mobile/model-configuration.ts",
+          "line": 230
+        },
+        {
+          "file": "src/mobile/remote-tools.ts",
+          "line": 116
+        },
+        {
+          "file": "src/pdf-reading/mineru.ts",
+          "line": 19
+        },
+        {
+          "file": "src/plugin/conversation-run-service.ts",
+          "line": 76
+        },
+        {
+          "file": "src/plugin/conversation-run-service.ts",
+          "line": 276
+        },
+        {
+          "file": "src/plugin/knowledge-linking-service.ts",
+          "line": 21
+        },
+        {
+          "file": "src/plugin/knowledge-linking-service.ts",
+          "line": 350
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 1393
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 210
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 303
+        },
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 426
+        },
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 157
+        },
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 396
+        },
+        {
+          "file": "src/resources/json-rpc-stdio-transport.ts",
+          "line": 66
+        },
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 381
+        },
+        {
+          "file": "src/settings/account-membership.ts",
+          "line": 95
+        },
+        {
+          "file": "src/settings/account-membership.ts",
+          "line": 123
+        },
+        {
+          "file": "src/tools/deepseek-search.ts",
+          "line": 23
+        },
+        {
+          "file": "src/tools/tavily-search.ts",
+          "line": 28
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 32
+        },
+        {
+          "file": "src/ui/appearance-pro.ts",
+          "line": 33
+        }
+      ],
+      "locationCount": 35,
+      "uniqueFileCount": 25
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Obsidian's configuration folder is not necessarily .obsidian, it can be configured by the user. Use Vault#configDir to get the current value",
+      "locations": [
+        {
+          "file": "src/home/home-note-visibility.ts",
+          "line": 38
+        },
+        {
+          "file": "src/knowledge-base/note-source-policy.ts",
+          "line": 2
+        },
+        {
+          "file": "src/lifestyle/finance-analysis-archive.ts",
+          "line": 23
+        },
+        {
+          "file": "src/lifestyle/finance-analysis-archive.ts",
+          "line": 27
+        },
+        {
+          "file": "src/mobile/data-root.ts",
+          "line": 6
+        },
+        {
+          "file": "src/plugin/obsidian-vault-domain-adapter.ts",
+          "line": 553
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 15
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 33
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 51
+        },
+        {
+          "file": "src/plugin/plugin-data-paths.ts",
+          "line": 53
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 48
+        },
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 49
+        }
+      ],
+      "locationCount": 12,
+      "uniqueFileCount": 7
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unsafe call of an error or any typed value",
+      "locations": [
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 345
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 128
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 141
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 141
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 155
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 181
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 182
+        },
+        {
+          "file": "src/ui/render-message.ts",
+          "line": 192
+        }
+      ],
+      "details": [
+        "@typescript-eslint/no-unsafe-call"
+      ],
+      "locationCount": 11,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Returns unsafe values from typed code",
+      "locations": [
+        {
+          "file": "src/home/home-workbench-model.ts",
+          "line": 336
+        },
+        {
+          "file": "src/home/native-journal.ts",
+          "line": 155
+        }
+      ],
+      "details": [
+        "@typescript-eslint/no-unsafe-return"
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "'@codemirror/language' should be listed in the project's dependencies. Run 'npm i -S @codemirror/language' to add it",
+      "locations": [
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"fs/promises\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/capture.ts",
+          "line": 5
+        },
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 7
+        },
+        {
+          "file": "src/knowledge-base/io-budget.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/raw-digest.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/report.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/structure-normalizer.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/tracker.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/transaction-snapshot-core.ts",
+          "line": 3
+        },
+        {
+          "file": "src/knowledge-base/utils.ts",
+          "line": 2
+        },
+        {
+          "file": "src/review/manager.ts",
+          "line": 2
+        },
+        {
+          "file": "src/review/preview-view.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 11,
+      "uniqueFileCount": 11
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"fs\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 6
+        },
+        {
+          "file": "src/knowledge-base/transaction-snapshot-core.ts",
+          "line": 2
+        },
+        {
+          "file": "src/knowledge-base/utils.ts",
+          "line": 1
+        },
+        {
+          "file": "src/review/manager.ts",
+          "line": 3
+        },
+        {
+          "file": "src/ui/codex-view/workspace-utils.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 5,
+      "uniqueFileCount": 5
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unnecessary escape character: \\[.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/digest-evidence.ts",
+          "line": 935
+        },
+        {
+          "file": "src/knowledge-base/web-capture.ts",
+          "line": 40
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unnecessary escape character: \\-.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/digest-evidence.ts",
+          "line": 935
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Avoid casting to 'TFile'. Use an 'instanceof TFile' check to safely narrow the type.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/vault-body-search.ts",
+          "line": 117
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:os\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/main.ts",
+          "line": 5
+        },
+        {
+          "file": "src/membership/storage.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/credential-device-scope.ts",
+          "line": 3
+        },
+        {
+          "file": "src/plugin/obsidian-official-cli.ts",
+          "line": 4
+        }
+      ],
+      "locationCount": 4,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "The command name should not include the plugin name, the plugin name is already shown next to the command name in the UI.",
+      "locations": [
+        {
+          "file": "src/plugin/bootstrap.ts",
+          "line": 65
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:http\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/plugin/loopback-openai-provider-adapter.ts",
+          "line": 2
+        },
+        {
+          "file": "src/plugin/qwen-token-plan-provider-adapter.ts",
+          "line": 5
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:child_process\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/plugin/obsidian-official-cli.ts",
+          "line": 5
+        },
+        {
+          "file": "src/resources/json-rpc-stdio-transport.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:https\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/plugin/qwen-token-plan-provider-adapter.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Promise-returning method provided where a void return was expected by extended/implemented type 'JsonRpcStdioTransport'.",
+      "locations": [
+        {
+          "file": "src/resources/mcp-broker.ts",
+          "line": 492
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Using Object.assign with an non-empty target object can lead to unexpected behaviour as it will overwrite the target object.",
+      "locations": [
+        {
+          "file": "src/settings/desktop-knowledge-settings.ts",
+          "line": 318
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use '.instanceOf(OwnerSVGSVGElement)' instead of 'instanceof OwnerSVGSVGElement' for cross-window safe type checking.",
+      "locations": [
+        {
+          "file": "src/settings/provider-brand-icons.ts",
+          "line": 159
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use '.instanceOf(this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement)' instead of 'instanceof this.containerEl.ownerDocument.defaultView!.HTMLDetailsElement' for cross-window safe type checking.",
+      "locations": [
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 1223
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "\"none\" | \"minimal\" | \"low\" | \"medium\" | \"high\" | \"xhigh\" | \"max\" is overridden by string in this union type.",
+      "locations": [
+        {
+          "file": "src/types/app-server.ts",
+          "line": 11
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Unexpected aliasing of 'this' to local variable.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 1161
+        },
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 1191
+        },
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 1209
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Use '.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)' instead of 'instanceof child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement' for cross-window safe type checking.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 516
+        },
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 774
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Warning",
+      "message": "Do not import Node.js built-in module \"node:module\". Node.js APIs are not available on mobile. Use a dynamic import() or require() guarded by Platform.isDesktop instead.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/pi-document-input.ts",
+          "line": 3
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'knowledgeRootRole' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/core/vault-note-links.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 4
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'VAULT_NOTE_ROOTS' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/core/vault-note-links.ts",
+          "line": 6
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'SECONDARY_MEMORY_SCHEMA' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/memory/personal-memory-repository.ts",
+          "line": 20
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'errorMessage' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-chat-ui-projector.ts",
+          "line": 2400
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'knowledgeRolePath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
+          "line": 4
+        },
+        {
+          "file": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
+          "line": 1
+        },
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 42
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'echoInkKnowledgeMaintenanceProtocolPrompt' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-knowledge-maintenance-tool.ts",
+          "line": 27
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 77
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'GenerationResult' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 8
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'PI_KNOWLEDGE_READ_TOOL_IDS' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/pi-native-conversation-runtime.ts",
+          "line": 135
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'resolveKnowledgePath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/vault-target-resolver.ts",
+          "line": 1
+        },
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-result.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'REDACTED_SECRET' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/harness/pi-native/vault-tool-result-safety.ts",
+          "line": 5
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'Root' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/home/home-conversation-actions-island.tsx",
+          "line": 2
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'formatHomeFullDate' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/home/home-view.ts",
+          "line": 19
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "keyCode is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
+      "locations": [
+        {
+          "file": "src/home/home-view.ts",
+          "line": 978
+        },
+        {
+          "file": "src/home/todo-edit-modal.ts",
+          "line": 139
+        },
+        {
+          "file": "src/home/todo-edit-modal.ts",
+          "line": 236
+        },
+        {
+          "file": "src/home/workbench-view.ts",
+          "line": 881
+        },
+        {
+          "file": "src/inline-agent/mention.ts",
+          "line": 122
+        },
+        {
+          "file": "src/plugin/quick-chat-window.ts",
+          "line": 528
+        },
+        {
+          "file": "src/settings/inline-editor.ts",
+          "line": 104
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 130
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 605
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 2285
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 2300
+        },
+        {
+          "file": "src/settings/provider-model-modal.ts",
+          "line": 2327
+        },
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 1300
+        },
+        {
+          "file": "src/ui/codex-view/composer.ts",
+          "line": 242
+        },
+        {
+          "file": "src/ui/codex-view/note-mentions.ts",
+          "line": 290
+        }
+      ],
+      "locationCount": 15,
+      "uniqueFileCount": 10
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'paths' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/home/home-workbench-data.ts",
+          "line": 219
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'rawDigestStateForRecord' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/home/workbench-data.ts",
+          "line": 11
+        },
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 11
+        },
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 26
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'shouldReadKnowledgeBaseFileContent' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 12
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'isDashboardRawTextPath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 475
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'cachedRawFingerprint' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 479
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'isRawProcessingSource' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/dashboard.ts",
+          "line": 1049
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'errorMessage' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/initializer.ts",
+          "line": 1330
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'knowledgePathPolicy' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/knowledge-agent-index.ts",
+          "line": 4
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'KNOWLEDGE_LINKING_INSTRUCTION' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/knowledge-maintenance-protocol.ts",
+          "line": 44
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'MaintenanceP1State' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/maintenance-p1-workflow.ts",
+          "line": 8
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'MaintenanceSectionSnapshot' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/maintenance-p1-workflow.ts",
+          "line": 8
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'error' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/knowledge-base/query.ts",
+          "line": 1151
+        },
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 5450
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "createElement is deprecated.",
+      "locations": [
+        {
+          "file": "src/lifestyle/finance-number.ts",
+          "line": 41
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "activeLeaf is deprecated. The use of this field is discouraged. The recommended alternatives are: - If you need information about the current view, use {@link Workspace.getActiveViewOfType}. - If you need to open a new file or navigate a view, use {@link Workspace.getLeaf}.",
+      "locations": [
+        {
+          "file": "src/mobile/plugin.ts",
+          "line": 190
+        },
+        {
+          "file": "src/plugin/obsidian-native-tools.ts",
+          "line": 93
+        },
+        {
+          "file": "src/plugin/quick-chat-window.ts",
+          "line": 482
+        }
+      ],
+      "locationCount": 3,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'PdfChunk' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/pdf-reading/service.ts",
+          "line": 6
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'knowledgeRoleRoots' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 7
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'classifyKnowledgePath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 10
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'CodexForObsidianSettings' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 32
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'apiProviderHasUsableCredential' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 36
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'isEchoInkPiReasoningEffortSupported' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 41
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'normalizeEchoInkReasoningEffort' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 42
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'resolveEchoInkPiReasoningCapabilities' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 43
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'ReasoningEffort' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 45
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'isFolder' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/knowledge-surface-service.ts",
+          "line": 389
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "aborted is deprecated. Since v17.0.0,v16.12.0 - Check message.destroyed from <a href=\"stream.html#class-streamreadable\" class=\"type\">stream.Readable</a>.",
+      "locations": [
+        {
+          "file": "src/plugin/loopback-openai-provider-adapter.ts",
+          "line": 208
+        },
+        {
+          "file": "src/plugin/qwen-token-plan-provider-adapter.ts",
+          "line": 186
+        }
+      ],
+      "locationCount": 2,
+      "uniqueFileCount": 2
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'MaintenanceActivityStage' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/maintenance-activity-controller.ts",
+          "line": 1
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'isRawMarkdownPath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 25
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'rawDigestRecordFromMarkdown' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 25
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'PHASE3_MAINTENANCE_RAW_INDEX_PATH' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 57
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'PHASE3_MAINTENANCE_TRACKER_PATH' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 58
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'Phase3MaintenanceProposal' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 63
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'Phase3MaintenanceProposalAction' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 64
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'Phase3MaintenanceProposalInput' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 65
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'completeKnowledgeMaintenanceCandidateSources' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 78
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'parseChangedRawPaths' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1179
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'ensureSafeControlDirectories' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1202
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'writeNewFileWithReadback' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1307
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'reliableKnowledgeNoopMessage' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1432
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'cancelledResult' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1448
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'safeMaintenanceError' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1455
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'candidateSourcePaths' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1461
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'extractExplicitRawPaths' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1466
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'uniqueShadowFileName' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-knowledge-maintenance-production.ts",
+          "line": 1476
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'FilePhase3MaintenanceStateStore' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 31
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'createKnowledgeMaintenanceResultEnvelope' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 33
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'recordProductionMaintenanceTerminal' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 43
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'PI_TASK_UPDATE_TOOL_ID' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 145
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'pluginDataRootPath' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 520
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'provider' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-production-runtime-composition.ts",
+          "line": 2086
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'normalizeApiProviderId' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/pi-provider-configuration-service.ts",
+          "line": 36
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'KnowledgeBaseSettings' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 19
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'StoredSession' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/plugin/settings-store.ts",
+          "line": 20
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'resourceRefToUri' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/resources/vault-resource-catalog.ts",
+          "line": 13
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'addSettingsHelp' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 148
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'copy' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/settings/settings-tab.ts",
+          "line": 2879
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'normalizePermissionMode' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/settings/settings.ts",
+          "line": 1784
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'normalizeUiMode' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/settings/settings.ts",
+          "line": 1788
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'normalizeComparablePath' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/settings/settings.ts",
+          "line": 2558
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "initEvent is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/Event/initEvent)",
+      "locations": [
+        {
+          "file": "src/ui/appearance-theme.ts",
+          "line": 73
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'unavailableCapabilityAccess' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 25
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'piConversationSupport' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 26
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'afterTurnSettledRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 55
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'resumeQueuedTurnsRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 59
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'startChatTurnRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 63
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'startNextQueuedTurnRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 64
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'startQueuedTurnItemRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 65
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'startQueuedTurnItemSafelyRunner' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 66
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'stopTurnAction' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view.ts",
+          "line": 155
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'maintenanceReady' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/composer-controller.ts",
+          "line": 315
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'icon' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/header.ts",
+          "line": 27
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'CHAT_SESSION_SAVE_DEBOUNCE_MS' is assigned a value but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/message-controller.ts",
+          "line": 53
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'createAIElementsDocumentSources' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 93
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'localDocumentMetadata' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 4879
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'localDocumentExcerpts' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/message-list.ts",
+          "line": 4896
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'sameLocalDate' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/tabs.ts",
+          "line": 1599
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'twoDigits' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/codex-view/tabs.ts",
+          "line": 1605
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "SOURCE CODE",
+      "severity": "Recommendation",
+      "message": "'MobileModuleId' is defined but never used.",
+      "locations": [
+        {
+          "file": "src/ui/ipad/module-elements.ts",
+          "line": 2
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Unexpected browser feature \"css-clip-path\" is only partially supported by Obsidian 1.11.4",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 3459
+        },
+        {
+          "file": "styles.css",
+          "line": 8980
+        },
+        {
+          "file": "styles.css",
+          "line": 19626
+        },
+        {
+          "file": "styles.css",
+          "line": 23622
+        },
+        {
+          "file": "styles.css",
+          "line": 23638
+        },
+        {
+          "file": "styles.css",
+          "line": 25531
+        },
+        {
+          "file": "styles.css",
+          "line": 29276
+        },
+        {
+          "file": "styles.css",
+          "line": 29369
+        },
+        {
+          "file": "styles.css",
+          "line": 30455
+        },
+        {
+          "file": "styles.css",
+          "line": 30585
+        },
+        {
+          "file": "src/ui/iphone/account-pages.css",
+          "line": 34
+        },
+        {
+          "file": "src/ui/iphone/modules.css",
+          "line": 59
+        },
+        {
+          "file": "src/ui/ipad/account-pages.css",
+          "line": 39
+        },
+        {
+          "file": "src/ui/ipad/modules.css",
+          "line": 86
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 35
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 51
+        }
+      ],
+      "locationCount": 16,
+      "uniqueFileCount": 6
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Unexpected browser feature \"multicolumn\" is only partially supported by Obsidian 1.11.4",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 4280
+        },
+        {
+          "file": "styles.css",
+          "line": 15212
+        },
+        {
+          "file": "styles.css",
+          "line": 19291
+        },
+        {
+          "file": "styles.css",
+          "line": 19469
+        },
+        {
+          "file": "styles.css",
+          "line": 19502
+        },
+        {
+          "file": "styles.css",
+          "line": 20993
+        },
+        {
+          "file": "styles.css",
+          "line": 21015
+        },
+        {
+          "file": "styles.css",
+          "line": 21154
+        },
+        {
+          "file": "styles.css",
+          "line": 27697
+        },
+        {
+          "file": "styles.css",
+          "line": 27765
+        },
+        {
+          "file": "styles.css",
+          "line": 28875
+        },
+        {
+          "file": "styles.css",
+          "line": 29924
+        },
+        {
+          "file": "src/ui/iphone/workbench.css",
+          "line": 104
+        },
+        {
+          "file": "src/ui/ipad/workbench.css",
+          "line": 110
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 200
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 268
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1265
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1287
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1426
+        }
+      ],
+      "locationCount": 19,
+      "uniqueFileCount": 5
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Unexpected browser feature \"text-decoration\" is only partially supported by Obsidian 1.11.4",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 7419
+        },
+        {
+          "file": "styles.css",
+          "line": 18709
+        },
+        {
+          "file": "styles.css",
+          "line": 18716
+        },
+        {
+          "file": "styles.css",
+          "line": 19733
+        },
+        {
+          "file": "styles.css",
+          "line": 19733
+        },
+        {
+          "file": "styles.css",
+          "line": 25496
+        },
+        {
+          "file": "styles.css",
+          "line": 25855
+        },
+        {
+          "file": "styles.css",
+          "line": 25855
+        },
+        {
+          "file": "styles.css",
+          "line": 25856
+        },
+        {
+          "file": "styles.css",
+          "line": 25856
+        },
+        {
+          "file": "styles.css",
+          "line": 25856
+        },
+        {
+          "file": "styles.css",
+          "line": 25857
+        },
+        {
+          "file": "styles.css",
+          "line": 25857
+        },
+        {
+          "file": "styles.css",
+          "line": 25857
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 5
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 5
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 65
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 65
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 66
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 66
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 66
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 67
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 67
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 67
+        }
+      ],
+      "locationCount": 24,
+      "uniqueFileCount": 3
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Unexpected browser feature \"css-display-contents\" is only partially supported by Obsidian 1.11.4",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 20780
+        },
+        {
+          "file": "styles.css",
+          "line": 23824
+        },
+        {
+          "file": "styles.css",
+          "line": 23911
+        },
+        {
+          "file": "styles.css",
+          "line": 23943
+        },
+        {
+          "file": "styles.css",
+          "line": 27290
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 28
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 37
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 124
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 156
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1052
+        }
+      ],
+      "locationCount": 10,
+      "uniqueFileCount": 4
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Avoid !important — override styles by increasing selector specificity or using CSS variables instead.",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 551
+        },
+        {
+          "file": "styles.css",
+          "line": 552
+        },
+        {
+          "file": "styles.css",
+          "line": 554
+        },
+        {
+          "file": "styles.css",
+          "line": 557
+        },
+        {
+          "file": "styles.css",
+          "line": 558
+        },
+        {
+          "file": "styles.css",
+          "line": 582
+        },
+        {
+          "file": "styles.css",
+          "line": 586
+        },
+        {
+          "file": "styles.css",
+          "line": 600
+        },
+        {
+          "file": "styles.css",
+          "line": 1409
+        },
+        {
+          "file": "styles.css",
+          "line": 1410
+        },
+        {
+          "file": "styles.css",
+          "line": 1446
+        },
+        {
+          "file": "styles.css",
+          "line": 1447
+        },
+        {
+          "file": "styles.css",
+          "line": 1448
+        },
+        {
+          "file": "styles.css",
+          "line": 1638
+        },
+        {
+          "file": "styles.css",
+          "line": 1639
+        },
+        {
+          "file": "styles.css",
+          "line": 1644
+        },
+        {
+          "file": "styles.css",
+          "line": 1827
+        },
+        {
+          "file": "styles.css",
+          "line": 1828
+        },
+        {
+          "file": "styles.css",
+          "line": 1836
+        },
+        {
+          "file": "styles.css",
+          "line": 1842
+        },
+        {
+          "file": "styles.css",
+          "line": 1846
+        },
+        {
+          "file": "styles.css",
+          "line": 1859
+        },
+        {
+          "file": "styles.css",
+          "line": 1960
+        },
+        {
+          "file": "styles.css",
+          "line": 2011
+        },
+        {
+          "file": "styles.css",
+          "line": 2014
+        },
+        {
+          "file": "styles.css",
+          "line": 2015
+        },
+        {
+          "file": "styles.css",
+          "line": 2023
+        },
+        {
+          "file": "styles.css",
+          "line": 2942
+        },
+        {
+          "file": "styles.css",
+          "line": 2944
+        },
+        {
+          "file": "styles.css",
+          "line": 2945
+        },
+        {
+          "file": "styles.css",
+          "line": 2953
+        },
+        {
+          "file": "styles.css",
+          "line": 2954
+        },
+        {
+          "file": "styles.css",
+          "line": 2955
+        },
+        {
+          "file": "styles.css",
+          "line": 2956
+        },
+        {
+          "file": "styles.css",
+          "line": 3168
+        },
+        {
+          "file": "styles.css",
+          "line": 3169
+        },
+        {
+          "file": "styles.css",
+          "line": 3170
+        },
+        {
+          "file": "styles.css",
+          "line": 3175
+        },
+        {
+          "file": "styles.css",
+          "line": 4432
+        },
+        {
+          "file": "styles.css",
+          "line": 4433
+        },
+        {
+          "file": "styles.css",
+          "line": 6166
+        },
+        {
+          "file": "styles.css",
+          "line": 6172
+        },
+        {
+          "file": "styles.css",
+          "line": 6173
+        },
+        {
+          "file": "styles.css",
+          "line": 6672
+        },
+        {
+          "file": "styles.css",
+          "line": 6673
+        },
+        {
+          "file": "styles.css",
+          "line": 6958
+        },
+        {
+          "file": "styles.css",
+          "line": 6960
+        },
+        {
+          "file": "styles.css",
+          "line": 6961
+        },
+        {
+          "file": "styles.css",
+          "line": 6966
+        },
+        {
+          "file": "styles.css",
+          "line": 6968
+        },
+        {
+          "file": "styles.css",
+          "line": 6969
+        },
+        {
+          "file": "styles.css",
+          "line": 6980
+        },
+        {
+          "file": "styles.css",
+          "line": 8039
+        },
+        {
+          "file": "styles.css",
+          "line": 8464
+        },
+        {
+          "file": "styles.css",
+          "line": 8577
+        },
+        {
+          "file": "styles.css",
+          "line": 8578
+        },
+        {
+          "file": "styles.css",
+          "line": 8585
+        },
+        {
+          "file": "styles.css",
+          "line": 8590
+        },
+        {
+          "file": "styles.css",
+          "line": 8591
+        },
+        {
+          "file": "styles.css",
+          "line": 9315
+        },
+        {
+          "file": "styles.css",
+          "line": 9323
+        },
+        {
+          "file": "styles.css",
+          "line": 9324
+        },
+        {
+          "file": "styles.css",
+          "line": 9332
+        },
+        {
+          "file": "styles.css",
+          "line": 9333
+        },
+        {
+          "file": "styles.css",
+          "line": 9450
+        },
+        {
+          "file": "styles.css",
+          "line": 9579
+        },
+        {
+          "file": "styles.css",
+          "line": 10470
+        },
+        {
+          "file": "styles.css",
+          "line": 10474
+        },
+        {
+          "file": "styles.css",
+          "line": 10576
+        },
+        {
+          "file": "styles.css",
+          "line": 10577
+        },
+        {
+          "file": "styles.css",
+          "line": 10579
+        },
+        {
+          "file": "styles.css",
+          "line": 10580
+        },
+        {
+          "file": "styles.css",
+          "line": 10589
+        },
+        {
+          "file": "styles.css",
+          "line": 10593
+        },
+        {
+          "file": "styles.css",
+          "line": 10594
+        },
+        {
+          "file": "styles.css",
+          "line": 10595
+        },
+        {
+          "file": "styles.css",
+          "line": 10598
+        },
+        {
+          "file": "styles.css",
+          "line": 10599
+        },
+        {
+          "file": "styles.css",
+          "line": 10600
+        },
+        {
+          "file": "styles.css",
+          "line": 10664
+        },
+        {
+          "file": "styles.css",
+          "line": 10667
+        },
+        {
+          "file": "styles.css",
+          "line": 10668
+        },
+        {
+          "file": "styles.css",
+          "line": 10683
+        },
+        {
+          "file": "styles.css",
+          "line": 10903
+        },
+        {
+          "file": "styles.css",
+          "line": 11007
+        },
+        {
+          "file": "styles.css",
+          "line": 11011
+        },
+        {
+          "file": "styles.css",
+          "line": 11013
+        },
+        {
+          "file": "styles.css",
+          "line": 11014
+        },
+        {
+          "file": "styles.css",
+          "line": 11015
+        },
+        {
+          "file": "styles.css",
+          "line": 11016
+        },
+        {
+          "file": "styles.css",
+          "line": 11019
+        },
+        {
+          "file": "styles.css",
+          "line": 11020
+        },
+        {
+          "file": "styles.css",
+          "line": 11022
+        },
+        {
+          "file": "styles.css",
+          "line": 11023
+        },
+        {
+          "file": "styles.css",
+          "line": 11032
+        },
+        {
+          "file": "styles.css",
+          "line": 11036
+        },
+        {
+          "file": "styles.css",
+          "line": 11159
+        },
+        {
+          "file": "styles.css",
+          "line": 11161
+        },
+        {
+          "file": "styles.css",
+          "line": 11162
+        },
+        {
+          "file": "styles.css",
+          "line": 11184
+        },
+        {
+          "file": "styles.css",
+          "line": 11231
+        },
+        {
+          "file": "styles.css",
+          "line": 11234
+        },
+        {
+          "file": "styles.css",
+          "line": 11235
+        },
+        {
+          "file": "styles.css",
+          "line": 11253
+        },
+        {
+          "file": "styles.css",
+          "line": 11254
+        },
+        {
+          "file": "styles.css",
+          "line": 11255
+        },
+        {
+          "file": "styles.css",
+          "line": 11295
+        },
+        {
+          "file": "styles.css",
+          "line": 11298
+        },
+        {
+          "file": "styles.css",
+          "line": 11299
+        },
+        {
+          "file": "styles.css",
+          "line": 11305
+        },
+        {
+          "file": "styles.css",
+          "line": 11319
+        },
+        {
+          "file": "styles.css",
+          "line": 11342
+        },
+        {
+          "file": "styles.css",
+          "line": 11352
+        },
+        {
+          "file": "styles.css",
+          "line": 11355
+        },
+        {
+          "file": "styles.css",
+          "line": 11356
+        },
+        {
+          "file": "styles.css",
+          "line": 11369
+        },
+        {
+          "file": "styles.css",
+          "line": 11377
+        },
+        {
+          "file": "styles.css",
+          "line": 11438
+        },
+        {
+          "file": "styles.css",
+          "line": 11439
+        },
+        {
+          "file": "styles.css",
+          "line": 11440
+        },
+        {
+          "file": "styles.css",
+          "line": 11481
+        },
+        {
+          "file": "styles.css",
+          "line": 11484
+        },
+        {
+          "file": "styles.css",
+          "line": 11485
+        },
+        {
+          "file": "styles.css",
+          "line": 11507
+        },
+        {
+          "file": "styles.css",
+          "line": 11592
+        },
+        {
+          "file": "styles.css",
+          "line": 11609
+        },
+        {
+          "file": "styles.css",
+          "line": 11612
+        },
+        {
+          "file": "styles.css",
+          "line": 11613
+        },
+        {
+          "file": "styles.css",
+          "line": 11625
+        },
+        {
+          "file": "styles.css",
+          "line": 11626
+        },
+        {
+          "file": "styles.css",
+          "line": 11631
+        },
+        {
+          "file": "styles.css",
+          "line": 11632
+        },
+        {
+          "file": "styles.css",
+          "line": 11637
+        },
+        {
+          "file": "styles.css",
+          "line": 11638
+        },
+        {
+          "file": "styles.css",
+          "line": 11643
+        },
+        {
+          "file": "styles.css",
+          "line": 11652
+        },
+        {
+          "file": "styles.css",
+          "line": 11653
+        },
+        {
+          "file": "styles.css",
+          "line": 11663
+        },
+        {
+          "file": "styles.css",
+          "line": 11664
+        },
+        {
+          "file": "styles.css",
+          "line": 11667
+        },
+        {
+          "file": "styles.css",
+          "line": 11684
+        },
+        {
+          "file": "styles.css",
+          "line": 11690
+        },
+        {
+          "file": "styles.css",
+          "line": 11692
+        },
+        {
+          "file": "styles.css",
+          "line": 11880
+        },
+        {
+          "file": "styles.css",
+          "line": 12794
+        },
+        {
+          "file": "styles.css",
+          "line": 12799
+        },
+        {
+          "file": "styles.css",
+          "line": 12803
+        },
+        {
+          "file": "styles.css",
+          "line": 12804
+        },
+        {
+          "file": "styles.css",
+          "line": 12813
+        },
+        {
+          "file": "styles.css",
+          "line": 12898
+        },
+        {
+          "file": "styles.css",
+          "line": 12905
+        },
+        {
+          "file": "styles.css",
+          "line": 12909
+        },
+        {
+          "file": "styles.css",
+          "line": 12910
+        },
+        {
+          "file": "styles.css",
+          "line": 12953
+        },
+        {
+          "file": "styles.css",
+          "line": 12992
+        },
+        {
+          "file": "styles.css",
+          "line": 12998
+        },
+        {
+          "file": "styles.css",
+          "line": 13002
+        },
+        {
+          "file": "styles.css",
+          "line": 13003
+        },
+        {
+          "file": "styles.css",
+          "line": 13010
+        },
+        {
+          "file": "styles.css",
+          "line": 13108
+        },
+        {
+          "file": "styles.css",
+          "line": 13164
+        },
+        {
+          "file": "styles.css",
+          "line": 13171
+        },
+        {
+          "file": "styles.css",
+          "line": 13174
+        },
+        {
+          "file": "styles.css",
+          "line": 13175
+        },
+        {
+          "file": "styles.css",
+          "line": 13185
+        },
+        {
+          "file": "styles.css",
+          "line": 13441
+        },
+        {
+          "file": "styles.css",
+          "line": 13453
+        },
+        {
+          "file": "styles.css",
+          "line": 13454
+        },
+        {
+          "file": "styles.css",
+          "line": 13626
+        },
+        {
+          "file": "styles.css",
+          "line": 13627
+        },
+        {
+          "file": "styles.css",
+          "line": 13645
+        },
+        {
+          "file": "styles.css",
+          "line": 13647
+        },
+        {
+          "file": "styles.css",
+          "line": 13751
+        },
+        {
+          "file": "styles.css",
+          "line": 13752
+        },
+        {
+          "file": "styles.css",
+          "line": 13760
+        },
+        {
+          "file": "styles.css",
+          "line": 13768
+        },
+        {
+          "file": "styles.css",
+          "line": 13769
+        },
+        {
+          "file": "styles.css",
+          "line": 13774
+        },
+        {
+          "file": "styles.css",
+          "line": 13815
+        },
+        {
+          "file": "styles.css",
+          "line": 13816
+        },
+        {
+          "file": "styles.css",
+          "line": 13818
+        },
+        {
+          "file": "styles.css",
+          "line": 13819
+        },
+        {
+          "file": "styles.css",
+          "line": 13879
+        },
+        {
+          "file": "styles.css",
+          "line": 13880
+        },
+        {
+          "file": "styles.css",
+          "line": 13887
+        },
+        {
+          "file": "styles.css",
+          "line": 13929
+        },
+        {
+          "file": "styles.css",
+          "line": 13930
+        },
+        {
+          "file": "styles.css",
+          "line": 13936
+        },
+        {
+          "file": "styles.css",
+          "line": 14057
+        },
+        {
+          "file": "styles.css",
+          "line": 14058
+        },
+        {
+          "file": "styles.css",
+          "line": 14063
+        },
+        {
+          "file": "styles.css",
+          "line": 14170
+        },
+        {
+          "file": "styles.css",
+          "line": 14171
+        },
+        {
+          "file": "styles.css",
+          "line": 14180
+        },
+        {
+          "file": "styles.css",
+          "line": 14194
+        },
+        {
+          "file": "styles.css",
+          "line": 14262
+        },
+        {
+          "file": "styles.css",
+          "line": 14269
+        },
+        {
+          "file": "styles.css",
+          "line": 14379
+        },
+        {
+          "file": "styles.css",
+          "line": 14380
+        },
+        {
+          "file": "styles.css",
+          "line": 14381
+        },
+        {
+          "file": "styles.css",
+          "line": 14386
+        },
+        {
+          "file": "styles.css",
+          "line": 14666
+        },
+        {
+          "file": "styles.css",
+          "line": 14667
+        },
+        {
+          "file": "styles.css",
+          "line": 15678
+        },
+        {
+          "file": "styles.css",
+          "line": 16490
+        },
+        {
+          "file": "styles.css",
+          "line": 16491
+        },
+        {
+          "file": "styles.css",
+          "line": 16492
+        },
+        {
+          "file": "styles.css",
+          "line": 16496
+        },
+        {
+          "file": "styles.css",
+          "line": 16497
+        },
+        {
+          "file": "styles.css",
+          "line": 16501
+        },
+        {
+          "file": "styles.css",
+          "line": 16502
+        },
+        {
+          "file": "styles.css",
+          "line": 16503
+        },
+        {
+          "file": "styles.css",
+          "line": 16527
+        },
+        {
+          "file": "styles.css",
+          "line": 16527
+        },
+        {
+          "file": "styles.css",
+          "line": 16762
+        },
+        {
+          "file": "styles.css",
+          "line": 16763
+        },
+        {
+          "file": "styles.css",
+          "line": 16775
+        },
+        {
+          "file": "styles.css",
+          "line": 17825
+        },
+        {
+          "file": "styles.css",
+          "line": 17980
+        },
+        {
+          "file": "styles.css",
+          "line": 18411
+        },
+        {
+          "file": "styles.css",
+          "line": 19282
+        },
+        {
+          "file": "styles.css",
+          "line": 19283
+        },
+        {
+          "file": "styles.css",
+          "line": 19463
+        },
+        {
+          "file": "styles.css",
+          "line": 19463
+        },
+        {
+          "file": "styles.css",
+          "line": 19470
+        },
+        {
+          "file": "styles.css",
+          "line": 19502
+        },
+        {
+          "file": "styles.css",
+          "line": 19502
+        },
+        {
+          "file": "styles.css",
+          "line": 19502
+        },
+        {
+          "file": "styles.css",
+          "line": 19596
+        },
+        {
+          "file": "styles.css",
+          "line": 19596
+        },
+        {
+          "file": "styles.css",
+          "line": 19599
+        },
+        {
+          "file": "styles.css",
+          "line": 19733
+        },
+        {
+          "file": "styles.css",
+          "line": 19739
+        },
+        {
+          "file": "styles.css",
+          "line": 19739
+        },
+        {
+          "file": "styles.css",
+          "line": 19739
+        },
+        {
+          "file": "styles.css",
+          "line": 19793
+        },
+        {
+          "file": "styles.css",
+          "line": 19793
+        },
+        {
+          "file": "styles.css",
+          "line": 19795
+        },
+        {
+          "file": "styles.css",
+          "line": 19795
+        },
+        {
+          "file": "styles.css",
+          "line": 20127
+        },
+        {
+          "file": "styles.css",
+          "line": 20148
+        },
+        {
+          "file": "styles.css",
+          "line": 20148
+        },
+        {
+          "file": "styles.css",
+          "line": 20549
+        },
+        {
+          "file": "styles.css",
+          "line": 20549
+        },
+        {
+          "file": "styles.css",
+          "line": 20681
+        },
+        {
+          "file": "styles.css",
+          "line": 20845
+        },
+        {
+          "file": "styles.css",
+          "line": 20845
+        },
+        {
+          "file": "styles.css",
+          "line": 20845
+        },
+        {
+          "file": "styles.css",
+          "line": 20845
+        },
+        {
+          "file": "styles.css",
+          "line": 20845
+        },
+        {
+          "file": "styles.css",
+          "line": 20879
+        },
+        {
+          "file": "styles.css",
+          "line": 20879
+        },
+        {
+          "file": "styles.css",
+          "line": 20879
+        },
+        {
+          "file": "styles.css",
+          "line": 20934
+        },
+        {
+          "file": "styles.css",
+          "line": 21109
+        },
+        {
+          "file": "styles.css",
+          "line": 21149
+        },
+        {
+          "file": "styles.css",
+          "line": 21166
+        },
+        {
+          "file": "styles.css",
+          "line": 21166
+        },
+        {
+          "file": "styles.css",
+          "line": 21166
+        },
+        {
+          "file": "styles.css",
+          "line": 21179
+        },
+        {
+          "file": "styles.css",
+          "line": 21179
+        },
+        {
+          "file": "styles.css",
+          "line": 22255
+        },
+        {
+          "file": "styles.css",
+          "line": 22256
+        },
+        {
+          "file": "styles.css",
+          "line": 22257
+        },
+        {
+          "file": "styles.css",
+          "line": 22258
+        },
+        {
+          "file": "styles.css",
+          "line": 23018
+        },
+        {
+          "file": "styles.css",
+          "line": 23018
+        },
+        {
+          "file": "styles.css",
+          "line": 23018
+        },
+        {
+          "file": "styles.css",
+          "line": 23018
+        },
+        {
+          "file": "styles.css",
+          "line": 23085
+        },
+        {
+          "file": "styles.css",
+          "line": 24730
+        },
+        {
+          "file": "styles.css",
+          "line": 24730
+        },
+        {
+          "file": "styles.css",
+          "line": 24730
+        },
+        {
+          "file": "styles.css",
+          "line": 24730
+        },
+        {
+          "file": "styles.css",
+          "line": 24731
+        },
+        {
+          "file": "styles.css",
+          "line": 24731
+        },
+        {
+          "file": "styles.css",
+          "line": 24731
+        },
+        {
+          "file": "styles.css",
+          "line": 24731
+        },
+        {
+          "file": "styles.css",
+          "line": 24733
+        },
+        {
+          "file": "styles.css",
+          "line": 24733
+        },
+        {
+          "file": "styles.css",
+          "line": 24733
+        },
+        {
+          "file": "styles.css",
+          "line": 24757
+        },
+        {
+          "file": "styles.css",
+          "line": 24757
+        },
+        {
+          "file": "styles.css",
+          "line": 24757
+        },
+        {
+          "file": "styles.css",
+          "line": 24757
+        },
+        {
+          "file": "styles.css",
+          "line": 24758
+        },
+        {
+          "file": "styles.css",
+          "line": 24758
+        },
+        {
+          "file": "styles.css",
+          "line": 24759
+        },
+        {
+          "file": "styles.css",
+          "line": 24761
+        },
+        {
+          "file": "styles.css",
+          "line": 24763
+        },
+        {
+          "file": "styles.css",
+          "line": 24763
+        },
+        {
+          "file": "styles.css",
+          "line": 24763
+        },
+        {
+          "file": "styles.css",
+          "line": 24763
+        },
+        {
+          "file": "styles.css",
+          "line": 24765
+        },
+        {
+          "file": "styles.css",
+          "line": 24765
+        },
+        {
+          "file": "styles.css",
+          "line": 24765
+        },
+        {
+          "file": "styles.css",
+          "line": 24794
+        },
+        {
+          "file": "styles.css",
+          "line": 24799
+        },
+        {
+          "file": "styles.css",
+          "line": 24803
+        },
+        {
+          "file": "styles.css",
+          "line": 24882
+        },
+        {
+          "file": "styles.css",
+          "line": 24882
+        },
+        {
+          "file": "styles.css",
+          "line": 24883
+        },
+        {
+          "file": "styles.css",
+          "line": 24887
+        },
+        {
+          "file": "styles.css",
+          "line": 25021
+        },
+        {
+          "file": "styles.css",
+          "line": 25140
+        },
+        {
+          "file": "styles.css",
+          "line": 25140
+        },
+        {
+          "file": "styles.css",
+          "line": 25140
+        },
+        {
+          "file": "styles.css",
+          "line": 25639
+        },
+        {
+          "file": "styles.css",
+          "line": 25804
+        },
+        {
+          "file": "styles.css",
+          "line": 26106
+        },
+        {
+          "file": "styles.css",
+          "line": 26106
+        },
+        {
+          "file": "styles.css",
+          "line": 26106
+        },
+        {
+          "file": "styles.css",
+          "line": 26106
+        },
+        {
+          "file": "styles.css",
+          "line": 26106
+        },
+        {
+          "file": "styles.css",
+          "line": 26107
+        },
+        {
+          "file": "styles.css",
+          "line": 26107
+        },
+        {
+          "file": "styles.css",
+          "line": 26108
+        },
+        {
+          "file": "styles.css",
+          "line": 26213
+        },
+        {
+          "file": "styles.css",
+          "line": 26213
+        },
+        {
+          "file": "styles.css",
+          "line": 26281
+        },
+        {
+          "file": "styles.css",
+          "line": 26372
+        },
+        {
+          "file": "styles.css",
+          "line": 26372
+        },
+        {
+          "file": "styles.css",
+          "line": 26372
+        },
+        {
+          "file": "styles.css",
+          "line": 26372
+        },
+        {
+          "file": "styles.css",
+          "line": 26372
+        },
+        {
+          "file": "styles.css",
+          "line": 26373
+        },
+        {
+          "file": "styles.css",
+          "line": 26374
+        },
+        {
+          "file": "styles.css",
+          "line": 26374
+        },
+        {
+          "file": "styles.css",
+          "line": 26457
+        },
+        {
+          "file": "styles.css",
+          "line": 26457
+        },
+        {
+          "file": "styles.css",
+          "line": 26505
+        },
+        {
+          "file": "styles.css",
+          "line": 26620
+        },
+        {
+          "file": "styles.css",
+          "line": 26650
+        },
+        {
+          "file": "styles.css",
+          "line": 26650
+        },
+        {
+          "file": "styles.css",
+          "line": 26650
+        },
+        {
+          "file": "styles.css",
+          "line": 26650
+        },
+        {
+          "file": "styles.css",
+          "line": 26770
+        },
+        {
+          "file": "styles.css",
+          "line": 26987
+        },
+        {
+          "file": "styles.css",
+          "line": 26988
+        },
+        {
+          "file": "styles.css",
+          "line": 26991
+        },
+        {
+          "file": "styles.css",
+          "line": 27000
+        },
+        {
+          "file": "styles.css",
+          "line": 27086
+        },
+        {
+          "file": "styles.css",
+          "line": 27151
+        },
+        {
+          "file": "styles.css",
+          "line": 27181
+        },
+        {
+          "file": "styles.css",
+          "line": 27183
+        },
+        {
+          "file": "styles.css",
+          "line": 27183
+        },
+        {
+          "file": "styles.css",
+          "line": 27184
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27188
+        },
+        {
+          "file": "styles.css",
+          "line": 27189
+        },
+        {
+          "file": "styles.css",
+          "line": 27189
+        },
+        {
+          "file": "styles.css",
+          "line": 27189
+        },
+        {
+          "file": "styles.css",
+          "line": 27193
+        },
+        {
+          "file": "styles.css",
+          "line": 27193
+        },
+        {
+          "file": "styles.css",
+          "line": 27193
+        },
+        {
+          "file": "styles.css",
+          "line": 27193
+        },
+        {
+          "file": "styles.css",
+          "line": 27193
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27210
+        },
+        {
+          "file": "styles.css",
+          "line": 27481
+        },
+        {
+          "file": "styles.css",
+          "line": 27482
+        },
+        {
+          "file": "styles.css",
+          "line": 27485
+        },
+        {
+          "file": "styles.css",
+          "line": 27486
+        },
+        {
+          "file": "styles.css",
+          "line": 27519
+        },
+        {
+          "file": "styles.css",
+          "line": 27546
+        },
+        {
+          "file": "styles.css",
+          "line": 27546
+        },
+        {
+          "file": "styles.css",
+          "line": 27654
+        },
+        {
+          "file": "styles.css",
+          "line": 27654
+        },
+        {
+          "file": "styles.css",
+          "line": 27681
+        },
+        {
+          "file": "styles.css",
+          "line": 27793
+        },
+        {
+          "file": "styles.css",
+          "line": 27883
+        },
+        {
+          "file": "styles.css",
+          "line": 27936
+        },
+        {
+          "file": "styles.css",
+          "line": 28024
+        },
+        {
+          "file": "styles.css",
+          "line": 28137
+        },
+        {
+          "file": "styles.css",
+          "line": 28239
+        },
+        {
+          "file": "styles.css",
+          "line": 28267
+        },
+        {
+          "file": "styles.css",
+          "line": 28299
+        },
+        {
+          "file": "styles.css",
+          "line": 28306
+        },
+        {
+          "file": "styles.css",
+          "line": 28859
+        },
+        {
+          "file": "styles.css",
+          "line": 29658
+        },
+        {
+          "file": "styles.css",
+          "line": 29907
+        },
+        {
+          "file": "styles.css",
+          "line": 30859
+        },
+        {
+          "file": "styles.css",
+          "line": 30859
+        },
+        {
+          "file": "src/ui/iphone/workbench.css",
+          "line": 88
+        },
+        {
+          "file": "src/ui/ipad/shell.css",
+          "line": 22
+        },
+        {
+          "file": "src/ui/ipad/workbench.css",
+          "line": 93
+        },
+        {
+          "file": "src/styles/agent-approval.css",
+          "line": 102
+        },
+        {
+          "file": "src/styles/agent-approval.css",
+          "line": 103
+        },
+        {
+          "file": "src/styles/agent-approval.css",
+          "line": 106
+        },
+        {
+          "file": "src/styles/agent-approval.css",
+          "line": 107
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 3
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 5
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 5
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 6
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 10
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 32
+        },
+        {
+          "file": "src/styles/desktop-account-settings.css",
+          "line": 45
+        },
+        {
+          "file": "src/styles/desktop-knowledge-settings.css",
+          "line": 9
+        },
+        {
+          "file": "src/styles/desktop-knowledge-settings.css",
+          "line": 9
+        },
+        {
+          "file": "src/styles/desktop-knowledge-settings.css",
+          "line": 9
+        },
+        {
+          "file": "src/styles/desktop-knowledge-settings.css",
+          "line": 9
+        },
+        {
+          "file": "src/styles/english-diary-page.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 30
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 30
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 30
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 30
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 31
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 31
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 31
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 31
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 33
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 33
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 33
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 57
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 57
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 57
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 57
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 58
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 58
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 59
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 61
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 63
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 63
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 63
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 63
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/journal-page.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/journal-page.css",
+          "line": 105
+        },
+        {
+          "file": "src/styles/knowledge-page.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/pdf-reading-page.css",
+          "line": 13
+        },
+        {
+          "file": "src/styles/pdf-reading-page.css",
+          "line": 41
+        },
+        {
+          "file": "src/styles/pdf-reading-page.css",
+          "line": 73
+        },
+        {
+          "file": "src/styles/pdf-reading-page.css",
+          "line": 80
+        },
+        {
+          "file": "src/styles/run-reports.css",
+          "line": 19
+        },
+        {
+          "file": "src/styles/todo-page.css",
+          "line": 16
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 22
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 49
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 49
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 157
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 157
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 184
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 5
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 11
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 67
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 67
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 399
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 420
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 420
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 821
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 821
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 953
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1117
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1117
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1117
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1117
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1117
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1151
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1151
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1151
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1206
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1381
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1421
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1438
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1438
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1438
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1451
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1451
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2527
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2528
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2529
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2530
+        },
+        {
+          "file": "src/english-diary/ui.css",
+          "line": 14
+        }
+      ],
+      "locationCount": 508,
+      "uniqueFileCount": 18
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Avoid :has — it can cause significant performance issues due to broad selector invalidation.",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 675
+        },
+        {
+          "file": "styles.css",
+          "line": 5317
+        },
+        {
+          "file": "styles.css",
+          "line": 5318
+        },
+        {
+          "file": "styles.css",
+          "line": 7440
+        },
+        {
+          "file": "styles.css",
+          "line": 7445
+        },
+        {
+          "file": "styles.css",
+          "line": 7450
+        },
+        {
+          "file": "styles.css",
+          "line": 16500
+        },
+        {
+          "file": "styles.css",
+          "line": 17876
+        },
+        {
+          "file": "styles.css",
+          "line": 19066
+        },
+        {
+          "file": "styles.css",
+          "line": 19786
+        },
+        {
+          "file": "styles.css",
+          "line": 19786
+        },
+        {
+          "file": "styles.css",
+          "line": 20148
+        },
+        {
+          "file": "styles.css",
+          "line": 20847
+        },
+        {
+          "file": "styles.css",
+          "line": 20851
+        },
+        {
+          "file": "styles.css",
+          "line": 20863
+        },
+        {
+          "file": "styles.css",
+          "line": 20864
+        },
+        {
+          "file": "styles.css",
+          "line": 20866
+        },
+        {
+          "file": "styles.css",
+          "line": 20867
+        },
+        {
+          "file": "styles.css",
+          "line": 20868
+        },
+        {
+          "file": "styles.css",
+          "line": 22245
+        },
+        {
+          "file": "styles.css",
+          "line": 22247
+        },
+        {
+          "file": "styles.css",
+          "line": 22248
+        },
+        {
+          "file": "styles.css",
+          "line": 22912
+        },
+        {
+          "file": "styles.css",
+          "line": 22981
+        },
+        {
+          "file": "styles.css",
+          "line": 22985
+        },
+        {
+          "file": "styles.css",
+          "line": 22986
+        },
+        {
+          "file": "styles.css",
+          "line": 22989
+        },
+        {
+          "file": "styles.css",
+          "line": 23672
+        },
+        {
+          "file": "styles.css",
+          "line": 23675
+        },
+        {
+          "file": "styles.css",
+          "line": 23726
+        },
+        {
+          "file": "styles.css",
+          "line": 23744
+        },
+        {
+          "file": "styles.css",
+          "line": 23760
+        },
+        {
+          "file": "styles.css",
+          "line": 23761
+        },
+        {
+          "file": "styles.css",
+          "line": 23801
+        },
+        {
+          "file": "styles.css",
+          "line": 23802
+        },
+        {
+          "file": "styles.css",
+          "line": 23802
+        },
+        {
+          "file": "styles.css",
+          "line": 23849
+        },
+        {
+          "file": "styles.css",
+          "line": 23849
+        },
+        {
+          "file": "styles.css",
+          "line": 23923
+        },
+        {
+          "file": "styles.css",
+          "line": 23964
+        },
+        {
+          "file": "styles.css",
+          "line": 24209
+        },
+        {
+          "file": "styles.css",
+          "line": 24209
+        },
+        {
+          "file": "styles.css",
+          "line": 24210
+        },
+        {
+          "file": "styles.css",
+          "line": 24211
+        },
+        {
+          "file": "styles.css",
+          "line": 24211
+        },
+        {
+          "file": "styles.css",
+          "line": 24212
+        },
+        {
+          "file": "styles.css",
+          "line": 24212
+        },
+        {
+          "file": "styles.css",
+          "line": 24213
+        },
+        {
+          "file": "styles.css",
+          "line": 24213
+        },
+        {
+          "file": "styles.css",
+          "line": 24214
+        },
+        {
+          "file": "styles.css",
+          "line": 24214
+        },
+        {
+          "file": "styles.css",
+          "line": 24221
+        },
+        {
+          "file": "styles.css",
+          "line": 24221
+        },
+        {
+          "file": "styles.css",
+          "line": 24222
+        },
+        {
+          "file": "styles.css",
+          "line": 24223
+        },
+        {
+          "file": "styles.css",
+          "line": 24224
+        },
+        {
+          "file": "styles.css",
+          "line": 24225
+        },
+        {
+          "file": "styles.css",
+          "line": 24300
+        },
+        {
+          "file": "styles.css",
+          "line": 24301
+        },
+        {
+          "file": "styles.css",
+          "line": 24321
+        },
+        {
+          "file": "styles.css",
+          "line": 24326
+        },
+        {
+          "file": "styles.css",
+          "line": 24334
+        },
+        {
+          "file": "styles.css",
+          "line": 24335
+        },
+        {
+          "file": "styles.css",
+          "line": 24385
+        },
+        {
+          "file": "styles.css",
+          "line": 24386
+        },
+        {
+          "file": "styles.css",
+          "line": 24432
+        },
+        {
+          "file": "styles.css",
+          "line": 24436
+        },
+        {
+          "file": "styles.css",
+          "line": 24761
+        },
+        {
+          "file": "styles.css",
+          "line": 25164
+        },
+        {
+          "file": "styles.css",
+          "line": 25184
+        },
+        {
+          "file": "styles.css",
+          "line": 25387
+        },
+        {
+          "file": "styles.css",
+          "line": 25401
+        },
+        {
+          "file": "styles.css",
+          "line": 25594
+        },
+        {
+          "file": "styles.css",
+          "line": 25961
+        },
+        {
+          "file": "styles.css",
+          "line": 27027
+        },
+        {
+          "file": "styles.css",
+          "line": 27076
+        },
+        {
+          "file": "styles.css",
+          "line": 27223
+        },
+        {
+          "file": "styles.css",
+          "line": 27343
+        },
+        {
+          "file": "styles.css",
+          "line": 27343
+        },
+        {
+          "file": "styles.css",
+          "line": 27355
+        },
+        {
+          "file": "styles.css",
+          "line": 27355
+        },
+        {
+          "file": "styles.css",
+          "line": 27366
+        },
+        {
+          "file": "styles.css",
+          "line": 27562
+        },
+        {
+          "file": "styles.css",
+          "line": 27562
+        },
+        {
+          "file": "styles.css",
+          "line": 27570
+        },
+        {
+          "file": "styles.css",
+          "line": 27633
+        },
+        {
+          "file": "styles.css",
+          "line": 27658
+        },
+        {
+          "file": "styles.css",
+          "line": 27671
+        },
+        {
+          "file": "styles.css",
+          "line": 27672
+        },
+        {
+          "file": "styles.css",
+          "line": 27675
+        },
+        {
+          "file": "styles.css",
+          "line": 27676
+        },
+        {
+          "file": "styles.css",
+          "line": 27711
+        },
+        {
+          "file": "styles.css",
+          "line": 27761
+        },
+        {
+          "file": "styles.css",
+          "line": 28419
+        },
+        {
+          "file": "styles.css",
+          "line": 28420
+        },
+        {
+          "file": "styles.css",
+          "line": 28423
+        },
+        {
+          "file": "styles.css",
+          "line": 28424
+        },
+        {
+          "file": "styles.css",
+          "line": 28908
+        },
+        {
+          "file": "styles.css",
+          "line": 28935
+        },
+        {
+          "file": "styles.css",
+          "line": 29045
+        },
+        {
+          "file": "styles.css",
+          "line": 29046
+        },
+        {
+          "file": "styles.css",
+          "line": 29050
+        },
+        {
+          "file": "styles.css",
+          "line": 29065
+        },
+        {
+          "file": "styles.css",
+          "line": 29074
+        },
+        {
+          "file": "styles.css",
+          "line": 29098
+        },
+        {
+          "file": "styles.css",
+          "line": 29127
+        },
+        {
+          "file": "styles.css",
+          "line": 29172
+        },
+        {
+          "file": "styles.css",
+          "line": 29173
+        },
+        {
+          "file": "styles.css",
+          "line": 29173
+        },
+        {
+          "file": "styles.css",
+          "line": 29501
+        },
+        {
+          "file": "styles.css",
+          "line": 29811
+        },
+        {
+          "file": "styles.css",
+          "line": 29812
+        },
+        {
+          "file": "styles.css",
+          "line": 29960
+        },
+        {
+          "file": "styles.css",
+          "line": 29987
+        },
+        {
+          "file": "styles.css",
+          "line": 30101
+        },
+        {
+          "file": "styles.css",
+          "line": 30220
+        },
+        {
+          "file": "styles.css",
+          "line": 30225
+        },
+        {
+          "file": "styles.css",
+          "line": 30226
+        },
+        {
+          "file": "styles.css",
+          "line": 30227
+        },
+        {
+          "file": "styles.css",
+          "line": 30255
+        },
+        {
+          "file": "styles.css",
+          "line": 30266
+        },
+        {
+          "file": "styles.css",
+          "line": 30298
+        },
+        {
+          "file": "styles.css",
+          "line": 30358
+        },
+        {
+          "file": "styles.css",
+          "line": 30406
+        },
+        {
+          "file": "styles.css",
+          "line": 30407
+        },
+        {
+          "file": "styles.css",
+          "line": 30614
+        },
+        {
+          "file": "styles.css",
+          "line": 30615
+        },
+        {
+          "file": "styles.css",
+          "line": 30616
+        },
+        {
+          "file": "styles.css",
+          "line": 30700
+        },
+        {
+          "file": "src/ui/iphone/capability-pages.css",
+          "line": 6
+        },
+        {
+          "file": "src/ui/iphone/capability-pages.css",
+          "line": 7
+        },
+        {
+          "file": "src/ui/iphone/capability-pages.css",
+          "line": 7
+        },
+        {
+          "file": "src/ui/iphone/integration.css",
+          "line": 18
+        },
+        {
+          "file": "src/ui/iphone/integration.css",
+          "line": 19
+        },
+        {
+          "file": "src/ui/iphone/integration.css",
+          "line": 23
+        },
+        {
+          "file": "src/ui/iphone/knowledge-settings-pages.css",
+          "line": 17
+        },
+        {
+          "file": "src/ui/iphone/settings.css",
+          "line": 14
+        },
+        {
+          "file": "src/ui/iphone/settings.css",
+          "line": 23
+        },
+        {
+          "file": "src/ui/iphone/settings.css",
+          "line": 47
+        },
+        {
+          "file": "src/ui/iphone/settings.css",
+          "line": 76
+        },
+        {
+          "file": "src/ui/iphone/workbench.css",
+          "line": 137
+        },
+        {
+          "file": "src/ui/iphone/workbench.css",
+          "line": 164
+        },
+        {
+          "file": "src/ui/ipad/agent-pane.css",
+          "line": 6
+        },
+        {
+          "file": "src/ui/ipad/agent-settings-pages.css",
+          "line": 47
+        },
+        {
+          "file": "src/ui/ipad/agent-settings-pages.css",
+          "line": 48
+        },
+        {
+          "file": "src/ui/ipad/capability-pages.css",
+          "line": 53
+        },
+        {
+          "file": "src/ui/ipad/knowledge-settings-pages.css",
+          "line": 15
+        },
+        {
+          "file": "src/ui/ipad/modules.css",
+          "line": 115
+        },
+        {
+          "file": "src/ui/ipad/modules.css",
+          "line": 116
+        },
+        {
+          "file": "src/ui/ipad/modules.css",
+          "line": 117
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 5
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 10
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 11
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 12
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 40
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 51
+        },
+        {
+          "file": "src/ui/ipad/settings.css",
+          "line": 83
+        },
+        {
+          "file": "src/ui/ipad/shell.css",
+          "line": 175
+        },
+        {
+          "file": "src/ui/ipad/shell.css",
+          "line": 176
+        },
+        {
+          "file": "src/ui/ipad/workbench.css",
+          "line": 146
+        },
+        {
+          "file": "src/ui/ipad/workbench.css",
+          "line": 173
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 81
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 81
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 93
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 93
+        },
+        {
+          "file": "src/styles/agent-editor.css",
+          "line": 104
+        },
+        {
+          "file": "src/styles/agent-settings.css",
+          "line": 55
+        },
+        {
+          "file": "src/styles/agent-settings.css",
+          "line": 56
+        },
+        {
+          "file": "src/styles/agent-settings.css",
+          "line": 59
+        },
+        {
+          "file": "src/styles/agent-settings.css",
+          "line": 60
+        },
+        {
+          "file": "src/styles/agent-tasks.css",
+          "line": 45
+        },
+        {
+          "file": "src/styles/desktop-module-settings.css",
+          "line": 21
+        },
+        {
+          "file": "src/styles/desktop-module-settings.css",
+          "line": 90
+        },
+        {
+          "file": "src/styles/desktop-module-settings.css",
+          "line": 94
+        },
+        {
+          "file": "src/styles/desktop-module-settings.css",
+          "line": 95
+        },
+        {
+          "file": "src/styles/desktop-module-settings.css",
+          "line": 98
+        },
+        {
+          "file": "src/styles/generation-ui.css",
+          "line": 49
+        },
+        {
+          "file": "src/styles/generation-ui.css",
+          "line": 50
+        },
+        {
+          "file": "src/styles/generation-ui.css",
+          "line": 96
+        },
+        {
+          "file": "src/styles/generation-ui.css",
+          "line": 100
+        },
+        {
+          "file": "src/styles/inline-agent-tasks.css",
+          "line": 61
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 85
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 88
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 139
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 157
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 173
+        },
+        {
+          "file": "src/styles/settings-demo-align.css",
+          "line": 174
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 14
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 15
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 62
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 62
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 136
+        },
+        {
+          "file": "src/styles/settings-demo-forms.css",
+          "line": 177
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 213
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 213
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 214
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 215
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 215
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 216
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 216
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 217
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 217
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 218
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 218
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 225
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 225
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 226
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 227
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 228
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 229
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 304
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 305
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 325
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 330
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 338
+        },
+        {
+          "file": "src/styles/settings-demo-modules.css",
+          "line": 339
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 65
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 73
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 136
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 161
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 174
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 175
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 178
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 179
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 214
+        },
+        {
+          "file": "src/styles/workbench.css",
+          "line": 264
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 58
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 58
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 420
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1119
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1123
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1135
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1136
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1138
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1139
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 1140
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2517
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2519
+        },
+        {
+          "file": "src/styles/workspace-settings.css",
+          "line": 2520
+        },
+        {
+          "file": "src/english-diary/integration.css",
+          "line": 3
+        }
+      ],
+      "locationCount": 242,
+      "uniqueFileCount": 26
+    },
+    {
+      "section": "CSS LINT",
+      "severity": "Warning",
+      "message": "Unexpected unknown type selector \"echoink-finance-number-flow-v023\"",
+      "locations": [
+        {
+          "file": "styles.css",
+          "line": 26645
+        }
+      ],
+      "locationCount": 1,
+      "uniqueFileCount": 1
+    },
+    {
+      "section": "DEPENDENCIES",
+      "severity": "Warning",
+      "message": "Dependency has a potential vulnerability advisory",
+      "locations": [],
+      "details": [
+        "brace-expansion, fflate, undici, zod",
+        "Upgrade to a version outside the vulnerable range (>=4.0.0 <5.0.8). Learn more"
+      ],
+      "locationCount": 0,
+      "uniqueFileCount": 0
+    }
+  ]
+}

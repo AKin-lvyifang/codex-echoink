@@ -23,6 +23,6 @@ export function renderDiaryProgress(container: HTMLElement, activity: readonly D
     item.createEl("dt", { text: label });
     const count = item.createEl("dd");
     count.createEl("strong", { text: String(value) });
-    count.createEl("span", { text: unit });
+    count.createSpan({ text: unit });
   }
 }

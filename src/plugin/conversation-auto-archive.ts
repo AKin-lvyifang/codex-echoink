@@ -13,7 +13,7 @@ export interface AutoArchivePort {
 
 /** Local lifecycle only: one timer, one scan, no model or provider dependency. */
 export class ConversationAutoArchive {
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private timer: number | undefined;
   private flight: Promise<void> | undefined;
   private generation = 0;
   private configuredDays = 0;
@@ -24,11 +24,11 @@ export class ConversationAutoArchive {
     const days = this.port.days();
     if (days === this.configuredDays) return;
     this.configuredDays = days; this.generation++;
-    if (this.timer !== undefined) clearInterval(this.timer);
+    if (this.timer !== undefined) window.clearInterval(this.timer);
     this.timer = undefined;
     if (!days) return;
     void this.scan();
-    this.timer = setInterval(() => { void this.scan(); }, 60 * 60 * 1_000);
+    this.timer = window.setInterval(() => { void this.scan(); }, 60 * 60 * 1_000);
   }
   async scan(): Promise<void> {
     if (this.disposed || !this.port.days()) return;
@@ -63,7 +63,7 @@ export class ConversationAutoArchive {
   }
   async dispose(): Promise<void> {
     this.disposed = true; this.generation++;
-    if (this.timer !== undefined) clearInterval(this.timer);
+    if (this.timer !== undefined) window.clearInterval(this.timer);
     this.timer = undefined;
     await this.flight;
   }

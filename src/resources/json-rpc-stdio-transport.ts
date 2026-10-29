@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { getDesktopChildProcess } from "../platform/desktop-process";
+
+const { spawn } = getDesktopChildProcess();
 
 export interface JsonRpcMessage {
   id?: number | string;
@@ -20,7 +22,7 @@ type PendingRequest = {
   method: string;
   resolve(value: unknown): void;
   reject(error: Error): void;
-  timer: ReturnType<typeof setTimeout> | null;
+  timer: number | null;
 };
 
 export abstract class JsonRpcStdioTransport {
@@ -63,7 +65,7 @@ export abstract class JsonRpcStdioTransport {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       const noTimeout = timeoutMs <= 0 && this.options.disableTimeoutForNonPositive !== false;
-      const timer = noTimeout ? null : setTimeout(() => {
+      const timer = noTimeout ? null : window.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(this.options.timeoutMessage?.(method) ?? `JSON-RPC request timed out: ${method}`));
       }, Math.max(0, timeoutMs));
@@ -72,14 +74,14 @@ export abstract class JsonRpcStdioTransport {
         this.write({ jsonrpc: "2.0", id, method, params });
         onWritten?.();
       } catch (error) {
-        if (timer) clearTimeout(timer);
+        if (timer) window.clearTimeout(timer);
         this.pending.delete(id);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
 
-  notify(method: string, params?: unknown): void {
+  notify(method: string, params?: unknown): void | Promise<void> {
     if (!this.process || this.disposed) return;
     this.write({ jsonrpc: "2.0", method, params });
   }
@@ -130,7 +132,7 @@ export abstract class JsonRpcStdioTransport {
         continue;
       }
       this.pending.delete(id);
-      if (pending.timer) clearTimeout(pending.timer);
+      if (pending.timer) window.clearTimeout(pending.timer);
       if (message.error) pending.reject(this.formatResponseError(message, pending));
       else pending.resolve(message.result);
     }
@@ -144,7 +146,7 @@ export abstract class JsonRpcStdioTransport {
 
   private rejectAll(error: Error): void {
     for (const pending of this.pending.values()) {
-      if (pending.timer) clearTimeout(pending.timer);
+      if (pending.timer) window.clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();

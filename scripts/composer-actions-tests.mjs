@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -32,7 +33,7 @@ if (process.argv.includes("--dom")) {
   const directory = path.join(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(process.env.HOME, "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021"), "composer-actions");
   await mkdir(directory, { recursive: true });
   const outfile = path.join(directory, "composer-actions-tests.mjs");
-  await esbuild.build({
+  await esbuild.build({ banner: desktopNodeTestBanner,
     stdin: { contents: 'import {runComposerActionTests} from "./src/tests/composer-actions"; await runComposerActionTests(); console.log("Composer actions: PASS");', resolveDir: rootDir, loader: "ts" },
     bundle: true, platform: "node", target: "node22", format: "esm", outfile,
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },

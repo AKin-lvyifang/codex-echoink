@@ -1,7 +1,7 @@
-import { createHash, randomBytes } from "node:crypto";
-import * as fsp from "node:fs/promises";
-import { homedir } from "node:os";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopOs, getDesktopPath } from "../platform/desktop-paths";
+
 import { validVaultId } from "../storage/vault-identity";
 import {
   DurableAppendOnlyCasError,
@@ -9,6 +9,12 @@ import {
   resolveDurablePlainRoot,
   writeDurableNewFile
 } from "../harness/storage/durable-append-only-cas";
+
+const { createHash, randomBytes } = getDesktopCrypto();
+
+const fsp = getDesktopFsPromises();
+const { homedir } = getDesktopOs();
+const path = getDesktopPath();
 
 const DEVICE_ID_FILE = "device-id-v1";
 const SCOPE_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;

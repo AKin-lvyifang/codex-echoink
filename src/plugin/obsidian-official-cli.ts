@@ -1,8 +1,14 @@
-import * as path from "node:path";
-import { access, realpath } from "node:fs/promises";
-import { constants } from "node:fs";
-import { homedir } from "node:os";
-import { execFile } from "node:child_process";
+import { getDesktopPath, getDesktopOs } from "../platform/desktop-paths";
+import { getDesktopFsPromises, getDesktopFs } from "../platform/desktop-filesystem";
+
+import { getDesktopChildProcess } from "../platform/desktop-process";
+
+const { execFile } = getDesktopChildProcess();
+
+const path = getDesktopPath();
+const { access, realpath } = getDesktopFsPromises();
+const { constants } = getDesktopFs();
+const { homedir } = getDesktopOs();
 
 export interface ObsidianCliProcessResult {
   status: "completed" | "failed" | "cancelled" | "truncated" | "unavailable";

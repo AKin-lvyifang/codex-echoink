@@ -1,17 +1,23 @@
 import { extractKnowledgeLinks, extractKnowledgeApplicability, resolveKnowledgeLink, type KnowledgeLink, type KnowledgeApplicability, type KnowledgeLinkResolver, type KnowledgeRelation, type KnowledgeRelationPage } from "./knowledge-relations";
 import { locateKnowledgeAnchor } from "./search/markdown-navigation";
 import type { KnowledgeAnchorLocation } from "./search/contracts";
-import { knowledgeRootRole, knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, knowledgePathPolicy, getKnowledgeFolderBindings } from "./root-paths";
+import { knowledgeRolePath, knowledgeRoleRoots, resolveKnowledgePath, knowledgePathRole, getKnowledgeFolderBindings } from "./root-paths";
 import { isRawMarkdownPath, rawDigestFingerprint } from "./raw-digest";
-import { createHash } from "node:crypto";
-import { createReadStream, type Stats } from "node:fs";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { isMissingPathError, writeFileAtomic } from "./utils";
 import { readKnowledgeLinkingDocument } from "./knowledge-linking";
 import type { KnowledgeLinkingDocument } from "./knowledge-linking-types";
 import type { KnowledgeSearchKind } from "./search/contracts";
 import type { KnowledgeBodySearchPort } from "./vault-body-search";
+
+const { createHash } = getDesktopCrypto();
+
+const { createReadStream } = getDesktopFs();
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 export const KNOWLEDGE_AGENT_INDEX_SCHEMA_VERSION = 1 as const;
 export const KNOWLEDGE_AGENT_INDEX_FILE = "index-v1.json" as const;
@@ -439,7 +445,7 @@ export class KnowledgeAgentIndex {
       const current = await this.read({ vaultRelativePath: entry.vaultRelativePath, expectedContentRevision: entry.contentRevision });
       yield readKnowledgeLinkingDocument(current.vaultRelativePath, current.content, current.contentRevision);
       processed += 1;
-      if (processed % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (processed % 16 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
     }
   }
 
@@ -578,7 +584,7 @@ export class KnowledgeAgentIndex {
       const files = (await Promise.all(knowledgeRoleRoots(vaultRoot, kind).map((root) => walkKnowledgeRoot(vaultRoot, kind, root)))).flat();
       for (const file of files) {
         scannedCount += 1;
-        if (scannedCount % 16 === 0) await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (scannedCount % 16 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         if (knowledgePathRole(vaultRoot, file.vaultRelativePath) !== kind) continue;
         const oldEntry = previous.entries[file.vaultRelativePath];
         if (oldEntry?.relationSchema === 2 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
@@ -717,7 +723,7 @@ async function buildCandidateEntry(
   file: Readonly<{
     absolutePath: string;
     vaultRelativePath: string;
-    stat: Stats;
+    stat: import("node:fs").Stats;
   }>,
   kind: KnowledgeAgentKind,
   vaultRoot = ""
@@ -758,7 +764,7 @@ async function walkKnowledgeRoot(
 ): Promise<Array<{
   absolutePath: string;
   vaultRelativePath: string;
-  stat: Stats;
+  stat: import("node:fs").Stats;
 }>> {
   const rootPath = path.join(vaultRoot, actualRoot);
   const rootStat = await fsp.lstat(rootPath).catch((error) => {
@@ -775,7 +781,7 @@ async function walkKnowledgeRoot(
   const files: Array<{
     absolutePath: string;
     vaultRelativePath: string;
-    stat: Stats;
+    stat: import("node:fs").Stats;
   }> = [];
   const walk = async (directoryPath: string): Promise<void> => {
     const entries = await fsp.readdir(directoryPath, { withFileTypes: true });
@@ -1260,7 +1266,7 @@ function sameEntry(
 
 function metadataMatches(
   entry: StoredKnowledgeEntry,
-  stat: Stats
+  stat: import("node:fs").Stats
 ): boolean {
   return entry.size === stat.size
     && Math.abs(entry.mtimeMs - stat.mtimeMs) < 1

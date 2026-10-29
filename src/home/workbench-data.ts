@@ -1,6 +1,7 @@
 import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
-import * as fsp from "node:fs/promises";
-import * as path from "node:path";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { getDesktopPath } from "../platform/desktop-paths";
+
 import { TFile, TFolder, type EventRef } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
@@ -8,7 +9,7 @@ import { hasProPluginAccess } from "../membership/access";
 import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeLinkHealthService, validWorkbenchBindingRoots, type KnowledgeLinkHealth } from "../knowledge-base/link-health";
 import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecordFromMarkdown, readRawDigestRegistry, type RawDigestFrontmatterRecord } from "../knowledge-base/raw-digest";
-import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
+
 import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-record";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
 import type { KnowledgeActivitySource } from "../knowledge-base/maintenance-activity";
@@ -18,6 +19,9 @@ import { journalContentLines, readWorkbenchJournalDay, recordWorkbenchJournalTem
 import { calculateWorkbenchSignals, nextWorkbenchRefreshAt, type WorkbenchFacts, type WorkbenchSourceFile } from "./workbench-signals";
 import { getWorkbenchRecordStore, localWorkbenchDate, validWorkbenchDate, workbenchFingerprint, workbenchWeekKey, type WorkbenchRecordStore, type WorkbenchRecords } from "./workbench-records";
 import type { WorkbenchDataPort, WorkbenchSnapshot, WorkbenchTaskSource } from "./workbench-types";
+
+const fsp = getDesktopFsPromises();
+const path = getDesktopPath();
 
 type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest" | "accountService" | "lifestyle" | "pdfReading" | "getVaultPath" | "getPluginDataDirName" | "listPiConversations" | "readPiConversationCatalogEntry" | "getKnowledgeSurfaceService"> & {
   getKnowledgeActivitySource?(): KnowledgeActivitySource | undefined;
@@ -312,7 +316,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         const resolution = resolveMaintenanceSourceState(content, { fingerprint: () => cached.rawFingerprint, registry: registry.entries[file.path], maintenance: latest.get(file.path), previous: this.plugin.settings.knowledgeBase.processedSources[file.path] });
         if (resolution.state !== "digested") result.push({ path: file.path, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
-      if (++batch % 32 === 0) await new Promise<void>(resolve => setTimeout(resolve, 0));
+      if (++batch % 32 === 0) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     return result;
   }

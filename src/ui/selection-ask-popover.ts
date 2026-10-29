@@ -1,18 +1,19 @@
+import { ownedDiv } from "./owned-dom";
 import { setIcon } from "obsidian";
 export interface SelectionAskMenuAction { id: string; name: string; template: string }
 export function createSelectionAskPopover(doc: Document, rect: DOMRect, actions: readonly SelectionAskMenuAction[], onChoose: (action: SelectionAskMenuAction) => void, onClose: () => void): { close(): void; reposition(rect: DOMRect): void } {
   const win = doc.defaultView!;
-  const menu = doc.createElement("div"); menu.className = "echoink-selection-menu";
+  const menu = ownedDiv(doc); menu.className = "echoink-selection-menu";
   const english = actions[0]?.name === "Ask";
   menu.classList.toggle("is-dark", doc.body.classList.contains("theme-dark")); menu.setAttribute("role", "toolbar");
   menu.setAttribute("aria-label", english ? "Selection Ask" : "选文提问");
   const makeButton = (action: SelectionAskMenuAction) => {
-    const button = doc.createElement("button"); button.type = "button";
-    const icon = doc.createElement("span"); icon.setAttribute("aria-hidden", "true"); setIcon(icon, "pencil"); button.append(icon, doc.createTextNode(action.name));
+    const button = menu.createEl("button", { attr: { type: "button" } });
+    const icon = button.createSpan({ attr: { "aria-hidden": "true" } }); setIcon(icon, "pencil"); button.append(doc.createTextNode(action.name));
     button.onclick = () => { const frozen = { ...action }; close(); onChoose(frozen); }; return button;
   };
   menu.addEventListener("mousedown", (event) => event.preventDefault());
-  actions.forEach((action) => menu.append(makeButton(action)));
+  actions.forEach(makeButton);
   menu.addEventListener("keydown", (event) => {
     if (event.key === "Escape") { event.preventDefault(); close(); onClose(); }
     const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>("button"));

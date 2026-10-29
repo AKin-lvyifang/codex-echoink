@@ -1,3 +1,4 @@
+import { watchImeComposition } from "../ime-composition";
 import { mountKnowledgeActivityProgress, mountKnowledgeLinkingProgress } from "./knowledge-linking-progress";
 import { setIcon, type Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
@@ -54,6 +55,7 @@ export interface CodexViewShellHost extends Component {
 }
 
 export function renderViewShell(host: CodexViewShellHost): void {
+  host.register(watchImeComposition(host.contentEl));
   host.knowledgeLinkingProgressDispose?.();
   host.knowledgeLinkingProgressDispose = undefined;
   host.contentEl.empty();
@@ -90,9 +92,9 @@ export function renderViewShell(host: CodexViewShellHost): void {
   host.register(() => host.knowledgeLinkingProgressDispose?.());
   host.messagesEl = messagesShell.createDiv({ cls: "codex-messages" });
   host.virtualListEl = host.messagesEl.createDiv({ cls: "codex-virtual-list" });
-  host.registerDomEvent(host.messagesEl, "wheel", (event) => host.messageScrollFollow.handleWheel(event as WheelEvent));
-  host.registerDomEvent(host.messagesEl, "touchstart", (event) => host.messageScrollFollow.handleTouchStart(event as TouchEvent));
-  host.registerDomEvent(host.messagesEl, "touchmove", (event) => host.messageScrollFollow.handleTouchMove(event as TouchEvent));
+  host.registerDomEvent(host.messagesEl, "wheel", (event) => host.messageScrollFollow.handleWheel(event));
+  host.registerDomEvent(host.messagesEl, "touchstart", (event) => host.messageScrollFollow.handleTouchStart(event));
+  host.registerDomEvent(host.messagesEl, "touchmove", (event) => host.messageScrollFollow.handleTouchMove(event));
   host.registerDomEvent(host.messagesEl, "scroll", () => host.handleMessagesScroll());
   host.turnNavigatorEl = messagesShell.createDiv({ cls: "codex-turn-nav-mount" });
   host.jumpToLatestEl = messagesShell.createEl("button", {
@@ -148,10 +150,15 @@ export function refreshViewShellCopy(host: CodexViewShellHost): void {
 /** Keep the same mounted progress and subscription below the real task header. */
 export function moveKnowledgeProgressToTaskDetail(messagesShell: HTMLElement, taskDetail: HTMLElement): void {
   const slot = Array.from(messagesShell.children).find(node => node.classList.contains("echoink-knowledge-activity-slot"));
-  if (slot) taskDetail.append(slot);
+  if (slot) {
+    taskDetail.append(slot);
+    messagesShell.classList.remove("has-knowledge-activity-slot");
+    taskDetail.classList.add("has-knowledge-activity-slot");
+  }
 }
 
 function mountKnowledgeProgress(host: CodexViewShellHost, mount: HTMLElement): void {
+  mount.parentElement?.classList.add("has-knowledge-activity-slot");
   host.knowledgeLinkingProgressDispose?.();
   host.knowledgeLinkingProgressDispose = undefined;
   const source = host.plugin.getKnowledgeActivitySource();

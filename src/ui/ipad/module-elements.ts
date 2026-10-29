@@ -1,5 +1,4 @@
 import type { MobileShellPage } from "../mobile/shell-types";
-import type { MobileModuleId } from "../../mobile/module-contracts";
 import type { IPadPageContext } from "./workbench-contract";
 import { ipadElement as el, ipadIcon, ipadAvatar } from "./workbench-elements";
 

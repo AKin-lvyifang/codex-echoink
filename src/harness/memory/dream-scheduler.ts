@@ -52,9 +52,9 @@ export class DreamScheduler {
   /** Start the heartbeat. Idempotent. */
   start(): void {
     if (this.disposed || this.timer !== null) return;
-    const handle = setInterval(() => {
+    const handle = window.setInterval(() => {
       void this.tick();
-    }, HEARTBEAT_MS) as unknown as number;
+    }, HEARTBEAT_MS);
     this.timer = handle;
     this.deps.registerInterval(handle);
   }
@@ -62,7 +62,7 @@ export class DreamScheduler {
   /** Stop the heartbeat (dreaming off or plugin unloading). */
   stop(): void {
     if (this.timer !== null) {
-      clearInterval(this.timer);
+      window.clearInterval(this.timer);
       this.timer = null;
     }
   }

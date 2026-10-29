@@ -1,5 +1,6 @@
-import { createHash } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
+import { getDesktopCrypto } from "../../platform/desktop-crypto";
+import { getDesktopUtil } from "../../platform/desktop-runtime";
+
 import {
   defineTool,
   type AgentToolResult,
@@ -19,6 +20,9 @@ import {
 } from "../../types/conversation-turn";
 import type { PiTurnInteractionBroker } from "../../plugin/pi-turn-interaction-broker";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
+
+const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 
 export const PI_USER_QUESTION_TOOL_ID = "user_question" as const;
 

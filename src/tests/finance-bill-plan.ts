@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { paidTestAccess } from "./membership-access";
 import assert from "node:assert/strict";
 import * as fsp from "node:fs/promises";
@@ -113,6 +114,7 @@ export async function runFinanceBillPlanTests(): Promise<void> {
 
 /** Real jsdom nodes and Origin/Radix checkboxes; the financial host remains in memory. */
 export async function runFinanceBillPlanDomTests(win: Window & typeof globalThis): Promise<void> {
+  installObsidianDom(win);
   const create = function(this: HTMLElement, tag: string, options: any = {}) {
     if (typeof options === "string") options = { cls: options };
     const el = this.ownerDocument.createElement(tag);

@@ -1,4 +1,6 @@
-import * as fsp from "fs/promises";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+
+const fsp = getDesktopFsPromises();
 
 export const DEFAULT_KNOWLEDGE_BASE_MAX_FILE_READ_BYTES = 262_144;
 export const DEFAULT_KNOWLEDGE_BASE_MAX_TOTAL_READ_BYTES = 2_097_152;

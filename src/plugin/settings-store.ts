@@ -1,7 +1,7 @@
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { runErrors } from "../run-reports/recent-errors";
 import { Notice, Platform } from "obsidian";
-import path from "node:path";
+import { getDesktopPath } from "../platform/desktop-paths";
 import { migrateLegacyAgentRegistry, synchronizeLegacyAgentIdentity } from "../agents/migration";
 import { pluginDataDir } from "./plugin-data-paths";
 import type CodexForObsidianPlugin from "../main";
@@ -15,14 +15,14 @@ import {
   sanitizeCredentialSettingsForDataSave,
   type ChatMessage,
   type ApiProviderConfig,
-  type CodexForObsidianSettings,
-  type KnowledgeBaseSettings,
-  type StoredSession
+  type CodexForObsidianSettings
 } from "../settings/settings";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
 import { isEmptyEchoInkPluginData } from "../settings/onboarding";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootDirectories, migrateKnowledgeFolderBindings, preferExistingBilingualKnowledgeDefaults, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+
+const path = getDesktopPath();
 export { ResourceMutationError, resourceMutationRollbackIsSafe } from "./resource-mutation-authority";
 
 export interface SettingsSaveOptions {
@@ -84,7 +84,7 @@ export class SettingsPersistenceError extends Error {
 }
 
 export class EchoInkSettingsStore {
-  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  private saveTimer: number | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
   private resourceMutationTail: Promise<void> = Promise.resolve();
   private rawWrites = new Set<Promise<void>>();
@@ -147,14 +147,14 @@ export class EchoInkSettingsStore {
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
     if (force) {
       if (this.saveTimer) {
-        clearTimeout(this.saveTimer);
+        window.clearTimeout(this.saveTimer);
         this.saveTimer = null;
       }
       await this.flushSettingsSave(options);
       return;
     }
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => {
+    this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
       // flushSettingsSave already emits one redacted diagnostic and Notice.
       void this.flushSettingsSave().catch(() => undefined);
@@ -393,7 +393,7 @@ export class EchoInkSettingsStore {
           // A later retry that did not commit cannot prove the earlier partial
           // write harmless. Preserve that status for transactional callers.
           if (delay === undefined) throw uncertainError ?? error;
-          await new Promise<void>(resolve => setTimeout(resolve, delay));
+          await new Promise<void>(resolve => window.setTimeout(resolve, delay));
         }
       }
     });

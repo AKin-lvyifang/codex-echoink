@@ -1,3 +1,4 @@
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -9,7 +10,7 @@ import esbuild from "esbuild";
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 // This suite never opens Obsidian or reads a Provider configuration.
 const fixtureParent = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/工作台可靠性-20261021"), ["ECHOINK_WORKBENCH_TEST_ROOT"]);
-const bundle = await esbuild.build({
+const bundle = await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: { contents: `
     export * from "./src/ui/turn-watchdog";
     export { armTurnWatchdog, clearTurnWatchdog } from "./src/ui/codex-view/turn-lifecycle";

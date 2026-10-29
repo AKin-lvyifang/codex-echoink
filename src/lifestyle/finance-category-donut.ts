@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 import { money } from "./finance-domain";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 
@@ -7,7 +8,7 @@ export function financeCategoryDonut(parent: HTMLElement, items: readonly Financ
 }) {
   const total = items.reduce((sum, item) => sum + item.amountCents, 0);
   const ring = parent.createDiv({ cls: `echoink-finance-donut-wrap${options.bill ? " echoink-finance-bill-donut" : ""}` });
-  const svg = parent.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const svg = ownedSvg(parent.ownerDocument, "svg");
   svg.setAttribute("viewBox", "0 0 200 200"); svg.setAttribute("class", "echoink-finance-donut-svg"); svg.setAttribute("role", "group"); svg.setAttribute("aria-label", options.label); ring.appendChild(svg);
   const center = ring.createDiv({ cls: "echoink-finance-donut-center" });
   const name = center.createEl("small"); const amount = center.createEl("strong"); const percent = center.createEl("small");
@@ -30,7 +31,7 @@ export function financeCategoryDonut(parent: HTMLElement, items: readonly Financ
   let offset = 0;
   for (const item of items) {
     const portion = total ? item.amountCents / total * 100 : 0;
-    const sector = parent.ownerDocument.createElementNS(svg.namespaceURI, "circle") as SVGCircleElement;
+    const sector = ownedSvg(parent.ownerDocument, "circle");
     for (const [key, value] of Object.entries({ cx: 100, cy: 100, r: 78, pathLength: 100, "stroke-dasharray": `${portion} ${100 - portion}`, "stroke-dashoffset": -offset, stroke: item.color,
       class: `echoink-finance-donut-sector${options.bill ? " echoink-finance-bill-category-target" : ""}`, role: "button", tabindex: 0, "data-category": item.category,
       "aria-label": `${item.category || "未分类"}，¥ ${money(item.amountCents)}，占 ${portion.toFixed(1)}%` })) sector.setAttribute(key, String(value));

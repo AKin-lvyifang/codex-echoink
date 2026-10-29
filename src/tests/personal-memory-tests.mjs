@@ -87,6 +87,7 @@ await esbuild.build({
   platform: "node",
   target: "node22",
   format: "esm",
+  banner: { js: `import { createRequire as createMemoryTestRequire } from "node:module"; const require = createMemoryTestRequire(${JSON.stringify(path.join(rootDir, "package.json"))});` },
   plugins: [runtimeDependencyPlugin, {
     name: "personal-memory-obsidian-stub",
     setup(build) {

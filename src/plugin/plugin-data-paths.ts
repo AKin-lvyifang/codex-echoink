@@ -1,5 +1,9 @@
-import * as path from "node:path";
-import * as fsp from "node:fs/promises";
+import { getDesktopPath } from "../platform/desktop-paths";
+import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+
+
+const path = getDesktopPath();
+const fsp = getDesktopFsPromises();
 
 export const CURRENT_PLUGIN_ID = "codex-echoink";
 

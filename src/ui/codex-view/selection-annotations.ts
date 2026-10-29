@@ -1,3 +1,4 @@
+import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Scope, setIcon, type App } from "obsidian";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -15,32 +16,30 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
   cleanups.get(host)?.();
   if (!annotations.length) return;
   let doc = host.ownerDocument, win = doc.defaultView!;
-  const wrapper = doc.createElement("div"); wrapper.className = "echoink-annotation-summary"; host.append(wrapper);
-  const trigger = doc.createElement("button"); trigger.type = "button"; trigger.className = "echoink-annotation-trigger";
-  trigger.textContent = conversationUiText(language, `${annotations.length}条注释`, `${annotations.length} annotation${annotations.length === 1 ? "" : "s"}`);
-  trigger.setAttribute("aria-expanded", "false"); trigger.setAttribute("aria-haspopup", "dialog"); wrapper.append(trigger);
-  const panel = doc.createElement("div"); panel.className = "echoink-annotation-popover"; panel.hidden = true;
+  const wrapper = host.createDiv({ cls: "echoink-annotation-summary" });
+  const trigger = wrapper.createEl("button", { cls: "echoink-annotation-trigger", text: conversationUiText(language, `${annotations.length}条注释`, `${annotations.length} annotation${annotations.length === 1 ? "" : "s"}`), attr: { type: "button", "aria-expanded": "false", "aria-haspopup": "dialog" } });
+  const panel = ownedDiv(doc); panel.className = "echoink-annotation-popover"; panel.hidden = true;
   panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", conversationUiText(language, "引用片段", "Selected passages"));
   for (const annotation of annotations) {
-    const card = doc.createElement("div"); card.className = "echoink-annotation-card"; panel.append(card);
-    const header = doc.createElement("div"); header.className = "echoink-annotation-card-header"; card.append(header);
-    const number = doc.createElement("span"); number.className = "echoink-annotation-number"; number.textContent = String(annotation.number); header.append(number);
-    const source = doc.createElement("button"); source.type = "button"; source.className = "echoink-annotation-source"; source.textContent = annotation.fileName;
-    source.onclick = () => actions.onSource(annotation); header.append(source);
+    const card = panel.createDiv({ cls: "echoink-annotation-card" });
+    const header = card.createDiv({ cls: "echoink-annotation-card-header" });
+    header.createSpan({ cls: "echoink-annotation-number", text: String(annotation.number) });
+    const source = header.createEl("button", { cls: "echoink-annotation-source", text: annotation.fileName, attr: { type: "button" } });
+    source.onclick = () => actions.onSource(annotation);
     attachNativeTooltip(source, annotation.vaultRelativePath);
-    const controls = doc.createElement("span"); controls.className = "echoink-annotation-actions"; header.append(controls);
+    const controls = header.createSpan({ cls: "echoink-annotation-actions" });
     const button = (icon: string, zh: string, en: string, run: () => void) => {
-      const element = doc.createElement("button"); element.type = "button"; element.setAttribute("aria-label", conversationUiText(language, zh, en));
-      setIcon(element, icon); element.onclick = run; controls.append(element);
+      const element = controls.createEl("button", { attr: { type: "button", "aria-label": conversationUiText(language, zh, en) } });
+      setIcon(element, icon); element.onclick = run;
     };
     if (actions.onEdit) button("pencil", "编辑问题", "Edit question", () => actions.onEdit!(annotation.id));
     if (actions.onRemove) button("x", "移除注释", "Remove annotation", () => actions.onRemove!(annotation.id));
-    if (annotation.anchor.invalid || annotation.anchor.unresolved) { const hint = doc.createElement("div"); hint.className = "echoink-annotation-invalid"; hint.textContent = conversationUiText(language, "原文位置已变化", "The source position has changed"); card.append(hint); }
-    const text = doc.createElement("div"); text.className = "echoink-annotation-text"; text.textContent = annotation.selectedText; card.append(text);
+    if (annotation.anchor.invalid || annotation.anchor.unresolved) card.createDiv({ cls: "echoink-annotation-invalid", text: conversationUiText(language, "原文位置已变化", "The source position has changed") });
+    card.createDiv({ cls: "echoink-annotation-text", text: annotation.selectedText });
   }
   if (actions.onRemoveAll) {
-    const remove = doc.createElement("button"); remove.type = "button"; remove.className = "echoink-annotation-remove-all";
-    remove.textContent = conversationUiText(language, "移除全部", "Remove all"); remove.onclick = () => actions.onRemoveAll?.(); panel.append(remove);
+    const remove = panel.createEl("button", { cls: "echoink-annotation-remove-all", text: conversationUiText(language, "移除全部", "Remove all"), attr: { type: "button" } });
+    remove.onclick = () => actions.onRemoveAll?.();
   }
   let timer: number | undefined, timerWindow: typeof win | undefined, observer: MutationObserver | undefined, suppressed = false;
   let openDocument: Document | null = null, openWindow: typeof win | null = null, escapeScope: Scope | null = null;
