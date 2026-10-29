@@ -56,7 +56,7 @@ export class DesktopMemorySettings {
       attachSettingsHelpTooltip(help, zh ? "Obsidian 打开且空闲时整理已有记忆；关闭后保留原内容。" : "Consolidate memories while Obsidian is open and idle. Turning this off preserves existing content.");
       check.onchange = () => { const value = check.checked, old = m.dreamEnabled; void this.save(() => { m.dreamEnabled = value; }, () => { m.dreamEnabled = old; }); };
       if (m.dreamEnabled) {
-        const options = content.createDiv({ cls: "echoink-dream-options" });
+        const options = content.closest(".echoink-settings-aligned") ? content : content.createDiv({ cls: "echoink-dream-options" });
         const row = applySettingsRow(new OriginSetting(options).setName(zh ? "每日整理次数" : "Runs per day"));
         row.controlEl.addClass("general-range");
         const output = row.controlEl.createEl("output", { text: zh ? `${m.dreamRunsPerDay} 次/天` : `${m.dreamRunsPerDay}/day` });

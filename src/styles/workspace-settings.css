@@ -1050,7 +1050,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause{display:block;min-width:0}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-text{gap:10px;font-size:calc(var(--font-text-size,16px)*.6875);line-height:1.85}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-details{grid-template-columns:max-content minmax(0,1fr);gap:8px 12px}
-.echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-detail{display:contents}
 .echoink-settings-demo .echoink-knowledge-init-recovery :is(.echoink-knowledge-init-pause-label,.echoink-knowledge-init-pause-value){font-size:inherit;line-height:inherit;min-width:0}
 .echoink-settings-demo .echoink-knowledge-init-recovery ul.echoink-knowledge-init-pause-value{margin:0;padding-inline-start:1.2em;list-style:disc}
 .echoink-settings-demo .echoink-knowledge-init-recovery .echoink-knowledge-init-pause-label{font-weight:500}

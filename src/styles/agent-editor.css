@@ -25,7 +25,11 @@
 .echoink-agent-editor-section, .echoink-agent-editor-resources, .echoink-agent-editor-identity { display: flex; flex-direction: column; min-width: 0; gap: 6px; }
 .echoink-agent-editor-identity > .echoink-agent-editor-label { margin-top: 8px; }
 .echoink-agent-editor .echoink-agent-editor-section-title, .echoink-agent-editor-label { margin: 0; font-size: 12px; font-weight: 400; color: var(--agent-editor-muted); }
-.echoink-agent-editor-resource-group, .echoink-agent-editor-resource-section { display: contents; }
+.echoink-agent-editor-resource-group, .echoink-agent-editor-resource-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 6px; }
 body:not(.is-mobile) .echoink-agent-editor .echoink-agent-editor-major > .echoink-agent-editor-section-title { font-size: 14px; font-weight: 600; color: var(--agent-editor-text); }
 body:not(.is-mobile) .echoink-agent-editor-resources { padding-top: 8px; }
 body:not(.is-mobile) .echoink-agent-editor-resource-group { display: flex; flex-direction: column; min-width: 0; gap: 14px; padding: 12px; border-radius: 8px; background: var(--agent-editor-hover); }
@@ -75,7 +79,7 @@ body:not(.is-mobile) .echoink-agent-editor-ownership { color: var(--text-faint, 
 .echoink-agent-editor-avatar-preview { flex: 0 0 26px; width: 26px; height: 26px; object-fit: contain; border-radius: 50%; }
 .echoink-agent-editor-avatar-grid-inner { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
 .echoink-agent-editor-avatar-grid { max-width: 400px; }
-.echoink-agent-editor-identity > .echoink-agent-editor-section > .echoink-origin-control[data-slot=button] { align-self: flex-start; }
+:is(.echoink-agent-editor-identity > .echoink-agent-editor-section, .echoink-agent-editor-avatar-field) > .echoink-origin-control[data-slot=button] { align-self: flex-start; }
 .echoink-agent-editor-avatar-option { position: relative; display: flex; align-items: center; justify-content: center; min-width: 0; cursor: pointer; border-radius: 50%; padding: 3px; }
 .echoink-agent-editor-avatar-option img { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 50%; pointer-events: none; }
 .echoink-agent-editor :is(.echoink-agent-editor-preset,.echoink-agent-editor-avatar-option):is(:hover,.has-echoink-checked-control,.has-echoink-visible-focus) { background: var(--agent-editor-hover); }

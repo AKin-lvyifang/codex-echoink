@@ -637,7 +637,7 @@ async function assertAnimatedSettingsTabIcons(): Promise<void> {
   }
   assert.match(
     css,
-    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.codex-settings-tab-icon\.is-animating svg[\s\S]*animation:\s*none !important;/u
+    /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.codex-settings-tab-icon\.is-animating svg[\s\S]*--echoink-motion-animation:\s*none;/u
   );
   tab.hide();
 }
@@ -913,7 +913,7 @@ function assertMemoryComposerVisualCssContract(): void {
     "the stop action uses the pinned AnimateIcons circle-stop motion"
   );
   assert.doesNotMatch(css, /codex-composer-send-icon-confirm/u);
-  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?animation:\s*none\s*!important/u);
+  assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*?--echoink-motion-animation:\s*none/u);
 }
 
 async function assertProviderTextGenerationCompletionContract(): Promise<void> {

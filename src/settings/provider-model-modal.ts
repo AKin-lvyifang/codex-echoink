@@ -356,12 +356,12 @@ export class ProviderModelModal extends Modal {
     if (aligned) this.addOptionalHelp(connectionHeading, connectionTitle, connectionDescription);
     else connectionCopy.createEl("p", { text: connectionDescription });
     connectionHeader.createSpan({ cls: "codex-provider-protocol-pill", text: protocolPill(this.draft.apiProtocol) });
-    const connectionFields = connection.createDiv({ cls: "provider-connection-grid" });
+    const connectionFields = aligned ? connection : connection.createDiv({ cls: "provider-connection-grid" });
     this.renderProviderPicker(connectionFields, providerId);
     this.renderProviderNameField(connectionFields);
 
     if (providerId === "custom") {
-      this.renderCustomForm(connection);
+      this.renderCustomForm(connection, aligned);
     } else {
       if (providerId !== "openai-codex") {
         const endpoint = connection.createDiv({ cls: "codex-provider-endpoint-summary" });
@@ -1748,14 +1748,15 @@ export class ProviderModelModal extends Modal {
     );
   }
 
-  private renderCustomForm(container: HTMLElement): void {
-    const fields = container.createDiv({ cls: "provider-connection-grid" });
+  private renderCustomForm(container: HTMLElement, aligned: boolean): void {
+    const fields = aligned ? container : container.createDiv({ cls: "provider-connection-grid" });
     const endpointId = this.controlId("endpoint");
     const endpoint = this.createField(
       fields,
       this.label("接口地址", "Endpoint URL"),
       endpointId
     );
+    if (aligned) endpoint.addClass("provider-field-group-start");
     const endpointInput = createOriginInput(endpoint, {
       cls: "codex-provider-modal-input",
       attr: {
