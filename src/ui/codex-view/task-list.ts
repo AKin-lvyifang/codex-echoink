@@ -6,7 +6,7 @@ import { createOriginButton, disposeOriginControls } from "../../settings/origin
 import { renderTaskAvatar, taskIconButton } from "./agent-roster";
 
 export function renderAgentTaskList(root: HTMLElement, agent: AgentDefinition, entries: readonly TaskEntry[], sessions: readonly StoredSession[],
-  actions: { onTask(id: string): void; onEdit(): void; onSessionMenu?(event: MouseEvent, session: StoredSession): void; summary?(entry: TaskEntry): string | undefined; status?(entry: TaskEntry): string | undefined }, now = Date.now(), language: SettingsLanguage = "zh-CN"): void {
+  actions: { onTask(id: string): void; onEdit(): void; onTaskMenu?(event: MouseEvent, taskId: string): void; onSessionMenu?(event: MouseEvent, session: StoredSession): void; summary?(entry: TaskEntry): string | undefined; status?(entry: TaskEntry): string | undefined }, now = Date.now(), language: SettingsLanguage = "zh-CN"): void {
   const prior = root.querySelector<HTMLElement>(".echoink-task-list-items");
   const scrollTop = prior?.scrollTop ?? 0;
   const focused = root.contains(root.ownerDocument.activeElement) ? (root.ownerDocument.activeElement as HTMLElement)?.dataset.taskId : undefined;
@@ -39,7 +39,8 @@ export function renderAgentTaskList(root: HTMLElement, agent: AgentDefinition, e
       button.createSpan({ cls: "echoink-task-card-summary", text: summary });
       button.onclick = () => actions.onTask(entry.conversationId);
       const session = sessions.find(session => session.id === entry.conversationId);
-      if (session && actions.onSessionMenu) button.oncontextmenu = event => actions.onSessionMenu?.(event, session);
+      if (actions.onTaskMenu) button.oncontextmenu = event => actions.onTaskMenu?.(event, entry.conversationId);
+      else if (session && actions.onSessionMenu) button.oncontextmenu = event => actions.onSessionMenu?.(event, session);
     }
   }
   list.scrollTop = scrollTop;

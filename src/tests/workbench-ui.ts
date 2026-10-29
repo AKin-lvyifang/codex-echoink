@@ -203,7 +203,12 @@ export async function runWorkbenchUiTests(): Promise<void> {
     Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
     assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 6, "default/unconfigured modules remain discoverable independently of snapshot.modules");
     Object.assign(host.settings, configured); await view.refresh();
-    for (const id of ["journal", "knowledge-base", "finance", "pdf-reading"] as const) {
+    for (const [id, destination] of [["journal", "journal"], ["knowledge-base", "knowledge"]] as const) {
+      await click(`module-${id}`);
+      assert.equal(content.querySelector('[data-wb="module-setup"]'), null, "basic modules open even without configured directories");
+      assert.deepEqual(calls.at(-1), [destination]);
+    }
+    for (const id of ["finance", "pdf-reading"] as const) {
       const before = calls.length; await click(`module-${id}`);
       const setup = content.querySelector<HTMLElement>(`[data-setup-module="${id}"]`)!;
       assert.ok(setup); assert.equal(setup.querySelectorAll(".is-primary").length, 1);

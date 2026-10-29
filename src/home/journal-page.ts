@@ -101,7 +101,6 @@ export class EchoInkJournalView extends ItemView {
       if (!this.active()) { this.pending = true; return; }
       const unchanged = this.snapshot && JSON.stringify(this.snapshot) === JSON.stringify(snapshot);
       this.snapshot = snapshot;
-      if (!snapshot.settings.available) { this.showUnavailable(); return; }
       if (unchanged && this.stats && this.statsDate === dateKey(new Date())) { disposeOriginControls(this.field("status")); this.field("status").empty(); return; }
       this.stats = journalStats(snapshot.records, snapshot.settings.folder, snapshot.settings.format);
       this.statsDate = dateKey(new Date());
@@ -173,12 +172,6 @@ export class EchoInkJournalView extends ItemView {
   }
   private iconButton(parent: HTMLElement, name: string, label: string, action: () => void | Promise<unknown>): void {
     const button = this.button(parent, "", action, "is-icon"); button.setAttribute("aria-label", label); setIcon(button, name);
-  }
-  private showUnavailable(): void {
-    this.stats = null; this.field("content").hidden = true;
-    const status = this.field("status"); disposeOriginControls(status); status.empty();
-    status.createSpan({ text: this.t("请先选择日记位置", "Choose a journal location first") });
-    this.button(status, this.t("设置日记位置", "Journal settings"), () => this.plugin.openEchoInkKnowledgeSettings());
   }
   private changeMonth(offset: number): void {
     this.month = new Date(this.month.getFullYear(), this.month.getMonth() + offset, 1);
@@ -298,6 +291,11 @@ export class EchoInkJournalView extends ItemView {
     if (known) { const preferred = this.dataService.existingJournalForDate(parseDate(this.selected)); await this.openPath(preferred?.path ?? known.path); return; }
     const existing = this.dataService.existingJournalForDate(parseDate(this.selected));
     if (existing) { await this.openPath(existing.path); return; }
+    if (!readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).available) {
+      new Notice(this.t("请先选择日记保存位置", "Choose a journal folder before creating a journal"));
+      await this.plugin.openWorkbenchModuleSettings("journal");
+      return;
+    }
     new JournalTemplateModal(this.app, { service: this.dataService, customTemplates: this.dataService.listCustomTemplates(), date: parseDate(this.selected), language: this.plugin.settings.settingsLanguage,
       englishEnabled: () => this.plugin.settings.englishDiary.enabled, englishAccess: this.plugin.accountService ?? undefined,
       onEnglish: this.plugin.settings.englishDiary.enabled ? async file => { await this.plugin.englishDiary?.openDiary(file.path); } : undefined,

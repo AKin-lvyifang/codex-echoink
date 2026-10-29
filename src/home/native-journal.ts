@@ -105,15 +105,18 @@ export function readNativeJournalSettings(app: App, legacyDirectory?: string, bi
   const nativeFolder = typeof daily.folder === "string" ? daily.folder : undefined;
   const nativeTemplates = typeof templates.folder === "string" ? templates.folder : undefined;
   const mapped = (role: "journal" | "templates") => bindings?.roles[role].enabled ? bindings.roles[role].writePath : null;
-  const folder = nativeFolder ?? (bindings ? mapped("journal") ?? "" : normalizeJournalDirectory(legacyDirectory));
-  const mappedFolder = mapped("journal");
+  // An empty native folder explicitly means the Vault root. A fallback is
+  // only a candidate location until its folder actually exists.
+  const folder = nativeFolder !== undefined
+    ? nativeFolder === "" || bindings ? nativeFolder : actualJournalPath(nativeFolder, roots)
+    : mapped("journal") ?? actualJournalPath(normalizeJournalDirectory(legacyDirectory), roots);
   const mappedTemplates = mapped("templates");
-  const available = nativeFolder !== undefined || !bindings || Boolean(mappedFolder && app.vault.getAbstractFileByPath(mappedFolder) instanceof TFolder);
+  const available = folder === "" ? nativeFolder !== undefined : app.vault.getAbstractFileByPath(folder) instanceof TFolder;
   const templatesFolder = nativeTemplates ?? (bindings ? mapped("templates") ?? "" : actualJournalPath(DEFAULT_TEMPLATES_DIRECTORY, roots));
   const template = bindings ? nonempty(daily.template) ?? "" : actualJournalPath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`, roots);
   return Object.freeze({
     available, templatesAvailable: nativeTemplates !== undefined || !bindings || Boolean(mappedTemplates && app.vault.getAbstractFileByPath(mappedTemplates) instanceof TFolder),
-    folder: bindings ? folder : actualJournalPath(nonempty(daily.folder) ?? normalizeJournalDirectory(legacyDirectory), roots),
+    folder,
     format: nonempty(daily.format) ?? DEFAULT_JOURNAL_DATE_FORMAT,
     template: !template ? "" : /\.md$/iu.test(template) ? template : `${template}.md`,
     templatesFolder,
@@ -124,7 +127,7 @@ export function readNativeJournalSettings(app: App, legacyDirectory?: string, bi
 
 export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null): string {
   const settings = readNativeJournalSettings(app, legacyDirectory, bindings);
-  if (!settings.available) throw new Error("请在知识库目录或 Obsidian 日记设置中选择日记位置。");
+  // Resolving a candidate path is read-only. Creation checks the actual folder.
   return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${moment(date).format(settings.format)}.md`);
 }
 
@@ -248,5 +251,6 @@ export async function initializeNativeJournal(app: App, legacyDirectory?: string
 }
 
 export async function saveNativeJournalFolder(app: App, folder: string): Promise<void> {
+  if (folder.trim()) await ensureFolder(app, folder);
   await updateCoreOptions(app, "daily-notes", { folder: folder.trim() === "" ? "" : relativePath(folder) }, false);
 }

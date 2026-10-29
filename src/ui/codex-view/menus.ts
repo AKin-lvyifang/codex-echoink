@@ -95,10 +95,15 @@ export interface ModelMenuCallbacks {
 }
 
 export interface SessionMenuCallbacks {
-  onRename: () => void;
-  onArchive: () => void;
-  onResetCache: () => void;
-  onDelete: () => void;
+  onRename?: () => void;
+  onArchive?: () => void;
+  onResetCache?: () => void;
+  onDelete?: () => void;
+  onStop?: () => void;
+  onResume?: () => void;
+  onRevoke?: () => void;
+  onRetrySave?: () => void;
+  onOpenSource?: () => void;
 }
 
 interface ComposerParameterOption {
@@ -274,36 +279,46 @@ export function closeComposerParameterMenu(): void {
 export function openSessionMenu(
   event: MouseEvent,
   callbacks: SessionMenuCallbacks,
-  language: SettingsLanguage = "zh-CN"
+  language: SettingsLanguage = "zh-CN",
+  options: { task?: boolean; document?: Document } = {}
 ): void {
   event.preventDefault();
   const menu = new Menu();
-  menu.addItem((item) =>
+  if (options.task) menu.setUseNativeMenu(false);
+  const add = (run: (() => void) | undefined, zh: string, en: string, icon: string) => {
+    if (run) menu.addItem(item => item.setTitle(conversationUiText(language, zh, en)).setIcon(icon).onClick(run));
+  };
+  add(callbacks.onStop, "停止", "Stop", "square");
+  add(callbacks.onResume, "继续", "Continue", "play");
+  add(callbacks.onRevoke, "撤销建议", "Revoke suggestion", "undo-2");
+  add(callbacks.onRetrySave, "重试保存", "Retry saving", "refresh-cw");
+  add(callbacks.onOpenSource, "查看正文", "Open source note", "file-text");
+  if (callbacks.onRename) menu.addItem((item) =>
     item
-      .setTitle(conversationUiText(language, "重命名会话", "Rename conversation"))
+      .setTitle(conversationUiText(language, options.task ? "重命名任务" : "重命名会话", options.task ? "Rename task" : "Rename conversation"))
       .setIcon("pencil")
-      .onClick(callbacks.onRename)
+      .onClick(callbacks.onRename!)
   );
-  menu.addItem((item) =>
+  if (callbacks.onArchive) menu.addItem((item) =>
     item
-      .setTitle(conversationUiText(language, "归档会话", "Archive conversation"))
+      .setTitle(conversationUiText(language, options.task ? "归档任务" : "归档会话", options.task ? "Archive task" : "Archive conversation"))
       .setIcon("archive")
-      .onClick(callbacks.onArchive)
+      .onClick(callbacks.onArchive!)
   );
-  menu.addItem((item) =>
+  if (callbacks.onResetCache) menu.addItem((item) =>
     item
       .setTitle(conversationUiText(language, "重置 Agent 缓存", "Reset Agent cache"))
       .setIcon("rotate-ccw")
-      .onClick(callbacks.onResetCache)
+      .onClick(callbacks.onResetCache!)
   );
-  menu.addItem((item) =>
+  if (callbacks.onDelete) menu.addItem((item) =>
     item
-      .setTitle(conversationUiText(language, "删除会话", "Delete conversation"))
+      .setTitle(conversationUiText(language, options.task ? "删除任务" : "删除会话", options.task ? "Delete task" : "Delete conversation"))
       .setIcon("trash")
       .setWarning(true)
-      .onClick(callbacks.onDelete)
+      .onClick(callbacks.onDelete!)
   );
-  showEchoInkMenu( (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
+  showEchoInkMenu(options.document ?? (event.currentTarget as HTMLElement | null)?.ownerDocument ?? document, () => menu.showAtMouseEvent(event));
 }
 
 export function renderSkillMatches(container: HTMLElement, query: string, state: SkillMatchesState, callbacks: SkillMatchesCallbacks): void {

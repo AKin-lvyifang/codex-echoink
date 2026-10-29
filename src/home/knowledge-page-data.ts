@@ -102,9 +102,9 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, loadLinks: 
   }
   const wiki = scans.find(scan => scan.directory.role === "wiki")!;
   const activity = aggregateKnowledgePageActivity(wiki.files, maintenanceHistory, now);
-  if (wiki.directory.state !== "ready") {
+  if (!["ready", "disabled", "unbound"].includes(wiki.directory.state)) {
     activity.weekly.added = null;
-    errors.activity = wiki.directory.state === "disabled" || wiki.directory.state === "unbound" ? "尚未设置知识成果位置" : "知识成果统计尚未更新";
+    errors.activity = "知识成果统计尚未更新";
   }
   if (errors.history) {
     activity.weekly.organized = null;

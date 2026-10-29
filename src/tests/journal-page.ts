@@ -9,6 +9,8 @@ import { HomeWorkbenchDataService } from "../home/home-workbench-data";
 import { journalMonthSelection, journalPageEntries, journalStats, journalSummary } from "../home/journal-stats";
 import { renderPhotoCalendar } from "../home/photo-calendar";
 import { EchoInkHomeView } from "../home/home-view";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { readNativeJournalSettings } from "../home/native-journal";
 
 export async function runJournalPageTests(root: string): Promise<void> {
   const dom = new JSDOM("<body><main></main></body>", { pretendToBeVisual: true });
@@ -112,6 +114,23 @@ export async function runJournalPageTests(root: string): Promise<void> {
   const oldStats = view.stats; service.buildJournalRecords = async () => { throw new Error("metadata unavailable"); }; await view.refresh();
   assert.equal(view.stats, oldStats); assert.match(view.field("status").textContent, /尚未更新/); service.buildJournalRecords = build;
   options.folder = "Other"; view.refreshIfSettingsChanged(); await Promise.resolve(); await Promise.resolve(); assert.equal(view.snapshot.settings.folder, "Other", "Native folder changes participate in the settings signature");
+  // Disabled Agent journal access cannot prevent a user from browsing their configured journals.
+  delete (options as { folder?: string }).folder;
+  plugin.settings.knowledgeBase = { folderBindings: emptyKnowledgeFolderBindings() };
+  plugin.settings.journalDirectory = "Daily";
+  view.dataService = new HomeWorkbenchDataService(app, () => plugin.settings.journalDirectory, null, undefined, () => plugin.settings.knowledgeBase.folderBindings);
+  view.month = new Date(2026, 0, 1); view.listYear = 2026; view.page = 1;
+  await view.refresh(); assert.equal(view.snapshot.records.length, 26); assert.equal(view.field("content").hidden, false);
+  options.folder = "";
+  assert.equal(readNativeJournalSettings(app, "Daily", plugin.settings.knowledgeBase.folderBindings).folder, "", "Native empty folder means Vault root");
+  assert.equal(readNativeJournalSettings(app, "Daily", plugin.settings.knowledgeBase.folderBindings).available, true);
+  delete (options as { folder?: string }).folder;
+  plugin.settings.journalDirectory = "Unconfigured";
+  let configured = ""; plugin.openWorkbenchModuleSettings = async (id: string) => { configured = id; };
+  await view.refresh(); assert.equal(view.snapshot.records.length, 0); assert.equal(view.snapshot.settings.available, false);
+  assert.equal(view.field("content").hidden, false, "Missing directory still shows the calendar and empty list");
+  assert.ok(view.field("days").childElementCount > 0);
+  await view.openSelected(); assert.equal(configured, "journal"); assert.equal(writes, 0);
   await view.onClose(); assert.equal(writes, 0); assert.equal(prefills, 1);
 
   const parent = win.document.body.createDiv(); const weekdays = parent.createDiv(); const days = parent.createDiv();

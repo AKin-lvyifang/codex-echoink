@@ -68,9 +68,9 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
   private publish(): void {
     if (!this.restored) return;
     const maintenance = [...this.maintenance.values()].sort((a,b) => b.updatedAt - a.updatedAt);
-    const visible = maintenance.filter(activity => activity.status !== "completed" || this.holdCompleted.has(activity.id));
+    const visible = maintenance.filter(activity => activity.status === "running" || activity.status === "waiting" || this.holdCompleted.has(activity.id));
     const task = this.linking;
-    const linked: KnowledgeActivity | null = task && !task.dismissed && !["completed", "cancelled"].includes(task.phase) ? {
+    const linked: KnowledgeActivity | null = task && !task.dismissed && ["queued", "scanning", "judging", "awaiting-confirmation", "writing"].includes(task.phase) ? {
       kind: "linking", id: task.id, originConversationId: task.originConversationId, task, updatedAt: task.updatedAt,
       status: task.phase === "awaiting-confirmation" ? "waiting" : task.phase === "interrupted" ? "interrupted" : task.phase === "failed" ? "failed" : task.phase === "partial" ? "partial" : "running"
     } : null;

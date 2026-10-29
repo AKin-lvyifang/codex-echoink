@@ -1,16 +1,14 @@
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import os from "node:os";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
-if (!process.env.ECHOINK_TODO_TEST_ROOT) throw new Error("Explicit ECHOINK_TODO_TEST_ROOT required");
-const testRoot = await realpath(process.env.ECHOINK_TODO_TEST_ROOT);
-if (!testRoot.startsWith(allowed + path.sep)) throw new Error("Fixtures must stay in 90-任务临时");
+if (!process.env.ECHOINK_TODO_TEST_ROOT && !process.env.ECHOINK_TEST_ROOT) throw new Error("Explicit disposable test root required");
+const testRoot = await realpath(disposableTestRoot("", ["ECHOINK_TODO_TEST_ROOT"]));
 const fixture = await mkdtemp(path.join(testRoot, "diary-todo-"));
 try {
   const output = path.join(fixture, "tests.mjs");

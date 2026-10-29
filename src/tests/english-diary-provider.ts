@@ -313,8 +313,9 @@ async function assertHomeMissingFolderGuidance(): Promise<void> {
   for (const folder of ["", "我的原生日记"]) {
     const fixture = makeFixture();
     fixture.dailyOptions.folder = folder;
+    if (folder) fixture.folders.set(folder, Object.assign(new TFolder(), { path: folder }));
     await fixture.home.openConversationAction("daily");
-    assert.equal(openTestModals.length, 0, "native Daily notes configuration remains authoritative, including the vault root");
+    assert.equal(openTestModals.length, 0, "an existing native Daily notes folder remains authoritative, including the vault root");
     assert.deepEqual(fixture.events, ["require-skill", "open-chat", "start-journal"]);
   }
   const readonlyDiary = makeFixture();

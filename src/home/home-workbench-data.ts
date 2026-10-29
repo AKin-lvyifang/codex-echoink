@@ -85,10 +85,8 @@ export class HomeWorkbenchDataService {
   /** Metadata only: the journal page reads bodies solely for its visible rows. */
   async buildJournalRecords() {
     const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
-    if (settings.available && settings.folder && !(this.app.vault.getAbstractFileByPath(settings.folder) instanceof TFolder)) {
-      throw new Error("日记位置不存在或已被文件占用，请检查日记设置。");
-    }
-    const records = settings.available ? this.app.vault.getMarkdownFiles()
+    const readable = settings.available && (!settings.folder || this.app.vault.getAbstractFileByPath(settings.folder) instanceof TFolder);
+    const records = readable ? this.app.vault.getMarkdownFiles()
       .filter(file => this.includeNotePath(file.path) && journalDateFromPath(file.path, settings.folder, settings.format))
       .map(file => this.recordForFile(file, settings.folder, settings.format)) : [];
     return { settings, records };

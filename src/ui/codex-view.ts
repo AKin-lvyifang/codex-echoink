@@ -1,4 +1,6 @@
 import { ownedDiv, ownedEl } from "./owned-dom";
+import { openTaskMenu } from "./codex-view/task-menu";
+import { stopManagedTask } from "../plugin/task-management";
 import { exportDesktopRunReport } from "../run-reports/desktop-ui";
 import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
@@ -171,7 +173,6 @@ import {
   derivePiConversationFromMessage as derivePiConversationFromMessageAction,
   refreshPiConversationShells as refreshPiConversationShellsAction,
   renderTabsView,
-  openSessionMenuView,
   renameSession as renameSessionAction,
   sessionById as sessionByIdAction,
   type CodexSessionHost,
@@ -255,6 +256,7 @@ export class CodexView extends ItemView {
   private taskLoadError = "";
   private taskCatalogFlight?: Promise<void>;
   private taskRefreshAgain = false;
+  private taskCatalogDispose?: () => void;
   private taskRefreshTimer: number | null = null;
   private taskMidnightTimer: number | null = null;
   private readonly taskDraftOrigins = new Map<string, string>();
@@ -263,7 +265,7 @@ export class CodexView extends ItemView {
 
   private currentTaskEntry(): TaskEntry | undefined {
     const page = this.taskNavigation.page;
-    return page.kind === "detail" ? projectInlineTaskEntries(this.taskEntries, inlineTaskHost(this.plugin)?.service.list() ?? []).find(entry => entry.conversationId === page.taskId) : undefined;
+    return page.kind === "detail" ? projectInlineTaskEntries(this.taskEntries, inlineTaskHost(this.plugin)?.service.list() ?? []).find(entry => entry.conversationId === page.taskId && entry.status === "active") : undefined;
   }
   private currentInlineTask(): InlineRequest | undefined {
     if (!this.taskUiMounted) return undefined;
@@ -388,15 +390,18 @@ export class CodexView extends ItemView {
     this.taskDetailLoaded = false; this.taskLoadError = "";
     this.restoreTaskComposerDraft(); this.renderTaskPages();
     const inline = inlineTaskHost(this.plugin)?.service.latestForTask(taskId);
-    if (inline) {
-      this.plugin.settings.activeSessionId = taskId; this.taskDetailLoaded = true;
-      this.renderTaskPages(); this.renderToolbar(); animateTaskDetailEntry(this.taskDetailEl!, token);
-      this.plugin.getConversationRunService().scheduleSave(); return;
-    }
     try {
+      if (inline) {
+        const { catalog } = await this.plugin.readPiConversationSupportState(taskId);
+        if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+        if (catalog.status !== "active") { await this.leaveUnavailableTask(taskId, catalog.agentId); return; }
+        this.plugin.settings.activeSessionId = taskId; this.taskDetailLoaded = true;
+        this.renderTaskPages(); this.renderToolbar(); animateTaskDetailEntry(this.taskDetailEl!, token);
+        this.plugin.getConversationRunService().scheduleSave(); return;
+      }
       const projection = await this.plugin.readPiConversationProjection(taskId);
       if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
-      if (!isUserTask(projection.catalog)) throw new Error(this.taskText("这件任务已不存在。", "This task no longer exists."));
+      if (projection.catalog.status !== "active" || !isUserTask(projection.catalog)) { await this.leaveUnavailableTask(taskId, projection.catalog.agentId); return; }
       let session = this.sessionById(taskId);
       if (!session) { session = createPiConversationShell(this.sessionHost(), projection.catalog); this.plugin.settings.sessions.push(session); }
       rememberPiConversationProjection(this.plugin, projection);
@@ -426,10 +431,23 @@ export class CodexView extends ItemView {
       this.plugin.getConversationRunService().scheduleSave();
     } catch (error) {
       if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+      const failure: unknown = error;
+      if (failure && typeof failure === "object" && "code" in failure && failure.code === "conversation_not_found") { await this.leaveUnavailableTask(taskId); return; }
       this.showTaskError(`${this.taskText("读取任务失败：", "Could not load the task: ")}${error instanceof Error ? error.message : String(error)}`);
     }
   }
   refreshAgentTasks(): void { if (this.taskUiMounted) void this.reloadTaskCatalog(); }
+  private async leaveUnavailableTask(taskId: string, owner?: string): Promise<void> {
+    if (this.taskNavigation.page.kind !== "detail" || this.taskNavigation.page.taskId !== taskId) return;
+    const agentId = owner ?? this.currentTaskAgent().id;
+    this.saveTaskComposerDraft();
+    if (this.plugin.settings.activeSessionId === taskId) this.plugin.settings.activeSessionId = "";
+    this.taskDetailLoaded = false; this.taskLoadError = "";
+    if (this.taskDetailHeaderEl) { disposeOriginControls(this.taskDetailHeaderEl); this.taskDetailHeaderEl.empty(); }
+    this.resetVirtualWindow(); this.virtualListEl?.empty();
+    await this.openAgentTaskList(this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId) ? agentId : GENERAL_ASSISTANT_ID);
+    this.renderToolbar();
+  }
   async refreshAgentTasksAfterMutation(): Promise<void> { if (this.taskUiMounted) await this.reloadTaskCatalog(); }
   private async reloadTaskCatalog(): Promise<void> {
     if (this.taskCatalogFlight) { this.taskRefreshAgain = true; return await this.taskCatalogFlight; }
@@ -440,6 +458,13 @@ export class CodexView extends ItemView {
           const entries = await this.plugin.listAgentTaskEntries(true);
           if (this.viewLifecycleAbortController.signal.aborted) return;
           this.taskEntries = entries;
+          const page = this.taskNavigation.page;
+          if (page.kind === "detail") {
+            const current = entries.find(entry => entry.conversationId === page.taskId);
+            // A valid newly created/empty conversation may not be a listed task yet.
+            // Only a catalog tombstone is proof that the currently open task expired.
+            if (current && current.status !== "active") await this.leaveUnavailableTask(page.taskId, current.agentId);
+          }
           for (const entry of entries) {
             if (entry.status !== "active") continue;
             if (inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId)) continue;
@@ -589,7 +614,7 @@ export class CodexView extends ItemView {
     if (this.taskEditor) return;
     if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions.filter(session => !inlineHost?.service.latestForTask(session.id)), {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
-      onSessionMenu: (event, session) => openSessionMenuView(this.sessionHost(), event, session),
+      onTaskMenu: (event, taskId) => { void openTaskMenu(this.plugin, event, taskId, () => this.refreshAgentTasks()); },
       summary: entry => this.taskSummaryText(entry),
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
     }, Date.now(), this.plugin.settings.settingsLanguage);
@@ -1286,7 +1311,11 @@ export class CodexView extends ItemView {
           if (session) { this.renderMessagesIfActive(session, message); if (this.plugin.settings.activeSessionId === id) this.renderInteractionDock(session); }
         }
       });
-      if (desktopTasks) { this.observeTaskMaintenance(); this.refreshInlineTasks(); }
+      if (desktopTasks) {
+        this.observeTaskMaintenance(); this.refreshInlineTasks();
+        this.taskCatalogDispose?.();
+        this.taskCatalogDispose = this.plugin.onConversationCatalogChanged?.(() => this.scheduleTaskCatalogRefresh());
+      }
       this.settleTaskUiReady(desktopTasks);
       if (desktopTasks) {
         await this.reloadTaskCatalog();
@@ -1326,6 +1355,7 @@ export class CodexView extends ItemView {
     if (this.rootEl) disposeOriginControls(this.rootEl);
     this.runSubscriptionDispose?.(); this.runSubscriptionDispose = undefined;
     this.taskMaintenanceDispose?.(); this.taskMaintenanceDispose = undefined; this.taskMaintenanceActivities = [];
+    this.taskCatalogDispose?.(); this.taskCatalogDispose = undefined;
     this.inlineTaskDispose?.(); this.inlineTaskDispose = undefined; this.inlineTaskObservedHost = undefined;
     this.inlineTaskDetail?.dispose(); this.inlineTaskDetail = undefined;
     this.knowledgeLinkingProgressDispose?.(); this.knowledgeLinkingProgressDispose = undefined;
@@ -2133,7 +2163,7 @@ export class CodexView extends ItemView {
       this.turnQueue.pauseSessionQueue(transfer.snapshot.sessionId); this.turnQueue.pauseSessionQueue(owner);
     }
     const transfer = [...this.composerTransfers.values()].find(value => value.owner === owner);
-    await this.plugin.getConversationRunService().stopTask(transfer?.snapshot.sessionId ?? (owner.startsWith("agent:") ? owner : this.plugin.settings.activeSessionId));
+    await stopManagedTask(this.plugin, transfer?.snapshot.sessionId ?? (owner.startsWith("agent:") ? owner : this.plugin.settings.activeSessionId));
   }
   private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
   private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }

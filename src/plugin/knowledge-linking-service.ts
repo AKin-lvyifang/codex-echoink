@@ -152,6 +152,8 @@ export class KnowledgeLinkingService {
       if (this.task.phase === "writing") this.launch(signal => this.write(signal));
     } else this.launch(signal => this.scan(signal));
   }
+  /** Explicitly resuming the origin may start new batches; old paused work stays paused. */
+  allowOrigin(originConversationId: string): void { this.blockedOrigins.delete(originConversationId); }
   private async regenerate(signal?: AbortSignal): Promise<void> {
     if (!this.task || this.disposed || signal?.aborted) return;
     this.task.bindingSignature = this.host.bindingSignature(); this.task.patches = []; this.task.proposals = []; this.task.results = [];

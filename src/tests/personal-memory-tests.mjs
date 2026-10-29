@@ -1,17 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { disposableTestRoot } from "../../scripts/disposable-test-root.mjs";
 import { mkdir, realpath } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../../", import.meta.url));
-const testRoot = process.env.ECHOINK_MEMORY_TEST_ROOT;
-if (!testRoot) throw new Error("Set ECHOINK_MEMORY_TEST_ROOT to the registered task directory under ~/EchoInk-TestVaults/90-任务临时");
-const allowedRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
-const outputRoot = await realpath(testRoot);
-const relative = path.relative(allowedRoot, outputRoot);
-if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Memory test root must be a child of 90-任务临时");
+const testRoot = process.env.ECHOINK_MEMORY_TEST_ROOT || process.env.ECHOINK_TEST_ROOT;
+if (!testRoot) throw new Error("Set an explicit disposable ECHOINK_MEMORY_TEST_ROOT or ECHOINK_TEST_ROOT");
+const outputRoot = await realpath(disposableTestRoot(testRoot, ["ECHOINK_MEMORY_TEST_ROOT"]));
 if (await realpath(process.env.TMPDIR || "") !== outputRoot) throw new Error("TMPDIR must match ECHOINK_MEMORY_TEST_ROOT");
 const outputDir = path.join(outputRoot, "runtime-local-checks");
 const runtimeDependencyPlugin = { name: "runtime-test-dependencies", setup(build) {

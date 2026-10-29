@@ -42,6 +42,7 @@ export class TFile {
 export class App {
   constructor() { installCurrentObsidianDom(); }
   vault = {
+    getAbstractFileByPath: (_path: string): TFile | TFolder | null => null,
     getAllLoadedFiles: (): Array<TFile | TFolder> => []
   };
 }

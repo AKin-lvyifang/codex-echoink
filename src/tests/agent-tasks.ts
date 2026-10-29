@@ -38,7 +38,7 @@ function createHost(catalog: any, runtime: any, settings: any): any {
     approvals: new FileApprovalTicketStore({ storageRootPath: catalog.storageRootPath, vaultId: catalog.vaultId }),
     readConversationProjection: (id: string) => runtime.readProjection(id), listConversations: (statuses?: string[]) => catalog.list({ statuses }) };
   const host = Object.assign(Object.create(CodexForObsidianPlugin.prototype), {
-    settings, piRuntimeBundle: { runtime }, piTaskMetadataWriteTails: new Map(), piTaskMetadataSyncTail: Promise.resolve(),
+    settings, piRuntimeBundle: { runtime }, piTaskMetadataWriteTails: new Map(), piTaskMetadataSyncTail: Promise.resolve(), conversationCatalogListeners: new Set(),
     piSubmittingConversations: new Set(), piRunConversations: new Map(), piConversationActivationTasks: new Map(),
     getCodexView: () => null, createPiConversation: (input: any) => runtime.createConversation(input),
     ensurePiLocalData: async () => local,

@@ -1,4 +1,5 @@
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
+import { openTaskMenu } from "../ui/codex-view/task-menu";
 import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
@@ -651,6 +652,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private taskCard(entry: TaskEntry): HTMLElement {
     const card = ownedEl(this.contentEl.ownerDocument, "article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
+    card.oncontextmenu = event => { void openTaskMenu(this.plugin, event, entry.conversationId, () => this.scheduleRefresh(0)); };
     card.onclick = event => {
       if ((event.target as Element).closest("button, input, textarea, select, label, a, summary")) return;
       void this.openTask(entry.conversationId).catch(error => new Notice(message(error)));
@@ -738,6 +740,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private interruptionRevision(entry: TaskEntry): string { return JSON.stringify([entry.updatedAt, entry.taskMetadataUpdatedAt, entry.taskInterruptedAt, entry.taskStage]); }
   private completedRow(entry: TaskEntry): HTMLElement {
     const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
+    row.oncontextmenu = event => { void openTaskMenu(this.plugin, event, entry.conversationId, () => this.scheduleRefresh(0)); };
     const button = this.button(row, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary"); button.classList.add("wb-completed-body");
     const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId);
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);

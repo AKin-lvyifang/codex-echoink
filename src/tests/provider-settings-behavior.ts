@@ -4283,6 +4283,9 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
   const { plugin } = createIdentityTestPlugin(fixtureState);
   // This legacy-vault scenario reuses its existing English journal folder.
   plugin.app.vault.getAllLoadedFiles = () => [Object.assign(new TFolder(), { path: "journal", name: "journal" })];
+  const folders = new Set(["journal"]);
+  plugin.app.vault.getAbstractFileByPath = (path: string) => folders.has(path) ? Object.assign(new TFolder(), { path }) : null;
+  plugin.app.vault.createFolder = async (path: string) => { folders.add(path); return Object.assign(new TFolder(), { path }); };
   const saved: Array<Record<string, unknown>> = [];
   let nativeOptions: Record<string, unknown> = { folder: "journal", format: "YYYY-MM/YYYY-MM-DD" };
   const daily = { instance: { options: nativeOptions }, loadData: async () => nativeOptions, saveData: async (value: Record<string, unknown>) => { nativeOptions = value; saved.push(structuredClone(value)); } };
@@ -4314,6 +4317,21 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
   await settleMicrotasks();
   assert.equal(daily.instance.options.folder, "journal");
   assert.equal(input.value, "journal");
+  assert.equal(saved.length, 2);
+  delete daily.instance.options.folder;
+  plugin.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  Object.assign(plugin.settings.knowledgeBase.folderBindings.roles.journal, { enabled: true, readPaths: ["Bound"], writePath: "Bound" });
+  folders.add("Bound"); tab.display();
+  assert.equal(tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!.value, "Bound", "settings use the same binding fallback as the journal page");
+  plugin.settings.knowledgeBase.folderBindings.roles.journal.enabled = false;
+  plugin.settings.journalDirectory = "Unconfigured"; tab.display();
+  const untouched = tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!;
+  untouched.fireEvent("blur"); await settleMicrotasks();
+  assert.equal(folders.has("Unconfigured"), false, "opening and leaving settings never creates the suggested default folder");
+  daily.instance.options.folder = ""; tab.display();
+  const rootInput = tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!;
+  assert.equal(rootInput.value, ""); rootInput.fireEvent("blur"); await settleMicrotasks();
+  assert.equal(daily.instance.options.folder, "", "focusing a native root folder never rewrites it to the default journal directory");
   assert.equal(saved.length, 2);
   tab.hide();
   console.log("PASS settings: journal folder normalizes, persists, and reloads");

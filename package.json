@@ -26,6 +26,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/run-tests.mjs",
+    "test:journal-task-recovery": "node scripts/journal-task-recovery-tests.mjs",
     "test:plan-mode": "node scripts/plan-mode-tests.mjs",
     "test:inline-agent": "node scripts/inline-agent-tests.mjs",
     "test:inline-agent-ranges": "node scripts/inline-agent-ranges-tests.mjs",
