@@ -1,3 +1,4 @@
+import { installMockObsidianDom } from "./obsidian-dom";
 import { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { paidTestAccess } from "./membership-access";
 import assert from "node:assert/strict";
@@ -106,6 +107,7 @@ export class ElementNode {
 }
 
 export class TestDocument {
+  constructor() { installMockObsidianDom(this); }
   activeElement: ElementNode | null = null;
   body = new ElementNode("body", this);
   defaultView = {

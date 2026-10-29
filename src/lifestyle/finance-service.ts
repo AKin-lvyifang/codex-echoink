@@ -165,7 +165,7 @@ export class LifestyleFinanceService {
   }
   private validateDiaryInput(input: Omit<FinanceEntry, "id" | "source" | "sourceId">): void {
     if (!validFinanceDate(input.date) || !["expense", "income", "refund", "transfer"].includes(input.kind)
-      || input.status !== "completed" || input.currency !== "CNY" || input.classificationPending
+      || input.status !== "completed" || !/^[A-Z]{3}$/u.test(input.currency) || input.classificationPending
       || typeof input.description !== "string" || input.description.length > 200
       || typeof input.note !== "string" || input.note.length > 2000) throw new Error("finance_invalid_record");
     this.requireExistingCategories([input.category]);

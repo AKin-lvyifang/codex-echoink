@@ -293,3 +293,6 @@
 .diary-organizer-fields { display: flex; flex-wrap: wrap; gap: 8px; }
 .diary-organizer-fields > * { max-width: 180px; }
 .diary-organizer-confirmation { flex-basis: 100%; }
+.diary-organizer-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.diary-organizer-field > span { font-size: var(--font-ui-smaller); }
+.diary-organizer-field input { width: 100%; min-width: 0; }

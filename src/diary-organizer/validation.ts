@@ -29,9 +29,10 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
   const before = position >= 0 ? content.slice(Math.max(0, position - 100), position).split(/[。！？!?\n]/u).pop() || "" : "";
   const after = position >= 0 ? content.slice(position + quote.length, position + quote.length + 100).split(/[。！？!?\n]/u)[0] : "";
   const context = `${before}${quote}${after}`;
-  const other = candidate.ownership === "other" || /(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
-    || /(?:别人请客|朋友请客|同事请客|他请客|她请客|不用我付|没花我的钱)/u.test(context);
-  const planned = /(?:打算|计划|准备|考虑|想要|希望|要不要|如果|还没|未买|没买|预计|预算|明天去买|明天买)/u.test(context);
+  const advance = /(?:垫付|代付|帮.{0,8}付|替.{0,8}付)/u.test(context);
+  const other = !advance && (candidate.ownership === "other" || /(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
+    || /(?:别人请客|朋友请客|同事请客|他请客|她请客|不用我付|没花我的钱)/u.test(context));
+  const planned = /(?:打算|计划|准备|考虑|想要|希望|要不要|如果|预计|预算).{0,18}(?:买|购|消费|花|付|订)|(?:还没|尚未|没有|未|没)(?:买|付款|支付|消费)|明天(?:去)?买/u.test(context);
   if (other) reasons.push("这是他人的收支或请客");
   if (candidate.type === "finance") {
     if (!["expense", "income", "refund", "transfer"].includes(candidate.kind)) reasons.push("收支类型无效");

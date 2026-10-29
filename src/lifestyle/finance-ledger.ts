@@ -75,9 +75,12 @@ function parseFinanceDocument(markdown: string): ParsedNote {
     note: stringField(fields, "note"), icon: stringField(fields, "icon") || undefined,
     billPlanId: stringField(fields, "bill_plan_id").trim() || undefined,
     ...(stringField(fields, "journal_path") ? { journalPath: stringField(fields, "journal_path") } : {}),
-    ...(Array.isArray(fields.source_links) ? { sourceLinks: fields.source_links.flatMap(link =>
-      link && (link.source === "wechat" || link.source === "alipay") && typeof link.sourceId === "string" && link.sourceId
-        ? [{ source: link.source as "wechat" | "alipay", sourceId: link.sourceId }] : []) } : {}),
+    ...(Array.isArray(fields.source_links) ? { sourceLinks: (fields.source_links as unknown[]).flatMap(value => {
+      if (!value || typeof value !== "object") return [];
+      const link = value as Record<string, unknown>;
+      return (link.source === "wechat" || link.source === "alipay") && typeof link.sourceId === "string" && link.sourceId
+        ? [{ source: link.source, sourceId: link.sourceId }] : [];
+    }) } : {}),
     ...(fields.classification_pending === true ? { classificationPending: true } : {})
   };
   return { entry, identity, issue: null };

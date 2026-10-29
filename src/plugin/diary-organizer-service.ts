@@ -91,7 +91,7 @@ export class DiaryOrganizerService {
       },
       undoTodo: async (id, version) => {
         guard();
-        const record = (await plugin.getTodoStore().snapshotForDiary()).records.find(record => record.id === id);
+        const record = (await plugin.getTodoStore().readOnlySnapshot()).records.find(record => record.id === id);
         if (!record) return { deleted: true };
         if (!record.diaryEntryId) throw new Error("这条待办缺少日记来源。");
         const current = await plugin.getTodoStore().getByDiaryEntryId(record.diaryEntryId);

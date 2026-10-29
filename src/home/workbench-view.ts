@@ -346,8 +346,8 @@ export class EchoInkWorkbenchView extends ItemView {
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
-    page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "starters" } });
+    page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
     void this.contentEl.ownerDocument.fonts?.ready.then(() => this.scheduleNav());

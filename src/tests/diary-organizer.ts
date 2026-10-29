@@ -72,7 +72,7 @@ export async function runDiaryOrganizerTests() {
   const entry: FinanceEntry = { kind: base.kind, amountCents: base.amountCents, currency: base.currency, date: base.date, merchant: base.merchant, category: base.category, icon: "auto", source: "diary", sourceId: "extract-one", id: "diary-one", status: "completed", account: "", description: "拿铁咖啡一杯", note: "", journalPath: path };
   const imported = { ...entry, id: "wechat-one", source: "wechat" as const, sourceId: "wechat-raw", date: "2026-10-28 12:30:00" };
   check(financeDuplicateCandidates({ ...base }, [{ ...entry, version: "v1", date: imported.date }]).length === 1, "timestamped imported record retrieved for diary dedupe");
-  const same = classifyImport([entry], [{ entry: imported }]); check(same.linked.length === 1 && same.added.length === 0, "import links same diary transaction without adding");
+  const same = classifyImport([entry], [{ entry: imported, duplicateDecision: { action: "same", id: entry.id } }]); check(same.linked.length === 1 && same.added.length === 0, "import links same diary transaction without adding");
   const vague = classifyImport([entry], [{ entry: { ...imported, description: "", merchant: "" } }]); check(vague.pending.length === 1 && !vague.added.length, "uncertain import goes to review");
   check(financeEntryCsv([entry]).includes("来源") && financeEntryCsv([entry]).includes("日记（AI）"), "CSV source column");
   check(filterFinanceEntries([entry, imported], "2026-10", { source: "diary", search: "", merchant: "", category: "", kind: "all", account: "", excludedCategories: [], excludedIds: [] }).length === 1, "source filter");
@@ -84,7 +84,7 @@ export async function runDiaryOrganizerTests() {
   check(parseFinanceNote(await vault.read(vault.files.get(saved.path)!.file))?.source === "diary", "diary parser round trip");
   const retry = await ledger.addDiary(entry, [], () => {}); check(retry.entry.id === saved.entry.id && ledger.entries().length === 1, "crash retry stable ID is idempotent");
   await assert.rejects(ledger.addDiary({ ...entry, id: "second", sourceId: "extract-two" }, [], () => {})); checks++;
-  const linked = await ledger.importRows([{ entry: imported }]); check(linked.linked === 1 && ledger.entries().length === 1 && ledger.entries()[0].sourceLinks?.[0].sourceId === "wechat-raw", "real ledger writes import association without duplicate");
+  const linked = await ledger.importRows([{ entry: imported, duplicateDecision: { action: "same", id: entry.id } }]); check(linked.linked === 1 && ledger.entries().length === 1 && ledger.entries()[0].sourceLinks?.[0].sourceId === "wechat-raw", "real ledger writes import association without duplicate");
   const repeated = await ledger.importRows([{ entry: imported }]); check(repeated.duplicates === 1 && ledger.entries().length === 1, "repeat imported associated identity is idempotent");
   const reload = new FinanceLedger(app, store); await reload.initialize(); check(reload.entries()[0].source === "diary", "old JSON/Markdown diary source stays parseable");
   console.log(`Diary organizer regression tests: PASS (${checks} checks)`);

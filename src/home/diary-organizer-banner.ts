@@ -76,13 +76,32 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
       copy.createEl("p", { text: item.reasons.join("；"), cls: "diary-organizer-reason" });
       copy.createEl("blockquote", { text: candidate.quote });
       const reviewed = structuredClone(candidate);
+      const fields = copy.createDiv({ cls: "diary-organizer-fields" });
+      const field = (label: string, value: string, type = "text") => {
+        const row = fields.createEl("label", { cls: "diary-organizer-field" }); row.createSpan({ text: label });
+        return createOriginInput(row, { type, value, attr: { "aria-label": label } });
+      };
       if (candidate.type === "finance") {
-        const fields = copy.createDiv({ cls: "diary-organizer-fields" });
-        const amount = createOriginInput(fields, { type: "number", value: (candidate.amountCents / 100).toFixed(2), attr: { "aria-label": t("金额（元）", "Amount (CNY)"), min: "0.01", step: "0.01" } });
+        const merchant = field(t("交易对象", "Counterparty"), candidate.merchant);
+        merchant.oninput = () => { if (reviewed.type === "finance") reviewed.merchant = merchant.value; };
+        const amount = field(t("金额", "Amount"), (candidate.amountCents / 100).toFixed(2), "number");
+        amount.min = "0.01"; amount.step = "0.01";
         amount.oninput = () => { if (reviewed.type === "finance") reviewed.amountCents = Math.round(Number(amount.value) * 100); };
+        const currency = field(t("币种", "Currency"), candidate.currency);
+        currency.oninput = () => { if (reviewed.type === "finance") reviewed.currency = currency.value.trim().toUpperCase(); };
+        const date = field(t("日期", "Date"), candidate.date, "date");
+        date.oninput = () => { if (reviewed.type === "finance") reviewed.date = date.value; };
+        const kind = createOriginSelect(fields, { attr: { "aria-label": t("收支类型", "Transaction type") } },
+          [ ["expense",t("支出","Expense")], ["income",t("收入","Income")], ["refund",t("退款","Refund")], ["transfer",t("转账","Transfer")] ].map(([value,label])=>({value,label})), candidate.kind, plugin.app).element;
+        kind.onchange = () => { if (reviewed.type === "finance") reviewed.kind = kind.value as typeof reviewed.kind; };
         const categories = plugin.settings.lifestyle.finance.categories.filter(category => category.active);
         const select = createOriginSelect(fields, { attr: { "aria-label": t("分类", "Category") } }, [{ value: "", label: t("选择分类", "Choose category") }, ...categories.map(category => ({ value: category.name, label: category.name }))], candidate.category, plugin.app).element;
         select.onchange = () => { if (reviewed.type === "finance") reviewed.category = select.value; };
+      } else {
+        const title = field(t("待办", "To-do"), candidate.text);
+        title.oninput = () => { if (reviewed.type === "todo") reviewed.text = title.value; };
+        const date = field(t("截止日期", "Due date"), candidate.dueDate ?? "", "date");
+        date.oninput = () => { if (reviewed.type === "todo") reviewed.dueDate = date.value || null; };
       }
       button(actions, t("忽略", "Ignore"), () => runAction(row, item, "ignore", { expectedRevision: item.revision }));
       button(actions, t("确认", "Confirm"), () => runAction(row, item, "confirm", { expectedRevision: item.revision, candidate: reviewed }), true);

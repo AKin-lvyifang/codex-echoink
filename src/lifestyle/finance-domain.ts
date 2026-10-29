@@ -1,7 +1,7 @@
 import { readSheet } from "read-excel-file/universal";
 import type { FinanceBudget, FinanceEntry, FinanceKind } from "./store-core";
 import { lifeId } from "./store-core";
-import { diaryFinanceCandidates, FINANCE_SOURCE_LABELS, sameDiaryFinanceTransaction } from "./finance-diary";
+import { diaryFinanceCandidates, FINANCE_SOURCE_LABELS } from "./finance-diary";
 
 export const FINANCE_CATEGORIES = ["居住", "餐饮", "购物", "交通", "订阅", "其他"] as const;
 export type FinanceCategory = string;
@@ -335,9 +335,9 @@ export function classifyImport(existing: readonly FinanceEntry[], rows: readonly
       const candidates = row.entry.status === "completed" && (row.entry.source === "wechat" || row.entry.source === "alipay")
         ? diaryFinanceCandidates([...known.values()].filter(entry => entry.source === "diary"), row.entry)
           .filter((entry, index, all) => all.findIndex(other => other.id === entry.id) === index) : [];
-      const certain = candidates.filter(entry => sameDiaryFinanceTransaction(entry, row.entry!));
-      const target = decision?.action === "same" ? candidates.find(entry => entry.id === decision.id)
-        : !decision && candidates.length === 1 && certain.length === 1 ? certain[0] : undefined;
+      // The same merchant/product can be bought twice. Imported identities are
+      // linked automatically only after a prior link; a new close match is reviewed.
+      const target = decision?.action === "same" ? candidates.find(entry => entry.id === decision.id) : undefined;
       if (target) { linked.push({ entry: target, imported: row.entry }); known.set(key, target); }
       else if (decision?.action === "same" || candidates.length && !(decision?.action === "separate" && candidates.every(entry => decision.candidateIds.includes(entry.id)))) pending.push({ row, candidates });
       else { added.push(row.entry); known.set(key, row.entry); }
