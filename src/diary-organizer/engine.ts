@@ -165,7 +165,7 @@ export class DiaryOrganizerEngine {
     if (!this.ports.isEnabled() || this.ports.isBusy() || this.disposed) throw new Error("模型正在忙，已让路");
     const controller = new AbortController();
     this.controller = controller;
-    let timer: ReturnType<typeof window.setTimeout> | undefined;
+    let timer: number | undefined;
     try {
       return await Promise.race([
         this.ports.generateText({ purpose, system: DIARY_ORGANIZER_SYSTEM, prompt, signal: controller.signal }),
@@ -259,9 +259,10 @@ export class DiaryOrganizerEngine {
       if (item.candidate.type === "finance") {
         // The batch review already confirmed these are separate events. Bind the
         // earlier writes' actual revisions before the ledger checks again.
+        const financeCandidate = item.candidate;
         const earlier = current.filter(other => other !== item && other.status === "written" && other.written && other.candidate.type === "finance"
-          && other.candidate.kind === item.candidate.kind && other.candidate.currency === item.candidate.currency
-          && other.candidate.amountCents === item.candidate.amountCents);
+          && other.candidate.kind === financeCandidate.kind && other.candidate.currency === financeCandidate.currency
+          && other.candidate.amountCents === financeCandidate.amountCents);
         item.reviewedDistinct = [...item.reviewedDistinct ?? [], ...earlier.map(other => ({ id: other.written!.id, version: other.written!.version }))];
       }
       await this.writeItem(item, doc);

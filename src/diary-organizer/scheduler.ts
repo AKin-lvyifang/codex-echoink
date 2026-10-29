@@ -4,7 +4,7 @@ export interface DiaryOrganizerSchedulerOptions { startupMs?: number; intervalMs
 
 /** Desktop-only lifecycle belongs to the host. Each check is serialized by the engine. */
 export class DiaryOrganizerScheduler {
-  private timer: ReturnType<typeof window.setTimeout> | null = null;
+  private timer: number | null = null;
   private started = false;
 
   constructor(private readonly engine: DiaryOrganizerEngine, private readonly options: DiaryOrganizerSchedulerOptions = {}) {}
