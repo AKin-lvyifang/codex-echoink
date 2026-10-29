@@ -149,6 +149,7 @@ export async function runRemoteSkillDeliveryTests(): Promise<void> {
         new SkillContentResolver({ files: mobileFiles, cacheRoot: ".ipad-config/plugins/echoink/skill-cache", account: () => service, pluginVersion: "2.8.8", platform: "ios", now: service === f.service ? f.now : free.now }));
       const locked = create(free.service), before = free.calls.filter(call => call.path.endsWith("/content")).length;
       const snapshot = await locked.readSkill("two-layer-explanation"); assert.equal(snapshot.locked, true); assert.equal(snapshot.content, "");
+      assert.equal(snapshot.deliveryStatus, "", "a locked list item is represented by its lock, without a repeated PRO warning");
       assert.equal(free.calls.filter(call => call.path.endsWith("/content")).length, before);
       for (const device of ["iphone", "ipad"]) {
         const mobile = create(f.service);

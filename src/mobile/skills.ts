@@ -100,7 +100,7 @@ export class MobileSkillsService {
     return { id: item.id, name: remote && metadata ? this.settings().settingsLanguage === "en" ? metadata.nameEn : metadata.name : item.name,
       description: remote && metadata ? this.settings().settingsLanguage === "en" ? metadata.summaryEn : metadata.summary : item.description, builtin: item.builtin && !(isRemoteOnlySkill(item.id) && !remote), enabled: item.enabled, icon: skillIcon(item.id),
       remote, locked, readonly: remote, compareUrl: metadata?.compareUrl ?? null, contentVersion: metadata?.version,
-      deliveryStatus: locked ? this.settings().settingsLanguage === "en" ? "Active PRO required" : "需要有效 PRO"
+      deliveryStatus: locked ? ""
         : skillDeliveryStateText(this.contentResolver.deliveryState(item.id), this.settings().settingsLanguage === "en"),
       mobileAvailable, ...(!mobileAvailable ? { unavailableReason: locked ? "需要有效 PRO，请在账号与会员中启用本机。" : item.id === "obsidian-cli" ? "此 Skill 仅在电脑运行；移动端可以查看和编辑。" : "Skill 正文尚未导入当前笔记库。" } : {}),
       contentPath: remote ? null : actualPath, sourceLabel: remote ? "EchoInk 官方联网下发" : actualPath ?? (item.builtin ? "EchoInk 内置正文" : "正文尚未导入"),
