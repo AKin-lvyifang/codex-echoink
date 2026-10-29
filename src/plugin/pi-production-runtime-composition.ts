@@ -2571,7 +2571,10 @@ async function createProductionAgentSession(input: {
     assertCurrentSkillsAllowed: async () => {
       const context = await liveCapabilityContext();
       const paths = input.input.skillPath ? [input.input.skillPath] : [...(input.input.skillPaths ?? [])];
-      for (const skillPath of paths) requireAgentCapability(checkAgentSkillPath(context, skillPath));
+      for (const skillPath of paths) {
+        const id = await input.plugin.getSkillRuntimeCoordinator?.().assertResolvedPath(skillPath);
+        requireAgentCapability(id ? checkAgentSkill(context, id) : checkAgentSkillPath(context, skillPath));
+      }
       const turn = input.input.currentSkillTurnContext?.();
       if (turn) requireAgentCapability(checkAgentSkill(context, turn.skillId));
       for (const note of input.input.currentNoteMentionTurnContext?.()?.noteMentions ?? []) {
@@ -2610,7 +2613,11 @@ async function createProductionAgentSession(input: {
     skillPaths: input.input.skillPath
       ? [input.input.skillPath]
       : [...(input.input.skillPaths ?? [])],
-    assertSkillAllowed: async skillPath => requireAgentCapability(checkAgentSkillPath(await liveCapabilityContext(), skillPath)),
+    assertSkillAllowed: async skillPath => {
+      const context = await liveCapabilityContext();
+      const id = await input.plugin.getSkillRuntimeCoordinator?.().assertResolvedPath(skillPath);
+      requireAgentCapability(id ? checkAgentSkill(context, id) : checkAgentSkillPath(context, skillPath));
+    },
     assertBeforeAgentStart: async () => {
       const context = await liveCapabilityContext();
       requireAgentCapability(checkAgentCapability(context, linkingBatch ? "knowledge" : "conversation"));

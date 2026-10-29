@@ -1,3 +1,5 @@
+import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
+import type { CapabilityAccess } from "../../membership/types";
 import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import {showEchoInkMenu} from "../theme-boundary";
@@ -31,6 +33,7 @@ export interface SkillMenuCallbacks {
 }
 
 export interface SkillMatchesState {
+  proAccess?: CapabilityAccess | null;
   language?: SettingsLanguage;
   skills: EchoInkResource[];
   selectedSkill: EchoInkResource | null;
@@ -313,7 +316,7 @@ export function renderSkillMatches(container: HTMLElement, query: string, state:
     item.toggleClass("is-selected", state.selectedSkill?.id === skill.id);
     const heading = item.createDiv({ cls: "codex-skill-heading" });
     const icon = heading.createSpan({ cls: "codex-skill-icon" });
-    setIcon(icon, "box");
+    setIcon(icon, remoteSkillLocked(skill, state.proAccess) ? "lock" : "box");
     heading.createDiv({ cls: "codex-skill-name", text: presentation.name });
     item.createDiv({ cls: "codex-skill-desc", text: presentation.description || skill.contentPath || skill.source });
     item.onclick = () => callbacks.onSelectSkill(skill);
@@ -356,7 +359,8 @@ export function renderKnowledgeCommandMatches(
       index++,
       state.selectedSkill?.id === skill.id,
       callbacks.onSelectSkill,
-      language
+      language,
+      state.proAccess
     ));
   }
   if (callbacks.onSelectGenerationTemplate) {
@@ -740,7 +744,8 @@ function createSlashSkillItem(
   index: number,
   selected: boolean,
   onSelectSkill: (skill: EchoInkResource) => void,
-  language: SettingsLanguage
+  language: SettingsLanguage,
+  proAccess?: CapabilityAccess | null
 ): HTMLElement {
   const presentation = resourcePresentation(skill, language);
   const item = window.createEl("button");
@@ -751,7 +756,7 @@ function createSlashSkillItem(
   item.addClass("codex-command-item", "codex-command-skill");
   item.toggleClass("is-current", selected);
   const icon = item.createSpan({ cls: "codex-command-icon" });
-  setIcon(icon, "box");
+  setIcon(icon, remoteSkillLocked(skill, proAccess) ? "lock" : "box");
   const body = item.createDiv({ cls: "codex-command-body" });
   body.createSpan({ cls: "codex-command-text", text: presentation.name });
   body.createSpan({

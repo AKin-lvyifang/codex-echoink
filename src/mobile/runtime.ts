@@ -151,6 +151,8 @@ export class MobileRuntime {
   private async ready(signal?: AbortSignal): Promise<void> {
     const generation = this.lifecycleGeneration;
     await (signal ? abortable(this.initialize(), signal) : this.initialize());
+    // Migrate resource identities before the run freezes its permission signature.
+    await this.capabilities?.().initializeSkills();
     if (signal?.aborted) throw new Error("已停止，原稿已保留。");
     if (this.foregroundRequested && this.shutdownFlight) await (signal ? abortable(this.shutdownFlight, signal) : this.shutdownFlight);
     if (generation !== this.lifecycleGeneration || this.suspended || this.disposed) throw new Error("应用已暂停，请回到前台后显式继续。");
@@ -385,6 +387,7 @@ export class MobileRuntime {
     if (this.blockedAgents.has(run.turn.agentSnapshot.agentId)) throw new Error("Agent 已停止接收新任务。");
     run.policy.assertTool("task_update");
     if (run.turn.skillId) run.policy.assertSkill(run.turn.skillId);
+    this.capabilities?.().assertRunSkills(run.taskId);
     if (run.turn.notePath) run.policy.assertReadPath(run.turn.notePath);
     const provider = this.settings().apiProviders.find(item => item.id === run.provider.id);
     if (!provider || !provider.models.some(item => item.id === run.model.id)) throw new Error("已选模型或提供商失效，原稿已保留。");
@@ -498,6 +501,7 @@ export class MobileRuntime {
       }
     } catch (error) { if (!controller.signal.aborted || saveFailed || run.persistenceFailed) { failed = true; failure = saveFailed ? persistenceFailure : run.persistenceFailed ? run.persistenceError : error; } }
     finally {
+      this.capabilities?.().releaseRunSkills(id);
       await Promise.all(commits);
       if (!run.accepted && controller.signal.aborted && !failed) { failed = true; failure = new Error("已停止，尚未受理的输入已保留。"); }
       if (failed || controller.signal.aborted || saveFailed) {

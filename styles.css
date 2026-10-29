@@ -20014,6 +20014,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 .echoink-settings-demo .codex-settings-body .settings-card .setting-row{min-width:0}
 .echoink-settings-demo .codex-settings-body button:disabled{cursor:default;opacity:.5}
 .echoink-settings-demo .codex-settings-body .page-intro{margin-bottom:var(--settings-intro-content,22px)}
+.echoink-settings-demo .codex-resource-row :is(.codex-resource-toggle,.codex-resource-state-badge)[hidden]{display:none}
 .echoink-settings-demo .codex-settings-body details>summary{cursor:pointer;font-size:calc(var(--font-text-size, 16px) * 0.75);font-weight:500;color:var(--secondary)}
 .echoink-settings-demo .codex-settings-body details[open]>summary{margin-bottom:15px}
 .echoink-settings-demo .codex-settings-body pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.9 ui-monospace,SFMono-Regular,Menlo,monospace}

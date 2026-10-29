@@ -1399,7 +1399,7 @@ async function assertBuiltinSkillPresetLabels(): Promise<void> {
     assert.equal(typeof customRow.querySelector(".codex-resource-row-name")?.onclick, "function");
     assert.equal(typeof customRow.querySelector(".codex-resource-toggle")?.onchange, "function");
     const stateBadges = tab.containerEl.querySelectorAll<ProviderModalTestElement>(
-      ".codex-resource-state-badge"
+      ".codex-resource-state-badge[data-resource-skill-state]"
     );
     assert.deepEqual(
       stateBadges.map((badge) => badge.textContent),

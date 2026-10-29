@@ -1,3 +1,4 @@
+import { requiresProductFreshnessVerification } from "../resources/skill-routing";
 import { runErrors } from "../../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
@@ -1525,10 +1526,12 @@ export class PiNativeConversationRuntime {
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath && !request.skillPath
-      ? catalog.defaultSkillId
+    const selectedRuntimeSkill = !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
+      ? request.skillId && this.options.skills?.resolveById
+        ? await this.options.skills.resolveById({ id: request.skillId, catalog })
+        : !request.skillPath && catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
-        : mode !== "plan" && knowledgeCommand.kind !== "maintain"
+        : !request.skillPath && mode !== "plan" && knowledgeCommand.kind !== "maintain"
           ? await this.options.skills?.selectForTask({ text: request.text, catalog }) ?? null
           : null
       : null;
@@ -1550,15 +1553,13 @@ export class PiNativeConversationRuntime {
         providerSettingsId: request.providerSettingsId,
         runtimeProviderId: request.runtimeProviderId,
         modelId: request.modelId,
-        ...(request.skillPath
-          ? { skillPath: request.skillPath, skillName: request.skillName }
-          : selectedRuntimeSkill
+        ...(selectedRuntimeSkill
             ? {
                 skillPaths: selectedRuntimeSkills.map((skill) => skill.skillPath),
                 skillNames: selectedRuntimeSkills.map((skill) => skill.skillName),
                 skillRevision: selectedRuntimeSkill.revision
               }
-            : {})
+            : request.skillPath ? { skillPath: request.skillPath, skillName: request.skillName } : {})
       }
     );
     assertPiSubmissionActive(request.signal);
@@ -1657,7 +1658,10 @@ export class PiNativeConversationRuntime {
       commandKind: knowledgeCommand.kind,
       selectedSkillIds,
       requiresFreshnessVerification:
-        selectedRuntimeSkill?.requiresFreshnessVerification === true,
+        selectedRuntimeSkill?.requiresFreshnessVerification === true
+        || !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
+          && !request.skillId && !request.skillPath && !catalog.defaultSkillId && mode !== "plan" && knowledgeCommand.kind !== "maintain"
+          && requiresProductFreshnessVerification(request.text),
       successfulCapabilityIds: new Set<string>(),
       ...(projectId ? { projectId } : {}),
       mode,

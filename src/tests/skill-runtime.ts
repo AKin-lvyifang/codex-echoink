@@ -1,3 +1,4 @@
+import { routingFixtureResolver } from "./skill-delivery-fixture";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,7 +7,8 @@ import * as path from "node:path";
 import {
   BUILTIN_SKILLS,
   getBuiltinSkillDefinition,
-  renderBuiltinSkill
+  renderBuiltinSkill,
+  isRemoteOnlySkill
 } from "../harness/resources/builtin-skills";
 import { initializeVaultResourceStore } from "../harness/resources/vault-store";
 import {
@@ -36,8 +38,8 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
       assert.equal(loaded.frontmatter.id, definition.id);
       assert.equal(loaded.frontmatter.permissions.length, 0);
       assert.match(loaded.instruction, new RegExp(definition.title, "u"));
-      assert.equal(loaded.instruction, `# ${definition.title}\n\n${definition.body}`.trim(),
-        "installed Skills retain their complete current guidance");
+      if (isRemoteOnlySkill(definition.id)) { assert.equal(definition.body, ""); assert.match(loaded.instruction, /官方 PRO Skill/u); }
+      else assert.equal(loaded.instruction, `# ${definition.title}\n\n${definition.body}`.trim(), "local Skills retain their complete current guidance");
     }
     const knowledgeReview = BUILTIN_SKILLS.find(
       (definition) => definition.id === "knowledge-review"
@@ -66,6 +68,7 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
     };
     const reviewPrompts: string[] = [];
     const coordinator = new SkillRuntimeCoordinator(vaultPath, {
+      content: routingFixtureResolver(vaultPath),
       now: () => now,
       reviewLlm: () => ({ call: async (input) => {
         reviewPrompts.push(input.userPrompt);

@@ -14,7 +14,10 @@ import { TFolder, TFile, type App, type EventRef } from "obsidian";
 import type { HomeHost } from "../home/home-host";
 import { EchoInkTodoStore } from "../home/todo-store";
 import { HomeActivityCore } from "../home/home-activity-core";
-import { BUILTIN_SKILLS, renderBuiltinSkill } from "../harness/resources/builtin-skills";
+import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
+import { SkillContentResolver, adapterSkillContentFiles, SKILL_PRODUCT_RULES } from "../harness/resources/skill-content";
+import type { AccountService } from "../membership/account-service";
+import { Platform } from "obsidian";
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import type { MobileSettings } from "./settings";
 import type { AgentModuleId, AgentRegistry } from "../agents/types";
@@ -46,6 +49,8 @@ export interface MobileServicesHost {
   runtime: MobileRuntime;
   navigation: MobileWorkspace;
   accountService?: CapabilityAccess;
+  getSkillAccountService?(): AccountService | undefined;
+  manifest?: { version: string };
   /** Test transports are explicit; production always uses Obsidian requestUrl. */
   capabilityRequest?: MobileRequest;
   saveSettings(candidateRegistry?: AgentRegistry): Promise<void>;
@@ -64,6 +69,12 @@ export class MobileServices implements HomeHost {
   private readonly todos: EchoInkTodoStore;
   private capabilitiesService?: MobileCapabilitiesService;
   private memoryService?: MobileMemoryService;
+  private skillContentResolver?: SkillContentResolver;
+  get skillContent(): SkillContentResolver {
+    return this.skillContentResolver ??= new SkillContentResolver({ files: adapterSkillContentFiles(this.app.vault.adapter),
+      cacheRoot: `${this.preferenceRoot}/skill-cache`, account: () => this.host.getSkillAccountService?.(),
+      pluginVersion: this.host.manifest?.version ?? "0.0.0", platform: Platform.isIosApp ? "ios" : "android" });
+  }
   private usage?: MobileUsageObserver;
   get usageObserver(): MobileUsageObserver | undefined { return this.usage; }
   setUsage(observer: MobileUsageObserver): void { this.usage = observer; this.memory.setUsage(observer); }
@@ -77,7 +88,7 @@ export class MobileServices implements HomeHost {
   }
   get capabilities(): MobileCapabilitiesService {
     return this.capabilitiesService ??= new MobileCapabilitiesService({ adapter: this.app.vault.adapter, settings: () => this.settings,
-      saveSettings: () => this.host.saveSettings(), agents: this.profileProtocol, request: this.host.capabilityRequest,
+      saveSettings: () => this.host.saveSettings(), agents: this.profileProtocol, request: this.host.capabilityRequest, skillContent: this.skillContent,
       policy: agentId => new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings, agentId, proAccess: () => this.host.accountService }) });
   }
   agentIdentity = defaultAgentIdentityState();
@@ -212,8 +223,8 @@ export class MobileServices implements HomeHost {
   skills() {
     const saved = this.settings.resources.catalog.filter(item => item.kind === "skill");
     const record = (id: string) => saved.find(item => item.id === id || item.metadata?.resourceId === id);
-    return [...BUILTIN_SKILLS.map(skill => ({ id: skill.id, name: skill.title, description: skill.description, enabled: record(skill.id)?.enabled ?? this.settings.resources.legacyEnabledOverrides?.[skill.id] ?? true,
-      content: renderBuiltinSkill(skill), contentPath: record(skill.id)?.contentPath })),
+    return [...BUILTIN_SKILLS.map(skill => ({ id: skill.id, name: skill.title, description: skill.description, enabled: record(skill.id)?.enabled ?? this.settings.resources.legacyEnabledOverrides?.[skill.id] ?? this.settings.resources.legacyEnabledOverrides?.[`echoink-local:skill:${skill.id}`] ?? true,
+      content: "", contentPath: record(skill.id)?.contentPath })),
       ...saved.filter(item => !BUILTIN_SKILLS.some(skill => skill.id === item.id || skill.id === item.metadata?.resourceId)).map(item => ({ ...item, content: "" }))];
   }
   async requireAvailableEchoInkSkill(id: string): Promise<string> {
@@ -318,10 +329,10 @@ export class MobileServices implements HomeHost {
     const memory = memoryAllowed ? await this.memory.contextForRuntime() : "";
     if (memoryAllowed) policy.assertTool("memory_search");
     const profile = `${identity}${memory}`;
-    const skill = skillId ? await this.requireAvailableEchoInkSkill(skillId) : "";
-    if (skillId && turn) await this.capabilities.recordSkillUse(skillId);
+    const skills = await this.capabilities.resolveRunSkills(sessionId, agentId, turn?.text ?? "", skillId, !!turn);
+    const skill = skills.map(item => `<skill id="${item.id}" version="${item.version}" revision="${item.revision}">\n${item.content}\n</skill>`).join("\n");
     const preference = await this.readPreferences() ?? this.defaultPreferences;
-    return `${profile}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;
+    return `${profile}\n${SKILL_PRODUCT_RULES}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;
   }
   plugins() {
     return [{ id: "echoink:finance", name: "财务", description: "账目、预算、账单计划与分析", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },

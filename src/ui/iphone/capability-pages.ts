@@ -1,3 +1,7 @@
+import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
+import { safeSkillCompareUrl } from "../../membership/skill-delivery";
+import { attachNativeTooltip } from "../native-tooltip";
+import { shellIconButton } from "../mobile/shell-controls";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -25,10 +29,11 @@ export class IPhoneCapabilityPages {
       try {
         const [skills, servers] = await Promise.all([this.service.listSkills(), this.service.listMcp()]);
         if (disposed || current !== revision) return;
-        body.replaceChildren(); const builtin = skills.filter(skill => skill.builtin), mine = skills.filter(skill => !skill.builtin);
+        body.replaceChildren(); const builtin = skills.filter(skill => skill.builtin && !skill.remote), pro = skills.filter(skill => skill.remote), mine = skills.filter(skill => !skill.builtin && !skill.remote);
         const group = settingsGroup(ctx, body, "Skills", true);
-        settingsRow(ctx, group, "内置技能", { leading: this.tile("sparkles"), value: this.text(`${builtin.filter(skill => skill.enabled && skill.mobileAvailable).length} 个启用`, `${builtin.filter(skill => skill.enabled && skill.mobileAvailable).length} enabled`), literalValue: true, action: () => this.skills(true) });
-        settingsRow(ctx, group, "我的 Skill", { leading: this.tile("sparkles"), value: this.text(`${mine.filter(skill => skill.enabled).length} / ${mine.length} 启用`, `${mine.filter(skill => skill.enabled).length} / ${mine.length} enabled`), literalValue: true, action: () => this.skills(false) });
+        settingsRow(ctx, group, "内置技能", { leading: this.tile("sparkles"), value: this.text(`${builtin.filter(skill => skill.enabled && skill.mobileAvailable).length} 个启用`, `${builtin.filter(skill => skill.enabled && skill.mobileAvailable).length} enabled`), literalValue: true, action: () => this.skills("builtin") });
+        settingsRow(ctx, group, "PRO", { literal: true, leading: this.tile("sparkles"), value: this.text(`${pro.length} 个`, `${pro.length}`), literalValue: true, action: () => this.skills("pro") });
+        settingsRow(ctx, group, "我的 Skill", { leading: this.tile("sparkles"), value: this.text(`${mine.filter(skill => skill.enabled).length} / ${mine.length} 启用`, `${mine.filter(skill => skill.enabled).length} / ${mine.length} enabled`), literalValue: true, action: () => this.skills("mine") });
         const mcp = settingsGroup(ctx, body, "MCP", true);
         for (const server of servers) settingsRow(ctx, mcp, server.name, { literal: true, literalValue: true, leading: this.tile("plug"), value: server.statusLabel, action: () => this.mcp(server.id) });
         settingsRow(ctx, mcp, "添加 MCP 服务", { leading: this.tile("plus"), action: () => this.mcp() });
@@ -41,21 +46,21 @@ export class IPhoneCapabilityPages {
     if (!disposed) await render();
   }
 
-  private async skills(builtin: boolean): Promise<void> {
-    const { ctx } = this, id = `iphone-settings-skills-${builtin ? "builtin" : "mine"}`;
+  private async skills(category: "builtin" | "pro" | "mine"): Promise<void> {
+    const { ctx } = this, id = `iphone-settings-skills-${category}`;
     if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
     const body = this.body(); let disposed = false, busy = 0, revision = 0;
     const render = async () => {
       if (busy) return;
       const current = ++revision;
       try {
-        const skills = (await this.service.listSkills()).filter(skill => skill.builtin === builtin);
+        const skills = (await this.service.listSkills()).filter(skill => category === "pro" ? skill.remote : !skill.remote && skill.builtin === (category === "builtin"));
         if (disposed || current !== revision || busy) return;
         body.replaceChildren(); const group = settingsGroup(ctx, body);
         if (!skills.length) this.empty(group, "还没有我的 Skill");
         for (const skill of skills) {
           const row = el(ctx.document, "div", "ip-cap-skill-row"), main = el(ctx.document, "button", "ip-cap-skill-main"); main.type = "button";
-          main.append(this.tile(skill.builtin ? skillIcon(skill.id) : "sparkles"));
+          main.append(this.tile(skill.locked ? "lock" : skill.builtin ? skillIcon(skill.id) : "sparkles"));
           const label = el(ctx.document, "span", "ip-settings-label");
           label.append(el(ctx.document, "span", "ip-settings-name", skill.name), el(ctx.document, "span", "ip-settings-detail", this.skillDescription(skill)));
           main.append(label); main.addEventListener("click", () => { void this.skill(skill.id).catch(ctx.error); }); row.append(main); group.append(row);
@@ -68,7 +73,7 @@ export class IPhoneCapabilityPages {
       } catch (failure) { if (!disposed && current === revision) this.loadFailure(body, failure, render); }
     };
     this.loading(body); this.refreshers.add(render);
-    await pushSettingsPage(ctx, { id, title: builtin ? "内置技能" : "我的 Skill", content: body, canLeave: () => busy === 0, dispose: () => { disposed = true; revision++; this.refreshers.delete(render); } });
+    await pushSettingsPage(ctx, { id, title: category === "pro" ? "PRO" : category === "builtin" ? "内置技能" : "我的 Skill", content: body, canLeave: () => busy === 0, dispose: () => { disposed = true; revision++; this.refreshers.delete(render); } });
     if (!disposed) await render();
   }
 
@@ -98,6 +103,20 @@ export class IPhoneCapabilityPages {
       head.append(this.tile(snapshot.builtin ? skillIcon(id) : "sparkles", true));
       const labels = el(ctx.document, "div", "ip-settings-label");
       labels.append(el(ctx.document, "div", "ip-cap-skill-title", snapshot.name), el(ctx.document, "div", "ip-cap-skill-description", snapshot.description)); head.append(labels); body.append(head);
+      if (snapshot.remote || snapshot.readonly) {
+        const english = ctx.host.settings().settingsLanguage === "en";
+        const info = settingsGroup(ctx, body);
+        settingsRow(ctx, info, "PRO", { literal: true, value: snapshot.locked ? (english ? "PRO required" : "需要 PRO") : (snapshot.contentVersion ?? "PRO"), literalValue: true });
+        const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
+        if (compareUrl) settingsRow(ctx, info, english ? "View examples" : "查看对比示例", { literal: true, action: () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); } });
+        else settingsRow(ctx, info, english ? "Comparison examples are not available yet." : "对比示例尚未提供。", { literal: true });
+        const helpLabel = english ? "Downloads and offline use" : "下载与离线使用";
+        const help = settingsRow(ctx, info, helpLabel, { literal: true });
+        const helpButton = shellIconButton(ctx.document, helpLabel, "circle-alert", () => {}); help.append(helpButton);
+        attachNativeTooltip(helpButton, skillDeliveryNotice(english), { touch: "notice" });
+        if (!snapshot.locked) { const content = el(ctx.document, "div", "ip-cap-skill-body markdown-rendered"); body.append(content); ctx.host.renderMarkdown(snapshot.content, content); }
+        return;
+      }
       const info = settingsGroup(ctx, body);
       if (snapshot.mobileAvailable) settingsSwitch(ctx, info, "启用", () => snapshot!.enabled, async value => {
         busy = true;
@@ -325,7 +344,7 @@ export class IPhoneCapabilityPages {
   private tile(icon: string, large = false): HTMLElement { const tile = el(this.ctx.document, "span", `ip-cap-tile${large ? " is-large" : ""}`); tile.append(iphoneIcon(this.ctx.document, icon)); return tile; }
   private text(zh: string, en: string): string { return this.ctx.host.settings().settingsLanguage === "en" ? en : zh; }
   private notice(message: string): void { new Notice(settingsText(this.ctx, message)); }
-  private skillDescription(skill: MobileSkillSummary): string { return skill.mobileAvailable ? `${this.text(`${skill.agents.filter(agent => agent.allowed).length} 个 Agent 能用`, `${skill.agents.filter(agent => agent.allowed).length} Agents`)} · ${skill.description}` : skill.unavailableReason || settingsText(this.ctx, "只能在电脑上用"); }
+  private skillDescription(skill: MobileSkillSummary): string { return skill.locked ? skill.description : skill.mobileAvailable ? `${this.text(`${skill.agents.filter(agent => agent.allowed).length} 个 Agent 能用`, `${skill.agents.filter(agent => agent.allowed).length} Agents`)} · ${skill.description}` : skill.unavailableReason || settingsText(this.ctx, "只能在电脑上用"); }
   private mcpStatus(draft: MobileMcpDraft): string {
     if (draft.readonly || draft.transport === "stdio") return settingsText(this.ctx, "只能在电脑上用");
     if (draft.status === "connected") return settingsText(this.ctx, "已连接");

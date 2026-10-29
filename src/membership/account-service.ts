@@ -22,6 +22,9 @@ import type {
 } from "./types";
 import { hasProPluginAccess } from "./access";
 import { signProof, verifyLease } from "./crypto";
+import { sha256Hex } from "../utils/sha256";
+import { parseOfficialSkillCatalog, parseSkillDelivery, REMOTE_SKILL_IDS,
+  type OfficialSkillCatalog, type SkillAuthorization, type SkillDeliveryResponse, type SkillPlatform } from "./skill-delivery";
 
 const ERRORS: Record<string, string> = {
   AUTH_REQUIRED: "请重新登录账号。",
@@ -44,6 +47,9 @@ const ERRORS: Record<string, string> = {
   PRODUCT_UNAVAILABLE: "购买待开放；已有激活码可在账号与会员中兑换。",
   SERVICE_UNAVAILABLE: "账号服务暂不可用。",
   OPERATION_CANCELLED: "账号已切换，本次操作已取消。",
+  ACCOUNT_DISABLED: "账号已停用，无法下载 Skill。",
+  PROOF_INVALID: "设备授权已失效，请联网重新验证。",
+  VERSION_NOT_COVERED: "当前版本不支持此 Skill，请检查插件更新。",
 };
 
 function hasTimerUnref(value: unknown): value is { unref(): void } {
@@ -87,6 +93,8 @@ export class AccountService implements CapabilityAccess {
   private persistence: Promise<void> = Promise.resolve();
   private closed = false;
   private generation = 0;
+  private skillGeneration = 0;
+  private readonly skillSessionId = crypto.randomUUID();
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
   private salesOpen = false;
@@ -97,7 +105,7 @@ export class AccountService implements CapabilityAccess {
   readonly actions: AccountActions;
 
   constructor(
-    readonly storage: MembershipStorage,
+    private readonly storage: MembershipStorage,
     private transport: MembershipTransport,
     readonly apiUrl: string,
     private openWebsite: (url: string) => void,
@@ -189,6 +197,53 @@ export class AccountService implements CapabilityAccess {
   /** An opaque in-memory session revision; no token or PRO/device lease is exposed. */
   checkInSession(): number | null { return !this.closed && this.state.token ? this.generation : null; }
 
+  /** Opaque cache ownership only. Credentials and the signed lease stay here. */
+  skillAuthorization(): SkillAuthorization | null {
+    if (this.closed || !this.state.token || !this.state.account || !this.state.deviceId || !this.state.lease || !this.claims || !hasProPluginAccess(this)) return null;
+    return { scope: sha256Hex(JSON.stringify([this.apiUrl, this.state.account.id, this.state.deviceId])), session: `${this.skillSessionId}:${this.skillGeneration}`, validUntil: this.claims.exp };
+  }
+
+  async getSkillCatalog(): Promise<OfficialSkillCatalog> {
+    const operation = this.operation();
+    if (!this.apiUrl) throw new MembershipApiError("SERVICE_UNAVAILABLE");
+    // Public metadata must not send an account credential.
+    const result = await this.transport("/api/skills/catalog", "GET", undefined);
+    this.assertCurrent(operation);
+    return parseOfficialSkillCatalog(result);
+  }
+
+  async getSkillContent(id: string, input: { pluginVersion: string; platform: SkillPlatform; knownVersion?: string }): Promise<SkillDeliveryResponse> {
+    if (!REMOTE_SKILL_IDS.includes(id)) throw new MembershipApiError("NOT_FOUND");
+    const operation = this.operation(), authorization = this.skillAuthorization(), deviceId = this.state.deviceId;
+    if (!authorization) throw new MembershipApiError("PRO_REQUIRED");
+    const assert = () => {
+      this.assertCurrent(operation);
+      const current = this.skillAuthorization();
+      if (!current || current.scope !== authorization.scope || current.session !== authorization.session || this.state.deviceId !== deviceId) throw new MembershipApiError("OPERATION_CANCELLED");
+    };
+    try {
+      const value = await this.call(`/api/skills/${encodeURIComponent(id)}/content`, "POST", {
+        deviceId, lease: this.state.lease, pluginVersion: input.pluginVersion, platform: input.platform,
+        ...(input.knownVersion ? { knownVersion: input.knownVersion } : {})
+      }, operation);
+      assert();
+      return parseSkillDelivery(value, id);
+    } catch (error) {
+      assert();
+      if (error instanceof MembershipApiError && ["AUTH_REQUIRED", "ACCOUNT_DISABLED", "PRO_REQUIRED", "SUBSCRIPTION_EXPIRED", "REVOKED", "ENTITLEMENT_SCHEDULED", "DEVICE_REVOKED", "PROOF_INVALID"].includes(error.code)) {
+        ++this.generation;
+        this.clearLease();
+        if (error.code === "AUTH_REQUIRED") this.state = {};
+        else this.state.rights = { ...this.state.rights, state: error.code === "PRO_REQUIRED" ? "free"
+          : error.code === "SUBSCRIPTION_EXPIRED" ? "expired" : error.code === "ENTITLEMENT_SCHEDULED" ? "scheduled"
+          : error.code === "DEVICE_REVOKED" || error.code === "PROOF_INVALID" ? "device-required" : "revoked" };
+        this.refreshError = error.message;
+        await this.persist();
+      }
+      throw error;
+    }
+  }
+
   /** Voluntary upload; credentials remain inside the account transport. */
   async submitRunReport(report: unknown): Promise<unknown> {
     const operation = this.operation();
@@ -247,6 +302,7 @@ export class AccountService implements CapabilityAccess {
   }): Promise<void> {
     const previousToken = this.state.token;
     ++this.generation;
+    ++this.skillGeneration;
     this.claims = null;
     this.state = {};
     const operation = this.operation();
@@ -265,6 +321,7 @@ export class AccountService implements CapabilityAccess {
   private async signOut(): Promise<void> {
     const token = this.state.token;
     ++this.generation;
+    ++this.skillGeneration;
     this.claims = null;
     this.state = {};
     try {
@@ -293,6 +350,7 @@ export class AccountService implements CapabilityAccess {
       return;
     }
     ++this.generation;
+    ++this.skillGeneration;
     this.claims = null;
     // Password rotation is still the same identity; preserve the profile while
     // refreshing the new token so subscribers do not observe a fake sign-out.
@@ -379,6 +437,7 @@ export class AccountService implements CapabilityAccess {
     return Math.max(wall, this.state.verifiedTime || 0);
   }
   private clearLease(): void {
+    ++this.skillGeneration;
     this.claims = null;
     delete this.state.lease;
     delete this.state.deviceId;
@@ -543,13 +602,16 @@ export class AccountService implements CapabilityAccess {
           "DEVICE_REVOKED",
           "VERSION_NOT_COVERED",
           "ENTITLEMENT_SCHEDULED",
+          "ACCOUNT_DISABLED",
+          "PRO_REQUIRED",
+          "PROOF_INVALID",
         ].includes(error.code)
       ) {
         this.clearLease();
         const state =
           error.code === "SUBSCRIPTION_EXPIRED"
             ? "expired"
-            : error.code === "DEVICE_REVOKED"
+            : error.code === "DEVICE_REVOKED" || error.code === "PROOF_INVALID"
               ? "device-required"
               : error.code === "ENTITLEMENT_SCHEDULED"
                 ? "scheduled"

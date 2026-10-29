@@ -7,7 +7,7 @@ import { knowledgeSearchPathKind, VaultBodySearch, type KnowledgeBodySearchPort 
 import { FINANCE_BILINGUAL_ROOT, FINANCE_DEFAULT_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
 import { PRO_CAPABILITIES, type CapabilityAccess } from "../membership/types";
 import { sha256Hex } from "../utils/sha256";
-import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
+import { BUILTIN_SKILLS, isRemoteOnlySkill } from "../harness/resources/builtin-skills";
 import type { EchoInkResource } from "../resources/types";
 import { loadMobileSettings, type MobileSettings } from "./settings";
 import { mobileModuleEnabled } from "./module-settings";
@@ -59,8 +59,8 @@ function currentResources(settings: MobileSettings): EchoInkResource[] {
     const record = skills.find(item => item.id === skill.id || item.metadata?.resourceId === skill.id);
     return { ...record, id: record?.id ?? skill.id, kind: "skill", source: record?.source ?? "echoink-local",
       name: record?.name ?? skill.title, description: record?.description ?? skill.description, bridgeMode: record?.bridgeMode ?? "prompt-only",
-      enabled: record?.enabled ?? settings.resources.legacyEnabledOverrides?.[skill.id] ?? true,
-      metadata: { ...record?.metadata, resourceId: skill.id } };
+      enabled: record?.enabled ?? settings.resources.legacyEnabledOverrides?.[skill.id] ?? settings.resources.legacyEnabledOverrides?.[`echoink-local:skill:${skill.id}`] ?? true,
+      metadata: { ...record?.metadata, resourceId: skill.id, ...(isRemoteOnlySkill(skill.id) && record?.metadata?.builtin !== false && record?.metadata?.userModified !== true ? { contentSource: "official-remote" } : {}) } };
   });
   return [...builtins, ...saved.filter(item => item.kind !== "skill" || !BUILTIN_SKILLS.some(skill => skill.id === item.id || skill.id === item.metadata?.resourceId))];
 }

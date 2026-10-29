@@ -86,7 +86,7 @@ export function resourcePresentation(resource: EchoInkResource, language: Settin
   if (resource.kind === "tool-bundle" && resource.source === "echoink-local" && resource.id === "echoink:english-diary") {
     return builtinPluginPresentation("english-diary", language);
   }
-  const definition = resource.kind === "skill" && resource.source === "echoink-local"
+  const definition = resource.kind === "skill" && resource.source === "echoink-local" && resource.metadata?.builtin !== false
     ? getBuiltinSkillDefinition(
         typeof resource.metadata?.resourceId === "string"
           ? resource.metadata.resourceId

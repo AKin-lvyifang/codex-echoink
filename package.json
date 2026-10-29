@@ -71,7 +71,8 @@
     "test:gallery": "node scripts/gallery-tests.mjs",
     "test:appearance": "node scripts/appearance-theme-tests.mjs",
     "test:companion-theme": "node scripts/companion-theme-tests.mjs",
-    "test:run-reports": "node scripts/run-report-tests.mjs"
+    "test:run-reports": "node scripts/run-report-tests.mjs",
+    "test:skill-remote-delivery": "node scripts/skill-remote-delivery-tests.mjs"
   },
   "keywords": [
     "obsidian",

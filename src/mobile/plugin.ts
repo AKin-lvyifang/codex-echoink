@@ -43,6 +43,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   navigation!: MobileWorkspace;
   services!: MobileServices;
   accountService!: AccountService;
+  getSkillAccountService(): AccountService | undefined { return this.accountService; }
   private appearance?: EchoInkAppearance;
   applyAppearanceTheme(doc?: Document): void { if (doc) this.appearance?.applyToDocument(doc); this.appearance?.refresh(); }
   iphoneNavigation?: IPhoneShellWorkspace;

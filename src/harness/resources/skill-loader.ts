@@ -1,3 +1,6 @@
+import { parseVaultSkillDocument, normalizeSkillId, type VaultSkillFrontmatter } from "./skill-document";
+export { parseVaultSkillDocument } from "./skill-document";
+export type { VaultSkillFrontmatter, ParsedVaultSkillDocument } from "./skill-document";
 import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import { getDesktopPath } from "../../platform/desktop-paths";
@@ -15,15 +18,6 @@ export interface LoadVaultSkillInput {
   maxBytes: number;
 }
 
-export interface VaultSkillFrontmatter {
-  id: string;
-  name: string;
-  version: string;
-  description: string;
-  permissions: string[];
-  entry: string;
-}
-
 export interface VaultSkillFile {
   relativePath: string;
   content: string;
@@ -36,11 +30,6 @@ export interface LoadedVaultSkill {
   instruction: string;
   files: VaultSkillFile[];
   contentHash: string;
-}
-
-export interface ParsedVaultSkillDocument {
-  frontmatter: VaultSkillFrontmatter;
-  instruction: string;
 }
 
 export async function loadVaultSkill(input: LoadVaultSkillInput): Promise<LoadedVaultSkill> {
@@ -64,31 +53,6 @@ export async function loadVaultSkill(input: LoadVaultSkillInput): Promise<Loaded
     files,
     contentHash: hash.digest("hex")
   };
-}
-
-export function parseVaultSkillDocument(
-  text: string,
-  fallbackSkillId: string
-): ParsedVaultSkillDocument {
-  const skillId = normalizeSkillId(fallbackSkillId);
-  const parsed = parseSkillDocument(text);
-  return {
-    frontmatter: {
-      id: parsed.frontmatter.id || skillId,
-      name: parsed.frontmatter.name || skillId,
-      version: parsed.frontmatter.version || "",
-      description: parsed.frontmatter.description || "",
-      permissions: parsed.frontmatter.permissions,
-      entry: parsed.frontmatter.entry || "instruction"
-    },
-    instruction: parsed.body
-  };
-}
-
-function normalizeSkillId(value: string): string {
-  const id = value.trim();
-  if (!/^[a-zA-Z0-9._-]+$/.test(id) || id.includes("..")) throw new Error("Invalid skill id.");
-  return id;
 }
 
 async function readSupportFiles(skillRoot: string, remainingBytes: number): Promise<VaultSkillFile[]> {
@@ -134,75 +98,8 @@ async function readLimitedFile(filePath: string, maxBytes: number): Promise<stri
   return await readFile(filePath, "utf8");
 }
 
-function parseSkillDocument(text: string): { frontmatter: VaultSkillFrontmatter; body: string } {
-  if (!text.startsWith("---\n")) {
-    return { frontmatter: emptyFrontmatter(), body: text.trim() };
-  }
-  const end = text.indexOf("\n---", 4);
-  if (end < 0) return { frontmatter: emptyFrontmatter(), body: text.trim() };
-  const rawFrontmatter = text.slice(4, end).trim();
-  const body = text.slice(end + "\n---".length).trim();
-  return {
-    frontmatter: parseFrontmatter(rawFrontmatter),
-    body
-  };
-}
-
 function isMissingFileSystemError(error: unknown): boolean {
   return (error as NodeJS.ErrnoException | null)?.code === "ENOENT";
-}
-
-function parseFrontmatter(text: string): VaultSkillFrontmatter {
-  const data = emptyFrontmatter();
-  const lines = text.split(/\r?\n/);
-  let activeList: "permissions" | null = null;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const listItem = trimmed.match(/^-\s+(.+)$/);
-    if (listItem && activeList) {
-      data[activeList].push(stripQuotes(listItem[1].trim()));
-      continue;
-    }
-    activeList = null;
-    const match = trimmed.match(/^([a-zA-Z0-9_-]+):\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1] as keyof VaultSkillFrontmatter;
-    const value = stripQuotes(match[2].trim());
-    if (key === "permissions") {
-      activeList = key;
-      if (value) data[key] = parseInlineList(value);
-      continue;
-    }
-    if (key in data && typeof data[key] === "string") {
-      data[key] = value;
-    }
-  }
-  return data;
-}
-
-function parseInlineList(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    return trimmed.slice(1, -1).split(",").map((item) => stripQuotes(item.trim())).filter(Boolean);
-  }
-  return [stripQuotes(trimmed)];
-}
-
-function stripQuotes(value: string): string {
-  return value.replace(/^["']|["']$/g, "");
-}
-
-function emptyFrontmatter(): VaultSkillFrontmatter {
-  return {
-    id: "",
-    name: "",
-    version: "",
-    description: "",
-    permissions: [],
-    entry: ""
-  };
 }
 
 function safeJoin(root: string, ...parts: string[]): string {

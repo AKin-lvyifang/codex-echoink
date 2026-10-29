@@ -9,6 +9,7 @@ import type { MobileSettings } from "./settings";
 import type { MobileRequest } from "./transport";
 import type { MobileCapabilityPolicy } from "./capability-policy";
 import { MobileSkillsService } from "./skills";
+import type { SkillContentResolver } from "../harness/resources/skill-content";
 import { MobileHttpMcpClient, mobileMcpAdmitted, mobileMcpContractFingerprint, mobileMcpHeaders, mobileMcpToolName, mobileMcpUrl } from "./remote-tools";
 import type { MobileCapabilitiesPort, MobileMcpDraft, MobileMcpStatus, MobileMcpSummary, MobileTavilySnapshot } from "./capabilities-contracts";
 export type * from "./capabilities-contracts";
@@ -28,6 +29,7 @@ export interface MobileCapabilitiesServiceOptions {
   adapter: DataAdapter; settings(): MobileSettings; saveSettings(): Promise<void>;
   agents?: Pick<MobileAgentRegistryService, "snapshot" | "update">;
   policy(agentId: string): MobileCapabilityPolicy; request?: MobileRequest;
+  skillContent?: SkillContentResolver;
 }
 /** Shared data/permissions only. Each device owns its own page stack and DOM. */
 export class MobileCapabilitiesService implements MobileCapabilitiesPort {
@@ -38,16 +40,20 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
   private readonly discoveries = new Map<string, { endpoint: string; tools: EchoInkMcpDiscoveredTool[]; at: number }>();
   constructor(private options: MobileCapabilitiesServiceOptions) {
     this.request = options.request ?? requestUrl;
-    this.skillsService = new MobileSkillsService(options.adapter, () => options.settings(), () => options.saveSettings(), id => options.policy(id), options.agents);
+    this.skillsService = new MobileSkillsService(options.adapter, () => options.settings(), () => options.saveSettings(), id => options.policy(id), options.agents, options.skillContent);
   }
   private serialize<T>(run: () => Promise<T>): Promise<T> { const pending = this.writes.then(run, run); this.writes = pending.catch(() => {}); return pending; }
   listSkills() { return this.skillsService.listSkills(); }
+  initializeSkills() { return this.skillsService.initialize(); }
   readSkill(id: string) { return this.skillsService.readSkill(id); }
   setSkillEnabled(id: string, enabled: boolean) { return this.skillsService.setSkillEnabled(id, enabled); }
   saveSkill(id: string, content: string, expected: string) { return this.skillsService.saveSkill(id, content, expected); }
   saveSkillAgents(id: string, agentIds: string[], expected: string) { return this.skillsService.saveSkillAgents(id, agentIds, expected); }
   defaultSkillContent(id: string) { return this.skillsService.defaultSkillContent(id); }
   recordSkillUse(id: string) { return this.skillsService.recordUse(id); }
+  resolveRunSkills(taskId: string, agentId: string, text: string, skillId?: string, recordUsage = true) { return this.skillsService.resolveRunSkills(taskId, agentId, text, skillId, recordUsage); }
+  assertRunSkills(taskId: string) { this.skillsService.assertRunSkills(taskId); }
+  releaseRunSkills(taskId: string) { this.skillsService.releaseRunSkills(taskId); }
   private resource(id: string): EchoInkResource | undefined { return this.options.settings().resources.catalog.find(item => item.id === id && item.kind === "mcp-server"); }
   private mcpVersion(id: string): string { const settings = this.options.settings(); return version([this.resource(id) ?? null, settings.resources.mcpConnections[id] ?? null]); }
   private endpoint(record: { url: string; headers?: Record<string, string> }): string { return version([mobileMcpUrl(record.url), mobileMcpHeaders(record.headers ?? {})]); }

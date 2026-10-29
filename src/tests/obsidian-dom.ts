@@ -38,6 +38,7 @@ export function installObsidianDom(value: unknown): void {
     const document = this.nodeType === 9 ? this as Document : this.ownerDocument;
     return document?.defaultView ?? win;
   } });
+  Object.defineProperty(win.Node.prototype, "instanceOf", { configurable: true, value(this: Node, constructor: typeof Node) { return this instanceof constructor; } });
 }
 
 /** Call at import and at host construction; late-created fixtures call the installer explicitly. */

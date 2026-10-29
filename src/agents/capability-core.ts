@@ -119,6 +119,7 @@ export function checkAgentSkill(context: AgentCapabilityContext, skillId: string
   const resource = context.resources.find(item => item.kind === "skill" && (item.metadata?.resourceId === skillId || item.id === skillId));
   if (!resource) return decision(skillId, "unknown_resource");
   if (!resource.enabled) return decision(skillId, "resource_disabled");
+  if (resource.metadata?.contentSource === "official-remote" && !hasProPluginAccess(context.proAccess ?? unavailableCapabilityAccess)) return decision(skillId, "pro_required");
   const capability = BASE_SKILLS.has(skillId) || skillId === "obsidian-cli" ? "conversation" : MODULE_SKILLS[skillId] ?? vaultSkillCapabilityId(resource.id);
   const agent = currentAgent(context), skillGrants = skillCapabilityIds(resource.id, skillId);
   if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id))) return decision(capability, "agent_disabled");
