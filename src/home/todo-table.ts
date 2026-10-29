@@ -12,6 +12,7 @@ export interface TodoTableCallbacks {
   onToggle(record: ParsedTodoRecord, done: boolean): void;
   onEdit(record: ParsedTodoRecord): void;
   onDelete(record: ParsedTodoRecord): void;
+  onOpenDiary?(path: string): void;
 }
 
 export interface TodoTableCopy {
@@ -116,6 +117,16 @@ function renderRow(
 
   const titleCell = row.createEl("td", { cls: "echoink-todo-title" });
   titleCell.createSpan({ text: record.title });
+  if (record.diaryJournalPath) {
+    titleCell.createEl("br");
+    const source = titleCell.createEl("a", {
+      cls: "internal-link", text: copy.titleHead === "事项" ? "AI 从日记记的" : "AI from journal",
+      attr: { href: record.diaryJournalPath, "data-href": record.diaryJournalPath }
+    });
+    if (callbacks.onOpenDiary) source.addEventListener("click", event => {
+      event.preventDefault(); event.stopPropagation(); callbacks.onOpenDiary?.(record.diaryJournalPath!);
+    });
+  }
 
   if (projects) {
     const cell = row.createEl("td", { cls: "echoink-todo-project" });

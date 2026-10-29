@@ -24,6 +24,9 @@ export interface ParsedTodoRecord {
   categoryName: string;
   /** Project display name, or Vault-relative path when names collide. */
   project?: string;
+  /** Stable extraction identity, independent of title, location and task ID. */
+  diaryEntryId?: string;
+  diaryJournalPath?: string;
   done: boolean;
   /** 0-based inclusive line range of the whole block in the source file. */
   lineStart: number;
@@ -47,6 +50,15 @@ const META_LINE = /^\s+[-*]\s+(相关人员|截止日期|截止时间|分类|项
 const INDENTED_LINE = /^\s+\S/;
 const ID_COMMENT = new RegExp(`<!--\\s*${TODO_ID_COMMENT}:\\s*([^>]+?)\\s*-->`, "u");
 const DATE_VALUE = /^\d{4}-\d{2}-\d{2}$/;
+const DIARY_ID_META = /^\s+[-*]\s+抽取条目ID[：:]\s*(.*)$/u;
+const DIARY_SOURCE_META = /^\s+[-*]\s+来源[：:]\s*AI 从日记记的\s+\[\[([^\]\r\n]+)\]\]\s*$/u;
+
+function readDiaryMeta(record: ParsedTodoRecord, line: string): void {
+  const id = DIARY_ID_META.exec(line);
+  const source = DIARY_SOURCE_META.exec(line);
+  if (id) record.diaryEntryId = id[1].trim();
+  if (source) record.diaryJournalPath = source[1];
+}
 
 export function parseTodoMarkdown(content: string): ParsedTodoMarkdown {
   const lines = content.split("\n");
@@ -99,6 +111,7 @@ export function parseTodoMarkdown(content: string): ParsedTodoMarkdown {
           record.extraMetaLines.push(sub);
         }
       } else {
+        readDiaryMeta(record, sub);
         record.extraMetaLines.push(sub);
       }
       record.lineEnd = index;
@@ -156,6 +169,13 @@ export function serializeTodoRecord(record: ParsedTodoRecord): string {
   if (record.categoryName) lines.push(`  - 分类：${record.categoryName}`);
   if (project) lines.push(`  - 项目：${project}`);
   lines.push(...record.extraMetaLines.filter(line => !PROJECT_META.test(line)));
+  // Keep metadata as compatibility carriers for older field-whitelist editors.
+  if (record.diaryJournalPath && !record.extraMetaLines.some(line => DIARY_SOURCE_META.test(line))) {
+    lines.push(`  - 来源：AI 从日记记的 [[${record.diaryJournalPath}]]`);
+  }
+  if (record.diaryEntryId && !record.extraMetaLines.some(line => DIARY_ID_META.test(line))) {
+    lines.push(`  - 抽取条目ID：${record.diaryEntryId}`);
+  }
   return lines.join("\n");
 }
 

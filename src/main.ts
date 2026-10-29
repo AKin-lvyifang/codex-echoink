@@ -80,6 +80,7 @@ import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "./home/home-view";
 import { PaperGuideController } from "./plugin/paper-guide-controller";
 import { EchoInkTodoStore } from "./home/todo-store";
 import { TodoReminderService } from "./home/todo-reminder-service";
+import { DiaryOrganizerService } from "./plugin/diary-organizer-service";
 import {
   EchoInkSettingsStore,
   SettingsPersistenceError,
@@ -220,6 +221,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private quickChatWindow: QuickChatWindowController | null = null;
   private todoStore: EchoInkTodoStore | null = null;
   private todoReminderService: TodoReminderService | null = null;
+  diaryOrganizer: DiaryOrganizerService | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
   private autoArchive: ConversationAutoArchive | null = null;
@@ -368,10 +370,16 @@ export default class CodexForObsidianPlugin extends Plugin {
       console.warn("EchoInk quick chat hotkey not registered", quickChatRegistration.reason);
     }
     this.getTodoReminderService().start();
+    if (Platform.isDesktopApp) {
+      this.diaryOrganizer = new DiaryOrganizerService(this);
+      await this.diaryOrganizer.initialize();
+    }
   }
 
   onunload(): void {
     this.echoInkMcp?.dispose();
+    this.diaryOrganizer?.dispose();
+    this.diaryOrganizer = null;
     // Stop notifications synchronously, before the async service shutdown.
     this.todoReminderService?.dispose();
     this.todoReminderService = null;
@@ -2399,7 +2407,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         runsPerDay: this.settings.memory.dreamRunsPerDay
       }),
       isForegroundBusy: () => this.developerMemoryChanging
-        || this.piRunConversations.size > 0 || this.productActivity.hasActivity,
+        || this.piRunConversations.size > 0 || this.productActivity.hasActivity || this.diaryOrganizer?.running === true,
       registerInterval: (handle) => this.registerInterval(handle)
     });
     system.startDreamScheduler();
@@ -2423,6 +2431,20 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Independent post-task Skill review; unavailable without a configured Provider. */
   createSkillReviewLlmPort(): DreamLlmPort | null {
     return this.createDreamLlmPort();
+  }
+
+  diaryOrganizerBusy(): boolean {
+    return this.developerMemoryChanging || this.piRunConversations.size > 0
+      || this.piSubmittingConversations.size > 0 || this.productActivity.hasActivity
+      || this.cognitiveSystem?.engine.isRunning === true;
+  }
+
+  async generateDiaryOrganizerText(systemPrompt: string, userPrompt: string, signal: AbortSignal): Promise<string> {
+    if (!getActiveApiProviderModel(this.settings)) throw new Error("请先配置当前模型服务。");
+    return this.getPiProviderConfigurationService().generateText({
+      draft: this.activePiProviderConfigurationDraft(), systemPrompt, userPrompt,
+      timeoutMs: 120_000, maxTokens: 6000, signal
+    });
   }
 
   async generateLifestyleText(systemPrompt: string, userPrompt: string, maxTokens = 1400, signal?: AbortSignal): Promise<string> {

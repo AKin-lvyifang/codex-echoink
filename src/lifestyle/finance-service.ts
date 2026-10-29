@@ -18,6 +18,8 @@ import { nextFinanceAnalysisMonth } from "./finance-analysis-history";
 import { FinanceAnalysisArchive, type FinanceAnalysisArchiveDraft } from "./finance-analysis-archive";
 import { FinanceLedger, type CreatedFinanceRow, type FinanceImportResult, type FinanceImportWriteOptions } from "./finance-ledger";
 import { financeBudgetSnapshot, financeValueVersion, type FinanceBudgetPatch, type FinanceRecordPatch } from "./finance-operation-types";
+import { diaryFinanceCandidates, validFinanceDate, type DiaryFinanceInput } from "./finance-diary";
+import { sha256Hex } from "../utils/sha256";
 
 export const FINANCE_ANALYSIS_PROMPT_VERSION = "finance-analysis-v23";
 
@@ -113,6 +115,60 @@ export class LifestyleFinanceService {
   entries(): readonly FinanceEntry[] { return this.ledger.entries(); }
   private requireEnabled(): void {
     if (!this.service.plugin.settings.lifestyle.finance.enabled) throw new Error("finance_plugin_disabled");
+  }
+  private requireDiaryWrite(guard: () => void): void {
+    if (typeof guard !== "function") throw new Error("finance_diary_guard_required");
+    guard();
+    if (!this.service.plugin.settings.diaryOrganizerEnabled) throw new Error("diary_organizer_disabled");
+    this.requireEnabled(); requireProPlugin(this.access);
+  }
+  /** Complete, untruncated, read-only ledger snapshots, including exact Markdown versions. */
+  async readDiarySnapshot() {
+    const records = await this.ledger.readSnapshots({ notify: false });
+    return { records, categories: structuredClone(this.service.plugin.settings.lifestyle.finance.categories), issues: this.ledger.issues() };
+  }
+  async findDiaryRecord(entryId: string) {
+    return (await this.readDiarySnapshot()).records.find(record => record.entry.source === "diary" && record.entry.sourceId === entryId) ?? null;
+  }
+  async findDiaryCandidates(input: Pick<FinanceEntry, "kind" | "currency" | "amountCents" | "date">) {
+    const { records } = await this.readDiarySnapshot();
+    const ids = new Set(diaryFinanceCandidates(records.map(record => record.entry), input).map(entry => entry.id));
+    return records.filter(record => ids.has(record.entry.id));
+  }
+  async writeDiaryRecord(entryId: string, journalPath: string, input: DiaryFinanceInput, guard: () => void) {
+    this.requireDiaryWrite(guard);
+    if (!entryId.trim() || entryId.length > 512 || /[\p{Cc}]/u.test(entryId)
+      || !journalPath.endsWith(".md") || journalPath.startsWith("/") || /[\\\p{Cc}]/u.test(journalPath)
+      || journalPath.split("/").some(part => !part || part === "." || part === "..")) throw new Error("finance_diary_identity_invalid");
+    const { reviewedDistinct = [], ...facts } = input;
+    this.validateDiaryInput(facts);
+    const entry = this.normalizeNewRecord(facts, { id: `entry-diary-${sha256Hex(entryId)}`, sourceId: entryId }, "diary");
+    entry.journalPath = journalPath;
+    return this.ledger.addDiary(entry, reviewedDistinct, () => { this.requireDiaryWrite(guard); this.validateDiaryInput(facts); });
+  }
+  /** A reviewed source edit changes its existing record; it never creates a second transaction. */
+  async updateDiaryRecord(id: string, expectedVersion: string, patch: FinanceRecordPatch, guard: () => void) {
+    this.requireDiaryWrite(guard);
+    const record = (await this.readDiarySnapshot()).records.find(row => row.entry.id === id);
+    if (!record || record.entry.source !== "diary") throw new Error("finance_diary_record_not_found");
+    const frozen = structuredClone(patch), merged = { ...record.entry, ...frozen, billPlanId: frozen.billPlanId === null ? undefined : frozen.billPlanId ?? record.entry.billPlanId };
+    this.validateDiaryInput(merged);
+    return this.ledger.patchRecord(id, expectedVersion, frozen, () => { this.requireDiaryWrite(guard); this.validateDiaryInput(merged); });
+  }
+  async undoDiaryRecord(id: string, writtenVersion: string, _force: boolean, guard: () => void) {
+    this.requireDiaryWrite(guard);
+    const record = (await this.readDiarySnapshot()).records.find(row => row.entry.id === id);
+    if (!record) throw new Error("finance_record_not_found");
+    if (record.entry.source !== "diary") throw new Error("finance_diary_record_not_found");
+    if (record.version !== writtenVersion) throw new Error("finance_version_conflict");
+    return this.ledger.deleteRecord(id, writtenVersion, () => this.requireDiaryWrite(guard));
+  }
+  private validateDiaryInput(input: Omit<FinanceEntry, "id" | "source" | "sourceId">): void {
+    if (!validFinanceDate(input.date) || !["expense", "income", "refund", "transfer"].includes(input.kind)
+      || input.status !== "completed" || !/^[A-Z]{3}$/u.test(input.currency) || input.classificationPending
+      || typeof input.description !== "string" || input.description.length > 200
+      || typeof input.note !== "string" || input.note.length > 2000) throw new Error("finance_invalid_record");
+    this.requireExistingCategories([input.category]);
   }
   async readForConversation() {
     this.requireEnabled();
@@ -336,14 +392,7 @@ export class LifestyleFinanceService {
 
   /** Prepare the real service-generated identity before conversation approval. No write here. */
   prepareManual(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">, identity?: Pick<FinanceEntry, "id" | "sourceId">, guard: () => void = () => {}) {
-    requireProPlugin(this.access);
-    if (entry.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
-    if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(entry.date)) throw new Error("交易日期无效");
-    if (entry.merchant.trim().length > 60) throw new Error("商户名称过长");
-    if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("金额无效");
-    this.validateBillPlanId(entry.billPlanId);
-    const created: FinanceEntry = { ...entry, merchant: entry.merchant.trim(), account: entry.account.trim(), id: identity?.id ?? lifeId("entry"), source: "manual", sourceId: identity?.sourceId ?? lifeId("manual") };
-    delete created.classificationPending;
+    const created = this.normalizeNewRecord(entry, identity, "manual");
     let consumed = false;
     return { entry: Object.freeze(created), relativePath: this.ledger.pathForNewEntry(created.id), create: async () => {
       if (consumed) throw new Error("finance_manual_operation_already_consumed");
@@ -356,8 +405,19 @@ export class LifestyleFinanceService {
       return created;
     } };
   }
+  private normalizeNewRecord(entry: Omit<FinanceEntry, "id" | "source" | "sourceId">, identity: Pick<FinanceEntry, "id" | "sourceId"> | undefined, source: FinanceEntry["source"]): FinanceEntry {
+    requireProPlugin(this.access);
+    if (entry.billPlanId != null) this.access.requireCapability("finance.bill_plan.write");
+    if (!/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(entry.date)) throw new Error("交易日期无效");
+    if (entry.merchant.trim().length > 60) throw new Error("商户名称过长");
+    if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("金额无效");
+    this.validateBillPlanId(entry.billPlanId);
+    const created: FinanceEntry = { ...entry, merchant: entry.merchant.trim(), account: entry.account.trim(), id: identity?.id ?? lifeId("entry"), source, sourceId: identity?.sourceId ?? lifeId(source) };
+    delete created.classificationPending;
+    return created;
+  }
 
-  previewImport(rows: readonly FinanceImportRow[]) { return this.ledger.previewImport(rows); }
+  previewImport(rows: readonly FinanceImportRow[]) { return this.ledger.previewImport(applyFinanceImportSettings(rows, this.service.plugin.settings.lifestyle.finance)); }
 
   async prepareImport(created: readonly CreatedFinanceRow[], signal: AbortSignal, onProgress?: (done: number, total: number, rows: readonly FinanceImportRow[]) => void): Promise<FinanceOrganizationResult> {
     requireProPlugin(this.access);
@@ -411,12 +471,13 @@ export class LifestyleFinanceService {
     if (pending.completion) return pending.completion;
     const cancelled = () => pending.signal?.aborted || options.signal?.aborted;
     if (cancelled() || options.failed || result.writeError || result.invalid || !pending.rowCount
-      || result.added + result.updated + result.duplicates !== pending.rowCount) return Promise.resolve(false);
+      || result.pending?.length || result.added + result.updated + result.duplicates + (result.linked ?? 0) !== pending.rowCount) return Promise.resolve(false);
     if (result.created.length && (!options.organization || !options.suggestions || options.suggestions.skipped
       || options.organization.incomplete || options.organization.warnings.some(warning => warning !== "智能整理未启用，基础账目已入库"))) return Promise.resolve(false);
     const run = async (): Promise<boolean> => {
       // The existing import/suggestion/catalog steps already reload the real ledger.
       const known = new Map(this.ledger.entries().map(entry => [`${entry.source}:${entry.sourceId}`, entry]));
+      for (const entry of this.ledger.entries()) for (const link of entry.sourceLinks ?? []) known.set(`${link.source}:${link.sourceId}`, entry);
       if (cancelled() || pending.expected.some(entry => known.get(`${entry.source}:${entry.sourceId}`)?.status !== entry.status)) return false;
       await this.service.store.updateFresh(draft => {
         if (cancelled()) throw new DOMException("已取消导入", "AbortError");

@@ -1,6 +1,7 @@
 import { readSheet } from "read-excel-file/universal";
 import type { FinanceBudget, FinanceEntry, FinanceKind } from "./store-core";
 import { lifeId } from "./store-core";
+import { diaryFinanceCandidates, FINANCE_SOURCE_LABELS } from "./finance-diary";
 
 export const FINANCE_CATEGORIES = ["居住", "餐饮", "购物", "交通", "订阅", "其他"] as const;
 export type FinanceCategory = string;
@@ -88,6 +89,7 @@ export function financeSummary(entries: readonly FinanceEntry[], month: string, 
 }
 
 export interface FinanceFilters {
+  source?: "" | FinanceEntry["source"];
   search: string; merchant: string; category: string; kind: "all" | "spending" | FinanceKind;
   account: string; excludedCategories: string[]; excludedIds: string[];
   date?: string; minCents?: number; maxCents?: number | null; validExpenseOnly?: boolean; exactAccount?: string; exactCategory?: string; exactMerchant?: string;
@@ -97,6 +99,7 @@ export function filterFinanceEntries(entries: readonly FinanceEntry[], month: st
   const query = filters.search.trim().toLocaleLowerCase();
   return entries.filter((entry) => {
     if (!entry.date.startsWith(month)) return false;
+    if (filters.source && entry.source !== filters.source) return false;
     if (filters.validExpenseOnly && (entry.kind !== "expense" || entry.status !== "completed" || entry.currency !== "CNY" || entry.date.slice(0, 10) > localDate())) return false;
     if (filters.date && entry.date.slice(0, 10) !== filters.date) return false;
     if (filters.minCents !== undefined && entry.amountCents < filters.minCents) return false;
@@ -156,8 +159,8 @@ export function allocateBudgetByPercent(month: string, totalCents: number, perce
 
 export function financeEntryCsv(entries: readonly FinanceEntry[]): string {
   const quote = (value: string) => `"${value.replace(/"/gu, '""')}"`;
-  const header = ["日期", "类型", "商户", "消费说明", "分类", "账户", "金额", "币种", "备注", "账单计划 ID"];
-  const rows = entries.map((entry) => [entry.date, entry.kind, entry.merchant, entry.description, entry.category, entry.account, money(entry.amountCents), entry.currency, entry.note, entry.billPlanId || ""]);
+  const header = ["日期", "类型", "商户", "消费说明", "分类", "账户", "金额", "币种", "备注", "账单计划 ID", "来源", "来源日记"];
+  const rows = entries.map((entry) => [entry.date, entry.kind, entry.merchant, entry.description, entry.category, entry.account, money(entry.amountCents), entry.currency, entry.note, entry.billPlanId || "", FINANCE_SOURCE_LABELS[entry.source], entry.journalPath || ""]);
   return "\uFEFF" + [header, ...rows].map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
 }
 
@@ -185,6 +188,8 @@ export interface FinanceImportRow {
   sourceFields?: { counterparty: string; product: string; transactionType: string; paymentMethod: string; direction: string; state: string; merchantOrderId: string; note: string };
   review?: string;
   reason?: string;
+  /** Explicit import-preview choice; never inferred from an amount/date match. */
+  duplicateDecision?: { action: "separate"; candidateIds: string[] } | { action: "same"; id: string };
 }
 
 function headerKey(value: string): string { return value.replace(/[\s\uFEFF()（）/\\]/gu, "").toLocaleLowerCase(); }
@@ -310,19 +315,38 @@ export async function readFinanceBill(bytes: Uint8Array, fileName: string, sourc
   return results;
 }
 
-export function classifyImport(existing: readonly FinanceEntry[], rows: readonly FinanceImportRow[]): { added: FinanceEntry[]; updated: FinanceEntry[]; duplicates: number; invalid: number } {
+export interface FinanceImportClassification {
+  added: FinanceEntry[]; updated: FinanceEntry[]; duplicates: number; invalid: number;
+  linked: { entry: FinanceEntry; imported: FinanceEntry }[];
+  pending: { row: FinanceImportRow; candidates: FinanceEntry[] }[];
+}
+export function classifyImport(existing: readonly FinanceEntry[], rows: readonly FinanceImportRow[]): FinanceImportClassification {
   const added: FinanceEntry[] = [], updated: FinanceEntry[] = [];
+  const linked: FinanceImportClassification["linked"] = [], pending: FinanceImportClassification["pending"] = [];
   let duplicates = 0, invalid = 0;
   const known = new Map(existing.map((entry) => [`${entry.source}:${entry.sourceId}`, entry]));
+  for (const entry of existing) for (const link of entry.sourceLinks ?? []) known.set(`${link.source}:${link.sourceId}`, entry);
   for (const row of rows) {
     if (!row.entry) { invalid++; continue; }
     const key = `${row.entry.source}:${row.entry.sourceId}`;
     const previous = known.get(key);
-    if (!previous) { added.push(row.entry); known.set(key, row.entry); }
+    if (!previous) {
+      const decision = row.duplicateDecision;
+      const candidates = row.entry.status === "completed" && (row.entry.source === "wechat" || row.entry.source === "alipay")
+        ? diaryFinanceCandidates([...known.values()].filter(entry => entry.source === "diary"), row.entry)
+          .filter((entry, index, all) => all.findIndex(other => other.id === entry.id) === index) : [];
+      // The same merchant/product can be bought twice. Imported identities are
+      // linked automatically only after a prior link; a new close match is reviewed.
+      const target = decision?.action === "same" ? candidates.find(entry => entry.id === decision.id) : undefined;
+      if (target) { linked.push({ entry: target, imported: row.entry }); known.set(key, target); }
+      else if (decision?.action === "same" || candidates.length && !(decision?.action === "separate" && candidates.every(entry => decision.candidateIds.includes(entry.id)))) pending.push({ row, candidates });
+      else { added.push(row.entry); known.set(key, row.entry); }
+    }
+    else if (previous.source !== row.entry.source) duplicates++;
     else if (previous.status !== row.entry.status) {
       const replacement = { ...previous, status: row.entry.status };
       updated.push(replacement); known.set(key, replacement);
     } else duplicates++;
   }
-  return { added, updated, duplicates, invalid };
+  return { added, updated, duplicates, invalid, linked, pending };
 }

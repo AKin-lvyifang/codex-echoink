@@ -8,7 +8,7 @@ import { getTodoProjects, resolveTodoProject, serializeTodoProject } from "../ho
 import { parseTodoMarkdown, serializeTodoRecord } from "../home/todo-markdown";
 import { EchoInkTodoStore, TODO_SOURCE_PATH, TodoConflictError } from "../home/todo-store";
 
-async function fixture(root: string, initial: string | null) {
+export async function todoStoreFixture(root: string, initial: string | null) {
   await mkdir(root, { recursive: true });
   const files = new Map<string, TFile | TFolder>();
   const events = new Map<string, ((...args: unknown[]) => void)[]>();
@@ -78,6 +78,8 @@ async function fixture(root: string, initial: string | null) {
     }
   };
 }
+
+const fixture = todoStoreFixture;
 
 export async function runTodoProjectTests(root: string): Promise<void> {
   assert.ok(root);

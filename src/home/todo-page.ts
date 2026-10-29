@@ -265,6 +265,7 @@ export class TodoPageView extends ItemView {
     renderTodoTable(host, result.records, copy, {
       onToggle: (record, done) => { void this.toggle(record, done); },
       onEdit: record => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
+      onOpenDiary: path => { void this.app.workspace.openLinkText(path, this.plugin.getTodoStore().sourcePath); },
       onDelete: record => { void this.remove(record).catch(error => new Notice(error instanceof Error ? error.message : String(error))); }
     }, this.projects);
     const wrap = host.querySelector<HTMLElement>(".echoink-todo-table-wrap")!;

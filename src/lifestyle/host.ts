@@ -9,7 +9,7 @@ import type { LifestyleKind } from "./settings";
 /** The existing finance workspace's host contract, shared by desktop and mobile. */
 export interface LifestylePluginHost {
   app: App;
-  settings: Pick<CodexForObsidianSettings, "lifestyle" | "homeModules" | "apiProviders" | "activeApiProviderId" | "defaultModel">;
+  settings: Pick<CodexForObsidianSettings, "lifestyle" | "homeModules" | "apiProviders" | "activeApiProviderId" | "defaultModel"> & { diaryOrganizerEnabled?: boolean };
   accountService?: CapabilityAccess | null;
   saveSettings(refresh?: boolean): Promise<void>;
   registerEvent(event: EventRef): void;

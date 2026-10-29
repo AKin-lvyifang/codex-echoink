@@ -5,6 +5,7 @@ import { classifyImport, parseYuan, type FinanceImportRow } from "./finance-doma
 import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, FINANCE_DEFAULT_ROOT, FINANCE_DEFAULT_TRANSACTIONS, FINANCE_LEGACY_ROOT, isEchoInkFinanceBase, isFinanceRootName } from "./finance-paths";
 import type { FinanceEntry, LifestyleStoreCore } from "./store-core";
 import type { FinanceRecordPatch, FinanceRecordSnapshot } from "./finance-operation-types";
+import { diaryFinanceCandidates } from "./finance-diary";
 
 export const FINANCE_DIRECTORY = `${FINANCE_DEFAULT_ROOT}/${FINANCE_DEFAULT_TRANSACTIONS}`;
 export const FINANCE_BASE_PATH = `${FINANCE_DEFAULT_ROOT}/ledger.base`;
@@ -14,6 +15,8 @@ export interface CreatedFinanceRow { entry: FinanceEntry; sourceFields?: Finance
 export interface FinanceImportResult {
   added: number; updated: number; duplicates: number; invalid: number;
   created: CreatedFinanceRow[]; writeError?: string;
+  linked?: number;
+  pending?: ReturnType<typeof classifyImport>["pending"];
 }
 export interface FinanceImportWriteOptions {
   signal?: AbortSignal;
@@ -22,7 +25,7 @@ export interface FinanceImportWriteOptions {
 const LEGACY_DIRECTORY = `${FINANCE_LEGACY_ROOT}/账目`;
 const LEGACY_BASE_PATH = `${FINANCE_LEGACY_ROOT}/账本.base`;
 
-const knownSources = new Set(["manual", "wechat", "alipay"]);
+const knownSources = new Set(["manual", "wechat", "alipay", "diary"]);
 const knownKinds = new Set(["expense", "income", "refund", "transfer"]);
 const knownStatuses = new Set(["completed", "failed"]);
 
@@ -64,6 +67,10 @@ function parseFinanceDocument(markdown: string): ParsedNote {
   catch { return { entry: null, identity, issue: "金额属性无效" }; }
   if (!knownKinds.has(kind) || !knownStatuses.has(status)
     || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(date)) return { entry: null, identity, issue: "日期、类型、状态或商户属性无效" };
+  // Obsidian updates the real wikilink when a journal is renamed. Prefer that
+  // managed target over the legacy plain path, while retaining old notes.
+  const journalTarget = stringField(fields, "journal_link").match(/^\[\[([^\]|#]+)(?:[^\]]*)\]\]$/u)?.[1]
+    || stringField(fields, "journal_path");
   const entry: FinanceEntry = {
     id, source: source as FinanceEntry["source"], sourceId, date, merchant,
     category: stringField(fields, "category"), kind: kind as FinanceEntry["kind"], amountCents,
@@ -71,6 +78,13 @@ function parseFinanceDocument(markdown: string): ParsedNote {
     description: stringField(fields, "description"), currency: stringField(fields, "currency") || "CNY",
     note: stringField(fields, "note"), icon: stringField(fields, "icon") || undefined,
     billPlanId: stringField(fields, "bill_plan_id").trim() || undefined,
+    ...(journalTarget ? { journalPath: journalTarget } : {}),
+    ...(Array.isArray(fields.source_links) ? { sourceLinks: (fields.source_links as unknown[]).flatMap(value => {
+      if (!value || typeof value !== "object") return [];
+      const link = value as Record<string, unknown>;
+      return (link.source === "wechat" || link.source === "alipay") && typeof link.sourceId === "string" && link.sourceId
+        ? [{ source: link.source, sourceId: link.sourceId }] : [];
+    }) } : {}),
     ...(fields.classification_pending === true ? { classificationPending: true } : {})
   };
   return { entry, identity, issue: null };
@@ -78,7 +92,7 @@ function parseFinanceDocument(markdown: string): ParsedNote {
 
 export function parseFinanceNote(markdown: string): FinanceEntry | null { return parseFinanceDocument(markdown).entry; }
 
-function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"]): Record<string, string | boolean> {
+function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"]): Record<string, unknown> {
   if (!Number.isSafeInteger(entry.amountCents) || entry.amountCents <= 0) throw new Error("账目金额无效");
   const fields = {
     echoink_type: "finance_entry", echoink_id: entry.id, source: entry.source, source_id: entry.sourceId,
@@ -87,6 +101,8 @@ function financeFields(entry: FinanceEntry, sourceFields?: FinanceImportRow["sou
     description: entry.description, currency: entry.currency, status: entry.status,
     note: entry.note, icon: entry.icon || "auto", ...(entry.billPlanId ? { bill_plan_id: entry.billPlanId } : {}),
     ...(entry.classificationPending === true ? { classification_pending: true } : {})
+    , ...(entry.journalPath ? { journal_path: entry.journalPath, journal_link: `[[${entry.journalPath}]]` } : {}),
+    ...(entry.sourceLinks?.length ? { source_links: entry.sourceLinks } : {})
   };
   if (!sourceFields) return fields;
   return { ...fields,
@@ -486,6 +502,34 @@ export class FinanceLedger {
     });
   }
 
+  /** Duplicate review and the write share the ledger queue, including earlier writes in this batch. */
+  addDiary(entry: FinanceEntry, reviewedDistinct: readonly { id: string; version: string }[], guard: () => void): Promise<FinanceRecordSnapshot> {
+    return this.enqueue(async () => {
+      await this.resolveLocation(true); await this.readDirect(); guard();
+      if (this.unidentifiedNote || this.blockedSources.has(`diary:${entry.sourceId}`)) throw new Error("finance_diary_ledger_review_required");
+      const snapshot = async (record: FinanceEntry): Promise<FinanceRecordSnapshot> => {
+        const file = this.files.get(record.id)!;
+        const markdown = await this.app.vault.read(file), observed = parseFinanceNote(markdown);
+        if (!observed || observed.id !== record.id) throw new Error("finance_version_conflict");
+        return { entry: observed, path: file.path, version: sha256Hex(markdown) };
+      };
+      const previous = this.records.find(record => record.source === "diary" && record.sourceId === entry.sourceId);
+      if (previous) return snapshot(previous);
+      const candidates = diaryFinanceCandidates(this.records, entry);
+      for (const candidate of candidates) {
+        const current = await snapshot(candidate);
+        if (!reviewedDistinct.some(review => review.id === current.entry.id && review.version === current.version)) throw new Error("finance_diary_duplicate_review_required");
+      }
+      await this.createDirect(entry, undefined, guard);
+      await this.readDirect();
+      const current = this.records.find(record => record.id === entry.id);
+      if (!current) throw new Error("finance_readback_failed");
+      const saved = await snapshot(current);
+      if (Object.entries(entry).some(([key, value]) => JSON.stringify(saved.entry[key as keyof FinanceEntry]) !== JSON.stringify(value))) throw new Error("finance_readback_failed");
+      return saved;
+    });
+  }
+
   async updateDetails(id: string, merchant: string, description: string, icon: string, category?: string, account?: string, billPlanId?: string | null): Promise<FinanceEntry> {
     return await this.enqueue(async () => {
       await this.readDirect();
@@ -522,6 +566,7 @@ export class FinanceLedger {
         .map((row) => [`${row.entry!.source}:${row.entry!.sourceId}`, row.sourceFields] as const));
       const created: CreatedFinanceRow[] = [];
       let updated = 0;
+      let linked = 0;
       let writeError: string | undefined;
       try {
         for (const entry of result.added) {
@@ -539,8 +584,26 @@ export class FinanceLedger {
           updated++;
           options.onSaved?.(entry, "updated");
         }
+        if (!writeError && !options.signal?.aborted) for (const pair of result.linked) {
+          if (options.signal?.aborted) break;
+          const file = this.files.get(pair.entry.id);
+          try {
+            if (!file) throw new Error("finance_record_not_found");
+            await this.app.fileManager.processFrontMatter(file, (fields: Record<string, unknown>) => {
+              const current = parseFinanceDocument(`---\n${stringify(fields)}---\n`).entry;
+              if (!current || JSON.stringify(current) !== JSON.stringify(pair.entry)) throw new Error("finance_version_conflict");
+              const source = pair.imported.source;
+              if (source !== "wechat" && source !== "alipay") throw new Error("finance_invalid_import_source");
+              fields.source_links = [...current.sourceLinks ?? [], { source, sourceId: pair.imported.sourceId }];
+              pair.entry.sourceLinks = fields.source_links as FinanceEntry["sourceLinks"];
+            });
+            const observed = parseFinanceNote(await this.app.vault.read(file));
+            if (!observed?.sourceLinks?.some(link => link.source === pair.imported.source && link.sourceId === pair.imported.sourceId)) throw new Error("finance_readback_failed");
+            linked++;
+          } catch (error) { writeError = error instanceof Error ? error.message : String(error); break; }
+        }
       } finally { await this.readDirect(); }
-      return { added: created.length, updated, duplicates: result.duplicates, invalid: result.invalid, created, writeError };
+      return { added: created.length, updated, duplicates: result.duplicates, invalid: result.invalid, created, writeError, linked, pending: result.pending };
     });
   }
 

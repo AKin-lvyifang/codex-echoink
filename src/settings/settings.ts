@@ -561,6 +561,8 @@ export interface CodexForObsidianSettings {
   todoReminders: import("../home/todo-reminders").TodoReminderSettings;
   todoCategories: EchoInkTodoCategory[];
   journalDirectory: string;
+  diaryOrganizerEnabled: boolean;
+  diaryOrganizerPromptDismissed: boolean;
   customWelcomeEnabled: boolean;
   customWelcomeTitle: string;
   customWelcomeSubtitle: string;
@@ -622,6 +624,8 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
     { id: "work", name: "工作" }
   ],
   journalDirectory: DEFAULT_JOURNAL_DIRECTORY,
+  diaryOrganizerEnabled: false,
+  diaryOrganizerPromptDismissed: false,
   customWelcomeEnabled: false,
   customWelcomeTitle: DEFAULT_ECHOINK_WELCOME_TITLE,
   customWelcomeSubtitle: DEFAULT_ECHOINK_WELCOME_SUBTITLE,
@@ -773,6 +777,8 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
+    diaryOrganizerEnabled: data?.diaryOrganizerEnabled === true,
+    diaryOrganizerPromptDismissed: data?.diaryOrganizerPromptDismissed === true,
     pdfReading: normalizePdfReading(data.pdfReading),
     englishDiary: normalizeEnglishDiarySettings(data.englishDiary, normalizeKnowledgeFolderBindings(settingsRecord(data.knowledgeBase)?.folderBindings)),
     activeApiProviderId: typeof data?.activeApiProviderId === "string" ? data.activeApiProviderId.trim() : "",
