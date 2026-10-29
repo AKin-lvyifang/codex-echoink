@@ -5382,7 +5382,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const state = content.createDiv({ cls: "codex-resource-row-desc", attr: { "data-skill-delivery-state": id, role: "status" } });
       const update = () => {
         const locked = remoteSkillLocked(resource, this.plugin.accountService);
-        const message = locked ? this.plugin.settings.settingsLanguage === "en" ? "Active PRO required" : "需要有效 PRO"
+        const message = locked ? ""
           : skillDeliveryStateText(resolver?.deliveryState(id) ?? null, this.plugin.settings.settingsLanguage === "en");
         state.setText(message); state.hidden = !message;
         badge.empty();
