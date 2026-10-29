@@ -1,3 +1,4 @@
+import { EchoInkMcpController } from "./mcp-server/plugin-service";
 import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
 import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
 import { RunReportModal } from "./run-reports/desktop-ui";
@@ -257,6 +258,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   pdfReading: PdfReadingController | null = null;
   englishDiary: EnglishDiaryController | null = null;
   accountService: AccountService | null = null;
+  echoInkMcp: EchoInkMcpController | null = null;
   usageStore: UsageStore | null = null;
   private personalMemoryCorrection: PersonalMemoryCorrectionService | null = null;
   private readonly productActivity = new ProductActivityGate();
@@ -313,6 +315,11 @@ export default class CodexForObsidianPlugin extends Plugin {
       console.error("EchoInk local usage statistics could not initialize", error);
     }
     this.accountService = await createPluginAccountService(this);
+    if (Platform.isDesktopApp) {
+      this.echoInkMcp = new EchoInkMcpController(this);
+      this.register(() => { this.echoInkMcp?.dispose(); this.echoInkMcp = null; });
+      void this.echoInkMcp.sync().catch(error => console.error("EchoInk MCP startup failed", error));
+    }
     this.lifestyle = new LifestyleService(this);
     await this.lifestyle.initialize();
     this.app.workspace.onLayoutReady(() => {
@@ -364,6 +371,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.echoInkMcp?.dispose();
     // Stop notifications synchronously, before the async service shutdown.
     this.todoReminderService?.dispose();
     this.todoReminderService = null;
@@ -2064,6 +2072,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     await this.getSettingsStore().saveSettings(force, options);
     this.selectionAskController?.refresh();
     this.autoArchive?.configure();
+    await this.echoInkMcp?.sync();
   }
   async persistPiNativeSettings(): Promise<void> {
     await this.getSettingsStore().saveSettings(true, {

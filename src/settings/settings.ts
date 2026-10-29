@@ -1,3 +1,4 @@
+import { normalizeEchoInkMcpServerSettings, type EchoInkMcpServerSettings } from "../mcp-server/settings";
 import { normalizeWorkbenchCheckin, type WorkbenchCheckinData } from "../home/workbench-checkin";
 import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
 import type { GenerationTemplate } from "../generation/types";
@@ -525,6 +526,7 @@ export interface EchoInkTodoItem {
 }
 
 export interface CodexForObsidianSettings {
+  mcpServer: EchoInkMcpServerSettings;
   workbenchCheckin: WorkbenchCheckinData;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
@@ -605,6 +607,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultMode: "agent",
   autoOpen: false,
   autoOpenHome: false,
+  mcpServer: normalizeEchoInkMcpServerSettings(undefined),
   quickChat: {
     enabled: false,
     hotkey: DEFAULT_QUICK_CHAT_HOTKEY
@@ -791,6 +794,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ),
     setup: normalizeSetupSettings(data?.setup),
     memory: normalizeMemorySettings(data?.memory),
+    mcpServer: normalizeEchoInkMcpServerSettings(data?.mcpServer),
     quickChat: normalizeQuickChatSettings(data?.quickChat),
     homeModules: normalizeHomeModules(data?.homeModules),
     lifestyle: normalizeLifestyleSettings(data?.lifestyle),

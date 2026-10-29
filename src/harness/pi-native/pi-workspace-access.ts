@@ -24,7 +24,7 @@ export function normalizePiWorkspacePermission(value: unknown): PermissionMode {
 }
 
 const CONTENT_READ_TOOLS = new Set([
-  "todo_query", "pdf_reading_query", "vault_search", "note_read", "knowledge_search", "knowledge_read",
+  "todo_query", "pdf_reading_query", "vault_search", "note_read", "explore_concept", "knowledge_search", "knowledge_read",
   "memory_search", "memory_read", "task_update", "user_question", "obsidian_context", "obsidian_cli", "obsidian_plugin_search", "finance_query", "finance_budget", "finance_bill"
 ]);
 

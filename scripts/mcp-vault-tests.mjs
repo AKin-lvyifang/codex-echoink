@@ -17,6 +17,8 @@ await esbuild.build({
       'import { runMcpToolSecurityTests } from "./src/tests/mcp-tool-security";',
       'import { runToolAuthorizationAndReceiptTests } from "./src/tests/pi-native/tool-authorization-and-receipt";',
       'import { runVaultDomainServiceTests } from "./src/tests/pi-native/vault-domain-service";',
+      'import { runEchoInkMcpServerTests } from "./src/tests/echoink-mcp-server";',
+      "await runEchoInkMcpServerTests();",
       "await runMcpToolSecurityTests();",
       "await runToolAuthorizationAndReceiptTests();",
       "await runVaultDomainServiceTests();",

@@ -509,7 +509,7 @@ export function normalizePiKnowledgeReadToolArguments<
   });
 }
 
-function searchToolResult(
+export function searchToolResult(
   result: Readonly<KnowledgeAgentSearchResult>,
   elapsedMsInput: number
 ): Readonly<KnowledgeSearchToolResult> {
@@ -554,7 +554,7 @@ function searchToolResult(
     hits => Buffer.byteLength(JSON.stringify(toolResultForProvider({ ...search, hits })), "utf8") <= SEARCH_RESULT_LIMIT_BYTES)) });
 }
 
-function readToolResult(
+export function readToolResult(
   snapshot: Readonly<KnowledgeAgentReadResult>,
   input: Readonly<KnowledgeReadToolArguments>
 ): Readonly<KnowledgeReadToolResult> {
@@ -608,7 +608,7 @@ function readToolResult(
   return Object.freeze({ ...read, reference: fitted, related: fitted.related });
 }
 
-function toolResultForProvider(
+export function toolResultForProvider(
   result: Readonly<KnowledgeSearchToolResult> | Readonly<KnowledgeReadToolResult>
 ): unknown {
   if (result.kind === "search") {

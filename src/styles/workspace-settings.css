@@ -2537,3 +2537,11 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
 .echoink-settings-desktop button.codex-provider-saved-identity{justify-content:flex-start;text-align:left;white-space:normal;padding:0;border:0;background:transparent;height:auto;box-shadow:none}
 .echoink-settings-desktop button.codex-provider-saved-identity:is(:hover,:focus-visible){background:var(--hover);outline:none;box-shadow:none}
 .echoink-settings-desktop .codex-provider-saved-identity .codex-provider-saved-details{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+
+.echoink-mcp-server-settings { margin-bottom: 16px; }
+.echoink-mcp-server-grant { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 18px; min-height: 52px; }
+.echoink-mcp-server-grant + .echoink-mcp-server-grant { border-top: 1px solid var(--background-modifier-border); }
+.echoink-settings-aligned .echoink-mcp-server-disclosure { margin: 0; padding: 12px 18px; }
+.echoink-settings-aligned .echoink-mcp-server-settings textarea.echoink-mcp-server-setup { display: block; width: calc(100% - 36px); margin: 12px 18px; resize: vertical; font-family: var(--font-monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-mcp-server-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 18px 16px; }
+.echoink-mcp-server-settings [hidden] { display: none; }
