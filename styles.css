@@ -22658,7 +22658,7 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
    EchoInk's minimal/highlighter/manifesto page mappings still own their page colors.
    These declarations stop theme tokens changing otherwise unstyled controls;
    they do not paint labels/rows, reset descendants, or change user font/zoom. */
-:where(body:not(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+:where(body:not(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
@@ -22732,8 +22732,8 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   body:not(.is-mobile) .echoink-expression-view,body:not(.is-mobile) .echoink-chat-surface,body:not(.is-mobile) .echoink-theme-boundary,
   body:not(.is-mobile) .codex-review-preview,body:not(.is-mobile) .echoink-journal-template-modal,body:not(.is-mobile) .echoink-todo-form-modal,
   body:not(.is-mobile) .echoink-diary-modal,body:not(.is-mobile) .echoink-finance-dialog,body:not(.is-mobile) .echoink-account-modal,
-  body:not(.is-mobile) .echoink-onboarding-coachmark) {font-family:var(--font-interface)}
-.theme-dark:not(:where(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+  body:not(.is-mobile) .echoink-onboarding-coachmark):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {font-family:var(--font-interface)}
+.theme-dark:not(:where(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
@@ -22762,30 +22762,31 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
   --shadow-s:0px 1px 2px rgba(0,0,0,.121),0px 3.4px 6.7px rgba(0,0,0,.179),0px 15px 30px rgba(0,0,0,.3);
   --shadow-l:0px 1.8px 7.3px rgba(0,0,0,.071),0px 6.3px 24.7px rgba(0,0,0,.112),0px 30px 90px rgba(0,0,0,.2);
 }
-.mod-macos:not(:where(.is-mobile)) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
+.mod-macos:not(:where(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-settings-demo,.echoink-home-workspace,.echoink-home-view,.codex-container,
     .echoink-lifestyle-view,.echoink-diary-view,.echoink-expression-view,.echoink-chat-surface,.echoink-theme-boundary,.codex-review-preview,
     .codex-provider-model-modal,.codex-mcp-server-modal,.echoink-knowledge-note-picker,
     .echoink-journal-template-modal,.echoink-todo-form-modal,.echoink-diary-modal,
     .echoink-finance-dialog,.codex-composer-parameter-menu,.codex-composer-parameter-submenu,.echoink-theme-overlay,.echoink-account-modal,.echoink-onboarding-coachmark) {--modal-radius:var(--radius-xl);--input-radius:var(--radius-m);--input-shadow:none;--input-shadow-hover:none;--interactive-normal:var(--background-modifier-border);--interactive-hover:var(--background-modifier-border);--dropdown-background:var(--echoink-host-macos-control-bg);--dropdown-background-hover:var(--echoink-host-macos-control-bg)}
 /* Both navigation levels keep their original background, accent, padding,
    corners, and active underline. The resource tabs had no shadow declaration. */
-.echoink-settings-demo.echoink-settings-demo :is(.codex-settings-tab,.codex-resource-tab) {
+.echoink-settings-demo.echoink-settings-demo:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.codex-settings-tab,.codex-resource-tab) {
   box-shadow:none;
 }
 
 /* The conversation itself stays transparent; its owned view supplies the same
    default host background instead of exposing the third-party leaf color. */
-.echoink-chat-surface,.codex-review-preview{background:var(--background-primary)}
+.echoink-chat-surface:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *),
+.codex-review-preview:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *){background:var(--background-primary)}
 /* This search wrapper is the real picker field, not a whole setting row. */
-.modal.echoink-knowledge-note-picker .picker-search:focus-within{border-color:var(--line);box-shadow:none}
+.modal.echoink-knowledge-note-picker:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) .picker-search:focus-within{border-color:var(--line);box-shadow:none}
 /* Owned UI image primitives only: keep existing avatar clipping/rounding and
    finance icon size/object-fit. Markdown images and report iframes are outside
    these selectors, as are images belonging to the host or another plugin. */
-:where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
-:where(body:not(.is-mobile)) :is(.echoink-finance-icon-art,.echoink-agent-profile-avatar) img {border-radius:0}
+:where(body:not(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-finance-icon-art,.echoink-agent-avatar-option,.echoink-agent-profile-avatar,.codex-agent-avatar) img {box-shadow:none}
+:where(body:not(.is-mobile)):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.echoink-finance-icon-art,.echoink-agent-profile-avatar) img {border-radius:0}
 
 /* The approved PRO identity is black/gold on both mobile page roots. */
-:is(.echoink-iphone, .echoink-ipad) {
+:is(.echoink-iphone, .echoink-ipad):where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {
   --echoink-pro-badge-text: #f3d995;
   --echoink-pro-badge-background: #1f1b13;
   --echoink-pro-badge-border: #786334;
@@ -25018,6 +25019,45 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
 @media (hover: none) { .echoink-inline-task-message .echoink-inline-task-edit-button { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .echoink-inline-task-spinner svg { animation: none; } }
 @container (max-width: 360px) { .echoink-inline-task-pin-actions { width: 100%; justify-content: flex-end; } }
+/* Resolve on body before component mappings reuse host variables, avoiding cycles
+   when a surface maps --background-primary back to --echoink-theme-bg. */
+html body[data-echoink-theme="host"] {
+  --echoink-theme-scheme: light dark;
+  --echoink-theme-bg: var(--background-primary);
+  --echoink-theme-card: var(--background-primary);
+  --echoink-theme-raised: var(--background-secondary);
+  --echoink-theme-hover: var(--background-modifier-hover);
+  --echoink-theme-active: var(--background-modifier-hover);
+  --echoink-theme-warn: var(--text-warning, var(--color-orange));
+  --echoink-theme-text: var(--text-normal);
+  --echoink-theme-secondary: var(--text-muted);
+  --echoink-theme-muted: var(--text-faint);
+  --echoink-theme-line: var(--background-modifier-border);
+  --echoink-theme-focus: var(--background-modifier-border-hover);
+  --echoink-theme-accent: var(--interactive-accent);
+  --echoink-theme-accent-text: var(--text-accent);
+  --echoink-theme-on-accent: var(--text-on-accent);
+  --echoink-control-fill: var(--interactive-accent);
+  --echoink-control-on-fill: var(--text-on-accent);
+  --echoink-control-hover: var(--background-modifier-hover);
+  --echoink-control-line: var(--background-modifier-border);
+  --echoink-control-muted: var(--text-muted);
+}
+body.theme-light[data-echoink-theme="host"] { --echoink-theme-scheme: light; }
+body.theme-dark[data-echoink-theme="host"] { --echoink-theme-scheme: dark; }
+body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-account,.echoink-theme-boundary,.echoink-theme-overlay,.echoink-mobile-modal) {
+  --bg: var(--echoink-theme-bg); --card: var(--echoink-theme-card);
+  --text: var(--echoink-theme-text); --secondary: var(--echoink-theme-secondary); --muted: var(--echoink-theme-muted);
+  --line: var(--echoink-theme-line); --soft: var(--echoink-theme-hover); --active: var(--echoink-theme-active);
+  --accent: var(--echoink-theme-accent); --accent-bg: var(--echoink-theme-active);
+  --danger: var(--text-error); --green: var(--text-success, var(--color-green)); --amber: var(--text-warning, var(--color-orange));
+}
+body[data-echoink-theme="host"] .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]):is([data-state=checked],[data-state=indeterminate]),
+body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-theme-boundary,.echoink-mobile-modal) button:is(.mod-cta,.is-primary,.primary) {
+  background: var(--echoink-control-fill); color: var(--echoink-control-on-fill);
+}
+body[data-echoink-theme="host"] .echoink-origin-control [data-slot=switch-thumb] { background: var(--echoink-control-on-fill); }
+.echoink-theme-required { margin-right: 8px; }
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */
@@ -25408,8 +25448,8 @@ body.theme-dark { --echoink-control-fill: #fafafa; --echoink-control-on-fill: #1
 /* Only EchoInk surfaces receive these tokens; Obsidian owns light/dark mode. */
 body[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="light"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
-body :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
-body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal {
+body:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
+body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {
   --echoink-theme-scheme: light;
   --echoink-theme-bg: #ffffff;
   --echoink-theme-card: #ffffff;
@@ -25428,8 +25468,8 @@ body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal {
 }
 body.theme-dark[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad, .echoink-home-workspace, .echoink-workbench, .echoink-journal-page, .echoink-todo-page, .echoink-knowledge-page, .echoink-pdf-reading-page, .echoink-pdf-upload-modal, .echoink-settings-host, .echoink-settings-demo, .echoink-diary-view, .echoink-diary-modal, .echoink-diary-assistant, .echoink-lifestyle-view, .echoink-finance-dialog, .echoink-agent-tasks, .echoink-generation-modal, .echoink-chat-surface, .echoink-theme-boundary, .echoink-inline-block, .echoink-inline-request-state, .echoink-inline-input, .echoink-inline-input-start, .echoink-inline-input-end, .echoink-expression-view, .echoink-agent-editor, .echoink-theme-overlay, .echoink-account-modal, .echoink-mobile):not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
 body.theme-light[data-echoink-theme="minimal"] :is(.echoink-iphone, .echoink-ipad)[data-appearance="dark"]:not(:where(.modal.mod-settings,.modal.mod-settings *,.echoink-settings-host,.echoink-settings-host *,.echoink-settings-demo,.echoink-settings-demo *,.echoink-settings-overlay,.echoink-settings-overlay *)),
-body.theme-dark :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
-body.theme-dark.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal {
+body.theme-dark:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) :is(.modal.mod-settings,.echoink-settings-host,.echoink-settings-demo,.echoink-settings-overlay),
+body.theme-dark.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {
   --echoink-theme-scheme: dark;
   --echoink-theme-bg: #0f0f11;
   --echoink-theme-card: #18181b;
@@ -25632,7 +25672,8 @@ body[data-echoink-theme] .echoink-home-workspace .dialog :is(input, textarea):fo
 
 
 /* Settings are neutral independently of the chosen notebook/workbench palette. */
-body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal,.modal.mod-settings {
+body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *),
+.modal.mod-settings:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) {
   --titlebar-background:var(--echoink-theme-bg);--titlebar-background-focused:var(--echoink-theme-bg);--background-primary:var(--echoink-theme-bg);--background-primary-alt:var(--echoink-theme-raised);
   --background-secondary:var(--echoink-theme-bg);--background-secondary-alt:var(--echoink-theme-raised);
   --background-modifier-border:var(--echoink-theme-line);--background-modifier-border-hover:var(--echoink-theme-focus);--background-modifier-border-focus:var(--echoink-theme-focus);--background-modifier-hover:var(--echoink-theme-hover);--background-modifier-active-hover:var(--echoink-theme-active);
@@ -25646,8 +25687,9 @@ body.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal,.moda
   --checkbox-color:var(--echoink-theme-accent);--checkbox-color-hover:var(--echoink-theme-accent);--checkbox-marker-color:var(--echoink-theme-on-accent);--checkbox-border-color:var(--echoink-theme-muted);--checkbox-border-color-hover:var(--echoink-theme-focus);
   --background-modifier-accent:var(--echoink-theme-active);color-scheme:var(--echoink-theme-scheme);
 }
-body.theme-dark.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal,body.theme-dark .modal.mod-settings {--accent-l:98%;--color-accent-rgb:250,250,250;--interactive-accent-rgb:250,250,250}
-.modal.mod-settings .checkbox-container.is-enabled::after {background:var(--text-on-accent)}
+body.theme-dark.is-popout-modal.has-echoink-settings-modal.has-echoink-settings-modal:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *),
+body.theme-dark:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) .modal.mod-settings {--accent-l:98%;--color-accent-rgb:250,250,250;--interactive-accent-rgb:250,250,250}
+.modal.mod-settings:where(body[data-echoink-theme]:not([data-echoink-theme="host"]), body[data-echoink-theme]:not([data-echoink-theme="host"]) *) .checkbox-container.is-enabled::after {background:var(--text-on-accent)}
 .echoink-settings-demo .echoink-theme-picker .echoink-theme-choice>input:checked+.echoink-theme-swatch {background:var(--echoink-theme-accent)}
 .echoink-settings-demo .echoink-theme-picker .echoink-theme-choice>input:checked+.echoink-theme-swatch svg {color:var(--echoink-theme-on-accent)}
 

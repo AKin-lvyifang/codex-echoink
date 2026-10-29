@@ -1,0 +1,39 @@
+/* Resolve on body before component mappings reuse host variables, avoiding cycles
+   when a surface maps --background-primary back to --echoink-theme-bg. */
+html body[data-echoink-theme="host"] {
+  --echoink-theme-scheme: light dark;
+  --echoink-theme-bg: var(--background-primary);
+  --echoink-theme-card: var(--background-primary);
+  --echoink-theme-raised: var(--background-secondary);
+  --echoink-theme-hover: var(--background-modifier-hover);
+  --echoink-theme-active: var(--background-modifier-hover);
+  --echoink-theme-warn: var(--text-warning, var(--color-orange));
+  --echoink-theme-text: var(--text-normal);
+  --echoink-theme-secondary: var(--text-muted);
+  --echoink-theme-muted: var(--text-faint);
+  --echoink-theme-line: var(--background-modifier-border);
+  --echoink-theme-focus: var(--background-modifier-border-hover);
+  --echoink-theme-accent: var(--interactive-accent);
+  --echoink-theme-accent-text: var(--text-accent);
+  --echoink-theme-on-accent: var(--text-on-accent);
+  --echoink-control-fill: var(--interactive-accent);
+  --echoink-control-on-fill: var(--text-on-accent);
+  --echoink-control-hover: var(--background-modifier-hover);
+  --echoink-control-line: var(--background-modifier-border);
+  --echoink-control-muted: var(--text-muted);
+}
+body.theme-light[data-echoink-theme="host"] { --echoink-theme-scheme: light; }
+body.theme-dark[data-echoink-theme="host"] { --echoink-theme-scheme: dark; }
+body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-account,.echoink-theme-boundary,.echoink-theme-overlay,.echoink-mobile-modal) {
+  --bg: var(--echoink-theme-bg); --card: var(--echoink-theme-card);
+  --text: var(--echoink-theme-text); --secondary: var(--echoink-theme-secondary); --muted: var(--echoink-theme-muted);
+  --line: var(--echoink-theme-line); --soft: var(--echoink-theme-hover); --active: var(--echoink-theme-active);
+  --accent: var(--echoink-theme-accent); --accent-bg: var(--echoink-theme-active);
+  --danger: var(--text-error); --green: var(--text-success, var(--color-green)); --amber: var(--text-warning, var(--color-orange));
+}
+body[data-echoink-theme="host"] .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]):is([data-state=checked],[data-state=indeterminate]),
+body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-theme-boundary,.echoink-mobile-modal) button:is(.mod-cta,.is-primary,.primary) {
+  background: var(--echoink-control-fill); color: var(--echoink-control-on-fill);
+}
+body[data-echoink-theme="host"] .echoink-origin-control [data-slot=switch-thumb] { background: var(--echoink-control-on-fill); }
+.echoink-theme-required { margin-right: 8px; }

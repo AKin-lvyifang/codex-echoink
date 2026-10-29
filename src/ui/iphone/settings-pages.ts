@@ -5,7 +5,7 @@ import { membershipWebsiteLink } from "../../membership/website-links";
 import { getProPluginAccess, hasProPluginAccess, unavailableCapabilityAccess } from "../../membership/access";
 import { mobileModuleEnabled, setMobileModuleEnabled } from "../../mobile/module-settings";
 import { createStaticSettingsTabIcon } from "../../settings/animated-settings-tab-icon";
-import { effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
+import { documentEchoInkColorTheme, readCompanionTheme, effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
 import { decorateProAppearanceChoice } from "../appearance-pro";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -77,7 +77,7 @@ export class IPhoneSettingsPages {
     track.classList.add("echoink-appearance-pro-surface"); track.dataset.echoinkAppearancePicker = "";
     const colorButtons = choices.map(([value, label]) => {
       const button = el(ctx.document, "button", "ip-settings-segment"); button.append(settingsMessage(ctx, el(ctx.document, "span", "echoink-theme-choice-title"), label)); button.type = "button";
-      button.addEventListener("click", () => { if (value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService) === value) return; void persist("colorTheme", value).then(sync).catch(error.show); }); if (value !== "minimal") locks.push(decorateProAppearanceChoice(button, track, { zh: ctx.host.settings().settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void this.accountPages.open(); } })); track.append(button); return button;
+      button.addEventListener("click", () => { if (!readCompanionTheme(ctx.document).active || value !== "minimal" && !hasPro() || effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService) === value) return; void persist("colorTheme", value).then(sync).catch(error.show); }); if (value !== "minimal") locks.push(decorateProAppearanceChoice(button, track, { zh: ctx.host.settings().settingsLanguage !== "en", enabled: () => readCompanionTheme(ctx.document).active, allowed: hasPro, upgrade: () => { void this.accountPages.open(); } })); track.append(button); return button;
     });
     renderCompanionThemeRecommendation(appearance, ctx.host.settings().settingsLanguage !== "en", ctx.host.app.vault.configDir);
     const language = settingsSelect(ctx, appearance, "界面语言", [["zh-CN", "简体中文"], ["en", "English"]], ctx.host.settings().settingsLanguage, value => {
@@ -90,11 +90,11 @@ export class IPhoneSettingsPages {
     settingsRow(ctx, settingsGroup(ctx, body, "关于"), "EchoInk Agent", { value: ctx.host.version ?? "版本未知", action: () => this.about() });
     const sync = () => {
       const value = effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService); track.dataset.selected = value;
-      for (const [index, button] of colorButtons.entries()) { button.setAttribute("aria-pressed", String(choices[index][0] === value)); button.disabled = busy; }
+      for (const [index, button] of colorButtons.entries()) { button.setAttribute("aria-pressed", String(choices[index][0] === value)); button.disabled = busy || !readCompanionTheme(ctx.document).active; }
       locks.forEach(update => update());
       language.value = ctx.host.settings().settingsLanguage; language.disabled = busy; language.setAttribute("aria-label", settingsText(ctx, "界面语言"));
       start.checked = ctx.host.settings().autoOpenHome === true; start.disabled = busy;
-      ctx.document.body.setAttribute("data-echoink-theme", value);
+      ctx.document.body.setAttribute("data-echoink-theme", documentEchoInkColorTheme(ctx.document, value, ctx.host.accountService));
     };
     const persist = async (key: "colorTheme" | "autoOpenHome" | "settingsLanguage", value: string | boolean) => {
       if (busy) { sync(); return; } busy = true; error.show(); const settings: Record<string, unknown> = ctx.host.settings(), previous = settings[key]; settings[key] = value; sync();
