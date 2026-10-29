@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const target = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "diary-organizer-tests.mjs");
 await mkdir(path.dirname(target), { recursive: true });
 await esbuild.build({ banner: desktopNodeTestBanner,
-  stdin: { contents: 'import { runDiaryOrganizerTests } from "./src/tests/diary-organizer"; import { runDiaryOrganizerBannerTests } from "./src/tests/diary-organizer-banner"; await runDiaryOrganizerTests(); runDiaryOrganizerBannerTests();', resolveDir: root, sourcefile: "diary-tests-entry.ts", loader: "ts" },
+  stdin: { contents: 'import { runDiaryOrganizerTests } from "./src/tests/diary-organizer"; import { runDiaryOrganizerBannerTests } from "./src/tests/diary-organizer-banner"; await runDiaryOrganizerTests(); await runDiaryOrganizerBannerTests();', resolveDir: root, sourcefile: "diary-tests-entry.ts", loader: "ts" },
   bundle: true, platform: "node", target: "node22", format: "esm", outfile: target,
   external: ["read-excel-file/node", "yaml", "postcss"],
   plugins: [{ name: "obsidian-test-shim", setup(build) {
