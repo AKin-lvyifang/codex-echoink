@@ -80,16 +80,12 @@ export function bindCssParentStates(doc: Document): () => void {
   const selector = CSS_PARENT_STATES.map(state => state.targets).join(",");
   const classes = new Set(CSS_PARENT_STATES.map(state => state.className));
   const candidates = new Set<Element>();
-  let frame: number | null = null, disposed = false;
-  const request = (callback: () => void) => typeof win.requestAnimationFrame === "function"
-    ? win.requestAnimationFrame(callback) : win.setTimeout(callback, 0);
-  const cancel = (handle: number) => { if (typeof win.cancelAnimationFrame === "function") win.cancelAnimationFrame(handle); else win.clearTimeout(handle); };
+  let scheduled = false, disposed = false;
   const collect = (root: Element) => {
     if (root.matches(selector)) candidates.add(root);
     root.querySelectorAll(selector).forEach(element => candidates.add(element));
   };
   const refresh = () => {
-    frame = null;
     if (disposed) return;
     for (const element of candidates) {
       if (!element.isConnected) { classes.forEach(name => element.classList.remove(name)); candidates.delete(element); continue; }
@@ -99,7 +95,13 @@ export function bindCssParentStates(doc: Document): () => void {
       }
     }
   };
-  const schedule = () => { if (!disposed && frame === null) frame = request(refresh); };
+  // Microtasks also run for background/popout documents; a pending visual
+  // update must not rely on that window receiving an animation frame.
+  const schedule = () => {
+    if (disposed || scheduled) return;
+    scheduled = true;
+    win.queueMicrotask(() => { scheduled = false; refresh(); });
+  };
   const observer = new win.MutationObserver(records => {
     let changed = false;
     for (const record of records) {
@@ -118,7 +120,6 @@ export function bindCssParentStates(doc: Document): () => void {
   const dispose = () => {
     if (disposed) return;
     disposed = true; observer.disconnect();
-    if (frame !== null) cancel(frame);
     events.forEach(event => doc.removeEventListener(event, schedule, true));
     win.removeEventListener("pagehide", dispose);
     for (const element of candidates) classes.forEach(name => element.classList.remove(name));

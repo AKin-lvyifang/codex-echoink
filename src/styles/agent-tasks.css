@@ -45,7 +45,7 @@
 .echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
 .echoink-task-error { color: var(--text-error); }
 .echoink-task-interruption { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: var(--echoink-conversation-radius-lg, 10px); font-size: 13px; line-height: 1.6; color: var(--text-normal); overflow-wrap: anywhere; }
-.echoink-agent-tasks .codex-messages:has(> [data-message-tail]:not([hidden])) > .codex-virtual-list { min-height: 0; }
+.echoink-agent-tasks .codex-messages.has-echoink-message-tail.has-echoink-message-tail > .codex-virtual-list { min-height: 0; }
 .echoink-task-interruption-detail { color: var(--text-muted); }
 .echoink-task-interruption-warning { color: var(--echoink-theme-warn, var(--text-warning)); }
 .echoink-task-interruption-error { color: var(--text-error); }

@@ -18,7 +18,7 @@
 }
 .echoink-module-drawer-header { display: flex; align-items: center; gap: 12px; padding-right: 18px; border-radius: 10px; }
 .echoink-module-drawer-header:hover,
-.echoink-module-drawer-header:has(:focus-visible) { background: var(--soft); }
+.echoink-module-drawer-header.has-echoink-visible-focus { background: var(--soft); }
 .echoink-module-drawer.is-expanded .echoink-module-drawer-header { border-radius: 10px 10px 0 0; }
 .echoink-settings-demo .echoink-module-drawer-trigger.echoink-origin-control[data-slot="button"] {
   flex: 1;
@@ -95,7 +95,7 @@
 .echoink-settings-demo :is(.echoink-desktop-modules, .echoink-knowledge-module-page) .setting-item.has-origin-checkbox > .setting-item-control { flex: 0 0 auto; width: auto; margin-top: 0; }
 .echoink-module-drawer-content .echoink-life-setting-row > .echoink-module-boolean-copy { display: flex; flex-direction: row; align-items: center; }
 @container (max-width: 520px) {
-  .echoink-module-drawer-content .echoink-life-setting-row:has(form) { flex-direction: column; align-items: stretch; }
+  .echoink-module-drawer-content .echoink-life-setting-row:is(:where(.has-echoink-form), div:not(*)) { flex-direction: column; align-items: stretch; }
   .echoink-module-drawer-content .echoink-life-setting-row > form { width: 100%; min-width: 0; }
 }
 /* The settings theme boundary resets host rules; retain the existing template picker geometry here. */

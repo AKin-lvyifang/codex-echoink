@@ -58,7 +58,7 @@
 .echoink-agent-tasks.has-inline-task button.echoink-inline-task-send.codex-composer-send-button.codex-send-button.is-send-action:not(:disabled):focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); }
 .has-inline-task.has-inline-task.has-inline-task.has-inline-task .codex-input-wrap > :is(.codex-turn-queue, .codex-composer-workspace, .codex-composer-enhance-review, .codex-skill-menu, .codex-knowledge-command-menu, .codex-composer-resource-panel) { display: none; }
 .has-inline-task.has-inline-task.has-inline-task.has-inline-task .codex-input-wrap > .codex-attachments > :not(.echoink-composer-annotation-slot),
-.has-inline-task.has-inline-task.has-inline-task.has-inline-task .codex-input-wrap > .codex-attachments:not(:has(.echoink-composer-annotation-slot)) { display: none; }
+.has-inline-task.has-inline-task.has-inline-task.has-inline-task .codex-input-wrap > .codex-attachments:not(.has-echoink-annotation) { display: none; }
 .has-inline-task .echoink-task-detail > .echoink-knowledge-activity-slot { display: none; }
 .cm-editor .echoink-inline-request-state button.echoink-inline-state-label { display: block; width: fit-content; max-width: 100%; height: auto; min-height: 0; margin: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; color: var(--echoink-theme-secondary, var(--text-muted)); font-family: inherit; font-size: 12px; font-weight: 400; line-height: 1.4; text-align: left; }
 .cm-editor .echoink-inline-request-state button.echoink-inline-state-label.is-waiting { color: var(--echoink-theme-warn, var(--text-warning)); }

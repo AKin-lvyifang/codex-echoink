@@ -66,8 +66,19 @@ export class EchoInkAppearance {
     private readonly access: () => CapabilityAccess | null | undefined = () => undefined) {}
 
   applyToDocument(doc: Document): void {
+    if (doc.defaultView?.closed) return;
     this.documents.add(doc);
-    if (!this.parentStates.has(doc)) this.parentStates.set(doc, bindCssParentStates(doc));
+    if (!this.parentStates.has(doc)) {
+      const stopStates = bindCssParentStates(doc);
+      const release = () => {
+        stopStates();
+        doc.defaultView?.removeEventListener("pagehide", release);
+        doc.body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
+        this.parentStates.delete(doc); this.documents.delete(doc);
+      };
+      this.parentStates.set(doc, release);
+      doc.defaultView?.addEventListener("pagehide", release, { once: true });
+    }
     refreshCompanionThemeRecommendations(doc);
     const effective = effectiveEchoInkColorTheme(this.theme(), this.access());
     if (doc.body.getAttribute(ECHOINK_THEME_ATTRIBUTE) !== effective) {
