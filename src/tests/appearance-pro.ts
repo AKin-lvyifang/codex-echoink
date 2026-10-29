@@ -1,4 +1,5 @@
 import { installObsidianDom } from "./obsidian-dom";
+import { runCssParentStateTests } from "./css-parent-states";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { EchoInkAppearance, effectiveEchoInkColorTheme, renderCompanionThemeRecommendation, type EchoInkColorTheme } from "../ui/appearance-theme";
@@ -60,3 +61,4 @@ doc.documentElement.style.setProperty("--echoink-companion-theme","1"); pro = fa
 appearance.dispose(); assert.equal(doc.body.hasAttribute("data-echoink-theme"),false); assert.equal(second.window.document.body.hasAttribute("data-echoink-theme"),false);
 first.window.close(); second.window.close();
 console.log("Appearance PRO: free/expired/logout/missing access fail closed, retained preference and automatic restoration, blocked selection, shared badges/upgrade route, save rollback, two windows, theme detection/link and unload passed.");
+await runCssParentStateTests();

@@ -1,4 +1,5 @@
 import { ownedDiv } from "./owned-dom";
+import { bindCssParentStates } from "./css-parent-states";
 import { galleryComparison } from "../gallery/comparison";
 import type { App } from "obsidian";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -59,12 +60,14 @@ export function renderCompanionThemeRecommendation(container: HTMLElement, zh: b
 /** Theme metadata is window-wide; the companion theme also consumes this attribute. */
 export class EchoInkAppearance {
   private readonly documents = new Set<Document>();
+  private readonly parentStates = new Map<Document, () => void>();
 
   constructor(private readonly app: App, private readonly theme: () => EchoInkColorTheme,
     private readonly access: () => CapabilityAccess | null | undefined = () => undefined) {}
 
   applyToDocument(doc: Document): void {
     this.documents.add(doc);
+    if (!this.parentStates.has(doc)) this.parentStates.set(doc, bindCssParentStates(doc));
     refreshCompanionThemeRecommendations(doc);
     const effective = effectiveEchoInkColorTheme(this.theme(), this.access());
     if (doc.body.getAttribute(ECHOINK_THEME_ATTRIBUTE) !== effective) {
@@ -83,6 +86,8 @@ export class EchoInkAppearance {
   }
 
   dispose(): void {
+    this.parentStates.forEach(dispose => dispose());
+    this.parentStates.clear();
     for (const doc of this.documents) doc.body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
     this.documents.clear();
   }
