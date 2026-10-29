@@ -65,7 +65,7 @@
 .echoink-ipad.pd-settings .pd-account-notices:empty { display: none; }
 .echoink-ipad.pd-settings .pd-account-mode { position: relative; isolation: isolate; display: flex; min-height: 44px; padding: 8px 2px; border-radius: 7px; }
 .echoink-ipad.pd-settings .pd-account-mode::before { position: absolute; z-index: -2; content: ""; inset: 8px 0; border-radius: 7px; background: var(--pd-settings-soft); }
-.echoink-ipad.pd-settings .pd-account-mode-thumb { position: absolute; z-index: -1; inset: 10px auto 10px 2px; width: calc(50% - 2px); border-radius: 5px; background: var(--background-primary); transition: transform .16s; }
+.echoink-ipad.pd-settings .pd-account-mode-thumb { position: absolute; z-index: -1; inset: 10px auto 10px 2px; width: calc(50% - 2px); border-radius: 5px; background: var(--background-primary); transition: var(--echoink-motion-transition, transform .16s); }
 .echoink-ipad.pd-settings .pd-account-mode[data-value="password"] .pd-account-mode-thumb { transform: translateX(100%); }
 .echoink-ipad.pd-settings button.pd-account-mode-button { appearance: none; display: inline-flex; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 44px; height: auto; margin: -8px 0; padding: 8px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font: inherit; font-size: .8125em; box-shadow: none; cursor: pointer; }
 .echoink-ipad.pd-settings button.pd-account-mode-button[aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }

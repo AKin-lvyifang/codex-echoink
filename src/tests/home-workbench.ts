@@ -94,7 +94,7 @@ function assertRecentNoteDirectoryScope(): void {
   }
   for (const path of ["finance/a.md", "财务（finance）/账目（transactions）/a.md", "EchoInk/财务/分析记录/a.md",
     ".obsidian/plugins/data.md", ".echoink/resources/skills/a.md", "templates/journal/a.md", "模板（templates）/a.md"]) {
-    assert.equal(isHomeRecentNotePath(path, journalDirectory), false, path);
+    assert.equal(isHomeRecentNotePath(path, journalDirectory, { configDirectory: ".obsidian" }), false, path);
   }
   for (const path of ["财务/手写.md","finance-backup/a.md","EchoInk/财务备份/a.md","health/a.md","map/a.md",
     "projects/a.md","inbox/a.md","other/a.md","wiki-backup/a.md","index.md","index/a.md","日记（journal）/a.md"]) {

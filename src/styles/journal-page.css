@@ -12,7 +12,7 @@
   font-family: var(--font-interface); font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55;
 }
 .echoink-journal-page *, .echoink-journal-page *::before, .echoink-journal-page *::after { box-sizing: border-box; }
-.echoink-journal-page [hidden] { display: none !important; }
+.echoink-journal-page [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-journal-page .journal-inner { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
 .echoink-journal-page .journal-header, .echoink-journal-page .journal-title, .echoink-journal-page .journal-month-navigation,
 .echoink-journal-page .journal-selected, .echoink-journal-page .journal-list-toolbar, .echoink-journal-page .journal-heatmap-heading {
@@ -102,7 +102,7 @@
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-trigger > span:first-child { display: inline-flex; flex: none; }
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-trigger svg { width: 13px; height: 13px; }
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-editor { container: echoink-activity-range / inline-size; min-width: 0; max-width: 100%; margin: 0 0 14px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
-:is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-editor[hidden] { display: none !important; }
+:is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-editor[hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-items: end; gap: 12px; min-width: 0; }
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; color: var(--secondary); font-size: calc(var(--font-text-size,16px)*.75); line-height: 1.55; }
 :is(.echoink-journal-page,.echoink-todo-page,.echoink-knowledge-page,.echoink-english-diary-page) .activity-range-field:first-child { grid-column: 1 / -1; width: min(180px,100%); }

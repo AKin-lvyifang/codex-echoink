@@ -400,7 +400,7 @@ export class EchoInkHomeView extends ItemView {
     const card = ownedEl(this.contentEl.ownerDocument, "section");
     card.className = "echoink-life-card echoink-life-card-finance";
     const heading = card.createDiv({ cls: "echoink-life-card-heading" });
-    heading.createEl("small", { text: "LIFE / ECHOINK" });
+    heading.createEl("small", { text: "Life / EchoInk" });
     heading.createEl("h2", { text: this.t("财务", "Finance") });
     card.createEl("p", { text: this.t("这个月的钱，清楚地看一眼", "A clear look at your money this month") });
     const button = card.createEl("button", { text: this.t("打开财务", "Open finance") });
@@ -465,7 +465,7 @@ export class EchoInkHomeView extends ItemView {
     card.className = "echoink-life-card echoink-life-card-english";
     card.dataset.expressionSignature = signature;
     const heading = card.createDiv({ cls: "echoink-life-card-heading" });
-    heading.createEl("small", { text: "ENGLISH / ECHOINK" });
+    heading.createEl("small", { text: "English / EchoInk" });
     heading.createEl("h2", { text: entry.term });
     card.createEl("p", { text: entry.meaning });
     const excerpt = card.createEl("p", { text: occurrence.targetExcerpt });

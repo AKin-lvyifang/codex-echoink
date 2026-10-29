@@ -11,7 +11,7 @@
 .echoink-iphone .ip-english-toolbar > .ip-button { margin-left: auto; }
 .echoink-iphone .ip-english-segments { position: relative; isolation: isolate; display: flex; flex: 0 1 auto; min-width: 0; min-height: 44px; max-width: 100%; }
 .echoink-iphone .ip-english-segments::before { content: ""; position: absolute; z-index: -2; inset: 6px 0; border-radius: 6px; background: var(--ip-soft); }
-.echoink-iphone .ip-english-segment-thumb { position: absolute; z-index: -1; top: 8px; bottom: 8px; left: 2px; width: calc(50% - 2px); border-radius: 4px; background: var(--ip-bg); transition: transform 180ms ease; }
+.echoink-iphone .ip-english-segment-thumb { position: absolute; z-index: -1; top: 8px; bottom: 8px; left: 2px; width: calc(50% - 2px); border-radius: 4px; background: var(--ip-bg); transition: var(--echoink-motion-transition, transform 180ms ease); }
 .echoink-iphone .ip-english-segments .ip-button { flex: 1; min-width: 44px; }
 .echoink-iphone .ip-english-segments .ip-button-visible { border: 0; background: transparent; }
 .echoink-iphone .ip-english-segments .ip-button[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }

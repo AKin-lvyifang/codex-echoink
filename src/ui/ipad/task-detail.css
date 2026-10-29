@@ -73,7 +73,7 @@
 .echoink-ipad .pd-task-empty, .echoink-ipad .pd-picker-empty { padding: 36px 0; text-align: center; color: var(--text-muted); font-size: .88em; }
 .echoink-ipad .pd-composer-wrap [hidden], .echoink-ipad .pd-task-detail [hidden] { display: none; }
 @media (hover: hover) { .echoink-ipad button.pd-action:hover:not(:disabled) .pd-action-visible { background: var(--background-modifier-hover); } }
-.echoink-ipad .pd-task-live .pd-icon svg { animation: pd-task-spin 1.2s linear infinite; }
+.echoink-ipad .pd-task-live .pd-icon svg { animation: var(--echoink-motion-animation, pd-task-spin 1.2s linear infinite); }
 @keyframes pd-task-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .echoink-ipad .pd-task-live .pd-icon svg { animation: none; } }
 /* Preserve code lines; overflow belongs to the code block, never the pane. */

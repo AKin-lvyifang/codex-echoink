@@ -50,4 +50,4 @@
   .echoink-ipad.pd-settings .pd-cap-header-fields > .pd-settings-action { justify-self: end; }
   .echoink-ipad.pd-settings .pd-cap-header-fields .pd-settings-field + .pd-settings-field { margin-top: 0; }
 }
-@media (hover: hover) { .echoink-ipad.pd-settings .pd-cap-skill-row:has(.pd-cap-skill-main:hover) { background: var(--pd-settings-soft); } }
+@media (hover: hover) { .echoink-ipad.pd-settings .pd-cap-skill-row.has-echoink-hovered-ipad-skill.has-echoink-hovered-ipad-skill { background: var(--pd-settings-soft); } }

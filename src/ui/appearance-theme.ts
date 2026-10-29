@@ -1,4 +1,5 @@
 import { ownedDiv } from "./owned-dom";
+import { bindCssParentStates } from "./css-parent-states";
 import { galleryComparison } from "../gallery/comparison";
 import type { App } from "obsidian";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -33,7 +34,7 @@ export function refreshCompanionThemeRecommendations(doc: Document): void {
   doc.querySelectorAll<HTMLElement>("[data-echoink-theme-recommendation]").forEach(node => { node.hidden = active; });
 }
 
-export function renderCompanionThemeRecommendation(container: HTMLElement, zh: boolean): void {
+export function renderCompanionThemeRecommendation(container: HTMLElement, zh: boolean, configDir: string): void {
   const doc = container.ownerDocument;
   const note = ownedDiv(doc);
   note.className = "echoink-theme-recommendation";
@@ -46,8 +47,8 @@ export function renderCompanionThemeRecommendation(container: HTMLElement, zh: b
   summary.textContent = zh ? "安装说明" : "Installation";
   const text = details.createEl("p");
   text.textContent = zh
-    ? "将 echoink-theme 文件夹放入当前库的 .obsidian/themes/，再到 Obsidian 设置 → 外观 → 主题中选择 echoink-theme。主题尚未上架。"
-    : "Place the echoink-theme folder in this vault’s .obsidian/themes/, then select echoink-theme in Obsidian Settings → Appearance → Themes. It is not listed in the theme directory yet.";
+    ? `将 echoink-theme 文件夹放入当前库的 ${configDir}/themes/，再到 Obsidian 设置 → 外观 → 主题中选择 echoink-theme。主题尚未上架。`
+    : `Place the echoink-theme folder in this vault’s ${configDir}/themes/, then select echoink-theme in Obsidian Settings → Appearance → Themes. It is not listed in the theme directory yet.`;
   const comparison = details.createEl("img"); comparison.src = galleryComparison;
   comparison.alt = zh ? "前后对比：普通插图逐张显示，三张图片组排成一大两小" : "Before and after: separate images versus a three-image gallery";
   comparison.className = "echoink-gallery-comparison";
@@ -59,12 +60,25 @@ export function renderCompanionThemeRecommendation(container: HTMLElement, zh: b
 /** Theme metadata is window-wide; the companion theme also consumes this attribute. */
 export class EchoInkAppearance {
   private readonly documents = new Set<Document>();
+  private readonly parentStates = new Map<Document, () => void>();
 
   constructor(private readonly app: App, private readonly theme: () => EchoInkColorTheme,
     private readonly access: () => CapabilityAccess | null | undefined = () => undefined) {}
 
   applyToDocument(doc: Document): void {
+    if (doc.defaultView?.closed) return;
     this.documents.add(doc);
+    if (!this.parentStates.has(doc)) {
+      const stopStates = bindCssParentStates(doc);
+      const release = () => {
+        stopStates();
+        doc.defaultView?.removeEventListener("pagehide", release);
+        doc.body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
+        this.parentStates.delete(doc); this.documents.delete(doc);
+      };
+      this.parentStates.set(doc, release);
+      doc.defaultView?.addEventListener("pagehide", release, { once: true });
+    }
     refreshCompanionThemeRecommendations(doc);
     const effective = effectiveEchoInkColorTheme(this.theme(), this.access());
     if (doc.body.getAttribute(ECHOINK_THEME_ATTRIBUTE) !== effective) {
@@ -83,6 +97,8 @@ export class EchoInkAppearance {
   }
 
   dispose(): void {
+    this.parentStates.forEach(dispose => dispose());
+    this.parentStates.clear();
     for (const doc of this.documents) doc.body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
     this.documents.clear();
   }

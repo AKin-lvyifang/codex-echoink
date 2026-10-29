@@ -1135,7 +1135,7 @@ function assertSessionPickerArchiveActions(): void {
     const styles = readFileSync("styles.css", "utf8");
     assert.match(
       styles,
-      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.codex-session-tab-running,[\s\S]*?\.codex-session-row-leading\.is-spinning\s*\{\s*animation:\s*none\s*!important;/u,
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.codex-session-tab-running,[\s\S]*?\.codex-session-row-leading\.is-spinning\s*\{\s*--echoink-motion-animation:\s*none;/u,
       "reduced motion keeps the status icon visible without continuous rotation"
     );
   } finally {

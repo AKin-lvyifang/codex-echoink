@@ -112,6 +112,8 @@ export interface VaultTrashEvidence {
  * atomically within their adapter, and never follow an unverified link.
  */
 export interface VaultDomainAdapter extends VaultTargetAdapter {
+  /** Current Vault configuration folder, supplied by the host adapter. */
+  readonly configDir?: string;
   /** Exclude private note sources, including canonical targets, before content I/O. */
   search(
     input: Readonly<VaultSearchAdapterInput>
@@ -291,7 +293,7 @@ export class VaultDomainService {
       mustExist: true,
       expectedKind: "directory"
     });
-    assertOrdinaryNoteSource(scope);
+    assertOrdinaryNoteSource(scope, this.adapter.configDir);
     throwIfAborted(input.signal);
     const rawValue: unknown = await this.adapter.search({
       query,
@@ -313,14 +315,14 @@ export class VaultDomainService {
     for (const candidate of raw) {
       if (items.length >= VAULT_SEARCH_RESULT_LIMIT) break;
       throwIfAborted(input.signal);
-      if (isPrivateNoteSourcePath(candidate.relativePath)) continue;
+      if (isPrivateNoteSourcePath(candidate.relativePath, [], this.adapter.configDir)) continue;
       const target = await this.resolver.resolve({
         vaultId: input.vaultId,
         relativePath: candidate.relativePath,
         mustExist: true,
         expectedKind: "file"
       });
-      if (isPrivateNoteSourcePath(target.relativePath)) continue;
+      if (isPrivateNoteSourcePath(target.relativePath, [], this.adapter.configDir)) continue;
       const pathBytes = Buffer.byteLength(target.relativePath, "utf8");
       if (pathBytes >= remainingBytes) {
         truncated = true;
@@ -357,7 +359,7 @@ export class VaultDomainService {
       mustExist: true,
       expectedKind: "file"
     });
-    assertOrdinaryNoteSource(target);
+    assertOrdinaryNoteSource(target, this.adapter.configDir);
     throwIfAborted(input.signal);
     const snapshot = await this.adapter.readFile(target, {
       maxBytes: ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "") ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
@@ -969,8 +971,8 @@ export class VaultDomainService {
   }
 }
 
-function assertOrdinaryNoteSource(target: Readonly<ResolvedVaultTarget>): void {
-  if (isPrivateNoteSourcePath(target.requestedRelativePath) || isPrivateNoteSourcePath(target.relativePath)) {
+function assertOrdinaryNoteSource(target: Readonly<ResolvedVaultTarget>, configDir?: string): void {
+  if (isPrivateNoteSourcePath(target.requestedRelativePath, [], configDir) || isPrivateNoteSourcePath(target.relativePath, [], configDir)) {
     throw new VaultDomainAdapterError("unsafe_target", "Private storage is outside ordinary note sources");
   }
 }

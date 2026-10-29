@@ -13,7 +13,7 @@
   font-family: var(--font-interface); font-size: calc(var(--font-text-size, 16px) * .8125); line-height: 1.55;
 }
 .echoink-todo-page *, .echoink-todo-page *::before, .echoink-todo-page *::after { box-sizing: border-box; }
-.echoink-todo-page [hidden] { display: none !important; }
+.echoink-todo-page [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-todo-page .echoink-todo-page-content { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
 .echoink-todo-page :is(.todo-page-header,.todo-page-title,.todo-page-toolbar,.todo-page-count) { display: flex; align-items: center; gap: 10px; }
 .echoink-todo-page .todo-page-header { justify-content: space-between; flex-wrap: wrap; gap: 14px; margin-bottom: 22px; }

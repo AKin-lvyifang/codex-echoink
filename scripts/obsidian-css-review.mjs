@@ -75,7 +75,7 @@ export async function lintProductionCss(rootDir) {
 }
 
 export async function runCssBehaviorSentinels() {
-  const source = 'article:has(span) { color: red !important; column-gap: 1px; clip-path: inset(50%); }\nechoink-unknown-type { display: block; }';
+  const source = 'article:has(span) { color: red !important; column-gap: 1px; clip-path: inset(50%); display: contents; }\nechoink-unknown-type { display: block; }';
   const result = await stylelint.lint({ code: source, codeFilename: "src/css-review-sentinel.css", config: CSS_REVIEW_CONFIG });
   const found = new Set(result.results.flatMap(item => item.warnings.map(warning => warning.rule)));
   const errors = selectedRules.filter(rule => !found.has(rule)).map(rule => `CSS sentinel: ${rule} did not detect its bad sample.`);

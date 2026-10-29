@@ -71,18 +71,22 @@ const suppressedWarning = collectFindings(root, [{ filePath: path.join(root, "sr
 check(suppressedWarning.length === 1 && suppressedWarning[0].suppressed, "suppressed warning remains visible");
 assert.throws(() => createWarningBaseline(suppressedWarning)); checks += 1;
 
-const cssFinding = { ...warning, path: "src/example.css", rule: "declaration-no-important", message: "Avoid !important.", context: "a { color: red !important; }" };
+const cssFinding = { ...warning, path: "src/example.css", rule: "plugin/no-unsupported-browser-features", message: 'Unexpected browser feature "text-decoration" is only partially supported.', context: "a { text-decoration-color: red; }" };
 const cssBaseline = createCssBaseline([cssFinding]);
 check(validateCssBaseline(cssBaseline).length === 0, "valid CSS fingerprint baseline");
 assert.throws(() => createCssBaseline([{ ...cssFinding, rule: "selector-type-no-unknown" }])); checks += 1;
 check(validateWarningBaseline(cssBaseline).length > 0 && validateCssBaseline(warningBaseline).length > 0, "CSS and JavaScript baselines cannot be interchanged");
-check(compareBaseline(createCssBaseline([{ ...cssFinding, context: "b { color: red !important; }" }]), cssBaseline).regressions.length === 1, "CSS same-count substitution fails");
+check(compareBaseline(createCssBaseline([{ ...cssFinding, context: "b { text-decoration-color: red; }" }]), cssBaseline).regressions.length === 1, "CSS same-count substitution fails");
 check(compareBaseline(createCssBaseline([cssFinding, cssFinding]), cssBaseline).regressions.length === 1, "CSS count increase fails");
 check(compareBaseline(createCssBaseline([]), cssBaseline).reductions.length === 1, "resolved CSS debt must be tightened");
 const cssSentinels = await runCssBehaviorSentinels();
 check(CSS_REVIEW_CONFIG.rules["selector-type-no-unknown"][1].severity === "error", "unknown CSS types are a hard error");
 check(cssSentinels.errors.length === 0, `CSS behavior sentinels pass: ${cssSentinels.errors.join(", ")}`);
-for (const feature of ["css-clip-path", "multicolumn"]) {
+for (const rule of ["declaration-no-important", "selector-pseudo-class-disallowed-list"]) {
+  check(CSS_REVIEW_CONFIG.rules[rule][1].severity === "error", `${rule} is a cleared hard error`);
+  assert.throws(() => createCssBaseline([{ ...cssFinding, rule }])); checks += 1;
+}
+for (const feature of ["css-clip-path", "multicolumn", "css-display-contents"]) {
   const hardFeature = { ...cssFinding, rule: "plugin/no-unsupported-browser-features", message: `Unexpected browser feature "${feature}" is only partially supported.` };
   check(isHardFinding(hardFeature), `${feature} is a cleared hard feature`);
   assert.throws(() => createCssBaseline([hardFeature])); checks += 1;

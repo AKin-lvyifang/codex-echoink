@@ -99,7 +99,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (!this.store.unavailableReason) this.runtime.setUsage(this.usage);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
-      this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.manifest.dir));
+      this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.app.vault.configDir, this.manifest.dir));
       await this.services.initialize();
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings || migratedTheme || migratedToolCalling) await this.saveSettings();

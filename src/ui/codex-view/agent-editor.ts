@@ -269,10 +269,11 @@ export class AgentEditorController {
   }
 
   private renderIdentity(parent: HTMLElement): void {
-    const section = this.el(parent, "section", "echoink-agent-editor-identity");
-    const avatar = this.el(section, "div", "echoink-agent-editor-section");
-    this.el(avatar, "div", "echoink-agent-editor-label", this.t("头像", "Avatar"));
     const settingsPresentation = this.root?.classList.contains("is-settings");
+    const flatIdentity = settingsPresentation && !!this.root?.closest(".echoink-settings-aligned");
+    const section = flatIdentity ? parent : this.el(parent, "section", "echoink-agent-editor-identity");
+    const avatar = this.el(section, "div", "echoink-agent-editor-section echoink-agent-editor-avatar-field");
+    this.el(avatar, "div", "echoink-agent-editor-label", this.t("头像", "Avatar"));
     const nameField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
     const nameId = `${this.instanceId}-name`;
     const label = this.el(nameField, "label", "echoink-agent-editor-label", this.t("名字", "Name")); label.htmlFor = nameId;
@@ -320,7 +321,7 @@ export class AgentEditorController {
     };
     avatarError.textContent = this.avatarError;
     // The avatar field precedes the name, while preserving its existing draft handlers.
-    section.prepend(avatar);
+    if (!flatIdentity) section.prepend(avatar);
     const positionField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(positionField, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;

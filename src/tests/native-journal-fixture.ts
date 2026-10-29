@@ -78,6 +78,7 @@ export async function nativeJournalFixture(root: string) {
     },
     cli: { handlers },
     vault: {
+      configDir: ".obsidian",
       on: () => ({}),
       adapter: { getBasePath: () => root },
       getName: () => "offline-journal-fixture",
@@ -109,7 +110,7 @@ export async function nativeJournalFixture(root: string) {
     app: app as App,
     settings: structuredClone(DEFAULT_SETTINGS),
     getVaultPath: () => root,
-    getPluginDataDirName: () => "codex-echoink",
+    getPluginDataDirName: () => `${app.vault.configDir}/plugins/codex-echoink`,
     async readKnowledgeInitialActivities() { return []; },
     async saveSettings() {}, refreshKnowledgeBaseSurfaces() {},
     async submitPiChat() { providerCalls += 1; throw new Error("No Provider expected"); }

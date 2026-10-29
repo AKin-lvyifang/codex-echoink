@@ -35,7 +35,7 @@ export function isHomeRecentSystemPath(path: string, journalDirectory: string, c
   path=relative(path);
   if (context.reportPaths?.has(path) || context.reportType === "finance-analysis") return true;
   if ([FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT,
-    context.configDirectory ?? ".obsidian", ".echoink"].some(root=>inDirectory(path,relative(root)))) return true;
+    context.configDirectory ?? "", ".echoink"].some(root=>inDirectory(path,relative(root)))) return true;
   // The configured native diary remains content even when it overlaps a template root.
   if (inDirectory(path,relative(journalDirectory))) return false;
   if (knowledgeRootRole(path, context.folderBindings) === "templates" || inDirectory(path,relative(context.templatesDirectory ?? (context.folderBindings ? "" : "templates")))) return true;

@@ -1170,7 +1170,7 @@ export class CodexSettingTab extends PluginSettingTab {
         ? "选择主题颜色，浅色与深色跟随 Obsidian。"
         : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
-    renderCompanionThemeRecommendation(appearanceSection, zh);
+    renderCompanionThemeRecommendation(appearanceSection, zh, this.app.vault.configDir);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"
@@ -1353,7 +1353,7 @@ export class CodexSettingTab extends PluginSettingTab {
         : embedded ? "Shares the Obsidian Daily notes folder, date format, and template." : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
       .addOriginText((text) => {
         const label = zh ? "日记保存文件夹" : "Journal folder";
-        text.setPlaceholder("journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder);
+        text.setPlaceholder("Journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder);
         text.inputEl.setAttr("aria-label", label);
         const saveDirectory = async (): Promise<void> => {
           const previous = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder;

@@ -13,6 +13,7 @@ import { createMobileAccountFixture } from "./account-fixture";
 import { MobileUsageStore } from "../../src/mobile/usage-store";
 import { createMobileAccountService } from "../../src/mobile/account";
 import EchoInkMobilePlugin from "../../src/mobile/plugin";
+import { EchoInkAppearance } from "../../src/ui/appearance-theme";
 import { mobileWorkspaceFixture } from "./workspace-fixture";
 import { EchoInkHomeView } from "../../src/home/home-view";
 import { mountAccountMembership } from "../../src/settings/account-membership";
@@ -122,6 +123,11 @@ const financeAccess = { checkCapability: () => !params.has("expired"), requireCa
 const plugin = new EchoInkMobilePlugin(host.app as any, { ...previewManifest, version: `${previewManifest.version} fixture` } as any);
 const services = new MobileServices({ capabilityRequest: params.has("englishfixture") ? syntheticEnglishRequest : undefined, accountService: financeAccess, app: host.app as any, settings, store, runtime, navigation: { open: () => plugin.navigation.open(), openNote: file => plugin.navigation.openNote(file) } as any, registerEvent() {}, showPage: page => plugin.showPage(page), saveSettings: registry => plugin.saveSettings(registry) }, "plugin/mobile");
 Object.assign(plugin, { app: host.app, settings, store, runtime, services, accountService });
+// The visual host constructs the same document appearance owner as onload.
+const appearance = new EchoInkAppearance(host.app as any, () => settings.colorTheme, () => accountService);
+Object.assign(plugin, { appearance });
+appearance.refresh();
+window.addEventListener("pagehide", () => appearance.dispose(), { once: true });
 plugin.saveData = async data => { const text = JSON.stringify(data); await host.adapter.write("plugin/data.json", text); localStorage.setItem(`${fixturePrefix}-settings`, text); };
 services.setUsage({ recordUsage: event => usageStore.recordUsage(event) });
 await services.initialize();

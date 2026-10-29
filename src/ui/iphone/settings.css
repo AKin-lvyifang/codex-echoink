@@ -11,7 +11,7 @@
   color: var(--ip-ink); background: transparent; font: inherit; text-align: left; white-space: normal;
 }
 .echoink-iphone .ip-settings .ip-settings-row:last-child { border-bottom: 0; }
-.echoink-iphone .ip-settings-group > .ip-settings-row:not(:has(~ .ip-settings-row)) { border-bottom: 0; }
+.echoink-iphone .ip-settings-group > .ip-settings-row:not(.has-echoink-later-iphone-row) { border-bottom: 0; }
 .echoink-iphone .ip-settings button.ip-settings-row { cursor: pointer; }
 .echoink-iphone .ip-settings button.ip-settings-row:hover:not(:disabled),
 .echoink-iphone .ip-settings button.ip-settings-row:focus-visible,
@@ -20,7 +20,7 @@
 .echoink-iphone .ip-settings button.ip-settings-row:disabled { opacity: .45; cursor: default; }
 .echoink-iphone .ip-settings-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .echoink-iphone .ip-settings-name { display: block; font-size: .92em; font-weight: 500; }
-.echoink-iphone .ip-settings-row > .ip-settings-label:not(:has(.ip-settings-name)) { font-size: .92em; font-weight: 500; }
+.echoink-iphone .ip-settings-row > .ip-settings-label:not(.has-echoink-iphone-setting-name) { font-size: .92em; font-weight: 500; }
 .echoink-iphone .ip-settings-detail { display: block; margin-top: 5px; color: var(--ip-secondary); font-size: .76em; line-height: 1.5; overflow-wrap: anywhere; }
 .echoink-iphone .ip-settings-value { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 1 auto; max-width: 48%; min-width: 0; color: var(--ip-secondary); font-size: .88em; overflow-wrap: anywhere; text-align: right; }
 .echoink-iphone .ip-settings-value > span:last-child { min-width: 0; overflow-wrap: anywhere; }
@@ -61,14 +61,14 @@
   appearance: none; position: relative; flex: 0 0 45px; width: 45px; height: 27px; margin: 0; padding: 3px;
   border: 0; border-radius: 16px; background: var(--background-modifier-border-hover, var(--ip-line)); box-shadow: none; cursor: pointer;
 }
-.echoink-iphone .ip-settings input.ip-settings-switch::before { content: ""; display: block; width: 21px; height: 21px; margin: 0; border: 0; border-radius: 50%; background: var(--text-on-accent); transform: translateX(0); transition: transform 180ms ease; }
+.echoink-iphone .ip-settings input.ip-settings-switch::before { content: ""; display: block; width: 21px; height: 21px; margin: 0; border: 0; border-radius: 50%; background: var(--text-on-accent); transform: translateX(0); transition: var(--echoink-motion-transition, transform 180ms ease); }
 .echoink-iphone .ip-settings input.ip-settings-switch::after { content: none; }
 .echoink-iphone .ip-settings input.ip-settings-switch:checked { background: var(--ip-accent); }
 .echoink-iphone .ip-settings input.ip-settings-switch:disabled { opacity: .45; cursor: default; }
 .echoink-iphone .ip-settings input.ip-settings-switch:checked::before { transform: translateX(18px); }
 .echoink-iphone .ip-settings-segments { position: relative; display: inline-grid; grid-template-columns: repeat(3, minmax(max-content, 1fr)); flex: 0 0 auto; align-items: stretch; min-width: 0; padding: 0 2px; isolation: isolate; }
 .echoink-iphone .ip-settings-segments::before { content: ""; position: absolute; z-index: -2; inset: 6px 0; border-radius: 8px; background: var(--background-modifier-hover); }
-.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 2px; width: calc((100% - 4px) / 3); border-radius: 6px; background: var(--background-primary); transition: transform 180ms ease; }
+.echoink-iphone .ip-settings-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 2px; width: calc((100% - 4px) / 3); border-radius: 6px; background: var(--background-primary); transition: var(--echoink-motion-transition, transform 180ms ease); }
 .echoink-iphone .ip-settings-segments[data-selected="highlighter"] .ip-settings-segment-slider { transform: translateX(100%); }
 .echoink-iphone .ip-settings-segments[data-selected="manifesto"] .ip-settings-segment-slider { transform: translateX(200%); }
 .echoink-iphone .ip-settings button.ip-settings-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; height: auto; margin: 0; padding: 6px 5px; border: 0; border-radius: 7px; box-shadow: none; background: transparent; color: var(--ip-secondary); font: inherit; font-size: .8em; white-space: nowrap; }

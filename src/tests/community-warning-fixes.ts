@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
 import { ObsidianVaultDomainAdapter, createPhase3MaintenanceVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
+import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -22,6 +23,7 @@ export async function runCommunityWarningFixesTests(first: Window, second: Windo
   processEventPayloads();
   customConfigProtection();
   await dataRoots();
+  await maintenanceConfigBoundary();
   measuredRows(first, second);
   providerIcons(first, second);
   await runShortcutFailureTests(createCapture);
@@ -43,7 +45,7 @@ function processEventPayloads(): void {
 function customConfigProtection(): void {
   const app = { vault: { configDir: ".obsidian-work" } } as never;
   const base = new ObsidianVaultDomainAdapter(app, "fixture", path.join(tmpdir(), "config-fixture"));
-  for (const trackerRelativePath of [".obsidian-work/tracker.md", ".obsidian/tracker.md", ".echoink/tracker.md"]) {
+  for (const trackerRelativePath of [".obsidian-work/tracker.md", ".echoink/tracker.md"]) {
     assert.throws(() => createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath }), /managed_hidden_update_path_invalid/);
   }
   assert.doesNotThrow(() => createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath: "outputs/.ingest-tracker.md" }));
@@ -61,12 +63,12 @@ async function dataRoots() {
     for (const [caseName, dir, configDir] of [
       ["default", undefined, ".obsidian"],
       ["custom-fallback", undefined, ".obsidian-work"],
-      ["custom-manifest", ".obsidian-work/plugins/codex-echoink", ".ignored"]
+      ["custom-manifest", ".obsidian-work/plugins/codex-echoink", ".obsidian-work"]
     ]) {
       const vault = path.join(temp, caseName!);
       await mkdir(vault);
       const manifest = { id, dir };
-      const expected = path.join(vault, pluginInstallDir(manifest, configDir));
+      const expected = path.join(vault, pluginInstallDir(manifest, configDir!));
       // An empty previous location must not force fallback.
       await mkdir(path.join(vault, ".obsidian/plugins", dir ?? id), { recursive: true });
       await writeFile(path.join(vault, ".obsidian/plugins", dir ?? id, "lifestyle.json"), "");
@@ -75,7 +77,7 @@ async function dataRoots() {
       assert.equal(binding.rootPath, expected);
       assert.equal(binding.usingPreviousRoot, false);
       assert.equal(pluginDataDir(vault), expected);
-      assert.equal(pluginDataDir(vault, pluginInstallDir(manifest, configDir)), expected);
+      assert.equal(pluginDataDir(vault, pluginInstallDir(manifest, configDir!)), expected);
       await mkdir(path.join(vault, "wiki"));
       await writeFile(path.join(vault, "wiki/note.md"), "# Knowledge fixture\n");
       const index = await refreshKnowledgeBaseIndex(vault, { roots: ["wiki"] });
@@ -87,12 +89,12 @@ async function dataRoots() {
       assert.equal(reloaded.reusedCount, 1);
     }
     // Finance JSON alone is durable state, with or without manifest.dir.
-    for (const manifestDir of [undefined, ".obsidian-work/plugins/codex-echoink"]) {
+    for (const manifestDir of ["custom/install"]) {
       for (const both of [false, true]) {
         const financeVault = path.join(temp, `finance-${manifestDir ? "manifest" : "fallback"}-${both}`);
         await mkdir(financeVault);
         const manifest = { id, dir: manifestDir };
-        const oldFinanceRoot = path.join(financeVault, ".obsidian/plugins", manifestDir ?? id);
+        const oldFinanceRoot = path.join(financeVault, ".obsidian-work/plugins", manifestDir);
         const newFinanceRoot = path.join(financeVault, pluginInstallDir(manifest, ".obsidian-work"));
         const oldFinance = JSON.stringify({ budgets: [{ month: "2026-10", totalCents: 12345 }], goals: [{ id: "old-goal" }], reports: [{ id: "old-report" }], unowned: { keep: true } });
         await mkdir(oldFinanceRoot, { recursive: true });
@@ -111,11 +113,21 @@ async function dataRoots() {
         if (both) assert.equal(await readFile(path.join(newFinanceRoot, "lifestyle.json"), "utf8"), "new-finance-preserved");
       }
     }
+    // An ancient default-folder root is intentionally not searched after a custom-config switch.
+    const ancientVault = path.join(temp, "ancient-default");
+    const ancientFile = path.join(ancientVault, ".obsidian/plugins", id, "lifestyle.json");
+    await mkdir(path.dirname(ancientFile), { recursive: true });
+    await writeFile(ancientFile, "old-default-remains-untouched");
+    const ancientBinding = await preparePluginDataRoot(ancientVault, { id }, "Config");
+    bindings.push(ancientBinding);
+    assert.equal(ancientBinding.rootPath, path.join(ancientVault, "Config/plugins", id));
+    assert.equal(ancientBinding.usingPreviousRoot, false);
+    assert.equal(await readFile(ancientFile, "utf8"), "old-default-remains-untouched");
     // Two live Vaults retain independent choices, including symlink aliases.
     const vault = path.join(temp, "legacy");
     await mkdir(vault);
-    const dir = ".obsidian-work/plugins/codex-echoink";
-    const oldRoot = path.join(vault, ".obsidian/plugins", dir);
+    const dir = "custom/install";
+    const oldRoot = path.join(vault, ".obsidian-work/plugins", dir);
     const storage = path.join(oldRoot, "pi-agent-product-v1");
     const catalog = new FileConversationCatalog({ storageRootPath: storage, vaultId: "fixture" });
     await catalog.initialize();
@@ -176,6 +188,19 @@ async function dataRoots() {
     for (const binding of bindings) binding.dispose();
     await rm(temp, { recursive: true, force: true });
   }
+}
+
+async function maintenanceConfigBoundary(): Promise<void> {
+  const vault = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-maintenance-config-")));
+  try {
+    const privatePath = "Config/plugins/codex-echoink/private.md";
+    await mkdir(path.dirname(path.join(vault, privatePath)), { recursive: true });
+    await writeFile(path.join(vault, privatePath), "private content must not be read");
+    const base = new ObsidianVaultDomainAdapter({ vault: { configDir: "Config" } } as never, "config-boundary", vault);
+    const adapter = createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath: "outputs/.tracker.md" });
+    const service = new VaultDomainService(adapter);
+    await assert.rejects(service.noteRead({ vaultId: adapter.vaultId, relativePath: privatePath }), { code: "unsafe_target" });
+  } finally { await rm(vault, { recursive: true, force: true }); }
 }
 
 function providerIcons(first: Window, second: Window): void {

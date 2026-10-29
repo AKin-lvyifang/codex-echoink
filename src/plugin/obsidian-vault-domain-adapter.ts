@@ -112,7 +112,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
     const results: VaultAdapterSearchResult[] = [];
     for (const file of this.app.vault.getFiles().filter((entry) => /\.(md|base|canvas)$/iu.test(entry.path))) {
       if (results.length >= input.maxResults) break;
-      if (isPrivateNoteSourcePath(file.path)) continue;
+      if (isPrivateNoteSourcePath(file.path, [], this.app.vault.configDir)) continue;
       if (!knowledgeRecallCandidateAllowed(getKnowledgeFolderBindings(this.vaultRootPath), file.path)) continue;
       if (
         scopePrefix
@@ -126,7 +126,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
         mustExist: true,
         expectedKind: "file"
       });
-      if (isPrivateNoteSourcePath(target.relativePath)) continue;
+      if (isPrivateNoteSourcePath(target.relativePath, [], this.app.vault.configDir)) continue;
       const maxBytes = Math.min(SEARCH_SCAN_LIMIT_BYTES, Math.max(1, input.maxExcerptBytes));
       const pathMatches = target.relativePath.toLocaleLowerCase().includes(query);
       if (!pathMatches) {
@@ -460,6 +460,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
 class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
   readonly vaultId: string;
   readonly vaultRootPath: string;
+  get configDir(): string { return this.base.configDir; }
 
   constructor(
     private readonly base: ObsidianVaultDomainAdapter,
@@ -561,7 +562,6 @@ function normalizeManagedHiddenPath(value: string, configDir?: string): string {
   const configuredRoot = configDir?.trim() ? normalizeVaultRelativePath(configDir) : null;
   if (
     !hasHiddenPathSegment(relativePath)
-    || segments[0] === ".obsidian"
     || (configuredRoot !== null && (relativePath === configuredRoot || relativePath.startsWith(`${configuredRoot}/`)))
     || segments[0] === ".echoink"
   ) {

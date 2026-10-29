@@ -1,6 +1,6 @@
 /* Desktop task navigation. Existing message/composer/dock styles remain in use. */
 .echoink-agent-tasks { container-type: inline-size; --interactive-accent: var(--echoink-theme-accent); --text-on-accent: var(--echoink-theme-on-accent); }
-.echoink-agent-tasks [hidden] { display: none !important; }
+.echoink-agent-tasks [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-agent-tasks > .codex-header { display: none; }
 .echoink-agent-tasks :is(button, input, textarea, select):is(:focus, :focus-visible) { outline: none; box-shadow: none; }
 .echoink-agent-tasks button:focus-visible { background: var(--background-modifier-hover); }
@@ -19,7 +19,7 @@
 .echoink-agent-badge { position: absolute; bottom: 1px; right: 0; border: 2px solid var(--background-primary); border-radius: 50%; min-width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; font: 600 9px/1 var(--font-interface); }
 .echoink-agent-badge.is-waiting, .echoink-agent-badge.is-interrupted { background: var(--echoink-theme-warn, var(--text-warning)); color: var(--background-primary); }
 .echoink-agent-badge.is-running { background: var(--background-primary); color: var(--text-muted); }
-.echoink-agent-badge.is-running svg { width: 11px; height: 11px; animation: echoink-task-spin 1s linear infinite; }
+.echoink-agent-badge.is-running svg { width: 11px; height: 11px; animation: var(--echoink-motion-animation, echoink-task-spin 1s linear infinite); }
 .echoink-agent-badge.is-unread, .echoink-task-unread { background: var(--echoink-control-fill); width: 6px; min-width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
 .echoink-agent-badge.is-unread { box-sizing: content-box; }
 .echoink-task-list, .echoink-task-detail, .echoink-agent-editor-mount { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; overflow: hidden; }
@@ -45,7 +45,7 @@
 .echoink-task-error { padding: 10px 12px; font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
 .echoink-task-error { color: var(--text-error); }
 .echoink-task-interruption { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: var(--echoink-conversation-radius-lg, 10px); font-size: 13px; line-height: 1.6; color: var(--text-normal); overflow-wrap: anywhere; }
-.echoink-agent-tasks .codex-messages:has(> [data-message-tail]:not([hidden])) > .codex-virtual-list { min-height: 0; }
+.echoink-agent-tasks .codex-messages.has-echoink-message-tail.has-echoink-message-tail > .codex-virtual-list { min-height: 0; }
 .echoink-task-interruption-detail { color: var(--text-muted); }
 .echoink-task-interruption-warning { color: var(--echoink-theme-warn, var(--text-warning)); }
 .echoink-task-interruption-error { color: var(--text-error); }

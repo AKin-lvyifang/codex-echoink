@@ -1,3 +1,4 @@
+import { TFile } from "obsidian";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
 import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
 import { createDesktopKnowledgeSourcePathResolver } from "../../plugin/pi-production-runtime-composition";
@@ -65,7 +66,7 @@ export async function runVaultPrivateBoundaryTests(): Promise<void> {
     for (const name of [...protectedPaths, ...publicPaths]) await fixture.write(name, `BOUNDARY_SHARED_TOKEN ${name}`);
     await symlink(path.join(fixture.root, "私有记忆"), path.join(fixture.root, "linked-private"));
     const entries = [...protectedPaths, ...publicPaths, "linked-private/偏好草稿.md"].map(name => ({ path: name }));
-    const adapter = new ObsidianVaultDomainAdapter({ vault: { getFiles: () => entries } } as never, fixture.adapter.vaultId, fixture.root);
+    const adapter = new ObsidianVaultDomainAdapter({ vault: { configDir: ".obsidian", getFiles: () => entries } } as never, fixture.adapter.vaultId, fixture.root);
     const service = new VaultDomainService(adapter);
     const contentReads: string[] = [];
     const baseRead = adapter.readFile.bind(adapter);
@@ -99,7 +100,7 @@ export async function runVaultBodySearchCanonicalBoundaryTests(): Promise<void> 
     const sourcePath = "公开/cached-note.md", allowedTarget = "私有记忆备份/公开.md";
     const reads: string[] = [], metadata: string[] = [];
     let cached: { path: string; basename: string; extension: string; stat: { mtime: number; size: number } };
-    const app = { vault: { getMarkdownFiles: () => [cached], getAbstractFileByPath: (name: string) => name === sourcePath ? cached : null,
+    const app = { vault: { configDir: ".obsidian", getMarkdownFiles: () => [cached], getAbstractFileByPath: (name: string) => name === sourcePath ? cached : null,
       read: async (file: { path: string }) => { reads.push(file.path); return await readFile(path.join(fixture.root, file.path), "utf8"); } },
       metadataCache: { getFileCache: (file: { path: string }) => { metadata.push(file.path); return null; } }, workspace: { getActiveFile: () => null, getLastOpenFiles: () => [] } };
     const adapter = new ObsidianVaultDomainAdapter(app as never, fixture.adapter.vaultId, fixture.root);
@@ -107,7 +108,7 @@ export async function runVaultBodySearchCanonicalBoundaryTests(): Promise<void> 
     const observations = [];
     for (const target of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md", ".echoink/memory.md", "outside", allowedTarget]) {
       await fixture.write(sourcePath, "SAFE_CACHED_BODY");
-      cached = { path: sourcePath, basename: "cached-note", extension: "md", stat: { mtime: 10, size: 16 } };
+      cached = Object.assign(new TFile(), { path: sourcePath, basename: "cached-note", extension: "md", stat: { mtime: 10, size: 16 } });
       if (target === "outside") await writeFile(path.join(fixture.outsideRoot, "private.md"), "PRIVATE_CANONICAL_MARKER");
       else await fixture.write(target, target === allowedTarget ? "PUBLIC_CANONICAL_MARKER" : "PRIVATE_CANONICAL_MARKER");
       const port = new VaultBodySearch(app as never, () => null, { excludedRoots: () => [".echoink"], resolveSourcePath });
@@ -138,12 +139,12 @@ export async function runVaultBodySearchCanonicalBoundaryTests(): Promise<void> 
 
 export async function runVaultBodySearchCanonicalPerformanceTests(): Promise<void> {
   await withFixture(async fixture => {
-    const files = Array.from({ length: 2940 }, (_, index) => ({ path: `notes/note-${String(index).padStart(4, "0")}.md`, basename: `note-${index}`, extension: "md", stat: { mtime: 10, size: 160 } }));
+    const files = Array.from({ length: 2940 }, (_, index) => Object.assign(new TFile(), { path: `notes/note-${String(index).padStart(4, "0")}.md`, basename: `note-${index}`, extension: "md", stat: { mtime: 10, size: 160 } }));
     await mkdir(path.join(fixture.root, "notes"));
     for (let offset = 0; offset < files.length; offset += 32) await Promise.all(files.slice(offset, offset + 32).map(file => writeFile(path.join(fixture.root, file.path), `# Benchmark\nOrdinary synthetic source paragraph ${file.basename}.\n${file === files[0] ? "CANONICAL_PERF_NEEDLE" : "Unrelated background."}\n`)));
     let reads = 0, resolutions = 0;
     const byPath = new Map(files.map(file => [file.path, file]));
-    const app = { vault: { getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => byPath.get(name) ?? null,
+    const app = { vault: { configDir: ".obsidian", getMarkdownFiles: () => files, getAbstractFileByPath: (name: string) => byPath.get(name) ?? null,
       read: async (file: { path: string }) => { reads++; return await readFile(path.join(fixture.root, file.path), "utf8"); } }, metadataCache: { getFileCache: () => null } };
     const adapter = new ObsidianVaultDomainAdapter(app as never, fixture.adapter.vaultId, fixture.root);
     const resolve = createDesktopKnowledgeSourcePathResolver(adapter);
@@ -588,6 +589,7 @@ class LocalVaultAdapter implements VaultDomainAdapter {
   private corruptNextUpdate = false;
   private misidentifyNextTrash = false;
 
+  readonly configDir = ".obsidian";
   constructor(readonly vaultRootPath: string) {
     this.vaultId = `fixture-${path.basename(vaultRootPath)}`;
   }

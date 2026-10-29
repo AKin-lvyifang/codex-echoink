@@ -40,6 +40,9 @@ parse(await readFile(path.join(root, "styles.css"), "utf8")).walkRules(rule => {
 });
 const fixture = new JSDOM('<body><div class="echoink-workbench"></div><div class="modal mod-settings"><div class="echoink-settings-host"><div class="echoink-settings-demo"><div class="echoink-theme-boundary"></div></div></div></div><div class="echoink-theme-overlay echoink-settings-overlay"></div></body>');
 const doc = fixture.window.document;
+await esbuild.build({ ...common, entryPoints: ["src/ui/css-parent-states.ts"], platform: "node", format: "esm", outfile: path.join(out, "parent-states.mjs") });
+const { bindCssParentStates } = await import(pathToFileURL(path.join(out, "parent-states.mjs")));
+const disposeParentStates = bindCssParentStates(doc);
 const resolve = element => {
   const ancestors = []; for (let node = element; node; node = node.parentElement) ancestors.unshift(node);
   const tokens = {};
@@ -59,7 +62,7 @@ for (const dark of [false, true]) {
     doc.body.classList.remove("is-popout-modal");
   }
 }
-fixture.window.close();
+disposeParentStates(); fixture.window.close();
 console.log("Settings neutral palette: PASS; 6 appearances, nested surfaces, settings portals, unknown identifiers, workbench isolation.");
 await esbuild.build({ banner: desktopNodeTestBanner, ...common, entryPoints: ["src/tests/appearance-pro.ts"], platform: "node", format: "esm", outfile: path.join(out,"pro.mjs"), external: ["jsdom"] });
 const proChecks = spawnSync(process.execPath,[path.join(out,"pro.mjs")],{stdio:"inherit"});

@@ -78,7 +78,7 @@ export class IPhoneModelPages {
     const invalidate = () => { revision++; error.show(); update(); };
     const name = settingsField(ctx, fields, "连接名称", draft.name, value => { draft.name = value; invalidate(); }); name.autocomplete = "off";
     const key = settingsField(ctx, fields, "API Key", draft.apiKey, value => { draft.apiKey = value; invalidate(); }, "password"); key.placeholder = settingsText(ctx, "粘贴 API Key"); key.autocomplete = "off"; key.spellcheck = false;
-    const url = settingsField(ctx, fields, "接口地址", draft.baseUrl, value => { draft.baseUrl = value; invalidate(); }, "url"); url.placeholder = "https://"; url.autocomplete = "off"; url.spellcheck = false;
+    const url = settingsField(ctx, fields, "接口地址", draft.baseUrl, value => { draft.baseUrl = value; invalidate(); }, "url"); url.placeholder = "HTTPS://"; url.autocomplete = "off"; url.spellcheck = false;
     settingsRow(ctx, settingsGroup(ctx, fields), "参数", { value: "沿用", action: () => this.parameters(draft, choices, picked, editedModels, added => { revision++; manualAdded ||= added === true; renderModels(); update(); }) });
     const head = el(ctx.document, "div", "ip-settings-model-head"); head.append(el(ctx.document, "h2", "", "模型")); settingsMessage(ctx, head.querySelector("h2")!, "模型"); fields.append(head);
     const fetch = settingsButton(ctx, "获取模型", () => { void discover(); }); head.append(fetch);

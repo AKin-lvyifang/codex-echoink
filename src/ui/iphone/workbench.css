@@ -97,7 +97,7 @@
 .echoink-iphone .ip-status.is-waiting,
 .echoink-iphone .ip-status.is-interrupted { color: var(--ip-warning); }
 .echoink-iphone .ip-status.is-running svg,
-.echoink-iphone .ip-agent-badge.is-running svg { animation: ip-workbench-spin 1.2s linear infinite; }
+.echoink-iphone .ip-agent-badge.is-running svg { animation: var(--echoink-motion-animation, ip-workbench-spin 1.2s linear infinite); }
 @keyframes ip-workbench-spin { to { transform: rotate(360deg); } }
 .echoink-iphone .ip-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .echoink-iphone .ip-task-step { color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); overflow-wrap: anywhere; }
@@ -134,7 +134,7 @@
 .echoink-iphone .ip-list-task-title { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .echoink-iphone .ip-list-task > .ip-sub { margin-top: 2px; }
 .echoink-iphone .ip-form-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
-.echoink-iphone .eis-page:has(> .eis-scroll > .eis-content > .ip-agent-form) > .eis-header { border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .eis-page.has-echoink-iphone-agent-form.has-echoink-iphone-agent-form.has-echoink-iphone-agent-form > .eis-header { border-bottom: 1px solid var(--ip-line); }
 .echoink-iphone .ip-form-field { display: block; min-width: 0; margin-top: 18px; }
 .echoink-iphone .ip-field-label { display: block; margin: 0 0 8px; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.8125); font-weight: 500; }
 .echoink-iphone input.ip-input { appearance: none; width: 100%; min-height: 44px; padding: 9px 12px; border: 1px solid var(--ip-line); border-radius: 9px; box-shadow: none; background: var(--ip-bg); color: var(--ip-ink); font: inherit; font-size: max(16px, 1em); line-height: 1.5; }

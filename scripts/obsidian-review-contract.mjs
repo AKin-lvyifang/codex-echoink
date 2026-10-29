@@ -6,6 +6,9 @@ import { isDeepStrictEqual } from "node:util";
 // Audited resolved settings, including default options. Do not derive these
 // from the live ESLint config: that would also approve a weakened config.
 export const SOURCE_HARD_RULES = {
+  "obsidianmd/ui/sentence-case": [2, {"enforceCamelCaseLower":true,"brands":["iOS","iPadOS","macOS","Windows","Android","Linux","Obsidian","Obsidian Sync","Obsidian Publish","Google","Gemini","Vertex AI","OpenAI","GPT","Anthropic","Claude","Cursor","Microsoft","Google Drive","Dropbox","OneDrive","iCloud Drive","YouTube","Slack","Discord","Telegram","WhatsApp","Twitter","X","Readwise","Zotero","Excalidraw","Mermaid","Markdown","LaTeX","JavaScript","TypeScript","Node.js","npm","pnpm","Yarn","Git","GitHub","GitLab","Anki","CalDAV","CardDAV","Evernote","IntelliJ IDEA","Jekyll","Logseq","Notion","PyCharm","React","Reddit","Roam Research","Svelte","VS Code","Visual Studio Code","WebDAV","WebStorm","EchoInk","EchoInk Agent","echoink-theme","Agent","Vault","Token","Natural Language Dates","Bases","MinerU","deepseek-chat"],"acronyms":["API","HTTP","HTTPS","URL","DNS","TCP","IP","SSH","TLS","SSL","FTP","SFTP","SMTP","JSON","XML","HTML","CSS","PDF","CSV","YAML","SQL","PNG","JPG","JPEG","GIF","SVG","2FA","MFA","OAuth","JWT","LDAP","SAML","SDK","IDE","CLI","GUI","CRUD","SOAP","CPU","GPU","RAM","SSD","USB","UI","OK","RSS","S3","ID","UUID","GUID","SHA","MD5","ASCII","UTF-8","UTF-16","DOM","CDN","FAQ","AI","ML","LLM","XLSX","ZIP"]}],
+  "obsidianmd/hardcoded-config-path": [2],
+  "no-undef": [2, { typeof: false }],
   "@typescript-eslint/no-deprecated": [2],
   "@typescript-eslint/no-explicit-any": [2,{"fixToUnknown":true}],
   "@typescript-eslint/no-unused-vars": [2,{"args":"none","ignoreRestSiblings":true}],
@@ -66,7 +69,7 @@ export const SOURCE_HARD_RULES = {
   "eslint-comments/require-description": [2],
   "eslint-comments/disable-enable-pair": [2, { allowWholeFile: false }],
   "eslint-comments/no-restricted-disable": [2,
-    "obsidianmd/*", "@typescript-eslint/no-deprecated", "@typescript-eslint/no-explicit-any", "@typescript-eslint/no-unused-vars", "@typescript-eslint/no-this-alias", "@typescript-eslint/no-unsafe-assignment", "@typescript-eslint/no-unsafe-member-access", "@typescript-eslint/no-unsafe-argument", "@typescript-eslint/no-unsafe-return", "@typescript-eslint/no-base-to-string", "import/no-extraneous-dependencies", "@typescript-eslint/no-unnecessary-type-assertion", "@typescript-eslint/no-redundant-type-constituents", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-useless-escape", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+    "obsidianmd/*", "no-undef", "@typescript-eslint/no-deprecated", "@typescript-eslint/no-explicit-any", "@typescript-eslint/no-unused-vars", "@typescript-eslint/no-this-alias", "@typescript-eslint/no-unsafe-assignment", "@typescript-eslint/no-unsafe-member-access", "@typescript-eslint/no-unsafe-argument", "@typescript-eslint/no-unsafe-return", "@typescript-eslint/no-base-to-string", "import/no-extraneous-dependencies", "@typescript-eslint/no-unnecessary-type-assertion", "@typescript-eslint/no-redundant-type-constituents", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-useless-escape", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
     "@typescript-eslint/no-floating-promises", "no-unsanitized/method", "no-unsanitized/property"]
 };
 // Audited source warning settings. Weakening a rule must not masquerade as resolved debt.
@@ -145,12 +148,6 @@ export const SOURCE_WARNING_RULES = {
   "no-self-compare": [
     1
   ],
-  "no-undef": [
-    1,
-    {
-      "typeof": false
-    }
-  ],
   "obsidianmd/commands/no-command-in-command-id": [
     1
   ],
@@ -164,9 +161,6 @@ export const SOURCE_WARNING_RULES = {
     1
   ],
   "obsidianmd/editor-drop-paste": [
-    1
-  ],
-  "obsidianmd/hardcoded-config-path": [
     1
   ],
   "obsidianmd/prefer-abstract-input-suggest": [
@@ -187,12 +181,6 @@ export const SOURCE_WARNING_RULES = {
   "obsidianmd/settings-tab/require-display": [
     1
   ],
-  "obsidianmd/ui/sentence-case": [
-    1,
-    {
-      "enforceCamelCaseLower": true
-    }
-  ],
   "obsidianmd/validate-license": [
     1
   ],
@@ -208,6 +196,7 @@ const JSON_RULES = {
   "json/no-unnormalized-keys": [2, { form: "NFC" }], "json/no-unsafe-values": [2]
 };
 export const PACKAGE_HARD_RULES = {
+  "no-undef": [2, { typeof: false }],
   "depend/ban-dependencies": [2, { presets: ["native", "microutilities", "preferred"] }],
   "no-useless-escape": [2, { allowRegexCharacters: [] }]
 };
@@ -215,9 +204,9 @@ const COMMENT_HARD_RULES = new Set(Object.keys(SOURCE_HARD_RULES).filter(rule =>
 const BASELINE_SOURCE = "eslint-plugin-obsidianmd production errors";
 const WARNING_BASELINE_SOURCE = "eslint-plugin-obsidianmd production warnings";
 const CSS_BASELINE_SOURCE = "stylelint-config-obsidianmd production warnings";
-export const CSS_HARD_RULES = ["selector-type-no-unknown"];
+export const CSS_HARD_RULES = ["selector-type-no-unknown", "declaration-no-important", "selector-pseudo-class-disallowed-list"];
 // Cleared browser-feature groups remain hard failures without weakening doiuse.
-export const CSS_HARD_FEATURES = ["css-clip-path", "multicolumn"];
+export const CSS_HARD_FEATURES = ["css-clip-path", "multicolumn", "css-display-contents"];
 export function isHardCssFeature(finding) {
   return finding.rule === "plugin/no-unsupported-browser-features"
     && CSS_HARD_FEATURES.some(feature => finding.message.includes(`feature "${feature}"`));
@@ -448,6 +437,14 @@ export {};`,
     { name: "redundant assertion and escape", file: sourcePath,
       source: String.raw`declare const a: string; const b = a as string; const re = /[\[\]]/g; void b; void re; export {};`,
       expected: ["@typescript-eslint/no-unnecessary-type-assertion", "no-useless-escape"] },
+    { name: "current Vault configuration", file: sourcePath,
+      source: 'const folder = ".obsidian/plugins/example"; void folder; export {};', expected: ["obsidianmd/hardcoded-config-path"] },
+    { name: "sentence case", file: sourcePath,
+      source: 'import { Notice } from "obsidian"; new Notice("Open Settings"); export {};', expected: ["obsidianmd/ui/sentence-case"] },
+    { name: "undefined global", file: sourcePath,
+      source: "missingCommunityGlobal; export {};", expected: ["no-undef"] },
+    { name: "mobile excludes Node runtime globals", file: path.join(rootDir, "src/mobile/plugin.ts"),
+      source: "void Buffer; void process; void module; export {};", expected: ["no-undef"], minimumByRule: { "no-undef": 3 } },
     { name: "window timers", file: sourcePath,
       source: 'const timer = setTimeout(() => {}, 1); clearTimeout(timer); export {};',
       expected: ["obsidianmd/prefer-window-timers"] },

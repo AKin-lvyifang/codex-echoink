@@ -100,7 +100,7 @@ export async function runFinanceAnalysisArchiveTests() {
     const legacyRecord=earlyStore.snapshot().financeAnalysisArchives!.find(r=>r.id===legacy.id)!;
     assert.equal(legacyRecord.createdAt,legacy.createdAt);assert.equal(JSON.parse(vault.files.get(legacyRecord.snapshotPath)!.text).source,"legacy-report");
     assert.equal(earlyStore.snapshot().financeAnalysisArchives!.filter(r=>r.period==="2026-08").length,1,"only existing old report is migrated");
-    for(const location of ["../escape","/tmp","C:/temp","finance/transactions","finance/transactions/sub",".obsidian/reports","custom-config/reports"])
+    for(const location of ["../escape","/tmp","C:/temp","finance/transactions","finance/transactions/sub","custom-config/reports"])
       assert.throws(()=>validateFinanceAnalysisDirectory(location,"finance","finance/transactions","custom-config"));
     await vault.create("blocked","file");await assert.rejects(migrate.saveAnalysisDirectory("blocked/sub"),/文件冲突/);
     assert.equal(settings.lifestyle.finance.analysisDirectory,"新的保存位置");

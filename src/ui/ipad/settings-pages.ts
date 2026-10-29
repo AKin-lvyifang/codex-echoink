@@ -123,7 +123,7 @@ export class IPadSettings {
           void this.save(current => { const old = current.colorTheme; current.colorTheme = value; return () => { current.colorTheme = old; }; }).catch(error => ctx.error(error)).finally(() => { busy = false; signature = ""; render(); }); }); if (value !== "minimal") decorateProAppearanceChoice(button, track, { zh: settings.settingsLanguage !== "en", allowed: hasPro, upgrade: () => { void ctx.push(this.category("account")); } })(); track.append(button);
       }
       row.classList.add("has-segments"); row.append(track);
-      renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en");
+      renderCompanionThemeRecommendation(appearance, settings.settingsLanguage !== "en", this.host.app.vault.configDir);
       const language = settingsSelect(ctx, appearance, t(ctx, "界面语言"), [["zh-CN", "简体中文"], ["en", "English"]], settings.settingsLanguage, value => {
         if (busy) { language.value = this.host.settings().settingsLanguage; return; }
         if (value === this.host.settings().settingsLanguage) return;

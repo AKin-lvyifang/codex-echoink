@@ -16,7 +16,7 @@ textarea.echoink-run-report-input { min-height: 110px; resize: vertical; }
 .echoink-run-report-actions button { min-height: 32px; padding: 7px 10px; font-size: 12px; border-radius: 6px; box-shadow: none; }
 body .echoink-run-report-modal .echoink-run-report-actions .echoink-origin-control[data-slot=button].mod-cta { background: var(--echoink-control-fill, var(--text-normal)); border-color: var(--echoink-control-fill, var(--text-normal)); color: var(--echoink-control-text, var(--background-primary)); }
 .echoink-run-report-modal .echoink-run-report-actions button:focus-visible { outline: none; box-shadow: none; }
-.echoink-run-report-form[hidden], .echoink-run-report-actions button[hidden] { display: none !important; }
+.echoink-run-report-form[hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden], .echoink-run-report-actions button[hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-run-report-header-actions { display: flex; align-items: center; }
 .echoink-run-report-menu { display: flex; flex-direction: column; }
 .echoink-run-report-button { position: relative; isolation: isolate; min-height: 44px; padding: 8px 12px; height: auto; border: 0; border-radius: 6px; color: var(--text-normal); background: transparent; box-shadow: none; font: inherit; font-size: .9em; white-space: normal; }
