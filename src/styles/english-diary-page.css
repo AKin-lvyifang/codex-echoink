@@ -12,7 +12,7 @@
   font: calc(var(--font-text-size, 16px) * .8125)/1.6 var(--font-interface);
 }
 .echoink-english-diary-page *, .echoink-english-diary-page *::before, .echoink-english-diary-page *::after { box-sizing: border-box; }
-.echoink-english-diary-page [hidden] { display: none !important; }
+.echoink-english-diary-page [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-english-diary-page .english-page-inner { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
 .echoink-english-diary-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.55; }
 .echoink-english-diary-page h2 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .9375); font-weight: 500; line-height: 1.6; }
@@ -46,7 +46,7 @@
 .echoink-english-diary-page .english-page-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 24px 0 20px; }
 .echoink-english-diary-page .english-page-toolbar > button.echoink-origin-control[data-slot=button].english-page-button { margin-left: auto; }
 .echoink-english-diary-page .english-page-tabs { position: relative; display: inline-grid; grid-template-columns: repeat(2, 1fr); width: max-content; align-items: stretch; gap: 0; padding: 3px; border-radius: 8px; background: var(--soft); }
-.echoink-english-diary-page .english-page-tab-indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 6px; background: var(--bg); transition: transform 160ms ease; pointer-events: none; }
+.echoink-english-diary-page .english-page-tab-indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc((100% - 6px) / 2); border-radius: 6px; background: var(--bg); transition: var(--echoink-motion-transition, transform 160ms ease); pointer-events: none; }
 .echoink-english-diary-page .english-page-tabs[data-selected=expressions] > .english-page-tab-indicator { transform: translateX(100%); }
 .echoink-english-diary-page .english-page-tabs > button.echoink-origin-control[data-slot=button].english-page-button { position: relative; z-index: 1; white-space: nowrap; min-height: 28px; padding: 4px 12px; border-radius: 6px; background: transparent; border-color: transparent; }
 .echoink-english-diary-page .english-page-tabs > button.echoink-origin-control[data-slot=button].english-page-button[aria-selected=true] { background: transparent; color: var(--text); font-weight: 600; }

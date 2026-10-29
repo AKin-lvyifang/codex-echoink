@@ -10,7 +10,7 @@
 }
 .echoink-pdf-reading-page { container: echoink-pdf-page / inline-size; padding: 0; overflow: auto; }
 :is(.echoink-pdf-reading-page, .echoink-pdf-upload-modal) *, :is(.echoink-pdf-reading-page, .echoink-pdf-upload-modal) *::before, :is(.echoink-pdf-reading-page, .echoink-pdf-upload-modal) *::after { box-sizing: border-box; }
-:is(.echoink-pdf-reading-page, .echoink-pdf-upload-modal) [hidden] { display: none !important; }
+:is(.echoink-pdf-reading-page, .echoink-pdf-upload-modal) [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-pdf-reading-page .pdf-page-inner { max-width: 920px; width: 100%; margin: 0 auto; padding: 28px 32px 40px; }
 .echoink-pdf-reading-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.55; }
 .echoink-pdf-reading-page h2 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .9375); font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }

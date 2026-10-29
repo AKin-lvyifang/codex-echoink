@@ -34,7 +34,7 @@
 .echoink-ipad .pd-module-section-head h2 { flex: 1; margin: 0; font-size: .8125em; font-weight: 600; }
 .echoink-ipad .pd-module-segments { position: relative; isolation: isolate; display: flex; min-width: 0; min-height: 44px; padding: 8px 2px; border-radius: 7px; }
 .echoink-ipad .pd-module-segments::before { content: ""; position: absolute; z-index: -2; inset: 8px 0; background: var(--background-modifier-hover); border-radius: 7px; }
-.echoink-ipad .pd-module-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 2px; width: calc((100% - 4px) / var(--pd-segments)); background: var(--background-primary); border-radius: 5px; transition: transform .18s; }
+.echoink-ipad .pd-module-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 2px; width: calc((100% - 4px) / var(--pd-segments)); background: var(--background-primary); border-radius: 5px; transition: var(--echoink-motion-transition, transform .18s); }
 .echoink-ipad .pd-module-segments .pd-module-button { flex: 1; min-width: 44px; margin: -8px 0; padding: 8px 3px; }
 .echoink-ipad .pd-module-segments .pd-module-button-visible { min-width: 0; padding: 0 7px; border: 0; background: transparent; }
 .echoink-ipad .pd-module-segments [aria-pressed="true"] { color: var(--text-normal); font-weight: 600; }

@@ -13,14 +13,14 @@
   appearance:none;position:relative;display:inline-flex;align-items:center;flex:0 0 36px;
   width:36px;min-width:36px;max-width:36px;height:21px;min-height:21px;max-height:21px;
   margin:0;padding:0;border:1px solid transparent;border-radius:20px;box-shadow:none;
-  background:var(--origin-line);vertical-align:middle;cursor:pointer;transition:background .16s;
+  background:var(--origin-line);vertical-align:middle;cursor:pointer;transition:var(--echoink-motion-transition, background .16s);
 }
 :is(.echoink-settings-demo,.modal) .echoink-origin-control[data-slot=switch][data-state=checked] {background:var(--origin-accent)}
 .echoink-origin-control[data-slot=switch]::before,.echoink-origin-control[data-slot=switch]::after {content:none}
 .echoink-origin-control [data-slot=switch-thumb] {
   position:absolute;display:block;top:2px;left:2px;width:15px;height:15px;margin:0;
   border:0;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0002;pointer-events:none;
-  transform:translateX(0);transition:transform .16s;
+  transform:translateX(0);transition:var(--echoink-motion-transition, transform .16s);
 }
 .echoink-origin-control [data-slot=switch-thumb][data-state=checked] {transform:translateX(15px)}
 :is(.echoink-settings-demo,.modal) .echoink-origin-control:is([data-slot=checkbox],[data-slot=radio-group-item]) {

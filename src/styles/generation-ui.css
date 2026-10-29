@@ -40,7 +40,7 @@
 }
 .echoink-settings-demo .echoink-generation-output-segments::before {
   content: ""; position: absolute; inset: 3px auto 3px 3px; width: calc((100% - 6px) / 2);
-  background: var(--bg, var(--background-primary)); border-radius: 6px; transition: transform 180ms ease;
+  background: var(--bg, var(--background-primary)); border-radius: 6px; transition: var(--echoink-motion-transition, transform 180ms ease);
 }
 .echoink-settings-demo .echoink-generation-output-segments[data-output-kind="canvas"]::before { transform: translateX(100%); }
 .echoink-settings-demo .echoink-generation-output-segment { position: relative; display: grid; place-items: center; min-width: 112px; min-height: 32px; padding: 5px 10px; font-size: 12px; line-height: 1.55; }

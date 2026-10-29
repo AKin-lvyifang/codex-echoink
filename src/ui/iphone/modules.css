@@ -30,7 +30,7 @@
 .echoink-iphone .ip-module-segments { position: relative; isolation: isolate; display: flex; align-items: stretch; min-width: 0; min-height: 44px; width: 100%; padding: 0; }
 .echoink-iphone .ip-module-section-head > .ip-module-segments { flex: 0 0 auto; width: auto; margin-left: auto; }
 .echoink-iphone .ip-module-segments::before { position: absolute; z-index: -2; inset: 6px 0; border-radius: 6px; background: var(--background-modifier-hover); content: ""; }
-.echoink-iphone .ip-module-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 0; border-radius: 4px; background: var(--ip-bg); transition: transform 180ms ease; }
+.echoink-iphone .ip-module-segment-slider { position: absolute; z-index: -1; inset: 8px auto 8px 0; border-radius: 4px; background: var(--ip-bg); transition: var(--echoink-motion-transition, transform 180ms ease); }
 .echoink-iphone button.ip-module-segment { flex: 1 1 0; min-width: 44px; min-height: 44px; padding: 0; }
 .echoink-iphone button.ip-module-segment .ip-button-visible { width: 100%; min-width: 0; min-height: 32px; padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; font-size: .8em; line-height: 1.5; white-space: normal; }
 .echoink-iphone button.ip-module-segment[aria-pressed="true"] { color: var(--ip-ink); font-weight: 600; }

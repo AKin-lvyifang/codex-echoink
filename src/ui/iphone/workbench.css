@@ -97,7 +97,7 @@
 .echoink-iphone .ip-status.is-waiting,
 .echoink-iphone .ip-status.is-interrupted { color: var(--ip-warning); }
 .echoink-iphone .ip-status.is-running svg,
-.echoink-iphone .ip-agent-badge.is-running svg { animation: ip-workbench-spin 1.2s linear infinite; }
+.echoink-iphone .ip-agent-badge.is-running svg { animation: var(--echoink-motion-animation, ip-workbench-spin 1.2s linear infinite); }
 @keyframes ip-workbench-spin { to { transform: rotate(360deg); } }
 .echoink-iphone .ip-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .echoink-iphone .ip-task-step { color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); overflow-wrap: anywhere; }

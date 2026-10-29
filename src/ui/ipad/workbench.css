@@ -103,7 +103,7 @@
 .echoink-ipad .pd-status.is-waiting,
 .echoink-ipad .pd-status.is-interrupted { color: var(--pd-warning); }
 .echoink-ipad .pd-status.is-running svg,
-.echoink-ipad .pd-agent-badge.is-running svg { animation: pd-workbench-spin 1.2s linear infinite; }
+.echoink-ipad .pd-agent-badge.is-running svg { animation: var(--echoink-motion-animation, pd-workbench-spin 1.2s linear infinite); }
 @keyframes pd-workbench-spin { to { transform: rotate(360deg); } }
 .echoink-ipad .pd-task-title { font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .echoink-ipad .pd-task-step { color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.875); overflow-wrap: anywhere; }

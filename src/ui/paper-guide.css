@@ -101,7 +101,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
   text-align: left;
   white-space: normal;
   cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: var(--echoink-motion-transition, background-color 120ms ease);
 }
 
 .echoink-paper-guide-modal button.echoink-paper-guide-choice:hover,

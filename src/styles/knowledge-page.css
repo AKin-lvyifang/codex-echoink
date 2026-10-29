@@ -12,7 +12,7 @@
   font: calc(var(--font-text-size, 16px) * .8125)/1.6 var(--font-interface);
 }
 .echoink-knowledge-page *, .echoink-knowledge-page *::before, .echoink-knowledge-page *::after { box-sizing: border-box; }
-.echoink-knowledge-page [hidden] { display: none !important; }
+.echoink-knowledge-page [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
 .echoink-knowledge-page .knowledge-inner { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
 .echoink-knowledge-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.55; }
 .echoink-knowledge-page h2 { margin: 0; font-size: calc(var(--font-text-size, 16px) * .9375); font-weight: 500; line-height: 1.6; }

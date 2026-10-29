@@ -11,7 +11,7 @@
 .echoink-ipad .pd-english-toolbar > .pd-button { margin-left: auto; }
 .echoink-ipad .pd-english-segments { position: relative; isolation: isolate; display: flex; flex: 0 1 auto; min-width: 0; min-height: 44px; max-width: 100%; }
 .echoink-ipad .pd-english-segments::before { content: ""; position: absolute; z-index: -2; inset: 8px 0; border-radius: 6px; background: var(--pd-soft); }
-.echoink-ipad .pd-english-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 2px; width: calc(50% - 2px); border-radius: 4px; background: var(--pd-bg); transition: transform 180ms ease; }
+.echoink-ipad .pd-english-segment-thumb { position: absolute; z-index: -1; top: 10px; bottom: 10px; left: 2px; width: calc(50% - 2px); border-radius: 4px; background: var(--pd-bg); transition: var(--echoink-motion-transition, transform 180ms ease); }
 .echoink-ipad .pd-english-segments .pd-button { flex: 1; min-width: 44px; }
 .echoink-ipad .pd-english-segments .pd-button-visible { border: 0; background: transparent; }
 .echoink-ipad .pd-english-segments .pd-button[aria-pressed="true"] { color: var(--pd-ink); font-weight: 600; }

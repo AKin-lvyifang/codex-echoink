@@ -270,7 +270,7 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-header.is-anonymous > .activation-feedback { grid-column: 1 / -1; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-header.is-anonymous .profile-copy { grid-column: 1; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-header.is-anonymous .profile-actions { grid-column: 2; flex-direction: column; align-items: flex-end; }
-.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-header.is-anonymous .registration-gift-tag { padding: 0; color: var(--secondary); background: transparent; animation: none; font-size: var(--f12); }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-header.is-anonymous .registration-gift-tag { padding: 0; color: var(--secondary); background: transparent; animation: var(--echoink-motion-animation, none); font-size: var(--f12); }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div { gap: 9px; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) { border: 0; }

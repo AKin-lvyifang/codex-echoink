@@ -258,8 +258,8 @@
   pointer-events: none;
 }
 
-.echoink-iphone .eis-forward { animation: eis-forward 180ms ease-out; }
-.echoink-iphone .eis-back { animation: eis-back 180ms ease-out; }
+.echoink-iphone .eis-forward { animation: var(--echoink-motion-animation, eis-forward 180ms ease-out); }
+.echoink-iphone .eis-back { animation: var(--echoink-motion-animation, eis-back 180ms ease-out); }
 @keyframes eis-forward {
   from { transform: translateX(24px); opacity: .4; }
   to { transform: none; opacity: 1; }

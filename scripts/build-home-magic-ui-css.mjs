@@ -50,6 +50,19 @@ const result = await postcss([
   from: path.join(rootDir, ".tmp", "home-magic-ui.css")
 });
 
+// Generated utilities consume the same motion overrides as handwritten CSS.
+const motionVariables = {
+  animation: "--echoink-motion-animation", "animation-name": "--echoink-motion-animation-name",
+  "animation-duration": "--echoink-motion-animation-duration", "animation-delay": "--echoink-motion-animation-delay",
+  "animation-iteration-count": "--echoink-motion-iteration-count", transition: "--echoink-motion-transition",
+  "transition-property": "--echoink-motion-transition-property", "transition-duration": "--echoink-motion-transition-duration",
+  "transition-delay": "--echoink-motion-transition-delay", "scroll-behavior": "--echoink-motion-scroll"
+};
+result.root.walkDecls(declaration => {
+  const variable = motionVariables[declaration.prop];
+  if (variable && !declaration.value.startsWith(`var(${variable},`)) declaration.value = `var(${variable}, ${declaration.value})`;
+});
+result.css = result.root.toString();
 assertScopedSelectors(result.root);
 if (result.css.includes(`${scope} &`)) throw new Error("Nested Magic UI selector was prefixed twice");
 const generated = [
