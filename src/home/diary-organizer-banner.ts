@@ -148,6 +148,7 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
       applyAmicroButton(edit, { variant: "tertiary" });
       const setEditing = (expanded: boolean) => {
         draft.expanded = expanded; editor.hidden = !expanded;
+        list.toggleClass("has-editor", Array.from(list.children).some(row => row.querySelector<HTMLElement>(".diary-organizer-editor")?.hidden === false));
         edit.textContent = expanded ? t("收起", "Collapse") : t("改一下", "Edit");
         edit.setAttribute("aria-expanded", String(expanded)); edit.setAttribute("aria-controls", editorId);
         if (expanded) renderFields();

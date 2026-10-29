@@ -73,11 +73,14 @@ export async function runDiaryOrganizerBannerTests(): Promise<void> {
     assert.equal(edit.getAttribute("aria-expanded"), "true");
     assert.equal(row.querySelectorAll("input").length, 4); assert.equal(row.querySelectorAll("select").length, 2);
     assert.equal(row.querySelector(".diary-organizer-editor")!.hidden, false);
+    assert.ok(row.closest(".diary-organizer-list")!.classList.contains("has-editor"), "open editors enable the list's existing scroll range");
     const financeFields = row.querySelectorAll(".diary-organizer-field");
     assert.deepEqual(financeFields.map(field => field.children[0].textContent), ["交易对象", "金额", "币种", "日期", "类型", "分类"], "every finance control has the same visible field label");
     assert.ok(financeFields.every(field => field.tagName === "label" && field.children.length === 2), "inputs and selects share the labelled container");
     const amount = row.querySelectorAll("input").find(input => input.getAttribute("aria-label") === "金额")!;
-    amount.value = "21.50"; amount.dispatchEvent({ type: "input" }); edit.click(); edit.click();
+    amount.value = "21.50"; amount.dispatchEvent({ type: "input" }); edit.click();
+    assert.ok(!row.closest(".diary-organizer-list")!.classList.contains("has-editor"), "closing the editor restores the collapsed list styling");
+    edit.click();
     assert.equal(amount.value, "21.50", "collapse retains the edited draft");
     items = [...items, { ...item, id: "another" }]; renderDiaryOrganizerBanner(host as unknown as HTMLElement, plugin);
     row = host.querySelector(".diary-organizer-review")!;

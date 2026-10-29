@@ -285,6 +285,7 @@
 .echoink-workbench .diary-organizer-results { margin-bottom: 26px; }
 .echoink-workbench .diary-organizer-results.is-collapsed .wb-section-heading { margin-bottom: 0; }
 .diary-organizer-list { max-height: 440px; overflow-y: auto; }
+.echoink-workbench .diary-organizer-list.has-editor { overflow-y: auto; }
 .echoink-workbench .diary-organizer-row { flex-wrap: wrap; align-items: start; }
 .diary-organizer-row > .wb-grow { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
 .diary-organizer-row a, .diary-organizer-reason { font-size: var(--font-ui-smaller); color: var(--text-muted); }
