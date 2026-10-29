@@ -8,6 +8,7 @@ export const MAX_EXPERT_OFFLINE_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_EXPERT_PERSONA_CHARACTERS = 4000;
 export interface ExpertMetadata {
   id: string; name: string; scene: string; summary: string; quote: string;
+  description?: string; story?: string; examples?: string[];
   tags: [string, string, string]; avatarUrl: string; version: string;
   minPluginVersion: string; platforms: ExpertPlatform[]; status: "draft" | "published";
 }
@@ -32,6 +33,17 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const text = (value: unknown, max = 4000): value is string => typeof value === "string" && !!value.trim() && value.length <= max;
 export const validExpertId = (value: unknown): value is string => typeof value === "string" && /^[a-z][a-z0-9-]{0,127}$/u.test(value);
 const validVersion = (value: unknown): value is string => typeof value === "string" && /^[a-zA-Z0-9][\w.-]{0,127}$/u.test(value);
+function optionalPublicText(value: unknown): string | undefined {
+  if (value === undefined || value === null || typeof value === "string" && !value.trim()) return undefined;
+  if (!text(value, 8000)) throw new Error("专家公开说明格式无效。");
+  return value;
+}
+function optionalPublicExamples(value: unknown): string[] | undefined {
+  if (value === undefined || value === null || typeof value === "string" && !value.trim()) return undefined;
+  if (!Array.isArray(value) || value.length > 4 || !value.every(item => typeof item === "string" && item.length <= 4000)) throw new Error("专家示例问题格式无效。");
+  const examples = (value as string[]).filter(item => item.trim());
+  return examples.length ? [...examples] : undefined;
+}
 export function safeExpertUrl(value: string, baseUrl?: string): string | null {
   try {
     const url = new URL(value, baseUrl);
@@ -40,12 +52,14 @@ export function safeExpertUrl(value: string, baseUrl?: string): string | null {
 }
 function parseMetadata(value: unknown, baseUrl?: string): ExpertMetadata {
   const data = record(value), avatarUrl = typeof data.avatarUrl === "string" ? safeExpertUrl(data.avatarUrl, baseUrl) : null;
+  const description = optionalPublicText(data.description), story = optionalPublicText(data.story), examples = optionalPublicExamples(data.examples);
   if (!validExpertId(data.id) || !validVersion(data.version) || !text(data.name, 300) || !text(data.scene, 300)
     || !text(data.summary) || !text(data.quote) || !Array.isArray(data.tags) || data.tags.length !== 3 || !data.tags.every(tag => text(tag, 300))
     || !avatarUrl || typeof data.minPluginVersion !== "string" || !skillPluginVersionSupported(data.minPluginVersion, data.minPluginVersion)
     || !Array.isArray(data.platforms) || !data.platforms.length || !data.platforms.every(platform => ["desktop", "ios", "android"].includes(String(platform)))
     || !["draft", "published"].includes(String(data.status))) throw new Error("专家目录条目无效。");
   return { id: data.id, name: data.name, scene: data.scene, summary: data.summary, quote: data.quote,
+    ...(description ? { description } : {}), ...(story ? { story } : {}), ...(examples ? { examples } : {}),
     tags: [...data.tags] as [string, string, string], avatarUrl, version: data.version, minPluginVersion: data.minPluginVersion,
     platforms: [...(data.platforms as ExpertPlatform[])], status: data.status as ExpertMetadata["status"] };
 }

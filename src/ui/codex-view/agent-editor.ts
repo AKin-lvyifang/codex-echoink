@@ -535,9 +535,6 @@ export class AgentEditorController {
     disposeOriginControls(area); area.replaceChildren();
     if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID) return;
     if (this.draft && isExpertAgent(this.draft.agent)) {
-      if (this.host.showExpertAbout) this.button(area, this.t("关于", "About"), "tertiary", () => {
-        void Promise.resolve().then(() => this.host.showExpertAbout!(this.editingId!)).catch(error => { this.error = error instanceof Error ? error.message : String(error); this.refresh(); });
-      });
       const dismiss = this.button(area, this.t("解聘", "Dismiss"), "danger", () => { void this.dismissExpert(); });
       dismiss.dataset.action = "dismiss-expert"; dismiss.disabled = !this.host.dismissExpert || !!this.busy;
       return;

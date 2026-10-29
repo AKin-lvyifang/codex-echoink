@@ -156,9 +156,6 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string): M
     }
     if (expert && agentId) {
       const actions = el(ctx.document, "div", "ip-expert-actions");
-      if (expertHooks.showExpertAbout) actions.append(iphoneButton(ctx.document, "关于", () => {
-        void Promise.resolve().then(() => expertHooks.showExpertAbout(agentId)).catch(showError);
-      }));
       const dismiss = iphoneButton(ctx.document, "解聘", () => { void dismissExpert(); }, "is-danger"); dismiss.dataset.action = "dismiss-expert"; dismiss.disabled = !expertHooks.dismissExpert; actions.append(dismiss); fields.append(actions);
     } else if (agentId && agentId !== GENERAL_ASSISTANT_ID) {
       const danger = el(ctx.document, "div", "ip-danger-zone"), remove = iphoneButton(ctx.document, "删除这个 Agent", () => {

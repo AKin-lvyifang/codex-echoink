@@ -52,8 +52,9 @@ export class DesktopAgentSettings {
     const root = this.summaryHost = parent.createDiv({ cls: "echoink-agent-settings" });
     const agents = createSettingsSection(root, { title: "Agent", surface: "flat" });
     const header = agents.querySelector<HTMLElement>(".echoink-settings-section-header")!;
-    const hire = createOriginButton(header, { text: this.text("聘请专家", "Hire an expert") }); hire.onclick = () => { void this.host.openExpertHall?.(); };
-    const add = createOriginButton(header, { cls: "is-icon", attr: { "aria-label": this.text("新建 Agent", "New Agent"), "data-echoink-focus-key": "agent:new" } });
+    const actions = header.createDiv({ cls: "echoink-agent-settings-actions" });
+    const hire = createOriginButton(actions, { text: this.text("聘请专家", "Hire an expert") }); hire.onclick = () => { void this.host.openExpertHall?.(); };
+    const add = createOriginButton(actions, { cls: "is-icon", attr: { "aria-label": this.text("新建 Agent", "New Agent"), "data-echoink-focus-key": "agent:new" } });
     setIcon(add, "plus"); add.onclick = () => this.open();
     const list = createSettingsGroup(agents); list.addClass("echoink-agent-settings-list");
     for (const agent of this.host.settings.agentRegistry.agents.filter(isAgentHired)) {

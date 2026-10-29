@@ -284,9 +284,10 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.ok(f.root.querySelector('.echoink-agent-editor-footer [data-action="dismiss-expert"]'));
     assert.equal(f.root.querySelectorAll(".echoink-agent-editor-lock").length, 2); assert.equal(f.loads, 0);
     assert.equal(f.root.querySelector('[data-action="delete-agent"]'), null);
-    button(f.root, "关于").click(); await settle(); assert.equal(about, 1);
+    assert.equal([...f.root.querySelectorAll("button")].some(node => node.textContent?.trim() === "关于" || node.textContent?.trim() === "About"), false);
+    assert.equal(about, 0, "the form never exposes or invokes the retained internal About hook");
     button(f.root, "解聘").click(); await settle(); assert.equal(dismissals, 1); assert.equal(f.deletes, 0); assert.equal(f.closed[0], "sol");
-    f.dispose(); console.log("PASS expert public-only identity, hidden capability controls and separate dismissal/about hooks");
+    f.dispose(); console.log("PASS expert public-only identity, hidden capability controls, no About entry and separate dismissal hook");
   }
   {
     const f = fixture(); f.settings.settingsLanguage = "en";

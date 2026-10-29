@@ -283,7 +283,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   showExpertAbout(agentId: string): Promise<void> { return this.experts.about(agentId); }
   prepareExpertRuntime(agentId: string, conversationId: string, text: string) { return this.experts.prepare(agentId, conversationId, text); }
   getExpertHallHost(): ExpertHallHost { return { content: this.experts.content, getAgents: () => this.settings.agentRegistry.agents,
-    hire: async id => { const agentId = await this.experts.hire(id); await this.openExpertConversation(agentId); }, dismiss: id => this.dismissExpert(id),
+    hire: async id => { await this.experts.hire(id); }, dismiss: id => this.dismissExpert(id),
     open: id => this.openExpertConversation(id), upgrade: () => this.openEchoInkAccountSettings("benefits") }; }
   async openExpertHall(aboutId?: string): Promise<void> {
     let leaf = this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)[0];

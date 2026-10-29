@@ -104,7 +104,7 @@ export interface WorkspacePreviewRenderOptions {
 export function renderWorkspacePreview(document: Document, container: HTMLElement, service: WorkspaceService, value: string,
   openExternal?: (path: string) => void | Promise<void>, options: WorkspacePreviewRenderOptions = {}): WorkspacePreviewController {
   const path = workspacePath(value);
-  const root = ownedDiv(document); root.className = "echoink-workspace-preview";
+  const root = ownedDiv(document); root.className = "echoink-workspace-preview echoink-theme-boundary";
   const toolbar = ownedDiv(document); toolbar.className = "echoink-workspace-preview__toolbar";
   const error = ownedDiv(document); error.className = "echoink-workspace-preview__error"; error.setAttribute("role", "alert"); error.hidden = true;
   const frame = ownedEl(document, "iframe"); frame.className = "echoink-workspace-preview__frame";

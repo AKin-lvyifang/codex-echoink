@@ -1,4 +1,5 @@
 import { renderExpertConversationDecorations } from "./codex-view/expert-decorations";
+import { isExpertAgent } from "../agents/persona";
 import { ownedDiv, ownedEl } from "./owned-dom";
 import { openTaskMenu } from "./codex-view/task-menu";
 import { stopManagedTask } from "../plugin/task-management";
@@ -586,7 +587,11 @@ export class CodexView extends ItemView {
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
     }), inlineHost?.service.list() ?? []).filter(task => task.status === "active");
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
-      { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor(), onHire: () => { void this.plugin.openExpertHall(); } }, this.plugin.settings.settingsLanguage);
+      { onSelect: id => {
+        const selected = this.plugin.settings.agentRegistry.agents.find(item => item.id === id);
+        if (isExpertAgent(selected)) void this.plugin.openExpertConversation(id).catch(error => new Notice(error instanceof Error ? error.message : String(error)));
+        else void this.openAgentTaskList(id);
+      }, onCreate: () => this.openAgentEditor(), onHire: () => { void this.plugin.openExpertHall(); } }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
     this.taskDetailEl.hidden = !!this.taskEditor || page.kind !== "detail";
     const interrupted = page.kind === "detail" && !!entry && taskState(entry) === "interrupted";

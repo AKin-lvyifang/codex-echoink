@@ -101,7 +101,9 @@ try {
       const page = create(ctx, expert.id); root.append(page.content, page.footer); await flush();
       assert.equal(root.querySelectorAll("textarea,input[type=text],[data-persona-template]").length, 0); assert.equal(root.querySelector(`.${prefix}-expert-summary`).textContent, "公开简介");
       assert.doesNotMatch(root.textContent, /能用的能力|删除这个 Agent/u); assert.equal(root.querySelectorAll(`.${prefix}-expert-lock`).length, 2);
-      button(root, "关于").click(); await flush(); assert.equal(about, 1); button(root, "解聘").click(); await flush(); assert.equal(dismissals, 1);
+      assert.equal([...root.querySelectorAll("button")].some(node => ["关于", "About"].includes(node.textContent.trim())), false);
+      assert.equal(about, 0, "the form never exposes or invokes the retained internal About hook");
+      button(root, "解聘").click(); await flush(); assert.equal(dismissals, 1);
       page.dispose(); root.remove();
     });
   }

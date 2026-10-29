@@ -154,7 +154,7 @@
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--line); border-radius: 10px; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-section,
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-resources,
-.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-identity-field { padding: 14px 18px; margin: 0; gap: 8px; }
+.echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-identity-field { padding: 13px 18px; margin: 0; gap: 6px; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-major:not(:first-child),
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-identity-field,
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-fields > .echoink-agent-editor-avatar-field:not(:first-child) { border-top: 1px solid var(--line); }
