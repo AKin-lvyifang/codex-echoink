@@ -19,6 +19,8 @@ export async function runDiaryOrganizerTests() {
     check(validateDiaryCandidate({ ...base, quote }, quote, categories).reasons.length > 0, quote);
   for (const patch of [{ amountCents: 0 }, { amountCents: 3500.5 }, { date: "2026-02-30" }, { quote: "捏造引用" }, { category: "不存在" }, { confidence: "low" }])
     check(validateDiaryCandidate({ ...base, ...patch } as DiaryCandidate, base.quote, categories).reasons.length > 0, "hard/auto condition fails");
+  check(!validateDiaryCandidate({ ...base, quote: "替同事垫付了35元车费。" }, "替同事垫付了35元车费。", categories).ignore, "advance waits for review rather than disappearing");
+  check(!validateDiaryCandidate({ ...base, quote: "我们吃饭共35元，AA，我那份还没算。", ownership: "uncertain" }, "我们吃饭共35元，AA，我那份还没算。", categories).ignore, "unknown AA share is review rather than a purchase plan");
   let now = new Date("2026-10-28T12:00:00").getTime(), enabled = true, pro = true, busy = false, calls = 0;
   let text = base.quote, path = "journal/2026-10-28.md", state: DiaryOrganizerState | null = null;
   let candidates: DiaryCandidate[] = [{ ...base }];
@@ -69,6 +71,12 @@ export async function runDiaryOrganizerTests() {
   enabled = false; const savedCalls = calls; await engine.runOnce(); check(calls === savedCalls, "disabled does not call model"); enabled = true; busy = true; await engine.runOnce(); check(calls === savedCalls, "foreground/Dream gets priority"); busy = false;
   check(diaryFingerprint(text) !== diaryFingerprint(text + "x"), "content fingerprint changes");
 
+  state = null; written.clear(); candidates = [{ ...base, category: "缺失分类" }];
+  ports.generateText = goodModel; engine = new DiaryOrganizerEngine(ports); await engine.runOnce(); now += 3600000; await engine.runOnce();
+  const ignoredId = engine.getState().items[0].id; await engine.ignore(ignoredId);
+  text = "无关段落。\n" + text; engine = new DiaryOrganizerEngine(ports); await engine.runOnce(); now += 3600000; await engine.runOnce();
+  check(written.size === 0 && engine.getState().items[0].id === ignoredId && engine.getState().items[0].status === "ignored", "ignored identity is not resurrected after restart and insertion");
+
   const entry: FinanceEntry = { kind: base.kind, amountCents: base.amountCents, currency: base.currency, date: base.date, merchant: base.merchant, category: base.category, icon: "auto", source: "diary", sourceId: "extract-one", id: "diary-one", status: "completed", account: "", description: "拿铁咖啡一杯", note: "", journalPath: path };
   const imported = { ...entry, id: "wechat-one", source: "wechat" as const, sourceId: "wechat-raw", date: "2026-10-28 12:30:00" };
   check(financeDuplicateCandidates({ ...base }, [{ ...entry, version: "v1", date: imported.date }]).length === 1, "timestamped imported record retrieved for diary dedupe");
@@ -82,6 +90,8 @@ export async function runDiaryOrganizerTests() {
   const ledger = new FinanceLedger(app, store); await ledger.initialize();
   const saved = await ledger.addDiary(entry, [], () => {});
   check(parseFinanceNote(await vault.read(vault.files.get(saved.path)!.file))?.source === "diary", "diary parser round trip");
+  const renamedLink = (await vault.read(vault.files.get(saved.path)!.file)).replace(/journal_link:.*\n/u, 'journal_link: "[[journal/moved.md]]"\n');
+  check(parseFinanceNote(renamedLink)?.journalPath === "journal/moved.md", "renamed native wikilink overrides stale plain journal path");
   const retry = await ledger.addDiary(entry, [], () => {}); check(retry.entry.id === saved.entry.id && ledger.entries().length === 1, "crash retry stable ID is idempotent");
   await assert.rejects(ledger.addDiary({ ...entry, id: "second", sourceId: "extract-two" }, [], () => {})); checks++;
   const linked = await ledger.importRows([{ entry: imported, duplicateDecision: { action: "same", id: entry.id } }]); check(linked.linked === 1 && ledger.entries().length === 1 && ledger.entries()[0].sourceLinks?.[0].sourceId === "wechat-raw", "real ledger writes import association without duplicate");

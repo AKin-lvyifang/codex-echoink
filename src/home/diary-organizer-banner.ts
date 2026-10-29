@@ -73,7 +73,7 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
     const actions = row.createDiv({ cls: "diary-organizer-actions" });
     if (item.status === "written") button(actions, t("撤销", "Undo"), () => runAction(row, item, "undo", { expectedRevision: item.revision }));
     else {
-      copy.createEl("p", { text: item.reasons.join("；"), cls: "diary-organizer-reason" });
+      copy.createEl("p", { text: item.reasons.map(reason => reason.replace(/\bcategory\b/gu, "分类")).join("；"), cls: "diary-organizer-reason" });
       copy.createEl("blockquote", { text: candidate.quote });
       const reviewed = structuredClone(candidate);
       const fields = copy.createDiv({ cls: "diary-organizer-fields" });

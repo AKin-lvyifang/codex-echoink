@@ -67,6 +67,10 @@ function parseFinanceDocument(markdown: string): ParsedNote {
   catch { return { entry: null, identity, issue: "金额属性无效" }; }
   if (!knownKinds.has(kind) || !knownStatuses.has(status)
     || !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/u.test(date)) return { entry: null, identity, issue: "日期、类型、状态或商户属性无效" };
+  // Obsidian updates the real wikilink when a journal is renamed. Prefer that
+  // managed target over the legacy plain path, while retaining old notes.
+  const journalTarget = stringField(fields, "journal_link").match(/^\[\[([^\]|#]+)(?:[^\]]*)\]\]$/u)?.[1]
+    || stringField(fields, "journal_path");
   const entry: FinanceEntry = {
     id, source: source as FinanceEntry["source"], sourceId, date, merchant,
     category: stringField(fields, "category"), kind: kind as FinanceEntry["kind"], amountCents,
@@ -74,7 +78,7 @@ function parseFinanceDocument(markdown: string): ParsedNote {
     description: stringField(fields, "description"), currency: stringField(fields, "currency") || "CNY",
     note: stringField(fields, "note"), icon: stringField(fields, "icon") || undefined,
     billPlanId: stringField(fields, "bill_plan_id").trim() || undefined,
-    ...(stringField(fields, "journal_path") ? { journalPath: stringField(fields, "journal_path") } : {}),
+    ...(journalTarget ? { journalPath: journalTarget } : {}),
     ...(Array.isArray(fields.source_links) ? { sourceLinks: (fields.source_links as unknown[]).flatMap(value => {
       if (!value || typeof value !== "object") return [];
       const link = value as Record<string, unknown>;
