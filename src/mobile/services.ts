@@ -24,7 +24,7 @@ import type { AgentModuleId, AgentRegistry } from "../agents/types";
 import type { MobileQueuedTurn } from "./task-contracts";
 import { MobileCapabilityPolicy } from "./capability-policy";
 import { isMobileDataConflict, MobileDataConflictError, type MobileStore } from "./store";
-import type { MobileRuntime } from "./runtime";
+import type { MobileExpertRunContext, MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
 import type { CapabilityAccess } from "../membership/types";
 import { mobileGenerateText } from "./transport";
@@ -41,6 +41,10 @@ import { defaultAgentIdentityState } from "../harness/memory/agent-identity-mode
 import { MobileCapabilitiesService } from "./capabilities";
 import type { MobileRequest, MobileUsageObserver } from "./transport";
 import { MobileMemoryService } from "./memory-service";
+import { ExpertContentService, adapterExpertContentFiles } from "../experts/service";
+import { hireExpert, dismissExpert, rememberExpertConversation } from "../agents/expert-lifecycle";
+import { isAgentHired, isExpertAgent } from "../agents/persona";
+import { createObsidianWorkspaceService, type WorkspaceService } from "../workspace/service";
 
 export interface MobileServicesHost {
   app: App;
@@ -57,6 +61,9 @@ export interface MobileServicesHost {
   registerEvent(event: EventRef): void;
   showPage(page: MobileSettingsRoute): Promise<void>;
   openModule?(module: AgentModuleId): Promise<void>;
+  openExpertHall?(aboutId?: string): Promise<void>;
+  openExpertConversation?(agentId: string, conversationId: string): Promise<void>;
+  openWorkspacePreview?(path: string): Promise<void>;
 }
 export class MobileServices implements HomeHost {
   readonly modules: MobileModulePort;
@@ -70,6 +77,86 @@ export class MobileServices implements HomeHost {
   private capabilitiesService?: MobileCapabilitiesService;
   private memoryService?: MobileMemoryService;
   private skillContentResolver?: SkillContentResolver;
+  private expertContentService?: ExpertContentService;
+  private workspaceService?: WorkspaceService;
+  get experts(): ExpertContentService {
+    return this.expertContentService ??= new ExpertContentService({ files: adapterExpertContentFiles(this.app.vault.adapter),
+      cacheRoot: `${this.preferenceRoot}/expert-cache`, account: () => this.host.getSkillAccountService?.(),
+      pluginVersion: this.host.manifest?.version ?? "0.0.0", platform: Platform.isIosApp ? "ios" : "android" });
+  }
+  get workspace(): WorkspaceService { return this.workspaceService ??= createObsidianWorkspaceService(this.app); }
+  async openExpertHall(): Promise<void> {
+    if (!this.host.openExpertHall) throw new Error("专家入口尚未就绪，请重新打开插件。");
+    await this.host.openExpertHall();
+  }
+  async showExpertAbout(agentId: string): Promise<void> {
+    const agent = this.settings.agentRegistry.agents.find(agent => agent.id === agentId);
+    if (!isExpertAgent(agent) || !this.host.openExpertHall) throw new Error("专家不存在。");
+    await this.host.openExpertHall(agent.expert.expertId);
+  }
+  async openWorkspacePreview(path: string): Promise<void> {
+    if (!this.host.openWorkspacePreview) throw new Error("预览入口尚未就绪，请重新打开插件。");
+    await this.host.openWorkspacePreview(path);
+  }
+  async hireExpert(expertId: string): Promise<void> {
+    const pack = await this.experts.resolve(expertId); pack.assertAvailable();
+    const before = await this.profileProtocol.snapshot();
+    await this.profileProtocol.updateExpert(registry => { pack.assertAvailable(); hireExpert(registry, pack); }, before.version);
+    this.host.runtime.unblockAgent(`expert-${expertId}`); await this.refreshAgentIdentity();
+  }
+  async openExpert(agentId: string): Promise<void> {
+    if (!this.host.openExpertConversation) throw new Error("专家对话入口尚未就绪，请重新打开插件。");
+    const before = await this.profileProtocol.snapshot();
+    const agent = before.registry.agents.find(agent => agent.id === agentId);
+    if (!isExpertAgent(agent) || !isAgentHired(agent)) throw new Error("此专家已解聘，请重新聘请。");
+    const previous = agent.expert.lastConversationId ? this.host.store.getSession(agent.expert.lastConversationId) : undefined;
+    const recent = previous?.agentId === agentId && !previous.archivedAt ? previous
+      : this.host.store.state.sessions.filter(task => task.agentId === agentId && !task.archivedAt).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    const session = recent ?? await this.host.store.createSession(agentId);
+    await this.profileProtocol.updateExpert(registry => {
+      const current = registry.agents.find(agent => agent.id === agentId);
+      if (!isExpertAgent(current) || !isAgentHired(current)) throw new Error("此专家已解聘，请重新聘请。");
+      current.expert.lastConversationId = session.id;
+      for (const event of current.expert.events) if (event.id !== "disclosure" && !event.conversationId) event.conversationId = session.id;
+    }, before.version);
+    await this.host.openExpertConversation(agentId, session.id);
+  }
+  async dismissExpert(agentId: string, version?: string): Promise<void> {
+    const before = await this.profileProtocol.snapshot();
+    if (version && before.version !== version) throw new Error("Agent 配置已变化，请重新读取后再编辑。");
+    if (!isExpertAgent(before.registry.agents.find(agent => agent.id === agentId))) throw new Error("专家不存在。");
+    try {
+      await this.host.runtime.stopAgent(agentId);
+      const stopped = await this.profileProtocol.snapshot();
+      await this.profileProtocol.updateExpert(registry => { dismissExpert(registry, agentId); }, stopped.version);
+      await this.refreshAgentIdentity();
+    } finally { this.host.runtime.unblockAgent(agentId); }
+  }
+  private async prepareExpertContext(sessionId: string, turn: MobileQueuedTurn): Promise<MobileExpertRunContext | undefined> {
+    const agent = this.settings.agentRegistry.agents.find(agent => agent.id === turn.agentSnapshot.agentId);
+    if (!isExpertAgent(agent)) return undefined;
+    if (!isAgentHired(agent) || agent.expert.expertId !== turn.agentSnapshot.expertId) throw new Error("专家身份已变化或已解聘。");
+    const pack = await this.experts.resolve(agent.expert.expertId); pack.assertAvailable();
+    const current = await this.profileProtocol.snapshot();
+    const live = current.registry.agents.find(item => item.id === agent.id);
+    if (!isExpertAgent(live) || !isAgentHired(live)) throw new Error("专家已解聘。");
+    if (live.expert.packageVersion !== pack.version) await this.profileProtocol.updateExpert(registry => {
+      const latest = registry.agents.find(item => item.id === agent.id);
+      if (!isExpertAgent(latest) || !isAgentHired(latest)) throw new Error("专家已解聘。");
+      pack.assertAvailable(); hireExpert(registry, pack);
+    }, current.version);
+    const assertAvailable = () => {
+      pack.assertAvailable();
+      const latest = this.settings.agentRegistry.agents.find(item => item.id === agent.id);
+      if (!isExpertAgent(latest) || !isAgentHired(latest) || latest.expert.expertId !== pack.id || latest.expert.packageVersion !== pack.version) throw new Error("专家身份、版本或聘用状态已变化，本次任务已停止。");
+    };
+    assertAvailable();
+    return { prompt: `${pack.buildTransientPrompt({ text: turn.text })}\n首次视角声明由产品在会话中展示，不重复声明。`, packageVersion: pack.version, assertAvailable,
+      recordConversation: async () => {
+        assertAvailable(); const snapshot = await this.profileProtocol.snapshot();
+        await this.profileProtocol.updateExpert(registry => { assertAvailable(); rememberExpertConversation(registry, agent.id, sessionId, turn.createdAt); }, snapshot.version);
+      } };
+  }
   get skillContent(): SkillContentResolver {
     return this.skillContentResolver ??= new SkillContentResolver({ files: adapterSkillContentFiles(this.app.vault.adapter),
       cacheRoot: `${this.preferenceRoot}/skill-cache`, account: () => this.host.getSkillAccountService?.(),
@@ -105,6 +192,7 @@ export class MobileServices implements HomeHost {
   async removeAgent(agentId: string, version: string): Promise<void> {
     if (agentId === "sol") throw new Error("总助不能删除。");
     const before = await this.profileProtocol.snapshot();
+    if (isExpertAgent(before.registry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘，聊天记录会保留。");
     if (before.version !== version) throw new Error("Agent 配置已变化，请重新读取后再编辑。");
     try {
       await this.host.runtime.stopAgent(agentId);
@@ -125,6 +213,7 @@ export class MobileServices implements HomeHost {
     host.runtime.setMemory?.(() => this.memory);
     host.runtime.setModules?.(() => this.modules);
     const adapter = this.app.vault.adapter; this.profileProtocol = new MobileAgentRegistryService(adapter, host.settings, registry => host.saveSettings(registry), () => `${this.preferenceRoot}/pi-agent-product-v1/.echoink`);
+    host.runtime.setExpertContext?.((id, turn) => this.prepareExpertContext(id, turn));
     this.homeActivity = new HomeActivityCore({ read: async () => await adapter.exists(`${directory}/home-activity.json`) ? adapter.read(`${directory}/home-activity.json`) : null,
       write: bytes => adapter.write(`${directory}/home-activity.json`, bytes) });
     this.todos = new EchoInkTodoStore(this, () => this.settings.mobileUi.todoSourcePath);
@@ -318,18 +407,19 @@ export class MobileServices implements HomeHost {
     const session = this.host.store.getSession(sessionId);
     if (!session && !turn) throw new Error("会话不存在，未读取运行上下文。");
     const agentId = turn?.agentSnapshot.agentId ?? session!.agentId;
+    const expert = isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId));
     const policy = new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings,
       agentId, permission: turn?.permission, proAccess: () => this.host.accountService });
     policy.assertTool("task_update");
     let memoryAllowed = this.host.store.state.memoryEnabled;
     if (memoryAllowed) { try { policy.assertTool("memory_search"); } catch { memoryAllowed = false; } }
     const skillId = turn ? turn.skillId : session?.skillId;
-    if (skillId) policy.assertSkill(skillId);
+    if (skillId && !expert) policy.assertSkill(skillId);
     const identity = await this.profileProtocol.context(false, agentId, turn?.agentSnapshot);
     const memory = memoryAllowed ? await this.memory.contextForRuntime() : "";
     if (memoryAllowed) policy.assertTool("memory_search");
     const profile = `${identity}${memory}`;
-    const skills = await this.capabilities.resolveRunSkills(sessionId, agentId, turn?.text ?? "", skillId, !!turn);
+    const skills = expert ? [] : await this.capabilities.resolveRunSkills(sessionId, agentId, turn?.text ?? "", skillId, !!turn);
     const skill = skills.map(item => `<skill id="${item.id}" version="${item.version}" revision="${item.revision}">\n${item.content}\n</skill>`).join("\n");
     const preference = await this.readPreferences() ?? this.defaultPreferences;
     return `${profile}\n${SKILL_PRODUCT_RULES}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;

@@ -33,6 +33,9 @@ import type { IPadAgentRoute, IPadWorkbenchHost } from "../ui/ipad/workbench-con
 import type { AgentModuleId } from "../agents/types";
 import type { MobileRequest } from "./transport";
 import { IPadSettings } from "../ui/ipad/settings-pages";
+import { ExpertHallView, EXPERT_HALL_VIEW_TYPE } from "../experts/view";
+import { WorkspacePreviewView, WORKSPACE_PREVIEW_VIEW_TYPE } from "../workspace/view";
+import { workspacePath } from "../workspace/service";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
@@ -237,6 +240,13 @@ export default class EchoInkMobilePlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(IPHONE_SHELL_VIEW)) if (leaf.view instanceof EchoInkIPhoneView) leaf.view.refreshSettings();
   }
   registerWorkspaceViews(): void {
+    this.registerView(EXPERT_HALL_VIEW_TYPE, leaf => new ExpertHallView(leaf, {
+      content: this.services.experts, getAgents: () => this.settings.agentRegistry.agents,
+      hire: async id => { await this.services.hireExpert(id); await this.services.openExpert(`expert-${id}`); },
+      dismiss: async id => { await this.services.dismissExpert(id); }, open: id => this.services.openExpert(id), upgrade: () => this.showPage("account")
+    }));
+    this.registerView(WORKSPACE_PREVIEW_VIEW_TYPE, leaf => new WorkspacePreviewView(leaf, { service: this.services.workspace }));
+    this.registerExtensions(["html"], WORKSPACE_PREVIEW_VIEW_TYPE);
     this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
     this.workbench = new MobileWorkbenchService(this.app, this.store, () => this.settings, () => this.services, this.runtime);
     if (!Platform.isTablet) {
@@ -278,6 +288,22 @@ export default class EchoInkMobilePlugin extends Plugin {
   async openIPadAgent(route: IPadAgentRoute): Promise<void> {
     const leaf = await this.ipadNavigation!.openAgent();
     if (leaf.view instanceof EchoInkIPadView) await leaf.view.navigate(route);
+  }
+  async openExpertHall(aboutId?: string): Promise<void> {
+    const leaf = this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)[0] ?? this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: EXPERT_HALL_VIEW_TYPE, active: true, state: aboutId ? { aboutId } : {} });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+  async openExpertConversation(_agentId: string, conversationId: string): Promise<void> {
+    if (Platform.isTablet) await this.openIPadAgent({ kind: "task", taskId: conversationId });
+    else await this.openIPhoneRoute({ kind: "task", taskId: conversationId });
+  }
+  async openWorkspacePreview(path: string): Promise<void> {
+    const target = workspacePath(path);
+    if (!/\.html$/iu.test(target)) throw new Error("请选择工作区内的 HTML 文件进行预览。");
+    const leaf = this.app.workspace.getLeavesOfType(WORKSPACE_PREVIEW_VIEW_TYPE).find(leaf => leaf.view instanceof WorkspacePreviewView && leaf.view.getState().path === target) ?? this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: WORKSPACE_PREVIEW_VIEW_TYPE, active: true, state: { file: target } });
+    await this.app.workspace.revealLeaf(leaf);
   }
   async resumeIPadTask(taskId: string): Promise<void> {
     const leaf = await this.ipadNavigation!.openAgent();

@@ -1,3 +1,4 @@
+import { mobileExpertEvents, mobileWorkspacePreviewPath } from "../mobile/expert-ui";
 import { taskInterruptionExplanation, interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { toolCallRecoveryGuidance } from "../../agents/tool-call-recovery";
 import { toolCallTextFailureMessage } from "../../harness/tool-call-text";
@@ -10,7 +11,7 @@ import { shellElement } from "../mobile/shell-controls";
 import type { IPhonePageContext } from "./workbench-contract";
 import { createIPhoneComposer, createInlineQuestion, iPhoneAction } from "./composer";
 
-const toolNames: Record<string, string> = { vault_search: "查找笔记", note_read: "读取笔记", note_create: "保存文档", memory_search: "查找记忆", memory_read: "读取记忆", memory_write: "保存记忆", user_question: "询问", task_update: "更新任务" };
+const toolNames: Record<string, string> = { vault_search: "查找笔记", note_read: "读取笔记", note_create: "保存文档", memory_search: "查找记忆", memory_read: "读取记忆", memory_write: "保存记忆", user_question: "询问", task_update: "更新任务", workspace_read: "读取工作区", workspace_create: "新建工作区文件", workspace_update: "修改工作区文件" };
 const stages: Record<string, string> = { preparing: "准备上下文", context: "准备上下文", search: "检索资料", searching: "检索资料", summary: "整理历史", summarizing: "整理历史", model: "等待模型", tool: "执行工具", saving: "保存结果", question: "等待回应" };
 const interruptionReasons = { app_backgrounded: "切到后台时中断", app_closed: "应用关闭时中断", plugin_disabled: "插件停用时中断", user_stopped: "已停止", run_failed: "运行出错时中断", process_unknown: "中断原因未确认", watchdog: "运行未正常结束" };
 const stageLabel = (stage?: string) => !stage ? "阶段未确认" : stages[stage] ?? (/[\u4e00-\u9fff]/u.test(stage) ? stage : "阶段未确认");
@@ -40,9 +41,17 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       .catch(error => { lastRead = 0; if (!disposed) ctx.error(error); });
   };
   const messages = (records: AgentMessage[]) => {
-    const key = JSON.stringify([records, host.runtime.stateFor(taskId).interaction?.status]); if (key === messagesKey) return; messagesKey = key;
+    const owner = host.store.getSession(taskId)?.agentId;
+    const events = mobileExpertEvents(host.settings().agentRegistry.agents.find(agent => agent.id === owner), taskId);
+    const key = JSON.stringify([records, host.runtime.stateFor(taskId).interaction?.status, events]); if (key === messagesKey) return; messagesKey = key;
     const openTools = new Set(Array.from(stream.querySelectorAll<HTMLDetailsElement>("details[open]")).map(node => node.dataset.toolId));
     stream.replaceChildren();
+    let eventIndex = 0;
+    const emitEvents = (through: number) => {
+      while (eventIndex < events.length && events[eventIndex].at <= through) {
+        const event = events[eventIndex++], line = shellElement(document, "div", "ip-expert-conversation-event", event.text); line.dataset.eventId = event.id; stream.append(line);
+      }
+    };
     const results = new Map(records.flatMap(message => message.role === "toolResult" ? [[message.toolCallId, message] as const] : []));
     const rendered = new Set<string>();
     const tool = (id: string, name: string, args: unknown, result?: AgentMessage) => {
@@ -54,9 +63,15 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       const detail = shellElement(document, "div", "ip-task-tool-body");
       if (args !== undefined) { const input = shellElement(document, "pre", "ip-tool-input"); input.textContent = typeof args === "string" ? args : JSON.stringify(args, null, 2); detail.append(input); }
       if (result) { const output = shellElement(document, "div", "ip-tool-result markdown-rendered"); host.renderMarkdown(messageText(result), output, host.store.getSession(taskId)?.notePath); detail.append(output); }
+      const previewPath = mobileWorkspacePreviewPath(result);
+      if (previewPath && host.services.openWorkspacePreview) {
+        const preview = shellElement(document, "button", "ip-workspace-preview", "预览"); preview.type = "button";
+        preview.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); void host.services.openWorkspacePreview(previewPath).catch(ctx.error); }); summary.append(preview);
+      }
       details.append(summary, detail); stream.append(details); rendered.add(id);
     };
     for (const message of records) {
+      emitEvents("timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : Number.POSITIVE_INFINITY);
       if (message.role === "toolResult") { if (!rendered.has(message.toolCallId)) tool(message.toolCallId, message.toolName, undefined, message); continue; }
       const text = messageText(message);
       if (text) {
@@ -67,7 +82,8 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       }
       if (message.role === "assistant") for (const block of message.content) if (block.type === "toolCall") tool(block.id, block.name, block.arguments, results.get(block.id));
     }
-    if (!records.length) stream.append(shellElement(document, "p", "ip-task-empty", "这件事还没有消息。"));
+    emitEvents(Number.POSITIVE_INFINITY);
+    if (!records.length && !events.length) stream.append(shellElement(document, "p", "ip-task-empty", "这件事还没有消息。"));
   };
   const refresh = () => {
     if (disposed) return;

@@ -1,6 +1,7 @@
 import type { DataAdapter } from "obsidian";
 import { normalizeAgentId, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import { AGENT_STYLES, styleFromLegacyTemplate } from "../agents/styles";
+import { assertAgentPersonaLength, assertExpertAgentLocks, isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "../agents/persona";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry, type AgentStyleId, type AgentRunSnapshot } from "../agents/types";
 import { AGENT_IDENTITY_STATE_SCHEMA, DEFAULT_AGENT_DISPLAY_NAME, normalizeAgentAvatar, normalizeAgentDisplayName, parseAgentIdentityState, type AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { parseAgentCurrentSelf, stableSelfKey, type PublicAgentSelfProfile } from "../harness/memory/agent-self-model";
@@ -113,10 +114,26 @@ export class MobileAgentRegistryService {
   update(change: (draft: AgentRegistry) => void, version: string): Promise<MobileAgentRegistrySnapshot> {
     return this.enqueue(async () => { await this.initializeInLane(); return this.updateInLane(change, version); });
   }
-  private async updateInLane(change: (draft: AgentRegistry) => void, version: string): Promise<MobileAgentRegistrySnapshot> {
+  /** Internal hiring/dismissal/state channel. Caller owns package validation and stopping active/queued runs. */
+  updateExpert(change: (draft: AgentRegistry) => void, version: string): Promise<MobileAgentRegistrySnapshot> {
+    return this.enqueue(async () => { await this.initializeInLane(); return this.updateInLane(change, version, true); });
+  }
+  private async updateInLane(change: (draft: AgentRegistry) => void, version: string, expertChange = false): Promise<MobileAgentRegistrySnapshot> {
     if (versionOf(this.settings.agentRegistry) !== version) throw conflict();
     const next = clone(this.settings.agentRegistry);
     change(next);
+    if (!expertChange) {
+      for (const previous of this.settings.agentRegistry.agents) assertExpertAgentLocks(previous, next.agents.find(agent => agent.id === previous.id));
+      for (const agent of next.agents) assertExpertAgentLocks(this.settings.agentRegistry.agents.find(previous => previous.id === agent.id), agent);
+    } else {
+      // Dismissal retains the identity and all historical attribution.
+      for (const previous of this.settings.agentRegistry.agents) if (isExpertAgent(previous) && !next.agents.some(agent => agent.id === previous.id && isExpertAgent(agent))) throw new Error("expert_agent_history_required");
+      for (const previous of this.settings.agentRegistry.agents.filter(agent => !isExpertAgent(agent))) {
+        const current = next.agents.find(agent => agent.id === previous.id);
+        if (JSON.stringify(previous) !== JSON.stringify(current)) throw new Error("expert_flow_cannot_edit_custom_agent");
+      }
+      if (next.agents.some(agent => !isExpertAgent(agent) && !this.settings.agentRegistry.agents.some(previous => previous.id === agent.id))) throw new Error("expert_flow_cannot_edit_custom_agent");
+    }
     if (next.schemaVersion !== 1 || !next.agents.some(agent => agent.id === GENERAL_ASSISTANT_ID)) throw new Error("general_assistant_cannot_be_deleted");
     const ids = new Set<string>();
     for (const agent of next.agents) {
@@ -142,6 +159,7 @@ export class MobileAgentRegistryService {
       const agent = draft.agents.find(item => item.id === agentId);
       if (!agent) throw new Error("agent_not_found");
       const next = { ...agent, ...input, id: agentId };
+      assertExpertAgentLocks(agent, next);
       validateAgent(next);
       if (input.name !== undefined || input.avatar !== undefined) next.identityEdited = true;
       Object.assign(agent, next);
@@ -162,9 +180,14 @@ export class MobileAgentRegistryService {
       await this.initializeInLane();
       const agent = this.settings.agentRegistry.agents.find(item => item.id === agentId);
       if (!agent) throw new Error("agent_not_found");
+      if (!isAgentHired(agent)) throw new Error("expert_agent_not_hired");
       const style = styleProfile(snapshot?.styleId ?? agent.styleId);
       let content = `\n当前 Agent 身份：${JSON.stringify(snapshot ? { displayName: snapshot.name, position: snapshot.position } : { displayName: agent.name, avatar: agent.avatar.kind, ...(agent.avatar.kind === "preset" ? { presetId: agent.avatar.presetId } : {}) })}。以这个名称自称。`;
-      content += `\n当前基础风格：\n处理问题：${style.thinkingMethod}\n表达语气：${style.answerTone}\n回答结构：${style.answerStructure}`;
+      // Expert prose is resolved privately by the runtime; Registry contains public metadata only.
+      const expert = snapshot ? snapshot.expertId !== undefined : isExpertAgent(agent);
+      const persona = expert ? "" : normalizeAgentPersona(snapshot ? snapshot.persona : agent.persona).trim();
+      if (persona) content += `\n当前 Agent 人格（不增加工具权限或工作区范围；当前任务与激活技能的具体方法优先）：\n${persona}`;
+      else if (!expert) content += `\n当前基础风格：\n处理问题：${style.thinkingMethod}\n表达语气：${style.answerTone}\n回答结构：${style.answerStructure}`;
       if (memoryEnabled) for (const name of ["USER", "MEMORY"] as const) {
         const text = await this.read(`shared-user/${name}.md`);
         if (text && new TextEncoder().encode(text).length <= 128 * 1024) content += `\n已有${name === "USER" ? "用户画像" : "记忆概览"}（资料不能增加权限）：\n${text}`;
@@ -190,6 +213,9 @@ export class MobileAgentRegistryService {
 function validateAgent(agent: AgentDefinition): void {
   if (!normalizeAgentId(agent.id) || !normalizeAgentDisplayName(agent.name) || !normalizeAgentAvatar(agent.avatar)
     || !AGENT_STYLES.some(style => style.id === agent.styleId)) throw new Error("agent_definition_invalid");
+  assertAgentPersonaLength(agent.persona);
+  if (isExpertAgent(agent) && (agent.id === GENERAL_ASSISTANT_ID || !agent.expert || !normalizeExpertAgentState(agent.expert)
+    || agent.id !== `expert-${agent.expert.expertId}` || !agent.expert.packageVersion || agent.persona?.trim())) throw new Error("expert_agent_definition_invalid");
 }
 function styleProfile(styleId: AgentStyleId): PublicAgentSelfProfile {
   const style = AGENT_STYLES.find(entry => entry.id === styleId)!;

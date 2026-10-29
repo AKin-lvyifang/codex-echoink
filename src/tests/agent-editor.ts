@@ -6,19 +6,20 @@ import { DEFAULT_SETTINGS } from "../settings/settings";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import type { EchoInkResource } from "../resources/types";
 import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../agents/capability-policy";
+import { agentPersonaLength, getAgentPersonaTemplate } from "../agents/persona";
 
 const settle = async () => { for (let pass = 0; pass < 3; pass++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 
 function assertCapabilityStructure(root: HTMLElement): string {
   const major = [...root.querySelectorAll(".echoink-agent-editor-major > h3")];
-  assert.deepEqual(major.map(node => node.textContent), ["负责的模块", "能用的能力", "风格"]);
+  assert.deepEqual(major.map(node => node.textContent), ["人格", "负责的模块", "能用的能力"]);
   assert.equal(root.querySelectorAll(".echoink-agent-editor-resource-group").length, 1, "all three capability groups share a single container");
   const group = root.querySelector<HTMLElement>(".echoink-agent-editor-resource-group")!;
   assert.equal(group.getAttribute("role"), "group");
   const labelledBy = group.getAttribute("aria-labelledby")!;
-  assert.equal(major[1].id, labelledBy, "the shared group belongs to the capabilities heading");
-  assert.equal(group.parentElement, major[1].parentElement);
+  assert.equal(major[2].id, labelledBy, "the shared group belongs to the capabilities heading");
+  assert.equal(group.parentElement, major[2].parentElement);
   assert.equal(group.querySelectorAll(":scope > .echoink-agent-editor-resource-section").length, 3);
   assert.deepEqual([...group.querySelectorAll("h4")].map(node => node.textContent), ["内置技能", "我的 Skill", "MCP"]);
   const skillsHeading = [...group.querySelectorAll("h4")][1];
@@ -90,7 +91,8 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "例如：选题编辑");
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "一句话：负责什么");
     assert.equal(f.root.querySelector("details .echoink-agent-editor-avatar-grid"), null, "avatar choices stay directly visible");
-    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-style-card .echoink-agent-editor-style-summary").length, 4);
+    assert.equal(f.root.querySelectorAll("[data-persona-template]").length, 4);
+    assert.equal(f.root.querySelector('[data-field="persona"]')!.tagName, "TEXTAREA");
     f.root.querySelector<HTMLButtonElement>('[data-preset="organizer"]')!.click(); await settle();
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "整理员");
     assert.equal(f.root.querySelector('[data-module-id="knowledge-base"]')!.getAttribute("aria-checked"), "true");
@@ -253,6 +255,40 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     console.log("PASS disposal releases its mount and stale resource/save callbacks cannot replace a newer View draft");
   }
   {
+    const f = fixture(); await f.open("sol");
+    f.root.querySelector<HTMLButtonElement>('[data-persona-template="analysis"]')!.click(); await settle();
+    const writePersona = (value: string) => { const field = f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!; field.value = value; field.dispatchEvent(new win.Event("input", { bubbles: true })); };
+    writePersona("自己写的人格");
+    assert.equal(f.root.querySelector('[data-persona-template="analysis"]')!.getAttribute("aria-pressed"), "true", "editing prose retains the selected fallback template");
+    f.root.querySelector<HTMLButtonElement>('[data-persona-template="creative"]')!.click(); await settle();
+    assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, "自己写的人格");
+    button(f.root, "保留修改").click(); await settle();
+    f.root.querySelector<HTMLButtonElement>('[data-persona-template="creative"]')!.click(); await settle(); button(f.root, "替换").click(); await settle();
+    assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, getAgentPersonaTemplate("creative"));
+    writePersona("😀".repeat(4001)); assert.equal(agentPersonaLength(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value), 4000);
+    assert.equal(f.root.querySelector(".echoink-agent-editor-persona-count")!.textContent, "4000 / 4000");
+    f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
+    assert.equal(agentPersonaLength(f.saved[0].agent.persona!), 4000); assert.equal(f.saved[0].agent.styleId, "creative");
+    f.dispose(); console.log("PASS Sol persona editing, retained fallback, inline template replacement and 4000 Unicode limit");
+  }
+  {
+    const f = fixture(); let dismissals = 0, about = 0;
+    f.settings.agentRegistry.agents.push({ id: "expert-socrates", name: "苏格拉底", avatar: { kind: "preset", presetId: "lin" }, position: "追问到想明白", styleId: "analysis", kind: "expert",
+      expert: { expertId: "socrates", hired: true, packageVersion: "1", summary: "公开简介", disclosureShown: false, events: [] }, capabilityIds: ["knowledge"] });
+    f.host.dismissExpert = async () => { dismissals++; }; f.host.showExpertAbout = () => { about++; };
+    await f.open("expert-socrates");
+    assert.equal(f.root.querySelectorAll('[data-field="name"],[data-field="position"],[data-field="persona"],[data-persona-template],[data-capability-id]').length, 0);
+    assert.equal(f.root.querySelector(".echoink-agent-editor-expert-summary")!.textContent, "公开简介");
+    assert.equal(f.root.querySelector(".echoink-agent-editor-title")!.textContent, "苏格拉底");
+    assert.equal(f.root.querySelector(".echoink-agent-editor-subtitle")!.textContent, "追问到想明白");
+    assert.ok(f.root.querySelector('.echoink-agent-editor-footer [data-action="dismiss-expert"]'));
+    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-lock").length, 2); assert.equal(f.loads, 0);
+    assert.equal(f.root.querySelector('[data-action="delete-agent"]'), null);
+    button(f.root, "关于").click(); await settle(); assert.equal(about, 1);
+    button(f.root, "解聘").click(); await settle(); assert.equal(dismissals, 1); assert.equal(f.deletes, 0); assert.equal(f.closed[0], "sol");
+    f.dispose(); console.log("PASS expert public-only identity, hidden capability controls and separate dismissal/about hooks");
+  }
+  {
     const f = fixture(); f.settings.settingsLanguage = "en";
     f.settings.agentRegistry.agents.push({ id: "english-ui", name: "用户原名", avatar: { kind: "default" }, position: "用户的原始职位，不翻译", styleId: "analysis", capabilityIds: [] });
     const skill: EchoInkResource = { id: "echoink-local:skill:unchanged", name: "用户自建 Skill 名字", description: "", kind: "skill", source: "echoink-local", enabled: false, bridgeMode: "prompt-only", metadata: { resourceId: "unchanged" } };
@@ -262,17 +298,17 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     await f.open("english-ui");
     assert.equal(f.root.lang, "en"); assert.equal(f.root.querySelector("h2")?.textContent, "Edit Agent");
     assert.ok(f.root.querySelector('[aria-label="Back to Agent tasks"]')); assert.ok(button(f.root, "Save")); assert.ok(button(f.root, "Cancel")); assert.ok(button(f.root, "Delete Agent"));
-    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Responsible for", "Capabilities", "Style"]);
+    assert.deepEqual([...f.root.querySelectorAll("h3")].map(node => node.textContent), ["Persona", "Responsible for", "Capabilities"]);
     assert.match(check(f.root, "finance").getAttribute("aria-description")!, /PRO membership has expired/); assert.match(check(f.root, vaultSkillCapabilityId(skill.id)).getAttribute("aria-description")!, /Resource disabled/);
     assert.match(f.root.textContent!, /用户自建 Skill 名字/); assert.match(f.root.textContent!, /用户服务名称/);
     const details = f.root.querySelector<HTMLDetailsElement>("details[data-resource-id]")!; assert.match(details.textContent!, /1 tool/); details.open = true; await settle();
     assert.match(details.textContent!, /用户工具名称/); assert.match(check(f.root, mcpToolCapabilityId(server.id, "用户工具名称")).getAttribute("aria-description")!, /Tool disabled/);
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "用户原名");
     assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="position"]')!.value, "用户的原始职位，不翻译");
-    assert.ok(f.root.querySelector('[role="radiogroup"][aria-label="Style"] [aria-label="Careful analysis"]'));
-    assert.deepEqual([...f.root.querySelectorAll(".echoink-agent-editor-style-description-label")].map(node => node.textContent), ["Thinking", "Tone", "Response structure"]);
-    assert.match(f.root.querySelector(".echoink-agent-editor-style-description")!.textContent!, /Check assumptions, evidence/);
-    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-style-description-row").length, 3);
+    assert.ok(f.root.querySelector('[role="group"][aria-label="Persona templates"] [data-persona-template="analysis"][aria-pressed="true"]'));
+    f.root.querySelector<HTMLButtonElement>('[data-persona-template="analysis"]')!.click(); await settle();
+    assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, getAgentPersonaTemplate("analysis", "en"));
+    assert.match(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, /Check assumptions, evidence/);
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "e.g., Topic Editor");
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "In one sentence: what it handles");
     input(f.root, ""); assert.match(f.root.textContent!, /Use 1–24 characters without line breaks or tabs/); input(f.root, "用户原名");

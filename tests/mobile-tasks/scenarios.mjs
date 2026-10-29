@@ -13,9 +13,9 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const provider = mobileProvider("custom"); Object.assign(provider, { apiKey: "fake-key", baseUrl: "https://fixture.example/v1", models: [mobileModel("fixture-model", options)], defaultModelId: "fixture-model" });
     return loadMobileSettings({ apiProviders: [provider], activeApiProviderId: provider.id, defaultModel: "fixture-model" });
   };
-  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context, initialize = true, persistSettings = async () => {}) => {
+  const fixture = async (request = async () => answer("openai-completions", "ok"), settings = config(), context, initialize = true, persistSettings = async () => {}, proAccess) => {
     const host = createHost(); const store = new MobileStore(host.adapter, "plugin/mobile", "task-fixture"); await store.load();
-    const runtime = new MobileRuntime(host.app, store, () => settings, request, context, persistSettings); if (initialize) await runtime.initialize();
+    const runtime = new MobileRuntime(host.app, store, () => settings, request, context, persistSettings, proAccess); if (initialize) await runtime.initialize();
     return { ...host, store, runtime, settings };
   };
 
@@ -187,12 +187,13 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
 
   await test("draft model/permission/Skill/reference is frozen for new and existing tasks; later draft metadata is retained", async () => {
     const waiting = gate(); let turn, payload;
-    const state = await fixture(async request => { payload = JSON.parse(request.body); return answer("openai-completions", "done"); }, config(), async (_id, submitted) => { turn = submitted; await waiting.promise; return ""; });
+    const state = await fixture(async request => { payload = JSON.parse(request.body); return answer("openai-completions", "done"); }, config(), async (_id, submitted) => { turn = submitted; await waiting.promise; return ""; }, true, async () => {}, () => ({ checkCapability: () => true }));
     const other = mobileProvider("custom"); Object.assign(other, { apiKey: "other-fake", baseUrl: "https://other.example/v1", models: [mobileModel("chosen-model")], defaultModelId: "chosen-model" }); state.settings.apiProviders.push(other);
     const metadata = { attachments: [], selectedProviderSettingsId: other.id, selectedModel: "chosen-model", selectedPermission: "danger-full-access", selectedMode: "plan",
       selectedSkill: { id: "echoink-local:skill:two-layer-explanation", kind: "skill", metadata: { resourceId: "two-layer-explanation" } }, noteMentions: [{ vaultRelativePath: "笔记/来源.md", fileName: "来源" }] };
     await state.store.update(latest => { latest.newTaskDrafts.sol = { ...metadata, text: "chosen draft" }; });
-    const submission = state.runtime.sendNew("sol", "chosen draft"); await waitFor(() => !!turn);
+    const submission = state.runtime.sendNew("sol", "chosen draft");
+    await Promise.race([waitFor(() => !!turn), submission.then(() => { assert.ok(turn, "submission must enter context preparation"); })]);
     await state.store.update(latest => { latest.newTaskDrafts.sol.selectedMode = "agent"; }); waiting.resolve(); const created = await submission; await created.completion;
     assert.equal(payload.model, "chosen-model"); assert.equal(turn.providerId, other.id); assert.equal(turn.permission, "read-only"); assert.equal(turn.skillId, "two-layer-explanation"); assert.equal(turn.notePath, "笔记/来源.md");
     assert.equal(state.store.session.id, created.taskId); assert.equal(state.store.session.draftContext.selectedMode, "plan"); assert.equal(state.store.state.newTaskDrafts.sol.selectedMode, "agent"); assert.equal(state.store.state.newTaskDrafts.sol.text, "chosen draft");

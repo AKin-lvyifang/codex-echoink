@@ -1,3 +1,4 @@
+import { isAgentHired } from "../../agents/persona";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import type { MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileMemorySettingsPort, MobileMemorySnapshot, MobileUserProfileSnapshot } from "../../mobile/memory-contracts";
@@ -30,7 +31,8 @@ export class IPhoneAgentSettingsPages {
       if (disposed || busy || current !== revision) return;
       body.replaceChildren(); const agents = settingsGroup(ctx, body, "我的 Agent"), owners = settingsGroup(ctx, body, "模块负责人");
       if (registry.status === "fulfilled") {
-        for (const agent of registry.value.registry.agents) settingsRow(ctx, agents, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true, detail: agent.position || undefined, action: () => this.editAgent(agent.id) });
+        for (const agent of registry.value.registry.agents.filter(isAgentHired)) settingsRow(ctx, agents, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true, detail: agent.position || undefined, action: () => this.editAgent(agent.id) });
+        settingsRow(ctx, agents, this.text("聘请专家", "Hire an expert"), { icon: "sparkles", action: () => ctx.host.services.openExpertHall() });
         settingsRow(ctx, agents, "新建 Agent", { icon: "user-plus", action: () => this.editAgent() });
         let snapshot = registry.value;
         const ownerError = settingsError(ctx, body);
@@ -38,7 +40,7 @@ export class IPhoneAgentSettingsPages {
           owners.replaceChildren();
           for (const module of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"].map(id => IPHONE_MODULES.find(module => module.id === id)!)) {
             const owner = snapshot.registry.agents.find(agent => agent.id === snapshot.registry.moduleOwners[module.id]);
-            const select = settingsSelect(ctx, owners, module.name, snapshot.registry.agents.map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
+            const select = settingsSelect(ctx, owners, module.name, snapshot.registry.agents.filter(isAgentHired).map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
               if (busy || value === snapshot.registry.moduleOwners[module.id]) { select.value = snapshot.registry.moduleOwners[module.id]; return; }
               busy = true; this.controls(body, true); body.setAttribute("aria-busy", "true"); ownerError.show();
               void (async () => {

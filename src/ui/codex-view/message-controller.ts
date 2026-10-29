@@ -6,7 +6,7 @@ import {
 } from "../../settings/settings";
 import { settleStaleRunningMessages } from "../../core/message-state";
 import { SessionMessageStore, type SessionMessageInput } from "./session-message-store";
-import { CodexMessageListRenderer } from "./message-list";
+import { CodexMessageListRenderer, type MessageListRenderedRow } from "./message-list";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./message-scroll-follow";
 import { piEntryIdFromProjectedMessageId, piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 
@@ -43,6 +43,7 @@ export interface CodexMessageHost {
   handleMissingPlanAction(message: ChatMessage, action: "retry" | "disable"): Promise<void>;
   renderTaskPlanDock(session: StoredSession): void;
   renderInteractionDock(session: StoredSession): void;
+  renderExpertDecorations?(session: StoredSession, root: HTMLElement, rows: readonly MessageListRenderedRow[]): void;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
   scheduleRenderMessages(options?: MessageRenderScheduleOptions): void;
   scheduleMeasureVirtualRows(forceBottom?: boolean): void;
@@ -149,6 +150,7 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     onScheduleRunProgress: () => host.scheduleKnowledgeBaseRunProgress(),
     shouldFollowBottom: () => !host.messagesBottomFollowPaused,
     onProcessDisclosureToggle: () => host.messageScrollFollow.pauseFromUser(),
+    onAfterRenderRows: (root, rows) => host.renderExpertDecorations?.(session, root, rows),
     options: renderOptions
   });
   host.renderTaskPlanDock(session);

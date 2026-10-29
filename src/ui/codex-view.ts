@@ -1,3 +1,4 @@
+import { renderExpertConversationDecorations } from "./codex-view/expert-decorations";
 import { ownedDiv, ownedEl } from "./owned-dom";
 import { openTaskMenu } from "./codex-view/task-menu";
 import { stopManagedTask } from "../plugin/task-management";
@@ -49,7 +50,7 @@ import {
 import { diagnoseProviderError, type ProviderErrorDiagnostic } from "../core/provider-diagnostics";
 import type { ComposerPrimaryActionState } from "./composer-state";
 import { RuntimeTurnQueue, type QueuedTurnItem } from "./turn-queue";
-import { CodexMessageListRenderer } from "./codex-view/message-list";
+import { CodexMessageListRenderer, type MessageListRenderedRow } from "./codex-view/message-list";
 import { loadMcpPanelView } from "./codex-view/mcp-panel";
 import { enabledSkillResources, mcpResourceEnablement } from "../resources/registry";
 import { MessageScrollFollowController, type MessageRenderScheduleOptions } from "./codex-view/message-scroll-follow";
@@ -585,7 +586,7 @@ export class CodexView extends ItemView {
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
     }), inlineHost?.service.list() ?? []).filter(task => task.status === "active");
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
-      { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor() }, this.plugin.settings.settingsLanguage);
+      { onSelect: id => void this.openAgentTaskList(id), onCreate: () => this.openAgentEditor(), onHire: () => { void this.plugin.openExpertHall(); } }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
     this.taskDetailEl.hidden = !!this.taskEditor || page.kind !== "detail";
     const interrupted = page.kind === "detail" && !!entry && taskState(entry) === "interrupted";
@@ -743,6 +744,8 @@ export class CodexView extends ItemView {
       loadResources: () => this.plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, moduleIds, baseline) => onboarding ? this.plugin.saveOnboardingAgentDefinition(agent, moduleIds) : this.plugin.saveAgentDefinition(agent, moduleIds, baseline),
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
+      dismissExpert: async id => { await this.plugin.dismissExpert(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
+      showExpertAbout: id => this.plugin.showExpertAbout(id),
       getDeleteCounts: id => this.plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => this.taskCapabilityAvailability(id),
       onClose: id => {
@@ -1776,6 +1779,10 @@ export class CodexView extends ItemView {
     renderMessagesAction(this.messageHost(), options);
     this.turnNavigator?.handleRender();
     this.renderComposerTransfers();
+  }
+  private renderExpertDecorations(session: StoredSession, root: HTMLElement, rows: readonly MessageListRenderedRow[]): void {
+    const agent = this.plugin.settings.agentRegistry.agents.find(item => item.id === session.agentId);
+    renderExpertConversationDecorations(root, agent, session.id, session.messages, path => this.plugin.openWorkspacePreview(path), rows);
   }
   private renderTaskPlanDock(session: StoredSession): void {
     if (this.taskUiMounted && this.currentInlineTask()) { this.taskPlanDockEl.hidden = true; return; }

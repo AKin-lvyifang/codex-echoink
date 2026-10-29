@@ -22,6 +22,9 @@ export interface AgentEditorHost {
   getCapabilityAvailability?(capabilityId: string): { available: boolean; reason?: string };
   saveAgent(agent: AgentDefinition, moduleIds: readonly AgentModuleId[], baseline?: AgentEditorSaveBaseline): Promise<void>;
   deleteAgent(agentId: string): Promise<void>;
+  /** Dedicated expert lifecycle; never route dismissal through deleteAgent. */
+  dismissExpert?(agentId: string): Promise<void>;
+  showExpertAbout?(agentId: string): void | Promise<void>;
   getDeleteCounts(agentId: string): Promise<{ total: number; running: number }>;
   onClose(agentId?: string): void;
 }

@@ -11,7 +11,7 @@ const shared = "plugin/pi-agent-product-v1/.echoink/shared-user/";
 const hash = value => createHash("sha256").update(value).digest("hex");
 
 /** Current production bootstrap, not a handcrafted Store-only startup substitute. */
-export async function mobileStartupConflictScenarios({ code, dom, test }) {
+export async function mobileStartupConflictScenarios({ code, dom, test, FileView }) {
   function fixture(tablet) {
     const host = createHost(), commands = [], views = [], notices = [];
     host.app.workspace.containerEl = dom.window.document.body;
@@ -23,6 +23,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
       registerEditorExtension() {} registerMarkdownPostProcessor() {} registerEvent() {} register() {} registerDomEvent() {}
       registerInterval(id) { this.interval = id; }
       registerView(type) { views.push(type); }
+      registerExtensions() {}
       addRibbonIcon() { return dom.window.document.createElement("button"); } addCommand(command) { commands.push(command.id); }
     }
     const module = { exports: {} };
@@ -32,7 +33,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test }) {
         if (["@codemirror/state", "@codemirror/view", "@codemirror/commands"].includes(id)) return editorRequire(id);
         assert.equal(id, "obsidian");
         return { Platform: { isMobileApp: true, isMobile: !tablet, isTablet: tablet }, Plugin,
-          ItemView: class {}, Component: class {}, Modal: class {}, TFile: FixtureTFile, TFolder: class {},
+          ItemView: class {}, FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, TFolder: class {},
           Notice: class { constructor(message) { notices.push(String(message)); } }, requestUrl() { throw new Error("unexpected startup Provider request"); } };
       }
     });

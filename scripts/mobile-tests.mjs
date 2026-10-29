@@ -779,6 +779,30 @@ async function nativeMountFixture(tablet) {
 }
 function mountGate() { let release; const promise = new Promise(resolve => { release = resolve; }); return { promise, release }; }
 
+for (const tablet of [false, true]) await test(`registered HTML file route loads one FileView and rejects outside workspace: ${tablet ? "iPad" : "iPhone"}`, async () => {
+  const f = await nativeMountFixture(tablet);
+  try {
+    const path = "EchoInk/工作区/file-list.html", outsidePath = "outside-workspace.html";
+    await f.app.vault.create(path, '<button onclick="this.textContent=42">file-list-fixture</button>');
+    await f.app.vault.create(outsidePath, "OUTSIDE_CONTENT_MUST_NOT_LOAD");
+    const reads = [], read = f.adapter.read.bind(f.adapter); f.adapter.read = async target => { reads.push(target); return read(target); };
+    assert.equal(f.fixture.extensions.get("html"), "echoink-workspace-preview");
+    const leaf = f.app.workspace.getLeaf("tab"), count = f.fixture.leaves.length;
+    await leaf.openFile(f.app.vault.getAbstractFileByPath(path));
+    assert.equal(leaf.view.getViewType(), "echoink-workspace-preview"); assert.ok(leaf.view instanceof obsidian.exports.FileView);
+    assert.equal(leaf.view.file.path, path); assert.equal(leaf.getViewState().state.file, path);
+    for (let attempt = 0; attempt < 20 && !leaf.contentEl.querySelector("iframe")?.srcdoc.includes("file-list-fixture"); attempt++) await settle();
+    const frame = leaf.contentEl.querySelector("iframe"); assert.ok(frame?.srcdoc.includes("file-list-fixture"), "file lifecycle loads the actual HTML into the isolated preview");
+    assert.equal(f.fixture.leaves.length, count, "opening HTML must not spawn a second page from file-open");
+    await f.plugin.openWorkspacePreview(path); await leaf.opening;
+    assert.equal(f.fixture.leaves.length, count, "the tool preview action reuses the file-backed view");
+    await leaf.openFile(f.app.vault.getAbstractFileByPath(outsidePath));
+    assert.equal(leaf.view.file.path, outsidePath); assert.equal(leaf.contentEl.querySelector("iframe"), null);
+    assert.match(leaf.contentEl.textContent, /只能预览 EchoInk\/工作区内/u); assert.ok(!reads.includes(outsidePath), "outside HTML is never read by the preview service");
+    assert.equal(frame.isConnected, false); assert.equal(frame.hasAttribute("srcdoc"), false, "file unload destroys executable preview content");
+  } finally { await f.close(); }
+});
+
 await test("native iPad first category waits for one initial mount and preserves the independent Agent pane", async () => {
   const f = await nativeMountFixture(true), gate = mountGate();
   await f.plugin.openIPadAgent({ kind: "agent", agentId: "sol" });
@@ -1072,7 +1096,7 @@ await test("mobile identity persists the same temporary key when SecretStorage r
 });
 
 for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, { isMobileApp: true, isMobile: false, isTablet: true }]) await test(`production mobile bundle initializes without Node: ${platform.isTablet ? "tablet desktop UI" : "phone"}`, async () => {
-  const code = productionCode; const host = createHost(); const imported = []; const commands = [];
+  const code = productionCode; const host = createHost(); const imported = []; const commands = [], extensions = [];
   class Plugin {
     constructor() { this.app = host.app; this.manifest = { id: "codex-echoink", dir: "plugin" }; }
     async loadData() { return { desktopUnknown: { keep: true } }; }
@@ -1084,17 +1108,19 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
     registerDomEvent() {}
     registerInterval(id) { this.interval = id; }
     registerView(type, factory) { this.factory = factory; }
+    registerExtensions(values, type) { extensions.push({ values: [...values], type }); }
     addRibbonIcon() { return dom.window.document.createElement("button"); }
     addCommand(command) { commands.push(command.id); }
   }
   class Component {}
   const exports = { exports: {} };
   const context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
+    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, FileView: obsidian.exports.FileView, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   for (const id of ["insert-gallery", "group-selected-images", "split-gallery"]) assert.ok(commands.includes(id), `Mobile gallery command missing: ${id}`);
   assert.ok(commands.includes("open-echoink-mobile")); assert.ok(plugin.store); assert.equal(plugin.settings.apiProviders.length, 0);
+  assert.ok(extensions.some(entry => entry.values.includes("html") && entry.type === "echoink-workspace-preview"), "HTML must have a registered FileView rather than relying on file-open");
   assert.ok(imported.every(id => id === "obsidian")); assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
   const initialProfile = await plugin.services.readAgentProfile();
   const savedProfile = await plugin.services.saveAgentProfile({ identity: { displayName: "生产墨墨😀", avatar: { kind: "preset", presetId: "lin" } }, templateId: "executor" }, initialProfile.version);
@@ -1126,6 +1152,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
       registerEditorExtension() {} registerMarkdownPostProcessor() {} registerEvent() {} register() {} registerDomEvent() {}
       registerInterval(id) { this.interval = id; }
       registerView(type, factory) { views.push(type); factories.set(type, factory); }
+      registerExtensions() {}
       addRibbonIcon() { return dom.window.document.createElement("button"); } addCommand(command) { commands.push(command.id); }
     }
     class NativeItemView {
@@ -1133,7 +1160,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
       async open(parent) { parent.append(this.containerEl); await this.onOpen(); }
     }
     const exports = { exports: {} }, context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
+      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, FileView: obsidian.exports.FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
     });
     vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports, plugin = new MobilePlugin();
     try {
@@ -1179,6 +1206,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
   });
 }
 
-await mobileStartupConflictScenarios({ code: productionCode, dom, test });
+await mobileStartupConflictScenarios({ code: productionCode, dom, test, FileView: obsidian.exports.FileView });
 
 console.log(`${passed} mobile integration checks passed (real Pi Agent; Provider and Obsidian API fixtures).`);
+await import("./mobile-expert-tests.mjs");

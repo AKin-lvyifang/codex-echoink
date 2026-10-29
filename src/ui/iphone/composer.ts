@@ -1,3 +1,4 @@
+import { isAgentHired, isExpertAgent } from "../../agents/persona";
 import { setIcon } from "obsidian";
 import type { TaskDraft } from "../../agents/task-workspace";
 import type { MobilePermission } from "../../mobile/store";
@@ -128,6 +129,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
   const iconButton = (label: string, icon: string, action: () => void | Promise<void>) => {
     const button = iPhoneAction(ctx, "", action, icon); button.classList.add("ip-composer-icon"); button.setAttribute("aria-label", label); return button;
   };
+  const currentAgent = () => host.settings().agentRegistry.agents.find(agent => agent.id === (agentId ?? (taskId ? host.store.getSession(taskId)?.agentId : undefined)));
   const open = (title: string, body: HTMLElement) => ctx.shell.openSheet({ title, content: body });
   const choose = async (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission) => { await update(change, workspacePermission); if (!disposed) { ctx.shell.closeSheet(); refresh(); } };
   const row = (body: HTMLElement, label: string, action: () => void | Promise<void>, selected = false) => {
@@ -147,7 +149,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
   };
   bar.append(iconButton("添加到任务", "plus", () => {
     const body = shellElement(document, "div", "ip-picker"); row(body, "引用笔记", notes);
-    row(body, "选择 Skill", () => {
+    if (!isExpertAgent(currentAgent())) row(body, "选择 Skill", () => {
       const skills = shellElement(document, "div", "ip-picker");
       row(skills, "不使用 Skill", () => choose(draft => { draft.selectedSkill = null; }), readDraft().selectedSkill === null);
       void host.services.capabilities.listSkills().then(items => {
@@ -232,7 +234,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
     if (provider && selected) { const brand = shellElement(document, "span", "ip-brand"); renderProviderBrandIcon(brand, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom"); visible.append(brand); }
     visible.append(shellElement(document, "span", "ip-model-label", selected?.displayName || selected?.id || "配置模型")); model.setAttribute("aria-label", `选择模型：${selected?.displayName || selected?.id || "未配置"}`);
     permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === effectivePermission())?.[1]}`);
-    send.disabled = sending || !!state?.resuming || !input.value.trim(); send.setAttribute("aria-busy", String(sending));
+    send.disabled = sending || !!state?.resuming || !input.value.trim() || !isAgentHired(currentAgent()); send.setAttribute("aria-busy", String(sending));
     send.hidden = !!state?.busy && !input.value.trim() && state?.interaction?.status !== "pending";
     stop.hidden = (!state?.busy && !state?.resuming) || state?.interaction?.status === "pending"; stop.disabled = stopping; stop.setAttribute("aria-label", state?.resuming ? "取消继续" : "停止当前任务");
     status.textContent = state?.queuedCount ? state.paused ? `已暂停 ${state.queuedCount} 条` : `排队 ${state.queuedCount} 条` : ""; status.hidden = !status.textContent;
@@ -242,7 +244,7 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
       references.append(iPhoneAction(ctx, note, () => host.openNote(note), "file-text"));
       references.append(iconButton("移除笔记引用", "x", () => choose(value => { value.noteMentions = []; })));
     }
-    if (draft.selectedSkill) { references.append(shellElement(document, "span", "ip-composer-skill", draft.selectedSkill.name)); references.append(iconButton("移除 Skill", "x", () => choose(value => { value.selectedSkill = null; }))); }
+    if (draft.selectedSkill && !isExpertAgent(currentAgent())) { references.append(shellElement(document, "span", "ip-composer-skill", draft.selectedSkill.name)); references.append(iconButton("移除 Skill", "x", () => choose(value => { value.selectedSkill = null; }))); }
     references.hidden = !references.childNodes.length;
   };
   input.addEventListener("input", () => { void saveText(input.value).catch(showFailure); refresh(); });

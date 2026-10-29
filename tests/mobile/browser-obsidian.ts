@@ -60,7 +60,8 @@ export function setTooltip(element: HTMLElement, content: string, options?: { pl
 // Mobile help uses its tappable panel. Desktop native rendering requires Obsidian.
 export function displayTooltip(_element: HTMLElement, _content: string | DocumentFragment): void {}
 
-export { FixtureTFile as TFile } from "./host.mjs";
+import { FixtureTFile } from "./host.mjs";
+export { FixtureTFile as TFile };
 export { parse as parseYaml } from "yaml";
 export class TFolder {
   path = ""; name = ""; children: unknown[] = [];
@@ -75,6 +76,7 @@ export class Plugin extends Component {
   private domEvents: (() => void)[] = [];
   constructor(public app: any, public manifest: any) { super(); installCurrentObsidianDom(); }
   registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
+  registerExtensions(extensions: string[], type: string) { this.app.workspace.registerExtensions(extensions, type); }
   registerEditorExtension() {}
   registerMarkdownPostProcessor() {}
   async saveData(_data: unknown) {}
@@ -90,6 +92,21 @@ export class View {
   registerDomEvent(element: any, name: string, cb: any, options?: any) { element.addEventListener(name, cb, options); }
 }
 export class ItemView extends View {}
+/** Exercise the host file lifecycle rather than treating FileView as an ItemView alias. */
+export class FileView extends ItemView {
+  file: FixtureTFile | null = null;
+  getState() { return this.file ? { file: this.file.path } : {}; }
+  async setState(state: { file?: string }, _result?: unknown) {
+    const file = typeof state.file === "string" ? this.app.vault.getAbstractFileByPath(state.file) : null;
+    if (file?.path === this.file?.path) return;
+    if (this.file) await this.onUnloadFile(this.file);
+    this.file = file && typeof file.extension === "string" ? file : null;
+    if (this.file) await this.onLoadFile(this.file);
+  }
+  async onLoadFile(_file: FixtureTFile) {}
+  async onUnloadFile(_file: FixtureTFile) {}
+  async onClose() { if (this.file) await this.onUnloadFile(this.file); this.file = null; }
+}
 
 export class Modal {
   contentEl: HTMLElement; modalEl: HTMLElement; titleEl: HTMLElement; containerEl: HTMLElement;
@@ -114,6 +131,7 @@ export class Notice { constructor(text: string, _timeout?: number) { console.inf
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
 installObsidianDom(window);
 for (const owner of [HTMLElement.prototype, SVGElement.prototype]) {
+  if (typeof (owner as any).instanceOf === "function") continue;
   (owner as any).instanceOf = function(type: new (...args: any[]) => unknown) {
     const view = this.ownerDocument?.defaultView;
     const local = view?.[type.name] ?? type;
@@ -121,18 +139,18 @@ for (const owner of [HTMLElement.prototype, SVGElement.prototype]) {
   };
 }
 const prototype = HTMLElement.prototype as any;
-(SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };
-prototype.empty = function() { this.replaceChildren(); };
-prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
-prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };
-prototype.setText = function(text: string) { this.textContent = text; };
-prototype.createEl = function(tag: string, opts: any = {}) { const element = this.ownerDocument.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; if (opts.value !== undefined) (element as HTMLInputElement).value = opts.value; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
-prototype.createDiv = function(opts: any = {}) { return this.createEl("div", typeof opts === "string" ? { cls: opts } : opts); };
-prototype.createSpan = function(opts: any = {}) { return this.createEl("span", opts); };
+if (typeof (SVGElement.prototype as any).addClass !== "function") (SVGElement.prototype as any).addClass = function(...names: string[]) { this.classList.add(...names); };
+if (typeof prototype.empty !== "function") prototype.empty = function() { this.replaceChildren(); };
+if (typeof prototype.addClass !== "function") prototype.addClass = function(...names: string[]) { this.classList.add(...names); };
+if (typeof prototype.removeClass !== "function") prototype.removeClass = function(...names: string[]) { this.classList.remove(...names); };
+if (typeof prototype.setText !== "function") prototype.setText = function(text: string) { this.textContent = text; };
+if (typeof prototype.createEl !== "function") prototype.createEl = function(tag: string, opts: any = {}) { const element = this.ownerDocument.createElement(tag); element.className = opts.cls ?? ""; element.textContent = opts.text ?? ""; if (opts.value !== undefined) (element as HTMLInputElement).value = opts.value; for (const [key, value] of Object.entries(opts.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
+if (typeof prototype.createDiv !== "function") prototype.createDiv = function(opts: any = {}) { return this.createEl("div", typeof opts === "string" ? { cls: opts } : opts); };
+if (typeof prototype.createSpan !== "function") prototype.createSpan = function(opts: any = {}) { return this.createEl("span", opts); };
 export { default as moment } from "moment";
 
-prototype.toggleClass = function(name: string, force: boolean) { this.classList.toggle(name, force); };
-prototype.setAttr = function(name: string, value: string) { this.setAttribute(name, value); };
+if (typeof prototype.toggleClass !== "function") prototype.toggleClass = function(name: string, force: boolean) { this.classList.toggle(name, force); };
+if (typeof prototype.setAttr !== "function") prototype.setAttr = function(name: string, value: string) { this.setAttribute(name, value); };
 export function normalizePath(path: string) { return path.replace(/\\/g, "/").replace(/\/+/g, "/"); }
 export class WorkspaceLeaf {}
 export class Setting {

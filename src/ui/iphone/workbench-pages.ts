@@ -1,3 +1,5 @@
+import { isAgentHired } from "../../agents/persona";
+import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { formatMobileWorkbenchDate } from "../../mobile/workbench-format";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../../agents/types";
@@ -16,7 +18,7 @@ export { createAgentFormPage } from "./agent-form";
 function agentStrip(ctx: IPhonePageContext, current?: string): HTMLElement {
   const strip = el(ctx.document, "nav", "ip-agent-strip"); strip.setAttribute("aria-label", "Agent");
   const tasks = iphoneTasks(ctx.host.store.state.sessions);
-  for (const agent of ctx.host.settings().agentRegistry.agents) {
+  for (const agent of ctx.host.settings().agentRegistry.agents.filter(isAgentHired)) {
     const mine = tasks.filter(task => task.agentId === agent.id);
     const waiting = mine.filter(task => iphoneTaskStatus(task) === "waiting").length;
     const interrupted = mine.some(task => iphoneTaskStatus(task) === "interrupted");
@@ -38,7 +40,12 @@ function agentStrip(ctx: IPhonePageContext, current?: string): HTMLElement {
     button.addEventListener("click", () => { if (current !== agent.id) void ctx.navigate({ kind: "agent", agentId: agent.id }, !!current).catch(error => ctx.error(error)); });
     strip.append(button);
   }
-  strip.append(shellIconButton(ctx.document, "新建 Agent", "user-plus", () => { void ctx.navigate({ kind: "agent-form" }).catch(error => ctx.error(error)); }));
+  strip.append(shellIconButton(ctx.document, "新建 Agent", "user-plus", () => {
+    if (!ctx.host.services.openExpertHall) { void ctx.navigate({ kind: "agent-form" }).catch(ctx.error); return; }
+    ctx.shell.openSheet({ title: "添加 Agent", content: mobileAgentCreationChoice(ctx.document, {
+      create: () => ctx.navigate({ kind: "agent-form" }), hire: () => ctx.host.services.openExpertHall(), close: () => ctx.shell.closeSheet(), error: ctx.error
+    }) });
+  }));
   return strip;
 }
 

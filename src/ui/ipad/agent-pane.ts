@@ -1,3 +1,5 @@
+import { isAgentHired } from "../../agents/persona";
+import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
@@ -134,7 +136,7 @@ export class IPadAgentPane {
     for (const task of tasks) this.projections.set(task.id, ipadTaskProjection([task]));
     const scroll = this.strip.scrollLeft, focused = (this.root.ownerDocument.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-agent-id]")?.dataset.agentId;
     this.strip.replaceChildren();
-    for (const agent of registry.agents) {
+    for (const agent of registry.agents.filter(isAgentHired)) {
       const mine = tasks.filter(task => task.agentId === agent.id), waiting = mine.filter(task => ipadTaskStatus(task) === "waiting").length;
       const interrupted = mine.some(task => ipadTaskStatus(task) === "interrupted"), running = mine.some(task => ipadTaskStatus(task) === "running"), unread = mine.some(ipadTaskUnread);
       const button = el(this.root.ownerDocument, "button", `pd-agent-avatar${this.currentAgent() === agent.id ? " is-selected" : ""}`); button.type = "button"; button.dataset.agentId = agent.id;
@@ -148,7 +150,12 @@ export class IPadAgentPane {
       button.addEventListener("click", () => { void this.navigate({ kind: "agent", agentId: agent.id }).catch(error => this.error(error)); }); this.strip.append(button);
     }
     const add = el(this.root.ownerDocument, "button", "pd-agent-add"); add.type = "button"; add.setAttribute("aria-label", "新建 Agent"); add.append(ipadIcon(this.root.ownerDocument, "user-plus"));
-    add.addEventListener("click", () => { void this.navigate({ kind: "agent-form" }).catch(error => this.error(error)); }); this.strip.append(add);
+    add.addEventListener("click", () => {
+      if (!this.host.services.openExpertHall) { void this.navigate({ kind: "agent-form" }).catch(error => this.error(error)); return; }
+      this.shell.openSheet({ title: "添加 Agent", content: mobileAgentCreationChoice(this.root.ownerDocument, {
+        create: () => this.navigate({ kind: "agent-form" }), hire: () => this.host.services.openExpertHall(), close: () => this.shell.closeSheet(), error: error => this.error(error)
+      }) });
+    }); this.strip.append(add);
     this.strip.scrollLeft = scroll;
     if (focused) Array.from(this.strip.querySelectorAll<HTMLElement>("[data-agent-id]")).find(node => node.dataset.agentId === focused)?.focus({ preventScroll: true });
   }

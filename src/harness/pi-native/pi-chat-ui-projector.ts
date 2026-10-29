@@ -19,7 +19,8 @@ import {
   summarizeProcessEvent
 } from "../../core/mapping";
 import { buildDiffSummary } from "../../core/diff-summary";
-import type { ChatMessage, StoredAttachment } from "../../settings/settings";
+import type { ChatMessage, StoredAttachment, WorkspaceArtifact } from "../../settings/settings";
+import { workspacePath } from "../../workspace/service";
 import { noteMentionReferencesFromPiContext } from "./pi-note-mentions";
 import {
   documentAttachmentsFromPiContext,
@@ -1965,7 +1966,7 @@ function toolMessage(input: {
       completedAt: input.completedAt
     };
   }
-  const privateCopy = input.privacySafe || input.maintenanceContext === true || input.status === "failed"
+  const privateCopy = isWorkspaceTool(input.toolName) || input.privacySafe || input.maintenanceContext === true || input.status === "failed"
     ? privacySafeKnowledgeToolCopy(input.toolName, input.status, input.result, input.resultText)
     : null;
   if (privateCopy) {
@@ -1988,6 +1989,7 @@ function toolMessage(input: {
       itemType: "dynamicToolCall",
       processKind: privateCopy.processKind,
       title: privateCopy.title,
+      workspaceArtifact: input.status === "completed" ? workspaceToolArtifact(input.toolName, input.toolCallId, input.result) : undefined,
       details: undefined,
       text: privateCopy.text,
       processOutput: output || undefined,
@@ -2694,9 +2696,27 @@ function exactPiToolDisplayTitle(toolName: string): string | undefined {
     knowledge_maintain: "整理知识关联", memory_search: "查看个人记忆",
     memory_read: "读取个人记忆", memory_write: "写入个人记忆",
     note_create: "创建笔记", note_update: "修改笔记", metadata_update: "修改笔记属性",
-    note_move: "移动笔记", note_delete: "删除笔记"
+    note_move: "移动笔记", note_delete: "删除笔记",
+    workspace_create: "新建工作区文件", workspace_read: "读取工作区", workspace_update: "修改工作区文件"
   };
   return titles[normalizedToolName(toolName)];
+}
+
+function isWorkspaceTool(toolName: string): boolean {
+  return ["workspace_create", "workspace_read", "workspace_update"].includes(normalizedToolName(toolName));
+}
+
+function workspaceToolArtifact(toolName: string, toolCallId: string, result: unknown): Readonly<WorkspaceArtifact> | undefined {
+  if (!isWorkspaceTool(toolName)) return undefined;
+  const outer = plainObject(result), details = plainObject(outer?.details) ?? outer;
+  if (outer?.isError === true || details?.source !== "echoink-workspace" || details.status !== "completed"
+    || details.truncated === true || details.toolCallId !== toolCallId || typeof details.path !== "string") return undefined;
+  try {
+    const path = workspacePath(details.path);
+    if (path !== details.path) return undefined;
+    if (details.previewPath !== undefined && (details.previewPath !== path || !/\.html$/iu.test(path))) return undefined;
+    return Object.freeze({ source: "echoink-workspace", path, ...(details.previewPath === path ? { previewPath: path } : {}) });
+  } catch { return undefined; }
 }
 
 function personalMemoryToolCopy(
@@ -3436,6 +3456,7 @@ function cloneView(current: Readonly<PiChatUiViewModel>): PiChatUiViewModel {
 function cloneProjectedMessage(message: Readonly<ChatMessage>): ChatMessage {
   return {
     ...message,
+    ...(message.workspaceArtifact ? { workspaceArtifact: { ...message.workspaceArtifact } } : {}),
     ...(message.approval ? { approval: { ...message.approval } } : {}),
     ...(message.attachments
       ? { attachments: message.attachments.map((attachment) => ({ ...attachment })) }
@@ -3704,7 +3725,7 @@ function privacySafeKnowledgeToolCopy(
   const inProgress = runtimeMessageStillActive(status);
   const metadata = piKnowledgeToolDisplayMetadata(toolName, result);
   const search = toolName === "knowledge_search" || toolName === "vault_search";
-  const read = toolName === "knowledge_read" || toolName === "note_read" || toolName === "explore_concept";
+  const read = toolName === "knowledge_read" || toolName === "note_read" || toolName === "explore_concept" || toolName === "workspace_read";
   const title = exactPiToolDisplayTitle(toolName) ?? toolName;
   let text = inProgress ? (search ? "查找中…" : read ? "读取中…" : "处理中…") : "";
   if (status === "completed") {

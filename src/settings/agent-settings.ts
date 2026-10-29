@@ -1,3 +1,4 @@
+import { isAgentHired } from "../agents/persona";
 import { type App, setIcon } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../agents/types";
 import { AgentEditorController } from "../ui/codex-view/agent-editor";
@@ -8,6 +9,7 @@ import { attachSettingsTooltip, createSettingsGroup, createSettingsNavigationRow
 
 export interface DesktopAgentSettingsHost extends Omit<AgentEditorHost, "onClose" | "backLabel" | "confirmLeave"> {
   readonly app?: Pick<App, "scope" | "keymap">;
+  openExpertHall?(): Promise<void>;
   setAgentModuleOwner(moduleId: AgentModuleId, agentId: string): Promise<void>;
 }
 export interface DesktopAgentSettingsNavigation {
@@ -50,10 +52,11 @@ export class DesktopAgentSettings {
     const root = this.summaryHost = parent.createDiv({ cls: "echoink-agent-settings" });
     const agents = createSettingsSection(root, { title: "Agent", surface: "flat" });
     const header = agents.querySelector<HTMLElement>(".echoink-settings-section-header")!;
+    const hire = createOriginButton(header, { text: this.text("聘请专家", "Hire an expert") }); hire.onclick = () => { void this.host.openExpertHall?.(); };
     const add = createOriginButton(header, { cls: "is-icon", attr: { "aria-label": this.text("新建 Agent", "New Agent"), "data-echoink-focus-key": "agent:new" } });
     setIcon(add, "plus"); add.onclick = () => this.open();
     const list = createSettingsGroup(agents); list.addClass("echoink-agent-settings-list");
-    for (const agent of this.host.settings.agentRegistry.agents) {
+    for (const agent of this.host.settings.agentRegistry.agents.filter(isAgentHired)) {
       const owned = AGENT_MODULE_IDS.filter(module => this.host.settings.agentRegistry.moduleOwners[module] === agent.id);
       const row = createSettingsNavigationRow(list, { title: agent.name, description: agent.position || undefined,
         focusKey: `agent:${agent.id}:edit`, onActivate: () => this.open(agent.id) });
@@ -79,7 +82,7 @@ export class DesktopAgentSettings {
       const initial = this.owner(module);
       const avatar = controls.createSpan({ cls: "echoink-agent-owner-avatar echoink-agent-settings-avatar", attr: { "aria-hidden": "true" } }); this.avatar(avatar, initial);
       const select = createOriginSelect(controls, { attr: { "aria-labelledby": label.id, "aria-label": this.text(`${this.moduleName(module)}负责人`, `${this.moduleName(module)} owner`), "data-echoink-focus-key": `agent:owner:${module}` } },
-        this.host.settings.agentRegistry.agents.map(agent => ({ value: agent.id, label: agent.name })), initial.id, this.host.app).element;
+        this.host.settings.agentRegistry.agents.filter(isAgentHired).map(agent => ({ value: agent.id, label: agent.name })), initial.id, this.host.app).element;
       select.disabled = this.pendingOwners.has(module);
       const status = row.createDiv({ cls: `echoink-agent-owner-status${this.ownerErrors.has(module) ? " is-error" : ""}`, text: this.ownerErrors.get(module) ?? "", attr: { role: "status", "aria-live": "polite" } });
       select.onchange = () => {
@@ -118,6 +121,7 @@ export class DesktopAgentSettings {
       backLabel: this.text("返回 Agent 设置", "Back to Agent settings"), confirmLeave: true,
       loadResources: () => this.host.loadResources(), getCapabilityAvailability: id => this.host.getCapabilityAvailability?.(id) ?? { available: true },
       saveAgent: (agent, modules, baseline) => this.host.saveAgent(agent, modules, baseline), deleteAgent: id => this.host.deleteAgent(id), getDeleteCounts: id => this.host.getDeleteCounts(id),
+      dismissExpert: id => host.dismissExpert!(id), showExpertAbout: id => host.showExpertAbout?.(id),
       onClose: id => {
         const focus = id ?? this.focusAgent;
         this.clearEditor();

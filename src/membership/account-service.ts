@@ -25,6 +25,8 @@ import { signProof, verifyLease } from "./crypto";
 import { sha256Hex } from "../utils/sha256";
 import { parseOfficialSkillCatalog, parseSkillDelivery, REMOTE_SKILL_IDS,
   type OfficialSkillCatalog, type SkillAuthorization, type SkillDeliveryResponse, type SkillPlatform } from "./skill-delivery";
+import { parseExpertCatalog, parseExpertDelivery, validExpertId,
+  type ExpertCatalog, type ExpertDeliveryResponse, type ExpertPlatform } from "../experts/contracts";
 
 const ERRORS: Record<string, string> = {
   AUTH_REQUIRED: "请重新登录账号。",
@@ -228,6 +230,46 @@ export class AccountService implements CapabilityAccess {
       }, operation);
       assert();
       return parseSkillDelivery(value, id);
+    } catch (error) {
+      assert();
+      if (error instanceof MembershipApiError && ["AUTH_REQUIRED", "ACCOUNT_DISABLED", "PRO_REQUIRED", "SUBSCRIPTION_EXPIRED", "REVOKED", "ENTITLEMENT_SCHEDULED", "DEVICE_REVOKED", "PROOF_INVALID"].includes(error.code)) {
+        ++this.generation;
+        this.clearLease();
+        if (error.code === "AUTH_REQUIRED") this.state = {};
+        else this.state.rights = { ...this.state.rights, state: error.code === "PRO_REQUIRED" ? "free"
+          : error.code === "SUBSCRIPTION_EXPIRED" ? "expired" : error.code === "ENTITLEMENT_SCHEDULED" ? "scheduled"
+          : error.code === "DEVICE_REVOKED" || error.code === "PROOF_INVALID" ? "device-required" : "revoked" };
+        this.refreshError = error.message;
+        await this.persist();
+      }
+      throw error;
+    }
+  }
+
+  async getExpertCatalog(): Promise<ExpertCatalog> {
+    const operation = this.operation();
+    if (!this.apiUrl) throw new MembershipApiError("SERVICE_UNAVAILABLE");
+    const result = await this.transport("/api/experts/catalog", "GET", undefined);
+    this.assertCurrent(operation);
+    return parseExpertCatalog(result, this.apiUrl);
+  }
+
+  async getExpertPackage(id: string, input: { pluginVersion: string; platform: ExpertPlatform; knownVersion?: string }): Promise<ExpertDeliveryResponse> {
+    if (!validExpertId(id)) throw new MembershipApiError("NOT_FOUND");
+    const operation = this.operation(), authorization = this.skillAuthorization(), deviceId = this.state.deviceId;
+    if (!authorization) throw new MembershipApiError("PRO_REQUIRED");
+    const assert = () => {
+      this.assertCurrent(operation);
+      const current = this.skillAuthorization();
+      if (!current || current.scope !== authorization.scope || current.session !== authorization.session || this.state.deviceId !== deviceId) throw new MembershipApiError("OPERATION_CANCELLED");
+    };
+    try {
+      const value = await this.call(`/api/experts/${encodeURIComponent(id)}/package`, "POST", {
+        deviceId, lease: this.state.lease, pluginVersion: input.pluginVersion, platform: input.platform,
+        ...(input.knownVersion ? { knownVersion: input.knownVersion } : {})
+      }, operation);
+      assert();
+      return parseExpertDelivery(value, id);
     } catch (error) {
       assert();
       if (error instanceof MembershipApiError && ["AUTH_REQUIRED", "ACCOUNT_DISABLED", "PRO_REQUIRED", "SUBSCRIPTION_EXPIRED", "REVOKED", "ENTITLEMENT_SCHEDULED", "DEVICE_REVOKED", "PROOF_INVALID"].includes(error.code)) {

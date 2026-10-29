@@ -1,11 +1,17 @@
 import * as assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import type {
   Api,
+  AssistantMessage,
+  AssistantMessageEvent,
   Context,
   ImageContent,
   Model
 } from "@earendil-works/pi-ai";
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { AssistantMessageEventStream, getSupportedThinkingLevels, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai/providers/faux";
+import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { ControlledVaultResourceLoader } from "../../harness/pi-native/controlled-resources";
 import {
   createPiNativeControlledProvider,
   createPiNativeModelFromCatalog,
@@ -28,6 +34,106 @@ export async function runPiNativeControlledProviderTests(): Promise<void> {
   await assertImageContentSurvivesControlledProviderProjection();
   await assertThrownOverflowRemainsVisibleToAgentSession();
   await assertUnknownProviderFailuresRemainSanitized();
+  await assertResponseRevocationStopsFauxStream();
+  await assertResponseFinalBoundaryFailsClosed();
+  await assertFauxStreamWithoutGuardIsUnchanged();
+}
+
+function guardedFauxFixture(assertResponseAllowed?: () => void) {
+  const config = providerConfig(), model = providerModel();
+  const faux = fauxProvider({ api: config.apiProtocol, provider: config.providerId,
+    models: [{ id: model.id, contextWindow: model.contextWindow, maxTokens: model.maxTokens }],
+    tokenSize: { min: 1, max: 1 }, tokensPerSecond: 100_000 });
+  faux.setResponses([fauxAssistantMessage("SAFEFORBIDDEN_RESPONSE_BODY")]);
+  const upstream: AssistantMessageEventStream[] = [];
+  const provider = createPiNativeControlledProvider({
+    config: { read: async () => structuredClone(config) }, model, assertResponseAllowed,
+    controlledStream: { authorityId: "response-guard-authority", storeSetId: "response-guard-store", stream: input => {
+      const stream = faux.provider.stream(input.model, input.context, input.options); upstream.push(stream); return stream;
+    } },
+    currentExecutionContext: () => ({ runId: "response-guard-run", conversationId: "response-guard-conversation", turnId: "response-guard-turn", correlationId: "response-guard-correlation" })
+  });
+  return { provider, model, upstream };
+}
+
+async function assertResponseRevocationStopsFauxStream(): Promise<void> {
+  let permitted = true, guardCalls = 0;
+  const fixture = guardedFauxFixture(() => { guardCalls++; if (!permitted) throw new Error("expert_package_expired_private_detail"); });
+  const stream = fixture.provider.stream(fixture.model, emptyContext(), {});
+  const events: AssistantMessageEvent[] = [];
+  for await (const event of stream) {
+    events.push(event);
+    if (event.type === "text_delta") { assert.equal(event.delta, "SAFE"); permitted = false; }
+  }
+  const result = await stream.result();
+  await Promise.all(fixture.upstream.map(source => source.result()));
+  assert.equal(events.filter(event => event.type === "text_delta").length, 1);
+  assert.equal(events.some(event => event.type === "done"), false);
+  assert.equal(events.at(-1)?.type, "error");
+  assert.equal(result.stopReason, "error"); assert.equal(result.errorMessage, "controlled_transport_failed");
+  assert.deepEqual(result.content, []);
+  assert.equal(JSON.stringify(events).includes("FORBIDDEN"), false, "later mutable upstream partials must not alter an already-forwarded snapshot");
+  assert.ok(guardCalls >= 4);
+}
+
+async function assertResponseFinalBoundaryFailsClosed(): Promise<void> {
+  const config = providerConfig(), model = providerModel(); let permitted = true;
+  class FinalBoundaryStream extends AssistantMessageEventStream {
+    async *[Symbol.asyncIterator](): AsyncGenerator<AssistantMessageEvent> {
+      yield { type: "done", reason: "stop", message: fauxAssistantMessage("FINAL_BODY_MUST_NOT_BE_ACCEPTED") };
+      permitted = false;
+    }
+  }
+  const provider = createPiNativeControlledProvider({ config: { read: async () => config }, model,
+    assertResponseAllowed: () => { if (!permitted) throw new Error("revoked_at_final_boundary"); },
+    controlledStream: { authorityId: "final-guard-authority", storeSetId: "final-guard-store", stream: () => new FinalBoundaryStream() },
+    currentExecutionContext: () => ({ runId: "final-guard-run", conversationId: "final-guard-conversation", turnId: "final-guard-turn", correlationId: "final-guard-correlation" })
+  });
+  const stream = provider.stream(model, emptyContext(), {}), events: AssistantMessageEvent[] = [];
+  for await (const event of stream) events.push(event);
+  assert.deepEqual(events.map(event => event.type), ["error"]);
+  const result = await stream.result(); assert.equal(result.stopReason, "error"); assert.deepEqual(result.content, []);
+}
+
+async function assertFauxStreamWithoutGuardIsUnchanged(): Promise<void> {
+  const fixture = guardedFauxFixture(), stream = fixture.provider.stream(fixture.model, emptyContext(), {});
+  const events: AssistantMessageEvent[] = [];
+  for await (const event of stream) events.push(event);
+  const result = await stream.result(); assert.equal(result.stopReason, "stop");
+  assert.equal(events.at(-1)?.type, "done");
+  assert.equal(events.filter(event => event.type === "text_delta").map(event => event.type === "text_delta" ? event.delta : "").join(""), "SAFEFORBIDDEN_RESPONSE_BODY");
+}
+
+/** Runs the real AgentSession persistence boundary with an offline faux stream. */
+export async function runPiNativeControlledProviderPersistenceTests(root: string): Promise<void> {
+  let permitted = true;
+  const fixture = guardedFauxFixture(() => { if (!permitted) throw new Error("expert_response_revoked"); });
+  const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false });
+  modelRuntime.registerNativeProvider(fixture.provider);
+  const sessionManager = SessionManager.create(root, root);
+  const resourceLoader = new ControlledVaultResourceLoader({ vaultRoot: root, systemPrompt: "Offline response authorization fixture." });
+  await resourceLoader.reload();
+  const { session } = await createAgentSession({ cwd: root, agentDir: root, modelRuntime, model: fixture.model, noTools: "all", sessionManager, resourceLoader,
+    settingsManager: SettingsManager.inMemory({ defaultProvider: fixture.model.provider, defaultModel: fixture.model.id, defaultThinkingLevel: "off", compaction: { enabled: false }, retry: { enabled: false }, packages: [], extensions: [], skills: [], prompts: [], themes: [], enableAnalytics: false }) });
+  const deltas: string[] = [];
+  const unsubscribe = session.subscribe(event => {
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") { deltas.push(event.assistantMessageEvent.delta); permitted = false; }
+  });
+  try {
+    await session.prompt("Offline guard test");
+    await Promise.all(fixture.upstream.map(source => source.result()));
+    const saved = sessionManager.getEntries().filter(entry => entry.type === "message").map(entry => entry.message)
+      .filter((message): message is AssistantMessage => message.role === "assistant");
+    assert.deepEqual(deltas, ["SAFE"]); assert.equal(saved.length, 1);
+    assert.equal(saved[0].stopReason, "error"); assert.deepEqual(saved[0].content, []);
+    assert.equal(JSON.stringify(sessionManager.getEntries()).includes("FORBIDDEN"), false);
+    const sessionFile = sessionManager.getSessionFile(); assert.ok(sessionFile);
+    assert.equal((await readFile(sessionFile, "utf8")).includes("FORBIDDEN"), false);
+    const reopened = SessionManager.open(sessionFile, root, root);
+    const replayed = reopened.getEntries().filter(entry => entry.type === "message").map(entry => entry.message)
+      .filter((message): message is AssistantMessage => message.role === "assistant");
+    assert.equal(replayed.length, 1); assert.equal(replayed[0].stopReason, "error"); assert.deepEqual(replayed[0].content, []);
+  } finally { unsubscribe(); session.dispose(); }
 }
 
 async function assertProtocolRequestLimitProjection(): Promise<void> {

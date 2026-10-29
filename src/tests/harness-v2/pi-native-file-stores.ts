@@ -19,6 +19,7 @@ import {
   knowledgeReferenceEntryDetails
 } from "../../knowledge-base/usage";
 import type { KnowledgeReference } from "../../knowledge-base/types";
+import { runProductRunSnapshotTests } from "../pi-native/product-run-snapshots";
 
 export async function runPiNativeFileStoreTests(): Promise<void> {
   assertKnowledgeReferenceContract();
@@ -294,6 +295,7 @@ export async function runPiNativeFileStoreTests(): Promise<void> {
       isStoreError("mapping-conflict")
     );
 
+    await runProductRunSnapshotTests(path.join(storageRootPath, "agent-snapshots"));
     const allFiles = await readdir(storageRootPath, { recursive: true });
     assert.equal(allFiles.some((name) => name.endsWith(".tmp")), false);
   } finally {
