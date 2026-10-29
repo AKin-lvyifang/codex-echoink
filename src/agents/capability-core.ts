@@ -59,7 +59,7 @@ const MODULE_SKILLS: Readonly<Record<string, AgentModuleCapability>> = {
 const BASE_TOOLS = new Set(["task_update", "user_question"]);
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
 const VAULT_TOOLS = new Set(["vault_search", "note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete"]);
-const KNOWLEDGE_TOOLS = new Set(["knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
+const KNOWLEDGE_TOOLS = new Set(["explore_concept", "knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
 const PATH_FIELDS = new Set(["path", "paths", "relativepath", "relativepaths", "vaultrelativepath", "vaultpath", "scopepath", "sourcepath", "sourcepaths", "targetpath", "targetpaths", "destinationpath", "folder", "directory", "dailypath", "recordpath", "file", "files", "filepath", "filepaths", "fileuri", "fileurl"]);
 export function isAgentCapabilityPathField(key: string): boolean { return PATH_FIELDS.has(key.replaceAll("_", "").replaceAll("-", "").toLowerCase()); }
 

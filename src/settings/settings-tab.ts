@@ -1,3 +1,4 @@
+import { renderMcpServerSettings } from "./mcp-server-settings";
 import { ownedDiv } from "../ui/owned-dom";
 import { isImeKeyEvent } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
@@ -4202,6 +4203,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     });
     if (Platform.isDesktopApp && activeTab === "mcp") {
+      this.membershipRowsDisposers.push(renderMcpServerSettings(body, this.plugin, () => this.openDesktopRoute({ tab: "account", focus: "account:benefits" })));
       const header = body.createDiv({ cls: "codex-resource-list-header" });
       const heading = new OriginSetting(header).setName(this.plugin.settings.settingsLanguage === "en" ? "Added" : "已添加").setHeading();
       heading.settingEl.addClass("codex-resource-group-title");

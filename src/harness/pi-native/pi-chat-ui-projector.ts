@@ -2689,7 +2689,7 @@ function toolItemType(toolName: string, args: unknown, result: unknown): string 
 
 function exactPiToolDisplayTitle(toolName: string): string | undefined {
   const titles: Readonly<Record<string, string>> = {
-    web_search: "联网搜索", knowledge_search: "检索知识库",
+    explore_concept: "查概念", web_search: "联网搜索", knowledge_search: "检索知识库",
     vault_search: "检索笔记", knowledge_read: "读取笔记", note_read: "读取笔记",
     knowledge_maintain: "整理知识关联", memory_search: "查看个人记忆",
     memory_read: "读取个人记忆", memory_write: "写入个人记忆",
@@ -3671,7 +3671,7 @@ export function piKnowledgeToolDisplayMetadata(toolName: string, result: unknown
       metadata.continuation = details.continuation === true;
     }
   }
-  if (["knowledge_search", "knowledge_read", "note_read"].includes(toolName)
+  if (["knowledge_search", "knowledge_read", "note_read", "explore_concept"].includes(toolName)
     && Array.isArray(details.references)) {
     const references = details.references.slice(0, 100).flatMap((value) => {
       const reference = plainObject(value);
@@ -3704,7 +3704,7 @@ function privacySafeKnowledgeToolCopy(
   const inProgress = runtimeMessageStillActive(status);
   const metadata = piKnowledgeToolDisplayMetadata(toolName, result);
   const search = toolName === "knowledge_search" || toolName === "vault_search";
-  const read = toolName === "knowledge_read" || toolName === "note_read";
+  const read = toolName === "knowledge_read" || toolName === "note_read" || toolName === "explore_concept";
   const title = exactPiToolDisplayTitle(toolName) ?? toolName;
   let text = inProgress ? (search ? "查找中…" : read ? "读取中…" : "处理中…") : "";
   if (status === "completed") {

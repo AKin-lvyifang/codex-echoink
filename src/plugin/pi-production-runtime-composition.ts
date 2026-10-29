@@ -1,3 +1,5 @@
+import { PiConceptToolSecurity, createPiConceptTool } from "../harness/pi-native/pi-concept-tool";
+import { createConceptExplorerPort } from "../knowledge-base/obsidian-concept-explorer";
 import { AgentCapabilityDeniedError } from "../agents/capability-denial";
 import type { AgentCapabilityDecision } from "../agents/capability-core";
 import { requireInlineGeneration } from "../inline-agent/access";
@@ -2373,6 +2375,24 @@ async function createProductionAgentSession(input: {
     },
     egress: new EchoInkVaultToolEgressPolicy()
   });
+  const conceptSecurity = new PiConceptToolSecurity({
+    port: createConceptExplorerPort(input.plugin.app, input.knowledgeAgentIndex, input.knowledgeAgentIndex.bodySearch!),
+    identity: () => input.input.currentToolExecutionContext(),
+    assertAllowed: args => assertToolAllowed("explore_concept", args),
+    scopeKey: () => input.knowledgeAgentIndex.bodySearch!.scopeKey(),
+    canMemory: async () => {
+      const context = await liveCapabilityContext();
+      return input.plugin.settings.memory.useLongTermMemory !== false
+        && input.input.currentWorkspaceAccess?.()?.memoryMode !== "no_memory"
+        && input.input.currentMemoryTurnContext?.()?.memoryMode === "normal"
+        && checkAgentCapability(context, "memory", "read").allowed;
+    },
+    searchMemory: async query => {
+      const execution = input.input.currentToolExecutionContext();
+      return input.personalMemory.search({ query, limit: 3 }, { ...execution, memoryMode: "normal" }, { maxResultChars: 1800 });
+    }
+  });
+  const conceptTool = createPiConceptTool(conceptSecurity);
   const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity, async call => {
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.resourceId === call.resourceId && tool.toolName === call.toolName);
     if (!descriptor || !await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor)) throw new Error("agent_capability_mcp_admission_revoked");
@@ -2444,6 +2464,7 @@ async function createProductionAgentSession(input: {
       userQuestionSecurity,
       personalMemorySecurity,
       knowledgeReadSecurity,
+      conceptSecurity,
       obsidianSecurity,
       todoSecurity,
       englishDiarySecurity,
@@ -2634,13 +2655,15 @@ async function createProductionAgentSession(input: {
     userQuestionTool,
     ...personalMemoryTools,
     ...knowledgeReadTools,
+    conceptTool,
     ...mcpSnapshot.customTools
   ];
   createControlledPiKnowledgeToolRegistration([
     ...vaultTools,
     maintenanceTool,
-    ...knowledgeReadTools
-  ]);
+    ...knowledgeReadTools,
+    conceptTool
+  ], "knowledge_maintain", [...PI_KNOWLEDGE_READ_TOOL_IDS, "explore_concept"]);
   const toolRegistration = createControlledPiToolRegistration(registeredTools, assertToolAllowed);
   const settingsManager = SettingsManager.inMemory({
     defaultProvider: model.provider,
@@ -2697,9 +2720,11 @@ async function createProductionAgentSession(input: {
     userQuestionTool.name,
     ...(configured.toolCalling ? [...PI_PERSONAL_MEMORY_TOOL_IDS] : []),
     ...PI_KNOWLEDGE_READ_TOOL_IDS,
+    "explore_concept",
     ...mcpSnapshot.toolNames
   ]);
   const planToolNames = [
+    "explore_concept",
     "todo_query",
     "pdf_reading_query",
     WEB_SEARCH_TOOL_NAME,

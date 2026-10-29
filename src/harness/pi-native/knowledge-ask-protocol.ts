@@ -4,7 +4,7 @@ import type { KnowledgeRelationPage } from "../../knowledge-base/knowledge-relat
 
 export const KNOWLEDGE_ASK_PROTOCOL = [
   "知识阅读建议：根据当前问题自主选择资料。按需核对对象、期间、适用条件和资料性质；上下文足够时直接推进，有歧义可声明合理假设或分情况回答，确实影响结论且无法合理处理时再澄清。",
-  "路径和关系列表是线索；实际交付并核验的原文可直接作为依据，已覆盖当前问题时无需为重复确认而再读。片段外的内容及链接目标仍属未读；按需只补与当前问题有关的缺口，可继续搜索、按段读取或用 knowledge_search mode=related 查看关联。来源上的 hasMore 只表示文件还有其他正文，不表示必须读完整篇。",
+  "路径和关系列表是线索；实际交付并核验的原文可直接作为依据，已覆盖当前问题时无需为重复确认而再读。片段外的内容及链接目标仍属未读；按需只补与当前问题有关的缺口，可继续搜索、按段读取或用 explore_concept 按概念和别名查看概念页与关联，knowledge_search mode=related 查看关联。来源上的 hasMore 只表示文件还有其他正文，不表示必须读完整篇。",
   "按问题选择原始依据、实施结果、限制、反例或版本；普通链接不等于支持或替代关系。修改时间和版本号不能单独证明哪个值可靠。判断应说明根据，推断与原文事实区分。",
   "计算时给出采用值、单位和公式，区分活动、期间、实际与预算。数据不全可以给出条件结果或估算并说明缺口，不补造数据。",
   "由你判断何时回答，不必完成固定读数、清空关联候选或取得通过信号。缺字段、断链、歧义或单条来源变化只影响相应材料；可换来源、重读或缩小结论。引用实际收到的正文，不声称穷尽知识库。"
@@ -34,7 +34,7 @@ export function knowledgeReadingState(
   };
   initial.forEach(addRead);
   for (const message of messages) {
-    if (message.role !== "toolResult" || !["knowledge_read", "knowledge_search"].includes(message.toolName)) continue;
+    if (message.role !== "toolResult" || !["knowledge_read", "knowledge_search", "explore_concept"].includes(message.toolName)) continue;
     const details = message.details as Record<string, unknown> | undefined;
     if (message.isError || details?.status !== "completed" || details.truncated === true) {
       failures.push(typeof details?.errorCode === "string"
