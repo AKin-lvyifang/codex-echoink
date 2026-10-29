@@ -15,9 +15,9 @@ body[data-echoink-theme] .echoink-iphone {
   -webkit-font-smoothing: antialiased;
 }
 .echoink-iphone.em-large-text { font-size: calc(var(--font-text-size, 16px) * 1.125); }
-.echoink-iphone .eis-page:has(> .eis-scroll > .eis-content > .ip-legacy) > .eis-scroll { display: flex; overflow: hidden; }
-.echoink-iphone .eis-content:has(> .ip-legacy) { display: flex; flex: 1; min-height: 0; padding: 0; }
+.echoink-iphone .eis-page.has-echoink-iphone-legacy-page.has-echoink-iphone-legacy-page.has-echoink-iphone-legacy-page > .eis-scroll { display: flex; overflow: hidden; }
+.echoink-iphone .eis-content.has-echoink-iphone-legacy { display: flex; flex: 1; min-height: 0; padding: 0; }
 .echoink-iphone .ip-legacy { flex: 1; min-width: 0; min-height: 0; height: 100%; --view-bottom-spacing: 0px; }
 .echoink-iphone .ip-file-row { display: block; width: 100%; min-height: 44px; text-align: left; border: 0; border-bottom: 1px solid var(--eis-line); background: transparent; box-shadow: none; white-space: normal; }
 .echoink-iphone .ip-model-heading { display: flex; align-items: center; gap: 8px; }
-.echoink-iphone .eis-page:has(.ip-task-detail) > .eis-header { border-bottom: 1px solid var(--eis-line); }
+.echoink-iphone .eis-page.has-echoink-iphone-task > .eis-header { border-bottom: 1px solid var(--eis-line); }

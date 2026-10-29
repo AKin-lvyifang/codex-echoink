@@ -172,6 +172,6 @@
 .echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-settings-detail .echoink-ipad-title { font-size: 18px; }
 /* The wide category root follows the Demo's 18px inset + 6px title margin.
    Its content starts after that title, without adding a second top inset. */
-.echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-header:has(> .echoink-ipad-back[hidden]) { min-height: 53px; padding-top: 24px; padding-bottom: 2px; }
-.echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-page:has(> .echoink-ipad-header > .echoink-ipad-back[hidden]) > .echoink-ipad-content { padding-top: 0; }
+.echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-header.has-echoink-hidden-ipad-back.has-echoink-hidden-ipad-back { min-height: 53px; padding-top: 24px; padding-bottom: 2px; }
+.echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-page.has-echoink-root-ipad-header.has-echoink-root-ipad-header.has-echoink-root-ipad-header > .echoink-ipad-content { padding-top: 0; }
 @media (prefers-reduced-motion: reduce) { .echoink-ipad .echoink-ipad-page-push { animation: none; } }

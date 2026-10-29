@@ -3,8 +3,8 @@
 .echoink-iphone .ip-cap-tile.is-large { flex-basis: 40px; width: 40px; height: 40px; border-radius: 10px; }
 .echoink-iphone .ip-cap-tile.is-large .ip-icon, .echoink-iphone .ip-cap-tile.is-large .ip-icon svg { width: 24px; height: 24px; }
 .echoink-iphone .ip-cap-skill-row { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0 4px 0 12px; border-bottom: 1px solid var(--ip-line); }
-.echoink-iphone .ip-cap-skill-row:not(:has(~ .ip-cap-skill-row)) { border-bottom: 0; }
-.echoink-iphone .ip-cap-skill-row:has(.ip-cap-skill-main:hover), .echoink-iphone .ip-cap-skill-row:has(.ip-cap-skill-main:focus-visible) { background: var(--background-modifier-hover); }
+.echoink-iphone .ip-cap-skill-row:not(.has-echoink-later-iphone-skill) { border-bottom: 0; }
+.echoink-iphone .ip-cap-skill-row.has-echoink-hovered-iphone-skill.has-echoink-hovered-iphone-skill, .echoink-iphone .ip-cap-skill-row.has-echoink-focused-iphone-skill.has-echoink-focused-iphone-skill { background: var(--background-modifier-hover); }
 .echoink-iphone .ip-capabilities button.ip-cap-skill-main { display: flex; align-items: center; flex: 1 1 auto; gap: 12px; width: 100%; min-width: 0; min-height: 58px; height: auto; margin: 0; padding: 6px 0; border: 0; border-radius: 0; background: transparent; color: var(--ip-ink); box-shadow: none; font: inherit; text-align: left; white-space: normal; }
 .echoink-iphone .ip-cap-skill-main .ip-settings-detail { margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .echoink-iphone .ip-cap-skill-head { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
