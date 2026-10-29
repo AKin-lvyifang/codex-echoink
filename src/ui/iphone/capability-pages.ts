@@ -1,3 +1,5 @@
+import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
+import { safeSkillCompareUrl } from "../../membership/skill-delivery";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -55,7 +57,7 @@ export class IPhoneCapabilityPages {
         if (!skills.length) this.empty(group, "还没有我的 Skill");
         for (const skill of skills) {
           const row = el(ctx.document, "div", "ip-cap-skill-row"), main = el(ctx.document, "button", "ip-cap-skill-main"); main.type = "button";
-          main.append(this.tile(skill.builtin ? skillIcon(skill.id) : "sparkles"));
+          main.append(this.tile(skill.locked ? "lock" : skill.builtin ? skillIcon(skill.id) : "sparkles"));
           const label = el(ctx.document, "span", "ip-settings-label");
           label.append(el(ctx.document, "span", "ip-settings-name", skill.name), el(ctx.document, "span", "ip-settings-detail", this.skillDescription(skill)));
           main.append(label); main.addEventListener("click", () => { void this.skill(skill.id).catch(ctx.error); }); row.append(main); group.append(row);
@@ -98,6 +100,17 @@ export class IPhoneCapabilityPages {
       head.append(this.tile(snapshot.builtin ? skillIcon(id) : "sparkles", true));
       const labels = el(ctx.document, "div", "ip-settings-label");
       labels.append(el(ctx.document, "div", "ip-cap-skill-title", snapshot.name), el(ctx.document, "div", "ip-cap-skill-description", snapshot.description)); head.append(labels); body.append(head);
+      if (snapshot.remote || snapshot.readonly) {
+        const english = ctx.host.settings().settingsLanguage === "en";
+        const info = settingsGroup(ctx, body);
+        settingsRow(ctx, info, "PRO", { literal: true, value: snapshot.locked ? (english ? "PRO required" : "需要 PRO") : (snapshot.contentVersion ?? "PRO"), literalValue: true });
+        const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
+        if (compareUrl) settingsRow(ctx, info, english ? "View examples" : "查看对比示例", { literal: true, action: () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); } });
+        else settingsRow(ctx, info, english ? "Comparison examples are not available yet." : "对比示例尚未提供。", { literal: true });
+        const disclosure = el(ctx.document, "details", ""); disclosure.append(el(ctx.document, "summary", "", english ? "Downloads and offline use" : "下载与离线使用"), el(ctx.document, "p", "ip-settings-detail", skillDeliveryNotice(english))); body.append(disclosure);
+        if (!snapshot.locked) { const content = el(ctx.document, "div", "ip-cap-skill-body markdown-rendered"); body.append(content); ctx.host.renderMarkdown(snapshot.content, content); }
+        return;
+      }
       const info = settingsGroup(ctx, body);
       if (snapshot.mobileAvailable) settingsSwitch(ctx, info, "启用", () => snapshot!.enabled, async value => {
         busy = true;
@@ -325,7 +338,7 @@ export class IPhoneCapabilityPages {
   private tile(icon: string, large = false): HTMLElement { const tile = el(this.ctx.document, "span", `ip-cap-tile${large ? " is-large" : ""}`); tile.append(iphoneIcon(this.ctx.document, icon)); return tile; }
   private text(zh: string, en: string): string { return this.ctx.host.settings().settingsLanguage === "en" ? en : zh; }
   private notice(message: string): void { new Notice(settingsText(this.ctx, message)); }
-  private skillDescription(skill: MobileSkillSummary): string { return skill.mobileAvailable ? `${this.text(`${skill.agents.filter(agent => agent.allowed).length} 个 Agent 能用`, `${skill.agents.filter(agent => agent.allowed).length} Agents`)} · ${skill.description}` : skill.unavailableReason || settingsText(this.ctx, "只能在电脑上用"); }
+  private skillDescription(skill: MobileSkillSummary): string { return skill.locked ? skill.description : skill.mobileAvailable ? `${this.text(`${skill.agents.filter(agent => agent.allowed).length} 个 Agent 能用`, `${skill.agents.filter(agent => agent.allowed).length} Agents`)} · ${skill.description}` : skill.unavailableReason || settingsText(this.ctx, "只能在电脑上用"); }
   private mcpStatus(draft: MobileMcpDraft): string {
     if (draft.readonly || draft.transport === "stdio") return settingsText(this.ctx, "只能在电脑上用");
     if (draft.status === "connected") return settingsText(this.ctx, "已连接");

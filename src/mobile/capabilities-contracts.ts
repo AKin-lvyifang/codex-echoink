@@ -7,6 +7,7 @@ export interface MobileSkillSummary {
   agents: { id: string; name: string; allowed: boolean }[];
   agentsVersion: string;
   usageCount?: number; lastUsedAt?: number | null;
+  remote?: boolean; locked?: boolean; readonly?: boolean; compareUrl?: string | null; contentVersion?: string;
 }
 export interface MobileSkillSnapshot extends MobileSkillSummary { content: string; version: string }
 export type MobileMcpStatus = "missing" | "configured" | "connected" | "failed" | "desktop-only" | "credential-required";

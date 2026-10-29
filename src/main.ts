@@ -46,6 +46,7 @@ import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
 import type { AccountService } from "./membership/account-service";
+import { SkillContentResolver, adapterSkillContentFiles } from "./harness/resources/skill-content";
 import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store";
 import { hasProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
@@ -221,6 +222,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private todoReminderService: TodoReminderService | null = null;
   private resourceCatalogService: EchoInkResourceCatalogService | null = null;
   private skillRuntimeCoordinator: SkillRuntimeCoordinator | null = null;
+  private skillContentResolver: SkillContentResolver | null = null;
   private autoArchive: ConversationAutoArchive | null = null;
   private agentRegistryWriteTail: Promise<void> = Promise.resolve();
   private readonly agentRegistryListeners = new Set<() => void>();
@@ -2026,10 +2028,18 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!this.skillRuntimeCoordinator) {
       this.skillRuntimeCoordinator = new SkillRuntimeCoordinator(
         this.getVaultPath(),
-        { reviewLlm: () => this.createSkillReviewLlmPort() }
+        { reviewLlm: () => this.createSkillReviewLlmPort(), content: this.getSkillContentResolver() }
       );
     }
     return this.skillRuntimeCoordinator;
+  }
+  getSkillContentResolver(): SkillContentResolver {
+    if (!this.skillContentResolver) this.skillContentResolver = new SkillContentResolver({
+      files: adapterSkillContentFiles(this.app.vault.adapter),
+      cacheRoot: `${path.relative(this.getVaultPath(), pluginDataDir(this.getVaultPath(), this.getPluginDataDirName())).replace(/\\/gu, "/")}/skill-cache`,
+      account: () => this.accountService, pluginVersion: this.manifest.version, platform: "desktop"
+    });
+    return this.skillContentResolver;
   }
   async readEchoInkBuiltinSkill(
     skillId: BuiltinSkillId

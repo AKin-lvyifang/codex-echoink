@@ -47,7 +47,8 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   assert.equal(parent.querySelectorAll(".plan").length, 4);
   assert.equal(findButton(parent, "新建计划").disabled, true);
   assert.equal(findButton(parent, "生成讲解").disabled, true);
-  assert.equal(parent.querySelectorAll(".plugin-feature-card").length, 2);
+  assert.equal(parent.querySelectorAll(".plugin-feature-card").length, 3);
+  assert.match(parent.textContent ?? "", /官方 PRO Skill/u);
   assert.ok(parent.querySelector(".coming-soon.span-full"));
   assert.ok(!parent.querySelector("iframe"));
   assert.equal(findButton(parent, "编辑资料"), undefined, "anonymous cannot edit a fake profile");

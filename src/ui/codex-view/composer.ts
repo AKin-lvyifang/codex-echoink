@@ -1,3 +1,5 @@
+import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
+import type { CapabilityAccess } from "../../membership/types";
 import { isImeKeyEvent } from "../ime-composition";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Platform, setIcon } from "obsidian";
@@ -96,6 +98,7 @@ export interface ComposerToolbarRefs {
 }
 
 export interface ComposerResourcePanelState {
+  proAccess?: CapabilityAccess | null;
   open: boolean;
   selectedSkill: EchoInkResource | null;
   selectedMode: UiMode;
@@ -586,7 +589,7 @@ export function renderComposerResourcePanel(
       const presentation = resourcePresentation(skill, state.language ?? "zh-CN");
       createResourcePanelRow(
         skillGroup,
-        "box",
+        remoteSkillLocked(skill, state.proAccess) ? "lock" : "box",
         presentation.name,
         presentation.description || skill.contentPath || copy("已启用 Skill", "Enabled Skill"),
         () => callbacks.onSelectSkill(skill),

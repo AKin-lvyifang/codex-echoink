@@ -27,6 +27,7 @@ vm.runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports
     return { setIcon: (element, icon) => { element.dataset.icon = icon; } };
   } });
 const api = module.exports;
+api.installObsidianDom(window);
 let passed = 0;
 async function test(name, action) { await action(); passed++; console.log(`OK ${name}`); }
 const flush = () => new Promise(resolve => setTimeout(resolve, 35));

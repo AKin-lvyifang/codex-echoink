@@ -155,9 +155,25 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     row(body, "选择 Skill", () => {
       const skills = shellElement(document, "div", "pd-picker");
       row(skills, "不使用 Skill", () => choose(draft => { draft.selectedSkill = null; }), readDraft().selectedSkill === null);
-      for (const skill of host.settings().resources.catalog.filter(resource => resource.kind === "skill" && resource.enabled)) {
-        row(skills, skill.name, () => choose(draft => { draft.selectedSkill = structuredClone(skill); }), readDraft().selectedSkill?.id === skill.id);
-      } open("选择 Skill", skills);
+      void host.services.capabilities.listSkills().then(items => {
+        for (const skill of items.filter(item => item.enabled)) {
+          const button = row(skills, `${skill.name}${skill.locked ? " · PRO" : ""}`, () => {
+            if (skill.locked) {
+              const info = shellElement(document, "div", "pd-picker");
+              info.append(shellElement(document, "p", "", skill.description));
+              info.append(shellElement(document, "p", "", "需要有效 PRO，并在账号与会员中启用本机。"));
+              if (skill.compareUrl) { const link = shellElement(document, "a", "", "查看对比示例"); link.href = skill.compareUrl; link.target = "_blank"; link.rel = "noopener noreferrer"; info.append(link); }
+              open(skill.name, info); return;
+            }
+            const resource = host.settings().resources.catalog.find(item => item.kind === "skill" && (item.id === skill.id || item.metadata?.resourceId === skill.id))
+              ?? { id: skill.id, kind: "skill" as const, source: "echoink-local" as const, name: skill.name, description: skill.description, enabled: skill.enabled,
+                bridgeMode: "prompt-only" as const, metadata: { resourceId: skill.id }, ...(skill.contentPath ? { contentPath: skill.contentPath } : {}) };
+            return choose(draft => { draft.selectedSkill = structuredClone(resource); });
+          }, readDraft().selectedSkill?.id === skill.id);
+          if (skill.locked) { const lock = shellElement(document, "span", "pd-icon"); lock.setAttribute("aria-hidden", "true"); setIcon(lock, "lock"); button.firstElementChild?.prepend(lock); }
+        }
+      }).catch(ctx.error);
+      open("选择 Skill", skills);
     }); open("添加到任务", body);
   }));
   bar.append(iconButton("引用笔记", "at-sign", notes));

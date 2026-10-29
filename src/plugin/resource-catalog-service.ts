@@ -201,7 +201,9 @@ function mergeBuiltinSkillSnapshots(
       metadata: {
         ...(source?.metadata ?? {}),
         resourceId: snapshot.id,
-        builtin: true,
+        builtin: snapshot.source !== "user",
+        contentSource: snapshot.source ?? "builtin",
+        ...(snapshot.source === "official-remote" ? { tier: "pro", compareUrl: snapshot.compareUrl ?? null, remoteVersion: snapshot.remoteVersion ?? "" } : {}),
         userModified: snapshot.userModified,
         fileStatus: snapshot.fileStatus,
         lifecycleStatus: snapshot.lifecycleStatus,

@@ -1,3 +1,5 @@
+import { skillDeliveryNotice } from "../../resources/remote-skill-presentation";
+import { safeSkillCompareUrl } from "../../membership/skill-delivery";
 import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
@@ -9,7 +11,7 @@ import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settin
 
 type EditAgent = (id: string) => Promise<unknown>;
 const capabilities = (ctx: IPadSettingsContext): MobileCapabilitiesPort => ctx.host.services.capabilities;
-const sourceKey = (ctx: IPadSettingsContext): string => JSON.stringify([ctx.host.settings().resources, ctx.host.settings().agentRegistry, ctx.host.settings().tavily, ctx.host.settings().settingsLanguage]);
+const sourceKey = (ctx: IPadSettingsContext): string => JSON.stringify([ctx.host.settings().resources, ctx.host.settings().agentRegistry, ctx.host.settings().tavily, ctx.host.settings().settingsLanguage, ctx.host.accountService?.skillAuthorization()]);
 const enabledCount = (ctx: IPadSettingsContext, count: number, total?: number): string => ctx.host.settings().settingsLanguage === "en"
   ? `${count}${total === undefined ? "" : ` / ${total}`} enabled` : total === undefined ? `${count} 个启用` : `${count} / ${total} 启用`;
 
@@ -89,8 +91,8 @@ function createSkillList(ctx: IPadSettingsContext, builtin: boolean, editAgent: 
     for (const skill of list) {
       const row = el(ctx.document, "div", "pd-cap-skill-row"), button = el(ctx.document, "button", "pd-cap-skill-main"); button.type = "button"; button.dataset.skillId = skill.id;
       const copy = el(ctx.document, "span", "pd-settings-copy"), count = skill.agents.filter(agent => agent.allowed).length;
-      copy.append(el(ctx.document, "span", "pd-settings-name", skill.name), el(ctx.document, "span", "pd-settings-description", !skill.mobileAvailable ? t(ctx, skill.unavailableReason || "只能在电脑上用") : `${ctx.host.settings().settingsLanguage === "en" ? `${count} Agents can use` : `${count} 个 Agent 能用`} · ${skill.description}`));
-      button.append(tile(ctx, skillIcon(skill.id)), copy);
+      copy.append(el(ctx.document, "span", "pd-settings-name", skill.name), el(ctx.document, "span", "pd-settings-description", skill.locked ? skill.description : !skill.mobileAvailable ? t(ctx, skill.unavailableReason || "只能在电脑上用") : `${ctx.host.settings().settingsLanguage === "en" ? `${count} Agents can use` : `${count} 个 Agent 能用`} · ${skill.description}`));
+      button.append(tile(ctx, skill.locked ? "lock" : skillIcon(skill.id)), copy);
       button.addEventListener("click", () => { void ctx.push(createSkillDetail(ctx, skill.id, editAgent)).catch(error => ctx.error(error)); }); row.append(button);
       if (skill.mobileAvailable) {
         const toggle = settingsToggle(ctx, `${t(ctx, "启用")}${skill.name}`, skill.enabled, async enabled => {
@@ -127,6 +129,17 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
     content.replaceChildren();
     const head = el(ctx.document, "div", "pd-cap-skill-head"), copy = el(ctx.document, "div", "pd-settings-copy");
     copy.append(el(ctx.document, "div", "pd-cap-skill-title", snapshot.name), el(ctx.document, "div", "pd-cap-skill-description", snapshot.description)); head.append(tile(ctx, skillIcon(id), true), copy); content.append(head);
+    if (snapshot.remote || snapshot.readonly) {
+      const english = ctx.host.settings().settingsLanguage === "en";
+      const state = el(ctx.document, "div", "pd-settings-group pd-cap-detail-state"); content.append(state);
+      settingsRow(ctx, state, "PRO", snapshot.locked ? (english ? "PRO required" : "需要 PRO") : (snapshot.contentVersion ?? "PRO"));
+      const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
+      if (compareUrl) settingsRow(ctx, state, english ? "View examples" : "查看对比示例", "", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); });
+      else settingsRow(ctx, state, english ? "Comparison examples are not available yet." : "对比示例尚未提供。");
+      const disclosure = el(ctx.document, "details", ""); disclosure.append(el(ctx.document, "summary", "", english ? "Downloads and offline use" : "下载与离线使用"), el(ctx.document, "p", "pd-settings-description", skillDeliveryNotice(english))); content.append(disclosure);
+      if (!snapshot.locked) { const body = el(ctx.document, "div", "pd-cap-skill-body"); ctx.host.renderMarkdown(snapshot.content, body); content.append(body); }
+      content.append(error, leaveArea); return;
+    }
     const state = el(ctx.document, "div", "pd-settings-group pd-cap-detail-state"); content.append(state);
     if (snapshot.mobileAvailable) settingsSwitch(ctx, state, t(ctx, "启用"), snapshot.enabled, async enabled => {
       busy = true; update();

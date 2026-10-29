@@ -1,3 +1,4 @@
+import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
@@ -258,6 +259,7 @@ export function renderToolbar(host: CodexComposerHost): void {
     {
       open: host.resourcePanelOpen,
       selectedSkill: host.selectedSkill,
+      proAccess: host.plugin.accountService,
       selectedMode: host.selectedMode,
       resources: host.resourcePanelResources.length
         ? host.resourcePanelResources
@@ -284,6 +286,9 @@ export function renderToolbar(host: CodexComposerHost): void {
         selectComposerMode(host, host.selectedMode === "plan" ? "agent" : "plan");
       },
       onSelectSkill: (skill) => {
+        if (remoteSkillLocked(skill, host.plugin.accountService)) {
+          void host.plugin.openEchoInkSkillSettings((typeof skill.metadata?.resourceId === "string" ? skill.metadata.resourceId : skill.id)); return;
+        }
         host.selectedSkill = skill;
         closeResourcePanel(host, false);
         host.renderAttachments();
@@ -1012,10 +1017,14 @@ export function renderSkillMatches(host: CodexComposerHost, query = "", loadedSk
       skills: enabledSkillsForComposerMenu(
         loadedSkills ?? host.currentEchoInkResourceCatalog()
       ),
-      selectedSkill: host.selectedSkill
+      selectedSkill: host.selectedSkill,
+      proAccess: host.plugin.accountService
     },
     {
       onSelectSkill: (skill) => {
+        if (remoteSkillLocked(skill, host.plugin.accountService)) {
+          void host.plugin.openEchoInkSkillSettings((typeof skill.metadata?.resourceId === "string" ? skill.metadata.resourceId : skill.id)); return;
+        }
         host.selectedSkill = skill;
         host.skillMenuEl.removeClass("is-visible");
         host.renderAttachments();
@@ -1047,6 +1056,7 @@ export function renderKnowledgeCommandMatches(
         loadedSkills ?? host.currentEchoInkResourceCatalog()
       ),
       selectedSkill: host.selectedSkill,
+      proAccess: host.plugin.accountService,
       generationTemplates: Platform.isDesktopApp ? normalizeGenerationTemplates(host.plugin.settings.generationTemplates) : [],
       generationEntryReason: Platform.isDesktopApp ? host.generationEntryReason() : null
     },
@@ -1059,6 +1069,9 @@ export function renderKnowledgeCommandMatches(
         host.openGenerationModal(template.id);
       },
       onSelectSkill: (skill) => {
+        if (remoteSkillLocked(skill, host.plugin.accountService)) {
+          void host.plugin.openEchoInkSkillSettings((typeof skill.metadata?.resourceId === "string" ? skill.metadata.resourceId : skill.id)); return;
+        }
         host.selectedSkill = skill;
         host.inputEl.value = removeTrailingSlashQuery(host.inputEl.value);
         clearPromptEnhanceReview(host.promptEnhanceReviewEl);

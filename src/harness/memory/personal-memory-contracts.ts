@@ -1,3 +1,4 @@
+import { SKILL_PRODUCT_RULES } from "../resources/skill-rules";
 export const PERSONAL_MEMORY_SCHEMA = "echoink.memory.v1" as const;
 export const PERSONAL_MEMORY_ACCEPTANCE_IDS = Object.freeze([
   "A1", "A2", "A3", "A4", "A5", "A6",
@@ -258,7 +259,7 @@ export function buildEchoInkSystemConstitutionPrompt(): string {
 
 /** The exact product-owned global System Prompt used by Pi-native sessions. */
 export function buildEchoInkRuntimeSystemPrompt(): string {
-  return buildEchoInkSystemConstitutionPrompt();
+  return `${buildEchoInkSystemConstitutionPrompt()}\n${SKILL_PRODUCT_RULES}`;
 }
 
 export function resolvePersonalMemoryCapability(input: Readonly<{
