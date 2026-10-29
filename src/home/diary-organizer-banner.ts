@@ -114,9 +114,12 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
       const renderFields = () => {
         if (fields) return;
         fields = editor.createDiv({ cls: "diary-organizer-fields" });
-        const field = (label: string, value: string, type = "text") => {
+        const fieldContainer = (label: string) => {
           const row = fields!.createEl("label", { cls: "diary-organizer-field" }); row.createSpan({ text: label });
-          return createOriginInput(row, { type, value, attr: { "aria-label": label } });
+          return row;
+        };
+        const field = (label: string, value: string, type = "text") => {
+          return createOriginInput(fieldContainer(label), { type, value, attr: { "aria-label": label } });
         };
         if (reviewed.type === "finance") {
           const merchant = field(t("交易对象", "Counterparty"), reviewed.merchant);
@@ -128,11 +131,11 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
           currency.oninput = () => { if (reviewed.type === "finance") reviewed.currency = currency.value.trim().toUpperCase(); };
           const date = field(t("日期", "Date"), reviewed.date, "date");
           date.oninput = () => { if (reviewed.type === "finance") reviewed.date = date.value; };
-          const kind = createOriginSelect(fields, { attr: { "aria-label": t("收支类型", "Transaction type") } },
+          const kind = createOriginSelect(fieldContainer(t("类型", "Type")), { attr: { "aria-label": t("收支类型", "Transaction type") } },
             [ ["expense",t("支出","Expense")], ["income",t("收入","Income")], ["refund",t("退款","Refund")], ["transfer",t("转账","Transfer")] ].map(([value,label])=>({value,label})), reviewed.kind, plugin.app).element;
           kind.onchange = () => { if (reviewed.type === "finance") reviewed.kind = kind.value as typeof reviewed.kind; };
           const categories = plugin.settings.lifestyle.finance.categories.filter(category => category.active);
-          const select = createOriginSelect(fields, { attr: { "aria-label": t("分类", "Category") } }, [{ value: "", label: t("选择分类", "Choose category") }, ...categories.map(category => ({ value: category.name, label: category.name }))], reviewed.category, plugin.app).element;
+          const select = createOriginSelect(fieldContainer(t("分类", "Category")), { attr: { "aria-label": t("分类", "Category") } }, [{ value: "", label: t("选择分类", "Choose category") }, ...categories.map(category => ({ value: category.name, label: category.name }))], reviewed.category, plugin.app).element;
           select.onchange = () => { if (reviewed.type === "finance") reviewed.category = select.value; };
         } else {
           const title = field(t("待办", "To-do"), reviewed.text);
@@ -145,6 +148,7 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
       applyAmicroButton(edit, { variant: "tertiary" });
       const setEditing = (expanded: boolean) => {
         draft.expanded = expanded; editor.hidden = !expanded;
+        list.toggleClass("has-editor", Array.from(list.children).some(row => row.querySelector<HTMLElement>(".diary-organizer-editor")?.hidden === false));
         edit.textContent = expanded ? t("收起", "Collapse") : t("改一下", "Edit");
         edit.setAttribute("aria-expanded", String(expanded)); edit.setAttribute("aria-controls", editorId);
         if (expanded) renderFields();
