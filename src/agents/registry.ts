@@ -1,5 +1,6 @@
 import { normalizeAgentAvatar, normalizeAgentDisplayName } from "../harness/memory/agent-identity-model";
 import { normalizeAgentStyleId } from "./styles";
+import { isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "./persona";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry } from "./types";
 
 export function defaultAgentRegistry(): AgentRegistry {
@@ -22,7 +23,12 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     const name = typeof agent?.name === "string" ? normalizeAgentDisplayName(agent.name) : null;
     if (!agent || !id || !name || seen.has(id)) continue;
     seen.add(id);
+    const expertKind = agent.kind === "expert" || agent.expert !== undefined;
+    // Keep malformed expert markers locked and unavailable, rather than downgrading to editable Agents.
+    const expert = normalizeExpertAgentState(agent.expert) ?? (expertKind ? { expertId: id.replace(/^expert-/u, ""), hired: false, packageVersion: "", summary: "", disclosureShown: false, events: [] } : undefined);
+    if (expert && (id !== `expert-${expert.expertId}` || !expert.packageVersion.trim())) expert.hired = false;
     agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), ...(agent.identityEdited === true ? { identityEdited: true } : {}), styleId: normalizeAgentStyleId(agent.styleId),
+      ...(expertKind ? { kind: "expert" as const, ...(expert ? { expert } : {}) } : { ...(agent.kind === "custom" ? { kind: "custom" as const } : {}), ...(typeof agent.persona === "string" ? { persona: normalizeAgentPersona(agent.persona) } : {}) }),
       ...(id === GENERAL_ASSISTANT_ID
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }
         : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds), ...(Array.isArray(agent.disabledCapabilityIds) ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) } : {}) }) });
@@ -31,18 +37,19 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
   const owners = record(raw.moduleOwners);
   return {
     schemaVersion: 1, legacyMigrationVersion: raw.legacyMigrationVersion === 1 ? 1 : 0, ...(raw.legacyIdentitySyncVersion === 1 ? { legacyIdentitySyncVersion: 1 as const } : {}), agents,
-    moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, agents.some(agent => agent.id === owners?.[id]) ? owners![id] : GENERAL_ASSISTANT_ID])) as AgentRegistry["moduleOwners"]
+    moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, agents.some(agent => agent.id === owners?.[id] && isAgentHired(agent)) ? owners![id] : GENERAL_ASSISTANT_ID])) as AgentRegistry["moduleOwners"]
   };
 }
 
 export function setModuleOwner(registry: AgentRegistry, moduleId: AgentModuleId, agentId: string): AgentRegistry {
-  if (!AGENT_MODULE_IDS.includes(moduleId) || !registry.agents.some(agent => agent.id === agentId)) throw new Error("agent_module_owner_invalid");
+  if (!AGENT_MODULE_IDS.includes(moduleId) || !registry.agents.some(agent => agent.id === agentId && isAgentHired(agent))) throw new Error("agent_module_owner_invalid");
   return { ...registry, moduleOwners: { ...registry.moduleOwners, [moduleId]: agentId } };
 }
 
 /** Pure data handoff only. The caller must stop and settle active runs first. */
 export function removeAgentDefinition(registry: AgentRegistry, agentId: string): AgentRegistry {
   if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");
+  if (registry.agents.some(agent => agent.id === agentId && isExpertAgent(agent))) throw new Error("expert_agent_requires_dismissal_flow");
   return { ...registry, agents: registry.agents.filter(agent => agent.id !== agentId), moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, registry.moduleOwners[id] === agentId ? GENERAL_ASSISTANT_ID : registry.moduleOwners[id]])) as AgentRegistry["moduleOwners"] };
 }
 

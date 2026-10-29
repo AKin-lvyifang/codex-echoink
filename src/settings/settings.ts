@@ -197,6 +197,13 @@ export interface ChatMessageApprovalSnapshot {
 
 import type { SelectionAnnotation } from "../types/selection-annotations";
 
+/** Public artifact location only; private tool arguments and file bodies stay in Pi. */
+export interface WorkspaceArtifact {
+  readonly source: "echoink-workspace";
+  readonly path: string;
+  readonly previewPath?: string;
+}
+
 export interface ChatMessage {
   /** The durable interruption card owns this failure's visible guidance. */
   toolCallTextFailure?: import("../harness/tool-call-text").ToolCallTextFailureCode;
@@ -204,6 +211,7 @@ export interface ChatMessage {
   planMissing?: boolean;
   /** Manual save receipt projected from this conversation's durable Pi Session. */
   savedNotePath?: string;
+  workspaceArtifact?: Readonly<WorkspaceArtifact>;
   generationRequest?: import("../generation/types").GenerationRequest;
   generationResult?: import("../generation/types").GenerationResult;
   id: string;

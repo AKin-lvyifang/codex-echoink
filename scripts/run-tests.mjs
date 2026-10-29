@@ -4,6 +4,13 @@ const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const ownedDomImeResult = spawnSync(process.execPath, ["scripts/owned-dom-ime-tests.mjs"], { stdio: "inherit" });
 if (ownedDomImeResult.status !== 0) process.exit(ownedDomImeResult.status ?? 1);
 const suites = [
+  "test:agent-persona",
+  "test:experts",
+  "test:workspace",
+  "test:workspace-provider",
+  "test:product-run-snapshots",
+  "test:pi-workspace-tools",
+  "test:expert-message-decorations",
   "test:ollama-http-400",
   "test:skill-remote-delivery",
   "test:run-reports",

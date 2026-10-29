@@ -1167,17 +1167,27 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
 
 function requireAgentRunSnapshot(value: unknown): AgentRunSnapshot {
   const raw = requirePlainObject(value, "agentSnapshot");
-  requireExactKeys(raw, ["agentId", "name", "position", "styleId"], ["capabilityIds", "disabledCapabilityIds"], "agentSnapshot");
+  requireExactKeys(raw, ["agentId", "name", "position", "styleId"], ["capabilityIds", "disabledCapabilityIds", "persona", "expertId", "expertPackageVersion"], "agentSnapshot");
   if (typeof raw.position !== "string" || !["execution", "analysis", "companion", "creative"].includes(raw.styleId as string)) {
     throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot identity invalid");
   }
-  const capabilities: Partial<AgentRunSnapshot> = {};
+  const optional: Partial<AgentRunSnapshot> = {};
+  for (const key of ["expertId", "expertPackageVersion"] as const) {
+    if (raw[key] !== undefined) Object.assign(optional, { [key]: requireNonEmptyString(raw[key], `agentSnapshot.${key}`) });
+  }
+  if (raw.persona !== undefined) {
+    if (typeof raw.persona !== "string" || Array.from(raw.persona).length > 4000) throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot persona invalid");
+    // Expert snapshots retain public references only; their private text belongs
+    // exclusively to the transient request context, never this durable record.
+    if (raw.expertId !== undefined || raw.expertPackageVersion !== undefined) throw new PiNativeFileStoreError("invalid-input", "Expert run snapshot must not contain persona text");
+    Object.assign(optional, { persona: raw.persona });
+  }
   for (const key of ["capabilityIds", "disabledCapabilityIds"] as const) {
     if (raw[key] === undefined) continue;
     if (!Array.isArray(raw[key])) throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot capabilities invalid");
-    Object.assign(capabilities, { [key]: raw[key].map((id, index) => requireNonEmptyString(id, `agentSnapshot.${key}[${index}]`)) });
+    Object.assign(optional, { [key]: raw[key].map((id, index) => requireNonEmptyString(id, `agentSnapshot.${key}[${index}]`)) });
   }
-  return { agentId: requireNonEmptyString(raw.agentId, "agentSnapshot.agentId"), name: requireNonEmptyString(raw.name, "agentSnapshot.name"), position: raw.position, styleId: raw.styleId as AgentRunSnapshot["styleId"], ...capabilities };
+  return { agentId: requireNonEmptyString(raw.agentId, "agentSnapshot.agentId"), name: requireNonEmptyString(raw.name, "agentSnapshot.name"), position: raw.position, styleId: raw.styleId as AgentRunSnapshot["styleId"], ...optional };
 }
 
 function requireInterruption(value: unknown): TaskInterruptionRecord {

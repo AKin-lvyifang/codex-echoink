@@ -1409,6 +1409,7 @@ export class CodexSettingTab extends PluginSettingTab {
       get settings() { return plugin.settings; }, app: this.app, draftCacheKey: plugin,
       loadResources: async () => resources = await plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, modules, baseline) => plugin.saveAgentDefinition(agent, modules, baseline),
+      openExpertHall: () => plugin.openExpertHall(), dismissExpert: id => plugin.dismissExpert(id), showExpertAbout: id => plugin.showExpertAbout(id),
       deleteAgent: id => plugin.deleteAgent(id), getDeleteCounts: id => plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => plugin.getAgentCapabilityAvailability(id, resources),
       setAgentModuleOwner: (module, id) => plugin.setAgentModuleOwner(module, id)

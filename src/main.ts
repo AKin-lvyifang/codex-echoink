@@ -1,3 +1,10 @@
+import { DesktopExpertController } from "./plugin/expert-controller";
+import { isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
+import type { AgentRegistry } from "./agents/types";
+import { EXPERT_HALL_VIEW_TYPE, type ExpertHallHost } from "./experts/view";
+import { createObsidianWorkspaceService, type WorkspaceService } from "./workspace/service";
+import { createDesktopWorkspacePathGuard } from "./workspace/desktop-safety";
+import { WORKSPACE_PREVIEW_VIEW_TYPE } from "./workspace/view";
 import { EchoInkMcpController } from "./mcp-server/plugin-service";
 import { stopTaskSideWork } from "./plugin/task-management";
 import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
@@ -263,6 +270,44 @@ export default class CodexForObsidianPlugin extends Plugin {
   pdfReading: PdfReadingController | null = null;
   englishDiary: EnglishDiaryController | null = null;
   accountService: AccountService | null = null;
+  private expertController?: DesktopExpertController;
+  private workspaceFiles?: WorkspaceService;
+  get experts(): DesktopExpertController { return this.expertController ??= new DesktopExpertController(this); }
+  getWorkspaceFiles(): WorkspaceService { return this.workspaceFiles ??= createObsidianWorkspaceService(this.app, { assertSafePath: createDesktopWorkspacePathGuard(this.getVaultPath()) }); }
+  async mutateExpertRegistry(change: (registry: AgentRegistry) => void): Promise<void> {
+    await this.writeAgentRegistry(async () => { const previous = this.settings.agentRegistry; const next = structuredClone(previous); change(next); this.settings.agentRegistry = normalizeAgentRegistry(next);
+      try { await this.saveSettings(true); } catch (error) { this.settings.agentRegistry = previous; throw error; }
+    });
+  }
+  dismissExpert(agentId: string): Promise<void> { return this.experts.dismiss(agentId); }
+  showExpertAbout(agentId: string): Promise<void> { return this.experts.about(agentId); }
+  prepareExpertRuntime(agentId: string, conversationId: string, text: string) { return this.experts.prepare(agentId, conversationId, text); }
+  getExpertHallHost(): ExpertHallHost { return { content: this.experts.content, getAgents: () => this.settings.agentRegistry.agents,
+    hire: async id => { await this.experts.hire(id); }, dismiss: id => this.dismissExpert(id),
+    open: id => this.openExpertConversation(id), upgrade: () => this.openEchoInkAccountSettings("benefits") }; }
+  async openExpertHall(aboutId?: string): Promise<void> {
+    let leaf = this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)[0];
+    if (!leaf) leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: EXPERT_HALL_VIEW_TYPE, active: true, state: { aboutId } });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+  async openExpertConversation(agentId: string): Promise<void> {
+    const agent = this.settings.agentRegistry.agents.find(item => item.id === agentId);
+    if (!isExpertAgent(agent) || !agent.expert.hired) throw new Error("专家已解聘。");
+    const tasks = (await this.listAgentTaskEntries()).filter(task => task.agentId === agentId && task.status === "active");
+    const previous = tasks.find(task => task.conversationId === agent.expert.lastConversationId) ?? tasks.sort((a,b) => b.updatedAt-a.updatedAt)[0];
+    if (previous) await this.mutateExpertRegistry(registry => {
+      const current = registry.agents.find(item => item.id === agentId);
+      if (!isExpertAgent(current) || !current.expert.hired) throw new Error("专家已解聘。");
+      current.expert.lastConversationId = previous.conversationId;
+      for (const event of current.expert.events) if (!event.conversationId) event.conversationId = previous.conversationId;
+    });
+    await this.activateView(); const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)[0]?.view;
+    if (view instanceof CodexView) { if (previous) await view.openTaskDetail(previous.conversationId); else await view.openAgentTaskList(agentId); }
+  }
+  async openWorkspacePreview(path: string): Promise<void> {
+    const leaf = this.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: WORKSPACE_PREVIEW_VIEW_TYPE, active: true, state: { file: path } }); await this.app.workspace.revealLeaf(leaf);
+  }
   echoInkMcp: EchoInkMcpController | null = null;
   usageStore: UsageStore | null = null;
   private personalMemoryCorrection: PersonalMemoryCorrectionService | null = null;
@@ -320,6 +365,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       console.error("EchoInk local usage statistics could not initialize", error);
     }
     this.accountService = await createPluginAccountService(this);
+    this.register(this.accountService.subscribe(() => { for (const leaf of this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)) { const view = leaf.view as unknown as { refresh?(): Promise<void> }; void view.refresh?.().catch(() => {}); } }));
     if (Platform.isDesktopApp) {
       this.echoInkMcp = new EchoInkMcpController(this);
       this.register(() => { this.echoInkMcp?.dispose(); this.echoInkMcp = null; });
@@ -1362,6 +1408,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async setAgentModuleOwner(moduleId: AgentModuleId, agentId: string): Promise<void> {
     await this.writeAgentRegistry(async () => {
       const previous = this.settings.agentRegistry;
+      if (!isAgentHired(previous.agents.find(agent => agent.id === agentId))) throw new Error("专家已解聘。");
       this.settings.agentRegistry = setModuleOwner(previous, moduleId, agentId);
       try { await this.saveSettings(true); }
       catch (error) { this.settings.agentRegistry = previous; throw error; }
@@ -1383,6 +1430,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         if (!this.onboardingRequested || this.settings.setup.tutorialStep !== "colleague") throw new Error("Onboarding step changed");
       }
       const current = previous.agents.find(entry => entry.id === agent.id);
+      assertExpertAgentLocks(current, agent);
       if (!baseline && current) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was already created. Reopen it to edit." : "这个 Agent 已经创建，请重新打开后编辑。你的输入已保留。");
       if (baseline && (!current || baseline.agent.id !== agent.id)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was deleted. Your draft has been kept." : "这个 Agent 已被删除，你的输入已保留。");
       if (baseline && JSON.stringify(current) !== JSON.stringify(baseline.agent)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent changed elsewhere. Reopen it before saving." : "这个 Agent 已在别处修改，请重新打开后核对。你的输入已保留。");
@@ -1470,6 +1518,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath) : false;
   }
   async deleteAgent(agentId: string): Promise<void> {
+    if (isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘。 ");
     if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");
     if (!this.settings.agentRegistry.agents.some(agent => agent.id === agentId)) return;
     const service = this.getConversationRunService();

@@ -7,12 +7,26 @@ export const AGENT_MODULE_IDS = [
 export type AgentModuleId = typeof AGENT_MODULE_IDS[number];
 export type AgentStyleId = "execution" | "analysis" | "companion" | "creative";
 
+export interface ExpertAgentState {
+  expertId: string;
+  hired: boolean;
+  packageVersion: string;
+  summary: string;
+  disclosureShown: boolean;
+  lastConversationId?: string;
+  events: Array<{ id: string; at: number; conversationId?: string }>;
+}
+
 export interface AgentDefinition {
   id: string;
   name: string;
   avatar: AgentAvatarState;
   position: string;
   styleId: AgentStyleId;
+  /** User-authored identity; absent legacy values retain the selected style. */
+  persona?: string;
+  kind?: "custom" | "expert";
+  expert?: ExpertAgentState;
   /** Other Agents explicitly opt into these capabilities; new capabilities stay off. */
   capabilityIds?: string[];
   /** Set when this identity is saved by the Agent editor. */
@@ -36,6 +50,9 @@ export interface AgentRunSnapshot {
   readonly name: string;
   readonly position: string;
   readonly styleId: AgentStyleId;
+  readonly persona?: string;
+  readonly expertId?: string;
+  readonly expertPackageVersion?: string;
   readonly capabilityIds?: readonly string[];
   readonly disabledCapabilityIds?: readonly string[];
 }

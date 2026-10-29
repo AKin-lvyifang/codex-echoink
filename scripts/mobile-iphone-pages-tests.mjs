@@ -5,7 +5,8 @@ import { JSDOM } from "jsdom";
 import esbuild from "esbuild";
 import { mobileBuildOptions } from "./mobile-build.mjs";
 
-const bundle = await esbuild.build(mobileBuildOptions("src/ui/iphone/workbench-pages.ts"));
+const { entryPoints: _entryPoints, ...options } = mobileBuildOptions();
+const bundle = await esbuild.build({ ...options, stdin: { contents: 'export * from "./src/ui/iphone/workbench-pages"; export { installObsidianDom } from "./src/tests/obsidian-dom";', resolveDir: process.cwd(), loader: "ts" } });
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://iphone-pages.invalid" });
 const { window } = dom, { document } = window, module = { exports: {} };
 window.HTMLElement.prototype.scrollIntoView = function () {};
@@ -14,7 +15,8 @@ vm.runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports
   HTMLElement: window.HTMLElement, Element: window.Element, MutationObserver: window.MutationObserver,
   require(name) { assert.equal(name, "obsidian", `Unexpected Node dependency: ${name}`); return { setIcon(element, icon) { element.dataset.icon = icon; } }; }
 });
-const { createAgentFormPage } = module.exports;
+const { createAgentFormPage, installObsidianDom } = module.exports;
+installObsidianDom(window);
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
 let passed = 0;
 async function test(name, action) { await action(); passed++; console.log(`OK ${name}`); }

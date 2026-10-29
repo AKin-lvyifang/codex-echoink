@@ -5,6 +5,7 @@ import { setIcon } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { AGENT_STYLES } from "../../agents/styles";
+import { AGENT_PERSONA_MAX_LENGTH, agentPersonaLength, getAgentPersonaTemplate, hasCustomAgentPersona, isExpertAgent, normalizeAgentPersona } from "../../agents/persona";
 import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../../agents/capability-policy";
 import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
 import { normalizeAgentDisplayName } from "../../harness/memory/agent-identity-model";
@@ -30,12 +31,6 @@ const STYLE_COPY_EN: Record<AgentDefinition["styleId"], { name: string; thinking
   analysis: { name: "Careful analysis", thinking: "Check assumptions, evidence and omissions; give the strongest case for each option before deciding.", tone: "Measured, calm and evidence-led", responseStructure: "Judgment → evidence → uncertainty" },
   companion: { name: "Gentle companion", thinking: "Acknowledge feelings and circumstances, clarify the problem and constraints, then suggest one small practical step.", tone: "Warm, thoughtful and considerate", responseStructure: "Response → clarity → one suggestion" },
   creative: { name: "Creative exploration", thinking: "Explore distinct directions, then narrow them to an option that fits the goal and constraints.", tone: "Relaxed, lively and vivid", responseStructure: "Several directions → recommendation → next step" }
-};
-const STYLE_SUMMARIES: Record<AgentDefinition["styleId"], [string, string]> = {
-  execution: ["先给结论，直接推进；少铺垫", "Lead with the conclusion and move forward"],
-  analysis: ["先把选择和依据摆清楚，再给判断", "Weigh the options and evidence before deciding"],
-  companion: ["先听你说，再一起理清", "Listen first, then work through it together"],
-  creative: ["多给几个方向，再挑最好的", "Explore several directions, then choose the best"]
 };
 interface EditorDraft { agent: AgentDefinition; moduleIds: AgentModuleId[]; baseline?: AgentEditorSaveBaseline; presetId: string; dirty: boolean; revision: number }
 // No DOM, View, host callback, promise or runtime is retained across View instances.
@@ -144,7 +139,8 @@ export class AgentEditorController {
     baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) } : undefined,
     presetId: "", dirty: false, revision: 0 };
     this.persistDraft();
-    void this.reloadResources();
+    this.loadingResources = false;
+    if (!isExpertAgent(this.draft.agent)) void this.reloadResources();
   }
 
   render(root: HTMLElement): void {
@@ -154,6 +150,7 @@ export class AgentEditorController {
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
     root.classList.toggle("is-onboarding", this.host.onboarding === true);
     const settingsPresentation = root.classList.contains("echoink-agent-settings-editor");
+    const expert = isExpertAgent(this.draft.agent);
     root.classList.toggle("is-settings", settingsPresentation);
     this.saveButton = null;
     this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
@@ -167,22 +164,33 @@ export class AgentEditorController {
     }
     const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);
     const heading = this.el(header, "div", "echoink-agent-editor-heading");
-    this.el(heading, "h2", "echoink-agent-editor-title", settingsPresentation && this.editingId ? this.draft.agent.name : this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
-    this.el(heading, "div", "echoink-agent-editor-subtitle", this.t("共用你的画像和记忆，只定身份和能做的事", "Shares your profile and memory; choose its identity and capabilities"));
+    const title = this.el(heading, "h2", "echoink-agent-editor-title", expert || settingsPresentation && this.editingId ? this.draft.agent.name : this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
+    if (expert) {
+      const lock = this.el(title, "span", "echoink-agent-editor-lock");
+      lock.setAttribute("aria-label", this.t("只读", "Read only")); setIcon(lock, "lock");
+    }
+    this.el(heading, "div", "echoink-agent-editor-subtitle", expert ? this.draft.agent.position : this.t("共用你的画像和记忆，只定身份和能做的事", "Shares your profile and memory; choose its identity and capabilities"));
     const body = this.el(root, "div", "echoink-agent-editor-body");
     const fields = this.el(body, "fieldset", "echoink-agent-editor-fields");
     if (!this.editingId) this.renderPresets(fields);
     this.renderIdentity(fields);
+    this.renderPersona(fields);
     this.renderResponsibilities(fields);
-    this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources echoink-agent-editor-major");
-    this.renderResources();
-    this.renderStyles(fields);
-    this.deleteArea = this.el(body, "section", "echoink-agent-editor-delete");
-    this.renderDelete();
+    this.resourceArea = null;
+    if (!isExpertAgent(this.draft.agent)) {
+      this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources echoink-agent-editor-major");
+      this.renderResources();
+    }
+    this.deleteArea = expert ? null : this.el(body, "section", "echoink-agent-editor-delete");
+    if (!expert) this.renderDelete();
     const footer = this.el(root, "footer", "echoink-agent-editor-footer");
     this.status = this.el(footer, "div", "echoink-agent-editor-status");
     this.status.setAttribute("role", "status"); this.status.setAttribute("aria-live", "polite");
     const actions = this.el(footer, "div", "echoink-agent-editor-actions");
+    if (expert) {
+      this.deleteArea = this.el(actions, "div", "echoink-agent-editor-expert-actions");
+      this.renderDelete();
+    }
     this.button(actions, this.t("取消", "Cancel"), "secondary", () => this.isOnboardingCreation() ? this.requestLeave(() => this.close(true)) : this.close(true));
     if (!this.isOnboardingCreation()) {
       this.saveButton = this.button(actions, this.editingId ? this.t("保存", "Save") : this.t("创建", "Create"), "primary", () => { void this.save(); });
@@ -269,6 +277,9 @@ export class AgentEditorController {
   }
 
   private renderIdentity(parent: HTMLElement): void {
+    if (isExpertAgent(this.draft!.agent)) {
+      return;
+    }
     const settingsPresentation = this.root?.classList.contains("is-settings");
     const flatIdentity = settingsPresentation && !!this.root?.closest(".echoink-settings-aligned");
     const section = flatIdentity ? parent : this.el(parent, "section", "echoink-agent-editor-identity");
@@ -346,6 +357,7 @@ export class AgentEditorController {
     }
   }
   private selected(id: string): boolean {
+    if (isExpertAgent(this.draft!.agent)) return true;
     return this.draft!.agent.id === GENERAL_ASSISTANT_ID ? !this.draft!.agent.disabledCapabilityIds?.includes(id) : this.draft!.agent.capabilityIds?.includes(id) === true;
   }
   private setCapability(id: string, enabled: boolean): void {
@@ -436,35 +448,46 @@ export class AgentEditorController {
     }
   }
 
-  private renderStyles(parent: HTMLElement): void {
-    const section = this.section(parent, this.t("风格", "Style"));
-    section.classList.add("echoink-agent-editor-major");
-    const description = this.el(section, "div", "echoink-agent-editor-style-description");
-    const describe = () => {
-      const style = AGENT_STYLES.find(style => style.id === this.draft!.agent.styleId)!;
-      description.replaceChildren();
-      const english = STYLE_COPY_EN[style.id];
-      for (const [label, zh, en, value] of [
-        ["thinking", "思考方式", "Thinking", style.thinking],
-        ["tone", "语气", "Tone", style.tone],
-        ["responseStructure", "回答结构", "Response structure", style.responseStructure]
-      ] as const) {
-        const row = this.el(description, "div", "echoink-agent-editor-style-description-row");
-        this.el(row, "span", "echoink-agent-editor-style-description-label", this.t(zh, en));
-        this.el(row, "span", "echoink-agent-editor-style-description-value", this.t(value, english[label]));
-      }
-    };
-    const group = createOriginRadioGroup(section, this.draft!.agent.styleId, this.t("风格", "Style"), id => { this.draft!.agent.styleId = id as AgentDefinition["styleId"]; describe(); this.changed(); });
-    group.element.classList.add("echoink-agent-editor-styles");
-    for (const style of AGENT_STYLES) {
-      const row = this.el(group.element, "label", "echoink-agent-editor-style-card");
-      const name = this.t(style.name, STYLE_COPY_EN[style.id].name);
-      const radio = group.addItem(row, style.id, false); radio.setAttribute("aria-label", name);
-      radio.addEventListener("click", () => this.onboardingInteraction());
-      const copy = this.el(row, "span", "echoink-agent-editor-style-copy"); this.el(copy, "span", "echoink-agent-editor-style-name", name);
-      this.el(copy, "span", "echoink-agent-editor-style-summary", this.t(...STYLE_SUMMARIES[style.id]));
+  private renderPersona(parent: HTMLElement): void {
+    const section = this.section(parent, this.t("人格", "Persona"));
+    section.classList.add("echoink-agent-editor-major", "echoink-agent-editor-persona-section");
+    if (isExpertAgent(this.draft!.agent)) {
+      const lock = this.el(section.querySelector("h3")!, "span", "echoink-agent-editor-lock");
+      lock.setAttribute("aria-label", this.t("只读", "Read only")); setIcon(lock, "lock");
+      this.el(section, "div", "echoink-agent-editor-expert-summary", this.draft!.agent.expert?.summary ?? "");
+      return;
     }
-    section.append(description); describe();
+    const templates = this.el(section, "div", "echoink-agent-editor-persona-templates");
+    templates.setAttribute("role", "group"); templates.setAttribute("aria-label", this.t("人格模板", "Persona templates"));
+    for (const style of AGENT_STYLES) {
+      const name = this.t(style.name, STYLE_COPY_EN[style.id].name);
+      const button = this.button(templates, name, "secondary", () => {
+        const apply = () => {
+          this.draft!.agent.styleId = style.id;
+          this.draft!.agent.persona = getAgentPersonaTemplate(style.id, this.host.settings.settingsLanguage === "en" ? "en" : "zh");
+          this.changed(); if (this.root) { this.render(this.root); this.root.querySelector<HTMLTextAreaElement>("[data-field=persona]")?.focus(); }
+        };
+        if (hasCustomAgentPersona(this.draft!.agent.persona)) {
+          showSettingsInlineConfirmation(section, button, { message: this.t("用模板替换当前人格？", "Replace this persona with the template?"), confirmLabel: this.t("替换", "Replace"), cancelLabel: this.t("保留修改", "Keep changes"), onConfirm: async () => { apply(); } });
+        } else apply();
+      });
+      button.dataset.personaTemplate = style.id;
+      button.classList.toggle("is-selected", this.draft!.agent.styleId === style.id);
+      button.setAttribute("aria-pressed", String(this.draft!.agent.styleId === style.id));
+    }
+    const input = this.el(section, "textarea", "echoink-agent-editor-persona");
+    input.dataset.field = "persona"; input.value = this.draft!.agent.persona ?? "";
+    input.placeholder = this.t("写下它是谁、怎么想、怎么说话、什么事不做", "Who it is, how it thinks and speaks, and what it avoids");
+    input.setAttribute("aria-label", this.t("人格正文", "Persona text"));
+    const counter = this.el(section, "div", "echoink-agent-editor-persona-count");
+    counter.id = `${this.instanceId}-persona-count`; input.setAttribute("aria-describedby", counter.id);
+    const update = () => {
+      const value = normalizeAgentPersona(input.value); if (input.value !== value) input.value = value;
+      this.draft!.agent.persona = value; counter.textContent = `${agentPersonaLength(value)} / ${AGENT_PERSONA_MAX_LENGTH}`; this.changed();
+    };
+    counter.textContent = `${agentPersonaLength(input.value)} / ${AGENT_PERSONA_MAX_LENGTH}`;
+    input.addEventListener("input", event => { if (!(event as InputEvent).isComposing) update(); });
+    input.addEventListener("compositionend", update);
   }
 
   private refresh(): void {
@@ -511,6 +534,11 @@ export class AgentEditorController {
     const area = this.deleteArea; if (!area) return;
     disposeOriginControls(area); area.replaceChildren();
     if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID) return;
+    if (this.draft && isExpertAgent(this.draft.agent)) {
+      const dismiss = this.button(area, this.t("解聘", "Dismiss"), "danger", () => { void this.dismissExpert(); });
+      dismiss.dataset.action = "dismiss-expert"; dismiss.disabled = !this.host.dismissExpert || !!this.busy;
+      return;
+    }
     const trigger = this.button(area, this.deleteLoading ? this.t("正在读取任务数量…", "Loading task counts…") : this.t("删除 Agent", "Delete Agent"), "danger", () => { void this.requestDelete(); });
     applyDeleteButton(trigger);
     trigger.dataset.action = "delete-agent"; trigger.disabled = this.deleteLoading || !!this.busy;
@@ -544,6 +572,17 @@ export class AgentEditorController {
       this.deleteCounts = counts;
     } catch (error) { if (!this.disposed && generation === this.generation) this.deleteError = error instanceof Error ? error.message : this.t("任务数量读取失败，请重试。", "Could not load task counts. Please retry."); }
     finally { if (!this.disposed && generation === this.generation) { this.deleteLoading = false; this.renderDelete(); this.refresh(); } }
+  }
+  private async dismissExpert(): Promise<void> {
+    if (!this.editingId || !this.draft || !isExpertAgent(this.draft.agent) || !this.host.dismissExpert || this.busy) return;
+    const generation = this.generation; this.busy = "delete"; this.error = ""; this.refresh();
+    try {
+      await this.host.dismissExpert(this.editingId);
+      formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey);
+      if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(GENERAL_ASSISTANT_ID); }
+    } catch (error) {
+      if (!this.disposed && generation === this.generation) this.error = error instanceof Error ? error.message : this.t("解聘失败，请重试。", "Could not dismiss. Please retry.");
+    } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.refresh(); } }
   }
   private async delete(): Promise<void> {
     if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID || !this.deleteCounts || this.busy) return;

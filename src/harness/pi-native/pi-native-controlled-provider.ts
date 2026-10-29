@@ -3,6 +3,7 @@ import {
   createAssistantMessageEventStream,
   type Api,
   type AssistantMessage,
+  type AssistantMessageEvent,
   type AssistantMessageEventStream,
   type Context,
   type Model,
@@ -55,6 +56,8 @@ export interface PiNativeControlledProviderOptions {
     model: Readonly<Model<Api>>;
     context: Readonly<Context>;
   }>): void;
+  /** Recheck private response authorization before egress and final acceptance. */
+  assertResponseAllowed?(): void;
   maxTokens?: number;
   temperature?: number;
   timeoutMs?: number;
@@ -346,7 +349,21 @@ function controlledProviderStream(
           )
         }
       });
-      for await (const event of upstream) output.push(event);
+      let terminal: Extract<AssistantMessageEvent, { type: "done" | "error" }> | undefined;
+      for await (const event of upstream) {
+        options.assertResponseAllowed?.();
+        if (!options.assertResponseAllowed) {
+          output.push(event);
+          continue;
+        }
+        // Upstream partials may share mutable content blocks. Freeze this
+        // egress snapshot so a later, denied delta cannot mutate prior output.
+        const snapshot = structuredClone(event);
+        if (snapshot.type === "done" || snapshot.type === "error") terminal = snapshot;
+        else output.push(snapshot);
+      }
+      options.assertResponseAllowed?.();
+      if (terminal) output.push(terminal);
     } catch (error) {
       output.push({
         type: "error",

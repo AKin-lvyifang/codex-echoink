@@ -1,3 +1,4 @@
+import { isAgentHired } from "../../agents/persona";
 import { Notice } from "obsidian";
 import type { AgentModuleId } from "../../agents/types";
 import type { MobileAgentRegistrySnapshot } from "../../mobile/agent-registry-service";
@@ -120,13 +121,14 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
     if (next === signature) { updateDream(); return; } signature = next;
     paint(ctx, v.body, () => {
       const registry = registrySnapshot?.registry ?? ctx.host.settings().agentRegistry, agents = settingsGroup(ctx, v.body, t(ctx, "我的 Agent"));
-      for (const agent of registry.agents) settingsRow(ctx, agents, agent.name, "", () => v.child(() => editAgent(agent.id)), ipadAvatar(ctx.document, agent), agent.position);
+      for (const agent of registry.agents.filter(isAgentHired)) settingsRow(ctx, agents, agent.name, "", () => v.child(() => editAgent(agent.id)), ipadAvatar(ctx.document, agent), agent.position);
+      settingsRow(ctx, agents, en(ctx) ? "Hire an expert" : "聘请专家", "", () => ctx.host.services.openExpertHall(), ipadIcon(ctx.document, "sparkles"));
       settingsRow(ctx, agents, t(ctx, "新建 Agent"), "", () => v.child(() => editAgent()), ipadIcon(ctx.document, "user-plus"));
       const owners = settingsGroup(ctx, v.body, t(ctx, "模块负责人"));
       for (const moduleId of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"] as const) {
         const module = IPAD_MODULES.find(item => item.id === moduleId)!;
         const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[module.id]);
-        const select = settingsSelect(ctx, owners, t(ctx, module.name), registry.agents.map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
+        const select = settingsSelect(ctx, owners, t(ctx, module.name), registry.agents.filter(isAgentHired).map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
           if (v.busy || !registrySnapshot || value === registrySnapshot.registry.moduleOwners[module.id]) { select.value = registrySnapshot?.registry.moduleOwners[module.id] ?? ""; return; }
           void saveOwner(module.id, value);
         }, owner ? ipadAvatar(ctx.document, owner, "pd-avatar pd-agent-owner-avatar") : undefined);

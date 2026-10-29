@@ -1,4 +1,5 @@
 import { ownedFragment, ownedEl } from "../owned-dom";
+import { disposeOriginControls } from "../../settings/origin-controls";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
@@ -139,6 +140,11 @@ export interface MessageListRenderOptions {
   preserveScroll?: boolean;
 }
 
+export interface MessageListRenderedRow {
+  readonly element: HTMLElement;
+  readonly messageIds: readonly string[];
+}
+
 /** 只读展示快照：当前 Agent 名称、头像与等待态人格。 */
 export interface AgentIdentityView {
   readonly displayName: string;
@@ -191,6 +197,8 @@ export interface MessageListRenderInput {
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
   onProcessDisclosureToggle?: () => void;
+  /** Persistent transcript decorations must be restored before row measurement. */
+  onAfterRenderRows?: (root: HTMLElement, rows: readonly MessageListRenderedRow[]) => void;
   options?: MessageListRenderOptions;
 }
 
@@ -465,11 +473,13 @@ export class CodexMessageListRenderer {
     const readingAnchor = !shouldPinBottom ? this.captureReadingAnchor() : null;
     this.disconnectVisibleRowsObserver();
     this.answerMarkdown.beginRender();
+    disposeOriginControls(virtualListEl);
     virtualListEl.empty();
     if (messages.length === 0) {
       // Agent task pages own the empty state; an empty transcript adds no greeting.
       virtualListEl.setCssStyles({ height: "100%" });
       this.currentRows = [];
+      this.decorateVisibleRows();
       this.answerMarkdown.endRender();
       return;
     }
@@ -496,6 +506,8 @@ export class CodexMessageListRenderer {
       rowEl.setCssStyles({ transform: `translateY(${virtualRow.top}px)` });
       this.renderVirtualRow(rowEl, row);
     }
+
+    this.decorateVisibleRows();
 
     this.answerMarkdown.endRender();
 
@@ -696,6 +708,7 @@ export class CodexMessageListRenderer {
   }
 
   dispose(): void {
+    if (this.env) disposeOriginControls(this.env.virtualListEl);
     this.answerMarkdown.clear();
     this.openGenerationRequests.clear();
     this.cancelAllDisclosureAutoFolds();
@@ -708,6 +721,23 @@ export class CodexMessageListRenderer {
   private requireEnv(): MessageListEnvironment {
     if (!this.env) throw new Error("Message list renderer has not been initialized");
     return this.env;
+  }
+
+  private decorateVisibleRows(): void {
+    const env = this.requireEnv();
+    if (!env.onAfterRenderRows) return;
+    const rowsById = new Map(this.currentRows.map(row => [row.id, row]));
+    const visible: MessageListRenderedRow[] = [];
+    for (const child of Array.from(env.virtualListEl.children)) {
+      const element = child as HTMLElement;
+      const row = rowsById.get(element.dataset.rowId ?? "");
+      if (!row) continue;
+      const messages = row.kind === "assistantTurn" ? row.turn.messages
+        : row.kind === "turnProcess" ? [...row.turn.processMessages, row.turn.finalAnswer]
+          : [row.message];
+      visible.push({ element, messageIds: messages.map(message => message.id) });
+    }
+    env.onAfterRenderRows(env.virtualListEl, visible);
   }
 
   private copy(): ConversationCopy {
@@ -894,7 +924,10 @@ export class CodexMessageListRenderer {
       updated = true;
       shouldPinBottom = shouldPinBottom || update.shouldPinBottom;
     }
-    if (updated) env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+    if (updated) {
+      this.decorateVisibleRows();
+      env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+    }
   }
 
   private flushAnswerMessageUpdates(updates: PendingProcessMessageUpdate[]): void {
@@ -919,7 +952,10 @@ export class CodexMessageListRenderer {
       updated = true;
       shouldPinBottom = shouldPinBottom || update.shouldPinBottom;
     }
-    if (updated) env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+    if (updated) {
+      this.decorateVisibleRows();
+      env.onScheduleMeasure(shouldPinBottom && (env.shouldFollowBottom?.() ?? true));
+    }
   }
 
   private tryUpdateAssistantTurnMessage(
@@ -1031,6 +1067,7 @@ export class CodexMessageListRenderer {
     const disclosureChanged = this.patchAssistantTurnDisclosure(turnRoot, turn);
     const row = this.currentRows.find((item) => item.kind === "assistantTurn" && item.turn.key === turn.key);
     if (row?.kind === "assistantTurn") row.turn = turn;
+    this.decorateVisibleRows();
     if (disclosureChanged) this.measureVisibleVirtualRows(env.messagesEl, env.virtualListEl, following);
     this.restoreReadingAnchor(readingAnchor);
     env.onScheduleMeasure(following);

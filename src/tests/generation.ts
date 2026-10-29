@@ -99,12 +99,17 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
   const handlers = new Map<string, (...args: any[]) => any>(); let memoryReads = 0;
   const extension = createPiKnowledgeInlineExtension({ vaultSecurity: { name: "empty", factory: () => undefined }, currentTurn: () => null,
     currentGenerationContext: () => ({ request, assessment }),
+    currentAgentSnapshot: () => ({ agentId: "expert-fixture", name: "测试专家", position: "测试", styleId: "execution", expertId: "fixture", expertPackageVersion: "v1" }),
+    privateAgentContext: async () => "EXPERT_PRIVATE_GENERATION_CONTEXT",
     personalMemory: { loadFixedContext: async () => { memoryReads++; throw new Error("must not read memory"); } } });
   await (extension as { factory: (api: unknown) => unknown }).factory({ on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler) });
   const before = await handlers.get("before_agent_start")!({ systemPrompt: "OLD_PRIVATE_PROFILE", prompt: "生成" });
   assert.equal(before.systemPrompt.includes("OLD_PRIVATE_PROFILE"), false); assert.equal(memoryReads, 0);
+  assert.match(before.systemPrompt, /EXPERT_PRIVATE_GENERATION_CONTEXT/u);
+  assert.ok(!JSON.stringify(before.message).includes("EXPERT_PRIVATE_GENERATION_CONTEXT"));
   const user = { role: "user", content: "生成", timestamp: 2 };
   const context = await handlers.get("context")!({ messages: [{ role: "user", content: "UNRELATED_OLD_CHAT", timestamp: 1 }, { role: "custom", customType: "memory", content: "OLD_MEMORY" }, user] });
+  assert.ok(!JSON.stringify(context.messages).includes("EXPERT_PRIVATE_GENERATION_CONTEXT"));
   assert.equal(context.messages.length, 2); assert.equal(context.messages[1], user); assert.equal(JSON.stringify(context).includes("UNRELATED_OLD_CHAT"), false); assert.equal(JSON.stringify(context).includes("OLD_MEMORY"), false);
   assert.throws(() => assertGenerationInputBudget(request, assessment.sources, 1), /本轮预算/u);
   let attempt: GenerationAttempt = { kind: "repair", failedOutput: "FAILED_THIS_TURN_ONLY", validationError: "节点重叠" };
@@ -129,6 +134,14 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
   const fallbackContext = await canvasHandlers.get("context")!({ messages: [user, repairUser] });
   assert.equal(JSON.stringify(fallbackContext).includes("FAILED_THIS_TURN_ONLY"), false);
   console.log("PASS generation: actual Provider context excludes old chat, memory and profile; small-model budget rejects without truncation");
+  const diaryHandlers = new Map<string, (...args: any[]) => any>();
+  const diaryExtension = createPiKnowledgeInlineExtension({ vaultSecurity: { name: "empty", factory: () => undefined }, currentTurn: () => null,
+    currentEnglishDiaryRequest: () => ({ sourcePath: "日记/今天.md" }), privateAgentContext: async () => "EXPERT_PRIVATE_DIARY_CONTEXT" });
+  await (diaryExtension as { factory: (api: unknown) => unknown }).factory({ on: (name: string, handler: (...args: any[]) => any) => diaryHandlers.set(name, handler) });
+  const diary = await diaryHandlers.get("before_agent_start")!({ systemPrompt: "PRODUCT_POLICY", prompt: "生成英文日记" });
+  assert.match(diary.systemPrompt, /EXPERT_PRIVATE_DIARY_CONTEXT/u); assert.match(diary.systemPrompt, /PRODUCT_POLICY/u);
+  assert.ok(!JSON.stringify(diary.message).includes("EXPERT_PRIVATE_DIARY_CONTEXT"));
+  console.log("PASS generation: expert private identity applies to generation and English diary without persisting secret instructions");
   console.log("PASS generation: real extension injects Canvas skill and attempt-scoped repair, then switches to isolated hierarchy fallback");
 }
 async function assertWriteOutcomes(root: string, request: ReturnType<typeof createGenerationRequest>): Promise<void> {

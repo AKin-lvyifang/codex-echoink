@@ -74,7 +74,15 @@
     "test:appearance": "node scripts/appearance-theme-tests.mjs",
     "test:companion-theme": "node scripts/companion-theme-tests.mjs",
     "test:run-reports": "node scripts/run-report-tests.mjs",
-    "test:skill-remote-delivery": "node scripts/skill-remote-delivery-tests.mjs"
+    "test:skill-remote-delivery": "node scripts/skill-remote-delivery-tests.mjs",
+    "test:agent-persona": "node scripts/agent-persona-tests.mjs",
+    "test:experts": "node scripts/expert-content-tests.mjs",
+    "test:workspace": "node scripts/workspace-tests.mjs",
+    "test:mobile-experts": "node scripts/mobile-expert-tests.mjs",
+    "test:workspace-provider": "node scripts/workspace-controlled-provider-tests.mjs",
+    "test:product-run-snapshots": "node scripts/product-run-snapshot-tests.mjs",
+    "test:pi-workspace-tools": "node scripts/pi-workspace-tool-tests.mjs",
+    "test:expert-message-decorations": "node scripts/expert-message-decorations-tests.mjs"
   },
   "keywords": [
     "obsidian",

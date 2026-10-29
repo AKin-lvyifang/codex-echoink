@@ -5,12 +5,11 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
-if (!process.env.ECHOINK_AGENT_EDITOR_TEST_ROOT?.trim()) throw new Error("Explicit ECHOINK_AGENT_EDITOR_TEST_ROOT is required");
-const fixture = await realpath(path.resolve(process.env.ECHOINK_AGENT_EDITOR_TEST_ROOT));
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Agent editor fixtures must stay in 90-任务临时");
+if (!process.env.ECHOINK_AGENT_EDITOR_TEST_ROOT?.trim() && !process.env.ECHOINK_TEST_ROOT?.trim()) throw new Error("An explicit disposable test root is required");
+const fixture = await realpath(disposableTestRoot(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"), ["ECHOINK_AGENT_EDITOR_TEST_ROOT"]));
 const run = await mkdtemp(path.join(fixture, ".agent-editor-run-"));
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 let dom;

@@ -136,6 +136,28 @@ export class View extends Component {
 }
 
 export class ItemView extends View {}
+export class FileView extends ItemView {
+  allowNoFile = false;
+  navigation = true;
+  file: TFile | null = null;
+  readonly contentEl: HTMLElement;
+  constructor(leaf: WorkspaceLeaf) {
+    super(leaf);
+    this.contentEl = (leaf as unknown as { contentEl?: HTMLElement }).contentEl ?? document.createElement("div");
+  }
+  getState(): Record<string, unknown> { return this.file ? { file: this.file.path } : {}; }
+  async setState(state: { file?: string }, _result?: unknown): Promise<void> {
+    if (!state.file) return;
+    const file = this.app.vault.getAbstractFileByPath(state.file);
+    if (!(file instanceof TFile)) throw new Error("FileView fixture file not found");
+    if (this.file) await this.onUnloadFile(this.file);
+    this.file = file;
+    await this.onLoadFile(file);
+  }
+  async onLoadFile(_file: TFile): Promise<void> {}
+  async onUnloadFile(_file: TFile): Promise<void> {}
+  canAcceptExtension(_extension: string): boolean { return false; }
+}
 export class MarkdownView extends ItemView {}
 
 export class Menu {

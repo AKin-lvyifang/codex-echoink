@@ -1,3 +1,8 @@
+import { openPathInElectron } from "../core/electron";
+import { getDesktopPath } from "../platform/desktop-paths";
+import { EXPERT_HALL_VIEW_TYPE, ExpertHallView } from "../experts/view";
+import { WORKSPACE_PREVIEW_VIEW_TYPE, WorkspacePreviewView } from "../workspace/view";
+import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
@@ -44,6 +49,11 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     const workbench = getWorkbenchDataService(plugin);
     plugin.register(() => workbench.dispose());
   }
+  plugin.registerView(EXPERT_HALL_VIEW_TYPE, leaf => new ExpertHallView(leaf, plugin.getExpertHallHost()));
+  plugin.registerView(WORKSPACE_PREVIEW_VIEW_TYPE, leaf => new WorkspacePreviewView(leaf, { service: plugin.getWorkspaceFiles(),
+    openExternal: async path => { if (!await openPathInElectron(getDesktopPath().join(plugin.getVaultPath(), path))) throw new Error("无法在浏览器打开。"); },
+    createButton: (parent, label) => createOriginButton(parent, { text: label }), disposeButtons: parent => disposeOriginControls(parent) }));
+  plugin.registerExtensions(["html"], WORKSPACE_PREVIEW_VIEW_TYPE);
   plugin.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => new ReviewPreviewView(leaf, plugin));
 
   const ribbonAnchor = plugin.addRibbonIcon("feather", Platform.isDesktopApp ? "打开 EchoInk 工作台和 Agent 侧栏" : "打开 EchoInk 首页和 Agent 侧栏", () => {
