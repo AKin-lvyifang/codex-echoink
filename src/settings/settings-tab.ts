@@ -5294,7 +5294,11 @@ export class CodexSettingTab extends PluginSettingTab {
       setIcon(status.createSpan({ attr: { "aria-hidden": "true" } }), connectionStatus === "verified" ? "check-circle-2" : connectionStatus === "failed" ? "circle-alert" : "circle-help");
       status.createSpan({ text: mcpConnectionStatusLabel(connectionStatus, this.plugin.settings.settingsLanguage) });
     }
-    if (Platform.isDesktopApp && resource.kind !== "tool-bundle") row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
+    if (Platform.isDesktopApp && resource.kind !== "tool-bundle") {
+      // Assignment presence is fixed for this row; rebuilding/removing the row owns cleanup.
+      row.classList.add("has-agent-assignment");
+      row.createSpan({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(this.resourceAssignedAgentCount(resource)) });
+    }
     const toggle = createOriginSwitch(row, {
       cls: "codex-resource-toggle",
       attr: {

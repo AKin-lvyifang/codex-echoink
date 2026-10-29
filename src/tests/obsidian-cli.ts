@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { View } from "obsidian";
 import { mkdir, readFile, rename, rm, symlink } from "node:fs/promises";
 import * as path from "node:path";
 import { nativeJournalFixture } from "./native-journal-fixture";
@@ -76,7 +77,9 @@ export function officialCliFixture(fixture: Fixture, root: string) {
   const dailyPath = () => state.dailyPath ?? nativeJournalPathForDate(fixture.app, new Date(), "old-directory");
   const app = fixture.app as any;
   app.workspace.getActiveFile = () => app.vault.getFileByPath(state.activeFile);
-  app.workspace.activeLeaf = { view: { getViewType: () => state.activeView } };
+  const activeView = Object.assign(new View({} as never), { getViewType: () => state.activeView });
+  app.workspace.activeLeaf = { view: activeView };
+  app.workspace.getActiveViewOfType = (type: typeof View) => activeView instanceof type ? activeView : null;
   app.plugins = { plugins: { "sample-plugin": {} } };
   const transport: ObsidianCliTransport = { async run(argv, signal) {
     calls.push([...argv]);

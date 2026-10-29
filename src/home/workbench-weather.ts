@@ -39,6 +39,8 @@ export class WorkbenchWeatherStage {
     this.win = parent.ownerDocument.defaultView!;
     this.checkins = workbenchCheckin(plugin);
     this.element = parent.createDiv({ cls: "wb-sky" });
+    parent.classList.remove("has-weather-feedback");
+    this.cleanups.push(() => parent.classList.remove("has-weather-feedback"));
     this.element.classList.toggle("is-checkin-disabled", !WORKBENCH_CHECKIN_ENABLED);
     const details = this.element.createDiv({ cls: "wb-weather-details" });
     this.text = details.createEl("button", { cls: "wb-weather-copy", attr: { type: "button" } });
@@ -178,13 +180,13 @@ export class WorkbenchWeatherStage {
   }
   private say(text: string, login = false): void {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
-    this.feedbackText.textContent = text; this.login.hidden = !login; this.element.classList.add("is-feedback");
+    this.feedbackText.textContent = text; this.login.hidden = !login; this.element.classList.add("is-feedback"); this.element.parentElement?.classList.add("has-weather-feedback");
     if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer);
     this.feedbackTimer = this.win.setTimeout(() => { this.clearFeedback(); }, 4500);
     this.layoutChanged();
   }
   private clearFeedback(): void {
-    this.feedbackText.textContent = ""; this.login.hidden = true; this.element.classList.remove("is-feedback");
+    this.feedbackText.textContent = ""; this.login.hidden = true; this.element.classList.remove("is-feedback"); this.element.parentElement?.classList.remove("has-weather-feedback");
     this.layoutChanged();
   }
   private hint(): void {

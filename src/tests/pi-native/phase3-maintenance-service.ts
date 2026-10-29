@@ -3,6 +3,7 @@ import { readPrivateMaintenanceRecords } from "../../plugin/pi-knowledge-mainten
 import { rawDigestFingerprint, readRawDigestRegistry, writeRawDigestRegistry } from "../../knowledge-base/raw-digest";
 import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
 import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
+import { TFile } from "obsidian";
 import { KnowledgeRetriever } from "../../knowledge-base/query";
 import { PiKnowledgeReadToolSecurity, createPiKnowledgeReadToolDefinitions } from "../../harness/pi-native/pi-knowledge-read-tools";
 import { recordMaintenanceSourceBodyFingerprint, maintenanceSourceFingerprintsFromEntries } from "../../harness/pi-native/pi-knowledge-maintenance-tool";
@@ -136,7 +137,7 @@ export async function runMaintenanceReadFingerprintTests(): Promise<void> {
   const canonical = rawDigestFingerprint(sourcePath, Buffer.from(original));
   const fullRevision = `sha256:${sha256(original)}`;
   assert.notEqual(canonical.split(":").at(-1), fullRevision.split(":").at(-1));
-  const file = { path: sourcePath, basename: "source", extension: "md", stat: { mtime: 1, size: Buffer.byteLength(original) } };
+  const file = Object.assign(new TFile(), { path: sourcePath, basename: "source", extension: "md", stat: { mtime: 1, size: Buffer.byteLength(original) } });
   const app = { vault: { getMarkdownFiles: () => [file], getAbstractFileByPath: (p: string) => p === sourcePath ? file : null,
     read: async () => fsp.readFile(path.join(vault, sourcePath), "utf8") }, metadataCache: { getFileCache: () => null } };
   const bodySearch = new VaultBodySearch(app as never, () => null);

@@ -171,7 +171,7 @@ export class EchoInkHomeView extends ItemView {
     if (this.searchTimer !== null) win?.clearTimeout(this.searchTimer);
     this.searchAbort?.abort(); this.activityUnsubscribe?.(); this.todoUnsubscribe?.(); this.activityModal?.close();
     disposeOriginControls(this.contentEl);
-    this.contentEl.empty(); this.contentEl.removeClass("echoink-home-workspace");
+    this.contentEl.empty(); this.contentEl.removeClass("echoink-home-workspace", "has-workbench-return");
   }
   private scheduleRefresh(delay = 220): void {
     const win = this.contentEl.ownerDocument.defaultView;
@@ -342,12 +342,14 @@ export class EchoInkHomeView extends ItemView {
     target.focus({ preventScroll: true });
   }
   private renderWorkbenchReturn(): void {
+    this.contentEl.classList.remove("has-workbench-return");
     if (this.getViewType() !== "echoink-legacy-home") return;
     const heading = this.contentEl.querySelector<HTMLElement>(".page-heading");
     if (!heading) return;
     const row = ownedDiv(this.contentEl.ownerDocument);
     row.className = "echoink-workbench-return";
     heading.before(row);
+    this.contentEl.classList.add("has-workbench-return");
     const button = createOriginButton(row, { cls: "echoink-workbench-back is-tertiary", text: this.t("返回工作台", "Back to workbench") });
     const icon = button.createSpan({ attr: { "aria-hidden": "true" } }); setIcon(icon, "arrow-left"); button.prepend(icon);
     button.onclick = () => {

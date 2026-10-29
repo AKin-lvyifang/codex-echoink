@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import type { App, TFile } from "obsidian";
+import { type App, TFile } from "obsidian";
 import { BodySearchMemoryIndex, searchBodyDocuments } from "../knowledge-base/search/body-search";
 import { VaultBodySearch, knowledgeSearchPathKind } from "../knowledge-base/vault-body-search";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -1105,7 +1105,7 @@ export async function runKnowledgeBodySearchInvalidationTests(): Promise<void> {
   ]);
   let journalPause: (() => Promise<void>) | undefined;
   let readPause: ((path: string) => Promise<void>) | undefined;
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md",
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.slice(0, -3), extension: "md",
     stat: { mtime: 1, size: bodies.get(path)?.length ?? 0 } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),

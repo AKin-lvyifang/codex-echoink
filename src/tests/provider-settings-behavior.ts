@@ -1,4 +1,5 @@
 import { runCustomModelToolCallingTests } from "./custom-model-tool-calling";
+import { installMockObsidianDom } from "./obsidian-dom";
 import { runCustomToolCallingRuntimeTests } from "./pi-native/pi-native-conversation-runtime";
 import { runProviderModelDiscoveryRegression } from "./provider-model-discovery-behavior";
 import { runSettingsSaveResilienceTests } from "./settings-save-resilience";
@@ -830,9 +831,10 @@ function assertMemoryComposerVisualCssContract(): void {
   const hiddenPreviewRule = css.match(
     /\.echoink-memory-correction-preview\.is-hidden\s*\{([^}]*)\}/u
   )?.[1] ?? "";
-  const disabledSaveRule = css.match(
-    /\.echoink-memory-correction-actions button\.mod-cta:disabled\s*\{([^}]*)\}/u
-  )?.[1] ?? "";
+  const disabledSaveRules = Array.from(css.matchAll(
+    /((?:\.echoink-memory-correction-actions)+ button\.mod-cta:disabled)\s*\{([^}]*)\}/gu
+  ));
+  const disabledSaveRule = disabledSaveRules.map(match => match[2]).join("\n");
   const sendButtonRule = blocks(
     /\.codex-composer-send-button\.codex-send-button\s*\{([^}]*)\}/u
   );
@@ -861,9 +863,25 @@ function assertMemoryComposerVisualCssContract(): void {
   assert.match(disabledSaveRule, /color:\s*var\(--text-faint\);/u);
   assert.match(
     disabledSaveRule,
-    /background:\s*var\(--background-modifier-border\)\s*!important;/u
+    /background:\s*var\(--background-modifier-border\)\s*;/u
   );
   assert.match(disabledSaveRule, /cursor:\s*not-allowed;/u);
+  assert.match(disabledSaveRule, /opacity:\s*0\.62;/u);
+  assert.match(disabledSaveRule, /box-shadow:\s*none;/u);
+  const disabledBackgroundRule = disabledSaveRules.find(match => /background:\s*var\(--background-modifier-border\)\s*;/u.test(match[2]));
+  assert.ok(disabledBackgroundRule, "the scoped disabled-save rule retains its original background token");
+  const disabledBackgroundSelector = disabledBackgroundRule[1];
+  assert.equal(
+    disabledBackgroundSelector.replace(/(?:\.echoink-memory-correction-actions)+/u, ".echoink-memory-correction-actions"),
+    ".echoink-memory-correction-actions button.mod-cta:disabled",
+    "specificity promotion must keep the exact disabled memory-save target"
+  );
+  // All these selectors have one button type and no IDs. Classes plus
+  // pseudo-classes decide their specificity: the base has 3; host CTA rules
+  // button.mod-cta:disabled and .modal button.mod-cta:disabled have 2 and 3.
+  const promotedSpecificity = (disabledBackgroundSelector.match(/\./gu)?.length ?? 0) + 1;
+  assert.ok(promotedSpecificity > 3, "the enhanced background rule beats both the base and host disabled CTA selectors without relying on source order");
+  assert.doesNotMatch(disabledBackgroundRule[2], /!important/u, "disabled save uses scoped specificity instead of important declarations");
   assert.match(sendButtonRule, /width:\s*34px;/u);
   assert.match(sendButtonRule, /height:\s*34px;/u);
   assert.match(sendButtonRule, /flex:\s*0 0 34px;/u);
@@ -11008,6 +11026,7 @@ class ProviderModalTestMouseEvent {
 }
 
 class ProviderModalTestDocument {
+  constructor() { installMockObsidianDom(this); }
   hasFocus(): boolean { return true; }
   activeElement: ProviderModalTestElement | null = null;
   prefersReducedMotion = false;

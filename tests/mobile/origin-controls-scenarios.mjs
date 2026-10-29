@@ -11,7 +11,7 @@ export async function originControlScenarios(test) {
     build.onResolve({ filter: /^origin-select-probe$/ }, () => ({ path: path.resolve("src/home/origin-select-probe.ts") }));
     build.onLoad({ filter: /[\\/]origin-select-probe\.ts$/ }, () => ({
       // Keep a value reference: a TS-only re-export can hide a missing export.
-      contents: 'import { createOriginSelect, createOriginCheck } from "../settings/origin-controls"; export const categorySelect = createOriginSelect; export const nativeCheckbox = createOriginCheck;', loader: "ts"
+      contents: 'import { createOriginSelect, createOriginCheck } from "../settings/origin-controls"; export const categorySelect = createOriginSelect; export const nativeCheckbox = createOriginCheck; export { installObsidianDom } from "../tests/obsidian-dom";', loader: "ts"
     }));
   } };
   await test("Home Select virtual probe loads on Windows and POSIX paths", async () => {
@@ -37,6 +37,8 @@ export async function originControlScenarios(test) {
   const module = { exports: {} };
   try {
     vm.runInNewContext(built.outputFiles[0].text, { module, exports: module.exports, document: main.window.document, window: main.window });
+    module.exports.installObsidianDom(main.window);
+    module.exports.installObsidianDom(owner.window);
     const createOriginSelect = module.exports.categorySelect;
     const parent = owner.window.document.getElementById("category");
     const choices = [{ value: "", label: "未分类" }, { value: "工作", label: "工作" }, { value: "归档", label: "归档", disabled: true }];

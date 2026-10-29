@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import type { App, TFile } from "obsidian";
+import { type App, TFile } from "obsidian";
 import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
 import { KnowledgeRetriever } from "../../knowledge-base/query";
 import { VaultBodySearch } from "../../knowledge-base/vault-body-search";
@@ -27,7 +27,7 @@ export async function runPiKnowledgeLinkCueBudgetTests(): Promise<void> {
   const bodies = new Map<string, string>(Array.from({ length: 4 }, (_, index): [string, string] => [`notes/cue-budget-${index}.md`, ["# Overview", `CUE_BUDGET_TOKEN ${"文".repeat(2250)}`,
     ...Array.from({ length: 60 }, () => "Background."), ...anchors.map(anchor => `[[Target#${anchor}]]`)].join("\n")]));
   bodies.set("notes/Target.md", anchors.map(anchor => `## ${anchor}\nUNREAD_CUE_BUDGET_BODY`).join("\n"));
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.slice(0, -3), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => bodies.get(entry.path)! }, metadataCache: { getFileCache: () => null } } as unknown as App;
   const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
@@ -89,7 +89,7 @@ export async function runPiKnowledgeAnchorBudgetTests(): Promise<void> {
   const bodies = new Map<string, string>(Array.from({ length: 4 }, (_, index): [string, string] => [`notes/anchor-budget-${index}.md`, ["# Overview", `ANCHOR_BUDGET_TOKEN ${"文".repeat(2250)}`,
     ...Array.from({ length: 60 }, () => "Background."), ...anchors.map(anchor => `[[Target#${anchor}]]`)].join("\n")]));
   bodies.set("notes/Target.md", anchors.map(anchor => `## ${anchor}\nUNREAD_TARGET_BODY`).join("\n"));
-  const file = (name: string) => ({ path: name, basename: name.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
+  const file = (name: string) => Object.assign(new TFile(), { path: name, basename: name.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(name)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (name: string) => bodies.has(name) ? file(name) : null,
     read: async (entry: TFile) => bodies.get(entry.path)! }, metadataCache: { getFileCache: () => null } } as unknown as App;
   const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
@@ -154,7 +154,7 @@ export async function runPiKnowledgeAnchorBudgetTests(): Promise<void> {
 export async function runPiKnowledgeOutlineBudgetTests(): Promise<void> {
   const bodies = new Map<string, string>(Array.from({ length: 4 }, (_, index): [string, string] => [`notes/budget-${index}.md`, ["# Overview", `BUDGET_ENV_TOKEN ${"文".repeat(2250)}`,
     ...Array.from({ length: 5 }, (_, heading) => `## ${heading}${"目录标题".repeat(65)}\nDetails.`), ...Array.from({ length: 120 }, () => "Background.")].join("\n")]));
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
   const app = { vault: { getMarkdownFiles: () => [...bodies.keys()].map(file), getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
     read: async (source: TFile) => bodies.get(source.path)! }, metadataCache: { getFileCache: () => null } } as unknown as App;
   const port = new VaultBodySearch(app, () => emptyKnowledgeFolderBindings());
@@ -222,7 +222,7 @@ export async function runPiKnowledgeOutlineBudgetTests(): Promise<void> {
 export async function runPiKnowledgeMetadataToolTests(): Promise<void> {
   const paragraph = "The replacement prism stays in the western cupboard.\nCheck its padded sleeve before transport.";
   const content = `---\naliases: [Copper Beacon]\ntags: [reserve-batch]\n---\n\n# Field kit\n\n${paragraph}\n\n## Background\nThe old packing list needs a separate review.`;
-  const file = { path: "notes/Field kit.md", basename: "Field kit", extension: "md", stat: { mtime: 10, ctime: 1, size: content.length } } as TFile;
+  const file = Object.assign(new TFile(), { path: "notes/Field kit.md", basename: "Field kit", extension: "md", stat: { mtime: 10, ctime: 1, size: content.length } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [file],
     getAbstractFileByPath: (path: string) => path === file.path ? file : null,
@@ -273,7 +273,7 @@ export async function runPiKnowledgeReferenceToolTests(): Promise<void> {
     ["notes/other-actions.md", "# Other actions\n这种方法的下一步安排是先检查封套。"]
   ]);
   let activePath: string | undefined = currentPath;
-  const file = (path: string) => ({ path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
+  const file = (path: string) => Object.assign(new TFile(), { path, basename: path.split("/").at(-1)!.replace(/\.md$/u, ""), extension: "md", stat: { mtime: 10, ctime: 1, size: bodies.get(path)!.length } }) as TFile;
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (path: string) => bodies.has(path) ? file(path) : null,
