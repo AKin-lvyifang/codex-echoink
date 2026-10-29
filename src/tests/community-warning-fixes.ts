@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { reasoningTextFromPayload, summarizeProcessEvent } from "../core/mapping";
 import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
 import { ObsidianVaultDomainAdapter, createPhase3MaintenanceVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
+import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -22,6 +23,7 @@ export async function runCommunityWarningFixesTests(first: Window, second: Windo
   processEventPayloads();
   customConfigProtection();
   await dataRoots();
+  await maintenanceConfigBoundary();
   measuredRows(first, second);
   providerIcons(first, second);
   await runShortcutFailureTests(createCapture);
@@ -186,6 +188,19 @@ async function dataRoots() {
     for (const binding of bindings) binding.dispose();
     await rm(temp, { recursive: true, force: true });
   }
+}
+
+async function maintenanceConfigBoundary(): Promise<void> {
+  const vault = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-maintenance-config-")));
+  try {
+    const privatePath = "Config/plugins/codex-echoink/private.md";
+    await mkdir(path.dirname(path.join(vault, privatePath)), { recursive: true });
+    await writeFile(path.join(vault, privatePath), "private content must not be read");
+    const base = new ObsidianVaultDomainAdapter({ vault: { configDir: "Config" } } as never, "config-boundary", vault);
+    const adapter = createPhase3MaintenanceVaultDomainAdapter({ base, trackerRelativePath: "outputs/.tracker.md" });
+    const service = new VaultDomainService(adapter);
+    await assert.rejects(service.noteRead({ vaultId: adapter.vaultId, relativePath: privatePath }), { code: "unsafe_target" });
+  } finally { await rm(vault, { recursive: true, force: true }); }
 }
 
 function providerIcons(first: Window, second: Window): void {

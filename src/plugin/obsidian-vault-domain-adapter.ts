@@ -460,6 +460,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
 class Phase3MaintenanceVaultDomainAdapter implements VaultDomainAdapter {
   readonly vaultId: string;
   readonly vaultRootPath: string;
+  get configDir(): string { return this.base.configDir; }
 
   constructor(
     private readonly base: ObsidianVaultDomainAdapter,
