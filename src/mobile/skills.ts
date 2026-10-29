@@ -6,6 +6,7 @@ import type { EchoInkResource } from "../resources/types";
 import { sha256Hex } from "../utils/sha256";
 import { skillIcon } from "../agents/skill-icons";
 import { resourcePresentation } from "../resources/resource-presentation";
+import { skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import { checkAgentSkill, skillCapabilityIds, type AgentCapabilityContext } from "../agents/capability-core";
 import { mobileAtomicFilePort } from "./finance-store";
 import type { MobileCapabilityPolicy } from "./capability-policy";
@@ -52,6 +53,7 @@ export class MobileSkillsService {
   }
   private serialize<T>(run: () => Promise<T>): Promise<T> { const pending = this.writes.then(run, run); this.writes = pending.catch(() => {}); return pending; }
   initialize(): Promise<void> { return this.prepare(); }
+  subscribeDelivery(listener: () => void): () => void { return this.contentResolver.subscribe(listener); }
   entries(): SkillEntry[] {
     const settings = this.settings(), saved = settings.resources.catalog.filter(item => item.kind === "skill");
     const builtin = BUILTIN_SKILLS.map(skill => {
@@ -98,6 +100,8 @@ export class MobileSkillsService {
     return { id: item.id, name: remote && metadata ? this.settings().settingsLanguage === "en" ? metadata.nameEn : metadata.name : item.name,
       description: remote && metadata ? this.settings().settingsLanguage === "en" ? metadata.summaryEn : metadata.summary : item.description, builtin: item.builtin && !(isRemoteOnlySkill(item.id) && !remote), enabled: item.enabled, icon: skillIcon(item.id),
       remote, locked, readonly: remote, compareUrl: metadata?.compareUrl ?? null, contentVersion: metadata?.version,
+      deliveryStatus: locked ? this.settings().settingsLanguage === "en" ? "Active PRO required" : "需要有效 PRO"
+        : skillDeliveryStateText(this.contentResolver.deliveryState(item.id), this.settings().settingsLanguage === "en"),
       mobileAvailable, ...(!mobileAvailable ? { unavailableReason: locked ? "需要有效 PRO，请在账号与会员中启用本机。" : item.id === "obsidian-cli" ? "此 Skill 仅在电脑运行；移动端可以查看和编辑。" : "Skill 正文尚未导入当前笔记库。" } : {}),
       contentPath: remote ? null : actualPath, sourceLabel: remote ? "EchoInk 官方联网下发" : actualPath ?? (item.builtin ? "EchoInk 内置正文" : "正文尚未导入"),
       agentsVersion: sha256Hex(JSON.stringify(this.settings().agentRegistry)),
@@ -115,10 +119,16 @@ export class MobileSkillsService {
     if (isRemoteOnlySkill(id) || id === "knowledge-review") await this.contentResolver.publicCatalog();
     const item = this.entry(id), raw = await this.raw(item), summary = await this.summary(item);
     if (summary.locked) return { ...summary, content: "", version: "locked" };
-    const resolved = await this.contentResolver.resolve(id, { path: item.path, ...(raw === null && !isRemoteOnlySkill(id) ? { content: item.content } : {}) });
+    let resolved: ResolvedSkillContent;
+    try { resolved = await this.contentResolver.resolve(id, { path: item.path, ...(raw === null && !isRemoteOnlySkill(id) ? { content: item.content } : {}) }); }
+    catch (error) {
+      if (!summary.remote) throw error;
+      const current = await this.summary(item);
+      return { ...current, deliveryStatus: current.deliveryStatus || (error instanceof Error ? error.message : "Skill 暂时不可用，请重试。"), content: "", version: "unavailable" };
+    }
     const content = resolved.content;
     if (!content) throw new Error("Skill 正文尚未导入当前笔记库。");
-    return { ...summary, readonly: resolved.source === "official-remote", contentVersion: resolved.version, content, version: sha256Hex(JSON.stringify([item.path, raw, item.content])) };
+    return { ...await this.summary(item), readonly: resolved.source === "official-remote", contentVersion: resolved.version, content, version: sha256Hex(JSON.stringify([item.path, raw, item.content])) };
   }
   defaultSkillContent(id: string): string | null { const builtin = BUILTIN_SKILLS.find(item => item.id === id); return builtin && !isRemoteOnlySkill(id) ? renderBuiltinSkill(builtin) : null; }
   saveSkill(id: string, content: string, version: string): Promise<MobileSkillSnapshot> {

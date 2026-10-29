@@ -25,6 +25,7 @@ export interface ResolvedSkillContent {
   assertAvailable(): void;
 }
 interface CachedSkill extends SkillContentResponse { scope: string; path: string; runtimePath: string }
+export type SkillDeliveryState = { kind: "offline"; until: number } | { kind: "refresh" } | { kind: "error"; message: string };
 /** A single source/entitlement/version boundary used by all three devices. */
 export class SkillContentResolver {
   private catalog: OfficialSkillCatalog | null = null;
@@ -34,6 +35,8 @@ export class SkillContentResolver {
   private catalogFailure: unknown = null;
   private readonly resolutions = new Map<string, Promise<ResolvedSkillContent>>();
   private readonly denied = new Set<string>();
+  private readonly deliveryStates = new Map<string, { binding: string; state: SkillDeliveryState }>();
+  private readonly listeners = new Set<() => void>();
   constructor(private readonly options: {
     files: SkillContentFiles; cacheRoot: string; account(): SkillDeliveryAccount | null | undefined;
     pluginVersion: string; platform: SkillPlatform; now?: () => number;
@@ -74,6 +77,21 @@ export class SkillContentResolver {
   }
   catalogEntry(id: string): OfficialSkillCatalogEntry | undefined { return this.catalog?.skills.find(item => item.id === id); }
   hasRemoteAccess(): boolean { return !!this.options.account()?.skillAuthorization(); }
+  subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  deliveryState(id: string): SkillDeliveryState | null {
+    const auth = this.options.account()?.skillAuthorization(), saved = this.deliveryStates.get(id);
+    if (!auth || !saved || saved.binding !== `${auth.scope}:${auth.session}`) return null;
+    return saved.state.kind === "offline" && this.now() >= Math.min(saved.state.until, auth.validUntil) ? { kind: "refresh" }
+      : saved.state.kind === "offline" ? { kind: "offline", until: Math.min(saved.state.until, auth.validUntil) } : saved.state;
+  }
+  private setDeliveryState(id: string, auth: SkillAuthorization, state: SkillDeliveryState | null): void {
+    const current = this.options.account()?.skillAuthorization();
+    if (!current || current.scope !== auth.scope || current.session !== auth.session) return;
+    const next = state ? { binding: `${auth.scope}:${auth.session}`, state } : undefined;
+    if (JSON.stringify(this.deliveryStates.get(id)) === JSON.stringify(next)) return;
+    if (next) this.deliveryStates.set(id, next); else this.deliveryStates.delete(id);
+    for (const listener of this.listeners) listener();
+  }
   async isUserCopy(id: string, contentPath = skillLocalPath(id)): Promise<boolean> {
     const content = await this.read(contentPath);
     if (content === null) return false;
@@ -105,6 +123,7 @@ export class SkillContentResolver {
       const flight = this.resolutions.get(key);
       if (flight) return flight;
       const promise = this.remote(id, account, auth).catch((error: unknown): ResolvedSkillContent => {
+        this.setDeliveryState(id, auth, error instanceof MembershipNetworkError ? { kind: "refresh" } : { kind: "error", message: error instanceof Error ? error.message : "Skill 暂时不可用，请重试。" });
         if (id !== "knowledge-review" || !(error instanceof MembershipNetworkError)) throw error;
         this.assertAuthorization(account, auth);
         const content = raw ?? renderBuiltinSkill(definition!);
@@ -171,6 +190,7 @@ export class SkillContentResolver {
       this.assertAuthorization(account, auth);
       if (error instanceof MembershipNetworkError && previous && !this.denied.has(deniedKey) && this.validCache(previous)) {
         await this.ensureRuntimeFile(previous, auth); this.assertAuthorization(account, auth);
+        this.setDeliveryState(id, auth, { kind: "offline", until: Math.min(account.skillAuthorization()!.validUntil, previous.issuedAt + Math.min(MAX_SKILL_OFFLINE_MS, previous.maxOfflineSeconds * 1000)) });
         return this.resolved(previous, account, auth);
       }
       if (!(error instanceof MembershipNetworkError)) this.denied.add(deniedKey);
@@ -181,6 +201,7 @@ export class SkillContentResolver {
       if (!previous || response.version !== previous.version || !this.validCache(previous)) throw new Error("Skill 缓存已到期，请重新下载完整正文。");
       this.denied.delete(deniedKey);
       await this.ensureRuntimeFile(previous, auth); this.assertAuthorization(account, auth);
+      this.setDeliveryState(id, auth, null);
       return this.resolved(previous, account, auth);
     }
     if (sha256Hex(response.content) !== response.sha256) throw new Error("Skill 正文校验失败，旧版本已保留。");
@@ -197,6 +218,7 @@ export class SkillContentResolver {
     await this.options.files.write(`${this.root()}/${auth.scope}/${id}/current.json`, JSON.stringify(metadataOnly));
     this.assertAuthorization(account, auth);
     this.denied.delete(deniedKey);
+    this.setDeliveryState(id, auth, null);
     return this.resolved(cached, account, auth);
   }
   private runtimePath(cache: CachedSkill, auth: SkillAuthorization): string {

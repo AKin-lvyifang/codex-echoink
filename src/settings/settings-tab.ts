@@ -1,5 +1,5 @@
 import { renderMcpServerSettings } from "./mcp-server-settings";
-import { isOfficialRemoteSkill, remoteSkillLocked, skillDeliveryNotice } from "../resources/remote-skill-presentation";
+import { isOfficialRemoteSkill, remoteSkillLocked, skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../membership/skill-delivery";
 import { ownedDiv } from "../ui/owned-dom";
 import { isImeKeyEvent } from "../ui/ime-composition";
@@ -4285,7 +4285,7 @@ export class CodexSettingTab extends PluginSettingTab {
       typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id
     ) : undefined;
     const page = createSettingsPage(container, {
-      title: presentation.name,
+      title: metadata ? english ? metadata.nameEn : metadata.name : presentation.name,
       description: (metadata ? english ? metadata.summaryEn : metadata.summary : presentation.description) || (english ? "Resource details" : "资源详情"),
       detail: true,
       backLabel: english ? "Back to Skills and MCP" : "返回 Skills 与 MCP",
@@ -4298,21 +4298,22 @@ export class CodexSettingTab extends PluginSettingTab {
       const locked = remoteSkillLocked(resource, this.plugin.accountService);
       const id = (typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id);
       createPluginEditionBadge(page, "pro", this.plugin.settings.settingsLanguage);
-      if (locked) createSettingsState(createSettingsSection(page), english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。");
-      const comparison = createSettingsSection(page, { title: english ? "Skill access" : "Skill 使用范围", surface: "group" });
-      const info = createSettingsGroup(comparison);
-      new OriginSetting(info).setName(english ? "Free" : "免费").setDesc(english ? "Built-in basic Skills and basic knowledge review" : "内置基础 Skill 与知识复盘基础版");
-      new OriginSetting(info).setName("PRO").setDesc(english ? "7 official methodology Skills, enhanced knowledge review and ongoing updates" : "7 个官方方法论 Skill、知识复盘增强版及持续更新");
-      const examples = new OriginSetting(info).setName(english ? "Comparison examples" : "对比示例");
+      const resolver = this.plugin.getSkillContentResolver?.();
+      const state = page.createEl("p", { cls: "settings-note", attr: { "data-skill-delivery-state": id, role: "status", "aria-live": "polite" } });
+      const updateState = () => {
+        const message = remoteSkillLocked(resource, this.plugin.accountService)
+          ? english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。"
+          : skillDeliveryStateText(resolver?.deliveryState(id) ?? null, english);
+        state.setText(message); state.hidden = !message;
+      };
+      updateState();
+      if (resolver) this.membershipRowsDisposers.push(resolver.subscribe(updateState));
+      this.membershipRowsDisposers.push((this.plugin.accountService ?? unavailableCapabilityAccess).subscribe(updateState));
       const compareUrl = typeof metadata?.compareUrl === "string" ? safeSkillCompareUrl(metadata.compareUrl) : null;
       if (compareUrl) {
-        const link = createOriginButton(examples.controlEl, { cls: "text-button", text: english ? "View" : "查看" });
+        const link = createOriginButton(page, { cls: "text-button", text: english ? "View comparison" : "查看对比" });
         link.onclick = () => window.open(compareUrl, "_blank", "noopener,noreferrer");
-      } else examples.setDesc(english ? "Not available yet" : "尚未提供");
-      const help = new OriginSetting(info).setName(english ? "Downloads and offline use" : "下载与离线使用");
-      const helpButton = createOriginButton(help.controlEl, { cls: "is-icon", attr: { "aria-label": english ? "Downloads and offline use" : "下载与离线使用" } });
-      setIcon(helpButton, "circle-alert");
-      attachSettingsHelpTooltip(helpButton, skillDeliveryNotice(english));
+      }
       if (!locked) {
         const read = createOriginButton(page, { cls: "text-button", text: english ? "Read official instructions" : "查看官方指令" });
         const body = page.createDiv({ cls: "markdown-rendered" });
@@ -4327,7 +4328,7 @@ export class CodexSettingTab extends PluginSettingTab {
             const selected = await this.plugin.getSkillContentResolver().resolve(id);
             selected.assertAvailable();
             if (body.isConnected) { body.empty(); await MarkdownRenderer.render(this.app, selected.content, body, "", component); }
-          } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+          } catch (error) { state.setText(error instanceof Error ? error.message : String(error)); state.hidden = false; }
           finally { read.disabled = false; }
         };
       }
@@ -5376,8 +5377,14 @@ export class CodexSettingTab extends PluginSettingTab {
     toggle.checked = resourceEnabled;
     if (isOfficialRemoteSkill(resource)) {
       const badge = title.createSpan({ cls: "codex-resource-state-badge" });
+      const id = typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id;
+      const resolver = this.plugin.getSkillContentResolver?.();
+      const state = content.createDiv({ cls: "codex-resource-row-desc", attr: { "data-skill-delivery-state": id, role: "status" } });
       const update = () => {
         const locked = remoteSkillLocked(resource, this.plugin.accountService);
+        const message = locked ? this.plugin.settings.settingsLanguage === "en" ? "Active PRO required" : "需要有效 PRO"
+          : skillDeliveryStateText(resolver?.deliveryState(id) ?? null, this.plugin.settings.settingsLanguage === "en");
+        state.setText(message); state.hidden = !message;
         badge.empty();
         if (locked) setIcon(badge.createSpan({ attr: { "aria-hidden": "true" } }), "lock");
         badge.setAttr("aria-label", this.plugin.settings.settingsLanguage === "en" ? "PRO required" : "需要 PRO");
@@ -5387,6 +5394,7 @@ export class CodexSettingTab extends PluginSettingTab {
       };
       update();
       this.membershipRowsDisposers.push((this.plugin.accountService ?? unavailableCapabilityAccess).subscribe(update));
+      if (resolver) this.membershipRowsDisposers.push(resolver.subscribe(update));
     }
     const currentEnabled = () => isEnglishDiary ? this.plugin.settings.englishDiary.enabled
       : this.plugin.settings.resources.catalog.find((candidate) => candidate.id === resource.id)?.enabled ?? false;

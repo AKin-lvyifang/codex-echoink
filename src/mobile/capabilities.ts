@@ -44,6 +44,7 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
   }
   private serialize<T>(run: () => Promise<T>): Promise<T> { const pending = this.writes.then(run, run); this.writes = pending.catch(() => {}); return pending; }
   listSkills() { return this.skillsService.listSkills(); }
+  subscribeSkillDelivery(listener: () => void) { return this.skillsService.subscribeDelivery(listener); }
   initializeSkills() { return this.skillsService.initialize(); }
   readSkill(id: string) { return this.skillsService.readSkill(id); }
   setSkillEnabled(id: string, enabled: boolean) { return this.skillsService.setSkillEnabled(id, enabled); }

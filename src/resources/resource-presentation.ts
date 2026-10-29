@@ -82,6 +82,11 @@ const ENGLISH_SKILLS: Record<BuiltinSkillId, { name: string; description: string
 
 /** UI copy is separate from the name that Pi validates against SKILL.md. */
 export function resourcePresentation(resource: EchoInkResource, language: SettingsLanguage): ResourcePresentation {
+  const remote = resource.metadata?.remoteCatalog as { name?: string; nameEn?: string; summary?: string; summaryEn?: string } | null | undefined;
+  if (resource.metadata?.contentSource === "official-remote" && remote
+    && [remote.name, remote.nameEn, remote.summary, remote.summaryEn].every(value => typeof value === "string" && value.trim())) {
+    return { name: (language === "en" ? remote.nameEn : remote.name)!, description: (language === "en" ? remote.summaryEn : remote.summary)!, aliases: [remote.name!, remote.nameEn!, resource.name] };
+  }
   if (resource.id === "echoink:selection-ask") return builtinPluginPresentation("selection-ask", language);
   if (resource.kind === "tool-bundle" && resource.source === "echoink-local" && resource.id === "echoink:english-diary") {
     return builtinPluginPresentation("english-diary", language);
