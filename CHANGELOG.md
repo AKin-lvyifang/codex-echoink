@@ -1,5 +1,63 @@
 # Changelog
 
+## 2.8.8 - 2026-10-29
+<!-- release-type: feat -->
+### 2.8.8 · 日记自动变待办和账单
+
+![EchoInk 2.8.8：日记自动变待办和账单](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.8/assets/releases/echoink-agent-2.8.8-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **日记里的事情和花销，可以自动整理了。** 在电脑端开启后，日记停笔满一小时，EchoInk 会提取待办和已发生的本人收支，保留原文来源。不确定的条目留在工作台等你核对，可修改、确认或忽略；已写入的条目可以撤销。待办整理免费，账单整理需要有效 PRO；手机和平板可查看整理结果，不运行后台整理。
+- **本机的外部 Agent 可以读取你授权的知识和记忆。** 新增 EchoInk MCP 服务（PRO），默认关闭。开启后分别授权知识库、个人记忆与画像，复制接入文字交给同一台电脑上的支持客户端。可以随时关闭或更换令牌；已经交给外部 Agent 的内容无法收回。
+- **官方 PRO Skill 可以联网获取新版。** 无 PRO 也能查看名称和简介；有有效权益和设备授权时按需下载。知识复盘保留完整本地基础版，用户自己修改过的 Skill 保留。模型调用额度仍由所选服务商另行收取。
+- **日记入口和任务进度恢复正常。** 日记角色关闭时仍能浏览日记；目录未设置时显示空状态，新建时再引导设置。后台任务停止后不再留下常驻进度卡，归档和删除按任务处理。
+- **设置里可以修正个人记忆，外观更贴合当前主题。** 没有安装配套主题时，插件外观跟随 Obsidian；保留已选的 PRO 外观偏好。
+- **修复部分 Ollama 模型连接正常、聊天却报 HTTP 400 的问题。** 未声明支持思考的模型不再默认发送思考参数；服务端返回的错误原因也会显示在提示中。
+
+#### 如何使用
+
+在电脑端 EchoInk 的「模块 → 日记」设置中开启「从日记自动整理待办和账单」，先阅读发送范围与额度说明。功能默认关闭，开启后会将待整理的日记发送给你配置的模型；首次从最近七天开始。回到工作台查看整理结果，展开待确认事项后核对再确认。
+
+需要外部 Agent 接入时，在电脑端「能力 → MCP」中打开 EchoInk MCP 服务，选择允许读取的资料，再复制个人接入文字。请只交给你信任的本机客户端；外部 Agent 及其模型服务可能保存读取的资料。
+
+#### 下载与升级
+
+**使用多台设备的用户，请把所有设备都升级到 2.8.8。** 日记整理新增了账目来源格式，旧版本无法识别，不能混用旧版处理这些数据。
+
+需要 **Obsidian 1.11.4 及以上**。升级前完整备份 Vault、插件设置和数据。在 Obsidian 社区插件中检查更新，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) 下载 **main.js、manifest.json、styles.css**，只替换 `.obsidian/plugins/codex-echoink/` 中这三个文件，保留原有数据，再重新启用插件。移动端仍为 Beta，支持范围见 [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.8/README_CN.md)。
+
+### English
+
+**2.8.8 · Turn journals into tasks and bills automatically**
+
+Type: New
+
+#### What's new
+
+- **Organize tasks and spending from your journal.** Once enabled on desktop, EchoInk extracts tasks and your completed income and expenses after a journal has remained unchanged for an hour, keeping links to the source. Uncertain items wait on the workbench for you to edit, confirm, or ignore; written items can be undone. Task extraction is free; bill extraction requires active PRO. Phones and tablets can display results but do not run background extraction.
+- **Local external agents can read the knowledge and memory you authorize.** The new EchoInk MCP server (PRO) is off by default. Enable it, authorize knowledge and personal memory/profile separately, then copy the setup instructions to a compatible client on the same computer. You can stop the server or rotate its token. Content already sent to an external agent cannot be recalled.
+- **Official PRO Skills can download updated versions.** Names and summaries are public; content downloads require active entitlement and device authorization. Knowledge review retains its complete local basic version, and your edited Skills are preserved. Your chosen model service still bills model usage separately.
+- **Restored journal access and task-progress behavior.** Journals remain browsable with the journal agent disabled. Unconfigured folders show an empty state and guide you to settings when creating a journal. Stopped background tasks leave the persistent progress area; archive and delete actions apply to the selected task.
+- **Correct personal memory in settings, with appearance that fits your theme.** Without the companion theme installed, EchoInk follows Obsidian's appearance while retaining your preferred PRO appearance.
+- **Fixed HTTP 400 errors in conversations with some Ollama models whose connection test succeeded.** Thinking parameters are no longer enabled by default for models that have not declared support. Error messages also show the reason returned by the server.
+
+#### How to use
+
+On desktop, enable automatic task and bill organization under EchoInk's **Modules → Journal** settings after reviewing what is sent and how usage is billed. It is off by default. Enabling it sends journals to your configured model for extraction, starting with the last seven days. Review results on the workbench and expand uncertain items before confirming them.
+
+For external-agent access, open **Capabilities → MCP** on desktop, enable the EchoInk MCP server, choose the data it may read, and copy the personal setup instructions. Share them only with trusted local clients. External agents and their model services may retain the data they read.
+
+#### Download and upgrade
+
+**If you use multiple devices, upgrade every device to 2.8.8.** Journal extraction adds a bill-source format that older versions cannot recognize. Do not use older versions to process that data.
+
+Requires **Obsidian 1.11.4 or later**. Back up your complete vault, plugin settings, and data before upgrading. Check for updates in Obsidian's community plugins, or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8). Replace only those three files in `.obsidian/plugins/codex-echoink/`, preserve existing data, and re-enable the plugin. Mobile remains in Beta; see the [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.8/README.md) for its supported scope.
+
 ## 2.8.7 - 2026-10-28
 <!-- release-type: feat -->
 ### 2.8.7 · 工作台直接开工

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.1：从资料生成与手机平板新工作台" src="assets/releases/echoink-agent-2.8.1-release.png">
+    <img width="1024" alt="EchoInk 2.8.8：日记自动变待办和账单" src="assets/releases/echoink-agent-2.8.8-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">官方网站</a> ·
   <a href="https://echoink.cn/install">下载与安装</a> ·
-  <a href="#281-更新">2.8.1 更新</a> ·
+  <a href="#288-更新">2.8.8 更新</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
   <a href="README.md">English</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1"><img src="https://img.shields.io/badge/version-2.8.1-0EA5E9?style=flat-square" alt="版本 2.8.1"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8"><img src="https://img.shields.io/badge/version-2.8.8-0EA5E9?style=flat-square" alt="版本 2.8.8"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
@@ -26,22 +26,17 @@
 
 EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理知识、保留可查看和修正的长期记忆，也记录自己的日常。笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
 
-## 2.8.1 更新
+## 2.8.8 更新
 
-**从资料生成与手机平板新工作台。** 桌面端可从选定笔记生成报告与 Canvas 思维导图，使用内置或自己的模板，并从结果回到来源笔记。
+电脑端开启日记自动整理后，EchoInk 会从日记中提取待办和账单。不确定的条目留在工作台等你核对，保留原文来源，已写入的条目可以撤销。待办整理免费，账单整理需要有效 PRO；手机和平板可查看结果，不运行后台整理。
 
-**全新工作台与多 Agent 任务。** 桌面首页集中展示等你回应、正在进行和已完成的事项。待办、资料和 PDF 等提醒可以直接带着相关内容交给 Agent。
+新增电脑端 EchoInk MCP 服务（PRO），让同一台电脑上的兼容 Agent 读取你授权的知识和个人记忆。官方 PRO Skill 按需联网获取新版，知识复盘保留完整本地基础版，自己修改过的 Skill 也会保留。
 
-- 创建不同的 Agent，分别配置身份、模型和可用能力；从各自的任务列表查看进度、处理审批和继续对话。
-- 中断任务保留原因与最后阶段，点击“从这里继续”前会核对操作和文件变化；结果不确定时先提示核对。任务不会在退出 Obsidian 后继续运行或自动重跑。
-- 日记、待办、财务、知识库、英文日记和 PDF 各有模块页面。按日期编辑日记、关联项目待办，浏览知识目录，回看英文稿、PDF 原件和处理成果。
-- 设置重组为“通用、模型、Agent、能力、模块、账号与会员”六个标签，同步更新新手引导。Agent、个人画像、记忆与模块目录都有集中入口。
-- 知识召回增加正文、章节与引用定位，记忆更贴近当前问题和明确提及的项目；知识检索排除私有记忆与插件内部数据。重要信息仍需核对来源。
-- 自定义知识目录、目录图谱、选文提问与标注，以及回答存为笔记，让阅读和整理可以接着对话进行。英文日记改善原生编辑、表达复习与首页每日表达。
+本版还修复了日记入口、后台任务停止后的进度显示和部分 Ollama 对话 HTTP 400，设置里可以修正个人记忆；没有配套主题时，插件外观跟随 Obsidian。
 
-极简黑白外观免费，荧光笔记和黄白宣言需要有效 PRO。配套主题另行提供，请从[官网配套主题页](https://echoink.cn/theme)下载并安装到 Obsidian。
+**使用多台设备时，请全部升级到 2.8.8：旧版无法识别日记整理新增的账目来源格式。** 开启方法、数据发送范围与升级步骤见 [CHANGELOG](CHANGELOG.md)。财务、英文日记、PDF 精读和 EchoInk MCP 服务需要有效 PRO，**PRO 不包含模型调用额度**，订阅说明以[官网](https://echoink.cn/plans)为准。
 
-财务、英文日记和 PDF 精读需要有效 PRO，**PRO 不包含模型调用额度**。活动与订阅说明以[官网](https://echoink.cn/plans)为准。完整更新与使用方法见 [CHANGELOG](CHANGELOG.md)。
+极简外观免费，荧光笔记和黄白宣言需要有效 PRO。配套主题请从[官网主题页](https://echoink.cn/theme)另行下载。
 
 ## 下载与说明
 

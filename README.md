@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.1 — generate from notes and work from phone or tablet" src="assets/releases/echoink-agent-2.8.1-release.png">
+    <img width="1024" alt="EchoInk 2.8.8 — turn journals into tasks and bills" src="assets/releases/echoink-agent-2.8.8-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">Official website</a> ·
   <a href="https://echoink.cn/install">Download &amp; installation</a> ·
-  <a href="#whats-new-in-281">What's new</a> ·
+  <a href="#whats-new-in-288">What's new</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
   <a href="README_CN.md">中文</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.1"><img src="https://img.shields.io/badge/version-2.8.1-0EA5E9?style=flat-square" alt="Version 2.8.1"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8"><img src="https://img.shields.io/badge/version-2.8.8-0EA5E9?style=flat-square" alt="Version 2.8.8"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
@@ -26,20 +26,17 @@
 
 EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your notes, organize knowledge, keep visible and editable long-term memory, and record everyday life. Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
 
-## What's new in 2.8.1
+## What's new in 2.8.8
 
-**Generate from notes and work from phone or tablet.** On desktop, generate reports and Canvas mind maps from selected notes with built-in or custom templates, then follow source links back to your notes.
+On desktop, EchoInk can turn journals into tasks and bills after you enable automatic organization. Uncertain items wait on the workbench for review, with source links and undo for written items. Task extraction is free; bill extraction requires active PRO. Phones and tablets display results without running background extraction.
 
-**A new workbench and multi-agent tasks.** The desktop Home gathers work that needs your response, running tasks, and completed results. Reminders for to-dos, sources, and PDFs can start an Agent task with the relevant content.
+The new desktop EchoInk MCP server (PRO) lets compatible agents on the same computer read authorized knowledge and personal memory. Official PRO Skills download updates on demand, while knowledge review keeps its complete local basic version and your edited Skills are preserved.
 
-- Create Agents with their own identity, model, and available capabilities. Use each Agent's task list to check progress, handle approvals, and continue conversations.
-- Interrupted tasks keep their reason and last stage. **Continue from here** checks operations and file changes, prompting you to review uncertain results. Tasks do not run after Obsidian closes or restart automatically.
-- Dedicated pages for Journal, To-dos, Finance, Knowledge, English Diary, and PDF let you edit by date, link to-dos to projects, browse Knowledge folders, and revisit English drafts, PDF originals, and saved results.
-- Six settings tabs—General, Models, Agent, Capabilities, Modules, and Account and membership—and updated onboarding provide clear places for Agents, your profile, memory, and module folders.
-- Knowledge recall adds body text, sections, and reference navigation. Memory stays closer to the current question and explicitly named projects. Knowledge retrieval excludes private-memory and internal plugin data; check sources for important information.
-- Custom Knowledge folders, folder graphs, selection questions and annotations, and saving answers as notes connect reading with chat. English Diary improves native editing, expression review, and daily expressions on Home.
+This version also restores journal navigation and stopped-task progress, adds personal-memory correction in settings, follows the host appearance when the companion theme is absent, and fixes HTTP 400 errors caused by unsupported thinking parameters in some Ollama conversations.
 
-Finance, English Diary, and PDF reading require active PRO. Minimal appearance is free; Highlighter and Manifesto require active PRO. The companion theme is provided separately: download it from [echoink.cn/theme](https://echoink.cn/theme) and install it in Obsidian. **PRO does not include model credits.** Campaign and subscription details are on the [website](https://echoink.cn/plans). See the [CHANGELOG](CHANGELOG.md) for full release notes and usage instructions.
+**Upgrade every device to 2.8.8:** older versions cannot recognize the new journal-derived bill-source format. See the [CHANGELOG](CHANGELOG.md) for setup, privacy boundaries, and upgrade instructions. **PRO does not include model credits.** Finance, English Diary, PDF reading, and the EchoInk MCP server require active PRO; see the [website](https://echoink.cn/plans) for current plans.
+
+Minimal appearance is free; Highlighter and Manifesto require active PRO. The companion theme is available separately from [echoink.cn/theme](https://echoink.cn/theme).
 
 ## Download and documentation
 
