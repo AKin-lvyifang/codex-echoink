@@ -236,12 +236,14 @@ await check("inline Composer reuses the existing textarea and keeps stop/version
 
 await check("opening inline task skips the raw Pi projection while ordinary tasks retain their existing route", async () => {
   const f = fixture(), view = Object.create(CodexView.prototype) as any;
-  let projections = 0, error = "";
+  let projections = 0, error = "", catalogStatus = "active", exits = 0;
   const navigation = { page: { kind: "list", agentId: "sol" } as any, token: 0, navigate(page: any) { this.page = page; return ++this.token; } };
-  Object.assign(view, { plugin: { inlineAgent: f.host, settings: {}, getConversationRunService: () => ({ scheduleSave() {} }), async readPiConversationProjection() { projections++; throw new Error("ordinary projection route"); } },
+  Object.assign(view, { plugin: { inlineAgent: f.host, settings: {}, getConversationRunService: () => ({ scheduleSave() {} }), async readPiConversationSupportState() { return { catalog: { status: catalogStatus, agentId: "sol" } }; }, async readPiConversationProjection() { projections++; throw new Error("ordinary projection route"); } },
     taskUiMounted: true, viewLifecycleAbortController: new AbortController(), taskNav: navigation, taskDetailEl: document.createElement("div"), saveTaskComposerDraft() {}, rememberTaskListPosition() {}, restoreTaskComposerDraft() {}, renderTaskPages() {}, renderToolbar() {}, showTaskError(message: string) { error = message; } });
   await view.openTaskDetail("t1"); assert.equal(projections, 0); assert.equal(view.taskDetailLoaded, true); assert.equal(view.plugin.settings.activeSessionId, "t1");
-  await view.openTaskDetail("ordinary"); assert.equal(projections, 1); assert.ok(error.includes("ordinary projection route")); f.close();
+  view.leaveUnavailableTask = async () => { exits++; };
+  await view.openTaskDetail("ordinary"); assert.equal(projections, 1); assert.ok(error.includes("ordinary projection route")); assert.equal(exits, 0, "temporary read failures remain retryable");
+  catalogStatus = "deleted"; await view.openTaskDetail("t1"); assert.equal(exits, 1, "an inline request cannot reopen its deleted catalog task"); f.close();
 });
 
 await check("view subscription refreshes projections once and onClose only unsubscribes", async () => {

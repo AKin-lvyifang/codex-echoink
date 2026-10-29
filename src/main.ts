@@ -1,4 +1,5 @@
 import { EchoInkMcpController } from "./mcp-server/plugin-service";
+import { stopTaskSideWork } from "./plugin/task-management";
 import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
 import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
 import { RunReportModal } from "./run-reports/desktop-ui";
@@ -1148,6 +1149,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.conversationRunService;
   }
   resumeTask(taskId: string, optionalMessage?: string, frozenItem?: QueuedTurnItem): Promise<import("./ui/codex-view/runner-context").QueuedTurnOutcome> {
+    this.knowledgeBase?.linking.allowOrigin(taskId);
     if (this.knowledgeBase?.upgrade?.ownsTask(taskId)) return this.knowledgeBase.resumeUpgrade().then(snapshot => snapshot.status === "running" ? "running" : snapshot.status === "completed" ? "completed" : "failed");
     return this.getConversationRunService().resumeTask(taskId, optionalMessage, frozenItem);
   }
@@ -1612,6 +1614,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     await this.syncPiConversationTaskMetadata();
     const runtime = this.piRuntimeBundle;
     if (status !== "active") {
+      await stopTaskSideWork(this, conversationId);
       // A task waiting for its Production Runtime has not created an
       // AgentSession yet, so cancel it without making local management join
       // that initialization. Once a runtime exists, wait for task cleanup.

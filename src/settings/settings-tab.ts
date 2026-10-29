@@ -1355,13 +1355,17 @@ export class CodexSettingTab extends PluginSettingTab {
         : embedded ? "Shares the Obsidian Daily notes folder, date format, and template." : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
       .addOriginText((text) => {
         const label = zh ? "日记保存文件夹" : "Journal folder";
-        text.setPlaceholder("Journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder);
+        text.setPlaceholder("Journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder);
         text.inputEl.setAttr("aria-label", label);
+        let edited = false;
+        text.inputEl.addEventListener("input", () => { edited = true; });
         const saveDirectory = async (): Promise<void> => {
-          const previous = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder;
-          const normalized = normalizeJournalDirectory(text.getValue());
+          const current = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
+          const previous = current.folder;
+          const normalized = text.getValue().trim() === "" ? "" : normalizeJournalDirectory(text.getValue());
+          const explicit = edited; edited = false;
           text.setValue(normalized);
-          if (normalized === previous) return;
+          if (normalized === previous && (current.available || !explicit)) return;
           try {
             await saveNativeJournalFolder(this.app, normalized);
           } catch {
@@ -1373,6 +1377,7 @@ export class CodexSettingTab extends PluginSettingTab {
         text.inputEl.addEventListener("keydown", (event) => {
           if (event.key !== "Enter") return;
           event.preventDefault();
+          edited = true;
           text.inputEl.blur();
         });
       }));
@@ -1537,7 +1542,7 @@ export class CodexSettingTab extends PluginSettingTab {
           const owner = registry?.agents.find(agent => agent.id === registry.moduleOwners["knowledge-base"]) ?? registry?.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID);
           return zh ? `资料来源 ${count} 个 · 负责人 ${owner?.name || "未分配"}` : `${count} source folders · Owner ${owner?.name || "Unassigned"}`;
         }
-        return module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "";
+        return module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "";
       },
       onProBenefits: () => { this.openDesktopRoute({ tab: "account", focus: "account:benefits" }); },
       renderContent: (module, parent) => {
@@ -5004,7 +5009,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }));
     if (!embedded) this.decorateSetting(modelSetting, "brain-circuit");
     const files = createSettingsGroup(createSettingsSection(page, { title: embedded ? undefined : "文件与内容", description: embedded ? undefined : "原稿、英文稿和词条都是可从文件夹查看的 Markdown 笔记。分类与备注可在表达库内修改。", surface: "flat" }));
-    const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory);
+    const native = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
     applySettingsRow(new OriginSetting(files).setName("日记原稿").setDesc(`沿用 Obsidian 日记：${native.folder || "Vault 根目录"}，可正常编辑。在英文面板更多菜单的“发送范围”中选择允许生成的段落。`));
     for (const [name, value] of [["英文稿位置", current.englishDirectory], ["表达库位置", current.expressionDirectory]]) {
       const row = new OriginSetting(files);

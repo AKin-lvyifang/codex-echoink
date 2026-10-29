@@ -191,7 +191,8 @@ async function assertCoordinatorRestoreAndHandoff(root: string): Promise<void> {
     const service = new KnowledgeActivityService(linkingSource(), async () => [], async () => reverse ? attempts.reverse() : attempts);
     await service.ready;
     assert.equal(service.snapshot().maintenance.length, 1, "repeated stops before the first source checkpoint restore one Conversation activity");
-    assert.equal(service.snapshot().primary?.id, "run:resumed-before-first-checkpoint");
+    assert.equal(service.snapshot().primary, null, "restored interrupted work stays in task history, not the persistent progress area");
+    assert.equal(service.snapshot().maintenance[0]?.id, "run:resumed-before-first-checkpoint");
     assert.equal(service.snapshot().other, null, "the older unbound ProductRun cannot revive as a duplicate entry");
     service.dispose();
   }

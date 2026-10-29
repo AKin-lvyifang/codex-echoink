@@ -829,7 +829,7 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
         ...Array.from(folders, (path) => Object.assign(new TFolder(), { path })),
         ...files.values()
       ],
-      getAbstractFileByPath: (path: string) => files.get(path) ?? (folders.has(path) ? { path } : null),
+      getAbstractFileByPath: (path: string) => files.get(path) ?? (folders.has(path) ? Object.assign(new TFolder(), { path }) : null),
       createFolder: async (path: string) => {
         createdFolders.push(path);
         folders.add(path);
@@ -851,6 +851,9 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
   const service = new HomeWorkbenchDataService(app, () => " Notes\\Daily// ");
 
   assert.equal(service.getJournalDirectory(), "Notes/Daily");
+  await assert.rejects(() => service.ensureJournalDirectory(), /选择日记位置/);
+  assert.deepEqual(createdFolders, [], "a fallback alone does not configure or create a journal folder");
+  await app.vault.createFolder("Notes"); await app.vault.createFolder("Notes/Daily");
   assert.equal(await service.ensureJournalDirectory(), "Notes/Daily");
   assert.deepEqual(createdFolders, ["Notes", "Notes/Daily"]);
 

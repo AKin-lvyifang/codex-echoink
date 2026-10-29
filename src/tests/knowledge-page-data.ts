@@ -144,6 +144,12 @@ export async function runKnowledgePageDataTests(testRoot: string): Promise<void>
     assert.equal((await loadKnowledgeSourceHealth(vaultPath, bindings, ["wiki/missing.md"])).missing.length, 0, "unbinding a source cannot manufacture a missing-file alert");
 
     bindings = emptyKnowledgeFolderBindings();
+    for (const enabled of [false, true]) {
+      bindings.roles.wiki.enabled = enabled;
+      const empty = await loadKnowledgePageData(host, async () => sharedLinks);
+      assert.equal(empty.weekly.added, 0);
+      assert.equal(empty.errors.activity, undefined, "unconfigured knowledge is an empty page, not a retryable read error");
+    }
     bindings.roles.wiki = { enabled: true, readPaths: ["bulk", "bulk/deep"], writePath: "bulk", allowedSubdirectories: [], compatibilityReadScopes: true };
     await Promise.all(Array.from({ length: 1000 }, (_, index) => write(`bulk/deep/note-${index}.md`, `# Synthetic ${index}`)));
     let turns = 0;

@@ -4,7 +4,7 @@ import { mkdtemp, realpath, readFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { TFile, type App } from "obsidian";
+import { TFile, TFolder, type App } from "obsidian";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { readNativeJournalContext, readNativeJournalSettings, QUICK_JOURNAL_TEMPLATE } from "../home/native-journal";
@@ -100,6 +100,7 @@ function assertJournalRootSnapshots(): void {
   let allFileReads = 0;
   let rootReads = 0;
   const vault = {
+    getAbstractFileByPath: (name: string) => roots.includes(name) ? Object.assign(new TFolder(), { path: name }) : null,
     getRoot: undefined as undefined | (() => { children: { path: string }[] }),
     getAllLoadedFiles: () => {
       allFileReads++;
@@ -159,6 +160,7 @@ async function assertHomeJournalBuildSnapshots(): Promise<void> {
   let markdownReads = 0;
   const app = {
     vault: {
+      getAbstractFileByPath: (name: string) => ["journal", "templates", "Custom daily", "raw"].includes(name) ? Object.assign(new TFolder(), { path: name }) : files.find(file => file.path === name),
       getRoot: () => {
         rootReads++;
         return { children: ["journal", "templates", "Custom daily", "raw"].map((root) => ({ path: root })) };
