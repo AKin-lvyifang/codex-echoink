@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { saveClipboardImageAttachment } from "../../core/clipboard-images";
+import { preparePluginDataRoot } from "../../plugin/plugin-data-paths";
 import {
   PiImageInputError,
   detectPiImageMimeType,
@@ -30,12 +31,14 @@ const WEBP_1X1 = Buffer.from(
 
 export async function runPiImageInputTests(): Promise<void> {
   const root = await mkdtemp(path.join(tmpdir(), "echoink-pi-image-"));
+  const dataRoot = await preparePluginDataRoot(root, { id: "echoink-test" }, "custom-config");
   try {
     await directFormatsStayOrderedAndUseContentDetection(root);
     await clipboardImagesKeepInternalPathsOutOfDisplayMetadata(root);
     await publicConversionAndResizeProducePiContent(root);
     await unconvertibleAndOrdinaryFilesFailBeforePayload(root);
   } finally {
+    dataRoot.dispose();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -52,6 +55,7 @@ async function clipboardImagesKeepInternalPathsOutOfDisplayMetadata(
       index: 1
     }
   );
+  assert.equal(path.dirname(attachment.path), path.join(root, "custom-config", "plugins", "echoink-test", "clipboard"));
   assert.equal(attachment.name, "粘贴图片 2.png");
   assert.equal(attachment.mimeType, "image/png");
   assert.equal(attachment.availability, "available");
