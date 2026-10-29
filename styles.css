@@ -25058,6 +25058,20 @@ body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-theme-bounda
 }
 body[data-echoink-theme="host"] .echoink-origin-control [data-slot=switch-thumb] { background: var(--echoink-control-on-fill); }
 .echoink-theme-required { margin-right: 8px; }
+/* Older conversation/account skins keep local color aliases; route those through
+   the same host palette instead of their light/dark black overlays. */
+body[data-echoink-theme="host"] .codex-container {
+  --codex-user-bg: var(--background-modifier-hover);
+  --codex-input-bg: var(--background-primary);
+  --codex-soft-bg: var(--background-secondary);
+  --codex-brand: var(--interactive-accent);
+  --codex-brand-rgb: var(--color-accent-rgb);
+}
+body[data-echoink-theme="host"] .echoink-account {
+  --raised: var(--echoink-theme-raised);
+  --account-primary-bg: var(--echoink-control-fill);
+  --account-primary-text: var(--echoink-control-on-fill);
+}
 /* ECHOINK_WORKSPACE_SETTINGS_END */
 
 /* ===== EchoInk 快捷 AI 小窗（quick chat popout）===== */
