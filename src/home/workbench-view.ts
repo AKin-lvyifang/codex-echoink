@@ -30,6 +30,7 @@ import { maintenanceActivityText, maintenanceTaskTitle, maintenanceTaskStatus, t
 import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 import { renderVaultMemoryBanner } from "./vault-memory-banner";
+import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
@@ -345,6 +346,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
+    page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "starters" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
@@ -476,6 +478,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.scheduleNav();
     this.renderStarters();
     this.renderStatus();
+    renderDiaryOrganizerBanner(this.field("diary-organizer"), this.plugin);
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
       resolve: async action => { await this.plugin.resolveVaultMemory(action); await this.refresh(); },
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }

@@ -1,4 +1,4 @@
-import { localTodoDate, reconcileTodoCompletions, todoCompletionStatistics } from "./todo-completions";
+import { localTodoDate, reconcileTodoCompletions, todoCompletionStatistics, validTodoDate } from "./todo-completions";
 import { Notice, TFile, TFolder } from "obsidian";
 import type { TodoHost } from "./home-host";
 import { getTodoProjects, resolveTodoProject, type TodoProject } from "./todo-projects";
@@ -35,6 +35,35 @@ export interface TodoReadSnapshot {
   contentVersion: string | null;
   records: ParsedTodoRecord[];
   warnings: number[];
+}
+
+/** The caller rechecks the live diary automation switch/lifecycle here. */
+export type TodoDiaryGuard = () => boolean | void;
+export interface TodoDiaryRecord {
+  record: ParsedTodoRecord;
+  /** Exact persisted block, excluding its location in the file. */
+  version: string;
+}
+export class TodoDiaryVersionConflictError extends Error {
+  readonly code = "todo_diary_version_changed";
+  constructor(public readonly current: ParsedTodoRecord, public readonly currentVersion: string) {
+    super("这条待办已被修改，请先查看当前内容再确认撤销。");
+    this.name = "TodoDiaryVersionConflictError";
+  }
+}
+
+function diaryVersion(record: ParsedTodoRecord): string {
+  return record.sourceBlock ?? serializeTodoRecord(record);
+}
+
+function requireDiaryGuard(guard: TodoDiaryGuard): void {
+  if (guard() === false) throw new Error("日记自动整理已关闭，未写入待办。");
+}
+
+function findDiaryRecord(records: readonly ParsedTodoRecord[], entryId: string): ParsedTodoRecord | null {
+  const matches = records.filter(record => record.diaryEntryId === entryId);
+  if (matches.length > 1) throw new TodoConflictError("todo_record_changed", "发现重复的日记待办来源，请先检查待办源文件。");
+  return matches[0] ?? null;
 }
 
 export class TodoConflictError extends Error {
@@ -96,6 +125,126 @@ export class EchoInkTodoStore {
     const contentVersion = await todoContentVersion(content, sourcePath);
     if (this.sourcePath !== sourcePath) throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
     return { sourcePath, exists: true, contentVersion, ...parseTodoMarkdown(content) };
+  }
+
+  /** Full deduplication scope, with no UI/tool pagination or result truncation. */
+  async snapshotForDiary(now = new Date()): Promise<Omit<TodoReadSnapshot, "records"> & { records: (ParsedTodoRecord & { completedAt: string | null })[] }> {
+    await this.writeQueue;
+    const snapshot = await this.readOnlySnapshot();
+    const cutoff = new Date(now); cutoff.setDate(cutoff.getDate() - 7);
+    const cutoffDate = localTodoDate(cutoff);
+    const records = snapshot.records.map(record => ({ ...record,
+      completedAt: record.done ? this.plugin.settings.todoCompletions[record.id] ?? null : null
+    })).filter(record => !record.done || record.completedAt === null || record.completedAt >= cutoffDate);
+    return { ...snapshot, records };
+  }
+
+  async getByDiaryEntryId(entryId: string): Promise<TodoDiaryRecord | null> {
+    if (!entryId.trim()) throw new Error("日记抽取条目 ID 不能为空。");
+    await this.writeQueue;
+    const record = findDiaryRecord((await this.readOnlySnapshot()).records, entryId);
+    return record ? { record, version: diaryVersion(record) } : null;
+  }
+
+  /** Internal automation entry; chat confirmation rules remain in the chat tools. */
+  async addFromDiary(entryId: string, journalPath: string, input: TodoInput, guard: TodoDiaryGuard): Promise<TodoDiaryRecord & { created: boolean }> {
+    guard = this.diaryGuard(guard);
+    requireDiaryGuard(guard);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/u.test(entryId)) throw new Error("日记抽取条目 ID 无效。");
+    if (!journalPath.endsWith(".md") || /[\r\n[\]|#\\]/u.test(journalPath) || journalPath.split("/").some(part => !part || part === "." || part === "..")) throw new Error("日记来源路径无效。");
+    this.validateDiaryInput(input);
+    const record: ParsedTodoRecord = {
+      id: newId("todo"), title: input.title.trim(), people: (input.people ?? "").trim(),
+      dueDate: input.dueDate ?? "", dueTime: normalizeTodoDueTime(input.dueTime) || undefined,
+      categoryName: (input.categoryName ?? "").trim(), project: input.project?.trim() || undefined,
+      done: false, diaryEntryId: entryId, diaryJournalPath: journalPath,
+      lineStart: 0, lineEnd: -1, extraMetaLines: []
+    };
+    let result: (TodoDiaryRecord & { created: boolean }) | undefined;
+    let created = false;
+    const sourcePath = this.sourcePath;
+    await this.enqueueWrite(content => {
+      const existing = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
+      if (existing) return { content };
+      created = true;
+      return { content: appendRecordBlock(content, serializeTodoRecord(record)) };
+    }, undefined, sourcePath, { guard, verify: content => {
+      const saved = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
+      if (!saved || (created && (saved.id !== record.id || serializeTodoRecord({ ...saved, sourceBlock: undefined }) !== serializeTodoRecord(record)))) throw new Error("日记待办写后核对失败。");
+      result = { record: saved, version: diaryVersion(saved), created };
+    } });
+    return result!;
+  }
+
+  private diaryGuard(guard: TodoDiaryGuard): TodoDiaryGuard {
+    return () => {
+      if (this.disposed || this.plugin.settings.diaryOrganizerEnabled !== true) return false;
+      return guard();
+    };
+  }
+
+  private validateDiaryInput(input: TodoInput): void {
+    for (const field of [input.title, input.people, input.categoryName, input.project]) {
+      if (field && /[\r\n]|<!--/u.test(field)) throw new Error("待办字段不能包含换行或内部标记。");
+    }
+    if (!input.title.trim()) throw new Error("待办事项不能为空。");
+    if (input.dueDate && !validTodoDate(input.dueDate)) throw new Error("待办截止日期无效。");
+    this.validateDueTime(input.dueTime);
+    if (input.dueTime && !input.dueDate) throw new Error("待办截止时间需要截止日期。");
+  }
+
+  /** Apply a user-confirmed diary correction to the same task, never add a replacement. */
+  async updateFromDiary(entryId: string, expectedVersion: string, input: TodoInput, guard: TodoDiaryGuard): Promise<TodoDiaryRecord> {
+    guard = this.diaryGuard(guard);
+    requireDiaryGuard(guard);
+    this.validateDiaryInput(input);
+    let result: TodoDiaryRecord | undefined;
+    let expected: string | undefined;
+    const sourcePath = this.sourcePath;
+    await this.enqueueWrite(content => {
+      const current = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
+      if (!current) throw new TodoConflictError("todo_record_changed", "日记待办已被删除，请重新核对。");
+      if (diaryVersion(current) !== expectedVersion) throw new TodoDiaryVersionConflictError(current, diaryVersion(current));
+      const next: ParsedTodoRecord = { ...current, title: input.title.trim(),
+        people: input.people !== undefined ? input.people.trim() : current.people,
+        dueDate: input.dueDate ?? current.dueDate,
+        categoryName: input.categoryName !== undefined ? input.categoryName.trim() : current.categoryName,
+        project: input.project !== undefined ? input.project.trim() : current.project,
+        done: input.done ?? current.done };
+      next.dueTime = input.dueDate === "" ? undefined : input.dueTime !== undefined
+        ? normalizeTodoDueTime(input.dueTime) || undefined : current.dueTime;
+      expected = serializeTodoRecord(next);
+      return { content: replaceRecordLines(content, current, expected) };
+    }, undefined, sourcePath, { guard, verify: content => {
+      const saved = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
+      if (!saved || diaryVersion(saved) !== expected) throw new Error("日记待办修改后核对失败。");
+      result = { record: saved, version: diaryVersion(saved) };
+    } });
+    return result!;
+  }
+
+  async undoFromDiary(entryId: string, version: string, _force: boolean, guard: TodoDiaryGuard): Promise<{ removed: boolean }> {
+    guard = this.diaryGuard(guard);
+    requireDiaryGuard(guard);
+    if (!entryId.trim()) throw new Error("日记抽取条目 ID 不能为空。");
+    let removed = false;
+    const sourcePath = this.sourcePath;
+    // Do not create an empty source merely to undo an already missing record.
+    await this.writeQueue;
+    const snapshot = await this.readOnlySnapshot();
+    if (!findDiaryRecord(snapshot.records, entryId)) return { removed: false };
+    await this.enqueueWrite(content => {
+      const current = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
+      if (!current) return { content };
+      // Confirmed undo passes the version the user just reviewed; a further edit
+      // must be reviewed again even when the caller marks the action as forced.
+      if (diaryVersion(current) !== version) throw new TodoDiaryVersionConflictError(current, diaryVersion(current));
+      removed = true;
+      return { content: replaceRecordLines(content, current, null) };
+    }, undefined, sourcePath, { guard, verify: content => {
+      if (findDiaryRecord(parseTodoMarkdown(content).records, entryId)) throw new Error("日记待办撤销后核对失败。");
+    } });
+    return { removed };
   }
 
   subscribe(listener: () => void): () => void {
@@ -477,9 +626,11 @@ export class EchoInkTodoStore {
   private enqueueWrite(
     mutate: (content: string) => { content: string; skipped?: boolean },
     expectedVersion?: string | null,
-    expectedSourcePath = this.sourcePath
+    expectedSourcePath = this.sourcePath,
+    diary?: { guard: TodoDiaryGuard; verify: (content: string) => void }
   ): Promise<void> {
     const run = this.writeQueue.then(async () => {
+      if (diary) requireDiaryGuard(diary.guard);
       if (this.sourcePath !== expectedSourcePath) throw new TodoConflictError("todo_source_changed", "待办数据文件已切换，请返回后重新打开；输入已保留。");
       const vault = this.plugin.app.vault;
       const abstract = vault.getAbstractFileByPath(this.sourcePath);
@@ -489,12 +640,14 @@ export class EchoInkTodoStore {
         throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
       }
       await this.ensureFolder();
+      if (diary) requireDiaryGuard(diary.guard);
       const file = abstract instanceof TFile
         ? abstract
         : await vault.create(this.sourcePath, `${SOURCE_HEADER}\n`);
       let previous: ParsedTodoRecord[] = [];
       let next: ParsedTodoRecord[] = [];
       await vault.process(file, (content) => {
+        if (diary) requireDiaryGuard(diary.guard);
         const guardedContent = expectedContent ?? (expectedVersion === null ? `${SOURCE_HEADER}\n` : undefined);
         if (guardedContent !== undefined && content !== guardedContent) throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
         const stable = this.assignStableIds(content);
@@ -509,6 +662,10 @@ export class EchoInkTodoStore {
         next = parseTodoMarkdown(stableResult).records;
         return stableResult;
       });
+      if (diary) {
+        if (this.sourcePath !== expectedSourcePath) throw new TodoConflictError("todo_source_changed", "待办数据文件已切换，请重新核对日记待办。");
+        diary.verify(await vault.read(file));
+      }
       // A refresh failure after a successful write must not invite a retry
       // that would add the same task twice.
       try {

@@ -39,10 +39,12 @@ export function createFinanceImportPage(ctx: IPadPageContext): MobileShellPage {
   }, true); actions.append(importButton, apply);
   const footer = el(ctx.document, "div", "pd-module-actions"), stop = moduleButton(ctx, t(ctx, "停止导入", "Stop import"), () => { controller?.abort(); }); footer.append(stop); v.page.footer = footer;
   v.onBusy = () => update();
-  function update(): void { if (!v.alive) return; importButton.disabled = v.busy || !rows.some(row => row.entry) || !!result; importButton.hidden = !!result; apply.hidden = !organized; apply.disabled = v.busy || controller?.signal.aborted === true; stop.hidden = !v.busy || !controller; file.disabled = selection.disabled = v.busy || !!result; }
+  function update(): void { if (!v.alive) return; importButton.disabled = v.busy || !rows.some(row => row.entry) || !!result || service.previewImport(rows).pending.length > 0; importButton.hidden = !!result; apply.hidden = !organized; apply.disabled = v.busy || controller?.signal.aborted === true; stop.hidden = !v.busy || !controller; file.disabled = selection.disabled = v.busy || !!result; }
   function render(): void {
     preview.replaceChildren();
-    if (result) preview.append(el(ctx.document, "div", "pd-module-import-result", t(ctx, `新增 ${result.added} · 更新 ${result.updated} · 重复 ${result.duplicates} · 无效 ${result.invalid}`, `Added ${result.added} · Updated ${result.updated} · Duplicates ${result.duplicates} · Invalid ${result.invalid}`)));
+    if (result) preview.append(el(ctx.document, "div", "pd-module-import-result", t(ctx, `新增 ${result.added} · 更新 ${result.updated} · 重复 ${result.duplicates} · 保留关联 ${result.linked ?? 0} · 无效 ${result.invalid}`, `Added ${result.added} · Updated ${result.updated} · Duplicates ${result.duplicates} · Linked ${result.linked ?? 0} · Invalid ${result.invalid}`)));
+    const classification = !result ? service.previewImport(rows) : undefined;
+    if (classification?.linked.length) preview.append(el(ctx.document, "div", "pd-module-secondary", t(ctx, `${classification.linked.length} 笔与日记账目一致，将保留关联`, `${classification.linked.length} transactions match diary records and will be linked`)));
     const showing = organized?.rows ?? rows;
     if (!showing.length) moduleEmpty(ctx, preview, t(ctx, "请选择实际账单文件", "Choose a bill file"));
     for (const row of showing) {
@@ -50,6 +52,12 @@ export function createFinanceImportPage(ctx: IPadPageContext): MobileShellPage {
       if (!row.entry) item.append(el(ctx.document, "div", "pd-module-error", row.error));
       else {
         item.append(el(ctx.document, "div", "", `${formatMobileDateTime(row.entry.date, Date.now(), ctx.host.settings().settingsLanguage)} · ${row.entry.merchant} · ${(row.entry.amountCents / 100).toFixed(2)}`));
+        const pending = classification?.pending.find(pending => pending.row.entry?.source === row.entry?.source && pending.row.entry?.sourceId === row.entry?.sourceId);
+        if (pending) moduleSelect(ctx, item, t(ctx, "可能已从日记记过", "Possible diary duplicate"), [["", t(ctx, "待确认，暂不导入", "Review before importing")], ...pending.candidates.map(candidate => [candidate.id,
+          t(ctx, "同一笔：", "Same transaction: ") + `${candidate.date.slice(0, 10)} · ${candidate.merchant} · ${candidate.description || candidate.note || candidate.category} · ${(candidate.amountCents / 100).toFixed(2)}`] as const), ["__separate__", t(ctx, "另一笔，新增账目", "Separate transaction, add entry")]], "", value => {
+          row.duplicateDecision = value === "__separate__" ? { action: "separate", candidateIds: pending.candidates.map(candidate => candidate.id) } : value ? { action: "same", id: value } : undefined;
+          render();
+        });
         if (organized) {
           moduleField(ctx, item, t(ctx, "商户", "Merchant"), row.entry.merchant, value => { row.entry!.merchant = value; });
           moduleField(ctx, item, t(ctx, "账户", "Account"), row.entry.account, value => { row.entry!.account = value; });

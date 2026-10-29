@@ -1374,6 +1374,24 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
 
+    if (Platform.isDesktopApp) {
+      const automatic = new OriginSetting(journalGroup)
+        .setName(zh ? "从日记自动整理待办和账单" : "Organize to-dos and finances from journals")
+        .setDesc(zh ? "日记内容会发给你当前配置的模型服务，并消耗它的额度。停笔满 1 小时后整理；收支需要 PRO。"
+          : "Journal content is sent to your configured model service and uses its quota. Runs after one hour without changes; finances require PRO.")
+        .addOriginToggle(toggle => toggle.setValue(this.plugin.settings.diaryOrganizerEnabled).onChange(async value => {
+          toggle.setDisabled(true);
+          try {
+            if (!this.plugin.diaryOrganizer) throw new Error(zh ? "日记整理尚未就绪，请稍后重试。" : "Journal organizer is not ready yet.");
+            await this.plugin.diaryOrganizer.setEnabled(value);
+          } catch (error) {
+            toggle.setValue(this.plugin.settings.diaryOrganizerEnabled);
+            new Notice(error instanceof Error ? error.message : String(error));
+          } finally { toggle.setDisabled(false); }
+        }));
+      automatic.settingEl.dataset.diaryOrganizer = "setting";
+    }
+
   }
 
   private ensureDesktopAgents(): DesktopAgentSettings {

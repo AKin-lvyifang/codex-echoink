@@ -18,6 +18,7 @@ import type { FinanceSettings } from "./settings";
 import { financeIconOptions, openFinanceIconPicker, renderFinanceIcon } from "./finance-icon-picker";
 import { FINANCE_ANALYSIS_PROMPT_VERSION, type FinanceImportCompletionOptions } from "./finance-service";
 import type { FinanceImportResult } from "./finance-ledger";
+import { FINANCE_SOURCE_LABELS } from "./finance-diary";
 import { financeDailyWeeks, type FinanceReportSnapshot, type FinanceChartSnapshot, type FinanceReportBlock, type FinanceTableSnapshot } from "./finance-analysis";
 import { applyAmicroButton, applyDeleteButton } from "../settings/amicro-buttons";
 import { renderAnimateIcon } from "../ui/animate-icon";
@@ -301,6 +302,7 @@ export class FinanceWorkspace {
     else if (f.account) parts.push(`账户 ${f.account}`);
     if (f.merchant) parts.push(`商户 ${f.merchant}`);
     if (f.search) parts.push(`搜索 ${f.search}`);
+    if (f.source) parts.push(`来源 ${FINANCE_SOURCE_LABELS[f.source]}`);
     if (f.excludedIds.length) parts.push(`排除 ${f.excludedIds.length} 笔`);
     return parts;
   }
@@ -934,6 +936,9 @@ export class FinanceWorkspace {
     const merchants = [...new Set(allEntries.map((entry) => entry.merchant).filter(Boolean))].sort((a, b) => a.localeCompare(b, "zh-CN"));
     if (this.state.filters.merchant && !merchants.includes(this.state.filters.merchant)) merchants.push(this.state.filters.merchant);
     const filters = toolbar.createDiv({ cls: "echoink-finance-ledger-filters", attr: { role: "group", "aria-label": "账目筛选" } });
+    select(filters, "来源", [["", "全部来源"], ...Object.entries(FINANCE_SOURCE_LABELS)], this.state.filters.source || "", value => {
+      this.state.filters.source = value as FinanceFilters["source"]; this.updateLedgerRows(panel);
+    });
     select(filters, "类型", [["all", "全部类型"], ["spending", "消费与退款"], ...Object.entries(labels)], this.state.filters.kind, (value) => {
       this.state.filters.kind = value as FinanceFilters["kind"];
       this.state.filters.validExpenseOnly = false; this.state.filters.date = undefined;
@@ -1010,6 +1015,7 @@ export class FinanceWorkspace {
     merchantIcon(merchant, entry, this.catalog());
     const copy = merchant.createDiv({ cls: "echoink-finance-transaction-copy" });
     copy.createEl("strong", { text: entry.merchant || "未指定" }); copy.createEl("small", { text: entry.description || entry.category });
+    copy.createEl("small", { text: FINANCE_SOURCE_LABELS[entry.source] });
     const category = row.createDiv({ cls: "echoink-finance-transaction-category" });
     const categoryLine = category.createSpan({ cls: "echoink-finance-transaction-category-line" });
     const dot = categoryLine.createSpan({ cls: "echoink-finance-category-dot", attr: { "aria-hidden": "true" } });
@@ -1187,8 +1193,13 @@ export class FinanceWorkspace {
       drawIcon();
       const error = form.createEl("p", { cls: "echoink-finance-error", attr: { role: "alert" } });
       const list = detail.createEl("dl", { cls: "echoink-finance-details" });
-      for (const [key, value] of [["类型", labels[entry.kind]], ["日期", entry.date], ["备注", entry.note || "—"], ["状态", entry.status === "completed" ? "已完成" : "未完成"]]) {
+      for (const [key, value] of [["来源", entry.source === "diary" ? "AI 从日记记的" : FINANCE_SOURCE_LABELS[entry.source]], ["类型", labels[entry.kind]], ["日期", entry.date], ["备注", entry.note || "—"], ["状态", entry.status === "completed" ? "已完成" : "未完成"]]) {
         list.createEl("dt", { text: key }); list.createEl("dd", { text: value });
+      }
+      if (entry.journalPath) {
+        list.createEl("dt", { text: "原日记" });
+        const link = list.createEl("dd").createEl("a", { text: entry.journalPath.replace(/\.md$/u, ""), href: "#" });
+        link.onclick = event => { event.preventDefault(); void this.service.plugin.app.workspace.openLinkText(entry.journalPath!, "", false); };
       }
       const actions = detail.createDiv({ cls: "echoink-finance-dialog-actions" });
       button(actions, "在笔记中查看 Bases", () => void this.service.finance.openBase(entry.id)
@@ -1300,11 +1311,24 @@ export class FinanceWorkspace {
       const renderReady = (): void => {
         details.empty(); issues.hidden = true;
         const result = this.service.finance.previewImport(rows);
-        const writable = result.added.length + result.updated.length;
+        const writable = result.added.length + result.updated.length + result.linked.length;
         reconciliationOnly = rows.length > 0 && !writable && !result.invalid && result.duplicates === rows.length;
-        status.setText(writable ? `已读取 ${rows.length} 行记录，点击开始导入` : !rows.length ? "没有可导入的记录" : result.invalid ? `已读取 ${rows.length} 行记录，部分记录无法导入` : "这些记录已导入");
-        noRows = !writable && !reconciliationOnly; action("ready"); dialog.refreshAccess();
+        status.setText(result.pending.length ? `有 ${result.pending.length} 笔可能已从日记记过，请先核对` : writable ? `已读取 ${rows.length} 行记录，点击开始导入` : !rows.length ? "没有可导入的记录" : result.invalid ? `已读取 ${rows.length} 行记录，部分记录无法导入` : "这些记录已导入");
+        noRows = result.pending.length > 0 || !writable && !reconciliationOnly; action("ready"); dialog.refreshAccess();
         if (result.duplicates) details.createEl("p", { text: `${result.duplicates} 笔已存在，将跳过` });
+        if (result.linked.length) details.createEl("p", { text: `${result.linked.length} 笔与日记账目一致，将保留关联` });
+        for (const pending of result.pending) {
+          const row = rows.find(row => row.entry?.source === pending.row.entry?.source && row.entry?.sourceId === pending.row.entry?.sourceId)!;
+          const entry = pending.row.entry!;
+          const item = details.createDiv({ cls: "echoink-finance-import-event" });
+          item.createEl("p", { text: `${entry.date.slice(0, 10)} · ${entry.merchant || entry.description} · ¥ ${money(entry.amountCents)}，可能已从日记记过` });
+          select(item, "核对这一笔", [["", "待确认，暂不导入"], ...pending.candidates.map((candidate): [string, string] => [candidate.id,
+            `同一笔：${candidate.date.slice(0, 10)} · ${candidate.merchant || "未指定商户"} · ${candidate.description || candidate.note || candidate.category} · ¥ ${money(candidate.amountCents)}`]), ["__separate__", "另一笔，新增账目"]], "", value => {
+            row.duplicateDecision = value === "__separate__" ? { action: "separate", candidateIds: pending.candidates.map(candidate => candidate.id) }
+              : value ? { action: "same", id: value } : undefined;
+            renderReady();
+          });
+        }
         showIssues(baseIssues());
       };
       const run = async (): Promise<void> => {
@@ -1389,7 +1413,7 @@ export class FinanceWorkspace {
             } else {
               phase = "done";
               status.setText(importResult && !importResult.added && !importResult.updated
-                ? `已核对 ${importResult.duplicates} 笔账目，均已存在。`
+                ? `已核对 ${importResult.duplicates + (importResult.linked ?? 0)} 笔账目，均已存在${importResult.linked ? `；${importResult.linked} 笔已保留日记关联` : ""}。`
                 : `已导入 ${saved} 笔账目${updated ? `，更新 ${updated} 笔` : ""}${problems.size ? `；有 ${problems.size} 笔需要确认` : ""}。`);
               action("done");
             }

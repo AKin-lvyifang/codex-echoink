@@ -28038,6 +28038,20 @@ body:not(.is-mobile):has(.status-bar) .echoink-agent-tasks .echoink-agent-editor
 .echoink-workbench .wb-module-setup-header > .is-primary { margin-left: auto; }
 .echoink-workbench .wb-module-setup > .wb-secondary { margin: 0; color: var(--wb-secondary); line-height: 1.7; }
 
+/* Diary results share the quiet workbench row geometry. */
+.diary-organizer-results, .diary-organizer-invitation { margin-block: 0 22px; font-size: var(--font-ui-small); color: var(--text-normal); }
+.diary-organizer-results > summary { cursor: pointer; padding: 9px 0; }
+.diary-organizer-results > summary:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.diary-organizer-list { max-height: 440px; overflow-y: auto; }
+.diary-organizer-row { display: flex; flex-wrap: wrap; align-items: start; gap: 10px; padding: 12px 0; border-top: 1px solid var(--background-modifier-border); }
+.diary-organizer-row > .wb-grow { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.diary-organizer-row a, .diary-organizer-reason { font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.diary-organizer-row blockquote { margin: 8px 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--background-modifier-border); color: var(--text-muted); }
+.diary-organizer-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 8px; margin-inline-start: auto; }
+.diary-organizer-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+.diary-organizer-fields > * { max-width: 180px; }
+.diary-organizer-confirmation { flex-basis: 100%; }
+
 /* P6 desktop journal: container widths follow the actual Obsidian pane. */
 .echoink-journal-page {
   container: echoink-journal / inline-size;

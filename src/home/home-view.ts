@@ -685,6 +685,7 @@ export class EchoInkHomeView extends ItemView {
     renderTodoTable(host, visible, todoTableCopy(this.language), {
       onToggle: (record, done) => void store.toggleDone(record, done).catch(() => this.refreshHomeSurfaces()),
       onEdit: (record) => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
+      onOpenDiary: path => { void this.app.workspace.openLinkText(path, store.sourcePath); },
       onDelete: (record) => void this.confirmTodoDelete(record).catch(() => this.refreshHomeSurfaces())
     });
   }

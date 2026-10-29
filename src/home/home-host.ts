@@ -8,7 +8,7 @@ import type { EchoInkTodoStore } from "./todo-store";
 export interface TodoHost {
   settingsKnowledgeBindings?(): import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null | undefined;
   app: App;
-  settings: Pick<CodexForObsidianSettings, "settingsLanguage" | "todos" | "todoCategories" | "todoCompletions"> & { knowledgeBase?: CodexForObsidianSettings["knowledgeBase"] };
+  settings: Pick<CodexForObsidianSettings, "settingsLanguage" | "todos" | "todoCategories" | "todoCompletions"> & { knowledgeBase?: CodexForObsidianSettings["knowledgeBase"]; diaryOrganizerEnabled?: boolean };
   registerEvent(event: EventRef): void;
   saveSettings(): Promise<void>;
   getTodoStore(): EchoInkTodoStore;

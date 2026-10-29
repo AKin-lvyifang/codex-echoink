@@ -7,13 +7,18 @@ export interface LifestyleFilePort {
 }
 
 export type FinanceKind = "expense" | "income" | "refund" | "transfer";
+export interface FinanceSourceLink { source: "wechat" | "alipay"; sourceId: string }
 export interface FinanceEntry {
-  id: string; source: "manual" | "wechat" | "alipay";
+  id: string; source: "manual" | "wechat" | "alipay" | "diary";
   sourceId: string; date: string; merchant: string; category: string;
   kind: FinanceKind; amountCents: number; status: "completed" | "failed";
   account: string; description: string; currency: string; note: string;
   icon?: string;
   billPlanId?: string;
+  /** Stable extraction identity is sourceId; the source note may move independently. */
+  journalPath?: string;
+  /** Imported bank identities linked to an existing diary record, without another amount. */
+  sourceLinks?: FinanceSourceLink[];
   /** Only new imports without a reliable category carry this marker. */
   classificationPending?: boolean;
 }

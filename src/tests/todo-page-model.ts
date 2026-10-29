@@ -76,6 +76,14 @@ export async function runTodoPageModelTests(): Promise<void> {
   const mobileDelete = mobile.querySelector<HTMLButtonElement>(".echoink-todo-action-delete")!;
   assert.equal(mobileDelete.classList.contains("echoink-delete-button"), false, "the shared mobile table retains its existing delete icon");
   mobileDelete.click(); assert.equal(mobileDeletes, 1, "presentation does not change the original callback");
+  let openedDiary = "";
+  renderTodoTable(mobile, [{ ...orphan, diaryEntryId: "entry-1", diaryJournalPath: "日记/2026-10-28.md" }], todoTableCopy("zh-CN"), {
+    onToggle() {}, onEdit() {}, onDelete() {}, onOpenDiary(value) { openedDiary = value; }
+  });
+  const diaryLink = mobile.querySelector<HTMLAnchorElement>("a.internal-link")!;
+  assert.equal(diaryLink.textContent, "AI 从日记记的");
+  diaryLink.click(); assert.equal(openedDiary, "日记/2026-10-28.md");
+  assert.equal(mobile.querySelector(".echoink-todo-title > span")?.textContent, orphan.title, "diary source does not pollute the title");
   const modal: any = new EchoInkTodoFormModal(app, plugin, orphan); modal.open();
   const projectSelect = modal.contentEl.querySelector('[aria-label="项目"]') as HTMLSelectElement;
   assert.match(projectSelect.selectedOptions[0].textContent!, /Deleted/);
