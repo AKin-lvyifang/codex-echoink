@@ -26,7 +26,10 @@ import type {
 import {
   preventProviderRetryAfterPartial,
   isProviderQuotaExhausted,
-  safeProviderFailureCode
+  safeProviderFailureCode,
+  sanitizeProviderFailureDetail,
+  type AssistantProviderFailure,
+  type ProviderFailureDetail
 } from "../harness/pi/provider-failure";
 import {
   apiProviderRequestUrl,
@@ -252,6 +255,7 @@ async function executeLoopbackCompletion(input: {
   let decoder: ProviderSseStreamDecoder | null = null;
   let responseObserved = false;
   let streamedChunk = false;
+  let failureDetail: ProviderFailureDetail | undefined;
   const streamStartedAt = Date.now();
   try {
     if (
@@ -326,6 +330,11 @@ async function executeLoopbackCompletion(input: {
     }
     const responseStatus = status ?? response.status;
     if (responseStatus < 200 || responseStatus >= 300) {
+      failureDetail = sanitizeProviderFailureDetail(
+        responseStatus,
+        response.body,
+        input.options.apiKey ? [input.options.apiKey] : []
+      );
       throw new Error(responseStatus === 401 || responseStatus === 403
         ? "provider_auth_failed"
         : isProviderQuotaExhausted(response.body)
@@ -347,7 +356,8 @@ async function executeLoopbackCompletion(input: {
         input.options.signal?.aborted,
         status,
         error,
-        decoder?.partial
+        decoder?.partial,
+        failureDetail
       )
     });
   }
@@ -374,7 +384,7 @@ function loopbackControlledInput(
     context,
     options: {
       ...(options.signal ? { signal: options.signal } : {}),
-      ...(options.reasoning ? { reasoning: options.reasoning } : {}),
+      ...(model.reasoning && options.reasoning ? { reasoning: options.reasoning } : {}),
       maxTokens: clampMaxTokensToContext(
         model,
         context,
@@ -403,8 +413,9 @@ function loopbackFailureMessage(
   aborted: boolean | undefined,
   status: number | null,
   error: unknown,
-  partial?: AssistantMessage
-): AssistantMessage {
+  partial?: AssistantMessage,
+  failureDetail?: ProviderFailureDetail
+): AssistantProviderFailure {
   const message = error instanceof Error ? error.message : "";
   const safeCode = aborted
     ? "controlled_transport_aborted"
@@ -447,7 +458,8 @@ function loopbackFailureMessage(
       timestamp: Date.now()
     }),
     stopReason: aborted ? "aborted" : "error",
-    errorMessage
+    errorMessage,
+    ...(failureDetail ? { echoInkProviderFailure: failureDetail } : {})
   };
 }
 

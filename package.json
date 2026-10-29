@@ -41,6 +41,7 @@
     "test:english-diary": "node scripts/english-diary-tests.mjs",
     "test:react-dom-resources": "node scripts/react-dom-script-resources-tests.mjs",
     "test:provider-settings": "node scripts/provider-settings-tests.mjs",
+    "test:ollama-http-400": "node scripts/ollama-http-400-tests.mjs",
     "test:paper-guide": "node scripts/paper-guide-tests.mjs",
     "test:account-membership": "node --enable-source-maps scripts/account-membership-tests.mjs",
     "test:usage": "node scripts/usage-tests.mjs",

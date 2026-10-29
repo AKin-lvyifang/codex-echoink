@@ -42,7 +42,8 @@ import {
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
   providerFailureHttpStatus,
-  safeProviderFailureCode
+  safeProviderFailureCode,
+  type AssistantProviderFailure
 } from "./provider-failure";
 import { validProviderHistory } from "./provider-stream-codec";
 import { observeUsageStream, type UsageRequestEvent } from "../usage/usage-stream";
@@ -462,7 +463,8 @@ function sanitizeProviderStream(
             type: "error",
             reason: event.reason,
             error: Object.assign({}, event.error, {
-              echoInkProviderFailure: sanitizeProviderFailureDetail(responseStatus(), event.error.errorMessage, secrets),
+              echoInkProviderFailure: sanitizeProviderFailureDetail(responseStatus(),
+                (event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage, secrets),
               errorMessage: runtimeProviderFailureCode(
                 responseStatus(),
                 event.error.errorMessage ?? "",
