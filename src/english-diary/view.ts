@@ -1,3 +1,4 @@
+import { ownedDiv, ownedSpan } from "../ui/owned-dom";
 import { showEchoInkMenu } from "../ui/theme-boundary";
 import { getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { Component, ItemView, MarkdownRenderer, Menu, Notice, Platform, setIcon, setTooltip, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
@@ -269,7 +270,7 @@ export class EnglishDiaryView extends ItemView {
         if (!anchor) continue;
         let list = after.get(anchor);
         if (!list) {
-          list = body.ownerDocument.createElement("div");
+          list = ownedDiv(body.ownerDocument);
           list.className = "echoink-diary-comparisons";
           list.lang = "zh";
           anchor.after(list);
@@ -304,7 +305,7 @@ export class EnglishDiaryView extends ItemView {
     mark.setAttribute("aria-pressed", "false");
     mark.setAttribute("aria-controls", this.explanationId);
     mark.dataset.alignmentIds = JSON.stringify(ids);
-    const label = mark.ownerDocument.createElement("span");
+    const label = ownedSpan(mark.ownerDocument);
     label.id = `${this.explanationId}-mark-${++diaryMarkSequence}`;
     label.textContent = mark.textContent;
     mark.replaceChildren(label);

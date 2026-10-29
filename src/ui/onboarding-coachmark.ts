@@ -1,3 +1,4 @@
+import { ownedDiv } from "./owned-dom";
 import { Scope, setIcon, type App } from "obsidian";
 import {
   renderAnimatedSettingsTabIcon,
@@ -186,7 +187,7 @@ export function mountEchoInkOnboardingCoachmark(
     const fitsBeside = !bounds || bounds.right + width + 26 <= ownerWindow.innerWidth || bounds.left - width - 26 >= 0;
     if (spotlight && protectedSurface?.parentElement && !fitsBeside) {
       if (!reservedSpace) {
-        reservedSpace = ownerDocument.createElement("div"); reservedSpace.className = "echoink-onboarding-space";
+        reservedSpace = ownedDiv(ownerDocument); reservedSpace.className = "echoink-onboarding-space";
         protectedSurface.parentElement.insertBefore(reservedSpace, protectedSurface);
         coachmark.addClass("is-reserved");
       }

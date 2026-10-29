@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 import weather from "../../assets/workbench/00-weather-master.svg";
 import avatar from "../../assets/workbench/06-card-avatar-wheel.svg";
 import knowledge from "../../assets/workbench/07-card-knowledge.svg";
@@ -39,10 +40,10 @@ export function avatarWheelArt(doc: Document, primary = "sol"): SVGSVGElement {
     const content = inlineWorkbenchArt(doc, preset.assetPath);
     content.setAttribute("x", String(cx - r)); content.setAttribute("y", String(cy - r));
     content.setAttribute("width", String(2 * r)); content.setAttribute("height", String(2 * r));
-    const clip = doc.createElementNS("http://www.w3.org/2000/svg", "clipPath"); clip.id = `${circle.id}-clip`;
+    const clip = ownedSvg(doc, "clipPath"); clip.id = `${circle.id}-clip`;
     const mask = circle.cloneNode(false) as SVGCircleElement; mask.removeAttribute("id"); mask.removeAttribute("data-layer"); mask.setAttribute("r", String(r)); clip.append(mask);
     svg.prepend(clip);
-    const group = doc.createElementNS("http://www.w3.org/2000/svg", "g"); group.setAttribute("clip-path", `url(#${clip.id})`); group.append(content);
+    const group = ownedSvg(doc, "g"); group.setAttribute("clip-path", `url(#${clip.id})`); group.append(content);
     circle.before(group);
   });
   return svg;

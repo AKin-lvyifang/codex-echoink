@@ -1,3 +1,5 @@
+import { ownedDiv } from "../ui/owned-dom";
+import { isImeKeyEvent } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
@@ -1298,7 +1300,7 @@ export class CodexSettingTab extends PluginSettingTab {
             input.blur();
             return;
           }
-          if (event.isComposing || event.keyCode === 229) return;
+          if (isImeKeyEvent(event)) return;
           const recorded = recordAcceleratorFromEvent(event);
           if (!recorded.valid) return;
           const normalized = normalizeAccelerator(recorded.accelerator);
@@ -2901,7 +2903,6 @@ export class CodexSettingTab extends PluginSettingTab {
     container: HTMLElement,
     activeTab: VisibleSettingsTab
   ): void {
-    const copy = this.copy;
     const navigation = this.nativeSettingsNavigation;
     const tabs = navigation?.listEl ?? container.createDiv({ cls: "codex-settings-tabs" });
     tabs.addClass("codex-settings-tabs");
@@ -3643,7 +3644,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.renderSettingsContent();
       return;
     }
-    const host = this.containerEl.ownerDocument.createElement("div");
+    const host = ownedDiv(this.containerEl.ownerDocument);
     host.toggleClass("echoink-settings-aligned", Platform.isDesktopApp);
     const modelEditor = tab === "providers" || tab === "models";
     const zh = this.plugin.settings.settingsLanguage !== "en";

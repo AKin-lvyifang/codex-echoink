@@ -1,3 +1,4 @@
+import { ownedDiv } from "./owned-dom";
 import { galleryComparison } from "../gallery/comparison";
 import type { App } from "obsidian";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -34,7 +35,7 @@ export function refreshCompanionThemeRecommendations(doc: Document): void {
 
 export function renderCompanionThemeRecommendation(container: HTMLElement, zh: boolean): void {
   const doc = container.ownerDocument;
-  const note = doc.createElement("div");
+  const note = ownedDiv(doc);
   note.className = "echoink-theme-recommendation";
   note.dataset.echoinkThemeRecommendation = "";
   const title = note.createEl("a");
@@ -70,7 +71,8 @@ export class EchoInkAppearance {
       doc.body.setAttribute(ECHOINK_THEME_ATTRIBUTE, effective);
     }
     doc.querySelectorAll("[data-echoink-appearance-picker]").forEach(picker => {
-      const event = doc.createEvent("Event"); event.initEvent(ECHOINK_APPEARANCE_REFRESH, false, false); picker.dispatchEvent(event);
+      const EventConstructor = doc.defaultView?.Event ?? window.Event;
+      picker.dispatchEvent(new EventConstructor(ECHOINK_APPEARANCE_REFRESH));
     });
   }
 

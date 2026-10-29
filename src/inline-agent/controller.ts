@@ -1,3 +1,4 @@
+import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { Annotation, StateEffect, StateField, Transaction, type EditorState } from "@codemirror/state";
 import { isolateHistory } from "@codemirror/commands";
@@ -253,7 +254,7 @@ class ProposalWidget extends WidgetType {
   }
   toDOM(view: EditorView): HTMLElement {
     const r = this.request, service = this.controller.service, document = view.dom.ownerDocument;
-    const root = document.createElement("section");
+    const root = ownedEl(document, "section");
     root.className = "echoink-inline-block"; root.dataset.requestId = r.id; root.setAttribute("aria-label", `${r.agentName}的待确认稿`);
     const header = root.createDiv({ cls: "echoink-inline-header" }), identity = header.createDiv({ cls: "echoink-inline-identity" });
     const agent = this.controller.plugin.settings.agentRegistry.agents.find(item => item.id === r.agentId);
@@ -288,7 +289,7 @@ class MissingRecordWidget extends WidgetType {
   constructor(private readonly message: string, private readonly controller?: InlineAgentController, private readonly taskId?: string) { super(); }
   eq(other: MissingRecordWidget): boolean { return this.message === other.message && this.taskId === other.taskId; }
   toDOM(view: EditorView): HTMLElement {
-    const el = view.dom.ownerDocument.createElement(this.taskId ? "button" : "span");
+    const el = ownedEl(view.dom.ownerDocument, this.taskId ? "button" : "span");
     el.className = "echoink-inline-missing"; el.textContent = this.message;
     if (this.taskId) {
       const taskId = this.taskId;
@@ -302,7 +303,7 @@ class RequestStateWidget extends WidgetType {
   constructor(private readonly controller: InlineAgentController, private readonly request: InlineRequest) { super(); }
   eq(other: RequestStateWidget): boolean { return this.request.id === other.request.id && this.request.status === other.request.status && this.request.error === other.request.error && this.request.instruction.text === other.request.instruction.text && this.request.agentName === other.request.agentName; }
   toDOM(view: EditorView): HTMLElement {
-    const r = this.request, root = view.dom.ownerDocument.createElement("div"); root.className = "echoink-inline-request-state"; root.dataset.requestId = r.id;
+    const r = this.request, root = ownedDiv(view.dom.ownerDocument); root.className = "echoink-inline-request-state"; root.dataset.requestId = r.id;
     const labels: Record<string, string> = { thinking: "思考中", clarifying: "等你回答", queued: "等前一块处理", interrupted: "已中断 · 重试", failed: "没写成 · 重试" };
     const state = root.createEl("button", { cls: `echoink-inline-state-label${r.status === "clarifying" ? " is-waiting" : ""}`, text: `${r.agentName} · ${labels[r.status] ?? r.status}`, attr: { type: "button" } });
     state.onclick = () => { void this.controller.openTask(r.taskId).catch(error => this.controller.report(error)); };

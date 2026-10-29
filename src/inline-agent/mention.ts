@@ -1,3 +1,5 @@
+import { ownedDiv, ownedSpan, ownedEl } from "../ui/owned-dom";
+import { isImeKeyEvent } from "../ui/ime-composition";
 import { Prec, StateEffect, StateField, type EditorState, type Extension, type Transaction } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type Tooltip } from "@codemirror/view";
@@ -118,8 +120,8 @@ export function mapInlineDraft(draft: InlineMentionDraft, tr: Transaction): Inli
   return inlineDraftText(tr.newDoc.toString(), mapped) === null ? null : mapped;
 }
 
-export function inlineMentionKeyAction(event: Pick<KeyboardEvent, "key" | "isComposing" | "keyCode" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">, composing: boolean): "previous" | "next" | "select" | "close" | null {
-  if (composing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
+export function inlineMentionKeyAction(event: Pick<KeyboardEvent, "key" | "isComposing" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">, composing: boolean): "previous" | "next" | "select" | "close" | null {
+  if (composing || isImeKeyEvent(event) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;
   return event.key === "ArrowUp" ? "previous" : event.key === "ArrowDown" ? "next" : event.key === "Enter" ? "select" : event.key === "Escape" ? "close" : null;
 }
 
@@ -256,7 +258,7 @@ export class InlineMentionController {
 
   private tooltip(candidate: Candidate): Tooltip {
     return { pos: candidate.from, end: candidate.to, above: false, create: view => {
-      const document = view.dom.ownerDocument, dom = document.createElement("div");
+      const document = view.dom.ownerDocument, dom = ownedDiv(document);
       dom.className = "echoink-inline-mention-list";
       dom.setAttribute("role", "listbox"); dom.setAttribute("aria-label", "选择管家");
       const render = () => {
@@ -264,11 +266,11 @@ export class InlineMentionController {
         dom.replaceChildren();
         if (!active) return;
         active.agents.forEach((agent, index) => {
-          const row = document.createElement("div");
+          const row = ownedDiv(document);
           row.className = "echoink-inline-mention-option";
           row.setAttribute("role", "option"); row.setAttribute("aria-selected", String(index === active.index));
           row.append(avatarElement(document, agent));
-          const name = document.createElement("span"); name.textContent = agent.name; row.append(name);
+          const name = ownedSpan(document); name.textContent = agent.name; row.append(name);
           row.addEventListener("mousedown", event => event.preventDefault());
           row.addEventListener("click", event => { event.preventDefault(); this.select(view, agent); });
           dom.append(row);
@@ -282,11 +284,11 @@ export class InlineMentionController {
 }
 
 function avatarElement(document: Document, agent: AgentDefinition | undefined): HTMLElement {
-  const avatar = document.createElement("span");
+  const avatar = ownedSpan(document);
   avatar.className = "echoink-inline-input-avatar"; avatar.setAttribute("aria-hidden", "true");
   const url = agent && resolveAgentAvatarUrl(agent.avatar);
-  if (url) { const image = document.createElement("img"); image.src = url; image.alt = ""; avatar.append(image); }
-  else { const fallback = document.createElement("span"); fallback.textContent = agent?.name.slice(0, 1) ?? ""; avatar.append(fallback); }
+  if (url) { const image = ownedEl(document, "img"); image.src = url; image.alt = ""; avatar.append(image); }
+  else { const fallback = ownedSpan(document); fallback.textContent = agent?.name.slice(0, 1) ?? ""; avatar.append(fallback); }
   return avatar;
 }
 
@@ -295,7 +297,7 @@ class MentionAvatar extends WidgetType {
   constructor(private readonly agent: AgentDefinition | undefined) { super(); this.url = agent ? resolveAgentAvatarUrl(agent.avatar) : null; }
   eq(other: MentionAvatar): boolean { return this.agent?.id === other.agent?.id && this.agent?.name === other.agent?.name && this.url === other.url; }
   toDOM(view: EditorView): HTMLElement {
-    const document = view.dom.ownerDocument, wrapper = document.createElement("span");
+    const document = view.dom.ownerDocument, wrapper = ownedSpan(document);
     wrapper.className = "echoink-inline-input-start";
     wrapper.setAttribute("aria-hidden", "true");
     wrapper.append(avatarElement(document, this.agent));
@@ -308,7 +310,7 @@ class MentionSend extends WidgetType {
   constructor(private readonly id: number, private readonly pending: boolean, private readonly empty: boolean, private readonly send: (view: EditorView, id: number) => void) { super(); }
   eq(other: MentionSend): boolean { return this.id === other.id && this.pending === other.pending && this.empty === other.empty; }
   toDOM(view: EditorView): HTMLElement {
-    const document = view.dom.ownerDocument, wrapper = document.createElement("span"), button = document.createElement("button");
+    const document = view.dom.ownerDocument, wrapper = ownedSpan(document), button = ownedEl(document, "button");
     wrapper.className = "echoink-inline-input-end";
     // Pair with the tail mark's generated joiner on the other side of CM's widget buffer.
     wrapper.append(document.createTextNode("\u2060"));

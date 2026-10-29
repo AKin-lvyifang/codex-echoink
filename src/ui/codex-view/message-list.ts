@@ -1,3 +1,4 @@
+import { ownedFragment, ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
@@ -1873,13 +1874,13 @@ export class CodexMessageListRenderer {
         } catch (error) {
           receiptError = error instanceof Error ? error.message : String(error);
         }
-        const notice = env.messagesEl.ownerDocument.createDocumentFragment();
+        const notice = ownedFragment(env.messagesEl.ownerDocument);
         notice.append(receiptError
           ? conversationUiText(env.settingsLanguage,
             `已存为 ${path}，但保存状态未能写入对话，重开后可能无法识别：${receiptError}\u3000`,
             `Saved as ${path}, but the conversation could not remember it after reopening: ${receiptError} `)
           : conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
-        const open = env.messagesEl.ownerDocument.createElement("button");
+        const open = ownedEl(env.messagesEl.ownerDocument, "button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
         open.onclick = () => { void this.openSavedAnswerNote(env, path); };
         notice.append(open);

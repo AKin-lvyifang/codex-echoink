@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 /**
  * Native-DOM ports of the matching Animate Icons Lucide components.
  *
@@ -11,7 +12,6 @@
 
 import { getIcon } from "obsidian";
 
-const SVG_NS = "http://www.w3.org/2000/svg";
 
 export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
   "settings",
@@ -228,7 +228,7 @@ function renderSparklesIcon(doc: Document): SVGSVGElement {
 }
 
 function createIconSvg(iconName: AnimatedSettingsTabIconName, doc: Document): SVGSVGElement {
-  const svg = doc.createElementNS(SVG_NS, "svg");
+  const svg = ownedSvg(doc, "svg");
   setSvgAttributes(svg, {
     viewBox: "0 0 24 24",
     fill: "none",
@@ -251,7 +251,7 @@ function appendSvg<K extends keyof SVGElementTagNameMap>(
   part?: string,
   index?: number
 ): SVGElementTagNameMap[K] {
-  const element = parent.ownerDocument.createElementNS(SVG_NS, tagName);
+  const element = ownedSvg(parent.ownerDocument, tagName);
   setSvgAttributes(element, attributes);
   if (part) element.setAttribute("data-part", part);
   if (index !== undefined) element.setAttribute("data-index", String(index));

@@ -1,3 +1,4 @@
+import { watchImeComposition } from "../ui/ime-composition";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import type { CSSProperties, ReactNode } from "react";
@@ -12,7 +13,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGr
 import { OriginPagination } from "../ui/components/origin/pagination";
 
 type ElementOptions = { cls?: string; text?: string; attr?: Record<string, string | number | boolean>; type?: string; value?: string };
-type Island = { root: Root; element: HTMLElement | null; document: Document; disposed: boolean; cleanup?: () => void };
+type Island = { root: Root; element: HTMLElement | null; document: Document; disposed: boolean; stopIme: () => void; cleanup?: () => void };
 const islands = new Set<Island>();
 const windowCleanup = new Map<Document, () => void>();
 
@@ -20,7 +21,7 @@ const windowCleanup = new Map<Document, () => void>();
 function createIsland(parent: HTMLElement) {
   const document = parent.ownerDocument;
   const fragment = new document.defaultView!.DocumentFragment();
-  const island: Island = { root: createRoot(fragment), element: null, document, disposed: false };
+  const island: Island = { root: createRoot(fragment), element: null, document, disposed: false, stopIme: watchImeComposition(parent) };
   islands.add(island);
   if (!windowCleanup.has(document)) {
     const cleanup = () => disposeOriginControls(document.documentElement);
@@ -42,6 +43,7 @@ export function disposeOriginControls(container: HTMLElement): void {
     if (island.document !== container.ownerDocument || !island.element || !container.contains(island.element)) continue;
     islands.delete(island);
     island.disposed = true;
+    island.stopIme();
     island.cleanup?.();
     island.root.unmount();
   }

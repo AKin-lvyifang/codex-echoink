@@ -216,7 +216,6 @@ export class HomeWorkbenchDataService {
     const path = normalizePath(templatePath(importedTemplatePath(template.name)));
     const existing = this.app.vault.getAbstractFileByPath(path);
     if (existing && conflictResolution === "cancel") {
-      const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));
       return {
         status: "conflict",
         path,

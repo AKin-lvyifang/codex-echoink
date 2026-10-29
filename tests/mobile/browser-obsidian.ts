@@ -1,4 +1,5 @@
 import { StateField } from "@codemirror/state";
+import { installCurrentObsidianDom, installObsidianDom } from "../../src/tests/obsidian-dom";
 
 export const apiVersion = "1.14.4";
 const paths: Record<string, string> = {
@@ -72,7 +73,7 @@ export class TFolder {
 export class Component { addChild() {} removeChild() {} register() {} load() {} unload() {} }
 export class Plugin extends Component {
   private domEvents: (() => void)[] = [];
-  constructor(public app: any, public manifest: any) { super(); }
+  constructor(public app: any, public manifest: any) { super(); installCurrentObsidianDom(); }
   registerView(type: string, factory: unknown) { this.app.workspace.registerView(type, factory); }
   registerEditorExtension() {}
   registerMarkdownPostProcessor() {}
@@ -82,15 +83,17 @@ export class Plugin extends Component {
   }
   unload() { this.domEvents.forEach(remove => remove()); this.domEvents = []; }
 }
-export class ItemView {
+export class View {
   app: any; containerEl: HTMLElement; contentEl: HTMLElement;
-  constructor(public leaf: any) { this.app = leaf.app; this.containerEl = leaf.containerEl; this.contentEl = leaf.contentEl; }
+  constructor(public leaf: any) { installCurrentObsidianDom(); this.app = leaf.app; this.containerEl = leaf.containerEl; this.contentEl = leaf.contentEl; }
   registerEvent() {} register() {} addChild() {} removeChild() {}
   registerDomEvent(element: any, name: string, cb: any, options?: any) { element.addEventListener(name, cb, options); }
 }
+export class ItemView extends View {}
+
 export class Modal {
   contentEl: HTMLElement; modalEl: HTMLElement; titleEl: HTMLElement; containerEl: HTMLElement;
-  constructor(public app: unknown) { this.containerEl = document.createElement("div"); this.containerEl.className = "modal-container"; this.modalEl = this.containerEl.appendChild(document.createElement("div")); this.modalEl.className = "modal"; this.titleEl = document.createElement("h2"); this.contentEl = document.createElement("div"); this.contentEl.className = "modal-content"; this.modalEl.append(this.titleEl, this.contentEl); }
+  constructor(public app: unknown) { installCurrentObsidianDom(); this.containerEl = document.createElement("div"); this.containerEl.className = "modal-container"; this.modalEl = this.containerEl.appendChild(document.createElement("div")); this.modalEl.className = "modal"; this.titleEl = document.createElement("h2"); this.contentEl = document.createElement("div"); this.contentEl.className = "modal-content"; this.modalEl.append(this.titleEl, this.contentEl); }
   open() {
     if (document.body.classList.contains("fixture-host")) {
       const close = this.modalEl.appendChild(document.createElement("div"));
@@ -109,9 +112,7 @@ export const MarkdownRenderer = { async render(_app: unknown, text: string, elem
 export async function requestUrl() { throw new Error("Browser fixture cannot call a real Provider"); }
 export class Notice { constructor(text: string, _timeout?: number) { console.info("Fixture notice", text); } hide() {} }
 export function sanitizeHTMLToDom(html: string) { const template = document.createElement("template"); template.innerHTML = html; return template.content; }
-// Obsidian exposes detached DOM creation helpers on each window.
-window.createEl = ((tag: keyof HTMLElementTagNameMap) => window.document.createElement(tag)) as typeof window.createEl;
-window.createSvg = ((tag: keyof SVGElementTagNameMap) => window.document.createElementNS("http://www.w3.org/2000/svg", tag)) as typeof window.createSvg;
+installObsidianDom(window);
 for (const owner of [HTMLElement.prototype, SVGElement.prototype]) {
   (owner as any).instanceOf = function(type: new (...args: any[]) => unknown) {
     const view = this.ownerDocument?.defaultView;

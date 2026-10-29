@@ -1,3 +1,4 @@
+import { watchImeComposition } from "../ime-composition";
 import { mountKnowledgeActivityProgress, mountKnowledgeLinkingProgress } from "./knowledge-linking-progress";
 import { setIcon, type Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
@@ -54,6 +55,7 @@ export interface CodexViewShellHost extends Component {
 }
 
 export function renderViewShell(host: CodexViewShellHost): void {
+  host.register(watchImeComposition(host.contentEl));
   host.knowledgeLinkingProgressDispose?.();
   host.knowledgeLinkingProgressDispose = undefined;
   host.contentEl.empty();

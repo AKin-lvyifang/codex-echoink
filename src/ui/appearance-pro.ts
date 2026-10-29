@@ -1,3 +1,4 @@
+import { ownedDiv, ownedSpan, ownedEl } from "./owned-dom";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { membershipWebsiteLink } from "../membership/website-links";
 let sequence = 0;
@@ -7,13 +8,13 @@ export function decorateProAppearanceChoice(trigger: HTMLElement, parent: HTMLEl
   zh: boolean; allowed(): boolean; upgrade(): void; blocked?(): void;
 }): () => void {
   createPluginEditionBadge(trigger, "pro", options.zh ? "zh-CN" : "en");
-  const doc = trigger.ownerDocument, panel = doc.createElement("div");
+  const doc = trigger.ownerDocument, panel = ownedDiv(doc);
   panel.className = "echoink-appearance-pro-popover"; panel.id = `echoink-appearance-pro-${++sequence}`;
   panel.setAttribute("popover", "auto"); panel.setAttribute("role", "dialog"); panel.hidden = true;
   trigger.setAttribute("aria-controls", panel.id); trigger.setAttribute("aria-haspopup", "dialog");
-  const message = doc.createElement("span"); message.textContent = options.zh ? "PRO 专属，开通后可用" : "PRO exclusive. Upgrade to use this appearance.";
+  const message = ownedSpan(doc); message.textContent = options.zh ? "PRO 专属，开通后可用" : "PRO exclusive. Upgrade to use this appearance.";
   message.id = `${panel.id}-message`; trigger.setAttribute("aria-describedby", message.id); panel.setAttribute("aria-label", message.textContent);
-  const link = doc.createElement("a"); link.className = "echoink-appearance-upgrade";
+  const link = ownedEl(doc, "a"); link.className = "echoink-appearance-upgrade";
   link.href = membershipWebsiteLink("plugin.plan.year", { planId: "year", currency: options.zh ? "CNY" : "USD" });
   link.textContent = options.zh ? "开通 PRO" : "Get PRO";
   link.addEventListener("click", event => { event.preventDefault(); hide(); options.upgrade(); });

@@ -1,3 +1,4 @@
+import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import {showEchoInkMenu} from "../theme-boundary";
 import { Menu, Notice, setIcon } from "obsidian";
@@ -471,7 +472,7 @@ function openComposerParameterMenu(
 
   const doc = anchor.ownerDocument;
   const view = doc.defaultView ?? window;
-  const root = doc.createElement("div");
+  const root = ownedDiv(doc);
   root.className = "codex-composer-parameter-menu";
   root.setAttribute("role", "menu");
   root.setAttribute("aria-label", ariaLabel);
@@ -629,7 +630,7 @@ function openParameterSubmenu(
   trigger.addClass("is-open");
   trigger.setAttribute("aria-expanded", "true");
 
-  const panel = active.root.ownerDocument.createElement("div");
+  const panel = ownedDiv(active.root.ownerDocument);
   panel.className = "codex-composer-parameter-submenu";
   panel.setAttribute("role", "menu");
   panel.setAttribute("aria-label", section.label);

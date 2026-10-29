@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -14,6 +15,7 @@ import { disposeOriginControls } from "../settings/origin-controls";
 
 async function runReminderSettingsTests(): Promise<void> {
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const names = ["window", "document", "Element", "Node", "Event", "CustomEvent", "MutationObserver", "DocumentFragment", "navigator", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
     ...Object.getOwnPropertyNames(dom.window).filter((name) => /^(HTML|SVG)\w*Element$/u.test(name))];
   const previous = new Map(names.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));

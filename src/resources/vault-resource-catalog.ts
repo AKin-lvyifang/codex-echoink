@@ -11,7 +11,7 @@ import {
   type VaultResourceStore,
   vaultResourceLayout
 } from "../harness/resources/vault-store";
-import { resourceRefToUri } from "../harness/resources/resource-ref";
+
 
 const { mkdir, readFile, writeFile } = getDesktopFsPromises();
 const path = getDesktopPath();

@@ -1,3 +1,4 @@
+import { ownedDiv } from "./owned-dom";
 import { attachNativeTooltip } from "./native-tooltip";
 import { Component, MarkdownRenderer, normalizePath, TFile, type App } from "obsidian";
 import { mapMarkdownInlineCode, mapMarkdownOutsideFences, normalizeMarkdownMath } from "../core/markdown-math";
@@ -135,7 +136,7 @@ export class AnswerMarkdownRenderer {
     let slot = this.slots.get(key);
     if (!slot || slot.root.ownerDocument !== container.ownerDocument) {
       if (slot) this.release(slot);
-      slot = { root: container.ownerDocument.createElement("div"), request: "", revision: 0, component: null, pending: null };
+      slot = { root: ownedDiv(container.ownerDocument), request: "", revision: 0, component: null, pending: null };
       this.slots.set(key, slot);
     }
     if (slot.root.parentElement !== container) container.replaceChildren(slot.root);
@@ -159,7 +160,7 @@ export class AnswerMarkdownRenderer {
       slot.component = legacy;
     }
     if (streaming) return;
-    const staged = container.ownerDocument.createElement("div");
+    const staged = ownedDiv(container.ownerDocument);
     staged.className = "echoink-answer-markdown markdown-rendered";
     const component = new Component();
     component.load();
@@ -172,7 +173,7 @@ export class AnswerMarkdownRenderer {
         decorateNoteLinks(app, staged, component, sourcePath);
         for (const table of Array.from(staged.querySelectorAll("table"))) {
           if (table.parentElement?.hasClass("table-wrapper")) continue;
-          const scroll = staged.ownerDocument.createElement("div");
+          const scroll = ownedDiv(staged.ownerDocument);
           scroll.className = "codex-message-table-scroll";
           table.replaceWith(scroll);
           scroll.append(table);

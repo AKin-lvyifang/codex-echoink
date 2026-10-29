@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { knowledgeLinkingProgressText, mountKnowledgeLinkingProgress } from "../ui/codex-view/knowledge-linking-progress";
@@ -5,6 +6,7 @@ import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-t
 
 export async function runKnowledgeLinkingProgressTests(): Promise<void> {
   const dom = new JSDOM("<!doctype html><body><div id='mount'></div></body>");
+  installObsidianDom(dom.window);
   const create = function (this: Element, tag: string, options: { cls?: string; text?: string; attr?: Record<string, string> } = {}) {
     const element = this.ownerDocument.createElement(tag);
     if (options.cls) element.className = options.cls;

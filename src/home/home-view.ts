@@ -1,3 +1,5 @@
+import { ownedDiv, ownedEl } from "../ui/owned-dom";
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
@@ -114,6 +116,7 @@ export class EchoInkHomeView extends ItemView {
   private kind(kind: HomeActivityKind): string { return this.t({ created: "新建", modified: "修改", reopened: "重读" }[kind], { created: "Created", modified: "Modified", reopened: "Reopened" }[kind]); }
 
   async onOpen(): Promise<void> {
+    this.register(watchImeComposition(this.contentEl));
     this.closed = false;
     this.contentEl.addClass("echoink-home-workspace");
     this.contentEl.tabIndex = -1;
@@ -342,7 +345,7 @@ export class EchoInkHomeView extends ItemView {
     if (this.getViewType() !== "echoink-legacy-home") return;
     const heading = this.contentEl.querySelector<HTMLElement>(".page-heading");
     if (!heading) return;
-    const row = this.contentEl.ownerDocument.createElement("div");
+    const row = ownedDiv(this.contentEl.ownerDocument);
     row.className = "echoink-workbench-return";
     heading.before(row);
     const button = createOriginButton(row, { cls: "echoink-workbench-back is-tertiary", text: this.t("返回工作台", "Back to workbench") });
@@ -392,7 +395,7 @@ export class EchoInkHomeView extends ItemView {
   private renderFinanceCard(): void {
     this.contentEl.querySelector(".echoink-life-card-finance")?.remove();
     if (!this.plugin.settings.lifestyle?.finance.enabled) return;
-    const card = this.contentEl.ownerDocument.createElement("section");
+    const card = ownedEl(this.contentEl.ownerDocument, "section");
     card.className = "echoink-life-card echoink-life-card-finance";
     const heading = card.createDiv({ cls: "echoink-life-card-heading" });
     heading.createEl("small", { text: "LIFE / ECHOINK" });
@@ -456,7 +459,7 @@ export class EchoInkHomeView extends ItemView {
     const signature = JSON.stringify([this.language, localDiaryDay(now), entry, occurrence]);
     if (existing?.dataset.expressionSignature === signature) return;
     existing?.remove();
-    const card = this.contentEl.ownerDocument.createElement("section");
+    const card = ownedEl(this.contentEl.ownerDocument, "section");
     card.className = "echoink-life-card echoink-life-card-english";
     card.dataset.expressionSignature = signature;
     const heading = card.createDiv({ cls: "echoink-life-card-heading" });
@@ -479,7 +482,7 @@ export class EchoInkHomeView extends ItemView {
       .map((target) => ECHOINK_HOME_MODULES.find((module) => target.matches(module.selector))!);
     let nav = this.contentEl.querySelector<HTMLElement>(".echoink-home-shortnav");
     if (!nav) {
-      nav = this.contentEl.ownerDocument.createElement("nav");
+      nav = ownedEl(this.contentEl.ownerDocument, "nav");
       nav.className = "echoink-home-shortnav";
       header.insertAdjacentElement("afterend", nav);
     }
@@ -975,7 +978,7 @@ export class EchoInkHomeView extends ItemView {
     } catch { if (!abort.signal.aborted) this.field("search-results-heading").setText(this.t("搜索失败，请重试", "Search failed. Try again.")); }
   }
   private handleKeys(event: KeyboardEvent): void {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if ((event.metaKey || event.ctrlKey) && ["k", "j"].includes(event.key.toLowerCase())) {
       event.preventDefault(); event.stopPropagation();
       if (event.key.toLowerCase() === "k") this.openSearch(); else void this.capture().catch((error) => new Notice(errorMessage(error)));

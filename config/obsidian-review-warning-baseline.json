@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "source": "eslint-plugin-obsidianmd production warnings",
-  "total": 466,
+  "total": 307,
   "findings": [
     {
       "fingerprint": "2058c942526f2a6e9eb04ac22baf0241eed9d1cd675768e13237f1b4d9ed77bb",
@@ -31,24 +31,6 @@
       "count": 1
     },
     {
-      "fingerprint": "a5e3f56167e594bc489e15c4a88edca3daefd7e36d7d478be947cad3ae3df50d",
-      "path": "src/core/electron.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "?? (globalThis as typeof globalThis & { require?: ElectronRequire }).require;",
-      "count": 2
-    },
-    {
-      "fingerprint": "fa52a79922955bb6947184baf275992ac2818872b3b93b45aaa596e22ad88f07",
-      "path": "src/core/mapping.ts",
-      "rule": "@typescript-eslint/no-explicit-any",
-      "severity": 1,
-      "message": "Unexpected any. Specify a different type.",
-      "context": "export function summarizeProcessEvent(itemType: string, payload: any, vaultPath: string, basePath?: string): ProcessEventSummary {",
-      "count": 1
-    },
-    {
       "fingerprint": "22e8a29a06f0d4c3f4838d7542a259853afbd9c5562a4db69f56d03a1242c96e",
       "path": "src/core/mapping.ts",
       "rule": "no-undef",
@@ -58,111 +40,12 @@
       "count": 1
     },
     {
-      "fingerprint": "c360811e1dc0c758eb0062ea34d30709a4825909bcc6cfdca657da8a968db25b",
-      "path": "src/core/vault-note-links.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRootRole' is defined but never used.",
-      "context": "import { knowledgeRootRole } from \"../knowledge-base/root-paths-core\";",
-      "count": 1
-    },
-    {
       "fingerprint": "9213c53449d4dcb539e44ef86edd0a04a94b1d25dc0453d7ecfb2a4b9eb6c2c0",
       "path": "src/english-diary/markdown.ts",
       "rule": "no-undef",
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": ": JSON.parse(Buffer.from(match![1], \"base64\").toString(\"utf8\")) as ExpressionEntry;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0e84b20c7ed51e6a042167e822bb1bfc9b3aca62ea4c8a64094f998de9fe687c",
-      "path": "src/english-diary/reading-renderer.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'element.ownerDocument.win.createSpan()' instead of 'element.ownerDocument.createElement(\"span\")'.",
-      "context": "const mark = element.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "1b22ed3e78fcb606706c2d96b01a8487b40b061b81e401dc295bd59792e84bf5",
-      "path": "src/english-diary/reading-renderer.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'root.ownerDocument.win.createDiv()' instead of 'root.ownerDocument.createElement(\"div\")'.",
-      "context": "const left = root.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "b952b3b8de036c9601d84bc75c845da7cca3d7ff7cbf8c7fd42f6dc9abc73665",
-      "path": "src/english-diary/reading-renderer.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'element.ownerDocument.win.createFragment()' instead of 'element.ownerDocument.createDocumentFragment()'.",
-      "context": "const fragment = element.ownerDocument.createDocumentFragment();",
-      "count": 1
-    },
-    {
-      "fingerprint": "caddeb8e8d75f8dec13df7a561a596293e9a1dcc25b4e0790b69c7fef749664c",
-      "path": "src/english-diary/reading-renderer.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'root.ownerDocument.win.createDiv()' instead of 'root.ownerDocument.createElement(\"div\")'.",
-      "context": "const right = root.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ee107476269e4d221092373196e7f6ebdf6b61a7f75749cf8fd88b964ebacdc0",
-      "path": "src/english-diary/reading-renderer.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'root.ownerDocument.win.createDiv()' instead of 'root.ownerDocument.createElement(\"div\")'.",
-      "context": "const scratch = root.ownerDocument.createElement(\"div\");",
-      "count": 2
-    },
-    {
-      "fingerprint": "347e3af4855a702b86de031963a5d6fb804daae21ed0eb2234cacf4054a7d1f5",
-      "path": "src/english-diary/view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'mark.ownerDocument.win.createSpan()' instead of 'mark.ownerDocument.createElement(\"span\")'.",
-      "context": "const label = mark.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ccc6efdf2d02c0870798fb18074fa62c7be2ea5b8795e63f6e32fd9048f9b937",
-      "path": "src/english-diary/view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'body.ownerDocument.win.createDiv()' instead of 'body.ownerDocument.createElement(\"div\")'.",
-      "context": "list = body.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "12173b6f0cb10dad0707ba13ffdf6a2126e04c03158d97b658587c3c1b136461",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'overlay.ownerDocument.win.createDiv()' instead of 'overlay.ownerDocument.createElement(\"div\")'.",
-      "context": "const bar = overlay.ownerDocument.createElement(\"div\"); bar.className = \"echoink-gallery-toolbar\"; bar.setAttribute(\"role\", \"group\"); bar.setAttribute(\"aria-label\", \"图片组操作\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "723559f55f56608c51c11a788a89673b6a95da34262b9ac9e9c798b59cd283bc",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'overlay.ownerDocument.win.createDiv()' instead of 'overlay.ownerDocument.createElement(\"div\")'.",
-      "context": "const mark = overlay.ownerDocument.createElement(\"div\"); mark.className = \"echoink-gallery-image-control\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "95ff829d8ad41eed8cd634df0c4d7c3fca2f9e05aeee8c10fec2fb29f3f832ba",
-      "path": "src/gallery/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'view.dom.ownerDocument.win.createDiv()' instead of 'view.dom.ownerDocument.createElement(\"div\")'.",
-      "context": "this.overlay = touchOnly ? null : view.dom.ownerDocument.createElement(\"div\");",
       "count": 1
     },
     {
@@ -373,15 +256,6 @@
       "count": 1
     },
     {
-      "fingerprint": "28818c33be9e0b0686a8226d598827fdf562ba88d19774eb56e2f49c89effe46",
-      "path": "src/harness/pi-native/pi-chat-ui-projector.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'errorMessage' is assigned a value but never used.",
-      "context": "const errorMessage = visibleText(message.errorMessage);",
-      "count": 1
-    },
-    {
       "fingerprint": "35b8d0daad8f24c8acc74f1214771c3ec2175812c4d06bf239a0f9f8fe3fa74c",
       "path": "src/harness/pi-native/pi-document-context.ts",
       "rule": "no-undef",
@@ -433,15 +307,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "hits => Buffer.byteLength(JSON.stringify(toolResultForProvider({ ...search, hits })), \"utf8\") <= SEARCH_RESULT_LIMIT_BYTES)) });",
-      "count": 1
-    },
-    {
-      "fingerprint": "289c6de2cc1152d2284fcef7a8edcb8d98533a101cc49f28c8e1e7adef69f607",
-      "path": "src/harness/pi-native/pi-native-conversation-runtime.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'PI_KNOWLEDGE_READ_TOOL_IDS' is defined but never used.",
-      "context": "import { PI_KNOWLEDGE_READ_TOOL_IDS } from \"./pi-knowledge-read-tools\";",
       "count": 1
     },
     {
@@ -517,15 +382,6 @@
       "count": 1
     },
     {
-      "fingerprint": "4e0a47c7c715c9614672df0b99c2294d26fad582719ffd615090272a38be3f96",
-      "path": "src/harness/pi-native/pi-vault-tool-security-extension.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRolePath' is defined but never used.",
-      "context": "import { knowledgeRolePath } from \"../../knowledge-base/root-paths\";",
-      "count": 1
-    },
-    {
       "fingerprint": "35ea2d34144a89cb36c74f42be967b680f688f98fcd7d90632659f320347e446",
       "path": "src/harness/pi-native/vault-domain-service.ts",
       "rule": "no-undef",
@@ -577,15 +433,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "...(!snapshot.truncated && [\"raw\", \"inbox\"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? \"\") ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, \"utf8\")) } : {})",
-      "count": 1
-    },
-    {
-      "fingerprint": "d80f7f7891ef3305a096d9a3b8ce76e8ebc9da4500640ffc1e1fb5e1faecfd2b",
-      "path": "src/harness/pi-native/vault-target-resolver.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'resolveKnowledgePath' is defined but never used.",
-      "context": "import { resolveKnowledgePath } from \"../../knowledge-base/root-paths\";",
       "count": 1
     },
     {
@@ -814,42 +661,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0377bc6ee0935027d102f295a17ec6d1af1436731061793148db4bb08b8842b9",
-      "path": "src/home/home-view.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5991b62dc3c0efa9b41542f9bade6f67dfa4e07248a1df54716bb710cc2b7d74",
-      "path": "src/home/home-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createEl(\"nav\")' instead of 'this.contentEl.ownerDocument.createElement(\"nav\")'.",
-      "context": "nav = this.contentEl.ownerDocument.createElement(\"nav\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "78fe7cf2d819eb091ad4e7b7663dac3d898164d493a0113b13b495b7fc8c35de",
-      "path": "src/home/home-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createDiv()' instead of 'this.contentEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const row = this.contentEl.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "b2a80a1e07b4ce394b4afd2919b89f9d773d8dc962d96eb7dd9fe10ab63cf61d",
-      "path": "src/home/home-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createEl(\"section\")' instead of 'this.contentEl.ownerDocument.createElement(\"section\")'.",
-      "context": "const card = this.contentEl.ownerDocument.createElement(\"section\");",
-      "count": 2
-    },
-    {
       "fingerprint": "05750127878965787411e5d6d391b3aee9ccec7971f88debe081802ecc4a5cc7",
       "path": "src/home/home-view.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -868,15 +679,6 @@
       "count": 1
     },
     {
-      "fingerprint": "a9e269bdd5a26959d3e1e85347b454f9ff03dc6f85b263c67b50225abac9b483",
-      "path": "src/home/home-workbench-data.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'paths' is assigned a value but never used.",
-      "context": "const paths = new Set(this.app.vault.getMarkdownFiles().map((file) => file.path));",
-      "count": 1
-    },
-    {
       "fingerprint": "676d747c90517e8062f253029bbbff7ae87824448247e71ddd6107a51ae2ea46",
       "path": "src/home/knowledge-page-data.ts",
       "rule": "no-undef",
@@ -892,87 +694,6 @@
       "severity": 1,
       "message": "'React' is not defined.",
       "context": "Icon: React.ElementType",
-      "count": 1
-    },
-    {
-      "fingerprint": "6a308ceb4cdc5d0f7f727f54e580d93dd435ff867f3f510f32e3c2ce9e4c9565",
-      "path": "src/home/pdf-reading-upload-modal.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const electronRequire = window.require ?? globalThis.require;",
-      "count": 1
-    },
-    {
-      "fingerprint": "150c2104e19ce6d209ef796792fdc0c858e029b803a254838d6fbbc9f47e681b",
-      "path": "src/home/photo-calendar.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'days.ownerDocument.win.createEl(\"button\")' instead of 'days.ownerDocument.createElement(\"button\")'.",
-      "context": "const day = days.ownerDocument.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "4ad758dca3b8b137de9b226ac2b2278829b86468c6affb02999bf9c80e118b79",
-      "path": "src/home/photo-calendar.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'day.ownerDocument.win.createEl(\"img\")' instead of 'day.ownerDocument.createElement(\"img\")'.",
-      "context": "const image = day.ownerDocument.createElement(\"img\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "0e8100f4163cca9e0056e8b0f05c8ec5a2643784e80dadaf0b43e5ff16353169",
-      "path": "src/home/todo-edit-modal.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "87320068ddd8191b4aa61bbe50a54615b915636a42cae91a3b9a2ddd25d22ef8",
-      "path": "src/home/todo-edit-modal.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229 || event.key !== \"Enter\") return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5f6ce3f4793e5cd1d603c034fca4a5dc1b807d5e2405bdf0d91510be445a7511",
-      "path": "src/home/todo-table.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'ownerDocument.win.createEl(\"tr\")' instead of 'ownerDocument.createElement(\"tr\")'.",
-      "context": "const row = ownerDocument.createElement(\"tr\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "13b15a0e67ffba19d94ff97718d95574ec0cab1bc40f91af861c547cdeeb74be",
-      "path": "src/home/workbench-artwork.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSvg(\"clipPath\")' instead of 'doc.createElementNS(\"http://www.w3.org/2000/svg\", \"clipPath\")'.",
-      "context": "const clip = doc.createElementNS(\"http://www.w3.org/2000/svg\", \"clipPath\"); clip.id = `${circle.id}-clip`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "9b94fff7ba270985a88be0ffef2f059d5fe5e6ba5c1d61f82d9d0adbd72126c9",
-      "path": "src/home/workbench-artwork.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSvg(\"g\")' instead of 'doc.createElementNS(\"http://www.w3.org/2000/svg\", \"g\")'.",
-      "context": "const group = doc.createElementNS(\"http://www.w3.org/2000/svg\", \"g\"); group.setAttribute(\"clip-path\", `url(#${clip.id})`); group.append(content);",
-      "count": 1
-    },
-    {
-      "fingerprint": "8fa5122ff40fdd569322452371e2cec76bfad17822dfbdaa9c9b2d58791a39cb",
-      "path": "src/home/workbench-data.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'rawDigestStateForRecord' is defined but never used.",
-      "context": "import { rawDigestStateForRecord } from \"../knowledge-base/digest-status\";",
       "count": 1
     },
     {
@@ -1012,201 +733,12 @@
       "count": 1
     },
     {
-      "fingerprint": "d20379d9336000aa2b4dc00018c48965394ed58cba6571606521dc3d01cc1c33",
-      "path": "src/home/workbench-starters.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.deck.ownerDocument.win.createEl(\"article\")' instead of 'this.deck.ownerDocument.createElement(\"article\")'.",
-      "context": "const card = this.deck.ownerDocument.createElement(\"article\"); card.className = \"wb-starter-card\"; card.dataset.starter = String(index);",
-      "count": 1
-    },
-    {
-      "fingerprint": "625222898533df84e1930a8aea00d20ee55284d9c055b491483bb2f8f694c50d",
-      "path": "src/home/workbench-view.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "0cb10c62ab4075ba3624925946e7cf397f7c525d48cff24ac8e4b72d682e15b0",
-      "path": "src/home/workbench-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createEl(\"article\")' instead of 'this.contentEl.ownerDocument.createElement(\"article\")'.",
-      "context": "const card = this.contentEl.ownerDocument.createElement(\"article\"); card.className = \"wb-task\"; card.dataset.task = entry.conversationId;",
-      "count": 1
-    },
-    {
-      "fingerprint": "169ccc81e98b163ff750ef5f4e8ee57885a181fab2847e3e77836e0fa469f0a2",
-      "path": "src/home/workbench-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createDiv()' instead of 'this.contentEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const row = this.contentEl.ownerDocument.createElement(\"div\"); row.className = \"wb-row wb-todo\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "657ee71a9ce4b280c5bd3fb50b72fb8500f3ea4a781345078117fb467dcbf5eb",
-      "path": "src/home/workbench-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createDiv()' instead of 'this.contentEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const row = this.contentEl.ownerDocument.createElement(\"div\"); row.className = \"wb-completed\"; row.dataset.task = entry.conversationId;",
-      "count": 1
-    },
-    {
-      "fingerprint": "e63bffe1ca060d425354ce95cfbc970200175a710d5ec25817fa965ff91f1006",
-      "path": "src/home/workbench-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.contentEl.ownerDocument.win.createDiv()' instead of 'this.contentEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const row = this.contentEl.ownerDocument.createElement(\"div\"); row.className = \"wb-row\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "20bb884614e68cee5c5372699a79307a6ad3f51fbc7693e68053e2ac9116796e",
-      "path": "src/home/workbench-weather.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.svg.ownerDocument.win.createSvg(\"path\")' instead of 'this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\")'.",
-      "context": "const star = this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\"); star.setAttribute(\"d\", \"M-2 0H2M0-2V2\"); group.append(star);",
-      "count": 1
-    },
-    {
-      "fingerprint": "8e785ef2abb018c3b65a8015852c3d9b5eb251f0e469ed7bcf2d6c539f4e1bb8",
-      "path": "src/home/workbench-weather.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.svg.ownerDocument.win.createSvg(\"g\")' instead of 'this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"g\")'.",
-      "context": "const group = this.svg.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"g\"); group.setAttribute(\"aria-hidden\", \"true\"); this.svg.append(group);",
-      "count": 1
-    },
-    {
-      "fingerprint": "565bcd714a122770b9a458fe156575a4686c6d041d699bec82d7df8e45236af4",
-      "path": "src/inline-agent/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'view.dom.ownerDocument.win.createDiv()' instead of 'view.dom.ownerDocument.createElement(\"div\")'.",
-      "context": "const r = this.request, root = view.dom.ownerDocument.createElement(\"div\"); root.className = \"echoink-inline-request-state\"; root.dataset.requestId = r.id;",
-      "count": 1
-    },
-    {
-      "fingerprint": "d933c6e7a3de3c2b347d9a574ad4bd2acf6b76f8373a94dab5c437f9c967de71",
-      "path": "src/inline-agent/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'view.dom.ownerDocument.win.createEl(this.taskId ? \"button\" : \"span\")' instead of 'view.dom.ownerDocument.createElement(this.taskId ? \"button\" : \"span\")'.",
-      "context": "const el = view.dom.ownerDocument.createElement(this.taskId ? \"button\" : \"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ee46751c2eeaadea54b44e3b7dc1e405b8defe10f69a124a0a9762bf5d539e2a",
-      "path": "src/inline-agent/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"section\")' instead of 'document.createElement(\"section\")'.",
-      "context": "const root = document.createElement(\"section\");",
-      "count": 1
-    },
-    {
       "fingerprint": "fea6f1e7ec5588172e337de423d4fb92d3facf2a893d1396bcd5d5237b57837c",
       "path": "src/inline-agent/controller.ts",
       "rule": "obsidianmd/ui/sentence-case",
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '正文管家和 natural language dates 都在使用 @，可能互相抢占。建议在任一个插件设置里改掉唤起符号。'",
       "context": "new Notice(\"正文管家和 Natural Language Dates 都在使用 @，可能互相抢占。建议在任一个插件设置里改掉唤起符号。\", 12000);",
-      "count": 1
-    },
-    {
-      "fingerprint": "4117d25220ec8da47416eb2d006b4eaca08cc84c20f474377c3f8ca4ce59fe7e",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (composing || event.isComposing || event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return null;",
-      "count": 1
-    },
-    {
-      "fingerprint": "09c3bb94c40bfa11eaa64dfb04aad045709a10b5ec095ad33b1b9b8e53ed8f04",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const name = document.createElement(\"span\"); name.textContent = agent.name; row.append(name);",
-      "count": 1
-    },
-    {
-      "fingerprint": "2ad368358c2f07fa5f42173c5a4631cc365d012d2820566903a8764774168764",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "else { const fallback = document.createElement(\"span\"); fallback.textContent = agent?.name.slice(0, 1) ?? \"\"; avatar.append(fallback); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "2b004f90b6d913a1c375fe0484442d31b57c961df39ece96560416e8e0c85333",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createDiv()' instead of 'document.createElement(\"div\")'.",
-      "context": "const row = document.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "6dbcae86179143e89bb44794f865e9af7ff36486048c5fb06b8c14deeb3f56d1",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const avatar = document.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "7296bc129d75c2590d254971dafcb2bfab2188531d125966dae8eb70ac2224df",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createDiv()' instead of 'document.createElement(\"div\")'.",
-      "context": "const document = view.dom.ownerDocument, dom = document.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "a4a586160973d7006e6da239a79f0ffb95e49b6b273dd91a418819621b9b781a",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"img\")' instead of 'document.createElement(\"img\")'.",
-      "context": "if (url) { const image = document.createElement(\"img\"); image.src = url; image.alt = \"\"; avatar.append(image); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "d03a78a26cff93a21597c1ad00c9be224c7868a30a94ddcf50d2da1819a4a83a",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const document = view.dom.ownerDocument, wrapper = document.createElement(\"span\"), button = document.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "e44a4f22694a12a88e066318604d0d8a4c9793c22b8b4d2a709f672a3abf4ba8",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"button\")' instead of 'document.createElement(\"button\")'.",
-      "context": "const document = view.dom.ownerDocument, wrapper = document.createElement(\"span\"), button = document.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "f90b1c8d20fbde65254b67995c202324edca3c426993d60b49e372dcb431bd39",
-      "path": "src/inline-agent/mention.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createSpan()' instead of 'document.createElement(\"span\")'.",
-      "context": "const document = view.dom.ownerDocument, wrapper = document.createElement(\"span\");",
       "count": 1
     },
     {
@@ -1387,15 +919,6 @@
       "severity": 1,
       "message": "'Buffer' is not defined.",
       "context": "const bytes = Buffer.byteLength(normalized, \"utf8\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "642162b975e25328b0322535e4c5b1c73c2545e6d672f357f7e80ca2f5afe60c",
-      "path": "src/knowledge-base/knowledge-maintenance-protocol.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'KNOWLEDGE_LINKING_INSTRUCTION' is assigned a value but never used.",
-      "context": "const KNOWLEDGE_LINKING_INSTRUCTION = [",
       "count": 1
     },
     {
@@ -2056,15 +1579,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8c39c8775c4af1a04a94bff44bdfbe37c2ce01803677c02931493cbf5a2b17c1",
-      "path": "src/knowledge-base/search/scheduling.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const environment = globalThis as unknown as {",
-      "count": 1
-    },
-    {
       "fingerprint": "c0a436c6c660a7c5610e326859d58c424b2cbaaef22184b4ac967224ced04229",
       "path": "src/knowledge-base/source-health.ts",
       "rule": "no-undef",
@@ -2119,15 +1633,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1729f0f96f8504f4572f2d652c7aa46ebca03da8fd37734c5664afe58220ea54",
-      "path": "src/knowledge-base/vault-body-search.ts",
-      "rule": "obsidianmd/no-tfile-tfolder-cast",
-      "severity": 1,
-      "message": "Avoid casting to 'TFile'. Use an 'instanceof TFile' check to safely narrow the type.",
-      "context": "return file as TFile;",
-      "count": 1
-    },
-    {
       "fingerprint": "afe5f54f18935687fb9c6a5536dd2eeae759adafdeb6d34857b0a3f5b4b65eea",
       "path": "src/lifestyle/finance-analysis-archive.ts",
       "rule": "obsidianmd/hardcoded-config-path",
@@ -2146,66 +1651,12 @@
       "count": 1
     },
     {
-      "fingerprint": "afaaedf711f2c897f42a4af718463cc03629a41ad48a0fb48070ec891a2ef567",
-      "path": "src/lifestyle/finance-category-donut.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createSvg(\"svg\")' instead of 'parent.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\")'.",
-      "context": "const svg = parent.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "6cc090a7005edeaa3595aa4b71d858ae2847ff3f9c825ab5cdd442730d2e1bf5",
-      "path": "src/lifestyle/finance-number.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`createElement` is deprecated.",
-      "context": "if (typeof parent.ownerDocument.createElement !== \"function\" || !win?.customElements) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "afaa9031cff3d9de6b219e136c9811ec72969261ba2611a0ddfe69fa3ed57df5",
-      "path": "src/lifestyle/finance-number.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'flow.ownerDocument.win.createEl(\"style\")' instead of 'flow.ownerDocument.createElement(\"style\")'.",
-      "context": "const style = flow.ownerDocument.createElement(\"style\"); style.textContent = flow.shadowRoot.adoptedStyleSheets.flatMap(sheet => Array.from(sheet.cssRules).map(rule => rule.cssText)).join(\"\\n\");",
-      "count": 1
-    },
-    {
       "fingerprint": "54663106309ce807e7ad14c68da4a4f033efeddba4aa55fa31c51d22d734d3cb",
       "path": "src/lifestyle/finance-service.ts",
       "rule": "obsidianmd/ui/sentence-case",
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: '请在 Obsidian 核心插件中启用 bases，再打开账本'",
       "context": "if (file === base && leaf.view.getViewType() === \"markdown\") new Notice(\"请在 Obsidian 核心插件中启用 Bases，再打开账本\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "1b17e60e9015e435ae607c12dfed4719105bc8538ecd0a15a8d225cfabb86326",
-      "path": "src/lifestyle/finance-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createDiv()' instead of 'container.ownerDocument.createElement(\"div\")'.",
-      "context": "const scroll=container.ownerDocument.createElement(\"div\");scroll.className=\"echoink-finance-ai-table-scroll\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "467da4e7d0523799c70178e484e92b229f3e8c099dbb42c34d8a9d1d1004730b",
-      "path": "src/lifestyle/finance-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'gauge.ownerDocument.win.createSvg(\"path\")' instead of 'gauge.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\")'.",
-      "context": "const path = gauge.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "b1d49da3bc0de260ba58190d5f89db5dd87ff389dbb8603389a494ef2a52e19c",
-      "path": "src/lifestyle/finance-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'gauge.ownerDocument.win.createSvg(\"svg\")' instead of 'gauge.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\")'.",
-      "context": "const svg = gauge.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\");",
       "count": 1
     },
     {
@@ -2296,15 +1747,6 @@
       "severity": 1,
       "message": "Obsidian's configuration folder is not necessarily `.obsidian`, it can be configured by the user. Use `Vault#configDir` to get the current value",
       "context": "const previous = legacyDirectory.startsWith(\".obsidian/plugins/\") ? legacyDirectory : `.obsidian/plugins/${legacyDirectory}`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "39d61efa227a2eff550bb3250366dba89b81976c3cf3d51bd48fd4d4f983df54",
-      "path": "src/mobile/plugin.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`activeLeaf` is deprecated. The use of this field is discouraged.\nThe recommended alternatives are:\n- If you need information about the current view, use {@link Workspace.getActiveViewOfType}.\n- If you need to open a new file or navigate a view, use {@link Workspace.getLeaf}.",
-      "context": "const active = this.app.workspace.activeLeaf;",
       "count": 1
     },
     {
@@ -2524,42 +1966,6 @@
       "count": 1
     },
     {
-      "fingerprint": "1b1d8304fc60b142ee606503a7bb3b449fc96534f9c2f3426b8b13a150675c11",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'isEchoInkPiReasoningEffortSupported' is defined but never used.",
-      "context": "isEchoInkPiReasoningEffortSupported,",
-      "count": 1
-    },
-    {
-      "fingerprint": "91dbc127bc9712ce681bafe8a73aa74c6484a543e0bbcaa066a54385b2ca466a",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'isFolder' is assigned a value but never used.",
-      "context": "const isFolder = file instanceof TFolder;",
-      "count": 1
-    },
-    {
-      "fingerprint": "b6c381ec317f41747fa1483392095002af0c43757afb1fb0f7d65e93409ce194",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'normalizeEchoInkReasoningEffort' is defined but never used.",
-      "context": "normalizeEchoInkReasoningEffort,",
-      "count": 1
-    },
-    {
-      "fingerprint": "d2b85df55e1f1d57a3320672fd84474f9b600d6b7349def4e756b3eca9db66f2",
-      "path": "src/plugin/knowledge-surface-service.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'resolveEchoInkPiReasoningCapabilities' is defined but never used.",
-      "context": "resolveEchoInkPiReasoningCapabilities",
-      "count": 1
-    },
-    {
       "fingerprint": "40f741500f1b2dd7644e10e5cc95cf0777b8661b23d3dcb1062678f99b342c93",
       "path": "src/plugin/knowledge-surface-service.ts",
       "rule": "no-undef",
@@ -2656,24 +2062,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "result = await fs.lstat(current).catch(error => { if ((error as NodeJS.ErrnoException).code === \"ENOENT\") return null; throw error; });",
-      "count": 1
-    },
-    {
-      "fingerprint": "24f38fa78c58b022eb94699f0730c5ca0e5e2608e9a698f87494672fcc096792",
-      "path": "src/plugin/loopback-openai-provider-adapter.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`aborted` is deprecated. Since v17.0.0,v16.12.0 - Check `message.destroyed` from <a href=\"stream.html#class-streamreadable\" class=\"type\">stream.Readable</a>.",
-      "context": "transportComplete: response.complete && !response.aborted",
-      "count": 1
-    },
-    {
-      "fingerprint": "b43653e3b3ddf47d8617d691fbb77672905d0183a3ee861ea9772d39db16b6bf",
-      "path": "src/plugin/obsidian-native-tools.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`activeLeaf` is deprecated. The use of this field is discouraged.\nThe recommended alternatives are:\n- If you need information about the current view, use {@link Workspace.getActiveViewOfType}.\n- If you need to open a new file or navigate a view, use {@link Workspace.getLeaf}.",
-      "context": "return active?.path === relativePath && app.workspace.activeLeaf?.view.getViewType() === \"bases\";",
       "count": 1
     },
     {
@@ -2812,33 +2200,6 @@
       "count": 1
     },
     {
-      "fingerprint": "0ec28023750493d8fe1621dba48c6d3a2d6d6b1e792cd36645e3dc597819b5cc",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'writeNewFileWithReadback' is defined but never used.",
-      "context": "async function writeNewFileWithReadback(",
-      "count": 1
-    },
-    {
-      "fingerprint": "aa63b3f327198387882db1b8abe94e70fc8f4ddc909b53389037b7d86c57a129",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'rawDigestStateForRecord' is defined but never used.",
-      "context": "import { rawDigestStateForRecord } from \"../knowledge-base/digest-status\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "c61b533b9fe1f639f8271fc3b3340a36bd869d5867a56aa01814d4f656c2799a",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'PHASE3_MAINTENANCE_TRACKER_PATH' is defined but never used.",
-      "context": "PHASE3_MAINTENANCE_TRACKER_PATH,",
-      "count": 1
-    },
-    {
       "fingerprint": "0c665eb6fc44c802d1be41af1ce7b025ef50e317342d734835ca385049a8085b",
       "path": "src/plugin/pi-knowledge-maintenance-production.ts",
       "rule": "no-undef",
@@ -2866,15 +2227,6 @@
       "count": 1
     },
     {
-      "fingerprint": "fe047f76a3e271ed1d636f050267c911baab8a459d0bfd2ace47fd8d67df4324",
-      "path": "src/plugin/pi-knowledge-maintenance-production.ts",
-      "rule": "no-undef",
-      "severity": 1,
-      "message": "'Buffer' is not defined.",
-      "context": "bytes: Buffer",
-      "count": 1
-    },
-    {
       "fingerprint": "53a4a4af97bc0f715925f5425debdc6d89042dc80ed9ab9ecf2f54c152d423aa",
       "path": "src/plugin/pi-local-data-service.ts",
       "rule": "no-undef",
@@ -2890,51 +2242,6 @@
       "severity": 1,
       "message": "'NodeJS' is not defined.",
       "context": "catch (error) { if ((error as NodeJS.ErrnoException).code !== \"ENOENT\") throw error; manifest = null; }",
-      "count": 1
-    },
-    {
-      "fingerprint": "2f67343f9b7805fa6868db7e6a88ae3efc848b1c74120a42bdd75ecfe197c063",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'createKnowledgeMaintenanceResultEnvelope' is defined but never used.",
-      "context": "import { createKnowledgeMaintenanceResultEnvelope } from \"../knowledge-base/knowledge-maintenance-result\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "50051efcbb652ecfddb5a89ebf8ad6af9f9b9d461dd57b8ad55f8aa74b031e57",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'pluginDataRootPath' is assigned a value but never used.",
-      "context": "pluginDataRootPath,",
-      "count": 1
-    },
-    {
-      "fingerprint": "7302b8bb01843b6c5d5b9eab37dc079f96541788a0783a6fd79bcd9c3c14fe6f",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'provider' is assigned a value but never used.",
-      "context": "const { configured, binding, controlledConfig, provider } = preparedProvider;",
-      "count": 1
-    },
-    {
-      "fingerprint": "8af2883ab9b14b6cdb47b6603055e5143f26a3a205d80e997ddda7ded0cfdfb1",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'recordProductionMaintenanceTerminal' is defined but never used.",
-      "context": "import { recordProductionMaintenanceTerminal } from \"./knowledge-maintenance-history\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "a24e7de890ff758a24425cc410155ab91fd905f0af7ebf7924c08eb0ea8ac96f",
-      "path": "src/plugin/pi-production-runtime-composition.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'knowledgeRolePath' is defined but never used.",
-      "context": "import { knowledgeRolePath } from \"../knowledge-base/root-paths\";",
       "count": 1
     },
     {
@@ -3046,33 +2353,6 @@
       "count": 1
     },
     {
-      "fingerprint": "07122325846d1e5f77c819fb0add354611f4b1def4e83a3fb9bdeb51cdc274ef",
-      "path": "src/plugin/quick-chat-window.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "4865364c57c3d39e276ba1716dfce092e5195d010927dafa768264681354ffa0",
-      "path": "src/plugin/quick-chat-window.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`activeLeaf` is deprecated. The use of this field is discouraged.\nThe recommended alternatives are:\n- If you need information about the current view, use {@link Workspace.getActiveViewOfType}.\n- If you need to open a new file or navigate a view, use {@link Workspace.getLeaf}.",
-      "context": "if (type === \"empty\" && leaf !== workspace.activeLeaf) {",
-      "count": 1
-    },
-    {
-      "fingerprint": "ef74423d3f60978746135415840d129c771694551241853ce49c64ee8108a0e5",
-      "path": "src/plugin/qwen-token-plan-provider-adapter.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`aborted` is deprecated. Since v17.0.0,v16.12.0 - Check `message.destroyed` from <a href=\"stream.html#class-streamreadable\" class=\"type\">stream.Readable</a>.",
-      "context": "transportComplete: response.complete && !response.aborted",
-      "count": 1
-    },
-    {
       "fingerprint": "2b123eae64b37b42135a303e3ebe9fd569d24a635e80a7a70f4f66759a35788f",
       "path": "src/plugin/settings-store.ts",
       "rule": "no-undef",
@@ -3163,15 +2443,6 @@
       "count": 1
     },
     {
-      "fingerprint": "8ba5721aab9e5c2d934121a2399e4a9b9dd464bbb9d2e0b3041643534912f593",
-      "path": "src/resources/vault-resource-catalog.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'resourceRefToUri' is defined but never used.",
-      "context": "import { resourceRefToUri } from \"../harness/resources/resource-ref\";",
-      "count": 1
-    },
-    {
       "fingerprint": "7f0c3b223b33fa7279564cd6e7112548d95965c269213904d40b569d04437eb7",
       "path": "src/resources/vault-resource-catalog.ts",
       "rule": "no-undef",
@@ -3199,231 +2470,6 @@
       "count": 1
     },
     {
-      "fingerprint": "44d092150177129129b7673767f7a17598569fedb92a76ec76db86f4acdfa22b",
-      "path": "src/run-reports/desktop-ui.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const reveal = doc.createElement(\"button\"); reveal.type = \"button\"; reveal.textContent = english ? \"Show in folder\" : \"在文件夹中显示\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5573917fe4a4e37f871e2e92fae20da3d8060257b2e39469a007c147fbb08798",
-      "path": "src/run-reports/desktop-ui.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createFragment()' instead of 'doc.createDocumentFragment()'.",
-      "context": "const fragment = doc.createDocumentFragment(); fragment.append(`${english ? \"Exported to Vault\" : \"已导出到笔记库\"}：${file} `);",
-      "count": 1
-    },
-    {
-      "fingerprint": "1f2552ef5c10cf8c5f59e2baac8113531f0942e57e6a81f3a2e5c32aa23f8722",
-      "path": "src/run-reports/form.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(tag)' instead of 'doc.createElement(tag)'.",
-      "context": "const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] => { const node = doc.createElement(tag); node.className = cls; if (text !== undefined) node.textContent = text; return node; };",
-      "count": 1
-    },
-    {
-      "fingerprint": "490d0565e2cc4e8addec11d8f4032c3ed5da03a0f2cb8ad730a967a29f1849a4",
-      "path": "src/run-reports/notice.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const button = doc.createElement(\"button\"); button.type = \"button\"; button.className = \"echoink-run-report-notice-action\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "5a0cb4a999bed93911ebdef89c0b8ab3d71e30c687860f272f021d5ca4630e84",
-      "path": "src/run-reports/notice.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const reason = doc.createElement(\"div\"); reason.textContent = error instanceof Error ? error.message : english ? \"Could not open report\" : \"无法打开上报问题\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "703b4ef8f2faeba7b525e35158b752b0b138ef3960d7b6feaacb7b69da27bd30",
-      "path": "src/run-reports/notice.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const actions = doc.createElement(\"div\"); actions.className = `echoink-run-report-notice-actions${mobile ? \" is-mobile\" : \"\"}`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "7c5fcc7f7121331efa503c978360107d5c808c5297c28608ecfeef7f2e666b1e",
-      "path": "src/run-reports/notice.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const text = doc.createElement(\"span\"); text.textContent = message; fragment.append(text);",
-      "count": 1
-    },
-    {
-      "fingerprint": "8dfbbd98a13a98bfd737b5e1939c6f74ded9b0749b537feaed89cf2e9d144299",
-      "path": "src/run-reports/notice.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createFragment()' instead of 'doc.createDocumentFragment()'.",
-      "context": "const fragment = doc.createDocumentFragment();",
-      "count": 1
-    },
-    {
-      "fingerprint": "0a74229dbad6c3af2f273b44576ab886b29c8dc9df54d9f371a0b3a595c83275",
-      "path": "src/selection-ask/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "if (!overlay) { overlay = doc.createElement(\"div\"); overlay.className = \"echoink-selection-overlay\"; doc.body.append(overlay); this.overlays.set(doc, overlay); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "1a1c8682704e8f6f6af060a46e53f24f4c0805f55558e91a558ce8d363e0e84c",
-      "path": "src/selection-ask/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"button\")' instead of 'doc.createElement(\"button\")'.",
-      "context": "const tag = doc.createElement(\"button\"); tag.type = \"button\"; tag.className = \"echoink-selection-tag\"; tag.textContent = String(annotation.number); tag.onclick = () => this.focusAnnotation();",
-      "count": 1
-    },
-    {
-      "fingerprint": "459e61855b7f89fe0fc26039349e542573592c397c8b7ef98d1d90f5aed80385",
-      "path": "src/selection-ask/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'view.dom.ownerDocument.win.createEl(\"button\")' instead of 'view.dom.ownerDocument.createElement(\"button\")'.",
-      "context": "const button = view.dom.ownerDocument.createElement(\"button\"); button.className = \"echoink-selection-tag\"; button.type = \"button\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "56bb5c39f46b921233cb8b5a988093c17a9899a00b260fe57d2f80752f065c60",
-      "path": "src/selection-ask/controller.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "for (const box of boxes) { const mark = doc.createElement(\"span\"); mark.className = \"echoink-selection-mark\"; Object.assign(mark.style, { position: \"absolute\", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` }); overlay.append(mark); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "312af315095f54a0f8db2a1a8a3c759214fa3da951c4d0050e6d7894a1941839",
-      "path": "src/settings/about-section.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'button.ownerDocument.win.createSvg(\"path\")' instead of 'button.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\")'.",
-      "context": "const path = button.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"path\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "eb65f820d9a25eca78a52609d023c56c7c73a96d150e3e13135aea5d8d6767a8",
-      "path": "src/settings/about-section.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'button.ownerDocument.win.createSvg(\"svg\")' instead of 'button.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\")'.",
-      "context": "const svg = button.ownerDocument.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "c28ef3c166e7640c54536f291d8d4b9136aa01f5fb0e636b5022bb1eb514cd69",
-      "path": "src/settings/account-membership.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(tag)' instead of 'parent.ownerDocument.createElement(tag)'.",
-      "context": "const node = parent.ownerDocument.createElement(tag);",
-      "count": 1
-    },
-    {
-      "fingerprint": "6479ff28e20b74f3b270154a54a3d06bb39a1c772919073db300a7ee994e69d7",
-      "path": "src/settings/amicro-buttons.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'button.ownerDocument.win.createSpan()' instead of 'button.ownerDocument.createElement(\"span\")'.",
-      "context": "const icon = button.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "33dd8e21640e20dd6e337f07a5d081f4fcdb1f400e7d13301447416ae88a0e30",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"label\")' instead of 'doc.createElement(\"label\")'.",
-      "context": "const label = doc.createElement(\"label\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "6eb08193977e5418f2c5a3af20ea02da55fc5ee03795be4acb1b18b444ff57ef",
-      "path": "src/settings/appearance-picker.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const picker = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "86003af76675b4376a48c34a1974877b65a36d0955a55eaaa2e08803ef318391",
-      "path": "src/settings/desktop-account-membership.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createDiv()' instead of 'parent.ownerDocument.createElement(\"div\")'.",
-      "context": "this.root = parent.ownerDocument.createElement(\"div\"); this.root.className = \"echoink-desktop-account-settings\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "143ef53723e4911846a081a6d7c8391adb10ab3f6d3a4bf14117ecb13662fb82",
-      "path": "src/settings/inline-editor.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.key !== \"Escape\" || event.isComposing || event.keyCode === 229 || event.defaultPrevented || host.querySelector(\".codex-provider-combobox.is-open, [data-slot=select-content][data-state=open]\")) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5ee2af0eb312bde790d1a8677194b6247f1a0389fad99cb0323ca493873db50e",
-      "path": "src/settings/provider-model-modal.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 4
-    },
-    {
-      "fingerprint": "ab47d5dac38290d864075e43e18991a63d1d1a8176ede6403f1b3fbdc86a80e0",
-      "path": "src/settings/provider-model-modal.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.key !== \"Escape\" || event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "4e683142872cca4693c11b539737b9dd07b4c80c1adc49c8b70466f66fb533b4",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "a941c5eb4f31755c9918dffaebf601bd66ac187b7ed2d0c5dc690ea2f557b489",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'copy' is assigned a value but never used.",
-      "context": "const copy = this.copy;",
-      "count": 1
-    },
-    {
-      "fingerprint": "6ff6b09089709f78b1cb58b5ed90a8ae9b816d7eea91f6c17b3294afeab777a2",
-      "path": "src/settings/settings-tab.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.containerEl.ownerDocument.win.createDiv()' instead of 'this.containerEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const host = this.containerEl.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
       "fingerprint": "935a339b5275f6a216c3dbfee09325c94dc89e55cec2bceed00fd3590f752986",
       "path": "src/settings/settings-tab.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -3442,69 +2488,6 @@
       "count": 1
     },
     {
-      "fingerprint": "234d4d0f90ff67c0ee6671ab524cbaed0fe47ced13a06373bfe4e2f553c7d9e5",
-      "path": "src/ui/answer-markdown.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'staged.ownerDocument.win.createDiv()' instead of 'staged.ownerDocument.createElement(\"div\")'.",
-      "context": "const scroll = staged.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "4d7732fdedc06aff4c8647792007052a06057b81c00dcafffff13c6f7d6cdbec",
-      "path": "src/ui/answer-markdown.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createDiv()' instead of 'container.ownerDocument.createElement(\"div\")'.",
-      "context": "slot = { root: container.ownerDocument.createElement(\"div\"), request: \"\", revision: 0, component: null, pending: null };",
-      "count": 1
-    },
-    {
-      "fingerprint": "5b9469bd20bfc3c94f014abcd92ef168a96546c61b9839bba51ea5b7685fa56d",
-      "path": "src/ui/answer-markdown.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createDiv()' instead of 'container.ownerDocument.createElement(\"div\")'.",
-      "context": "const staged = container.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "364768a9e08adeef0c783dda98cde5b0002a5bae52bc88a9813e6fa60bc8b411",
-      "path": "src/ui/appearance-pro.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createEl(\"a\")' instead of 'doc.createElement(\"a\")'.",
-      "context": "const link = doc.createElement(\"a\"); link.className = \"echoink-appearance-upgrade\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "80b5402e7c044191635042715de40df5b2471822be23f5c7be6d3a8a1cf79cd6",
-      "path": "src/ui/appearance-pro.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const message = doc.createElement(\"span\"); message.textContent = options.zh ? \"PRO 专属，开通后可用\" : \"PRO exclusive. Upgrade to use this appearance.\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "ff2576642084ca7ca3edcfc8b0d79a8b9a8ceaee8c7004981913062c72e85a97",
-      "path": "src/ui/appearance-pro.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const doc = trigger.ownerDocument, panel = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "db93cf10d5f2e72bbd6347fcfd18ea87d5d18463d80827d7a00ec9a38e547fb9",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`initEvent` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/Event/initEvent)",
-      "context": "const event = doc.createEvent(\"Event\"); event.initEvent(ECHOINK_APPEARANCE_REFRESH, false, false); picker.dispatchEvent(event);",
-      "count": 1
-    },
-    {
       "fingerprint": "0a9e08a05ddd565546bd077e5d1bcac912c735ea3ce3804226a33ae363e574a0",
       "path": "src/ui/appearance-theme.ts",
       "rule": "obsidianmd/hardcoded-config-path",
@@ -3520,204 +2503,6 @@
       "severity": 1,
       "message": "Obsidian's configuration folder is not necessarily `.obsidian`, it can be configured by the user. Use `Vault#configDir` to get the current value",
       "context": "? \"将 echoink-theme 文件夹放入当前库的 .obsidian/themes/，再到 Obsidian 设置 → 外观 → 主题中选择 echoink-theme。主题尚未上架。\"",
-      "count": 1
-    },
-    {
-      "fingerprint": "09375a843edc1c8602d3305b03d8150ff94faee34fbbc83a4ee83ffd3072ad02",
-      "path": "src/ui/appearance-theme.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const note = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "5b4b06daf836fc99a3d79a6318a7740fb30b1cad26a89d15891017c9d00aaf38",
-      "path": "src/ui/codex-view.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'unavailableCapabilityAccess' is defined but never used.",
-      "context": "import { unavailableCapabilityAccess } from \"../membership/access\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "828ad10ecb77df6d854230d70d82f660b8439e414907a71e3193a54b00e75465",
-      "path": "src/ui/codex-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.inputEl.ownerDocument.win.createEl(\"textarea\")' instead of 'this.inputEl.ownerDocument.createElement(\"textarea\")'.",
-      "context": "const inputEl = this.inputEl.ownerDocument.createElement(\"textarea\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "c47fdd857f8c5f1c524ecd87888970f0c198f8d6145875aae283d02713172f92",
-      "path": "src/ui/codex-view.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.inputEl.ownerDocument.win.createDiv()' instead of 'this.inputEl.ownerDocument.createElement(\"div\")'.",
-      "context": "const presets = this.inputEl.ownerDocument.createElement(\"div\"); presets.className = \"echoink-inline-task-presets\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "9f674f64a62d5993ae9c5db29eb1f8a9743734dd06cd0b5b006a35bf28d16255",
-      "path": "src/ui/codex-view/agent-editor.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(tag)' instead of 'parent.ownerDocument.createElement(tag)'.",
-      "context": "const element = parent.ownerDocument.createElement(tag);",
-      "count": 1
-    },
-    {
-      "fingerprint": "803331c706138df46b1a9efdd225ede99545f114decd9139a99de057ab32f380",
-      "path": "src/ui/codex-view/attachments.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "const electronRequire = window.require ?? globalThis.require;",
-      "count": 1
-    },
-    {
-      "fingerprint": "605cbf654de1ca2829e902f6a9941b5b8340e5747e21f5ac7184dc23fd34625d",
-      "path": "src/ui/codex-view/composer-controller.ts",
-      "rule": "@typescript-eslint/no-unused-vars",
-      "severity": 1,
-      "message": "'maintenanceReady' is assigned a value but never used.",
-      "context": "const maintenanceReady = (knowledgeManager?.maintenanceRecoveryStatus?.state ?? \"ready\") === \"ready\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "8b28e759079b9afd43890a0553a2065bfed0d45d08b5bac367ac41fc9f15cac9",
-      "path": "src/ui/codex-view/composer.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return;",
-      "count": 1
-    },
-    {
-      "fingerprint": "5b2c9fad9f81a0bcf6318f8ba780ea61638435fa674abf31fd4aae8f8e2d9ba7",
-      "path": "src/ui/codex-view/inline-task.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'this.root.ownerDocument.win.createDiv()' instead of 'this.root.ownerDocument.createElement(\"div\")'.",
-      "context": "const row = this.root.ownerDocument.createElement(\"div\"); row.className = `echoink-inline-task-message is-${message.role}`;",
-      "count": 1
-    },
-    {
-      "fingerprint": "72f329074c4c2a2d2f8c9e4db322cfa01f543add27216a870e22a49148c5a6e7",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"button\")' instead of 'document.createElement(\"button\")'.",
-      "context": "const button = document.createElement(\"button\"); button.type = \"button\";",
-      "count": 2
-    },
-    {
-      "fingerprint": "7649f91ab7badcce69e2c61970aae7c81b27f01106253b351589008475a02004",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"button\")' instead of 'document.createElement(\"button\")'.",
-      "context": "const otherButton = document.createElement(\"button\"); otherButton.type = \"button\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "822a0d19c09c910a167784054097c86567ec037ad1b1dd054d4b281f44be2810",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"li\")' instead of 'document.createElement(\"li\")'.",
-      "context": "const row = document.createElement(\"li\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ab0ea2b27dc0b52efe4139b4e1043baabcd547c07f035e9b70bb8d67f6da01f0",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"progress\")' instead of 'document.createElement(\"progress\")'.",
-      "context": "const task = current.task, progress = document.createElement(\"progress\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "c7f35f2096b095d7528d29d3d94e0bd8ea55ba0e76a615c8c30cd7b08585d936",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createDiv()' instead of 'document.createElement(\"div\")'.",
-      "context": "const details = document.createElement(\"div\"); details.className = \"echoink-knowledge-activity-details\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "e3978a73bc66fe97191415eea854cd0c096edcd5ea1baa8aa136075e0277679c",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"li\")' instead of 'document.createElement(\"li\")'.",
-      "context": "for (const failure of current.failures) { const row = document.createElement(\"li\"); row.textContent = current.taskKind === \"upgrade\" ? failure.message : maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }",
-      "count": 1
-    },
-    {
-      "fingerprint": "eaef8be2c48ab41fe1b816b7861844e8d5a81d57b3b1669ec1359459f0523561",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(\"ul\")' instead of 'document.createElement(\"ul\")'.",
-      "context": "const failures = document.createElement(\"ul\"); failures.className = \"echoink-knowledge-activity-failures\"; failures.hidden = true;",
-      "count": 1
-    },
-    {
-      "fingerprint": "ebcdc56539218df28db41cfbaac989d2bd98e2bca1b4792dfbe6d58635766fe7",
-      "path": "src/ui/codex-view/knowledge-linking-progress.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createSpan()' instead of 'container.ownerDocument.createElement(\"span\")'.",
-      "context": "const bar = container.ownerDocument.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "6c5e3a487ce627d186115105e7a669fc2478ddbdd9b0803f1c25da8cf61fc81a",
-      "path": "src/ui/codex-view/menus.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'active.root.ownerDocument.win.createDiv()' instead of 'active.root.ownerDocument.createElement(\"div\")'.",
-      "context": "const panel = active.root.ownerDocument.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "980a72b36b0e70e6597dd3743b9ccacf90b06a27c899e0c1f7bb2536f4a0a5d5",
-      "path": "src/ui/codex-view/menus.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const root = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "1c9e2219eff3047f2edeb99e696ca138cace393aedd74e692417db579a60047e",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'env.messagesEl.ownerDocument.win.createFragment()' instead of 'env.messagesEl.ownerDocument.createDocumentFragment()'.",
-      "context": "const notice = env.messagesEl.ownerDocument.createDocumentFragment();",
-      "count": 1
-    },
-    {
-      "fingerprint": "2e717326fe749f1439a5768f879c15643da9a5e50945aa37bab8114bd0675165",
-      "path": "src/ui/codex-view/message-list.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'env.messagesEl.ownerDocument.win.createEl(\"button\")' instead of 'env.messagesEl.ownerDocument.createElement(\"button\")'.",
-      "context": "const open = env.messagesEl.ownerDocument.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "71816737ddca4341720748b299dd318df660ec41df05517d95b640ba3b6fbee9",
-      "path": "src/ui/codex-view/note-mentions.ts",
-      "rule": "@typescript-eslint/no-deprecated",
-      "severity": 1,
-      "message": "`keyCode` is deprecated. [MDN Reference](https://developer.mozilla.org/docs/Web/API/KeyboardEvent/keyCode)",
-      "context": "if (event.isComposing || event.keyCode === 229) return false;",
       "count": 1
     },
     {
@@ -3748,15 +2533,6 @@
       "count": 1
     },
     {
-      "fingerprint": "a5a012c9849a11ad64b79b67d8fb53b54d9d33144297c7ecd1165b27e08af636",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "no-undef",
-      "severity": 1,
-      "message": "'NodeJS' is not defined.",
-      "context": "(globalThis as typeof globalThis & { require?: NodeJS.Require }).require =",
-      "count": 1
-    },
-    {
       "fingerprint": "bb591295e585057d4a285ee743d3f010f9a5f374b6f577ffb0044b8029855e71",
       "path": "src/ui/codex-view/pi-document-input.ts",
       "rule": "no-undef",
@@ -3773,15 +2549,6 @@
       "message": "'Buffer' is not defined.",
       "context": "function decodeUtf8Strict(bytes: Buffer, fileName: string): string {",
       "count": 1
-    },
-    {
-      "fingerprint": "65296549f43694167c6b48943c5a0ca5ee4a6422f097b6772b14843a38984c92",
-      "path": "src/ui/codex-view/pi-document-input.ts",
-      "rule": "obsidianmd/no-global-this",
-      "severity": 1,
-      "message": "Avoid using 'globalThis'. Use 'window' or 'activeWindow' for popout window compatibility.",
-      "context": "(globalThis as typeof globalThis & { require?: NodeJS.Require }).require =",
-      "count": 2
     },
     {
       "fingerprint": "9f238e56064b7b85c8ab6077cd97caf6a53eb0dc2a85714e8a613cc7c2a50d3f",
@@ -3820,24 +2587,6 @@
       "count": 1
     },
     {
-      "fingerprint": "f3f7d7094eb49eb3cb603cf65ab52c9a1494acd514656e29b01e1b3e5cfdf38c",
-      "path": "src/ui/codex-view/selection-annotations.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const panel = doc.createElement(\"div\"); panel.className = \"echoink-annotation-popover\"; panel.hidden = true;",
-      "count": 1
-    },
-    {
-      "fingerprint": "96a30ccc95d1672d93842fbd472970f512db7b1abe4f0e84776a9d624933f548",
-      "path": "src/ui/codex-view/task-interruption.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'container.ownerDocument.win.createEl(\"ul\")' instead of 'container.ownerDocument.createElement(\"ul\")'.",
-      "context": "const list = container.ownerDocument.createElement(\"ul\"); list.className = \"echoink-task-interruption-operations\";",
-      "count": 1
-    },
-    {
       "fingerprint": "1895a0b995d71a379cfcb0db0082ebc69e0df2efbcc6d07c072d4b0c2f06520a",
       "path": "src/ui/ipad/agent-pane.ts",
       "rule": "obsidianmd/ui/sentence-case",
@@ -3871,114 +2620,6 @@
       "severity": 1,
       "message": "Use sentence case for UI text. Expected: 'Echoink 导航'",
       "context": "const navigation = el(workspace, \"nav\", \"em-navigation\"); navigation.setAttribute(\"aria-label\", \"EchoInk 导航\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "2d95780b64e03aed3af7bea8c5bbbd5573aabc82f0c5f506e8ddee49a6fed22e",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"button\")' instead of 'parent.ownerDocument.createElement(\"button\")'.",
-      "context": "const button = parent.ownerDocument.createElement(\"button\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "4043fc34d46536316b31936f69c891b37c3285679571d7e9d06e44170eb58db4",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"option\")' instead of 'parent.ownerDocument.createElement(\"option\")'.",
-      "context": "const option = parent.ownerDocument.createElement(\"option\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "5b9132f73f2f503603a506fe63186eabca4a583e067728f4afe72e5cdbb1fe7e",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"input\")' instead of 'parent.ownerDocument.createElement(\"input\")'.",
-      "context": "const input = parent.ownerDocument.createElement(\"input\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "7b09110a3e32e234e5a462793a6e094a20b477bd43c215dd3f909bc5041cf79d",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"ul\")' instead of 'parent.ownerDocument.createElement(\"ul\")'.",
-      "context": "const list = parent.ownerDocument.createElement(\"ul\"); list.dataset.slot = \"pagination-content\"; nav.append(list);",
-      "count": 1
-    },
-    {
-      "fingerprint": "993c2583d19f8677e33a824e9e0adaf221310b532317405b824a0b024049fdb6",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"nav\")' instead of 'parent.ownerDocument.createElement(\"nav\")'.",
-      "context": "const nav = parent.ownerDocument.createElement(\"nav\"); nav.className = \"echoink-origin-pagination\"; nav.dataset.slot = \"pagination\"; nav.setAttribute(\"aria-label\", \"分页\"); parent.append(nav);",
-      "count": 1
-    },
-    {
-      "fingerprint": "a4e422679fb8f14beff96a29bb534d850a63fd860780ef8e65e57f453c3ef553",
-      "path": "src/ui/mobile/origin-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'parent.ownerDocument.win.createEl(\"select\")' instead of 'parent.ownerDocument.createElement(\"select\")'.",
-      "context": "const element = parent.ownerDocument.createElement(\"select\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "239fd688432359952ee79c97e2225a173574306ff89c5b05b4aefcbdfcc98e22",
-      "path": "src/ui/mobile/shell-controls.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'document.win.createEl(tag)' instead of 'document.createElement(tag)'.",
-      "context": "const element = document.createElement(tag);",
-      "count": 1
-    },
-    {
-      "fingerprint": "bcacee68cf3cd8ec1ab6d0d2328c9aabe4cb4e4e7eae035eb63d415b45bbf68c",
-      "path": "src/ui/native-tooltip.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSvg(\"desc\")' instead of 'doc.createElementNS(\"http://www.w3.org/2000/svg\", \"desc\")'.",
-      "context": "const node = svg ? doc.createElementNS(\"http://www.w3.org/2000/svg\", \"desc\") : doc.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "ddd5937fe029b61c82bb7331615045872a1187008f2f79720d2cc32b437a158c",
-      "path": "src/ui/native-tooltip.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createSpan()' instead of 'doc.createElement(\"span\")'.",
-      "context": "const node = svg ? doc.createElementNS(\"http://www.w3.org/2000/svg\", \"desc\") : doc.createElement(\"span\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "f2ff07efa464ecc46eb84d2a72ebe1a6b67baa0bcdfa8fd7c7c0611d99aef8cd",
-      "path": "src/ui/native-tooltip.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "anchor = doc.createElement(\"div\");",
-      "count": 1
-    },
-    {
-      "fingerprint": "e102f116e825d8a69b5e3308855d97aaa5fd850060252eeda8a620df8585d07a",
-      "path": "src/ui/onboarding-coachmark.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'ownerDocument.win.createDiv()' instead of 'ownerDocument.createElement(\"div\")'.",
-      "context": "reservedSpace = ownerDocument.createElement(\"div\"); reservedSpace.className = \"echoink-onboarding-space\";",
-      "count": 1
-    },
-    {
-      "fingerprint": "1f9d982651433d1bda014e1570f7b6fe5b54e62ce7cc96dcb4ea3b65c5b4ab03",
-      "path": "src/ui/selection-ask-popover.ts",
-      "rule": "obsidianmd/prefer-create-el",
-      "severity": 1,
-      "message": "Use 'doc.win.createDiv()' instead of 'doc.createElement(\"div\")'.",
-      "context": "const menu = doc.createElement(\"div\"); menu.className = \"echoink-selection-menu\";",
       "count": 1
     }
   ]

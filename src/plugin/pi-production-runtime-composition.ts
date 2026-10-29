@@ -30,7 +30,6 @@ import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLink
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
 import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
-import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { PiPdfReadingSecurity, createPdfReadingTools, PDF_TOOL_NAMES } from "../harness/pi-native/pi-pdf-reading-tools";
 import type { PdfReadingController } from "../pdf-reading/controller";
@@ -39,8 +38,6 @@ import type { DiscoveredProviderModel } from "../settings/provider-model-discove
 import { PiWebSearchSecurity, createWebSearchTool, WEB_SEARCH_TOOL_NAME, WEB_SEARCH_INSTRUCTIONS } from "../harness/pi-native/pi-web-search";
 import { toolCallingDisabledMessage } from "../agents/tool-call-recovery";
 import { KNOWLEDGE_ASK_PROTOCOL, knowledgeReadingState } from "../harness/pi-native/knowledge-ask-protocol";
-import { knowledgeRolePath } from "../knowledge-base/root-paths";
-import { recordProductionMaintenanceTerminal } from "./knowledge-maintenance-history";
 import { isRawMarkdownPath } from "../knowledge-base/raw-digest";
 import { piWorkspaceToolDecision, piToolAccessFailure, piWorkspaceAccessPrompt, type PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
@@ -522,7 +519,6 @@ export async function createPiProductionRuntimeBundle(
   const localData = localDataInput ?? await PiLocalDataService.create(plugin);
   const {
     vaultRootPath,
-    pluginDataRootPath,
     piNativeStorageRootPath,
     deviceScope,
     storeScope,
@@ -2088,7 +2084,7 @@ async function createProductionAgentSession(input: {
     ...input,
     modelSelection: input.input
   });
-  const { configured, binding, controlledConfig, provider } = preparedProvider;
+  const { configured, binding, controlledConfig } = preparedProvider;
   if (linkingBatch && !configured.toolCalling) throw new Error(toolCallingDisabledMessage("desktop", configured.provider.name, configured.modelRef));
   const productProviderId = normalizeApiProviderId(
     configured.provider.providerId,

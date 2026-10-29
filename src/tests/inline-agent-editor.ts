@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { parse, type Rule } from "postcss";
@@ -10,6 +11,7 @@ import { anchorAt, markerFor } from "../inline-agent/document";
 import type { InlineRequest, InlineRequestStatus } from "../inline-agent/types";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+installObsidianDom(dom.window);
 for (const key of ["window", "document", "HTMLElement", "HTMLButtonElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "MutationObserver", "navigator", "Event", "getComputedStyle"]) Object.defineProperty(globalThis, key, { configurable: true, value: (dom.window as any)[key] });
 dom.window.Range.prototype.getClientRects = () => [] as never;
 dom.window.Range.prototype.getBoundingClientRect = () => ({ top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 }) as DOMRect;

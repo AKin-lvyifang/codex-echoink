@@ -9,7 +9,7 @@ import { hasProPluginAccess } from "../membership/access";
 import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeLinkHealthService, validWorkbenchBindingRoots, type KnowledgeLinkHealth } from "../knowledge-base/link-health";
 import { isKnowledgeMaintenanceSourcePath, rawDigestFingerprint, rawDigestRecordFromMarkdown, readRawDigestRegistry, type RawDigestFrontmatterRecord } from "../knowledge-base/raw-digest";
-import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
+
 import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-record";
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
 import type { KnowledgeActivitySource } from "../knowledge-base/maintenance-activity";

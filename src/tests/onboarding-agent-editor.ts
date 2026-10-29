@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { AgentEditorController } from "../ui/codex-view/agent-editor";
 import type { AgentEditorHost } from "../ui/codex-view/agent-editor-contract";
@@ -9,6 +10,7 @@ const settle = async () => { for (let pass = 0; pass < 3; pass++) await new Prom
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
 
 export async function runOnboardingAgentEditorTests(win: Window & typeof globalThis): Promise<void> {
+  installObsidianDom(win);
   const create = function(this: HTMLElement, tag: string, options: any = {}) {
     const node = this.ownerDocument.createElement(tag); if (options.cls) node.className = options.cls;
     if (options.text !== undefined) node.textContent = options.text;

@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import type { TaskInterruptionInfo } from "../../agents/task-resume";
 import { taskInterruptionExplanation } from "../../agents/task-interruption-copy";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
@@ -35,7 +36,7 @@ export function renderTaskInterruption(
   } else if (!input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (info?.uncertainOperations.length) {
     text("div", "echoink-task-interruption-warning", en ? "The result of this operation is uncertain. Check it before continuing." : "这个操作结果不确定，继续前请先核对");
-    const list = container.ownerDocument.createElement("ul"); list.className = "echoink-task-interruption-operations";
+    const list = ownedEl(container.ownerDocument, "ul"); list.className = "echoink-task-interruption-operations";
     for (const operation of info.uncertainOperations) {
       list.createEl("li", { text: operation.label });
     }

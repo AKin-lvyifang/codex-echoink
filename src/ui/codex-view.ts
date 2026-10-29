@@ -1,3 +1,4 @@
+import { ownedDiv, ownedEl } from "./owned-dom";
 import { exportDesktopRunReport } from "../run-reports/desktop-ui";
 import { setTurnWatchdogWaiting } from "./turn-watchdog";
 import type { PdfNavigationStart } from "../pdf-reading/types";
@@ -22,7 +23,7 @@ import { InlineTaskDetailView, renderInlineGenerationGate, inlineTaskHost, inlin
 import type { InlineRequest } from "../inline-agent/types";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
-import { unavailableCapabilityAccess } from "../membership/access";
+
 import { copyPiImageAttachmentsForProjection, piComposerImageAttachmentsForEntry, rememberPiConversationProjection } from "./codex-view/pi-conversation-support";
 import { validateTaskTurnBeforeCreation } from "./codex-view/turn-runner";
 import type { ConversationRunState } from "../plugin/conversation-run-service";
@@ -634,7 +635,7 @@ export class CodexView extends ItemView {
       const old = this.inputEl.parentElement?.querySelector<HTMLElement>(".echoink-inline-task-presets");
       if (old) { disposeOriginControls(old); old.remove(); }
       if (hasPresets) {
-        const presets = this.inputEl.ownerDocument.createElement("div"); presets.className = "echoink-inline-task-presets";
+        const presets = ownedDiv(this.inputEl.ownerDocument); presets.className = "echoink-inline-task-presets";
         this.inputEl.parentElement!.insertBefore(presets, this.inputEl);
         for (const text of [this.taskText("再短一点", "Make it shorter"), this.taskText("换个语气", "Change the tone")]) {
           const button = createOriginButton(presets, { cls: "echoink-inline-task-action", text, attr: { type: "button" } });
@@ -741,7 +742,7 @@ export class CodexView extends ItemView {
     await this.plugin.validatePdfNavigationStart(input);
     this.saveTaskComposerDraft();
     // A separate data-only Composer prevents a navigation action from sending another task's draft.
-    const inputEl = this.inputEl.ownerDocument.createElement("textarea");
+    const inputEl = ownedEl(this.inputEl.ownerDocument, "textarea");
     const choices = ["提取原文", ...(input.options.translation ? [`翻译为${input.options.translationLanguage || "中文"}`] : []),
       ...(input.options.reading ? ["精读"] : []), ...(input.options.summary ? ["摘要"] : [])];
     inputEl.value = `PDF 精读：处理「${input.attachment.name}」，本次选择：${choices.join("、")}。请保存并核对实际成果。`;
@@ -1151,29 +1152,30 @@ export class CodexView extends ItemView {
   private messageHost(): CodexMessageHost { return this as unknown as CodexMessageHost; }
   private headerHost(): CodexHeaderHost { return this as unknown as CodexHeaderHost; }
   private turnLifecycleHost(sessionId = this.plugin.settings.activeSessionId): CodexTurnLifecycleHost {
-    const view = this;
-    const state = this.conversationRun(sessionId);
-    const host: CodexTurnLifecycleHost = {
-      turnWatchdogOwner: state,
-      get plugin() { return view.plugin; },
-      get running() { return state.running; }, set running(value) { state.running = value; },
-      get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
-      get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; },
-      get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; },
-      get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
-      get turnWatchdog() { return state.turnWatchdog; }, set turnWatchdog(value) { state.turnWatchdog = value; },
-      cancelPendingTurn: () => state.controller.abort(),
-      clearTurnWatchdog: () => clearTurnWatchdogAction(host),
-      clearActiveRun: () => view.clearConversationRun(sessionId, state),
-      applyStatus: () => view.applyStatus(),
-      activeRunSession: () => view.sessionById(sessionId) ?? view.ensureSession(),
-      pauseQueueForSession: (id) => view.pauseQueueForSession(id),
-      finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status),
-      finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status),
-      addMessageToSession: (session, message) => view.addMessageToSession(session, message),
-      afterTurnSettled: (id, succeeded) => view.afterTurnSettled(id, succeeded)
-    };
-    return host;
+    return ((view: this) => {
+      const state = this.conversationRun(sessionId);
+      const host: CodexTurnLifecycleHost = {
+        turnWatchdogOwner: state,
+        get plugin() { return view.plugin; },
+        get running() { return state.running; }, set running(value) { state.running = value; },
+        get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },
+        get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; },
+        get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; },
+        get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
+        get turnWatchdog() { return state.turnWatchdog; }, set turnWatchdog(value) { state.turnWatchdog = value; },
+        cancelPendingTurn: () => state.controller.abort(),
+        clearTurnWatchdog: () => clearTurnWatchdogAction(host),
+        clearActiveRun: () => view.clearConversationRun(sessionId, state),
+        applyStatus: () => view.applyStatus(),
+        activeRunSession: () => view.sessionById(sessionId) ?? view.ensureSession(),
+        pauseQueueForSession: (id) => view.pauseQueueForSession(id),
+        finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status),
+        finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status),
+        addMessageToSession: (session, message) => view.addMessageToSession(session, message),
+        afterTurnSettled: (id, succeeded) => view.afterTurnSettled(id, succeeded)
+      };
+      return host;
+    })(this);
   }
 
   private conversationRun(sessionId: string): ConversationRunState { return this.plugin.getConversationRunService().stateFor(sessionId); }
@@ -1181,29 +1183,31 @@ export class CodexView extends ItemView {
   private shellHost(): CodexViewShellHost { return this as unknown as CodexViewShellHost; }
 
   private createTurnRunnerContext(sessionId: string): CodexViewTurnContext {
-    const view = this;
-    const state = this.conversationRun(sessionId);
-    const lifecycle = this.turnLifecycleHost(sessionId);
-    const context: CodexViewTurnContext = {
-      get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
-      get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
-      applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
-      onComposerTransferStarted: item => view.onComposerTransferStarted(item),
-      onComposerTransferFinished: (item, outcome) => view.onComposerTransferFinished(item, outcome),
-      isComposerTransferCancelled: id => view.isComposerTransferCancelled(id),
-      clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
-      createQueuedTurnFromComposer: (options) => createQueuedTurnFromComposerRunner(context, options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), clearComposerDraft: () => { if (!view.viewLifecycleAbortController.signal.aborted && (view.composerDraftOwner || view.plugin.settings.activeSessionId) === sessionId) view.clearComposerDraft(); },
-      ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), setPendingInteraction: (sessionId, interaction, expectedTurnId) => view.setPendingInteraction(sessionId, interaction, expectedTurnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), dismissThinkingMessage: (session) => view.dismissThinkingMessage(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command)
-    } satisfies CodexViewTurnContext;
-    return context;
+    return ((view: this) => {
+      const state = this.conversationRun(sessionId);
+      const lifecycle = this.turnLifecycleHost(sessionId);
+      const context: CodexViewTurnContext = {
+        get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
+        get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
+        applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
+        onComposerTransferStarted: item => view.onComposerTransferStarted(item),
+        onComposerTransferFinished: (item, outcome) => view.onComposerTransferFinished(item, outcome),
+        isComposerTransferCancelled: id => view.isComposerTransferCancelled(id),
+        clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
+        createQueuedTurnFromComposer: (options) => createQueuedTurnFromComposerRunner(context, options), startQueuedTurnItem: (item, source) => view.startQueuedTurnItem(item, source), startQueuedTurnItemSafely: (item, source) => view.startQueuedTurnItemSafely(item, source), afterTurnSettled: (sessionId, succeeded) => view.afterTurnSettled(sessionId, succeeded), startNextQueuedTurn: (sessionId) => view.startNextQueuedTurn(sessionId), startChatTurn: (session, item, source) => view.startChatTurn(session, item, source), clearComposerDraft: () => { if (!view.viewLifecycleAbortController.signal.aborted && (view.composerDraftOwner || view.plugin.settings.activeSessionId) === sessionId) view.clearComposerDraft(); },
+        ensureChatWorkspaceSelected: (session) => view.ensureChatWorkspaceSelected(session), currentTurnOptions: (session) => view.currentTurnOptions(session), sessionById: (sessionId) => view.sessionById(sessionId), renderQueue: () => view.renderQueue(), renderTabs: () => view.renderTabs(), renderMessages: (options) => view.renderMessages(options), renderMessagesIfActive: (session, updatedMessage) => view.renderMessagesIfActive(session, updatedMessage), setPendingInteraction: (sessionId, interaction, expectedTurnId) => view.setPendingInteraction(sessionId, interaction, expectedTurnId), ensureThinkingMessage: (session, title, text) => view.ensureThinkingMessage(session, title, text), dismissThinkingMessage: (session) => view.dismissThinkingMessage(session), attachTurnIdToRun: (session, turnId) => view.attachTurnIdToRun(session, turnId), finishThinkingMessage: (session, status) => view.finishThinkingMessage(session, status), finishRunningProcessMessages: (session, status) => view.finishRunningProcessMessages(session, status), finishPlanMessage: (session) => view.finishPlanMessage(session), addMessageToSession: (session, message) => view.addMessageToSession(session, message), moveMessageToEnd: (session, messageId) => view.moveMessageToEnd(session, messageId), fillKnowledgeBaseCommand: (command) => view.fillKnowledgeBaseCommand(command)
+      } satisfies CodexViewTurnContext;
+      return context;
+    })(this);
   }
 
   private createPromptEnhancerRunnerContext(): CodexViewPromptEnhanceContext {
-    const view = this;
-    return {
-      get plugin() { return view.plugin; }, get normalTaskRunning() { return view.runningSessionIds.size > 0; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; }, get promptEnhancerRunning() { return view.promptEnhancerRunning; }, set promptEnhancerRunning(value) { view.promptEnhancerRunning = value; }, get promptEnhancerRunId() { return view.promptEnhancerRunId; }, set promptEnhancerRunId(value) { view.promptEnhancerRunId = value; }, get promptEnhancerTurnId() { return view.promptEnhancerTurnId; }, set promptEnhancerTurnId(value) { view.promptEnhancerTurnId = value; },
-      captureViewLifecycle: () => view.captureViewLifecycle(), applyStatus: () => view.applyStatus(), renderToolbar: () => view.renderToolbar(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
-    } satisfies CodexViewPromptEnhanceContext;
+    return ((view: this) => {
+      return {
+        get plugin() { return view.plugin; }, get normalTaskRunning() { return view.runningSessionIds.size > 0; }, get inputEl() { return view.inputEl; }, get promptEnhanceReviewEl() { return view.promptEnhanceReviewEl; }, get promptEnhancerRunning() { return view.promptEnhancerRunning; }, set promptEnhancerRunning(value) { view.promptEnhancerRunning = value; }, get promptEnhancerRunId() { return view.promptEnhancerRunId; }, set promptEnhancerRunId(value) { view.promptEnhancerRunId = value; }, get promptEnhancerTurnId() { return view.promptEnhancerTurnId; }, set promptEnhancerTurnId(value) { view.promptEnhancerTurnId = value; },
+        captureViewLifecycle: () => view.captureViewLifecycle(), applyStatus: () => view.applyStatus(), renderToolbar: () => view.renderToolbar(), onInputChanged: () => view.onInputChanged(), focusInput: () => view.focusInput()
+      } satisfies CodexViewPromptEnhanceContext;
+    })(this);
   }
 
 

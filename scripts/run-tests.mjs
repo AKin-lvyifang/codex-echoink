@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const ownedDomImeResult = spawnSync(process.execPath, ["scripts/owned-dom-ime-tests.mjs"], { stdio: "inherit" });
+if (ownedDomImeResult.status !== 0) process.exit(ownedDomImeResult.status ?? 1);
 const suites = [
   "test:run-reports",
   "test:plan-mode",

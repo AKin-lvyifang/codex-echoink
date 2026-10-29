@@ -1,3 +1,4 @@
+import { ownedDiv, ownedFragment, ownedSpan } from "../ui/owned-dom";
 import type { DiaryAlignment } from "./types";
 
 export interface DiaryReadingBlock {
@@ -70,8 +71,8 @@ export async function renderDiaryReading(
         const rightStart = cut + boundary[0].length;
         if (!cut || rightStart === block.markdown.length) continue;
         remainingProbes -= 2;
-        const left = root.ownerDocument.createElement("div");
-        const right = root.ownerDocument.createElement("div");
+        const left = ownedDiv(root.ownerDocument);
+        const right = ownedDiv(root.ownerDocument);
         await renderMarkdown(block.markdown.slice(0, cut), left);
         if (!isCurrent()) return [];
         await renderMarkdown(block.markdown.slice(rightStart), right);
@@ -86,7 +87,7 @@ export async function renderDiaryReading(
     return [{ block, signature: expected.length === 1 ? expected[0] : null }];
   };
   for (const block of sourceBlocks(body.markdown, body.start)) {
-    const scratch = root.ownerDocument.createElement("div");
+    const scratch = ownedDiv(root.ownerDocument);
     await renderMarkdown(block.markdown, scratch);
     if (!isCurrent()) return [];
     for (const candidate of await inspect(block, scratch)) { blocks.push(candidate.block); candidateShapes.push(candidate.signature); }
@@ -106,7 +107,7 @@ export async function renderDiaryReading(
     if (blocks[index].element) continue;
     for (let end = index + 1; end < blocks.length && !blocks[end].element && remainingProbes > 0; end++) {
       remainingProbes--;
-      const scratch = root.ownerDocument.createElement("div");
+      const scratch = ownedDiv(root.ownerDocument);
       await renderMarkdown(text.slice(blocks[index].start, blocks[end].end), scratch);
       if (!isCurrent()) return [];
       if (scratch.children.length !== 1) continue;
@@ -156,13 +157,13 @@ export function markDiaryReadingBlock(
     const matches = ranges.filter((range) => range.start < offset && range.end > start);
     if (!matches.length) continue;
     const points = [...new Set([start, offset, ...matches.flatMap((range) => [Math.max(start, range.start), Math.min(offset, range.end)])])].sort((a, b) => a - b);
-    const fragment = element.ownerDocument.createDocumentFragment();
+    const fragment = ownedFragment(element.ownerDocument);
     for (let index = 0; index < points.length - 1; index++) {
       const from = points[index], to = points[index + 1];
       const active = matches.filter((range) => range.start <= from && range.end >= to);
       const value = text.slice(from - start, to - start);
       if (!active.length) { fragment.append(value); continue; }
-      const mark = element.ownerDocument.createElement("span");
+      const mark = ownedSpan(element.ownerDocument);
       mark.className = `echoink-diary-mark is-${active[0].kind}`;
       mark.textContent = value;
       const ids = [...new Set(active.map((range) => range.id))];

@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { EchoInkAppearance, effectiveEchoInkColorTheme, renderCompanionThemeRecommendation, type EchoInkColorTheme } from "../ui/appearance-theme";
@@ -5,7 +6,9 @@ import { renderAppearancePicker } from "../settings/appearance-picker";
 import type { CapabilityAccess } from "../membership/types";
 
 const first = new JSDOM('<body class="theme-light"><main class="echoink-settings-demo echoink-settings-aligned"></main></body>');
+installObsidianDom(first.window);
 const second = new JSDOM('<body class="theme-dark"></body>');
+installObsidianDom(second.window);
 for (const owner of [first.window, second.window]) {
   owner.HTMLElement.prototype.createEl = function (tag: string) {
     const element = this.ownerDocument.createElement(tag);

@@ -6,6 +6,18 @@ import { isDeepStrictEqual } from "node:util";
 // Audited resolved settings, including default options. Do not derive these
 // from the live ESLint config: that would also approve a weakened config.
 export const SOURCE_HARD_RULES = {
+  "@typescript-eslint/no-deprecated": [2],
+  "@typescript-eslint/no-explicit-any": [2,{"fixToUnknown":true}],
+  "@typescript-eslint/no-unused-vars": [2,{"args":"none","ignoreRestSiblings":true}],
+  "obsidianmd/no-global-this": [2],
+  "obsidianmd/no-tfile-tfolder-cast": [2],
+  "obsidianmd/prefer-create-el": [2],
+  "@typescript-eslint/no-this-alias": [2],
+  "@typescript-eslint/no-unsafe-assignment": [2],
+  "@typescript-eslint/no-unsafe-member-access": [2],
+  "@typescript-eslint/no-unsafe-argument": [2],
+  "@typescript-eslint/no-unsafe-return": [2],
+  "@typescript-eslint/no-base-to-string": [2],
   "no-eval": [2, { allowIndirect: false }],
   "no-implied-eval": [2],
   "@typescript-eslint/no-implied-eval": [2],
@@ -54,7 +66,7 @@ export const SOURCE_HARD_RULES = {
   "eslint-comments/require-description": [2],
   "eslint-comments/disable-enable-pair": [2, { allowWholeFile: false }],
   "eslint-comments/no-restricted-disable": [2,
-    "obsidianmd/*", "import/no-extraneous-dependencies", "@typescript-eslint/no-unnecessary-type-assertion", "@typescript-eslint/no-redundant-type-constituents", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-useless-escape", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+    "obsidianmd/*", "@typescript-eslint/no-deprecated", "@typescript-eslint/no-explicit-any", "@typescript-eslint/no-unused-vars", "@typescript-eslint/no-this-alias", "@typescript-eslint/no-unsafe-assignment", "@typescript-eslint/no-unsafe-member-access", "@typescript-eslint/no-unsafe-argument", "@typescript-eslint/no-unsafe-return", "@typescript-eslint/no-base-to-string", "import/no-extraneous-dependencies", "@typescript-eslint/no-unnecessary-type-assertion", "@typescript-eslint/no-redundant-type-constituents", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-useless-escape", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
     "@typescript-eslint/no-floating-promises", "no-unsanitized/method", "no-unsanitized/property"]
 };
 // Audited source warning settings. Weakening a rule must not masquerade as resolved debt.
@@ -64,15 +76,6 @@ export const SOURCE_WARNING_RULES = {
   ],
   "@microsoft/sdl/no-inner-html": [
     1
-  ],
-  "@typescript-eslint/no-deprecated": [
-    1
-  ],
-  "@typescript-eslint/no-explicit-any": [
-    1,
-    {
-      "fixToUnknown": true
-    }
   ],
   "@typescript-eslint/no-restricted-imports": [
     1,
@@ -112,13 +115,6 @@ export const SOURCE_WARNING_RULES = {
       "allowShortCircuit": true,
       "allowTaggedTemplates": false,
       "allowTernary": true
-    }
-  ],
-  "@typescript-eslint/no-unused-vars": [
-    1,
-    {
-      "args": "none",
-      "ignoreRestSiblings": true
     }
   ],
   "no-alert": [
@@ -173,16 +169,7 @@ export const SOURCE_WARNING_RULES = {
   "obsidianmd/hardcoded-config-path": [
     1
   ],
-  "obsidianmd/no-global-this": [
-    1
-  ],
-  "obsidianmd/no-tfile-tfolder-cast": [
-    1
-  ],
   "obsidianmd/prefer-abstract-input-suggest": [
-    1
-  ],
-  "obsidianmd/prefer-create-el": [
     1
   ],
   "obsidianmd/prefer-get-language": [
@@ -406,6 +393,30 @@ export function compareBaseline(current, allowed) {
 export async function runBehaviorSentinels(eslint, rootDir) {
   const sourcePath = path.join(rootDir, "src/main.ts");
   const probes = [
+    { name: "unsafe values and explicit any", file: sourcePath,
+      source: "declare const value: any; const text: string = value; void text; void value.member; function takesString(input: string) { return input; } takesString(value); function unsafe(): string { return value; } void unsafe; export {};",
+      expected: ["@typescript-eslint/no-explicit-any","@typescript-eslint/no-unsafe-assignment","@typescript-eslint/no-unsafe-member-access","@typescript-eslint/no-unsafe-argument","@typescript-eslint/no-unsafe-return"] },
+    { name: "this alias", file: sourcePath,
+      source: "export class Example { run() { const that = this; return that; } }",
+      expected: ["@typescript-eslint/no-this-alias"] },
+    { name: "native DOM creation", file: sourcePath,
+      source: "document.createElement(\"span\"); document.createElementNS(\"http://www.w3.org/2000/svg\", \"svg\"); document.createDocumentFragment(); export {};",
+      expected: ["obsidianmd/prefer-create-el"] },
+    { name: "window ownership", file: sourcePath,
+      source: "void globalThis.document; export {};",
+      expected: ["obsidianmd/no-global-this"] },
+    { name: "TFile cast", file: sourcePath,
+      source: "import type { TFile, TAbstractFile } from \"obsidian\"; declare const file: TAbstractFile; void (file as TFile); export {};",
+      expected: ["obsidianmd/no-tfile-tfolder-cast"] },
+    { name: "deprecated event API", file: sourcePath,
+      source: "declare const event: KeyboardEvent; void event.keyCode; export {};",
+      expected: ["@typescript-eslint/no-deprecated"] },
+    { name: "unused code", file: sourcePath,
+      source: "const unusedBinding = 1; export {};",
+      expected: ["@typescript-eslint/no-unused-vars"] },
+    { name: "implicit object string", file: sourcePath,
+      source: "const object = {}; void String(object); export {};",
+      expected: ["@typescript-eslint/no-base-to-string"] },
     { name: "typed unsafe code", file: sourcePath,
       source: `import type { Vault, TFile } from "obsidian";
 declare const vault: Vault; declare const file: TFile;

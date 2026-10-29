@@ -1,4 +1,4 @@
-import { resolveKnowledgePath } from "../../knowledge-base/root-paths";
+
 import { getDesktopPath } from "../../platform/desktop-paths";
 
 const path = getDesktopPath();

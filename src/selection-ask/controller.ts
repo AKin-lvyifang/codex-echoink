@@ -1,3 +1,4 @@
+import { ownedEl, ownedDiv, ownedSpan } from "../ui/owned-dom";
 import { openSelectionAnnotationSource } from "./navigation";
 import { attachSourceAnchor, resolveSourceSpan, renderedSpanForSource, mapSelectionSource, mapSourceChangeOnce } from "./anchors";
 import { MarkdownView, Notice, Platform } from "obsidian";
@@ -14,7 +15,7 @@ class AnnotationNumber extends WidgetType {
   constructor(readonly annotation: SelectionAnnotation, readonly controller: SelectionAskController) { super(); }
   eq(other: AnnotationNumber): boolean { return other.annotation.id === this.annotation.id && other.annotation.number === this.annotation.number; }
   toDOM(view: EditorView): HTMLElement {
-    const button = view.dom.ownerDocument.createElement("button"); button.className = "echoink-selection-tag"; button.type = "button";
+    const button = ownedEl(view.dom.ownerDocument, "button"); button.className = "echoink-selection-tag"; button.type = "button";
     button.textContent = String(this.annotation.number); button.setAttribute("aria-label", this.controller.annotationLabel(this.annotation.number));
     button.onclick = () => this.controller.focusAnnotation(); return button;
   }
@@ -194,7 +195,7 @@ export class SelectionAskController {
       const root = leaf.view.containerEl.querySelector<HTMLElement>(".markdown-preview-section"), doc = leaf.view.containerEl.ownerDocument;
       if (!root || !root.isConnected || !root.getBoundingClientRect().height) continue;
       let overlay = this.overlays.get(doc);
-      if (!overlay) { overlay = doc.createElement("div"); overlay.className = "echoink-selection-overlay"; doc.body.append(overlay); this.overlays.set(doc, overlay); }
+      if (!overlay) { overlay = ownedDiv(doc); overlay.className = "echoink-selection-overlay"; doc.body.append(overlay); this.overlays.set(doc, overlay); }
       const filePath = leaf.view.file.path;
       const markdown = leaf.view.editor?.getValue();
       for (const annotation of this.records().filter((value) => value.vaultRelativePath === filePath)) {
@@ -210,9 +211,9 @@ export class SelectionAskController {
         const rootBounds = root.getBoundingClientRect();
         const boxes = Array.from(range.getClientRects()).map((box) => ({ left: Math.max(0, rootBounds.left, box.left), right: Math.min(doc.defaultView!.innerWidth, rootBounds.right, box.right), top: Math.max(0, rootBounds.top, box.top), bottom: Math.min(doc.defaultView!.innerHeight, rootBounds.bottom, box.bottom) }))
           .filter((box) => box.right > box.left && box.bottom > box.top).map((box) => ({ ...box, width: box.right - box.left, height: box.bottom - box.top }));
-        for (const box of boxes) { const mark = doc.createElement("span"); mark.className = "echoink-selection-mark"; Object.assign(mark.style, { position: "absolute", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` }); overlay.append(mark); }
+        for (const box of boxes) { const mark = ownedSpan(doc); mark.className = "echoink-selection-mark"; Object.assign(mark.style, { position: "absolute", left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` }); overlay.append(mark); }
         const last = boxes.at(-1); if (!last) continue;
-        const tag = doc.createElement("button"); tag.type = "button"; tag.className = "echoink-selection-tag"; tag.textContent = String(annotation.number); tag.onclick = () => this.focusAnnotation();
+        const tag = ownedEl(doc, "button"); tag.type = "button"; tag.className = "echoink-selection-tag"; tag.textContent = String(annotation.number); tag.onclick = () => this.focusAnnotation();
         tag.setAttribute("aria-label", this.annotationLabel(annotation.number));
         tag.style.left = `${Math.max(rootBounds.left, Math.min(last.right, rootBounds.right - 18, doc.defaultView!.innerWidth - 24))}px`; tag.style.top = `${last.top}px`; overlay.append(tag);
       }

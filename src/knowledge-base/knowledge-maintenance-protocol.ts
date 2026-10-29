@@ -40,13 +40,6 @@ export const ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS = Object.freeze([
   })
 ]);
 
-// The authoring Agent supplies prose; the shared background judge owns new link placement.
-const KNOWLEDGE_LINKING_INSTRUCTION = [
-  "为新知识生成有依据的常见中文/英文 aliases，保留已有别名。正文自然表达概念与关系，保留原有知识链接；新增提及使用原词，不手工选择或插入新的知识链接，不为双链改写原句、追加无提及的句子或相关知识区块。",
-  "本批正文出链和老笔记反向补链统一由插件后台关联任务完成：受控模型逐处判断是否同一概念并返回所有通过的提及，程序跨批按正文字符位置选择同一目标最早一处，其余保留原词。名称、别名、缩写和复合词中的同概念都参与；HTTP user agent 等不同含义、无效或有歧义目标不强行链接。原有链接保持原写法。",
-  "knowledge_maintain 回执只确认正文安全写入与回读；收到关联任务后自然结束本轮写作，不要因为立即回读尚未出现首次链接而反复调用 knowledge_maintain 或重写正文。关联状态由后台结果显示，不能把正文写入成功声称为关联已完成。老知识不伪装成本轮 Raw 成果。"
-].join("\n");
-
 export type { KnowledgeMaintenanceRawBinding, KnowledgeMaintenanceSourceEvidence } from "./knowledge-maintenance-sources-core";
 
 import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./folder-bindings";

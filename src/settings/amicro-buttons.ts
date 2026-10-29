@@ -1,3 +1,4 @@
+import { ownedSpan } from "../ui/owned-dom";
 import { setIcon } from "obsidian";
 
 /**
@@ -56,7 +57,7 @@ export function applyDeleteButton(button: HTMLButtonElement, options: { iconOnly
   } else if (!button.querySelector(".echoink-delete-button-icon")) {
     button.querySelector(".echoink-amicro-button-icon")?.remove();
     button.querySelector(":scope > svg")?.remove();
-    const icon = button.ownerDocument.createElement("span");
+    const icon = ownedSpan(button.ownerDocument);
     icon.className = "echoink-delete-button-icon";
     icon.setAttribute("aria-hidden", "true");
     setIcon(icon, "trash-2");

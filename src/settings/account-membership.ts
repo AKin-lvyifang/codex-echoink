@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 // SPDX-License-Identifier: LicenseRef-EchoInk-Pro
 // Scope and preserved rights: ../../LICENSE
 import { Modal, Notice, setIcon, type App } from "obsidian";
@@ -16,7 +17,7 @@ export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembers
 type PageOptions = AccountMembershipPageOptions;
 type Tag = keyof HTMLElementTagNameMap;
 function el<K extends Tag>(parent: HTMLElement, tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
-  const node = parent.ownerDocument.createElement(tag);
+  const node = ownedEl(parent.ownerDocument, tag);
   node.className = cls;
   if (text) node.textContent = text;
   parent.appendChild(node);

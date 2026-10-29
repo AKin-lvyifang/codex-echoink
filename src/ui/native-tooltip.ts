@@ -1,3 +1,4 @@
+import { ownedSvg, ownedSpan, ownedDiv } from "./owned-dom";
 import { Notice, Platform, displayTooltip } from "obsidian";
 
 export interface NativeTooltipOptions {
@@ -39,7 +40,7 @@ export function attachNativeTooltip(
   const mobile = () => !Platform.isDesktopApp || doc.body.classList.contains("is-mobile");
   const svg = trigger.namespaceURI === "http://www.w3.org/2000/svg";
   const accessibleNode = (suffix: string) => {
-    const node = svg ? doc.createElementNS("http://www.w3.org/2000/svg", "desc") : doc.createElement("span");
+    const node = svg ? ownedSvg(doc, "desc") : ownedSpan(doc);
     node.id = `${marker}-${suffix}`;
     node.setAttribute("hidden", "");
     node.setAttribute("data-echoink-tooltip-accessibility", "");
@@ -126,7 +127,7 @@ export function attachNativeTooltip(
       let target: HTMLElement;
       if (svg) {
         if (!anchor) {
-          anchor = doc.createElement("div");
+          anchor = ownedDiv(doc);
           anchor.setAttribute("aria-hidden", "true");
           anchor.setAttribute("data-echoink-tooltip-anchor", marker);
           // Empty and transparent, but laid out: the host requires HTMLElement.isShown().

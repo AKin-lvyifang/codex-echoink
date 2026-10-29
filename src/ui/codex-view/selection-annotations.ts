@@ -1,3 +1,4 @@
+import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Scope, setIcon, type App } from "obsidian";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
@@ -17,7 +18,7 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
   let doc = host.ownerDocument, win = doc.defaultView!;
   const wrapper = host.createDiv({ cls: "echoink-annotation-summary" });
   const trigger = wrapper.createEl("button", { cls: "echoink-annotation-trigger", text: conversationUiText(language, `${annotations.length}条注释`, `${annotations.length} annotation${annotations.length === 1 ? "" : "s"}`), attr: { type: "button", "aria-expanded": "false", "aria-haspopup": "dialog" } });
-  const panel = doc.createElement("div"); panel.className = "echoink-annotation-popover"; panel.hidden = true;
+  const panel = ownedDiv(doc); panel.className = "echoink-annotation-popover"; panel.hidden = true;
   panel.setAttribute("role", "dialog"); panel.setAttribute("aria-label", conversationUiText(language, "引用片段", "Selected passages"));
   for (const annotation of annotations) {
     const card = panel.createDiv({ cls: "echoink-annotation-card" });

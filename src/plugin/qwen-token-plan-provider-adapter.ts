@@ -184,7 +184,7 @@ export async function requestQwenTokenPlanProvider(
           status,
           headers,
           body: Buffer.concat(chunks).toString("utf8"),
-          transportComplete: response.complete && !response.aborted
+          transportComplete: response.complete && !response.readableAborted
         }));
       });
       response.once("error", fail);

@@ -1,3 +1,4 @@
+import { isImeKeyEvent } from "../ui/ime-composition";
 import { type Modal, setIcon } from "obsidian";
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 
@@ -101,7 +102,7 @@ export function mountSettingsEditor(
     } else modal.close();
   };
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented || host.querySelector(".codex-provider-combobox.is-open, [data-slot=select-content][data-state=open]")) return;
+    if (event.key !== "Escape" || isImeKeyEvent(event) || event.defaultPrevented || host.querySelector(".codex-provider-combobox.is-open, [data-slot=select-content][data-state=open]")) return;
     event.preventDefault();
     event.stopPropagation();
     navigateBack();

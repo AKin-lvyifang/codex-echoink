@@ -1,3 +1,5 @@
+import { ownedEl, ownedDiv } from "../ui/owned-dom";
+import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
@@ -147,6 +149,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private active(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
 
   async onOpen(): Promise<void> {
+    this.register(watchImeComposition(this.contentEl));
     this.closed = false;
     this.contentEl.addClass("echoink-workbench");
     this.contentEl.tabIndex = -1;
@@ -641,7 +644,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (missing.length && this.active() && version === this.refreshVersion) this.render(now);
   }
   private taskCard(entry: TaskEntry): HTMLElement {
-    const card = this.contentEl.ownerDocument.createElement("article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
+    const card = ownedEl(this.contentEl.ownerDocument, "article"); card.className = "wb-task"; card.dataset.task = entry.conversationId;
     card.onclick = event => {
       if ((event.target as Element).closest("button, input, textarea, select, label, a, summary")) return;
       void this.openTask(entry.conversationId).catch(error => new Notice(message(error)));
@@ -728,7 +731,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private interruptionRevision(entry: TaskEntry): string { return JSON.stringify([entry.updatedAt, entry.taskMetadataUpdatedAt, entry.taskInterruptedAt, entry.taskStage]); }
   private completedRow(entry: TaskEntry): HTMLElement {
-    const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
+    const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-completed"; row.dataset.task = entry.conversationId;
     const button = this.button(row, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary"); button.classList.add("wb-completed-body");
     const agent = this.agent(entry), activity = this.maintenance.get(entry.conversationId);
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
@@ -768,7 +771,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.syncRows(host, this.signalsExpanded ? signals : signals.slice(0, 5), signal => signal.key,
       signal => JSON.stringify([this.language, signal, this.plugin.settings.agentRegistry, !!this.dataError]),
       signal => {
-        const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-row";
+        const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
         row.createSpan({ cls: "wb-grow", text: signal.description });
         const registry = this.plugin.settings.agentRegistry;
@@ -794,7 +797,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const heading = section.firstElementChild as HTMLElement;
     if (!heading.querySelector("button")) this.button(heading, this.t("全部待办", "All to-dos"), "all-todos", () => openWorkbenchModule(this.plugin, "todos"), "tertiary", "chevron-right");
     this.syncRows(section.lastElementChild as HTMLElement, todos, todo => this.todoKey(todo), todo => JSON.stringify([this.language, todo, resolveTodoProject(todo.project, projects), !!this.dataError]), todo => {
-      const row = this.contentEl.ownerDocument.createElement("div"); row.className = "wb-row wb-todo";
+      const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row wb-todo";
       const key = this.todoKey(todo);
       const check = createOriginCheck(row, { cls: "wb-todo-check", attr: { "aria-label": this.t(`完成：${todo.title}`, `Complete: ${todo.title}`), "data-wb-focus": key } });
       check.checked = todo.done; check.disabled = !!this.dataError || this.busy.has(key);
@@ -897,7 +900,7 @@ export class EchoInkWorkbenchView extends ItemView {
     } catch { if (!abort.signal.aborted && this.active()) this.field("search-heading").textContent = this.t("搜索失败，请重试", "Search failed. Try again."); }
   }
   private handleKeys(event: KeyboardEvent): void {
-    if (event.isComposing || event.keyCode === 229) return;
+    if (isImeKeyEvent(event)) return;
     if (this.lockedModule) {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeModuleLock(); }
       return;

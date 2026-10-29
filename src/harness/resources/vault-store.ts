@@ -210,7 +210,7 @@ async function loadVaultMcpConnections(filePath: string): Promise<Record<string,
 async function loadVaultResourceBindings(filePath: string): Promise<VaultResourceBinding[]> {
   const data = await readJsonFile<{ bindings?: RawBinding[] }>(filePath, { bindings: [] });
   return (data.bindings ?? []).map((binding) => {
-    const ref = parseResourceUri(String(binding.ref ?? ""));
+    const ref = parseResourceUri(typeof binding.ref === "string" ? binding.ref : "");
     return {
       ref,
       uri: resourceRefToUri(ref),

@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { Platform } from "obsidian";
 import { JSDOM } from "jsdom";
@@ -126,6 +127,7 @@ function assertMcpAndFallbacks(): void {
 
 async function assertRealDomAndBindings(): Promise<void> {
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: dom.window });
   installComposerMenuDomHelpers(dom.window.document);

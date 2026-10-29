@@ -1,3 +1,4 @@
+import { ownedEl, ownedSpan, ownedDiv } from "../owned-dom";
 import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
 import { maintenanceActivityText, maintenanceStageLabel, maintenanceStepText, maintenanceTaskStateLabel, maintenanceTaskTitle, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../../knowledge-base/maintenance-activity";
 import { maintenanceFailureText, maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
@@ -16,7 +17,7 @@ export function knowledgeLinkingProgressVisible(task: KnowledgeLinkingTask | nul
 export function mountKnowledgeLinkingProgress(container: HTMLElement, source: KnowledgeLinkingProgressSource, open: (taskId?: string) => void, english = false): () => void {
   const document = container.ownerDocument;
   container.classList.add("echoink-knowledge-linking-progress");
-  const button = document.createElement("button"); button.type = "button";
+  const button = ownedEl(document, "button"); button.type = "button";
   button.className = "echoink-knowledge-linking-progress-button";
   const title = button.createSpan({ cls: "echoink-knowledge-linking-progress-title", text: english ? "Knowledge links" : "知识关联" });
   const status = button.createSpan({ cls: "echoink-knowledge-linking-progress-status" });
@@ -40,7 +41,7 @@ export function mountKnowledgeLinkingProgress(container: HTMLElement, source: Kn
 
 /** A read-only bar shared by the sidebar and the existing workbench task. */
 export function renderMaintenanceProgressBar(container: HTMLElement, activity: Readonly<MaintenanceActivity>): HTMLElement {
-  const bar = container.ownerDocument.createElement("span");
+  const bar = ownedSpan(container.ownerDocument);
   bar.className = "echoink-maintenance-progress-bar";
   bar.setAttribute("aria-hidden", "true");
   for (const step of activity.steps) {
@@ -64,19 +65,19 @@ export function mountKnowledgeActivityProgress(
   const document = container.ownerDocument;
   container.classList.add("echoink-knowledge-linking-progress", "echoink-knowledge-activity-progress");
   container.hidden = true;
-  const button = document.createElement("button"); button.type = "button";
+  const button = ownedEl(document, "button"); button.type = "button";
   button.className = "echoink-knowledge-linking-progress-button";
   const title = button.createSpan({ cls: "echoink-knowledge-linking-progress-title" });
   const status = button.createSpan({ cls: "echoink-knowledge-linking-progress-status" });
   const barHost = button.createSpan({ cls: "echoink-knowledge-activity-bar" });
-  const details = document.createElement("div"); details.className = "echoink-knowledge-activity-details";
+  const details = ownedDiv(document); details.className = "echoink-knowledge-activity-details";
   details.id = `echoink-knowledge-activity-${++activityProgressId}`; details.hidden = true;
   const steps = details.createEl("ol");
   const path = details.createDiv({ cls: "echoink-knowledge-activity-path" });
   const detailButton = details.createEl("button", { cls: "echoink-knowledge-activity-open", text: english ? "View task" : "查看任务", attr: { type: "button" } });
-  const failures = document.createElement("ul"); failures.className = "echoink-knowledge-activity-failures"; failures.hidden = true;
+  const failures = ownedEl(document, "ul"); failures.className = "echoink-knowledge-activity-failures"; failures.hidden = true;
   details.insertBefore(failures, detailButton);
-  const otherButton = document.createElement("button"); otherButton.type = "button";
+  const otherButton = ownedEl(document, "button"); otherButton.type = "button";
   otherButton.className = "echoink-knowledge-activity-open echoink-knowledge-activity-other"; otherButton.hidden = true;
   container.append(button, details, otherButton);
   const expanded = new Set<string>();
@@ -110,7 +111,7 @@ export function mountKnowledgeActivityProgress(
       barHost.hidden = false;
       renderMaintenanceProgressBar(barHost, current);
       for (const step of current.steps) {
-        const row = document.createElement("li");
+        const row = ownedEl(document, "li");
         row.createSpan({ text: maintenanceStageLabel(step.stage, english, current.taskKind) });
         const count = row.createSpan({ cls: "echoink-knowledge-activity-step-status" });
         const state = step.state === "completed" ? (english ? "Completed" : "已完成")
@@ -123,10 +124,10 @@ export function mountKnowledgeActivityProgress(
       }
       path.hidden = !current.currentPath;
       path.textContent = current.currentPath ? `${english ? "Current: " : "当前："}${maintenancePageLabel(current.currentPath)}` : "";
-      for (const failure of current.failures) { const row = document.createElement("li"); row.textContent = current.taskKind === "upgrade" ? failure.message : maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }
+      for (const failure of current.failures) { const row = ownedEl(document, "li"); row.textContent = current.taskKind === "upgrade" ? failure.message : maintenanceFailureText(failure.message, current.currentPath, english); failures.append(row); }
       failures.hidden = !current.failures.length;
     } else {
-      const task = current.task, progress = document.createElement("progress");
+      const task = current.task, progress = ownedEl(document, "progress");
       progress.className = "echoink-knowledge-linking-progress-bar";
       progress.hidden = !["scanning", "judging", "writing"].includes(task.phase);
       barHost.hidden = progress.hidden;

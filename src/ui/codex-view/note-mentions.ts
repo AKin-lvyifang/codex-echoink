@@ -1,3 +1,4 @@
+import { isImeKeyEvent } from "../ime-composition";
 import { pinyin } from "pinyin-pro";
 import { TFile, type App } from "obsidian";
 
@@ -287,7 +288,7 @@ export function handleComposerNoteMentionKeyDown(
 ): boolean {
   const state = requireComposerState(input);
   if (!reconcileComposerNoteMentionMenuAtCursor(input)) return false;
-  if (event.isComposing || event.keyCode === 229) return false;
+  if (isImeKeyEvent(event)) return false;
   if (event.key === "Escape") {
     event.preventDefault();
     event.stopPropagation();

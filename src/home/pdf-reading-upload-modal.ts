@@ -1,3 +1,4 @@
+import { getElectronFilePath } from "../core/electron";
 import { Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
@@ -115,9 +116,7 @@ export class PdfReadingUploadModal extends Modal {
     else {
       let path = (file as File & { path?: string }).path;
       if (!path) {
-        const electronRequire = window.require ?? globalThis.require;
-        try { path = (electronRequire?.("electron") as { webUtils?: { getPathForFile(file: File): string } } | undefined)?.webUtils?.getPathForFile(file); }
-        catch { /* A missing host path is shown inline; no binary is read here. */ }
+        path = getElectronFilePath(file);
       }
       if (!path) this.error = this.t("无法读取这个 PDF 的本地路径，请重新选择", "The PDF's local path is unavailable. Choose it again");
       else this.attachment = Object.freeze({ type: "file", name: file.name, path, mimeType: "application/pdf", sizeBytes: file.size });

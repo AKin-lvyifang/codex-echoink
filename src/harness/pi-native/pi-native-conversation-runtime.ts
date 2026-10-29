@@ -132,7 +132,7 @@ import {
 import {
   ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION
 } from "../../knowledge-base/knowledge-maintenance-protocol";
-import { PI_KNOWLEDGE_READ_TOOL_IDS } from "./pi-knowledge-read-tools";
+
 import {
   piModelSupportsImageInput,
   type PiNativeProviderExecutionContext

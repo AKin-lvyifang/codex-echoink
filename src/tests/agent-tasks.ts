@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { runTaskCardDenialTests } from "./task-card-denial";
 import { PiTurnInteractionBroker } from "../plugin/pi-turn-interaction-broker";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
@@ -50,6 +51,7 @@ export async function runAgentTaskTests(root: string): Promise<void> {
   await ignoredLegacyTransferMetadata(root);
   draftsAndDates();
   const dom = new JSDOM("<!doctype html><body></body>", { url: "https://local.test/", pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
   for (const key of ["window", "document", "HTMLElement", "HTMLButtonElement", "Element", "Node", "MutationObserver", "navigator", "Event", "CustomEvent", "KeyboardEvent"]) {
     descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));

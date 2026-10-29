@@ -1,8 +1,9 @@
+import { ownedDiv } from "./owned-dom";
 import { setIcon } from "obsidian";
 export interface SelectionAskMenuAction { id: string; name: string; template: string }
 export function createSelectionAskPopover(doc: Document, rect: DOMRect, actions: readonly SelectionAskMenuAction[], onChoose: (action: SelectionAskMenuAction) => void, onClose: () => void): { close(): void; reposition(rect: DOMRect): void } {
   const win = doc.defaultView!;
-  const menu = doc.createElement("div"); menu.className = "echoink-selection-menu";
+  const menu = ownedDiv(doc); menu.className = "echoink-selection-menu";
   const english = actions[0]?.name === "Ask";
   menu.classList.toggle("is-dark", doc.body.classList.contains("theme-dark")); menu.setAttribute("role", "toolbar");
   menu.setAttribute("aria-label", english ? "Selection Ask" : "选文提问");

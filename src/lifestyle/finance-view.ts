@@ -1,3 +1,4 @@
+import { ownedDiv, ownedSvg } from "../ui/owned-dom";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import type { Capability } from "../membership/types";
 import { capabilityMessage } from "../membership/access";
@@ -164,7 +165,7 @@ export class FinanceWorkspace {
       if (ticket === this.reportRenderTicket && container.isConnected) {
         for(const table of Array.from(container.querySelectorAll<HTMLTableElement>("table"))) {
           if(!table.parentElement?.classList.contains("echoink-finance-ai-table-scroll")) {
-            const scroll=container.ownerDocument.createElement("div");scroll.className="echoink-finance-ai-table-scroll";
+            const scroll=ownedDiv(container.ownerDocument);scroll.className="echoink-finance-ai-table-scroll";
             table.parentElement?.insertBefore(scroll,table);scroll.appendChild(table);
           }
           for(const row of Array.from(table.rows)) for(const [index,cell] of Array.from(row.cells).entries()) {
@@ -480,10 +481,10 @@ export class FinanceWorkspace {
     amount.createEl("small", { text: `本月总预算 ¥ ${money(plan.totalCents)}` });
     const percent = Math.max(0, expense / plan.totalCents * 100);
     const gauge = card.createDiv({ cls: "echoink-finance-gauge", attr: { "aria-label": `已使用预算 ${percent.toFixed(1)}%` } });
-    const svg = gauge.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
+    const svg = ownedSvg(gauge.ownerDocument, "svg");
     svg.setAttribute("viewBox", "0 0 240 135"); svg.setAttribute("aria-hidden", "true");
     for (const [className, fill] of [["is-track", 100], [remaining < 0 ? "is-over" : "is-fill", Math.min(100, percent)]] as const) {
-      const path = gauge.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path");
+      const path = ownedSvg(gauge.ownerDocument, "path");
       path.setAttribute("d", "M15 126 A108 108 0 0 1 231 126"); path.setAttribute("pathLength", "100");
       path.setAttribute("stroke-dasharray", `${fill} 100`); path.setAttribute("class", className);
       svg.appendChild(path);

@@ -1,4 +1,4 @@
-import { knowledgeRolePath } from "../../knowledge-base/root-paths";
+
 import {
   type InlineExtension,
   type ToolCallEvent,

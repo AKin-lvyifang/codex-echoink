@@ -1,3 +1,4 @@
+import { installMockObsidianDom, installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Platform, TFile, TFolder } from "obsidian";
@@ -139,7 +140,7 @@ export class FakeElement {
   }
 
   get ownerDocument(): Document {
-    return (globalThis as unknown as { document?: Document }).document ?? fallbackDocument as unknown as Document;
+    return installMockObsidianDom((globalThis as unknown as { document?: Document }).document ?? fallbackDocument as unknown as Document);
   }
 
   get parentElement(): FakeElement | null { return this.parent; }
@@ -922,6 +923,7 @@ function assertSessionSummaryTooltipLifecycle(): void {
   const { JSDOM } = require("jsdom");
   const { setTooltipDisplayForTests, openTestNoticeMessages } = require("./obsidian-shim") as typeof import("./obsidian-shim");
   const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  installObsidianDom(dom.window);
   const view = dom.window as Window & typeof globalThis;
   const original = new Map(["window", "document", "HTMLElement"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
   const desktop = Platform.isDesktopApp;

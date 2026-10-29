@@ -14,7 +14,8 @@ interface TaskChannel {
   port2: TaskPort;
 }
 
-const environment = globalThis as unknown as {
+declare const global: unknown;
+const environment = (typeof window !== "undefined" ? window : typeof self !== "undefined" ? self : global) as {
   scheduler?: SchedulerLike;
   MessageChannel?: new () => TaskChannel;
   setTimeout: typeof setTimeout;

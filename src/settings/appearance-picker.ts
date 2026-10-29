@@ -1,3 +1,4 @@
+import { ownedDiv, ownedEl } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
 import { ECHOINK_COLOR_THEMES, ECHOINK_APPEARANCE_REFRESH, effectiveEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { decorateProAppearanceChoice } from "../ui/appearance-pro";
@@ -17,7 +18,7 @@ let pickerSequence = 0;
 export function renderAppearancePicker(container: HTMLElement, host: AppearanceHost, zh: boolean): void {
   const doc = container.ownerDocument;
   host.applyAppearanceTheme(doc);
-  const picker = doc.createElement("div");
+  const picker = ownedDiv(doc);
   picker.className = "echoink-theme-picker";
   picker.classList.add("echoink-appearance-pro-surface"); picker.dataset.echoinkAppearancePicker = "";
   const textSegments = container.closest(".echoink-settings-aligned") !== null;
@@ -35,7 +36,7 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
   let busy = false;
   const themes = ECHOINK_COLOR_THEMES.map(theme => ({ id: theme.id, title: zh ? theme.zh : theme.en }));
   for (const theme of themes) {
-    const label = doc.createElement("label");
+    const label = ownedEl(doc, "label");
     label.className = "echoink-theme-choice";
     label.dataset.theme = theme.id;
     const input = label.createEl("input");

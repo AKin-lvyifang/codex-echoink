@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import { dateKey, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
 import { formatHomeFullDate } from "./home-i18n";
 import type { SettingsLanguage } from "../settings/settings";
@@ -29,7 +30,7 @@ export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays
     const date = new Date(first.getFullYear(), first.getMonth(), index - offset + 1), key = dateKey(date);
     const outside = date.getMonth() !== first.getMonth(), photo = !outside && photos.get(key), blank = outside && options.showOutsideDays === false;
     const count = options.activity?.get(key) ?? 0;
-    const day = days.ownerDocument.createElement("button");
+    const day = ownedEl(days.ownerDocument, "button");
     day.type = "button"; day.dataset.date = key; day.setAttribute("aria-pressed", String(key === selected));
     day.setAttribute("aria-label", `${formatHomeFullDate(date, language)} · ${count}${photo ? language === "en" ? " · With photo" : " · 含照片" : ""}`);
     if (blank) { day.disabled = true; day.tabIndex = -1; day.setAttribute("aria-hidden", "true"); }
@@ -38,7 +39,7 @@ export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays
     if (key === dateKey(new Date())) day.setAttribute("aria-current", "date");
     day.createSpan({ cls: "calendar-day-number", text: blank ? "" : String(date.getDate()) });
     if (photo) {
-      const image = day.ownerDocument.createElement("img");
+      const image = ownedEl(day.ownerDocument, "img");
       image.className = "echoink-calendar-photo"; image.alt = ""; image.loading = "lazy";
       image.addEventListener("error", () => { image.remove(); day.classList.remove("has-photo"); }, { once: true });
       image.src = photo; day.prepend(image);

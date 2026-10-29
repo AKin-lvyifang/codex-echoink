@@ -1,4 +1,4 @@
-import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
+
 export type VaultNoteLinkSegment =
   | { kind: "text"; text: string }
   | { kind: "noteLink"; text: string; original: string; targetPath: string; title: string; heading?: string };

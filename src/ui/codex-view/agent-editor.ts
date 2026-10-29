@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
 import { setIcon } from "obsidian";
@@ -201,7 +202,7 @@ export class AgentEditorController {
   }
 
   private el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, cls = "", text?: string): HTMLElementTagNameMap[K] {
-    const element = parent.ownerDocument.createElement(tag);
+    const element = ownedEl(parent.ownerDocument, tag);
     if (cls) element.className = cls;
     if (text !== undefined) element.textContent = text;
     parent.append(element); return element;

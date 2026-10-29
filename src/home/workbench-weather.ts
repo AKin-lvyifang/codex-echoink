@@ -1,3 +1,4 @@
+import { ownedSvg } from "../ui/owned-dom";
 import { animate, type AnimationPlaybackControlsWithThen } from "framer-motion";
 import type CodexForObsidianPlugin from "../main";
 import { MembershipApiError } from "../membership/account-service";
@@ -233,9 +234,9 @@ export class WorkbenchWeatherStage {
     } else { this.pull(0); this.paintTag(); }
   }
   private sparkle(): void {
-    const group = this.svg.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "g"); group.setAttribute("aria-hidden", "true"); this.svg.append(group);
+    const group = ownedSvg(this.svg.ownerDocument, "g"); group.setAttribute("aria-hidden", "true"); this.svg.append(group);
     for (let i = 0; i < 10; i++) {
-      const star = this.svg.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "path"); star.setAttribute("d", "M-2 0H2M0-2V2"); group.append(star);
+      const star = ownedSvg(this.svg.ownerDocument, "path"); star.setAttribute("d", "M-2 0H2M0-2V2"); group.append(star);
       const a = i * Math.PI / 5;
       this.motion(0, 1, v => { star.setAttribute("transform", `translate(${181 + Math.cos(a) * v * 30} ${45 + Math.sin(a) * v * 26})`); star.setAttribute("opacity", String(1 - v)); }, { duration: .75 });
     }

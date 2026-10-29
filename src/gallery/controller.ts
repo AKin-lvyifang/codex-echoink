@@ -1,3 +1,4 @@
+import { ownedDiv } from "../ui/owned-dom";
 import { Menu, Notice, Platform, editorInfoField, editorLivePreviewField, type Editor, type MarkdownFileInfo, type Plugin } from "obsidian";
 import { StateEffect, StateField, Transaction } from "@codemirror/state";
 import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
@@ -52,7 +53,7 @@ class GalleryEditor {
     this.path = this.info()?.file?.path;
     controller.editors.add(this);
     controller.observeDocument(view.dom.ownerDocument);
-    this.overlay = touchOnly ? null : view.dom.ownerDocument.createElement("div");
+    this.overlay = touchOnly ? null : ownedDiv(view.dom.ownerDocument);
     if (this.overlay) { this.overlay.className = "echoink-gallery-layer"; view.dom.append(this.overlay); }
     this.context = event => this.contextMenu(event);
     this.move = event => {
@@ -151,7 +152,7 @@ class GalleryEditor {
         if (this.disposed || !this.live()) return;
         const overlay = this.overlay!; overlay.replaceChildren();
         for (const box of boxes) {
-          const mark = overlay.ownerDocument.createElement("div"); mark.className = "echoink-gallery-image-control";
+          const mark = ownedDiv(overlay.ownerDocument); mark.className = "echoink-gallery-image-control";
           mark.classList.toggle("is-selected", box.picked);
           Object.assign(mark.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
           const button = mark.createEl("button", { cls: "echoink-gallery-pick", attr: { type: "button" } });
@@ -163,7 +164,7 @@ class GalleryEditor {
         }
         const selected = this.selected();
         if (selected.length >= 2) {
-          const bar = overlay.ownerDocument.createElement("div"); bar.className = "echoink-gallery-toolbar"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "图片组操作");
+          const bar = ownedDiv(overlay.ownerDocument); bar.className = "echoink-gallery-toolbar"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "图片组操作");
           bar.createSpan({ text: `已选 ${selected.length} 张图片`, attr: { role: "status" } });
           const add = (label: string, run: () => void) => { const button = bar.createEl("button", { text: label, attr: { type: "button" } }); button.addEventListener("mousedown", event => event.preventDefault()); button.addEventListener("click", event => { event.stopPropagation(); run(); }); };
           if (selected.length === 2) add("排成图片组（并排）", () => this.controller.run(this, "group"));

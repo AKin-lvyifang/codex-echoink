@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { runGalleryMarkupTests } from "./gallery-markup";
 import { galleryNativeMarkup } from "./fixtures/gallery-native-markup";
 import assert from "node:assert/strict";
@@ -73,6 +74,7 @@ const fourState = EditorState.create({ doc: four, extensions: [gallerySelection]
 const capped = fourState.update({ effects: standaloneImages(four).map(image => toggleGalleryImage.of(image)) }).state;
 assert.equal(capped.field(gallerySelection).length, 3);
 const dom = new JSDOM('<html><body></body></html>'); const doc = dom.window.document;
+installObsidianDom(dom.window);
 assert.deepEqual(readCompanionTheme(doc), { active: false, gallery: false });
 doc.documentElement.style.setProperty('--echoink-companion-theme', '1'); assert.equal(readCompanionTheme(doc).gallery, false);
 doc.documentElement.style.setProperty('--echoink-gallery', '1'); assert.equal(readCompanionTheme(doc).gallery, true);
@@ -102,6 +104,7 @@ new GalleryController(plugin as any).register(); assert.equal(registered.length,
 for (const command of registered) { command.editorCallback({}, {}); assert.equal((Notice as any).messages.at(-1), '需要配套主题 echoink-theme 才能拼排'); }
 async function editorLifecycle() {
   const runtime = new JSDOM('<html><body><div class="markdown-source-view"></div></body></html>', { pretendToBeVisual: true });
+  installObsidianDom(runtime.window);
   const win = runtime.window;
   Object.assign(globalThis, { window: win, document: win.document, MutationObserver: win.MutationObserver });
   const cleanups: (() => void)[] = [], events = new Map<string, () => void>(); let extension: any;

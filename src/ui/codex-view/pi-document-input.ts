@@ -15,6 +15,7 @@ import type { StoredAttachment } from "../../settings/settings";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 const { createRequire } = getDesktopModule();
+declare const global: { require?: ReturnType<typeof createRequire> };
 
 const { readFile, stat } = getDesktopFsPromises();
 const { fileURLToPath } = getDesktopUrl();
@@ -381,7 +382,8 @@ async function createWordExtractor(): Promise<Readonly<{
   extract(source: Buffer): Promise<Readonly<{ getBody(): string }>>;
 }>> {
   if (typeof require === "undefined") {
-    (globalThis as typeof globalThis & { require?: NodeJS.Require }).require =
+    const host = typeof window === "undefined" ? global : window;
+    host.require =
       createRequire(`${process.cwd()}/package.json`);
   }
   const imported: unknown = await import("word-extractor");

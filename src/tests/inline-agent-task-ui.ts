@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { CodexView } from "../ui/codex-view";
@@ -15,6 +16,7 @@ import { TaskNavigationState } from "../ui/codex-view/task-navigation-state";
 import { defaultTaskWorkspace } from "../agents/task-workspace";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "https://local.test/" });
+installObsidianDom(dom.window);
 for (const key of ["window", "document", "HTMLElement", "HTMLButtonElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "MutationObserver", "navigator", "Event", "CustomEvent", "KeyboardEvent", "getComputedStyle"]) Object.defineProperty(globalThis, key, { configurable: true, value: (dom.window as any)[key] });
 const create = function(this: HTMLElement, tag: string, options: any = {}) { const element = this.ownerDocument.createElement(tag); if (typeof options === "string") options = { cls: options }; if (options.cls) element.className = options.cls; if (options.text !== undefined) element.textContent = options.text; for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, String(value)); this.append(element); return element; };
 Object.assign(dom.window.Element.prototype, { createEl: create, createDiv(options: unknown) { return create.call(this, "div", options); }, createSpan(options: unknown) { return create.call(this, "span", options); },

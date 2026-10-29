@@ -1,6 +1,7 @@
 import { Platform } from "obsidian";
 
 type ElectronRequire = (moduleName: string) => unknown;
+declare const require: ElectronRequire | undefined;
 
 export interface ElectronShell {
   showItemInFolder(filePath: string): void;
@@ -22,6 +23,7 @@ export interface ElectronDialog {
 }
 
 interface ElectronModule {
+  webUtils?: { getPathForFile(file: File): string };
   shell?: ElectronShell;
   dialog?: ElectronDialog;
   remote?: {
@@ -77,12 +79,18 @@ export async function openExternalInElectron(url: string): Promise<boolean> {
 
 function electronModule(): ElectronModule | null {
   const electronRequire = window.require
-    ?? (globalThis as typeof globalThis & { require?: ElectronRequire }).require;
+    ?? (typeof require === "function" ? require : undefined);
   try {
     return (electronRequire?.("electron") as ElectronModule | undefined) ?? null;
   } catch {
     return null;
   }
+}
+
+export function getElectronFilePath(file: File): string | undefined {
+  if (!Platform.isDesktopApp) return;
+  try { return electronModule()?.webUtils?.getPathForFile(file); }
+  catch { return undefined; }
 }
 
 export function isLoopbackHostname(value: string): boolean {

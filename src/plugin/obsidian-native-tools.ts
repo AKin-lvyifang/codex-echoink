@@ -1,4 +1,4 @@
-import type { App } from "obsidian";
+import { View, type App } from "obsidian";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopUtil } from "../platform/desktop-runtime";
@@ -96,7 +96,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   };
   const activeBase = (relativePath: string): boolean => {
     const active = app.workspace.getActiveFile?.();
-    return active?.path === relativePath && app.workspace.activeLeaf?.view.getViewType() === "bases";
+    return active?.path === relativePath && app.workspace.getActiveViewOfType(View)?.getViewType() === "bases";
   };
   const pluginInstance = (id: string) => (app as unknown as { plugins?: { plugins?: Record<string, unknown> } }).plugins?.plugins?.[id];
   const port: ObsidianNativePort = {

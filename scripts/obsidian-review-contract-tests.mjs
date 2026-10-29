@@ -13,7 +13,7 @@ import { productionCssFiles, auditCssCoverage, runCssBehaviorSentinels, CSS_REVI
 const root = fileURLToPath(new URL("../", import.meta.url));
 let checks = 0;
 const check = (condition, message) => { assert.ok(condition, message); checks += 1; };
-const finding = { path: "src/example.ts", rule: "@typescript-eslint/no-unsafe-assignment", severity: 2,
+const finding = { path: "src/example.ts", rule: "@typescript-eslint/no-unnecessary-condition", severity: 2,
   message: "Unsafe assignment of an `any` value.", context: "const value = legacy();", line: 3, column: 1 };
 const accepted = createBaseline([finding]);
 check(validateBaseline(accepted).length === 0, "valid fingerprint baseline");
@@ -47,13 +47,13 @@ for (const [name, mutate] of [
 }
 for (const changed of [
   { context: "const value = replacement();" }, { message: "Different unsafe error" },
-  { path: "src/elsewhere.ts" }, { rule: "@typescript-eslint/no-unsafe-member-access" }
+  { path: "src/elsewhere.ts" }, { rule: "@typescript-eslint/no-unnecessary-type-parameters" }
 ]) check(compareBaseline(createBaseline([{ ...finding, ...changed }]), accepted).regressions.length === 1, "same-count debt substitution must fail");
 check(compareBaseline(createBaseline([finding, finding]), accepted).regressions.length === 1, "count increase must fail");
 check(compareBaseline(createBaseline([]), accepted).reductions.length === 1, "resolved debt must be tightened");
 check(compareBaseline(createBaseline([{ ...finding, line: 300 }]), accepted).regressions.length === 0, "unrelated preceding line changes preserve identity");
 
-const warning = { ...finding, rule: "obsidianmd/prefer-create-el", severity: 1, message: "Use the Obsidian DOM helper." };
+const warning = { ...finding, rule: "no-alert", severity: 1, message: "Unexpected alert." };
 const warningBaseline = createWarningBaseline([warning]);
 check(validateWarningBaseline(warningBaseline).length === 0, "valid warning fingerprint baseline");
 check(validateBaseline(warningBaseline).length > 0 && validateWarningBaseline(accepted).length > 0, "error and warning baselines cannot be interchanged");
@@ -83,7 +83,7 @@ const cssSentinels = await runCssBehaviorSentinels();
 check(CSS_REVIEW_CONFIG.rules["selector-type-no-unknown"][1].severity === "error", "unknown CSS types are a hard error");
 check(cssSentinels.errors.length === 0, `CSS behavior sentinels pass: ${cssSentinels.errors.join(", ")}`);
 
-for (const rule of ["obsidianmd/platform", "obsidianmd/object-assign", "import/no-extraneous-dependencies", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
+for (const rule of [...Object.keys(SOURCE_HARD_RULES), "obsidianmd/platform", "obsidianmd/object-assign", "import/no-extraneous-dependencies", "@typescript-eslint/no-misused-promises", "@typescript-eslint/no-unsafe-call", "no-eval", "no-implied-eval", "@typescript-eslint/no-implied-eval",
   "@typescript-eslint/no-floating-promises", "depend/ban-dependencies", "no-unsanitized/method", "no-unsanitized/property",
   "eslint-comments/no-unlimited-disable", "eslint-comments/require-description", "eslint-comments/disable-enable-pair", "eslint-comments/no-restricted-disable", "<parse>"]) {
   check(isHardFinding({ ...finding, rule }), `${rule} is hard`);

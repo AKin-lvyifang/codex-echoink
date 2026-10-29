@@ -36,11 +36,7 @@ import {
   getActiveApiProviderModel,
   newId
 } from "../settings/settings";
-import {
-  isEchoInkPiReasoningEffortSupported,
-  normalizeEchoInkReasoningEffort,
-  resolveEchoInkPiReasoningCapabilities
-} from "../settings/pi-model-catalog";
+
 import {
   KnowledgeBaseInitializer,
   knowledgeMaintenanceBatchPrompt,
@@ -389,7 +385,7 @@ export class EchoInkKnowledgeSurfaceService {
     const file = this.plugin.app.vault.getAbstractFileByPath(source);
     if (!file) throw new Error(`源路径不存在：${source}`);
     if (this.plugin.app.vault.getAbstractFileByPath(target)) throw new Error(`目标已存在：${target}`);
-    const isFolder = file instanceof TFolder;
+
     const folderLinks = await captureFolderLinkRenames(this.plugin.app, source, target);
     const key = `${source}→${target}`;
     this.ownedRenames.add(key);

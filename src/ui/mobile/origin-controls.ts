@@ -1,3 +1,4 @@
+import { ownedEl } from "../owned-dom";
 import type { App } from "obsidian";
 
 /** Native controls for the mobile build of Home dialogs. Desktop keeps React. */
@@ -6,12 +7,12 @@ type ElementOptions = { cls?: string; text?: string; attr?: Record<string, strin
 type OriginSelectOption = { value: string; label: string; disabled?: boolean };
 export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   choices: readonly OriginSelectOption[], initialValue = "", _app?: Pick<App, "keymap" | "scope">) {
-  const element = parent.ownerDocument.createElement("select");
+  const element = ownedEl(parent.ownerDocument, "select");
   element.className = `echoink-origin-control ${options.cls ?? ""}`;
   element.dataset.slot = "select-trigger";
   for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, String(value));
   const appendOption = (value: string, label: string, disabled = false) => {
-    const option = parent.ownerDocument.createElement("option");
+    const option = ownedEl(parent.ownerDocument, "option");
     option.value = value; option.textContent = label; option.disabled = disabled;
     element.append(option);
   };
@@ -39,8 +40,8 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
 }
 export function createOriginSwitch(parent: HTMLElement, options: ElementOptions = {}) { return createOriginCheck(parent, options, "switch"); }
 export function createOriginPagination(parent: HTMLElement, page: number, pages: number, onChange: (page: number) => void): HTMLElement {
-  const nav = parent.ownerDocument.createElement("nav"); nav.className = "echoink-origin-pagination"; nav.dataset.slot = "pagination"; nav.setAttribute("aria-label", "分页"); parent.append(nav);
-  const list = parent.ownerDocument.createElement("ul"); list.dataset.slot = "pagination-content"; nav.append(list);
+  const nav = ownedEl(parent.ownerDocument, "nav"); nav.className = "echoink-origin-pagination"; nav.dataset.slot = "pagination"; nav.setAttribute("aria-label", "分页"); parent.append(nav);
+  const list = ownedEl(parent.ownerDocument, "ul"); list.dataset.slot = "pagination-content"; nav.append(list);
   const start = Math.max(2, Math.min(page - 1, pages - 3)), end = Math.min(pages - 1, start + 2);
   const items: (number | string)[] = pages <= 7 ? Array.from({ length: pages }, (_, i) => i + 1) : [1, ...(start > 2 ? start === 3 ? [2] : ["…"] : []), ...Array.from({ length: end - start + 1 }, (_, i) => start + i), ...(end < pages - 1 ? end === pages - 2 ? [pages - 1] : ["…"] : []), pages];
   const add = (label: string, target: number, disabled = false) => { const item = list.createEl("li"); item.dataset.slot = "pagination-item"; const button = createOriginButton(item, { text: label, attr: { "aria-label": label === "‹" ? "上一页" : label === "›" ? "下一页" : `第 ${target} 页` } }); button.dataset.slot = "pagination-link"; button.disabled = disabled; if (target === page && label !== "‹" && label !== "›") button.setAttribute("aria-current", "page"); button.onclick = () => onChange(target); };
@@ -49,7 +50,7 @@ export function createOriginPagination(parent: HTMLElement, page: number, pages:
   add("›", page + 1, page >= pages); return nav;
 }
 export function createOriginInput(parent: HTMLElement, options: { cls?: string; attr?: Record<string, string | number | boolean>; value?: string; type?: string } = {}): HTMLInputElement {
-  const input = parent.ownerDocument.createElement("input");
+  const input = ownedEl(parent.ownerDocument, "input");
   input.className = `echoink-origin-control ${options.cls ?? ""}`;
   input.type = String(options.attr?.type ?? options.type ?? "text");
   for (const [key, value] of Object.entries(options.attr ?? {})) input.setAttribute(key, String(value));
@@ -57,7 +58,7 @@ export function createOriginInput(parent: HTMLElement, options: { cls?: string; 
   parent.append(input); return input;
 }
 export function createOriginButton(parent: HTMLElement, options: ElementOptions = {}, onDispose?: () => void): HTMLButtonElement {
-  const button = parent.ownerDocument.createElement("button");
+  const button = ownedEl(parent.ownerDocument, "button");
   button.type = "button";
   button.dataset.slot = "button";
   button.className = `echoink-origin-control ${options.cls ?? "echoink-origin-button"}`;

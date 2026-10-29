@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import * as assert from "node:assert/strict";
 import { BUILTIN_SKILLS } from "../harness/resources/builtin-skills";
 import { disposeOriginControls } from "../settings/origin-controls";
@@ -20,6 +21,7 @@ import { handleKnowledgeCommandMenuKeyDown } from "../ui/knowledge-command-menu"
 
 /** Exercise real settings rows and their DOM search index without opening a Vault. */
 export async function runResourcePresentationDomTests(win: Window & typeof globalThis) {
+  installObsidianDom(win);
   const scheduler = prepareDocument(win);
   globalThis.ResizeObserver = win.ResizeObserver;
   globalThis.requestAnimationFrame = win.requestAnimationFrame;

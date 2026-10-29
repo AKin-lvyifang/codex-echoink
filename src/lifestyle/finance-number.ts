@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import type { NumberFlowLite } from "number-flow";
 import { money } from "./finance-domain";
 
@@ -38,7 +39,7 @@ export class FinanceNumbers {
     const final = `¥ ${money(cents)}`; parent.setAttribute("aria-label", final); parent.setAttribute("role", "img");
     const fallback = parent.createSpan({ cls: "echoink-finance-amount-static", text: final, attr: { "aria-hidden": "true" } });
     const win = parent.ownerDocument.defaultView;
-    if (typeof parent.ownerDocument.createElement !== "function" || !win?.customElements) return;
+    if (typeof win?.createEl !== "function" || !win.customElements) return;
     const record = this.mounted.get(key) ?? { parent, fallback, frame: 0, stop: () => {}, target: cents, value: 0, entrance: true, used: true, generation: 0 };
     this.stop(record); record.parent = parent; record.fallback = fallback; record.target = cents; record.used = true;
     const generation = ++record.generation; this.mounted.set(key, record);
@@ -65,7 +66,7 @@ export class FinanceNumbers {
             // Copy constructed sheets once so the same metric remains styled when
             // Obsidian moves its existing leaf into a different Document.
             if (flow.shadowRoot?.adoptedStyleSheets?.length) {
-              const style = flow.ownerDocument.createElement("style"); style.textContent = flow.shadowRoot.adoptedStyleSheets.flatMap(sheet => Array.from(sheet.cssRules).map(rule => rule.cssText)).join("\n");
+              const style = ownedEl(flow.ownerDocument, "style"); style.textContent = flow.shadowRoot.adoptedStyleSheets.flatMap(sheet => Array.from(sheet.cssRules).map(rule => rule.cssText)).join("\n");
               flow.shadowRoot.adoptedStyleSheets = []; flow.shadowRoot.appendChild(style);
             }
             const wrapper = parent.createSpan({ cls: "echoink-finance-amount", attr: { "aria-hidden": "true" } });

@@ -1,3 +1,4 @@
+import { ownedEl } from "../ui/owned-dom";
 import { setIcon } from "obsidian";
 import { applyDeleteButton } from "../settings/amicro-buttons";
 import type { SettingsLanguage } from "../settings/settings";
@@ -102,7 +103,7 @@ function renderRow(
   ownerDocument: Document,
   projects?: readonly TodoProject[]
 ): HTMLTableRowElement {
-  const row = ownerDocument.createElement("tr");
+  const row = ownedEl(ownerDocument, "tr");
   row.className = record.done ? "is-done" : "";
   row.dataset.todoId = record.id;
 

@@ -23,7 +23,7 @@ import { registerKnowledgePrivateRoot, knowledgePrivateRoot } from "../knowledge
 import { knowledgePathPolicy, knowledgePathRole, getKnowledgeFolderBindings, knowledgeRolePath, resolveKnowledgePath } from "../knowledge-base/root-paths";
 import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint, isKnowledgeMaintenanceSourcePath } from "../knowledge-base/raw-digest";
-import { rawDigestStateForRecord } from "../knowledge-base/digest-status";
+
 import { isBilingualWikiFolder, wikiFolderEnglishId } from "../knowledge-base/wiki-folder-names";
 import { knowledgeMayCreateCategoryDirectory } from "../knowledge-base/folder-organization";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
@@ -47,7 +47,6 @@ import type {
 } from "../harness/pi-native/vault-domain-service";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import {
-  PHASE3_MAINTENANCE_TRACKER_PATH,
   Phase3KnowledgeMaintenanceService,
   Phase3MaintenanceError,
   type Phase3MaintenanceFaultPoint,
@@ -75,7 +74,7 @@ const { createHash, randomUUID } = getDesktopCrypto();
 const { TextDecoder } = getDesktopUtil();
 
 const { constants: fsConstants } = getDesktopFs();
-const { lstat, mkdir, open, readFile, readdir, realpath } = getDesktopFsPromises();
+const { lstat, mkdir, open, readdir, realpath } = getDesktopFsPromises();
 const path = getDesktopPath();
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -1245,21 +1244,6 @@ async function ensurePrivateStateDirectory(
   return cursor;
 }
 
-
-async function writeNewFileWithReadback(
-  filePath: string,
-  bytes: Buffer
-): Promise<void> {
-  const handle = await open(filePath, "wx", 0o600);
-  try {
-    await handle.writeFile(bytes);
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  const readback = await readFile(filePath);
-  if (!readback.equals(bytes)) throw new Error("phase3_shadow_readback_failed");
-}
 
 interface ControlEnvelope {
   schemaVersion: 1;

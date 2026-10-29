@@ -1,6 +1,7 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import { openTestModals } from "obsidian";
+import { displayedTooltipsForTests, openTestModals, Platform } from "obsidian";
 import { DesktopAgentSettings, type DesktopAgentSettingsHost } from "../settings/agent-settings";
 import { AgentEditorController } from "../ui/codex-view/agent-editor";
 import type { AgentEditorSaveBaseline } from "../ui/codex-view/agent-editor-contract";
@@ -11,7 +12,10 @@ import { disposeOriginControls, type OriginSelectElement } from "../settings/ori
 
 export async function runAgentSettingsTests(): Promise<void> {
   const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://agent-settings.invalid" });
+  installObsidianDom(dom.window);
   const win = dom.window as any;
+  const previousDesktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
   win.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   const saved = new Map<string, PropertyDescriptor | undefined>();
   for (const key of ["window", "document", "navigator", "HTMLElement", "HTMLButtonElement", "HTMLInputElement", "HTMLTextAreaElement", "HTMLFormElement", "DocumentFragment", "Node", "Element", "Event", "CustomEvent", "MutationObserver", "ResizeObserver", "getComputedStyle"]) {
@@ -65,9 +69,7 @@ export async function runAgentSettingsTests(): Promise<void> {
     assert.equal(summaryLabel(), "负责 7 个模块");
     const builtInRow = root.querySelector<HTMLButtonElement>(".echoink-agent-settings-row")!;
     builtInRow.focus();
-    const tooltip = root.querySelector<HTMLElement>('[role="tooltip"]')!;
-    assert.equal(tooltip.hidden, false);
-    assert.equal(tooltip.textContent, "负责 日记、待办、财务、知识库、英文日记、PDF 精读、复盘");
+    assert.equal(displayedTooltipsForTests.get(builtInRow), "负责 日记、待办、财务、知识库、英文日记、PDF 精读、复盘", "focus requests the host-rendered ownership tooltip");
     builtInRow.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     assert.equal(root.querySelector('[role="tooltip"]'), null);
     builtInRow.click(); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true, "the ownership tooltip preserves row navigation");
@@ -147,6 +149,7 @@ export async function runAgentSettingsTests(): Promise<void> {
     assert.ok(redraws > 0);
     console.log("PASS agent-settings: real shared editor/cache, stable save baseline across entries/conflicts/redraws, seven owner controls and rollback, settings leave/suspend, save failure, sidebar compatibility, presets, real delete counts and callbacks");
   } finally {
+    Platform.isDesktopApp = previousDesktop;
     panel.dispose(); disposeOriginControls(document.body); dom.window.close();
     for (const [key, descriptor] of saved) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }

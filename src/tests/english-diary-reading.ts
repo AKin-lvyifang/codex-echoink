@@ -1,9 +1,11 @@
+import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { diaryReadingBody, markDiaryReadingBlock, renderDiaryReading } from "../english-diary/reading-renderer";
 import type { DiaryAlignment } from "../english-diary/types";
 
 /** Fixture HTML stands in for host rendering; this tests mapping, not Markdown parsing. */
 export async function runEnglishDiaryReadingTests(document: Document): Promise<void> {
+  installObsidianDom(document.defaultView);
   const fixture = (entries: Array<[string, string]>) => {
     const html = new Map(entries);
     return async (markdown: string, container: HTMLElement) => {

@@ -1,3 +1,4 @@
+import { installObsidianDom } from "./obsidian-dom";
 import { runMembershipWebsiteLinksTests } from "./membership-website-links";
 import * as assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import type { CapabilityAccess } from "../membership/types";
 import { createUnavailableAccountAdapter, type AccountActions, type AccountMembershipViewModel, type MembershipState } from "../settings/account-membership-model";
 
 export async function runAccountMembershipSubscriptionTests(win: Window & typeof globalThis): Promise<void> {
+  installObsidianDom(win);
   runMembershipWebsiteLinksTests();
   const css = readFileSync("src/styles/workspace-settings.css", "utf8");
   const declarations = (selector: string) => {
