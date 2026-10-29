@@ -204,9 +204,9 @@ const COMMENT_HARD_RULES = new Set(Object.keys(SOURCE_HARD_RULES).filter(rule =>
 const BASELINE_SOURCE = "eslint-plugin-obsidianmd production errors";
 const WARNING_BASELINE_SOURCE = "eslint-plugin-obsidianmd production warnings";
 const CSS_BASELINE_SOURCE = "stylelint-config-obsidianmd production warnings";
-export const CSS_HARD_RULES = ["selector-type-no-unknown"];
+export const CSS_HARD_RULES = ["selector-type-no-unknown", "declaration-no-important", "selector-pseudo-class-disallowed-list"];
 // Cleared browser-feature groups remain hard failures without weakening doiuse.
-export const CSS_HARD_FEATURES = ["css-clip-path", "multicolumn"];
+export const CSS_HARD_FEATURES = ["css-clip-path", "multicolumn", "css-display-contents"];
 export function isHardCssFeature(finding) {
   return finding.rule === "plugin/no-unsupported-browser-features"
     && CSS_HARD_FEATURES.some(feature => finding.message.includes(`feature "${feature}"`));
@@ -443,6 +443,8 @@ export {};`,
       source: 'import { Notice } from "obsidian"; new Notice("Open Settings"); export {};', expected: ["obsidianmd/ui/sentence-case"] },
     { name: "undefined global", file: sourcePath,
       source: "missingCommunityGlobal; export {};", expected: ["no-undef"] },
+    { name: "mobile excludes Node runtime globals", file: path.join(rootDir, "src/mobile/plugin.ts"),
+      source: "void Buffer; void process; void module; export {};", expected: ["no-undef"], minimumByRule: { "no-undef": 3 } },
     { name: "window timers", file: sourcePath,
       source: 'const timer = setTimeout(() => {}, 1); clearTimeout(timer); export {};',
       expected: ["obsidianmd/prefer-window-timers"] },
