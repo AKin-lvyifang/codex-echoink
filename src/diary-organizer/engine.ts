@@ -332,7 +332,7 @@ export class DiaryOrganizerEngine {
     if (source === null || diaryFingerprint(source) !== item.sourceFingerprint) throw new Error("原日记已变化，未写入");
     if (!updating) {
       const found = await this.find(item);
-      if (found) { item.written = found; item.status = "written"; item.writeIntent = false; await this.save(); return; }
+      if (found) { item.written = found; item.writtenAt ??= item.updatedAt; item.status = "written"; item.writeIntent = false; await this.save(); return; }
     }
     item.writeIntent = true;
     await this.save();
@@ -354,7 +354,7 @@ export class DiaryOrganizerEngine {
     const verified = await this.find(item);
     if (!verified || verified.id !== receipt.id || verified.version !== receipt.version) {
       item.status = "review"; item.reasons = ["写后核对未通过，请检查实际记录"];
-    } else { item.status = "written"; item.reasons = []; item.previousCandidate = undefined; }
+    } else { item.status = "written"; item.writtenAt = this.now(); item.reasons = []; item.previousCandidate = undefined; }
     item.writeIntent = false;
     item.updatedAt = this.now();
     item.revision++;
@@ -374,7 +374,7 @@ export class DiaryOrganizerEngine {
         if (item.written) {
           item.status = "review"; item.reasons = ["上次更新中断，请核对原记录后确认"];
         } else if (current) {
-          item.written = current; item.status = "written"; item.reasons = [];
+          item.written = current; item.writtenAt ??= item.updatedAt; item.status = "written"; item.reasons = [];
         } else item.status = "pending";
         item.writeIntent = false; item.revision++; changed = true;
       } else if (item.status === "written") {

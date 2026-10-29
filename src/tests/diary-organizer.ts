@@ -7,6 +7,7 @@ import { FinanceLedger, parseFinanceNote } from "../lifestyle/finance-ledger";
 import { LifestyleStoreCore, type FinanceEntry } from "../lifestyle/store-core";
 import { FakeVault } from "./lifestyle-finance-ledger";
 import type { App } from "obsidian";
+import { diaryHomeSummary, DIARY_HOME_RECENT_MS } from "../home/diary-organizer-summary";
 import type { DiaryCandidate, DiaryOrganizerPorts, DiaryOrganizerState, DiaryWrittenRecord } from "../diary-organizer/types";
 
 export async function runDiaryOrganizerTests() {
@@ -21,6 +22,13 @@ export async function runDiaryOrganizerTests() {
     check(validateDiaryCandidate({ ...base, ...patch } as DiaryCandidate, base.quote, categories).reasons.length > 0, "hard/auto condition fails");
   check(!validateDiaryCandidate({ ...base, quote: "替同事垫付了35元车费。" }, "替同事垫付了35元车费。", categories).ignore, "advance waits for review rather than disappearing");
   check(!validateDiaryCandidate({ ...base, quote: "我们吃饭共35元，AA，我那份还没算。", ownership: "uncertain" }, "我们吃饭共35元，AA，我那份还没算。", categories).ignore, "unknown AA share is review rather than a purchase plan");
+  for (const [quote, amountCents] of [["我和她吃饭，我付了120元", 12000], ["朋友请客，我付了停车费 20 元", 2000], ["同事付了午饭钱，我转给他 30 元", 3000]] as const) {
+    const result = validateDiaryCandidate({ ...base, quote, amountCents }, quote, categories);
+    check(!result.ignore && result.reasons.some(reason => reason.includes("核对这笔")), "regex/model conflict remains visible for review: " + quote);
+  }
+  check(validateDiaryCandidate({ ...base, quote: "朋友请客，他付了35元。", ownership: "other" }, "朋友请客，他付了35元。", categories).ignore, "model and regex agree on another person's spending");
+  check(validateDiaryCandidate({ ...base, quote: "打算明天买35元的咖啡。", occurred: false }, "打算明天买35元的咖啡。", categories).ignore, "model and regex agree on a future purchase");
+  check(!validateDiaryCandidate({ ...base, ownership: "other" }, base.quote, categories).ignore, "model-only rejection also remains reviewable");
   let now = new Date("2026-10-28T12:00:00").getTime(), enabled = true, pro = true, busy = false, calls = 0;
   let text = base.quote, path = "journal/2026-10-28.md", state: DiaryOrganizerState | null = null;
   let candidates: DiaryCandidate[] = [{ ...base }];
@@ -76,6 +84,28 @@ export async function runDiaryOrganizerTests() {
   const ignoredId = engine.getState().items[0].id; await engine.ignore(ignoredId);
   text = "无关段落。\n" + text; engine = new DiaryOrganizerEngine(ports); await engine.runOnce(); now += 3600000; await engine.runOnce();
   check(written.size === 0 && engine.getState().items[0].id === ignoredId && engine.getState().items[0].status === "ignored", "ignored identity is not resurrected after restart and insertion");
+
+  for (const [quote, amountCents] of [["我和她吃饭，我付了120元", 12000], ["朋友请客，我付了停车费 20 元", 2000], ["同事付了午饭钱，我转给他 30 元", 3000]] as const) {
+    state = null; written.clear(); text = quote; candidates = [{ ...base, quote, amountCents }];
+    engine = new DiaryOrganizerEngine(ports); await engine.runOnce(); now += 3600000; await engine.runOnce();
+    check(engine.getState().items[0].status === "review" && written.size === 0, "engine keeps personal-spending conflict out of silent ignore");
+  }
+  state = null; written.clear(); text = base.quote; candidates = [{ ...base }];
+  engine = new DiaryOrganizerEngine(ports); await engine.runOnce(); now += 3600000; await engine.runOnce();
+  const firstWriteAt = engine.getState().items[0].writtenAt;
+  check(firstWriteAt === now, "successful write has a durable timestamp");
+  check(diaryHomeSummary(engine.getState().items, now).writtenFinance === 1, "recent writes appear at home");
+  now += DIARY_HOME_RECENT_MS + 1;
+  text = "无关段落。\n" + text; await engine.runOnce(); now += 3600000; await engine.runOnce();
+  const historical = engine.getState().items[0];
+  check(historical.updatedAt === now && historical.writtenAt === firstWriteAt && !diaryHomeSummary([historical], now).items.length, "source rescans do not renew the seven-day window");
+  const review = { ...historical, id: "old-review", status: "review" as const };
+  const recent = { ...historical, id: "recent", writtenAt: now };
+  const recentTodo = { ...recent, id: "recent-todo", candidate: { type: "todo" as const, text: "task", quote: "task", confidence: "high" as const, occurred: true, ownership: "self" as const } };
+  const home = diaryHomeSummary([historical, review, recent, recentTodo, { ...recent, status: "undone" }, { ...recent, status: "ignored" }], now);
+  check(home.writtenFinance === 1 && home.writtenTodos === 1 && home.review === 1 && home.items.length === 3, "home includes recent writes and all outstanding reviews only");
+  const boundary = { ...recent, writtenAt: now - DIARY_HOME_RECENT_MS };
+  check(diaryHomeSummary([boundary], now).nextRefreshAt === now + 1 && diaryHomeSummary([boundary], now + 1).items.length === 0, "home expires a write at the seven-day boundary without waiting for a scan");
 
   const entry: FinanceEntry = { kind: base.kind, amountCents: base.amountCents, currency: base.currency, date: base.date, merchant: base.merchant, category: base.category, icon: "auto", source: "diary", sourceId: "extract-one", id: "diary-one", status: "completed", account: "", description: "拿铁咖啡一杯", note: "", journalPath: path };
   const imported = { ...entry, id: "wechat-one", source: "wechat" as const, sourceId: "wechat-raw", date: "2026-10-28 12:30:00" };

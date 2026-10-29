@@ -125,6 +125,8 @@ export interface DiaryItem {
   revision: number;
   createdAt: number;
   updatedAt: number;
+  /** Last verified write, unaffected by later scans or source-only changes. */
+  writtenAt?: number;
   sourceFingerprint: string;
   /** Preserved AI receipt; do not replace it when a user changes the target. */
   written?: DiaryWrittenRecord;

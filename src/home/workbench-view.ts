@@ -31,6 +31,7 @@ import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-up
 import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 import { renderVaultMemoryBanner } from "./vault-memory-banner";
 import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
+import { diaryHomeSummary } from "./diary-organizer-summary";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
@@ -308,6 +309,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const evening = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 18).getTime();
     if (evening > now) targets.push(evening);
     if (this.snapshot?.nextRefreshAt && this.snapshot.nextRefreshAt > now) targets.push(this.snapshot.nextRefreshAt);
+    const diaryRefreshAt = diaryHomeSummary(this.plugin.diaryOrganizer?.engine.getState().items ?? [], now).nextRefreshAt;
+    if (diaryRefreshAt && diaryRefreshAt > now) targets.push(diaryRefreshAt);
     if (this.entries?.some(entry => entry.status === "active" && !this.maintenance.has(entry.conversationId) && taskState(entry) === "running")) targets.push(now + 60_000);
     this.clockTimer = win?.setTimeout(() => { this.clockTimer = null; this.scheduleRefresh(0); }, Math.max(1, Math.min(...targets) - now + 25)) ?? null;
   }

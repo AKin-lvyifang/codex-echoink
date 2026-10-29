@@ -30,10 +30,10 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
   const after = position >= 0 ? content.slice(position + quote.length, position + quote.length + 100).split(/[。！？!?\n]/u)[0] : "";
   const context = `${before}${quote}${after}`;
   const advance = /(?:垫付|代付|帮.{0,8}付|替.{0,8}付)/u.test(context);
-  const other = !advance && (candidate.ownership === "other" || /(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
+  const other = !advance && (/(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
     || /(?:别人请客|朋友请客|同事请客|他请客|她请客|不用我付|没花我的钱)/u.test(context));
   const planned = /(?:打算|计划|准备|考虑|想要|希望|要不要|如果|预计|预算).{0,18}(?:买|购|消费|花|付|订)|(?:还没|尚未|没有|未|没)(?:买|付款|支付|消费)|明天(?:去)?买/u.test(context);
-  if (other) reasons.push("这是他人的收支或请客");
+  if (other) reasons.push(candidate.ownership === "other" ? "这是他人的收支或请客" : "上下文提到他人付款或请客，请核对这笔是否由你支付");
   if (candidate.type === "finance") {
     if (!["expense", "income", "refund", "transfer"].includes(candidate.kind)) reasons.push("收支类型无效");
     if (!Number.isSafeInteger(candidate.amountCents) || candidate.amountCents <= 0) reasons.push("金额必须是正整数分");
@@ -42,7 +42,7 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
     if (candidate.currency !== "CNY") reasons.push("外币收支需核对");
     if (typeof candidate.merchant !== "string" || !candidate.merchant.trim()) reasons.push("交易对象不明确");
     if (!finance.categories.some(category => category.name === candidate.category && (!category.kind || category.kind === candidate.kind))) reasons.push("分类未对应到已启用分类");
-    if (planned) reasons.push("原文描述的是计划或未发生消费");
+    if (planned) reasons.push(candidate.occurred === false ? "原文描述的是计划或未发生消费" : "上下文含购买计划，请核对这笔是否已经发生");
     if (/(?:垫付|代付|帮.{0,8}付|替.{0,8}付|报销|借给|借了|借款|一百多|几十|几百|大约|大概|左右|差不多|多块|多元|不到|至少|美元|美金|欧元|日元|港币|外币|美刀)/u.test(context)) reasons.push("金额、币种或垫付关系需核对");
     const explicitOwnShare = /(?:我|自己|本人|我的).{0,8}(?:付|出|那份|承担|份额|分摊)/u.test(context);
     if (candidate.kind === "transfer" || candidate.kind === "refund" || /(?:转账|退款|退货|退回|收回垫款)/u.test(context)
@@ -55,7 +55,8 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
     if (candidate.dueDate != null && !validDiaryDate(candidate.dueDate)) reasons.push("待办日期无效");
     if (/(?:希望有一天|真希望|要是能|梦想是|感慨|觉得人生)/u.test(quote)) reasons.push("原文可能是愿望或感想");
   }
-  return { reasons: [...new Set(reasons)], ignore: other || (candidate.type === "finance" && planned) };
+  return { reasons: [...new Set(reasons)], ignore: other && candidate.ownership === "other"
+    || candidate.type === "finance" && planned && candidate.occurred === false };
 }
 
 export function financeDuplicateCandidates(candidate: DiaryFinanceCandidate, entries: DiaryFinanceSnapshotEntry[]): DiaryFinanceSnapshotEntry[] {

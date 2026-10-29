@@ -1,19 +1,22 @@
-import { Notice } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { DiaryActionOptions, DiaryActionResult, DiaryItem } from "../diary-organizer/types";
 import { createOriginButton, createOriginInput, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
+import { diaryHomeSummary } from "./diary-organizer-summary";
+
+let nextDiaryListId = 0;
 
 /** One quiet expandable result list, composed from existing workbench rows and controls. */
 export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForObsidianPlugin): void {
   const service = plugin.diaryOrganizer;
   if (!service) { host.empty(); return; }
-  const state = service.engine.getState(), summary = service.engine.getSummary();
+  const state = service.engine.getState(), summary = diaryHomeSummary(state.items);
   const enabled = plugin.settings.diaryOrganizerEnabled;
   const hasDiary = service.hasJournals;
-  const signature = JSON.stringify([state.items, enabled, plugin.settings.diaryOrganizerPromptDismissed, hasDiary, plugin.settings.settingsLanguage]);
+  const signature = JSON.stringify([state.items, summary.items.map(item => item.id), enabled, plugin.settings.diaryOrganizerPromptDismissed, hasDiary, plugin.settings.settingsLanguage]);
   if (host.dataset.diarySignature === signature) return;
-  const expanded = host.querySelector<HTMLDetailsElement>("details")?.open;
+  const expanded = host.querySelector<HTMLElement>(".diary-organizer-results")?.dataset.expanded === "true";
   disposeOriginControls(host); host.empty(); host.dataset.diarySignature = signature;
   const zh = plugin.settings.settingsLanguage !== "en", t = (a: string, b: string) => zh ? a : b;
   const button = (parent: HTMLElement, text: string, action: (button: HTMLButtonElement) => Promise<unknown>, primary = false) => {
@@ -38,12 +41,25 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
     button(actions, t("开启", "Enable"), () => service.setEnabled(true), true);
     return;
   }
-  const visible = summary.items.filter(item => item.status === "written" || item.status === "review");
+  const visible = summary.items;
   if (!visible.length) return;
-  const details = host.createEl("details", { cls: "diary-organizer-results" }); details.open = expanded ?? false;
-  details.createEl("summary", { text: t(`日记里记了 ${summary.writtenFinance} 笔账、${summary.writtenTodos} 个待办${summary.review ? ` · ${summary.review} 条待你看一眼` : ""}`,
-    `From journals: ${summary.writtenFinance} transactions, ${summary.writtenTodos} to-dos${summary.review ? ` · ${summary.review} to review` : ""}`) });
-  const list = details.createDiv({ cls: "diary-organizer-list" });
+  const section = host.createEl("section", { cls: "wb-section diary-organizer-results" });
+  const heading = section.createDiv({ cls: "wb-section-heading" });
+  const writtenCopy = [summary.writtenFinance ? t(`${summary.writtenFinance} 笔账`, `${summary.writtenFinance} transactions`) : "",
+    summary.writtenTodos ? t(`${summary.writtenTodos} 个待办`, `${summary.writtenTodos} to-dos`) : ""].filter(Boolean).join(t("、", ", "));
+  heading.createEl("h2", { text: [writtenCopy ? t(`近7天记了 ${writtenCopy}`, `From journals in the last 7 days: ${writtenCopy}`) : "",
+    summary.review ? t(`${summary.review} 条待你看一眼`, `${summary.review} to review`) : ""].filter(Boolean).join(" · ") });
+  const toggle = createOriginButton(heading, { cls: "wb-button is-tertiary", attr: { "aria-label": t("展开或收起日记整理记录", "Expand or collapse journal results") } });
+  applyAmicroButton(toggle, { variant: "tertiary" });
+  const listId = host.dataset.diaryListId ??= `echoink-diary-list-${++nextDiaryListId}`;
+  const list = section.createDiv({ cls: "wb-rows diary-organizer-list", attr: { id: listId } });
+  const setExpanded = (value: boolean) => {
+    section.dataset.expanded = String(value); section.toggleClass("is-collapsed", !value);
+    list.hidden = !value; toggle.textContent = value ? t("收起", "Collapse") : t("展开", "Expand");
+    toggle.setAttribute("aria-expanded", String(value)); toggle.setAttribute("aria-controls", listId);
+  };
+  setExpanded(expanded);
+  toggle.onclick = () => setExpanded(section.dataset.expanded !== "true");
   const runAction = async (row: HTMLElement, item: DiaryItem, action: "confirm" | "ignore" | "undo", options: DiaryActionOptions = {}): Promise<void> => {
     const result: DiaryActionResult = action === "ignore" ? await service.engine.ignore(item.id)
       : action === "undo" ? await service.engine.undo(item.id, options) : await service.engine.confirm(item.id, options);
@@ -62,7 +78,8 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
   };
   for (const item of [...visible].sort((a, b) => b.updatedAt - a.updatedAt)) {
     const candidate = item.candidate;
-    const row = list.createDiv({ cls: "diary-organizer-row", attr: { "data-diary-item": item.id } });
+    const row = list.createDiv({ cls: "wb-row diary-organizer-row", attr: { "data-diary-item": item.id } });
+    setIcon(row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }), candidate.type === "todo" ? "list-todo" : "wallet");
     const copy = row.createDiv({ cls: "wb-grow" });
     copy.createDiv({ text: candidate.type === "todo" ? candidate.text : `${candidate.merchant || t("收支", "Transaction")} · ${candidate.currency} ${(candidate.amountCents / 100).toFixed(2)}` });
     const document = state.documents.find(document => document.id === item.documentId);

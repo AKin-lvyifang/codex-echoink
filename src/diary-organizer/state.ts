@@ -13,5 +13,11 @@ export function readDiaryOrganizerState(raw: unknown): DiaryOrganizerState {
     || value.documents.some(doc => !doc || typeof doc.id !== "string" || typeof doc.path !== "string" || typeof doc.fingerprint !== "string")
     || value.items.some(item => !item || typeof item.id !== "string" || typeof item.documentId !== "string" || !item.candidate
       || !["pending", "review", "written", "ignored", "undone"].includes(item.status))) throw new Error("日记整理进度损坏，已保留原文件");
-  return structuredClone(value);
+  const state = structuredClone(value);
+  for (const item of state.items) {
+    // Older receipts have only updatedAt. Freeze it once so future scans do not
+    // make historical writes appear new on the home screen.
+    if (item.written && item.writtenAt === undefined) item.writtenAt = item.updatedAt;
+  }
+  return state;
 }
