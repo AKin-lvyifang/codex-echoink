@@ -63,10 +63,10 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
   for (const role of KNOWLEDGE_ROOT_ROLES) {
     const saved = input.roles?.[role];
     if (!saved) continue;
-    const paths = (items: unknown): string[] => Array.isArray(items) ? [...new Set(items.filter((item): item is string => typeof item === "string").map((item) => {
+    const paths = (items: unknown): string[] => typeof items === "string" ? paths([items]) : Array.isArray(items) ? [...new Set(items.filter((item): item is string => typeof item === "string").map((item) => {
       try { return normalizeKnowledgeDirectory(item); } catch { return ""; }
     }).filter(Boolean))] : [];
-    const readPaths = paths(saved.readPaths);
+    const readPaths = paths(saved.readPaths ?? saved.writePath);
     result.roles[role] = { enabled: saved.enabled === true, searchEnabled: saved.searchEnabled !== false, readPaths,
       writePath: paths([saved.writePath])[0] ?? null,
       allowedSubdirectories: paths(saved.allowedSubdirectories), allowedSubdirectoryRoots: paths(Array.isArray(saved.allowedSubdirectoryRoots) ? saved.allowedSubdirectoryRoots : saved.readPaths).filter(directory => readPaths.includes(directory)),
@@ -89,11 +89,11 @@ export function knowledgeCollectionDirectory(config: KnowledgeFolderBindings | n
 export function knowledgeWikiFolderSelectionIssues(config: KnowledgeFolderBindings): string[] {
   const wiki = config.roles.wiki;
   if (!wiki.enabled) return [];
-  if (wiki.readPaths.length !== 1) return ["知识成果：请选择一个一级文件夹"];
+  if (wiki.readPaths.length !== 1) return ["知识成果：请选择一个文件夹"];
   try {
     const selected = normalizeKnowledgeDirectory(wiki.readPaths[0]);
-    if (selected !== wiki.readPaths[0] || selected.includes("/")) return ["知识成果：请选择一个一级文件夹"];
-  } catch { return ["知识成果：请选择一个一级文件夹"]; }
+    if (selected !== wiki.readPaths[0]) return ["知识成果：请选择一个文件夹"];
+  } catch { return ["知识成果：请选择一个文件夹"]; }
   return [];
 }
 
@@ -162,6 +162,7 @@ export function migrateKnowledgeFolderBindings(directories: readonly string[], m
 
 /** Correct exact legacy default paths using observed folders only; custom destinations remain literal. */
 export function preferExistingBilingualKnowledgeDefaults(config: KnowledgeFolderBindings, directories: readonly string[]): KnowledgeFolderBindings {
+  if (config.configured) return config;
   const next = structuredClone(config);
   let changed = false;
   for (const role of KNOWLEDGE_ROOT_ROLES) {

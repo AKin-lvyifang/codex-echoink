@@ -7,8 +7,25 @@ import { generateConversationTitle } from "../plugin/conversation-title";
 import { workbenchResultType } from "../home/workbench-result";
 import { WorkbenchStarters } from "../home/workbench-starters";
 import type { ChatMessage } from "../settings/settings";
+import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 
 export async function runWorkbenchHomeRefreshTests(): Promise<void> {
+  const blank = structuredClone(DEFAULT_SETTINGS);
+  blank.sessions = [{ id: "empty", title: "空会话", createdAt: 1, updatedAt: 1, cwd: "/fixture", messages: [] }];
+  assert.equal(normalizeSettingsData(blank).settings.workbenchOnboardingDismissed, false, "an empty conversation is not onboarding completion");
+  blank.sessions[0].messages.push({ id: "user", role: "user", text: "你好", createdAt: 1 });
+  assert.equal(normalizeSettingsData(blank).settings.workbenchOnboardingDismissed, true, "legacy user messages migrate to a permanent flag");
+  blank.sessions = []; blank.workbenchOnboardingDismissed = true;
+  assert.equal(normalizeSettingsData(blank).settings.workbenchOnboardingDismissed, true, "deleting all conversations does not restore onboarding");
+  assert.equal(normalizeSettingsData({}).settings.knowledgeBase.initialized, false);
+  blank.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  blank.knowledgeBase.folderBindings.roles.raw.readPaths = ["Sources"];
+  assert.equal(normalizeSettingsData(blank).settings.knowledgeBase.initialized, false, "first-install scanned directories are not a saved initialization");
+  delete blank.knowledgeBase.initialized;
+  assert.equal(normalizeSettingsData(blank).settings.knowledgeBase.initialized, true, "bound legacy directories complete initialization");
+  blank.knowledgeBase.folderBindings = null; blank.knowledgeBase.initialized = true;
+  assert.equal(normalizeSettingsData(blank).settings.knowledgeBase.initialized, true, "a dismissed reminder stays dismissed without directory bindings");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "echoink-home-refresh-"));
   try {
     const catalog = new FileConversationCatalog({ storageRootPath: root, vaultId: "refresh-test" }); await catalog.initialize();
@@ -40,6 +57,8 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     const parent = document.body.createDiv(); let actions = 0, pro = false;
     const deck = new WorkbenchStarters(parent, { english: () => false, hasPro: () => pro, avatar: () => "sol", act: async () => { actions++; }, upgrade: async () => {}, error: error => { throw error; } });
     assert.equal(parent.querySelectorAll(".wb-starter-card").length, 5);
+    assert.match(parent.querySelector(".wb-starter-card.is-current h3")!.textContent!, /知识库/);
+    assert.match(parent.querySelector('[data-starter="1"] h3')!.textContent!, /头像/);
     const track = parent.querySelector<HTMLElement>(".wb-deck")!;
     let captures = 0;
     track.setPointerCapture = () => { captures++; };
@@ -77,6 +96,42 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     const ids = Array.from(parent.querySelectorAll("[id]")).map(node => node.id); assert.equal(new Set(ids).size, ids.length, "nested SVG IDs are unique");
     deck.dispose();
     parent.remove();
+    await assertStarterRotation();
     console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, per-turn results, bounded carousel and PRO");
   } finally { await fs.rm(root, { recursive: true, force: true }); }
+}
+
+async function assertStarterRotation(): Promise<void> {
+  const win = document.defaultView!, originalSet = win.setTimeout, originalClear = win.clearTimeout;
+  const timers = new Map<number, { action: () => void; at: number }>();
+  let now = 0, sequence = 0;
+  win.setTimeout = ((action: () => void, delay: number) => { const id = ++sequence; timers.set(id, { action, at: now + delay }); return id; }) as typeof win.setTimeout;
+  win.clearTimeout = (id: number) => { timers.delete(id); };
+  const advance = (duration: number) => {
+    const end = now + duration;
+    while (true) {
+      const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      now = next[1].at; timers.delete(next[0]); next[1].action();
+    }
+    now = end;
+  };
+  const parent = document.body.createDiv();
+  let deck: WorkbenchStarters | undefined;
+  try {
+    deck = new WorkbenchStarters(parent, { english: () => false, hasPro: () => true, avatar: () => "sol", act: async () => {}, upgrade: async () => {}, error: error => { throw error; } });
+    const current = () => parent.querySelector<HTMLElement>(".wb-starter-card.is-current")?.dataset.starter;
+    advance(4_999); assert.equal(current(), "0"); advance(1); assert.equal(current(), "1");
+    advance(30_000); assert.equal(current(), "0", "rotation wraps after the final card");
+    deck.element.dispatchEvent(new MouseEvent("mouseenter")); advance(10_000); assert.equal(current(), "0", "hovering the whole carousel pauses rotation");
+    parent.querySelector<HTMLButtonElement>(".wb-deck-arrow.is-next")!.click(); await Promise.resolve(); await Promise.resolve();
+    assert.equal(current(), "1"); advance(10_000); assert.equal(current(), "1", "manual controls do not resume rotation while hovered");
+    deck.element.dispatchEvent(new MouseEvent("mouseleave")); advance(4_000);
+    parent.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button")[3].click(); await Promise.resolve(); await Promise.resolve();
+    advance(4_999); assert.equal(current(), "3"); advance(1); assert.equal(current(), "4", "manual dot selection starts a full new five-second interval");
+    deck.setActive(false); advance(10_000); assert.equal(current(), "4");
+    deck.setActive(true); advance(5_000); assert.equal(current(), "5");
+    deck.dispose(); deck = undefined;
+    assert.equal(timers.size, 0, "disposing the carousel releases its timer");
+  } finally { deck?.dispose(); parent.remove(); win.setTimeout = originalSet; win.clearTimeout = originalClear; }
 }

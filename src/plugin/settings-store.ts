@@ -119,9 +119,9 @@ export class EchoInkSettingsStore {
       console.warn("EchoInk Agent identity migration could not complete; it will retry on the next load.", error);
     }
     let bindingsMigrated = false;
+    const legacyKnowledgePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
     if (!this.plugin.settings.knowledgeBase.folderBindings) {
-      const mobilePaths = (data as { mobileUi?: { knowledgePaths?: Partial<Record<"raw" | "wiki" | "inbox", string>> } } | null)?.mobileUi?.knowledgePaths;
-      this.plugin.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(knowledgeRootDirectories(this.plugin.getVaultPath()), mobilePaths);
+      this.plugin.settings.knowledgeBase.folderBindings = migrateKnowledgeFolderBindings(knowledgeRootDirectories(this.plugin.getVaultPath()), legacyKnowledgePaths);
       bindingsMigrated = true;
     } else {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
@@ -131,12 +131,16 @@ export class EchoInkSettingsStore {
         bindingsMigrated = true;
       }
     }
+    const knowledgeInitialized = this.plugin.settings.knowledgeBase.initialized !== true
+      && Object.values(legacyKnowledgePaths ?? {}).some(directory => typeof directory === "string" && directory.trim())
+      && Object.values(this.plugin.settings.knowledgeBase.folderBindings?.roles ?? {}).some(binding => binding.readPaths.length > 0 || !!binding.writePath);
+    if (knowledgeInitialized) this.plugin.settings.knowledgeBase.initialized = true;
     // Registered before local runtimes and feature controllers are constructed; reloads read live settings.
     registerKnowledgeFolderBindings(this.plugin.getVaultPath(), () => this.plugin.settings.knowledgeBase.folderBindings, DESKTOP_KNOWLEDGE_ROOT_ROLES);
     this.settingsConflictBackupPending = false;
     this.resourceMutationRecoveryError = null;
     const knowledgeStatusRecovered = await this.recoverKnowledgeBaseLintStatus();
-    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated || agentsMigrated) {
+    if (normalized.changed || knowledgeStatusRecovered || bindingsMigrated || agentsMigrated || knowledgeInitialized) {
       await this.saveSettings(true, {
         flushConversationStore: false
       });

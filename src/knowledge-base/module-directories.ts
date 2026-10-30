@@ -32,8 +32,10 @@ export function prepareKnowledgeModuleDirectories(settings: KnowledgeModuleSetti
       const choice = choices[key];
       const role = paths[roleKey] && (choice === undefined || choice === paths[pathKey] || choice === previous[pathKey] || choice === settings.englishDiary[storedKey]);
       modes[key] = role ? "role" : "custom";
-      if (role && (!bindings?.roles.outputs.enabled || !bindings.roles.outputs.writePath || !bindings.roles.outputs.readPaths.includes(bindings.roles.outputs.writePath))) {
-        issues.push(`${knowledgeModuleLabels[key]}：请先绑定输出目录。`); continue;
+      if (choice === "" || role && (!bindings?.roles.outputs.enabled || !bindings.roles.outputs.writePath || !bindings.roles.outputs.readPaths.includes(bindings.roles.outputs.writePath))) {
+        // Optional locations can be skipped without changing the module's saved settings.
+        modes[key] = "custom";
+        directories[key] = ""; continue;
       }
       directories[key] = role ? paths[pathKey] : choice ?? paths[pathKey];
     }

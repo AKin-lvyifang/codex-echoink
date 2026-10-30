@@ -121,9 +121,9 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(saveCalls, 2);
     const beforeInitialization = JSON.stringify(saved);
     section.open("initialize"); button("使用现有文件夹").click(); await flush();
-    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields input[aria-label^="初始化"]').length, 9, "initialization uses the current four purposes and five module locations");
+    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields .echoink-folder-picker').length, 9, "initialization uses searchable folder choices for the four purposes and five module locations");
     for (const label of ["初始化复盘输出", "初始化英文稿", "初始化表达库", "初始化原 PDF"]) {
-      assert.equal(host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!.disabled, true, "disabled modules keep their displayed values without permitting edits");
+      assert.equal(host.querySelector<HTMLButtonElement>(`[role="combobox"][aria-label="${label}"]`)!.disabled, true, "disabled modules keep their displayed values without permitting edits");
     }
     assert(previewCalls > 0); assert.equal(applyCalls, 0, "rendering and previewing cannot apply directory changes");
     assert.equal(JSON.stringify(saved), beforeInitialization);
@@ -135,6 +135,14 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     applyFails = false; button("重新核对").click(); await flush(); button("确认初始化").click(); await flush();
     assert.equal(applyCalls, 2); assert.equal(section.isDetail, false);
     assert.equal(saved.roles.work.writePath, "工作兼容"); assert.equal(saved.roles.archive.writePath, "归档兼容");
+    section.open("initialize"); button("帮我搭建").click(); await flush();
+    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields [role="combobox"]').length, 9, "each location initially has one selector, including pending new folders");
+    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields input').length, 0, "new-folder names do not leave permanent input rows");
+    const applyCount = applyCalls;
+    let left = false; section.requestLeave(() => { left = true; draw(); });
+    assert(left && !section.hasDraft && !section.isDetail, "return immediately discards the unconfirmed plan");
+    assert.equal(applyCalls, applyCount, "discarding a plan cannot create folders or apply bindings");
+    assert(!host.textContent?.includes("放弃修改"));
     await runKnowledgeFolderActionsTests(host, dom.win);
     section.dispose(); disposeOriginControls(host); host.empty();
     const notes = new Map([["wiki/A.md", '---\naliases: [Alpha]\nprivate: frontmatter-private\n---\n# A\nB 帮助理解原句。<!-- echoink-source: {"path":"raw/private-source.md"} -->\n<!-- echoink-source: {"revision":"internal-revision"} -->\n下一行内容。'], ["wiki/B.md", "---\naliases: [Beta]\n---\n# B"]]);

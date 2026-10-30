@@ -98,6 +98,8 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
 export class EchoInkWorkbenchView extends ItemView {
   private weatherStage?: WorkbenchWeatherStage;
   private starters?: WorkbenchStarters;
+  private onboardingHistoryReady = false;
+  private readonly onboardingChecks = new Map<string, string>();
   private navObserver?: ResizeObserver;
   private navFrame?: number;
   private overflowModules: typeof WORKBENCH_NAVIGATION[number][] = [];
@@ -163,7 +165,10 @@ export class EchoInkWorkbenchView extends ItemView {
     this.foreground = new ForegroundView(this, active => this.foregroundChanged(active));
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
-    this.unsubscribers.push(service.subscribe({ refresh: () => this.scheduleRefresh(), clearAcceptedDraft() {}, isTaskVisible: () => false }));
+    this.unsubscribers.push(service.subscribe({ refresh: () => {
+      if (this.plugin.settings.workbenchOnboardingDismissed) this.renderStarters();
+      this.scheduleRefresh();
+    }, clearAcceptedDraft() {}, isTaskVisible: () => false }));
     this.registerDomEvent(this.contentEl, "keydown", event => this.handleKeys(event));
     this.registerDomEvent(this.contentEl, "input", event => {
       if ((event.target as HTMLElement).dataset.wb === "search-input" && !isComposingInput(event)) this.scheduleSearch();
@@ -251,6 +256,8 @@ export class EchoInkWorkbenchView extends ItemView {
         this.entries = tasks.value;
         this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries);
         this.taskError = "";
+        await this.syncOnboardingHistory(version);
+        if (!this.active() || version !== this.refreshVersion) return;
       }
       else this.taskError = message(tasks.reason);
       if (snapshot.status === "fulfilled") { this.snapshot = snapshot.value; this.dataError = ""; }
@@ -353,6 +360,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "starters" } });
+    page.createDiv({ attr: { "data-wb": "knowledge-reminder", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
@@ -410,21 +418,67 @@ export class EchoInkWorkbenchView extends ItemView {
     for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${(module.id === "experts" || isProWorkbenchModule(module.id)) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
     const box = this.field("module-more").getBoundingClientRect(); menu.showAtPosition({ x: box.left, y: box.bottom });
   }
+  private async syncOnboardingHistory(version: number): Promise<void> {
+    const settings = this.plugin.settings;
+    const dismiss = async () => {
+      this.onboardingHistoryReady = true;
+      if (settings.workbenchOnboardingDismissed) return;
+      settings.workbenchOnboardingDismissed = true;
+      await this.plugin.saveSettings(true, { flushConversationStore: false }).catch(() => undefined);
+    };
+    if (settings.workbenchOnboardingDismissed) { this.onboardingHistoryReady = true; return; }
+    if (settings.sessions.some(session => session.messages.some(message => message.role === "user"))) { await dismiss(); return; }
+    const candidates = new Map<string, string>();
+    for (const session of settings.sessions) if (!session.id.startsWith("knowledge-linking-")) candidates.set(session.id, `${session.piSessionId ?? ""}:${session.updatedAt}`);
+    for (const entry of this.entries ?? []) if (isUserTask(entry)) candidates.set(entry.conversationId, `${entry.piSessionId}:${entry.updatedAt}`);
+    const unread = [...candidates].filter(([id, revision]) => this.onboardingChecks.get(id) !== revision);
+    let failed = false;
+    for (let offset = 0; offset < unread.length; offset += 4) {
+      const batch = unread.slice(offset, offset + 4);
+      const results = await Promise.allSettled(batch.map(([id]) => this.plugin.readPiConversationProjection(id)));
+      if (!this.active() || version !== this.refreshVersion) return;
+      if (results.some(result => result.status === "fulfilled" && result.value.messages.some(message => message.role === "user"))) { await dismiss(); return; }
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") this.onboardingChecks.set(...batch[index]); else failed = true;
+      });
+    }
+    this.onboardingHistoryReady = !failed;
+  }
   private renderStarters(): void {
-    const show = this.entries !== null && !this.taskError && !this.entries.some(isUserTask);
+    const show = this.entries !== null && !this.taskError && this.onboardingHistoryReady && !this.plugin.settings.workbenchOnboardingDismissed;
     const host = this.field("starters"); host.hidden = !show;
     if (!show) { this.starters?.dispose(); this.starters = undefined; return; }
     if (!this.starters) this.starters = new WorkbenchStarters(host, {
       english: () => this.language === "en", hasPro: () => workbenchHasPro(this.plugin),
       avatar: () => { const avatar = this.plugin.settings.agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.avatar; return avatar?.kind === "preset" ? avatar.presetId : "sol"; },
       act: async index => {
-        if (index < 3) return this.plugin.openWorkbenchSetup((["agent", "knowledge", "appearance"] as const)[index]);
+        if (index < 3) return this.plugin.openWorkbenchSetup((["knowledge", "agent", "appearance"] as const)[index]);
         if (index === 3 || index === 4) return this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, index === 3
           ? this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first.") : this.t("带我精读 @", "Read closely @"));
         return this.openModule(index === 5 ? "english-diary" : "pdf-reading");
       }, upgrade: () => this.plugin.openEchoInkAccountSettings("benefits"), error: error => new Notice(message(error))
     });
     else this.starters.update();
+    if (this.lockedModule) this.starters.setActive(false);
+  }
+  private renderKnowledgeReminder(): void {
+    const host = this.field("knowledge-reminder"), initialized = this.plugin.settings.knowledgeBase?.initialized === true;
+    host.hidden = initialized;
+    if (initialized) { this.disposeControls(host); host.empty(); delete host.dataset.signature; return; }
+    if (host.dataset.signature === this.language) return;
+    this.disposeControls(host); host.empty(); host.dataset.signature = this.language;
+    const row = host.createDiv({ cls: "wb-knowledge-reminder" });
+    row.createSpan({ cls: "wb-grow", text: this.t("还没设置知识库", "Knowledge base not set up") });
+    this.button(row, this.t("去初始化", "Set up"), "knowledge-reminder-settings", () => this.plugin.openWorkbenchSetup("knowledge"), "secondary", "arrow-right").classList.add("is-small");
+    this.button(row, this.t("关闭知识库提醒", "Dismiss knowledge base reminder"), "knowledge-reminder-dismiss", async () => {
+      if (this.busy.has("knowledge-reminder-dismiss")) return;
+      await this.runAction("knowledge-reminder-dismiss", async () => {
+        this.plugin.settings.knowledgeBase.initialized = true;
+        try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
+        catch (error) { this.plugin.settings.knowledgeBase.initialized = false; throw error; }
+        this.plugin.notifyHomeSurfacesChanged();
+      });
+    }, "icon", "x");
   }
 
   private async openModule(id: typeof WORKBENCH_NAVIGATION[number]["id"]): Promise<void> {
@@ -485,6 +539,7 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     this.scheduleNav();
     this.renderStarters();
+    this.renderKnowledgeReminder();
     this.renderStatus();
     renderDiaryOrganizerBanner(this.field("diary-organizer"), this.plugin);
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {

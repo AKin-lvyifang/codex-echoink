@@ -47,6 +47,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
   let projectionsInFlight = 0, maxProjectionConcurrency = 0;
   let pro = true;
   const projectionReads = new Map<string, number>(), projectionText = new Map<string, string>(), failedProjections = new Set<string>();
+  const projectedUsers = new Set<string>(), savedSettings: unknown[] = [];
   let releaseResume: (() => void) | undefined;
   let upgradeTaskId = "maintenance";
   const pending = new Map([[waiting.conversationId, question]]);
@@ -72,7 +73,10 @@ export async function runWorkbenchUiTests(): Promise<void> {
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
       workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
-    settings: { expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    settings: { expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    async saveSettings() { savedSettings.push(structuredClone(host.settings)); },
+    notifyHomeSurfacesChanged() {},
+    async openWorkbenchSetup(target: string) { calls.push(["setup", target]); },
     accountService: { checkCapability: () => pro, checkInSession: () => null, subscribe: () => () => {} },
     getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
     getKnowledgeActivitySource: () => activitySource,
@@ -88,7 +92,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 0));
         if (failedProjections.has(taskId)) throw new Error("结果文件读取失败");
         const text = projectionText.get(taskId) ?? "## 真正结果\n已整理 **3** 篇笔记。";
-        return { catalog: tasks.find(task => task.conversationId === taskId)!, activeLeafId: null, diagnostics: [], drafts: [], messages: text ? [{ id: "answer", role: "assistant", text }] : [] };
+        return { catalog: tasks.find(task => task.conversationId === taskId)!, activeLeafId: null, diagnostics: [], drafts: [], messages: [...(projectedUsers.has(taskId) ? [{ id: "user", role: "user", text: "真实问题" }] : []), ...(text ? [{ id: "answer", role: "assistant", text }] : [])] };
       } finally { projectionsInFlight--; }
     },
     async setPiConversationTaskMetadata() { calls.push(["metadata-write"]); throw new Error("overview must not mark results read"); },
@@ -137,6 +141,33 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="loading"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
+    assert.ok(content.querySelector(".wb-starters"));
+    assert.match(content.querySelector(".wb-starter-card.is-current h3")!.textContent!, /知识库/);
+    content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["setup", "knowledge"], "the first card opens knowledge setup");
+    content.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button")[1].click(); await tick();
+    content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["setup", "agent"], "the moved avatar card retains its agent action");
+    const reminder = content.querySelector<HTMLElement>('[data-wb="knowledge-reminder"]')!;
+    assert.equal(content.querySelector('[data-wb="starters"]')?.nextElementSibling, reminder);
+    assert.equal(reminder.querySelector('.wb-grow')?.textContent, "还没设置知识库");
+    assert.equal(reminder.querySelector('[data-wb-focus="knowledge-reminder-settings"]')?.textContent?.trim(), "去初始化");
+    await click("knowledge-reminder-settings"); assert.deepEqual(calls.at(-1), ["setup", "knowledge"]);
+    host.settings.sessions.push({ id: "empty-onboarding", messages: [] }); projectionText.set("empty-onboarding", "");
+    tasks = [entry("empty-onboarding", "interrupted")]; await view.refresh();
+    assert.ok(content.querySelector(".wb-starters"), "empty shells and task metadata cannot dismiss onboarding");
+    assert.equal(host.settings.workbenchOnboardingDismissed, false);
+    projectedUsers.add("legacy-onboarding"); tasks = [entry("legacy-onboarding", "completed")]; await view.refresh();
+    assert.equal(content.querySelector(".wb-starters"), null, "legacy stored user messages hide onboarding without resident bodies");
+    assert.equal(host.settings.workbenchOnboardingDismissed, true);
+    assert.equal((savedSettings.at(-1) as typeof host.settings).workbenchOnboardingDismissed, true);
+    tasks = []; host.settings.sessions = []; await view.refresh();
+    assert.equal(content.querySelector(".wb-starters"), null, "deleting the old conversation cannot restore onboarding");
+    assert.equal(reminder.hidden, false, "knowledge setup reminder is independent of conversation onboarding");
+    await click("knowledge-reminder-dismiss");
+    assert.equal(host.settings.knowledgeBase.initialized, true);
+    assert.equal((savedSettings.at(-1) as typeof host.settings).knowledgeBase.initialized, true);
+    assert.equal(reminder.hidden, true); await view.refresh(); assert.equal(reminder.hidden, true);
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 0);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
     assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));

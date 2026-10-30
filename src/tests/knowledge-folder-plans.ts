@@ -5,6 +5,7 @@ import * as os from "node:os";
 import { TFolder } from "obsidian";
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeMaintenanceFolderIssues, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
+import { initializationFolderIssues } from "../knowledge-base/initialization-choices";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
@@ -21,9 +22,21 @@ function buildBindings() {
 }
 
 export async function runKnowledgeFolderPlanTests(): Promise<void> {
+  const issues = initializationFolderIssues([
+    { key: "raw", title: "资料来源", values: [{ path: "Library", create: false }, { path: "Archive", create: false }] },
+    { key: "wiki", title: "知识成果", values: [{ path: "library", create: true }] },
+    { key: "projects", title: "项目", values: [{ path: "", create: true }] }
+  ], ["Library", "Archive"]);
+  assert.match(issues.get("raw")!.join(), /重名/u);
+  assert.match(issues.get("wiki")!.join(), /重名/u);
+  assert.match(issues.get("projects")!.join(), /请输入新文件夹名/u);
+  assert.equal(initializationFolderIssues([{ key: "raw", title: "资料来源", values: [{ path: "Archive/sub", create: true }] }], ["Archive"]).size, 0);
   const legacy = buildBindings();
   delete legacy.roles.raw.autoOrganizePaths;
   const normalized = normalizeKnowledgeFolderBindings(legacy)!;
+  const nestedWiki = await previewKnowledgeDirectoryPlan({ baseRevision: normalized.revision, bindings: normalized, baseline: normalized,
+    createPaths: [], sourcePaths: [], wikiChanged: true, kind: async () => "folder" });
+  assert.deepEqual(nestedWiki.issues, [], "a single nested knowledge folder is selectable during initialization");
   assert.deepEqual(normalized.roles.raw.autoOrganizePaths, [], "legacy settings do not grant ongoing organization");
   legacy.roles.raw.autoOrganizePaths = ["资料/原文", "旧位置"];
   assert.deepEqual(normalizeKnowledgeFolderBindings(legacy)!.roles.raw.autoOrganizePaths, ["资料/原文"]);
@@ -175,6 +188,7 @@ async function assertPlanApplication(root: string) {
     assert.deepEqual(plan.moves.map(move => move.from), ["课程/a.md", "课程/a.png", "课程/b.md"]);
     assert(plan.excluded.some(item => item.path === "private-state/runtime.json"));
     const result = await service.applyDirectoryPlan(plan, true);
+    assert.equal(plugin.settings.knowledgeBase.initialized, true, "successful setup persists the homepage reminder completion marker");
     assert.equal(result.configured, true);
     assert.equal(result.refinement, "not-started", "missing Provider cannot block configuring or relocation");
     assert.match(result.refinementError!, /提炼尚未开始/u);
@@ -369,12 +383,25 @@ async function assertFailedSaveRecovery(root: string) {
     await assert.rejects(fixture.service.applyDirectoryPlan(plan), /settings disk unavailable/u);
     assert.equal(await fs.readFile(path.join(root, "source.md"), "utf8"), "SAVED CONTENT");
     assert.equal(fixture.plugin.settings.knowledgeBase.folderBindings.roles.wiki.enabled, false);
+    assert.notEqual(fixture.plugin.settings.knowledgeBase.initialized, true, "failed setup restores the completion marker");
   } finally { fixture.release(); }
 }
 
 async function assertInitializationModuleRegression(root: string): Promise<void> {
   const f = await fixtureAt(root);
   try {
+    Object.assign(f.plugin.settings.englishDiary, { enabled: true, englishDirectoryMode: "role", expressionDirectoryMode: "role" });
+    const optionalBefore = JSON.stringify(f.plugin.settings.englishDiary);
+    const optional = await f.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build", moduleDirectories: { review: "", pdfOriginal: "" } });
+    assert.deepEqual(optional.issues, [], "unbound optional Outputs never blocks knowledge setup");
+    assert.equal(optional.moduleDirectories?.english, "");
+    await f.service.applyDirectoryPlan(optional);
+    assert.equal(JSON.stringify(f.plugin.settings.englishDiary), optionalBefore, "skipped modules preserve their saved settings");
+    const custom = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), ["custom-english", "custom-journal"], { mode: "existing", moduleDirectories: { english: "custom-english", expressions: "", journal: "custom-journal" } });
+    assert.deepEqual(custom.issues, []);
+    assert(custom.create.includes("custom-english"), "the custom route can explicitly approve new module folders");
+    await f.service.applyDirectoryPlan(custom);
+    assert.equal(f.plugin.settings.englishDiary.englishDirectory, "custom-english");
     await f.write("closed-review/keep.md", "REVIEW"); await f.write("closed-english/keep.md", "ENGLISH");
     f.plugin.settings.review.enabled = false; f.plugin.settings.review.outputDir = "closed-review";
     Object.assign(f.plugin.settings.englishDiary, { enabled: false, englishDirectory: "closed-english", legacyEnglishDirectories: ["outputs/.english-diary/diaries"] });

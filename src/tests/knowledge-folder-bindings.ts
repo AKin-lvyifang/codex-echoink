@@ -73,6 +73,9 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
   const optedOut = { ...unsetChoice, allowAgentSubfolders: false };
   const savedOptOut = normalizeSettingsData({ knowledgeBase: { folderBindings: optedOut } }).settings;
   assert.equal(normalizeSettingsData(JSON.parse(JSON.stringify(savedOptOut))).settings.knowledgeBase.folderBindings?.allowAgentSubfolders, false, "an explicit opt-out survives settings save and reload");
+  const single = emptyKnowledgeFolderBindings();
+  Object.assign(single.roles.raw, { enabled: true, readPaths: "legacy-source", writePath: "legacy-source" });
+  assert.deepEqual(normalizeKnowledgeFolderBindings(single)!.roles.raw.readPaths, ["legacy-source"], "legacy single source upgrades to an array");
   await assertDesktopRoleProjection();
   await runCaptureSourceBindingTests();
   const vault = await mkdtemp(path.join(tmpdir(), "echoink-bindings-"));

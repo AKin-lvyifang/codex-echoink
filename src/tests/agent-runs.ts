@@ -148,7 +148,10 @@ async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
       answer: session.messages.find(message => message.text?.includes(`RESULT:${id}:`))?.text });
   } });
   for (const id of ["burst-A", "burst-B"]) { f.gates.set(id, deferred()); f.started.set(id, deferred()); }
+  assert.equal(f.settings.workbenchOnboardingDismissed, false, "empty conversations and metadata do not complete onboarding");
   assert.deepEqual(await Promise.all(["burst-A", "burst-B"].map(id => f.service.start(f.item(id), "composer"))), ["running", "running"]);
+  assert.equal(f.settings.workbenchOnboardingDismissed, true, "first durable user-message acceptance completes onboarding");
+  assert.equal(JSON.parse(await readFile(f.dataPath, "utf8")).workbenchOnboardingDismissed, true, "the acceptance marker is saved before returning to the composer");
   await Promise.all(["burst-A", "burst-B"].map(id => f.started.get(id)!.promise));
   await new Promise(resolve => setTimeout(resolve, 40));
   refreshed.length = 0; rebuiltRows = 0;

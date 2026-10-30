@@ -716,6 +716,7 @@ export class EchoInkKnowledgeSurfaceService {
       if (plan.moves.length && (this.plugin.app.vault as unknown as { getConfig(key: string): unknown }).getConfig?.("alwaysUpdateLinks") !== true) throw new Error("请在 Obsidian 开启自动更新内部链接，再重新预览搬迁。");
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       const previousDiary = structuredClone(this.plugin.settings.englishDiary);
+      const previousInitialized = this.plugin.settings.knowledgeBase.initialized;
       const previousJournal = this.plugin.settings.journalDirectory;
       const previousReview = this.plugin.settings.review.outputDir;
       const previousPdfOriginal = this.plugin.settings.pdfReading.originalDirectory;
@@ -743,6 +744,7 @@ export class EchoInkKnowledgeSurfaceService {
           result.moved.push(move);
         }
         this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 };
+        this.plugin.settings.knowledgeBase.initialized = true;
         const modules = choices;
         if (modules?.journal !== undefined) {
           nativeJournalChanged = true; // Native save can complete before its refresh hook fails.
@@ -767,6 +769,7 @@ export class EchoInkKnowledgeSurfaceService {
         await this.plugin.saveSettings(true);
       } catch (failure) {
         this.plugin.settings.knowledgeBase.folderBindings = previous;
+        this.plugin.settings.knowledgeBase.initialized = previousInitialized;
         this.plugin.settings.englishDiary = previousDiary;
         this.plugin.settings.journalDirectory = previousJournal;
         this.plugin.settings.review.outputDir = previousReview;
@@ -812,6 +815,7 @@ export class EchoInkKnowledgeSurfaceService {
 
   private directoryModuleChanges(choices: KnowledgeModuleDirectories, modes: KnowledgeEnglishDirectoryModes): KnowledgeModuleDirectories {
     const settings = this.plugin.settings, next = { ...choices };
+    for (const key of ["review", "english", "expressions", "pdfOriginal"] as const) if (next[key] === "") delete next[key];
     const current = this.directoryModuleSettings(choices);
     if (next.journal === settings.journalDirectory && next.journal === current.nativeJournal?.folder) delete next.journal;
     if (!settings.review.enabled || next.review === settings.review.outputDir) delete next.review;

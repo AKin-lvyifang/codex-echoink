@@ -105,6 +105,8 @@
 .echoink-workbench .wb-unread { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--wb-accent); }
 .echoink-workbench .wb-todo-check { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; border: 1px solid var(--wb-line); border-radius: 4px; box-shadow: none; }
 .echoink-workbench .wb-status:not(:empty) { margin-bottom: 24px; color: var(--wb-secondary); }
+.echoink-workbench .wb-knowledge-reminder { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 26px; padding: 9px 14px; border: 1px solid var(--wb-line); border-radius: 12px; }
+.echoink-workbench .wb-knowledge-reminder .wb-grow { flex-basis: 180px; }
 .echoink-workbench .wb-memory-notice { padding: 12px 14px; margin-bottom: 20px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); }
 .echoink-workbench .wb-memory-notice-row { display: flex; align-items: flex-start; gap: 10px; }
 .echoink-workbench .wb-memory-notice .wb-lead { flex-basis: 20px; width: 20px; height: 30px; }
