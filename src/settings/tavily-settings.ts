@@ -74,7 +74,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
     input.setAttr("aria-label", `${deepseek ? "DeepSeek" : "Tavily"} API Key`); input.placeholder = deepseek ? "sk-…" : "tvly-…";
     reveal.setAttr("aria-pressed", "false"); reveal.setAttr("aria-label", label("显示 Key", "Show key")); setIcon(reveal, "eye");
     links.empty();
-    links.createEl("a", { text: label("官网 / 获取 API Key", "Website / Get an API key"), href: deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com", attr: { target: "_blank", rel: "noopener noreferrer" } });
+    if (source !== "model") links.createEl("a", { text: label("官网 / 获取 API Key", "Website / Get an API key"), href: deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com", attr: { target: "_blank", rel: "noopener noreferrer" } });
     links.createEl("a", { text: label("官方定价", "Official pricing"), href: deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits", attr: { target: "_blank", rel: "noopener noreferrer" } });
     cost.textContent = deepseek ? label("测试会发送一次搜索请求，按官方搜索定价计费。", "Testing sends one search request, charged at official search rates.") : label("执行一次搜索，消耗 1 积分", "Runs one search and uses 1 credit");
   }

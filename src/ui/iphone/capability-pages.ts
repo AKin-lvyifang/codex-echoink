@@ -298,9 +298,13 @@ export class IPhoneCapabilityPages {
       const editable = !deepseek || source === "legacy"; key.parentElement!.hidden = !editable;
       key.value = editable ? webSearchApiKey(draft) : "";
       modelStatus.hidden = source !== "model"; setup.hidden = !deepseek || source !== "missing";
-      pricing.replaceChildren(); const link = el(ctx.document, "a", "", this.text("官网 / 获取 API Key", "Website / Get an API key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+      pricing.replaceChildren();
+      if (source !== "model") {
+        const link = el(ctx.document, "a", "", this.text("官网 / 获取 API Key", "Website / Get an API key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+        pricing.append(link, ctx.document.createTextNode(" · "));
+      }
       const price = el(ctx.document, "a", "", this.text("官方定价", "Official pricing")); price.href = deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits"; price.target = "_blank"; price.rel = "noopener noreferrer";
-      pricing.append(link, ctx.document.createTextNode(" · "), price, el(ctx.document, "div", "", this.text("测试会发送一次搜索请求，按官方定价计费。", "Testing sends one search request, charged at official rates.")));
+      pricing.append(price, el(ctx.document, "div", "", this.text("测试会发送一次搜索请求，按官方定价计费。", "Testing sends one search request, charged at official rates.")));
     };
     const result = el(ctx.document, "div", "ip-cap-result"); result.setAttribute("role", "status"); result.setAttribute("aria-live", "polite"); body.append(result);
     const error = settingsError(ctx, body), actions = el(ctx.document, "div", "ip-settings-actions ip-cap-actions"), stop = settingsButton(ctx, "停止", () => { controller?.abort(); }); stop.hidden = true;

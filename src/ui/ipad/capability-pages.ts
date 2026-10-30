@@ -333,9 +333,13 @@ function createTavilyPage(ctx: IPadSettingsContext): MobileShellPage {
     const editable = !deepseek || source === "legacy"; key.parentElement!.hidden = !editable;
     key.value = editable ? webSearchApiKey(draft) : "";
     modelStatus.hidden = source !== "model"; setup.hidden = !deepseek || source !== "missing";
-    pricing.replaceChildren(); const link = el(ctx.document, "a", "", t(ctx, "官网 / 获取 API Key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+    pricing.replaceChildren();
+    if (source !== "model") {
+      const link = el(ctx.document, "a", "", t(ctx, "官网 / 获取 API Key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+      pricing.append(link, ctx.document.createTextNode(" · "));
+    }
     const price = el(ctx.document, "a", "", t(ctx, "官方定价")); price.href = deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits"; price.target = "_blank"; price.rel = "noopener noreferrer";
-    pricing.append(link, ctx.document.createTextNode(" · "), price, el(ctx.document, "div", "", t(ctx, "测试会发送一次搜索请求，按官方定价计费。")));
+    pricing.append(price, el(ctx.document, "div", "", t(ctx, "测试会发送一次搜索请求，按官方定价计费。")));
   }
   const result = status(ctx, content, ""); result.hidden = true;
   const cancel = settingsAction(ctx, "取消", () => ctx.back()), stop = settingsAction(ctx, "停止", () => abort?.abort());

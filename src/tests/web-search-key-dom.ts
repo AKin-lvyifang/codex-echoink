@@ -70,6 +70,8 @@ export async function runWebSearchKeyDomTests(win: Window & typeof globalThis): 
           const test = button(root, testLabel)!; assert.ok(test, `${platform}: test action exists`);
           assert.equal(test.disabled, scenario === "missing" || scenario === "custom");
           assert.equal(settings.tavily.enabled, true, `${platform}: mounting does not erase the saved enabled state`);
+          assert.equal(visible(root.querySelector('a[href="https://platform.deepseek.com/api_keys"]')), scenario !== "model", `${platform}: only the model-key state omits the key acquisition link`);
+          assert.ok(visible(root.querySelector('a[href="https://api-docs.deepseek.com/zh-cn/guides/search/"]')), `${platform}: official pricing remains available in every credential state`);
           if (scenario === "model") {
             assert.ok([...root.querySelectorAll("span, div")].some(node => node.textContent === readyText && visible(node)), `${platform}: model-key source is displayed`);
             test.click(); await flush(); assert.equal(calls, 1); assert.equal(settings.tavily.deepseekApiKey, legacyKey);
