@@ -149,7 +149,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.deepEqual(calls.at(-1), ["setup", "agent"], "the moved avatar card retains its agent action");
     const reminder = content.querySelector<HTMLElement>('[data-wb="knowledge-reminder"]')!;
     assert.equal(content.querySelector('[data-wb="starters"]')?.nextElementSibling, reminder);
-    assert.match(reminder.textContent!, /还没设置知识库，去初始化/);
+    assert.equal(reminder.querySelector('.wb-grow')?.textContent, "还没设置知识库");
+    assert.equal(reminder.querySelector('[data-wb-focus="knowledge-reminder-settings"]')?.textContent?.trim(), "去初始化");
     await click("knowledge-reminder-settings"); assert.deepEqual(calls.at(-1), ["setup", "knowledge"]);
     host.settings.sessions.push({ id: "empty-onboarding", messages: [] }); projectionText.set("empty-onboarding", "");
     tasks = [entry("empty-onboarding", "interrupted")]; await view.refresh();

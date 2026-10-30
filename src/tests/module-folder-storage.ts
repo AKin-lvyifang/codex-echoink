@@ -95,7 +95,7 @@ async function assertImmediateBindingSave(root: string) {
     await assert.rejects(service.saveDirectoryBindings(split), /目录配置已改变/u);
     const oldSignature = knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings);
     const badWiki = structuredClone(saved);
-    await assert.rejects(service.saveDirectoryBindings(badWiki, { wikiChanged: true }), /一级文件夹/u);
+    await assert.rejects(service.saveDirectoryBindings(badWiki, { wikiChanged: true }), /请选择一个文件夹/u);
     assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), oldSignature);
     const newWiki = structuredClone(saved);
     Object.assign(newWiki.roles.wiki, { readPaths: ["知识成果"], writePath: "知识成果", compatibilityReadScopes: false });
@@ -201,6 +201,9 @@ async function assertModuleDirectoryChoices(root: string) {
   const fixture = await fixtureAt(root);
   try {
     const { plugin, service, records } = fixture;
+    plugin.settings.review.enabled = true;
+    plugin.settings.englishDiary.enabled = true;
+    plugin.settings.pdfReading.enabled = true;
     const bindings = sourceBindings();
     plugin.settings.knowledgeBase.folderBindings = bindings;
     const oldNative = { folder: "原日记", format: "YYYY-MM-DD", template: "原模板.md", custom: "PRESERVE" };
@@ -274,6 +277,8 @@ async function assertPersistentOptionalModuleRestore(root: string) {
   const fixture = await fixtureAt(root);
   try {
     const { plugin, service, records } = fixture;
+    plugin.settings.englishDiary.enabled = true;
+    plugin.settings.pdfReading.enabled = true;
     await records["daily-notes"].saveData({});
     records["daily-notes"].instance.options = {};
     for (const folder of ["来源甲", "来源乙", "知识成果"]) await fixture.write(`${folder}/keep.md`, folder);
@@ -296,10 +301,37 @@ async function assertPersistentOptionalModuleRestore(root: string) {
   } finally { fixture.release(); }
 }
 
+async function assertSkippedModuleDirectoryChoices(root: string) {
+  const fixture = await fixtureAt(root);
+  try {
+    const { plugin, service } = fixture;
+    for (const folder of ["来源甲", "来源乙", "知识成果"]) await fixture.write(`${folder}/keep.md`, folder);
+    plugin.settings.knowledgeBase.folderBindings = sourceBindings();
+    const before = structuredClone({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading });
+    const disabled = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build",
+      moduleDirectories: { journal: "新日记", review: "新复盘", english: "新英文", expressions: "新表达", pdfOriginal: "新PDF" } });
+    assert.deepEqual(disabled.issues, []);
+    assert.deepEqual(disabled.create, ["新日记"], "disabled optional modules ignore directory choices");
+    await service.applyDirectoryPlan(disabled);
+    assert.deepEqual({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading }, before);
+    plugin.settings.review.enabled = plugin.settings.englishDiary.enabled = plugin.settings.pdfReading.enabled = true;
+    const enabled = structuredClone({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading });
+    const skipped = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build",
+      moduleDirectories: { review: "", english: "", expressions: "", pdfOriginal: "" } });
+    assert.deepEqual(skipped.issues, []);
+    assert.deepEqual(skipped.create, [], "empty choices skip even enabled optional modules");
+    await service.applyDirectoryPlan(skipped);
+    assert.deepEqual({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading }, enabled);
+  } finally { fixture.release(); }
+}
+
 async function assertModuleDirectoryFailureRecovery(root: string) {
   const fixture = await fixtureAt(root);
   try {
     const { plugin, service, records } = fixture;
+    plugin.settings.review.enabled = true;
+    plugin.settings.englishDiary.enabled = true;
+    plugin.settings.pdfReading.enabled = true;
     const native = { folder: "原日记", format: "YYYY-MM-DD", template: "原模板.md" };
     await records["daily-notes"].saveData(native);
     records["daily-notes"].instance.options = structuredClone(native);
@@ -347,5 +379,6 @@ export async function runModuleFolderStorageTests(root: string): Promise<void> {
   await assertModuleDirectoryFailureRecovery(path.join(root, "module-failure"));
   await assertRootJournalChoice(path.join(root, "root-journal"));
   await assertPersistentOptionalModuleRestore(path.join(root, "optional-module-restore"));
+  await assertSkippedModuleDirectoryChoices(path.join(root, "optional-module-skip"));
   console.log("P12 module folder storage and transactions: PASS");
 }

@@ -136,10 +136,8 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(applyCalls, 2); assert.equal(section.isDetail, false);
     assert.equal(saved.roles.work.writePath, "工作兼容"); assert.equal(saved.roles.archive.writePath, "归档兼容");
     section.open("initialize"); button("帮我搭建").click(); await flush();
-    const projectDraft = host.querySelector<HTMLInputElement>('input[aria-label="初始化项目"]')!;
-    projectDraft.value = "raw"; projectDraft.dispatchEvent(new dom.win.Event("input", { bubbles: true })); await flush();
-    assert(host.querySelector('.echoink-folder-picker-error')?.textContent?.includes("重名"));
-    assert.equal(button("确认初始化").disabled, true);
+    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields [role="combobox"]').length, 9, "each location initially has one selector, including pending new folders");
+    assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields input').length, 0, "new-folder names do not leave permanent input rows");
     const applyCount = applyCalls;
     let left = false; section.requestLeave(() => { left = true; draw(); });
     assert(left && !section.hasDraft && !section.isDetail, "return immediately discards the unconfirmed plan");

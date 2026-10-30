@@ -312,7 +312,7 @@ export class DesktopKnowledgeSettings {
         update(this.choices[key].map(choice => choice.path.trim()).filter(Boolean));
       }
       const picker = createKnowledgeFolderPicker(row.controlEl, { label: `初始化${title}`, folders,
-        values: this.choices[key], multiple: key === "raw", disabled, app: this.plugin.app,
+        values: this.choices[key], multiple: key === "raw", required: this.mode === "build" && (key === "raw" || key === "wiki"), disabled, app: this.plugin.app,
         onChange: values => {
           this.choices[key] = values;
           const field = formFields.find(field => field.key === key); if (field) field.values = values;

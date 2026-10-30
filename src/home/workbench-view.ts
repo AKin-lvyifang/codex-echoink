@@ -465,8 +465,8 @@ export class EchoInkWorkbenchView extends ItemView {
     if (host.dataset.signature === this.language) return;
     this.disposeControls(host); host.empty(); host.dataset.signature = this.language;
     const row = host.createDiv({ cls: "wb-knowledge-reminder" });
-    row.createSpan({ cls: "wb-grow", text: this.t("还没设置知识库，去初始化", "Set up your knowledge base") });
-    this.button(row, this.t("去设置", "Settings"), "knowledge-reminder-settings", () => this.plugin.openWorkbenchSetup("knowledge"), "secondary", "arrow-right").classList.add("is-small");
+    row.createSpan({ cls: "wb-grow", text: this.t("还没设置知识库", "Knowledge base not set up") });
+    this.button(row, this.t("去初始化", "Set up"), "knowledge-reminder-settings", () => this.plugin.openWorkbenchSetup("knowledge"), "secondary", "arrow-right").classList.add("is-small");
     this.button(row, this.t("关闭知识库提醒", "Dismiss knowledge base reminder"), "knowledge-reminder-dismiss", async () => {
       if (this.busy.has("knowledge-reminder-dismiss")) return;
       await this.runAction("knowledge-reminder-dismiss", async () => {
