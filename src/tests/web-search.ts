@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { searchDeepSeek, DeepSeekSearchError } from "../tools/deepseek-search";
-import { normalizeWebSearchSettings, searchWeb, webSearchAvailable, webSearchApiKey, setWebSearchApiKey, webSearchErrorMessage, type WebSearchSettings, type WebSearchTransport } from "../tools/web-search";
-import { normalizeSettingsData } from "../settings/settings";
+import { normalizeWebSearchSettings, searchWeb, webSearchAvailable, webSearchApiKey, webSearchKeySource, deepSeekModelApiKey, setWebSearchApiKey, webSearchErrorMessage, type WebSearchSettings, type WebSearchTransport } from "../tools/web-search";
+import { normalizeSettingsData, createApiProviderConfig } from "../settings/settings";
 import { loadMobileSettings } from "../mobile/settings";
+import { MobileCapabilitiesService } from "../mobile/capabilities";
+import { MobileCapabilityPolicy } from "../mobile/capability-policy";
+import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { PiWebSearchSecurity, createWebSearchTool } from "../harness/pi-native/pi-web-search";
 import { setRequestUrlForTests } from "./obsidian-shim";
 
@@ -60,6 +63,60 @@ await searchWeb({ ...settings, provider: "tavily" }, { query: "Tavily", transpor
 let noFallback = 0;
 await assert.rejects(searchWeb(settings, { query: "failed", transport: async request => { noFallback++; assert.equal(request.url, "https://api.deepseek.com/v1/tools/search"); return { status: 402, json: {} }; } }), /quota/); assert.equal(noFallback, 1);
 
+const modelKey = "synthetic-model-search-key", model = { ...createApiProviderConfig("deepseek", "search-model"), apiKey: ` ${modelKey} ` };
+const modelOnly: WebSearchSettings = { enabled: true, provider: "deepseek", apiKey: tavilyKey, deepseekApiKey: "" };
+assert.equal(webSearchKeySource(modelOnly, [model]), "model");
+assert.equal(webSearchApiKey(settings, [model]), modelKey, "official model key takes precedence over an old independent search key");
+assert.equal(webSearchKeySource(settings, []), "legacy");
+assert.equal(webSearchKeySource(modelOnly, []), "missing");
+for (const baseUrl of ["https://api.deepseek.com", "https://api.deepseek.com/", "https://api.deepseek.com/v1", "https://api.deepseek.com/v1/"]) {
+  assert.equal(deepSeekModelApiKey([{ ...model, baseUrl }]), modelKey);
+}
+for (const rejected of [
+  { ...model, providerId: "custom", name: "DeepSeek" }, { ...model, providerId: undefined, name: "DeepSeek" },
+  ...["https://proxy.example/v1", "https://api.deepseek.com.example/v1", "http://api.deepseek.com", "https://api.deepseek.com/proxy", "https://api.deepseek.com?proxy=1", "https://user@api.deepseek.com", "https://api.deepseek.com:8443", "invalid"].map(baseUrl => ({ ...model, baseUrl }))
+]) {
+  assert.equal(webSearchAvailable(modelOnly, [rejected]), false, "only the official provider and endpoint can supply a model key");
+  assert.equal(webSearchApiKey(settings, [rejected]), key, "an old independent key remains a fallback");
+}
+for (const normalized of [normalizeSettingsData({ tavily: modelOnly, apiProviders: [model] }).settings, loadMobileSettings({ tavily: modelOnly, apiProviders: [model] })]) {
+  assert.equal(normalized.tavily.enabled, true, "normalization retains enabled when only the model key exists");
+  assert.equal(normalized.tavily.deepseekApiKey, "", "model credentials are never copied into the legacy field");
+  assert.equal(webSearchAvailable(normalized.tavily, normalized.apiProviders), true);
+}
+assert.equal(normalizeWebSearchSettings(modelOnly).enabled, true, "saved intent is independent of credential availability");
+await searchWeb(settings, { query: "model credential", transport: async request => {
+  assert.equal(request.headers.Authorization, `Bearer ${modelKey}`);
+  return { status: 200, json: { results: [{ title: modelKey, url: "https://example.com", summary: `${modelKey} ${key} ${tavilyKey}` }] } };
+} }, [model]).then(response => assert.equal(response.results[0].summary, "[redacted] [redacted] [redacted]"));
+assert.equal(settings.deepseekApiKey, key);
+
+const mobileSettings = loadMobileSettings({ tavily: modelOnly, apiProviders: [structuredClone(model)] });
+const policy = new MobileCapabilityPolicy({ settings: () => mobileSettings, store: { permission: "workspace-write", memoryEnabled: true } as any, agentId: GENERAL_ASSISTANT_ID });
+let mobileRequests = 0, mobileSaves = 0;
+const mobile = new MobileCapabilitiesService({ adapter: {} as any, settings: () => mobileSettings, saveSettings: async () => { mobileSaves++; }, policy: () => policy,
+  request: async request => { mobileRequests++; assert.equal(request.headers.Authorization, `Bearer ${modelKey}`); return { status: 200, json: { results: [] } }; } });
+const savedMobile = await mobile.saveTavily(mobile.readTavily());
+assert.equal(savedMobile.enabled, true); assert.equal(savedMobile.deepseekApiKey, ""); assert.equal(mobileSaves, 1);
+await mobile.testTavily(savedMobile);
+const mobileSearch = mobile.runtimeTools(policy, async () => ({})).find(tool => tool.name === "web_search")!;
+assert.ok(mobileSearch, "the actual mobile policy advertises model-key-only search");
+await mobileSearch.execute("model-mobile", { query: "current facts" });
+assert.equal(mobileRequests, 2, "both mobile connection test and runtime search use the official model key");
+mobileSettings.apiProviders[0].providerId = "custom";
+assert.equal(mobile.runtimeTools(policy, async () => ({})).some(tool => tool.name === "web_search"), false);
+
+let piProviders = [{ ...model }];
+const modelSecurity = new PiWebSearchSecurity(() => modelOnly, undefined, () => piProviders);
+assert.equal(modelSecurity.available(), true);
+await modelSecurity.handleToolCall({ toolName: "web_search", toolCallId: "model-key", input: { query: "facts" } } as any);
+await modelSecurity.execute("model-key", { query: "facts" }, undefined, async input => { assert.equal(input.apiKey, modelKey); return { source: "web", provider: "DeepSeek", results: [] }; });
+assert.equal((await modelSecurity.handleToolResult({ toolName: "web_search", toolCallId: "model-key" } as any)).isError, false);
+await modelSecurity.handleToolCall({ toolName: "web_search", toolCallId: "rotated-model-key", input: { query: "facts" } } as any);
+piProviders[0].apiKey = "synthetic-rotated-model-key";
+await modelSecurity.execute("rotated-model-key", { query: "facts" }, undefined, async () => { assert.fail("a changed model key must block dispatch"); });
+assert.equal((await modelSecurity.handleToolResult({ toolName: "web_search", toolCallId: "rotated-model-key" } as any)).isError, true);
+
 let selected = { ...settings }, allow = true, calls = 0, resolve: ((value: unknown) => void) | undefined;
 const restore = setRequestUrlForTests(async request => { calls++; assert.equal(typeof request === "string" ? request : request.url, "https://api.deepseek.com/v1/tools/search"); return await new Promise(done => { resolve = done as typeof resolve; }); });
 try {
@@ -82,4 +139,4 @@ try {
   const rejected = await result("switch-during"); assert.equal(rejected.isError, true); assert.equal(rejected.details.provider, "DeepSeek"); assert.doesNotMatch(rejected.content[0].text, /should not escape/);
   allow = false; assert.ok((await call("denied"))?.block); allow = true; selected.enabled = false; assert.ok((await call("disabled"))?.block);
 } finally { restore(); }
-console.log("PASS web search: DeepSeek official request, Unicode/query bounds, mapping/redaction, errors, timeout/cancel, legacy desktop/mobile settings, selected provider/no fallback, Pi safety/replay/configuration changes (controlled responses).");
+console.log("PASS web search: DeepSeek official request, Unicode/query bounds, mapping/redaction, errors, timeout/cancel, model/legacy/missing key selection and custom exclusion, enabled persistence, desktop/mobile actual search credentials, Pi safety/replay/configuration and model-key changes (controlled responses).");

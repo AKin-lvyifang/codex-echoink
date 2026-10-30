@@ -1,6 +1,7 @@
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
-import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
+import { normalizeWebSearchSettings, webSearchApiKey, webSearchKeySource, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
+import { IPhoneModelPages } from "./model-pages";
 import { skillIcon } from "../../agents/skill-icons";
 import type { AgentDefinition } from "../../agents/types";
 import type { MobileCapabilitiesPort, MobileMcpDraft, MobileSkillSnapshot, MobileSkillSummary } from "../../mobile/capabilities-contracts";
@@ -35,7 +36,7 @@ export class IPhoneCapabilityPages {
         for (const server of servers) settingsRow(ctx, mcp, server.name, { literal: true, literalValue: true, leading: this.tile("plug"), value: server.statusLabel, action: () => this.mcp(server.id) });
         settingsRow(ctx, mcp, "添加 MCP 服务", { leading: this.tile("plus"), action: () => this.mcp() });
         const tavily = this.service.readTavily();
-        settingsRow(ctx, settingsGroup(ctx, body, "工具"), "联网搜索", { leading: this.tile("globe"), value: webSearchApiKey(tavily) ? "已填写 Key" : "未填写 Key", action: () => this.tavily() });
+        settingsRow(ctx, settingsGroup(ctx, body, "工具"), "联网搜索", { leading: this.tile("globe"), value: webSearchApiKey(tavily, ctx.host.settings().apiProviders) ? "已填写 Key" : "未填写 Key", action: () => this.tavily() });
       } catch (failure) { if (!disposed && current === revision) this.loadFailure(body, failure, render); }
     };
     this.loading(body); this.refreshers.add(render);
@@ -276,6 +277,7 @@ export class IPhoneCapabilityPages {
     const { ctx } = this, id = "iphone-settings-tavily";
     if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
     const initial = this.service.readTavily(), draft = { ...initial, ...normalizeWebSearchSettings(initial) }, body = this.body(), fields = el(ctx.document, "fieldset", "ip-settings-fields"); body.append(fields);
+    const apiKey = () => webSearchApiKey(draft, ctx.host.settings().apiProviders);
     let baseline = JSON.stringify(draft), saving = false, disposed = false, generation = 0, controller: AbortController | undefined;
     const guard = this.leaveGuard(body, () => saving, () => JSON.stringify(draft) !== baseline), group = settingsGroup(ctx, fields);
     const changed = () => { generation++; controller?.abort(); controller = undefined; result.textContent = ""; error.show(); update(); };
@@ -285,20 +287,29 @@ export class IPhoneCapabilityPages {
     for (const provider of WEB_SEARCH_PROVIDERS) {
       const row = el(ctx.document, "label", "ip-settings-row"), radio = el(ctx.document, "input", ""); radio.type = "radio"; radio.name = "iphone-search-provider"; radio.value = provider; radio.checked = draft.provider === provider;
       const name = provider === "deepseek" ? "DeepSeek" : "Tavily"; radio.setAttribute("aria-label", name); row.append(el(ctx.document, "span", "ip-settings-label", name), radio); providers.append(row); radios.push(radio);
-      radio.addEventListener("change", () => { if (!radio.checked) return; changed(); draft.provider = provider; if (!webSearchApiKey(draft)) { draft.enabled = false; error.show(this.text("请先填写当前搜索服务的 API Key。", "Enter the selected search service's API key first.")); } refreshKey(); update(); });
+      radio.addEventListener("change", () => { if (!radio.checked) return; changed(); draft.provider = provider; refreshKey(); update(); });
     }
-    const key = settingsField(ctx, fields, "API Key", webSearchApiKey(draft), value => { changed(); setWebSearchApiKey(draft, value); if (!webSearchApiKey(draft)) draft.enabled = false; update(); }, "password"); key.autocomplete = "off"; key.spellcheck = false;
+    const modelStatus = settingsRow(ctx, group, this.text("使用模型里的 DeepSeek Key", "Using the DeepSeek key from Models"), { literal: true });
+    const setup = settingsRow(ctx, group, this.text("先在模型里添加 DeepSeek", "Add DeepSeek in Models first"), { literal: true, action: () => new IPhoneModelPages(ctx, () => this.refresh()).open() });
+    const key = settingsField(ctx, fields, "API Key", "", value => { if (key.parentElement!.hidden) return; changed(); setWebSearchApiKey(draft, value); if (!apiKey()) draft.enabled = false; update(); }, "password"); key.autocomplete = "off"; key.spellcheck = false;
     const pricing = el(ctx.document, "div", "ip-sub"); fields.append(pricing);
     const refreshKey = () => {
-      key.value = webSearchApiKey(draft); const deepseek = webSearchProvider(draft) === "deepseek";
-      pricing.replaceChildren(); const link = el(ctx.document, "a", "", this.text("官网 / 获取 API Key", "Website / Get an API key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+      const deepseek = webSearchProvider(draft) === "deepseek", source = webSearchKeySource(draft, ctx.host.settings().apiProviders);
+      const editable = !deepseek || source === "legacy"; key.parentElement!.hidden = !editable;
+      key.value = editable ? webSearchApiKey(draft) : "";
+      modelStatus.hidden = source !== "model"; setup.hidden = !deepseek || source !== "missing";
+      pricing.replaceChildren();
+      if (source !== "model") {
+        const link = el(ctx.document, "a", "", this.text("官网 / 获取 API Key", "Website / Get an API key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
+        pricing.append(link, ctx.document.createTextNode(" · "));
+      }
       const price = el(ctx.document, "a", "", this.text("官方定价", "Official pricing")); price.href = deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits"; price.target = "_blank"; price.rel = "noopener noreferrer";
-      pricing.append(link, ctx.document.createTextNode(" · "), price, el(ctx.document, "div", "", this.text("测试会发送一次搜索请求，按官方定价计费。", "Testing sends one search request, charged at official rates.")));
+      pricing.append(price, el(ctx.document, "div", "", this.text("测试会发送一次搜索请求，按官方定价计费。", "Testing sends one search request, charged at official rates.")));
     };
     const result = el(ctx.document, "div", "ip-cap-result"); result.setAttribute("role", "status"); result.setAttribute("aria-live", "polite"); body.append(result);
     const error = settingsError(ctx, body), actions = el(ctx.document, "div", "ip-settings-actions ip-cap-actions"), stop = settingsButton(ctx, "停止", () => { controller?.abort(); }); stop.hidden = true;
     const test = settingsButton(ctx, "测试连接", () => { void (async () => {
-      if (saving || controller || !webSearchApiKey(draft)) return; controller = new AbortController(); const request = controller, revision = ++generation;
+      if (saving || controller || !apiKey()) return; controller = new AbortController(); const request = controller, revision = ++generation;
       update(); error.show(); result.textContent = this.text("正在测试…", "Testing…");
       try {
         const response = await this.service.testTavily({ ...draft }, request.signal);
@@ -309,17 +320,19 @@ export class IPhoneCapabilityPages {
       finally { if (revision === generation) { controller = undefined; if (!disposed) update(); } }
     })(); });
     const save = settingsButton(ctx, "保存", () => { void (async () => {
-      if (saving || controller || draft.enabled && !webSearchApiKey(draft)) return; saving = true; update(); error.show();
+      if (saving || controller || draft.enabled && !apiKey()) return; saving = true; update(); error.show();
       try { const saved = await this.service.saveTavily({ ...draft }); if (!disposed) { Object.assign(draft, saved); baseline = JSON.stringify(draft); saving = false; this.refresh(); this.notice("联网搜索设置已保存"); await ctx.shell.back(); } }
       catch (failure) { if (!disposed) error.show(this.safeFailure(failure, [draft.apiKey, draft.deepseekApiKey])); }
       finally { saving = false; if (!disposed) update(); }
     })(); }, "is-primary");
     function update(): void {
       fields.disabled = saving; toggle.checked = draft.enabled; toggle.setAttribute("aria-checked", String(draft.enabled)); for (const radio of radios) radio.checked = draft.provider === radio.value;
-      test.disabled = saving || Boolean(controller) || !webSearchApiKey(draft); save.disabled = saving || Boolean(controller) || draft.enabled && !webSearchApiKey(draft); stop.hidden = !controller || saving; body.setAttribute("aria-busy", String(saving || Boolean(controller)));
+      test.disabled = saving || Boolean(controller) || !apiKey(); save.disabled = saving || Boolean(controller) || draft.enabled && !apiKey(); stop.hidden = !controller || saving; body.setAttribute("aria-busy", String(saving || Boolean(controller)));
     }
+    const refreshCredential = async () => { if (!disposed) { refreshKey(); update(); } };
+    this.refreshers.add(refreshCredential);
     actions.append(test, stop, save); body.append(actions); refreshKey(); update();
-    await pushSettingsPage(ctx, { id, title: "联网搜索", content: body, canLeave: guard.canLeave, dispose: () => { disposed = true; generation++; controller?.abort(); controller = undefined; guard.dispose(); } });
+    await pushSettingsPage(ctx, { id, title: "联网搜索", content: body, canLeave: guard.canLeave, dispose: () => { disposed = true; this.refreshers.delete(refreshCredential); generation++; controller?.abort(); controller = undefined; guard.dispose(); } });
   }
 
   private leaveGuard(body: HTMLElement, blocked: () => boolean, dirty: () => boolean): { canLeave: NonNullable<MobileShellPage["canLeave"]>; dispose: () => void } {

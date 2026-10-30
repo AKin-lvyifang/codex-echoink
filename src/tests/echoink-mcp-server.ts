@@ -36,7 +36,12 @@ export async function runEchoInkMcpServerTests() {
       search: async () => ({ generation: 1, total: 1, returned: 1, remaining: 0, hasMore: false, exhausted: true, hits: [{ ...snapshot, content: undefined, excerpt: "只读原文", lineStart: 2, lineEnd: 2, totalLines: 4 }] })
     } };
   const tools = new EchoInkMcpReadTools(ports);
-  assert.deepEqual(normalizeEchoInkMcpServerSettings(null), { enabled: false, knowledge: false, memory: false, token: "", tokenVault: "", port: 0 });
+  assert.deepEqual(normalizeEchoInkMcpServerSettings(null), { enabled: false, knowledge: true, memory: true, token: "", tokenVault: "", port: 0 });
+  assert.equal(normalizeEchoInkMcpServerSettings({ knowledge: false }).knowledge, false);
+  assert.equal(normalizeEchoInkMcpServerSettings({ knowledge: false }).memory, true);
+  assert.equal(normalizeEchoInkMcpServerSettings({ memory: false }).knowledge, true);
+  assert.equal(normalizeEchoInkMcpServerSettings({ memory: false }).memory, false);
+  assert.deepEqual(normalizeEchoInkMcpServerSettings({ knowledge: true, memory: true }), normalizeEchoInkMcpServerSettings({}));
   assert.equal(tools.list().length, 6);
   const profile = await tools.call("get_user_profile", {}, "request-profile");
   assert.equal(profile.ok, true); assert.equal(profile.requestId, "request-profile");
@@ -67,6 +72,7 @@ export async function runEchoInkMcpServerTests() {
   access.pro = false; assert.deepEqual(tools.list(), []); assert.equal((await tools.call("search_knowledge", { query: "x" }, "expired")).error?.code, "membership_required"); access.pro = true;
   const server = new EchoInkMcpServer({ tools, access: () => access, token: () => token, version: "test" });
   assert.equal(server.setupText(), null);
+  access.pro = false; await server.start(); assert.equal(server.read().status, "stopped"); access.pro = true;
   const occupied = http.createServer(); await new Promise<void>(resolve => occupied.listen(0, "127.0.0.1", resolve));
   const occupiedPort = (occupied.address() as { port: number }).port;
   await server.start(occupiedPort); const port = server.read().port!; assert.notEqual(port, occupiedPort); assert.equal(server.read().status, "running");
@@ -82,6 +88,31 @@ export async function runEchoInkMcpServerTests() {
     assert.equal((await rpc("tools/list", {}, { host: `evil.example:${port}` })).status, 403);
     assert.equal((await rpc("tools/list", {}, { origin: "https://evil.example" })).status, 403);
     const discovery = await rpc("tools/list"); assert.equal(discovery.status, 200); assert.ok(!JSON.stringify(discovery.value).includes('"name":"search_memory"'));
+    const toolArguments = {
+      get_user_profile: {}, search_memory: { query: "概念" }, read_memory: { id: "memory-1" },
+      explore_concept: { name: "概念" }, search_knowledge: { query: "概念" },
+      read_note: { vaultRelativePath: snapshot.vaultRelativePath, expectedContentRevision: snapshot.contentRevision }
+    };
+    const assertHttpGrants = async (knowledge: boolean, memory: boolean) => {
+      Object.assign(access, { knowledge, memory }); server.revoke();
+      const listed = await rpc("tools/list"); assert.equal(listed.status, 200);
+      const names = (listed.value.result as { tools: Array<{ name: string }> }).tools.map(tool => tool.name);
+      const expected = [...memory ? ["get_user_profile", "search_memory", "read_memory"] : [], ...knowledge ? ["explore_concept", "search_knowledge", "read_note"] : []];
+      assert.deepEqual(names, expected, "HTTP discovery follows both saved grant switches");
+      for (const [name, args] of Object.entries(toolArguments)) {
+        const called = await rpc("tools/call", { name, arguments: args }); assert.equal(called.status, 200);
+        const result = called.value.result as { isError: boolean; content: Array<{ text: string }> };
+        const envelope = JSON.parse(result.content[0].text) as { ok: boolean; error?: { code: string } };
+        assert.equal(envelope.ok, expected.includes(name), `${name} call follows its grant`);
+        assert.equal(result.isError, !expected.includes(name));
+        if (!expected.includes(name)) assert.equal(envelope.error?.code, "permission_denied");
+      }
+    };
+    await assertHttpGrants(true, true);
+    await assertHttpGrants(false, true);
+    await assertHttpGrants(false, false);
+    await assertHttpGrants(true, false);
+    await assertHttpGrants(true, true);
     const old = token; token = "b".repeat(64); server.revoke(); assert.equal((await rpc("tools/list", {}, { token: old })).status, 401); assert.equal((await rpc("tools/list")).status, 200);
     access.pro = false; assert.equal((await rpc("tools/list")).status, 403); access.pro = true;
     const second = new EchoInkMcpServer({ tools, access: () => access, token: () => "c".repeat(64), version: "test" });
@@ -120,5 +151,5 @@ export async function runEchoInkMcpServerTests() {
     assert.equal(next.items[0].direction, "incoming"); assert.equal(next.items[0].source.vaultRelativePath, "B.md");
     const alias = await conceptPort.candidates("A"); assert.deepEqual(alias, ["A.md"]);
   } finally { body.dispose(); }
-  console.log("EchoInk MCP: six tools; auth discovery/call/egress; memory-off isolation; in-flight revocation; scope/version boundaries; redaction; HTTP token/Host/Origin; port collision/reload/two Vault instances; membership expiry; in-app concept/Plan/reading records: PASS");
+  console.log("EchoInk MCP: six tools; missing/explicit-false grants; HTTP grant toggle discovery/calls; non-PRO start denial; auth discovery/call/egress; memory-off isolation; in-flight revocation; scope/version boundaries; redaction; HTTP token/Host/Origin; port collision/reload/two Vault instances; membership expiry; in-app concept/Plan/reading records: PASS");
 }

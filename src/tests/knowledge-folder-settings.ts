@@ -138,7 +138,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     await runKnowledgeFolderActionsTests(host, dom.win);
     section.dispose(); disposeOriginControls(host); host.empty();
     const notes = new Map([["wiki/A.md", '---\naliases: [Alpha]\nprivate: frontmatter-private\n---\n# A\nB 帮助理解原句。<!-- echoink-source: {"path":"raw/private-source.md"} -->\n<!-- echoink-source: {"revision":"internal-revision"} -->\n下一行内容。'], ["wiki/B.md", "---\naliases: [Beta]\n---\n# B"]]);
-    let savedTask: KnowledgeLinkingTask | null = null; const history = new Map<string, KnowledgeLinkingTask>(); let linkingWrites = 0; let backCalls = 0;
+    let savedTask: KnowledgeLinkingTask | null = null; const history = new Map<string, KnowledgeLinkingTask>(); let linkingWrites = 0;
     const linking = new KnowledgeLinkingService({
       async *documents() { for (const [name, content] of notes) yield readKnowledgeLinkingDocument(name, content, `sha256:${createHash("sha256").update(content).digest("hex")}`); },
       async judge(input) { return [{ path: input.documents[0].path, version: input.documents[0].version, mentions: input.candidates }]; },
@@ -147,21 +147,23 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     }, { async load() { return savedTask; }, async save(task) { savedTask = structuredClone(task); history.set(task.id, structuredClone(task)); }, async loadTask(id) { return history.get(id) ?? null; } });
     (manager as any).linking = linking;
     await linking.start(); await linking.waitForIdle();
-    let closeLinking = renderKnowledgeLinkingSection(host, plugin, () => backCalls++);
+    let closeLinking = renderKnowledgeLinkingSection(host, plugin);
     assert(host.textContent?.includes("待确认"), JSON.stringify(linking.snapshot())); assert(host.textContent?.includes("B → wiki/B.md"), host.textContent ?? "");
     const previewQuote = host.querySelector(".echoink-knowledge-linking-preview-note p")!.textContent!;
     assert.equal(previewQuote, "B 帮助理解原句。", "preview quotes the original mention line and excludes its inline source comment");
     assert(!host.textContent?.includes("frontmatter-private")); assert(!host.textContent?.includes("echoink-source")); assert(!host.textContent?.includes("internal-revision")); assert(!host.textContent?.includes("下一行内容"));
     assert.equal(host.querySelectorAll(".mod-cta").length, 1, "preview has one primary confirmation");
     closeLinking(); host.empty(); assert.equal(linking.snapshot()?.phase, "awaiting-confirmation", "closing detail never cancels preview");
-    closeLinking = renderKnowledgeLinkingSection(host, plugin, () => backCalls++);
-    button("确认补全").click(); await flush(); await linking.waitForIdle();
+    closeLinking = renderKnowledgeLinkingSection(host, plugin);
+    button("确认写入").click(); await flush(); await linking.waitForIdle();
     assert.equal(linkingWrites, 1); assert.equal(linking.snapshot()?.phase, "completed"); const completedTaskId = linking.snapshot()!.id; closeLinking(); host.empty();
     await linking.start(); await linking.waitForIdle();
     assert.equal(linking.snapshot()?.phase, "completed", "a new scan sees the already linked note");
-    closeLinking = renderKnowledgeLinkingSection(host, plugin, () => backCalls++);
-    button("返回知识库").click(); assert.equal(backCalls, 1); closeLinking(); host.empty();
-    closeLinking = renderKnowledgeLinkingSection(host, plugin, () => backCalls++, completedTaskId); await flush();
+    closeLinking = renderKnowledgeLinkingSection(host, plugin);
+    assert.equal(host.querySelector(".settings-back"), null, "linking stays inline without its own detail page");
+    assert(host.textContent?.includes("条链接"));
+    assert.equal(button("开始").disabled, false); closeLinking(); host.empty();
+    closeLinking = renderKnowledgeLinkingSection(host, plugin, completedTaskId); await flush();
     assert(host.textContent?.includes("wiki/A.md"), "historical task details retain their own results after the next task finishes");
     assert.equal(linking.snapshot()?.id === completedTaskId, false); closeLinking(); await linking.dispose();
     host.empty();
@@ -169,7 +171,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     const mentionStart = longBody.indexOf("B");
     const previewTask: KnowledgeLinkingTask = { ...history.get(completedTaskId)!, phase: "awaiting-confirmation", patches: [{ path: "wiki/Long.md", before: longBody, after: longBody, mentions: [{ start: mentionStart, end: mentionStart + 1, text: "B", targetPath: "wiki/B.md" }], addedAliases: [] }] };
     (manager as any).linking = { subscribe(listener: (task: KnowledgeLinkingTask) => void) { listener(previewTask); return () => undefined; } };
-    closeLinking = renderKnowledgeLinkingSection(host, plugin, () => backCalls++);
+    closeLinking = renderKnowledgeLinkingSection(host, plugin);
     assert.equal(host.querySelector(".echoink-knowledge-linking-preview-note p")!.textContent, `…${"😀".repeat(70)}B${"后".repeat(70)}…`, "long-line excerpt keeps original characters and marks truncation without splitting emoji");
     assert(!host.textContent?.includes("hidden-frontmatter")); assert(!host.textContent?.includes("echoink-source")); closeLinking();
   } finally { section.dispose(); disposeOriginControls(host); host.remove(); dom.close(); }

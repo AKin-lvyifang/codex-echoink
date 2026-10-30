@@ -9,7 +9,6 @@ import { DesktopAgentSettings } from "./agent-settings";
 import { renderInlineAgentSettings } from "./inline-agent-settings";
 import { DesktopMemorySettings } from "./desktop-memory-settings";
 import { UserProfileSettingsController } from "./user-profile-settings";
-import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings, type SelectionAnnotationSettingsController } from "./selection-annotation-settings";
@@ -1483,7 +1482,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.settingsDetail === "generation-templates") { this.ensureGenerationTemplates().renderList(container); return; }
     if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.openSettingsDetail("knowledge-linking"); }
     if (this.settingsDetail === "knowledge-preferences") { this.desktopModuleExpanded.add("knowledge"); this.renderKnowledgeMaintenancePreferences(container); return; }
-    if (this.settingsDetail === "knowledge-linking") { this.desktopModuleExpanded.add("knowledge"); this.knowledgeLinkingCleanup = renderKnowledgeLinkingSection(container, this.plugin, () => { void this.closeSettingsDetail(); }, this.knowledgeLinkingTaskId ?? undefined); return; }
+    if (this.settingsDetail === "knowledge-linking") { this.desktopModuleExpanded.add("knowledge"); this.settingsDetail = null; knowledge.openLinking(this.knowledgeLinkingTaskId ?? undefined); this.knowledgeLinkingTaskId = null; return; }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "resource") {
       const resourceId = this.settingsDetail.resourceId;
       const resource = this.currentEchoInkResourceCatalog().find(item => item.id === resourceId);
@@ -3443,7 +3442,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (focus) active?.focus();
       active?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
-    if (!Platform.isDesktopApp && this.providerSubTab === "tools") { renderTavilySettings(wrapper, this.plugin); return; }
+    if (!Platform.isDesktopApp && this.providerSubTab === "tools") { renderTavilySettings(wrapper, this.plugin, undefined, () => { this.providerSubTab = "models"; this.scheduleDisplay(); }); return; }
 
     const savedSection = wrapper.createDiv({ cls: "codex-provider-saved-section settings-card provider-list-card" });
     const addSection = savedSection.createDiv({
@@ -4161,7 +4160,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const tools = wrapper.createDiv({ cls: "codex-capability-tools", attr: { id: RESOURCE_PANEL_ID, role: "tabpanel", "aria-labelledby": resourceTabDomId("tools"), tabindex: "0" } });
       const count = this.plugin.settings.agentRegistry.agents.filter(agent => agent.id === GENERAL_ASSISTANT_ID ? !agent.disabledCapabilityIds?.includes("web-search") : agent.capabilityIds?.includes("web-search")).length;
       tools.createDiv({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(count) });
-      renderTavilySettings(tools, this.plugin);
+      renderTavilySettings(tools, this.plugin, undefined, () => { void this.activateSettingsTab("models", true); });
       const toolsButton = activeButton as HTMLButtonElement | null;
       if (!this.suppressResourceTabFocusRestore && this.resourceTabFocusId === "tools") (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(() => { toolsButton?.focus({ preventScroll: true }); this.resourceTabFocusId = null; });
       this.suppressResourceTabFocusRestore = false;

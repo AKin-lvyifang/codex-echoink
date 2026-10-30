@@ -2368,6 +2368,10 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-knowledge-linking-preview-note, .echoink-knowledge-linking-result-note { padding-block: 12px; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-knowledge-linking-preview-note p { white-space: pre-wrap; }
 .echoink-knowledge-linking-error { color: var(--text-error); }
+.echoink-knowledge-linking-inline .setting-item { border: 0; }
+.echoink-knowledge-linking-inline-details { padding: 0 18px 13px; }
+.echoink-knowledge-linking-inline-details summary { cursor: pointer; color: var(--text-muted); }
+.echoink-knowledge-linking-inline .setting-item-description { font-variant-numeric: tabular-nums; }
 @container echoink-linking (max-width: 760px) { .echoink-knowledge-linking-progress-status { white-space: nowrap; } }
 @container echoink-linking (max-width: 520px) { .echoink-knowledge-linking-progress-button { grid-template-columns: minmax(0, 1fr); } .echoink-knowledge-linking-progress-title, .echoink-knowledge-linking-progress-status { grid-column: 1; } }
 

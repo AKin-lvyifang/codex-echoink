@@ -2,15 +2,17 @@ import { setIcon } from "obsidian";
 import { createOriginButton, createOriginInput, createOriginSwitch, createOriginRadioGroup } from "./origin-controls";
 import { applyAmicroButton } from "./amicro-buttons";
 import { createSettingsGroup, createSettingsSection, createSettingsState } from "./settings-v2";
-import { searchWeb, normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, webSearchErrorMessage, WEB_SEARCH_PROVIDERS, type WebSearchSettings } from "../tools/web-search";
+import { searchWeb, normalizeWebSearchSettings, webSearchApiKey, webSearchKeySource, setWebSearchApiKey, webSearchProvider, webSearchErrorMessage, WEB_SEARCH_PROVIDERS, type WebSearchSettings, type WebSearchModelProvider } from "../tools/web-search";
 
 export function renderTavilySettings(parent: HTMLElement, host: {
-  settings: { settingsLanguage: string; tavily: WebSearchSettings };
+  settings: { settingsLanguage: string; tavily: WebSearchSettings; apiProviders?: readonly WebSearchModelProvider[] };
   saveSettings(): Promise<void>;
-}, search: typeof searchWeb = searchWeb): void {
+}, search: typeof searchWeb = searchWeb, openModels?: () => void): void {
   const english = host.settings.settingsLanguage === "en";
   const label = (zh: string, en: string) => english ? en : zh;
   const settings = host.settings.tavily;
+  const apiKey = () => webSearchApiKey(settings, host.settings.apiProviders);
+  const missingKey = () => webSearchProvider(settings) === "deepseek" ? label("先在模型里添加 DeepSeek", "Add DeepSeek in Models first") : label("请先填写 API Key。", "Enter an API key first.");
   Object.assign(settings, normalizeWebSearchSettings(settings));
   const aligned = parent.closest(".echoink-settings-aligned") !== null;
   const section = createSettingsSection(parent, { title: label("联网搜索", "Web search"), surface: aligned ? "flat" : "group" });
@@ -26,7 +28,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   const providers = card.createDiv({ cls: "echoink-web-search-providers" });
   const radios = createOriginRadioGroup(providers, webSearchProvider(settings), label("搜索服务", "Search service"), value => {
     invalidate(); settings.provider = value === "deepseek" ? "deepseek" : "tavily";
-    if (!webSearchApiKey(settings)) { settings.enabled = false; toggle.checked = false; show(label("请先填写当前搜索服务的 API Key。", "Enter the selected search service's API key first."), "error"); }
+    if (!apiKey()) show(missingKey(), "error");
     refreshKey(); save();
   });
   for (const provider of WEB_SEARCH_PROVIDERS) {
@@ -38,7 +40,11 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   const links = card.createDiv({ cls: "echoink-tavily-links settings-note" });
   const keyLabel = card.createEl("label", { cls: "echoink-tavily-key-label" });
   const keyCopy = aligned ? keyLabel.createDiv({ cls: "echoink-tavily-key-copy" }) : keyLabel;
-  keyCopy.createSpan({ text: "API Key" });
+  const keyTitle = keyCopy.createSpan({ text: "API Key" });
+  const modelLink = createOriginButton(keyCopy, { text: label("前往模型", "Open Models"), attr: { type: "button" } });
+  modelLink.onclick = () => openModels?.();
+  applyAmicroButton(modelLink, { variant: "tertiary" });
+  modelLink.disabled = !openModels;
   if (aligned) keyCopy.appendChild(links);
   const control = keyLabel.createDiv({ cls: "echoink-tavily-key-control" });
   const input = createOriginInput(control, { attr: { type: "password", autocomplete: "new-password" } });
@@ -55,34 +61,41 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   if (aligned) control.appendChild(actions);
   const state = card.createDiv({ cls: "echoink-tavily-state" });
   function show(text: string, tone: "error" | "success" | "neutral" = "neutral"): void { state.empty(); createSettingsState(state, text, tone); }
-  function invalidate(): void { generation++; pending?.abort(); pending = null; test.disabled = false; state.empty(); }
+  function invalidate(): void { generation++; pending?.abort(); pending = null; test.disabled = !apiKey(); state.empty(); }
   function save(): void { void host.saveSettings().catch(() => show(label("保存失败，请重试。", "Could not save settings. Try again."), "error")); }
   function refreshKey(): void {
     const deepseek = webSearchProvider(settings) === "deepseek";
-    input.value = webSearchApiKey(settings); input.type = "password";
+    const source = webSearchKeySource(settings, host.settings.apiProviders), editable = !deepseek || source === "legacy";
+    keyTitle.textContent = source === "model" ? label("使用模型里的 DeepSeek Key", "Using the DeepSeek key from Models") : deepseek && source === "missing" ? missingKey() : "API Key";
+    modelLink.hidden = !deepseek || source !== "missing";
+    input.hidden = !editable; reveal.hidden = !editable;
+    input.value = editable ? webSearchApiKey(settings) : ""; input.type = "password";
+    test.disabled = !apiKey();
     input.setAttr("aria-label", `${deepseek ? "DeepSeek" : "Tavily"} API Key`); input.placeholder = deepseek ? "sk-…" : "tvly-…";
     reveal.setAttr("aria-pressed", "false"); reveal.setAttr("aria-label", label("显示 Key", "Show key")); setIcon(reveal, "eye");
     links.empty();
-    links.createEl("a", { text: label("官网 / 获取 API Key", "Website / Get an API key"), href: deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com", attr: { target: "_blank", rel: "noopener noreferrer" } });
+    if (source !== "model") links.createEl("a", { text: label("官网 / 获取 API Key", "Website / Get an API key"), href: deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com", attr: { target: "_blank", rel: "noopener noreferrer" } });
     links.createEl("a", { text: label("官方定价", "Official pricing"), href: deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits", attr: { target: "_blank", rel: "noopener noreferrer" } });
     cost.textContent = deepseek ? label("测试会发送一次搜索请求，按官方搜索定价计费。", "Testing sends one search request, charged at official search rates.") : label("执行一次搜索，消耗 1 积分", "Runs one search and uses 1 credit");
   }
   input.oninput = () => {
+    if (input.hidden) return;
     invalidate(); setWebSearchApiKey(settings, input.value);
-    if (!webSearchApiKey(settings)) { settings.enabled = false; toggle.checked = false; } save();
+    if (!apiKey()) { settings.enabled = false; toggle.checked = false; }
+    test.disabled = !apiKey(); save();
   };
   toggle.onchange = () => {
     invalidate();
-    if (toggle.checked && !webSearchApiKey(settings)) { toggle.checked = false; show(label("请先填写 API Key。", "Enter an API key first."), "error"); input.focus(); return; }
+    if (toggle.checked && !apiKey()) { toggle.checked = settings.enabled; show(missingKey(), "error"); if (!input.hidden) input.focus(); return; }
     settings.enabled = toggle.checked; save();
   };
   test.onclick = async () => {
     if (pending) return;
-    if (!webSearchApiKey(settings)) { show(label("请先填写 API Key。", "Enter an API key first."), "error"); input.focus(); return; }
+    if (!apiKey()) { show(missingKey(), "error"); if (!input.hidden) input.focus(); return; }
     const revision = ++generation, snapshot = { ...settings }, controller = new AbortController(); pending = controller; test.disabled = true;
     show(label("正在搜索以验证连接…", "Searching to verify the connection…"));
     try {
-      await search(snapshot, { query: "Obsidian", maxResults: 1, signal: controller.signal });
+      await search(snapshot, { query: "Obsidian", maxResults: 1, signal: controller.signal }, host.settings.apiProviders);
       if (revision === generation && card.isConnected) show(label("连接成功，已收到有效搜索响应。", "Connected. Received a valid search response."), "success");
     } catch (error) { if (revision === generation && card.isConnected) show(webSearchErrorMessage(error, english), "error"); }
     finally { if (revision === generation) { pending = null; test.disabled = false; } }

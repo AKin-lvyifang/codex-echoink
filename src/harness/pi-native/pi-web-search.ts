@@ -1,6 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ToolCallEvent, type ToolResultEvent } from "@earendil-works/pi-coding-agent";
-import { searchWeb, webSearchAvailable, webSearchProviderName, webSearchProvider, webSearchApiKey, webSearchErrorCode, webSearchErrorMessage, type WebSearchSettings, type WebSearchInput, type WebSearchResponse } from "../../tools/web-search";
+import { searchWeb, webSearchAvailable, webSearchProviderName, webSearchProvider, webSearchApiKey, webSearchErrorCode, webSearchErrorMessage, type WebSearchSettings, type WebSearchModelProvider, type WebSearchInput, type WebSearchResponse } from "../../tools/web-search";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
 import { secureVaultToolResult, EchoInkVaultToolEgressPolicy } from "./vault-tool-result-safety";
 
@@ -16,15 +16,18 @@ function queryFrom(input: unknown): string {
 export class PiWebSearchSecurity implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = WEB_SEARCH_TOOL_NAME;
   private readonly seen = new Set<string>();
-  private readonly calls = new Map<string, { query: string; settings: WebSearchSettings; consumed: boolean; result?: unknown; failed?: boolean }>();
-  constructor(private readonly settings: () => WebSearchSettings, private readonly assertAllowed?: () => Promise<void>) {}
-  available(): boolean { return webSearchAvailable(this.settings()); }
-  private current(settings: WebSearchSettings): boolean { const now = this.settings(); return webSearchAvailable(now) && webSearchProvider(now) === webSearchProvider(settings) && webSearchApiKey(now) === webSearchApiKey(settings); }
+  private readonly calls = new Map<string, { query: string; settings: WebSearchSettings; providers: WebSearchModelProvider[]; consumed: boolean; result?: unknown; failed?: boolean }>();
+  constructor(private readonly settings: () => WebSearchSettings, private readonly assertAllowed?: () => Promise<void>, private readonly modelProviders: () => readonly WebSearchModelProvider[] = () => []) {}
+  available(): boolean { return webSearchAvailable(this.settings(), this.modelProviders()); }
+  private current(settings: WebSearchSettings, providers: readonly WebSearchModelProvider[]): boolean {
+    const now = this.settings(), currentProviders = this.modelProviders();
+    return webSearchAvailable(now, currentProviders) && webSearchProvider(now) === webSearchProvider(settings) && webSearchApiKey(now, currentProviders) === webSearchApiKey(settings, providers);
+  }
   async handleToolCall(event: ToolCallEvent) {
     try { await this.assertAllowed?.(); } catch { return { block: true as const, reason: "tool_policy_blocked" }; }
     if (!this.available() || this.seen.has(event.toolCallId)) return { block: true as const, reason: "tool_policy_blocked" };
     this.seen.add(event.toolCallId);
-    try { this.calls.set(event.toolCallId, { query: queryFrom(event.input), settings: { ...this.settings() }, consumed: false }); }
+    try { this.calls.set(event.toolCallId, { query: queryFrom(event.input), settings: { ...this.settings() }, providers: this.modelProviders().map(provider => ({ ...provider })), consumed: false }); }
     catch { return { block: true as const, reason: "tool_policy_blocked" }; }
   }
   async execute(id: string, args: unknown, signal?: AbortSignal, search?: (input: WebSearchInput) => Promise<WebSearchResponse>) {
@@ -33,11 +36,11 @@ export class PiWebSearchSecurity implements PiVaultAdditionalToolSecurityPort {
     await this.assertAllowed?.();
     call.consumed = true;
     try {
-      if (!this.current(call.settings)) throw new Error("web_search_configuration_changed");
+      if (!this.current(call.settings, call.providers)) throw new Error("web_search_configuration_changed");
       const input = { query: call.query, signal };
-      call.result = await (search ? search({ ...input, apiKey: webSearchApiKey(call.settings) }) : searchWeb(call.settings, input));
+      call.result = await (search ? search({ ...input, apiKey: webSearchApiKey(call.settings, call.providers) }) : searchWeb(call.settings, input, call.providers));
       await this.assertAllowed?.();
-      if (signal?.aborted || !this.current(call.settings)) throw new Error("web_search_configuration_changed");
+      if (signal?.aborted || !this.current(call.settings, call.providers)) throw new Error("web_search_configuration_changed");
     } catch (error) {
       call.failed = true;
       call.result = { source: "web", provider: webSearchProviderName(call.settings), status: "failed", error: webSearchErrorCode(error), message: `${webSearchErrorMessage(error, true)} Search did not complete. Do not claim the answer was verified online.` };
@@ -47,7 +50,7 @@ export class PiWebSearchSecurity implements PiVaultAdditionalToolSecurityPort {
   async handleToolResult(event: ToolResultEvent) {
     const call = this.calls.get(event.toolCallId); this.calls.delete(event.toolCallId);
     if (call?.consumed && call.result !== undefined && !call.failed) {
-      try { await this.assertAllowed?.(); if (!this.current(call.settings)) throw new Error("web_search_configuration_changed"); }
+      try { await this.assertAllowed?.(); if (!this.current(call.settings, call.providers)) throw new Error("web_search_configuration_changed"); }
       catch { call.failed = true; call.result = { source: "web", provider: webSearchProviderName(call.settings), status: "failed", error: "web_search_configuration_changed", message: "Search settings or permission changed. Search again; do not claim online verification." }; }
     }
     const valid = event.toolName === this.toolName && call?.consumed && call.result !== undefined;

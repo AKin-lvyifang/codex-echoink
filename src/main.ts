@@ -1458,7 +1458,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   getAgentCapabilityAvailability(id: string, resources: readonly EchoInkResource[] = []): { available: boolean; reason?: string } {
     const settings = this.settings, zh = settings.settingsLanguage !== "en";
     const enabled = id === "finance" ? settings.lifestyle.finance.enabled : id === "pdf-reading" ? settings.pdfReading.enabled
-      : id === "english-diary" ? settings.englishDiary.enabled : id === "web-search" ? webSearchAvailable(settings.tavily)
+      : id === "english-diary" ? settings.englishDiary.enabled : id === "web-search" ? webSearchAvailable(settings.tavily, settings.apiProviders)
         : id === "journal" ? settings.knowledgeBase.folderBindings?.roles.journal.enabled !== false
           : id === "knowledge" ? !settings.knowledgeBase.folderBindings || ["raw", "wiki", "projects", "inbox"].some(role => settings.knowledgeBase.folderBindings!.roles[role as "raw"].enabled) : true;
     if (!enabled) return { available: false, reason: zh ? "对应功能尚未启用" : "This feature is disabled" };

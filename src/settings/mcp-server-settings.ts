@@ -36,7 +36,7 @@ export function renderMcpServerSettings(host: HTMLElement, plugin: CodexForObsid
     const label = grants.createEl("label", { cls: "echoink-mcp-server-grant" });
     label.createSpan({ text: title });
     const check = createOriginCheck(label, { attr: { "aria-label": title } });
-    check.onchange = () => run(() => controller.update({ [key]: check.checked }));
+    check.onchange = () => { const value = check.checked; run(() => controller.update({ [key]: value })); };
     return check;
   };
   const knowledge = permission("knowledge", english ? "Knowledge" : "知识库");
