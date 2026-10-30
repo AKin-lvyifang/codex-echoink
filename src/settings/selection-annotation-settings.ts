@@ -6,6 +6,7 @@ import { createPluginEditionBadge } from "./plugin-edition-badge";
 import { applyDeleteButton } from "./amicro-buttons";
 import { normalizeSelectionAskSettings, selectionActionNameError, type SelectionAskAction } from "../selection-ask/settings";
 import { conversationUiText } from "../ui/codex-view/ui-i18n";
+import { isComposingInput } from "../ui/ime-composition";
 
 export function renderSelectionAskPluginRow(container: HTMLElement, plugin: CodexForObsidianPlugin, visible: boolean, onSettings: () => void): void {
   const en = plugin.settings.settingsLanguage === "en";
@@ -77,7 +78,7 @@ export function renderSelectionAnnotationSettings(container: HTMLElement, plugin
     let composing = false;
     name.addEventListener("compositionstart", () => { composing = true; });
     name.addEventListener("compositionend", () => { composing = false; validate(action); });
-    name.addEventListener("input", (event) => { if (!composing && !(event as InputEvent).isComposing) validate(action); });
+    name.addEventListener("input", (event) => { if (!composing && !isComposingInput(event)) validate(action); });
     template.addEventListener("input", updatePreview); updatePreview();
   };
   const updateAdd = () => { add.disabled = draft.actions.length >= 3 || saving; add.textContent = draft.actions.length >= 3 ? text("最多3个", "At most 3") : text("新增选项", "Add action"); };
@@ -171,7 +172,7 @@ function renderDesktopSelectionActions(container: HTMLElement, plugin: CodexForO
       let composing = false;
       name.addEventListener("compositionstart", () => { composing = true; });
       name.addEventListener("compositionend", () => { composing = false; validate(); });
-      name.addEventListener("input", event => { draft.name = name.value; if (!composing && !(event as InputEvent).isComposing) validate(); });
+      name.addEventListener("input", event => { draft.name = name.value; if (!composing && !isComposingInput(event)) validate(); });
       template.addEventListener("input", () => { draft.template = template.value; });
       const actionsRow = editor.createDiv({ cls: "echoink-selection-inline-actions" });
       if (action.id !== "default") {

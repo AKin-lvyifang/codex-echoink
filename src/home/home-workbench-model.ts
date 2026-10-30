@@ -1,5 +1,5 @@
 import type { SettingsLanguage } from "../settings/settings";
-import { moment } from "obsidian";
+import { journalMoment } from "./journal-moment";
 import { DEFAULT_JOURNAL_DATE_FORMAT, QUICK_JOURNAL_TEMPLATE, renderNativeJournalTemplate } from "./native-journal";
 import { homeContributionMonthLabel, homeCopy } from "./home-i18n";
 import { isHomeRecentSystemPath, type HomeRecentNoteContext } from "./home-note-visibility";
@@ -332,7 +332,7 @@ export function journalDateFromPath(
   if (!normalizedPath.endsWith(".md")) return null;
   const name = normalizedPath.slice(prefix.length, -3);
   for (const format of [journalFormat, DEFAULT_JOURNAL_DATE_FORMAT, "YYYY-MM-DD"]) {
-    const parsed = moment(name, format, true);
+    const parsed = journalMoment(name, format, true);
     if (parsed.isValid() && parsed.format(format) === name) return parsed.format("YYYY-MM-DD");
   }
   return null;
@@ -342,7 +342,7 @@ export function journalPathForDate(
   date: Date,
   journalDirectory = DEFAULT_JOURNAL_DIRECTORY
 ): string {
-  return `${normalizeJournalDirectory(journalDirectory)}/${moment(date).format(DEFAULT_JOURNAL_DATE_FORMAT)}.md`;
+  return `${normalizeJournalDirectory(journalDirectory)}/${journalMoment(date).format(DEFAULT_JOURNAL_DATE_FORMAT)}.md`;
 }
 
 export function extractFirstLocalImageTarget(markdown: string): string | null {

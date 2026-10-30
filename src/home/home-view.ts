@@ -1,5 +1,5 @@
 import { ownedDiv, ownedEl } from "../ui/owned-dom";
-import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
+import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { knowledgeRootRole } from "../knowledge-base/root-paths-core";
@@ -139,7 +139,7 @@ export class EchoInkHomeView extends ItemView {
     this.registerDomEvent(this.contentEl, "keydown", (e) => this.handleKeys(e));
     this.registerDomEvent(this.contentEl, "scroll", () => this.scheduleShortNavigation(), { passive: true });
     this.registerDomEvent(this.contentEl, "input", (e) => {
-      if ((e.target as HTMLElement).dataset.home === "search-input" && !(e as InputEvent).isComposing) this.scheduleSearch();
+      if ((e.target as HTMLElement).dataset.home === "search-input" && !isComposingInput(e)) this.scheduleSearch();
     });
     this.registerDomEvent(this.contentEl, "compositionend", () => this.scheduleSearch());
     this.registerDomEvent(this.contentEl, "pointermove", (event) => {

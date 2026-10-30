@@ -1,7 +1,8 @@
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { resolveKnowledgePathFromRoots, rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
-import { moment, TFolder, TFile, type App } from "obsidian";
+import { TFolder, TFile, type App } from "obsidian";
 import { normalizeJournalDirectory, normalizedJournalDirectoryOrNull } from "./journal-directory";
+import { journalMoment } from "./journal-moment";
 
 export const DEFAULT_JOURNAL_DATE_FORMAT = "YYYY-MM/YYYY-MM-DD";
 export const DEFAULT_TEMPLATES_DIRECTORY = "templates";
@@ -128,7 +129,7 @@ export function readNativeJournalSettings(app: App, legacyDirectory?: string, bi
 export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null): string {
   const settings = readNativeJournalSettings(app, legacyDirectory, bindings);
   // Resolving a candidate path is read-only. Creation checks the actual folder.
-  return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${moment(date).format(settings.format)}.md`);
+  return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${journalMoment(date).format(settings.format)}.md`);
 }
 
 /** An empty native folder is the Vault root; protect matching notes, not the whole Vault. */
@@ -140,7 +141,7 @@ export function nativeRootJournalPaths(app: App, paths: readonly string[]): stri
   return paths.filter(relative => {
     if (!relative.endsWith(".md")) return false;
     const title = relative.slice(0, -3);
-    const date = moment(title, format, true);
+    const date = journalMoment(title, format, true);
     return date.isValid() && date.format(format) === title;
   });
 }
@@ -155,7 +156,7 @@ export function renderNativeJournalTemplate(
   }
 ): string {
   return source.replace(/\{\{(date|time)(?::([^}]+))?\}\}/giu, (_match, kind: string, format?: string) =>
-    moment(date).format(format ?? (kind.toLowerCase() === "date" ? formats.templateDateFormat : formats.templateTimeFormat))
+    journalMoment(date).format(format ?? (kind.toLowerCase() === "date" ? formats.templateDateFormat : formats.templateTimeFormat))
   ).replace(/\{\{title\}\}/giu, title);
 }
 
@@ -181,8 +182,8 @@ export async function readNativeJournalContext(
   if (!target) prepareNativeJournalTemplate(app, targetPath, templateContent);
   return Object.freeze({
     ...settings,
-    date: moment(now).format("YYYY-MM-DD"),
-    time: moment(now).format("HH:mm"),
+    date: journalMoment(now).format("YYYY-MM-DD"),
+    time: journalMoment(now).format("HH:mm"),
     targetPath,
     exists: target instanceof TFile,
     templateExists: source !== null,

@@ -1,4 +1,4 @@
-import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
+import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { providerFailureDetailText } from "../harness/pi/provider-failure";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, createOriginSelect, createOriginRadioGroup, disposeOriginControls } from "./origin-controls";
 import { App, Modal, setIcon, setTooltip } from "obsidian";
@@ -656,7 +656,7 @@ export class ProviderModelModal extends Modal {
       applyProviderFilter(query);
       this.positionCombobox(picker, trigger);
     };
-    search.oninput = (event) => { if (!(event as InputEvent).isComposing) filterSearch(); };
+    search.oninput = (event) => { if (!isComposingInput(event)) filterSearch(); };
     search.addEventListener("compositionend", filterSearch);
     bindComboboxKeyboard({
       picker,
