@@ -24279,6 +24279,10 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-loc
 body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { flex: none; margin-left: auto; color: var(--secondary); font-size: 12px; line-height: 1.55; white-space: nowrap; }
 .echoink-settings-aligned.echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content { padding: 0; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-content :is(.echoink-settings-section, .echoink-settings-group, .echoink-life-settings-page) {
+  /* Embedded pages fill the drawer instead of retaining a standalone reading width. */
+  width: 100%;
+  min-width: 0;
+  max-width: none;
   margin: 0;
   padding: 0;
   gap: 0;
