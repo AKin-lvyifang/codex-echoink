@@ -86,7 +86,7 @@ export class MobileCapabilityPolicy {
       // The mobile v2 switch is authoritative; preserved desktop settings are not a second switch.
       memory: { useLongTermMemory: this.options.store.memoryEnabled },
       lifestyle: { finance: { enabled: s.lifestyle.finance.enabled } }, pdfReading: { enabled: false }, englishDiary: { enabled: s.englishDiary.enabled },
-      tavily: s.tavily, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
+      tavily: s.tavily, apiProviders: s.apiProviders, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
     }, agentId: this.options.agentId, resources: currentResources(s), proAccess: this.options.proAccess?.(),
     access: { permission: this.permission === "read-only" || this.options.store.permission === "read-only" ? "read-only" : "workspace-write",
       mode: "agent", memoryMode: this.options.store.memoryEnabled ? "default" : "no_memory" },

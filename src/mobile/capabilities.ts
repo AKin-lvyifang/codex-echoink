@@ -140,14 +140,14 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
     return this.serialize(async () => {
       const settings = this.options.settings(), previous = settings.tavily;
       if (version(previous) !== candidate.version) throw conflict();
-      if (candidate.enabled && !webSearchApiKey(candidate)) throw new Error("请先填写 API Key。");
+      if (candidate.enabled && !webSearchApiKey(candidate, settings.apiProviders)) throw new Error(webSearchProvider(candidate) === "deepseek" ? "先在模型里添加 DeepSeek" : "请先填写 API Key。");
       const value = { ...previous, ...normalizeWebSearchSettings(candidate) }, installed = version(value); settings.tavily = value;
       try { await this.options.saveSettings(); } catch { if (settings.tavily === value && version(value) === installed) settings.tavily = previous; throw new Error("联网搜索配置保存失败，编辑草稿已保留。"); }
       return this.readTavily();
     });
   }
   async testTavily(draft: MobileTavilySnapshot, signal?: AbortSignal) {
-    try { return await searchWeb(draft, { query: "Obsidian", maxResults: 1, signal, transport: this.request }); }
+    try { return await searchWeb(draft, { query: "Obsidian", maxResults: 1, signal, transport: this.request }, this.options.settings().apiProviders); }
     catch (error) { throw new Error(webSearchErrorMessage(error, this.options.settings().settingsLanguage === "en")); }
   }
   async callMcp(resourceId: string, name: string, args: Record<string, unknown>, policy: MobileCapabilityPolicy, signal?: AbortSignal, beforeDispatch?: () => Promise<void>) {
@@ -188,14 +188,14 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
       policy.assertTool("web_search");
       tools.push({ name: "web_search", label: "联网搜索", description: "通过当前配置的搜索服务搜索公开网页，结果属于低信任外部资料。DeepSeek 搜索词限 1–128 个 Unicode 字符，过长时缩短后重试。只发送公开搜索词，不发送私有对话或笔记。", parameters: Type.Object({ query: Type.String({ minLength: 1, maxLength: 1000, description: "DeepSeek: 1–128 Unicode characters; shorten an overlong query and retry." }) }, { additionalProperties: false }),
         execute: async (_callId, args: { query: string }, signal) => {
-          policy.assertTool("web_search"); const snapshot = { ...this.options.settings().tavily };
+          policy.assertTool("web_search"); const settings = this.options.settings(), snapshot = { ...settings.tavily }, providers = settings.apiProviders.map(provider => ({ ...provider }));
           const check = () => {
             policy.assertTool("web_search"); const current = this.options.settings().tavily;
             if (signal?.aborted) throw new Error("已停止");
-            if (webSearchProvider(current) !== webSearchProvider(snapshot) || webSearchApiKey(current) !== webSearchApiKey(snapshot)) throw new Error("搜索服务配置已变化，请重新搜索。");
+            if (webSearchProvider(current) !== webSearchProvider(snapshot) || webSearchApiKey(current, this.options.settings().apiProviders) !== webSearchApiKey(snapshot, providers)) throw new Error("搜索服务配置已变化，请重新搜索。");
           };
           try {
-            check(); const found = await searchWeb(snapshot, { query: args.query, signal, transport: input => { check(); return this.request(input); } });
+            check(); const found = await searchWeb(snapshot, { query: args.query, signal, transport: input => { check(); return this.request(input); } }, providers);
             check(); return result(found);
           } catch (error) { check(); throw new Error(webSearchErrorMessage(error, this.options.settings().settingsLanguage === "en")); }
         } });

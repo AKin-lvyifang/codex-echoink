@@ -9,6 +9,7 @@ const { createHash, randomUUID } = getDesktopCrypto();
 export interface KnowledgeLinkingHost {
   readonly vaultRootPath?: string;
   automaticEnabled?(): boolean;
+  prepareManual?(): void;
   documents(origin?: Readonly<KnowledgeLinkingOrigin>): AsyncIterable<KnowledgeLinkingDocument>;
   judge(input: KnowledgeLinkingOrigin & { taskId: string; documents: KnowledgeLinkingDocument[]; targets: KnowledgeLinkingTarget[]; candidates: Array<KnowledgeLinkingMention & { path: string }>; allowAliases: boolean; signal: AbortSignal }): Promise<KnowledgeLinkingProposal[]>;
   read(path: string, origin?: Readonly<KnowledgeLinkingOrigin>): Promise<string>;
@@ -57,14 +58,19 @@ export class KnowledgeLinkingService {
     this.notify();
     this.advanceQueue();
   }
-  async start(mode: "manual" | "automatic" = "manual", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
-    const next = this.starts.then(() => this.startScoped(mode, targetPaths, queuedId, sourcePaths, originConversationId));
+  /** The settings Start button explicitly authorizes analysis and note updates. */
+  startAndApply(): Promise<KnowledgeLinkingTask> {
+    this.host.prepareManual?.();
+    return this.start("manual", undefined, undefined, undefined, undefined, true);
+  }
+  async start(mode: "manual" | "automatic" = "manual", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string, applyImmediately = false): Promise<KnowledgeLinkingTask> {
+    const next = this.starts.then(() => this.startScoped(mode, targetPaths, queuedId, sourcePaths, originConversationId, applyImmediately));
     this.starts = next.then(() => undefined, () => undefined);
     const task = await next;
     this.advanceQueue();
     return task;
   }
-  private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string): Promise<KnowledgeLinkingTask> {
+  private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string, applyImmediately = false): Promise<KnowledgeLinkingTask> {
     await this.ready;
     if (this.disposed) throw new Error("知识关联服务已关闭。");
     if (mode === "automatic" && this.host.automaticEnabled?.() === false) throw new Error("自动补链已关闭，待处理关联保留。");
@@ -86,9 +92,11 @@ export class KnowledgeLinkingService {
       }
       return this.snapshot()!;
     }
+    if (applyImmediately && !await this.host.canWrite(origin)) throw new Error("当前权限只允许读取，不能补全关联。");
     const at = Date.now();
     this.task = { ...origin, ...(originConversationId && this.blockedOrigins.has(originConversationId) ? { pausedForHandoff: true } : {}), schemaVersion: 1, id: queuedId ?? randomUUID(), mode, queuedAutomatic: this.automaticQueue, phase: "scanning", bindingSignature: this.host.bindingSignature(), createdAt: at, updatedAt: at, processed: 0, total: null, proposals: [], patches: [], results: [], ...(targetPaths ? { targetPaths: [...new Set(targetPaths)] } : {}), ...(sourcePaths ? { sourcePaths: [...new Set(sourcePaths)] } : {}) };
     const created = this.task;
+    if (mode === "manual" && applyImmediately) created.writeConfirmed = true;
     if (created.pausedForHandoff) created.phase = "interrupted";
     await this.persist();
     if (!this.disposed && this.task === created && created.phase === "scanning") this.launch(signal => this.scan(signal));
@@ -300,10 +308,10 @@ export class KnowledgeLinkingService {
       for (const rejected of checked.rejected) task.results.push({ path: rejected.path, status: "skipped", links: 0, aliases: 0, message: rejected.reason });
     }
     if (!task.patches.length) return await this.finish();
-    task.phase = task.mode === "manual" ? "awaiting-confirmation" : "writing";
-    task.writeConfirmed = task.mode === "automatic";
+    task.phase = task.mode === "manual" && !task.writeConfirmed ? "awaiting-confirmation" : "writing";
+    task.writeConfirmed = task.phase === "writing";
     task.processed = 0; task.total = task.patches.length; await this.persist();
-    if (task.mode === "automatic") await this.write(signal);
+    if (task.writeConfirmed) await this.write(signal);
     else await this.host.release?.();
   }
   private targetCurrent(task: KnowledgeLinkingTask, targetPath: string, content: string): boolean {

@@ -1,5 +1,5 @@
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
-import { normalizeWebSearchSettings, webSearchApiKey, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
+import { normalizeWebSearchSettings, webSearchApiKey, webSearchKeySource, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
 import { skillIcon } from "../../agents/skill-icons";
 import type { MobileCapabilitiesPort, MobileMcpDraft, MobileMcpSummary, MobileSkillSnapshot } from "../../mobile/capabilities-contracts";
@@ -10,7 +10,7 @@ import { el, settingsContent, settingsGroup, settingsRow, settingsAction, settin
 
 type EditAgent = (id: string) => Promise<unknown>;
 const capabilities = (ctx: IPadSettingsContext): MobileCapabilitiesPort => ctx.host.services.capabilities;
-const sourceKey = (ctx: IPadSettingsContext): string => JSON.stringify([ctx.host.settings().resources, ctx.host.settings().agentRegistry, ctx.host.settings().tavily, ctx.host.settings().settingsLanguage, ctx.host.accountService?.skillAuthorization()]);
+const sourceKey = (ctx: IPadSettingsContext): string => JSON.stringify([ctx.host.settings().resources, ctx.host.settings().agentRegistry, ctx.host.settings().tavily, ctx.host.settings().apiProviders, ctx.host.settings().settingsLanguage, ctx.host.accountService?.skillAuthorization()]);
 const enabledCount = (ctx: IPadSettingsContext, count: number, total?: number): string => ctx.host.settings().settingsLanguage === "en"
   ? `${count}${total === undefined ? "" : ` / ${total}`} enabled` : total === undefined ? `${count} 个启用` : `${count} / ${total} 启用`;
 
@@ -77,7 +77,7 @@ export function createCapabilityPage(ctx: IPadSettingsContext, editAgent: EditAg
     const mcp = settingsGroup(ctx, content, "MCP");
     for (const service of data.mcp) settingsRow(ctx, mcp, service.name, t(ctx, service.statusLabel), () => openMcp(service), tile(ctx, "plug"));
     settingsRow(ctx, mcp, t(ctx, "添加 MCP 服务"), "", () => openMcp(), tile(ctx, "plus"));
-    settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "工具")), t(ctx, "联网搜索"), t(ctx, webSearchApiKey(data.tavily) ? "已填写 Key" : "未填写 Key"), () => ctx.push(createTavilyPage(ctx)), tile(ctx, "globe"));
+    settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "工具")), t(ctx, "联网搜索"), t(ctx, webSearchApiKey(data.tavily, ctx.host.settings().apiProviders) ? "已填写 Key" : "未填写 Key"), () => ctx.push(createTavilyPage(ctx)), tile(ctx, "globe"));
     content.append(error); if (opening) content.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
   });
   page.canLeave = () => !opening;
@@ -311,6 +311,7 @@ function createTavilyPage(ctx: IPadSettingsContext): MobileShellPage {
   const api = capabilities(ctx), initial = api.readTavily(), draft = { ...initial, ...normalizeWebSearchSettings(initial) }, content = settingsContent(ctx), fields = el(ctx.document, "fieldset", "pd-cap-fields"), error = settingsError(ctx);
   content.classList.add("pd-capabilities"); content.append(fields, error);
   const footer = el(ctx.document, "div", ""), leaveArea = el(ctx.document, "div", ""), actions = el(ctx.document, "div", "pd-settings-actions"); footer.append(leaveArea, actions);
+  const apiKey = () => webSearchApiKey(draft, ctx.host.settings().apiProviders);
   const baseline = JSON.stringify(draft); let busy = false, saving = false, disposed = false, allowLeave = false, generation = 0, abort: AbortController | undefined, leave: Promise<boolean> | undefined;
   const changed = () => { generation++; abort?.abort(); abort = undefined; busy = false; allowLeave = false; error.hidden = true; result.hidden = true; };
   const group = settingsGroup(ctx, fields, t(ctx, "联网搜索"));
@@ -320,12 +321,18 @@ function createTavilyPage(ctx: IPadSettingsContext): MobileShellPage {
   for (const provider of WEB_SEARCH_PROVIDERS) {
     const row = el(ctx.document, "label", "pd-settings-row"), radio = el(ctx.document, "input", ""); radio.type = "radio"; radio.name = "ipad-search-provider"; radio.value = provider; radio.checked = draft.provider === provider;
     const name = provider === "deepseek" ? "DeepSeek" : "Tavily"; radio.setAttribute("aria-label", name); row.append(el(ctx.document, "span", "pd-settings-copy", name), radio); providers.append(row); radios.push(radio);
-    radio.addEventListener("change", () => { if (!radio.checked) return; changed(); draft.provider = provider; if (!webSearchApiKey(draft)) { draft.enabled = false; showSettingsError(error, t(ctx, "请先填写当前搜索服务的 API Key。")); } refreshKey(); update(); });
+    radio.addEventListener("change", () => { if (!radio.checked) return; changed(); draft.provider = provider; refreshKey(); update(); });
   }
-  const key = settingsField(ctx, fields, "API Key", webSearchApiKey(draft), value => { changed(); setWebSearchApiKey(draft, value); if (!webSearchApiKey(draft)) draft.enabled = false; update(); }, "password"); key.autocomplete = "off"; key.spellcheck = false;
+  const english = ctx.host.settings().settingsLanguage === "en";
+  const modelStatus = settingsRow(ctx, group, english ? "Using the DeepSeek key from Models" : "使用模型里的 DeepSeek Key");
+  const setup = settingsRow(ctx, group, english ? "Add DeepSeek in Models first" : "先在模型里添加 DeepSeek", "", () => ctx.shell.selectCategory("model"));
+  const key = settingsField(ctx, fields, "API Key", "", value => { if (key.parentElement!.hidden) return; changed(); setWebSearchApiKey(draft, value); if (!apiKey()) draft.enabled = false; update(); }, "password"); key.autocomplete = "off"; key.spellcheck = false;
   const pricing = el(ctx.document, "div", "pd-sub"); fields.append(pricing);
   function refreshKey(): void {
-    key.value = webSearchApiKey(draft); const deepseek = webSearchProvider(draft) === "deepseek";
+    const deepseek = webSearchProvider(draft) === "deepseek", source = webSearchKeySource(draft, ctx.host.settings().apiProviders);
+    const editable = !deepseek || source === "legacy"; key.parentElement!.hidden = !editable;
+    key.value = editable ? webSearchApiKey(draft) : "";
+    modelStatus.hidden = source !== "model"; setup.hidden = !deepseek || source !== "missing";
     pricing.replaceChildren(); const link = el(ctx.document, "a", "", t(ctx, "官网 / 获取 API Key")); link.href = deepseek ? "https://platform.deepseek.com/api_keys" : "https://app.tavily.com"; link.target = "_blank"; link.rel = "noopener noreferrer";
     const price = el(ctx.document, "a", "", t(ctx, "官方定价")); price.href = deepseek ? "https://api-docs.deepseek.com/zh-cn/guides/search/" : "https://docs.tavily.com/documentation/api-credits"; price.target = "_blank"; price.rel = "noopener noreferrer";
     pricing.append(link, ctx.document.createTextNode(" · "), price, el(ctx.document, "div", "", t(ctx, "测试会发送一次搜索请求，按官方定价计费。")));
@@ -333,27 +340,27 @@ function createTavilyPage(ctx: IPadSettingsContext): MobileShellPage {
   const result = status(ctx, content, ""); result.hidden = true;
   const cancel = settingsAction(ctx, "取消", () => ctx.back()), stop = settingsAction(ctx, "停止", () => abort?.abort());
   const test = settingsAction(ctx, "测试连接", async () => {
-    if (busy || !webSearchApiKey(draft)) return; busy = true; saving = false; abort = new AbortController(); const request = abort, revision = ++generation; error.hidden = true; result.hidden = true; update();
+    if (busy || !apiKey()) return; busy = true; saving = false; abort = new AbortController(); const request = abort, revision = ++generation; error.hidden = true; result.hidden = true; update();
     try { await api.testTavily({ ...draft }, request.signal); if (!disposed && revision === generation && !request.signal.aborted) { result.textContent = t(ctx, "连接成功"); result.hidden = false; } }
     catch (failure) { if (!disposed && revision === generation) showSettingsError(error, request.signal.aborted ? t(ctx, "测试已取消。") : t(ctx, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey]))); }
     finally { if (revision === generation) { busy = false; abort = undefined; update(); } }
   });
   const save = settingsAction(ctx, "保存", async () => {
-    if (busy || draft.enabled && !webSearchApiKey(draft)) return; busy = true; saving = true; error.hidden = true; update();
+    if (busy || draft.enabled && !apiKey()) return; busy = true; saving = true; error.hidden = true; update();
     try { await api.saveTavily({ ...draft }); allowLeave = true; ctx.refresh(); if (!disposed) { new Notice(t(ctx, "已保存")); busy = false; saving = false; await ctx.back(); } }
     catch (failure) { if (!disposed) showSettingsError(error, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey])); }
     finally { busy = false; saving = false; update(); }
   }, true);
   function update(): void {
     if (disposed) return; fields.disabled = saving; toggle.checked = draft.enabled; for (const radio of radios) radio.checked = draft.provider === radio.value;
-    cancel.disabled = saving; test.disabled = busy || !webSearchApiKey(draft); save.disabled = busy || draft.enabled && !webSearchApiKey(draft); stop.hidden = !busy || saving;
+    cancel.disabled = saving; test.disabled = busy || !apiKey(); save.disabled = busy || draft.enabled && !apiKey(); stop.hidden = !busy || saving;
     content.setAttribute("aria-busy", String(busy)); buttonText(test, t(ctx, busy && !saving ? "测试中…" : "测试连接")); buttonText(save, t(ctx, saving ? "保存中…" : "保存"));
   }
   actions.append(cancel, test, stop, save); refreshKey(); update();
-  return { id: "ipad-tavily", title: t(ctx, "联网搜索"), content, footer,
+  return liveSettingsPage(ctx, { id: "ipad-tavily", title: t(ctx, "联网搜索"), content, footer,
     canLeave: () => {
       if (saving) return false;
       if (allowLeave || JSON.stringify(draft) === baseline) return true;
       return leave ??= leaveSettingsConfirm(ctx, leaveArea).then(allowed => { leave = undefined; allowLeave = allowed; return allowed; });
-    }, dispose: () => { disposed = true; generation++; abort?.abort(); } };
+    }, dispose: () => { disposed = true; generation++; abort?.abort(); } }, () => { if (!disposed) { refreshKey(); update(); } });
 }

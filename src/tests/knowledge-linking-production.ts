@@ -47,6 +47,44 @@ function memoryHarness(contents: Record<string, string>, judge?: KnowledgeLinkin
 export async function runKnowledgeLinkingProductionTests(): Promise<void> {
   let groups = 0;
   {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const harness = memoryHarness({ "wiki/Source.md": "# Source\nAgent helps.\n", "wiki/Agent.md": "# Agent\n" }, async input => {
+      await gate;
+      return input.documents.map(document => ({ path: document.path, version: document.version,
+        mentions: input.candidates.filter(candidate => candidate.path === document.path),
+        ...(input.allowAliases ? { aliases: [document.title === "Agent" ? "智能体" : "来源"] } : {}) }));
+    });
+    let observed = 0;
+    const close = harness.service.subscribe(() => observed++);
+    await harness.service.startAndApply();
+    close();
+    release(); await harness.service.waitForIdle();
+    const task = harness.service.snapshot()!;
+    assert.equal(task.phase, "completed", "one Start completes the manual job after settings unsubscribes");
+    assert.equal(task.writeConfirmed, true);
+    assert.match(harness.files.get("wiki/Source.md")!, /\[\[wiki\/Agent.md\|Agent\]\]/u);
+    assert.ok(task.results.reduce((count, result) => count + result.aliases, 0) > 0);
+    assert.equal(observed, 1, "closed settings receives no further progress");
+    let reopened: KnowledgeLinkingTask | null = null;
+    harness.service.subscribe(task => { reopened = task; })();
+    assert.equal((reopened as KnowledgeLinkingTask | null)?.phase, "completed");
+    await harness.service.dispose();
+    groups++;
+  }
+  {
+    const harness = memoryHarness({ "wiki/Source.md": "# Source\n" });
+    harness.host.prepareManual = () => { throw new Error("请先配置模型"); };
+    assert.throws(() => harness.service.startAndApply(), /配置模型/u);
+    assert.equal(harness.service.snapshot(), null, "missing model does not start a doomed scan");
+    harness.host.prepareManual = () => undefined;
+    harness.host.canWrite = () => false;
+    await assert.rejects(harness.service.startAndApply(), /只允许读取/u);
+    assert.equal(harness.service.snapshot(), null);
+    await harness.service.dispose();
+    groups++;
+  }
+  {
     for (const ambiguous of [false, true]) {
       const harness = memoryHarness({
         "wiki/source.md": "# Source\n人工智能系统改善效率，Agent执行任务。\n",

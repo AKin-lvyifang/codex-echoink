@@ -9,6 +9,7 @@ import { OriginSetting } from "./origin-setting";
 import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
+import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
 import { applyDeleteButton } from "./amicro-buttons";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
@@ -24,6 +25,9 @@ type Page = "sources" | "role" | "initialize" | "picker" | "collections" | "perm
 /** Desktop presentation only. All writes use the existing directory service. */
 export class DesktopKnowledgeSettings {
   private page: Page = null;
+  private linkingCleanup: (() => void) | null = null;
+  private linkingTaskId?: string;
+  openLinking(taskId?: string): void { this.linkingTaskId = taskId; this.change("permissions"); }
   private selectedRole: Role = "wiki";
   private host: HTMLElement | null = null;
   private error = "";
@@ -87,7 +91,7 @@ export class DesktopKnowledgeSettings {
     } });
   }
   private reset(): void { this.draft = null; this.mode = null; this.moduleDraft = {}; this.wikiChanged = false; this.plan = null; this.generation++; }
-  suspend(): void { this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.host = null; }
+  suspend(): void { this.linkingCleanup?.(); this.linkingCleanup = null; this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.host = null; }
   dispose(): void { this.suspend(); }
   private help(parent: HTMLElement, hint: string): void {
     const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger echoink-knowledge-help-trigger", attr: { "aria-label": hint } });
@@ -157,7 +161,8 @@ export class DesktopKnowledgeSettings {
       void this.plugin.getEchoInkKnowledgeMaintenancePreferenceState().then(state => { showPreference(state.state === "custom" ? "已自定义" : "使用默认"); })
         .catch(() => { showPreference(undefined, "知识提炼偏好读取失败"); });
     } else showPreference(undefined, "知识提炼偏好状态暂不可用");
-    createSettingsNavigationRow(permissions, { title: "知识关联", focusKey: "knowledge:linking", onActivate: () => this.navigation.openLinking() });
+    this.linkingCleanup = renderKnowledgeLinkingSection(permissions, this.plugin, this.linkingTaskId);
+    this.linkingTaskId = undefined;
   }
   private renderManagement(page: HTMLElement): void {
     const bindings = this.bindings();

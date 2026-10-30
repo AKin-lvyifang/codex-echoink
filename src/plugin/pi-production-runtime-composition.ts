@@ -2440,7 +2440,7 @@ async function createProductionAgentSession(input: {
     resumeIntentId: () => { const safety = input.input.currentTaskResumeContext?.()?.safety; return safety ? `${safety.conversationId}:${safety.originalUserEntryId}` : undefined; },
     resumeOperations: () => input.input.currentTaskResumeContext?.()?.safety.pdfOperations ?? [] });
   const pdfTools = createPdfReadingTools(pdfSecurity);
-  const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily, async () => await assertToolAllowed(WEB_SEARCH_TOOL_NAME, {}));
+  const webSearchSecurity = new PiWebSearchSecurity(() => input.plugin.settings.tavily, async () => await assertToolAllowed(WEB_SEARCH_TOOL_NAME, {}), () => input.plugin.settings.apiProviders);
   const workspaceService = input.plugin.getWorkspaceFiles?.();
   const workspaceSecurity = workspaceService ? new PiWorkspaceToolSecurity({ service: workspaceService,
     currentRunIdentity: () => input.input.currentToolExecutionContext(), assertToolAllowed,

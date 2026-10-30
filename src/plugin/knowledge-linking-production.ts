@@ -62,6 +62,10 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
   return {
     vaultRootPath: root,
     automaticEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
+    prepareManual: () => {
+      try { resolveKnowledgeMaintenanceSubmitSnapshot(plugin.settings); }
+      catch { throw new Error(plugin.settings.settingsLanguage === "en" ? "Configure an available model in Models first." : "请先到「模型」配置可用模型，再开始补全知识关联。"); }
+    },
     release,
     async *documents(origin) {
       await assertOrigin(origin, "read");
