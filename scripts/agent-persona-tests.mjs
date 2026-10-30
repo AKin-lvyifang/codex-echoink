@@ -17,7 +17,7 @@ const api = module.exports;
 api.installObsidianDom(window);
 const plain = value => JSON.parse(JSON.stringify(value));
 const flush = async () => { for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setTimeout(resolve, 0)); };
-const expert = { id: "expert-socrates", name: "苏格拉底", avatar: { kind: "preset", presetId: "lin" }, position: "帮你想明白", styleId: "analysis", kind: "expert",
+const expert = { id: "expert-socrates", name: "苏格拉底", avatar: { kind: "preset", presetId: "lin" }, position: "思考伙伴", positionDescription: "公开简介", styleId: "analysis", kind: "expert",
   expert: { expertId: "socrates", hired: true, packageVersion: "draft-1", summary: "公开简介", disclosureShown: true, lastConversationId: "conversation-1", events: [{ id: "rehired", at: 123, conversationId: "conversation-1" }] }, capabilityIds: ["knowledge"] };
 function fixture(registry = api.defaultAgentRegistry()) {
   registry.legacyMigrationVersion = 1;
@@ -31,8 +31,19 @@ function button(root, text) { const node = [...root.querySelectorAll("button")].
 function input(node, value) { node.value = value; node.dispatchEvent(new window.Event("input", { bubbles: true })); }
 
 try {
+  await test("new three-field identities retain roles while legacy mobile callers retain their descriptions", async () => {
+    const { service } = fixture(); let state = await service.snapshot();
+    const base = { name: "小林", avatar: { kind: "default" }, position: "编辑", styleId: "creative", capabilityIds: [] };
+    state = await service.createAgent({ ...base, id: "new-editor", positionDescription: "" }, state.version);
+    assert.equal(state.registry.agents.find(agent => agent.id === "new-editor").position, "编辑");
+    assert.equal(state.registry.agents.find(agent => agent.id === "new-editor").positionDescription, "");
+    state = await service.createAgent({ ...base, id: "legacy-editor", position: "写文章、整理资料" }, state.version);
+    const legacy = state.registry.agents.find(agent => agent.id === "legacy-editor");
+    assert.equal(legacy.position, ""); assert.equal(legacy.positionDescription, "写文章、整理资料");
+    const context = await service.context(false, legacy.id); assert.match(context, /写文章、整理资料/u);
+  });
   await test("normalization retains legacy style, permissions, ownership and all expert public state", () => {
-    const registry = api.defaultAgentRegistry(); registry.agents.push({ id: "writer", name: "写作者", avatar: { kind: "default" }, position: "写作", styleId: "creative", capabilityIds: ["knowledge", "custom-tool"], persona: "正文😀" }, plain(expert));
+    const registry = api.defaultAgentRegistry(); registry.agents.push({ id: "writer", name: "写作者", avatar: { kind: "default" }, position: "写作", positionDescription: "写文章", styleId: "creative", capabilityIds: ["knowledge", "custom-tool"], persona: "正文😀" }, plain(expert));
     registry.moduleOwners.journal = "writer"; registry.moduleOwners.todos = expert.id;
     const normalized = api.normalizeAgentRegistry(registry);
     assert.deepEqual(plain(normalized.agents[1]), registry.agents[1]); assert.deepEqual(plain(normalized.agents[2]), expert);
@@ -56,7 +67,7 @@ try {
     const { service } = fixture(); let state = await service.snapshot();
     await assert.rejects(service.createAgent(plain(expert), state.version), /hiring_flow/u);
     state = await service.updateExpert(registry => { registry.agents.push(plain(expert)); }, state.version);
-    for (const patch of [{ name: "改名" }, { position: "改职位" }, { avatar: { kind: "default" } }, { persona: "私有正文" }, { capabilityIds: [] }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...expert.expert, hired: false } }]) {
+    for (const patch of [{ name: "改名" }, { position: "改职位" }, { positionDescription: "改简介" }, { avatar: { kind: "default" } }, { persona: "私有正文" }, { capabilityIds: [] }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...expert.expert, hired: false } }]) {
       await assert.rejects(service.patchAgent(expert.id, patch, state.version), /expert_agent_locked/u);
     }
     await assert.rejects(service.update(registry => { registry.agents = registry.agents.filter(agent => agent.id !== expert.id); }, state.version), /expert_agent_locked/u);
@@ -76,7 +87,7 @@ try {
     const oldContext = await service.context(false, "sol", old); assert.match(oldContext, /当前基础风格/u); assert.doesNotMatch(oldContext, /测试人格正文/u);
     let state = await service.snapshot(); await service.patchAgent("sol", { persona: "  " }, state.version); assert.match(await service.context(false), /当前基础风格/u);
     state = await service.snapshot(); await service.updateExpert(draft => { draft.agents.push(plain(expert)); }, state.version);
-    const expertContext = await service.context(false, expert.id); assert.doesNotMatch(expertContext, /当前基础风格|公开简介/u);
+    const expertContext = await service.context(false, expert.id); assert.doesNotMatch(expertContext, /当前基础风格/u); assert.match(expertContext, /公开简介/u);
   });
   for (const [device, prefix, create] of [["iPhone", "ip", api.createIPhoneAgentForm], ["iPad", "pd", api.createIPadAgentForm]]) {
     await test(`${device} persona edits keep template selected, confirm replacement and enforce Unicode limit`, async () => {

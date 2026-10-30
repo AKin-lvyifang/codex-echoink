@@ -29,6 +29,7 @@
 .echoink-settings-aligned .echoink-module-drawer-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-title { font-size: 13px; font-weight: 500; }
 .echoink-settings-aligned .echoink-desktop-modules .echoink-module-drawer-summary { font-size: 12px; line-height: 1.6; }
+.echoink-settings-aligned .echoink-desktop-modules [data-module="experts"] button.echoink-module-drawer-trigger:disabled { opacity: 1; }
 body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked .echoink-module-drawer-header { padding-right: 0; }
 body:not(.is-mobile) .echoink-settings-aligned .echoink-module-drawer.is-pro-locked button.echoink-module-drawer-trigger { width: 100%; padding-right: 18px; }
 body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { flex: none; margin-left: auto; color: var(--secondary); font-size: 12px; line-height: 1.55; white-space: nowrap; }

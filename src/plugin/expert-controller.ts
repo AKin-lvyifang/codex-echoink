@@ -41,6 +41,7 @@ export class DesktopExpertController {
     if (agent.expert.packageVersion !== pack.version) await this.plugin.mutateExpertRegistry(registry => {
       assertAvailable(); const current = registry.agents.find(item => item.id === agentId)!;
       current.name = pack.name; current.avatar = pack.avatar; current.position = pack.meta.scene;
+      current.positionDescription = pack.summary;
       current.expert!.packageVersion = pack.version; current.expert!.summary = pack.summary;
     });
     await this.plugin.mutateExpertRegistry(registry => { assertAvailable(); rememberExpertConversation(registry, agentId, conversationId); });

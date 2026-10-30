@@ -1,12 +1,13 @@
 import { normalizeAgentAvatar, normalizeAgentDisplayName } from "../harness/memory/agent-identity-model";
 import { normalizeAgentStyleId } from "./styles";
+import { normalizeAgentPosition } from "./identity";
 import { isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "./persona";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry } from "./types";
 
 export function defaultAgentRegistry(): AgentRegistry {
   return {
     schemaVersion: 1, legacyMigrationVersion: 0,
-    agents: [{ id: GENERAL_ASSISTANT_ID, name: "总助", avatar: { kind: "preset", presetId: "sol" }, position: "什么都能接，专门的活转给同事", styleId: "execution", disabledCapabilityIds: [] }],
+    agents: [{ id: GENERAL_ASSISTANT_ID, name: "总助", avatar: { kind: "preset", presetId: "sol" }, position: "", positionDescription: "什么都能接，专门的活转给同事", styleId: "execution", disabledCapabilityIds: [] }],
     moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, GENERAL_ASSISTANT_ID])) as AgentRegistry["moduleOwners"]
   };
 }
@@ -27,7 +28,7 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
     // Keep malformed expert markers locked and unavailable, rather than downgrading to editable Agents.
     const expert = normalizeExpertAgentState(agent.expert) ?? (expertKind ? { expertId: id.replace(/^expert-/u, ""), hired: false, packageVersion: "", summary: "", disclosureShown: false, events: [] } : undefined);
     if (expert && (id !== `expert-${expert.expertId}` || !expert.packageVersion.trim())) expert.hired = false;
-    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, position: text(agent.position), ...(agent.identityEdited === true ? { identityEdited: true } : {}), styleId: normalizeAgentStyleId(agent.styleId),
+    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, ...normalizeAgentPosition(agent, expertKind ? expert?.summary ?? "" : undefined), ...(agent.identityEdited === true ? { identityEdited: true } : {}), styleId: normalizeAgentStyleId(agent.styleId),
       ...(expertKind ? { kind: "expert" as const, ...(expert ? { expert } : {}) } : { ...(agent.kind === "custom" ? { kind: "custom" as const } : {}), ...(typeof agent.persona === "string" ? { persona: normalizeAgentPersona(agent.persona) } : {}) }),
       ...(id === GENERAL_ASSISTANT_ID
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }
@@ -60,7 +61,6 @@ export function normalizeAgentId(value: unknown): string | undefined {
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
-function text(value: unknown): string { return typeof value === "string" ? value.trim() : ""; }
 function normalizeCapabilityIds(value: unknown): string[] {
   return [...new Set((Array.isArray(value) ? value : [])
     .filter((id): id is string => typeof id === "string" && !!id.trim()).map(id => id.trim()))];

@@ -33,26 +33,39 @@ export async function runProductRunSnapshotTests(root: string): Promise<void> {
   assert.deepEqual((await ordinaryCold.listReadOnly("conversation")).find(run => run.productRunId === "ordinary-persona")?.agentSnapshot, ordinary);
   console.log("OK ordinary 4000-Unicode persona survives create, update, cold read and read-only listing byte-for-byte");
 
-  const expert: AgentRunSnapshot = { agentId: "expert-synthetic", name: "测试专家", position: "产品", styleId: "execution", expertId: "synthetic", expertPackageVersion: "draft-2", capabilityIds: ["knowledge"] };
+  const expert: AgentRunSnapshot = { agentId: "expert-synthetic", name: "测试专家", position: "产品", positionDescription: "帮你把产品问题想清楚", styleId: "execution", expertId: "synthetic", expertPackageVersion: "draft-2", capabilityIds: ["knowledge"] };
   assert.deepEqual((await create("expert-reference", expert)).agentSnapshot, expert);
   await store.update("expert-reference", { state: "running", updatedAt: ++clock });
   const expertCold = new FileProductRunStore(options);
   assert.deepEqual((await expertCold.read("expert-reference"))?.agentSnapshot, expert);
   assert.deepEqual((await expertCold.listReadOnly("conversation")).find(run => run.productRunId === "expert-reference")?.agentSnapshot, expert);
   assert.equal(Object.hasOwn((await expertCold.read("expert-reference"))!.agentSnapshot!, "persona"), false);
-  console.log("OK expert ID/package reference survives create, update and cold/read-only reads without persona");
+  console.log("OK expert ID/package reference and public description survive create, update and cold/read-only reads without persona");
+
+  const emptyDescription: AgentRunSnapshot = { ...legacy, position: "编辑", positionDescription: "" };
+  assert.deepEqual((await create("empty-description", emptyDescription)).agentSnapshot, emptyDescription);
+  await store.update("empty-description", { state: "running", updatedAt: ++clock });
+  const emptyCold = new FileProductRunStore(options);
+  assert.deepEqual((await emptyCold.read("empty-description"))?.agentSnapshot, emptyDescription);
+  assert.deepEqual((await emptyCold.listReadOnly("conversation")).find(run => run.productRunId === "empty-description")?.agentSnapshot, emptyDescription);
+  console.log("OK an explicitly empty description remains present after create, update and cold/read-only reads");
 
   const countBeforeRejection = (await readdir(store.rootPath)).length;
   for (const [id, patch] of [
     ["oversized-persona", { persona: "😀".repeat(4001) }],
     ["non-string-persona", { persona: 123 }],
     ["non-string-expert-id", { expertId: 123 }],
-    ["empty-expert-version", { expertPackageVersion: " " }]
+    ["empty-expert-version", { expertPackageVersion: " " }],
+    ["numeric-description", { positionDescription: 123 }],
+    ["null-description", { positionDescription: null }],
+    ["object-description", { positionDescription: { text: "简介" } }],
+    ["array-description", { positionDescription: ["简介"] }],
+    ["boolean-description", { positionDescription: false }]
   ] as const) {
     await assert.rejects(create(id, { ...legacy, ...patch } as unknown as AgentRunSnapshot));
   }
   assert.equal((await readdir(store.rootPath)).length, countBeforeRejection);
-  console.log("OK invalid persona lengths/types and malformed expert references are rejected before writing");
+  console.log("OK invalid persona/description types and malformed expert references are rejected before writing");
 
   const privateBody = "SYNTHETIC_PRIVATE_EXPERT_FULL_BODY";
   await assert.rejects(create("expert-persona-body", { ...expert, persona: privateBody }));
@@ -64,5 +77,5 @@ export async function runProductRunSnapshotTests(root: string): Promise<void> {
     assert.equal(persisted.includes(privateBody), false, "private expert content must never reach a ProductRun file");
   }
   console.log("OK expert persona/hidden-skill payloads remain forbidden and never reach ProductRun files");
-  console.log("Passed 5 ProductRun snapshot persistence regressions (real file store, isolated disposable directory).");
+  console.log("Passed 6 ProductRun snapshot persistence regressions (real file store, isolated disposable directory).");
 }

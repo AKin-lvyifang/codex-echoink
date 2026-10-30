@@ -12,7 +12,7 @@ export function hireExpert(registry: AgentRegistry, pack: ResolvedExpertPackage,
   const rehired = !!previous && !previous.expert?.hired;
   const expert = previous?.expert;
   const next: AgentDefinition = {
-    id, kind: "expert", name: pack.name, position: pack.meta.scene, avatar: pack.avatar,
+    id, kind: "expert", name: pack.name, position: pack.meta.scene, positionDescription: pack.summary, avatar: pack.avatar,
     styleId: "execution", identityEdited: true,
     expert: { expertId: pack.id, hired: true, packageVersion: pack.version, summary: pack.summary,
       disclosureShown: expert?.disclosureShown ?? false,

@@ -24,6 +24,7 @@ import { getWorkbenchDataService } from "./workbench-data";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "./workbench-types";
 import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher";
 import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
+import { expertModuleEnabled } from "../experts/module";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro } from "./workbench-module-lock";
@@ -39,6 +40,7 @@ import type { VaultMemoryNotice } from "../storage/vault-identity";
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
 type TaskGroups = Record<"interrupted" | "waiting" | "running" | "completed", TaskEntry[]>;
 let viewId = 0;
+const WORKBENCH_NAVIGATION = [...WORKBENCH_MODULES, { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const];
 
 function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceActivity>[], entries: readonly TaskEntry[] = []): Map<string, Readonly<MaintenanceActivity>> {
   const latest = new Map<string, Readonly<MaintenanceActivity>>();
@@ -98,7 +100,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private starters?: WorkbenchStarters;
   private navObserver?: ResizeObserver;
   private navFrame?: number;
-  private overflowModules: typeof WORKBENCH_MODULES[number][] = [];
+  private overflowModules: typeof WORKBENCH_NAVIGATION[number][] = [];
   private memoryNotice: VaultMemoryNotice | null = null;
   private memoryError: string | null = null;
   private readonly port: WorkbenchDataPort;
@@ -333,7 +335,7 @@ export class EchoInkWorkbenchView extends ItemView {
     titles.createEl("h1", { text: this.t("工作台", "Workbench") });
     titles.createEl("time", { cls: "wb-date", attr: { "data-wb": "date" } });
     const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
-    for (const module of WORKBENCH_MODULES) {
+    for (const module of WORKBENCH_NAVIGATION) {
       const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
       button.dataset.module = module.id;
     }
@@ -377,7 +379,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const header = nav.closest<HTMLElement>(".wb-header")!;
     // Always retry with the full layout so weather returns when space becomes available.
     header.classList.remove("is-weather-condensed"); header.style.removeProperty("column-gap");
-    const visible = WORKBENCH_MODULES;
+    const visible = WORKBENCH_NAVIGATION.filter(module => module.id !== "experts" || expertModuleEnabled(this.plugin));
+    nav.querySelector<HTMLButtonElement>('[data-module="experts"]')!.hidden = !expertModuleEnabled(this.plugin);
     const buttons = visible.map(module => nav.querySelector<HTMLButtonElement>(`[data-module="${module.id}"]`)!);
     buttons.forEach(button => { button.hidden = false; }); more.hidden = true; this.overflowModules = [];
     if (!nav.getBoundingClientRect().width) return;
@@ -404,7 +407,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private openMoreModules(): void {
     const menu = new Menu();
-    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${isProWorkbenchModule(module.id) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
+    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${(module.id === "experts" || isProWorkbenchModule(module.id)) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
     const box = this.field("module-more").getBoundingClientRect(); menu.showAtPosition({ x: box.left, y: box.bottom });
   }
   private renderStarters(): void {
@@ -424,7 +427,8 @@ export class EchoInkWorkbenchView extends ItemView {
     else this.starters.update();
   }
 
-  private async openModule(id: typeof WORKBENCH_MODULES[number]["id"]): Promise<void> {
+  private async openModule(id: typeof WORKBENCH_NAVIGATION[number]["id"]): Promise<void> {
+    if (id === "experts") { if (expertModuleEnabled(this.plugin)) await this.plugin.openExpertHall(); return; }
     if (isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) || workbenchModuleSetupReason(this.plugin, id)) { this.showModuleLock(id); return; }
     await openWorkbenchModule(this.plugin, id);
   }
@@ -465,9 +469,9 @@ export class EchoInkWorkbenchView extends ItemView {
     date.textContent = new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric", weekday: "long" }).format(new Date(now));
     date.setAttribute("datetime", dayKey(now));
     this.field("modules").querySelectorAll<HTMLButtonElement>("[data-module]").forEach(button => {
-      const id = button.dataset.module as typeof WORKBENCH_MODULES[number]["id"];
-      const proModule = isProWorkbenchModule(id);
-      button.hidden = false;
+      const id = button.dataset.module as typeof WORKBENCH_NAVIGATION[number]["id"];
+      const proModule = id === "experts" || isProWorkbenchModule(id);
+      button.hidden = id === "experts" && !expertModuleEnabled(this.plugin);
       const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
       const locked = proModule && !workbenchHasPro(this.plugin);
       if (locked && !badge) createPluginEditionBadge(button, "pro", this.language);

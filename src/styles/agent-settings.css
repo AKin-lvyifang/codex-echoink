@@ -17,6 +17,7 @@
 .echoink-agent-settings-list { max-height: min(380px, 55vh); overflow-y: auto; }
 .echoink-agent-settings-row .echoink-settings-navigation-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .echoink-agent-settings-row .echoink-settings-navigation-copy { grid-column: 2; grid-row: 1; min-width: 0; }
+.echoink-agent-settings-row .echoink-settings-navigation-description { color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .echoink-agent-settings-row .echoink-settings-navigation-trailing { grid-column: 3; grid-row: 1; min-width: 16px; display: flex; align-self: center; justify-content: flex-end; }
 .echoink-agent-settings-modules { margin-top: 5px; font-weight: 400; color: var(--secondary); white-space: normal; overflow-wrap: anywhere; }
 .echoink-agent-owner-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 230px); gap: 8px 12px; align-items: center; padding: 12px 0; }

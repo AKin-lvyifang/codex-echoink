@@ -72,7 +72,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
       workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
-    settings: { settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    settings: { expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
     accountService: { checkCapability: () => pro, checkInSession: () => null, subscribe: () => () => {} },
     getConversationRunService: () => ({ pendingInteractions: pending, runs: new Map(), subscribe(listener: ConversationRunSubscriber) { subscribers.add(listener); return () => { subscribers.delete(listener); }; } }),
     getKnowledgeActivitySource: () => activitySource,
@@ -108,6 +108,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateJournalView() { calls.push(["journal"]); },
     async activateEnglishDiaryPage() { calls.push(["english"]); },
     async activatePdfReadingPage() { calls.push(["pdf"]); },
+    async openExpertHall() { calls.push(["experts"]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
@@ -171,6 +172,15 @@ export async function runWorkbenchUiTests(): Promise<void> {
     memoryError = null; host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
+    const beforeExperts = JSON.stringify(host.settings.agentRegistry);
+    assert.equal(button("module-experts").hidden, false, "PRO discovers the expert tab by default");
+    await click("module-experts"); assert.deepEqual(calls.at(-1), ["experts"]);
+    host.settings.expertsEnabled = false; await view.refresh();
+    assert.equal(button("module-experts").hidden, true);
+    assert.equal(JSON.stringify(host.settings.agentRegistry), beforeExperts, "hiding the hall never dismisses hired Agents");
+    host.settings.expertsEnabled = true; await view.refresh();
+    assert.equal(button("module-experts").hidden, false);
+    host.settings.expertsEnabled = undefined;
     for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);
     assert.ok(calls.some(call => JSON.stringify(call) === '["journal"]'));
     assert.ok(calls.some(call => JSON.stringify(call) === '["todos"]'));
@@ -178,6 +188,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));
 
     pro = false; host.settings.englishDiary.enabled = true; await view.refresh();
+    assert.equal(button("module-experts").hidden, true, "free defaults to a hidden expert tab");
     for (const id of ["finance", "english-diary", "pdf-reading"] as const) {
       assert.equal(button(`module-${id}`).hidden, false);
       assert.ok(button(`module-${id}`).querySelector('[data-plugin-edition="pro"]'));
@@ -201,7 +212,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     snapshot = { ...snapshot, modules: ["todos"] }; await view.refresh();
     const configured = { ...host.settings };
     Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
-    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 6, "default/unconfigured modules remain discoverable independently of snapshot.modules");
+    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 7, "default/unconfigured modules remain discoverable independently of snapshot.modules");
     Object.assign(host.settings, configured); await view.refresh();
     for (const [id, destination] of [["journal", "journal"], ["knowledge-base", "knowledge"]] as const) {
       await click(`module-${id}`);

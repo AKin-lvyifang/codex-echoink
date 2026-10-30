@@ -88,8 +88,9 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     assert.equal(f.root.querySelector('[aria-label="返回 Agent 任务"]')!.textContent, "");
     assert.equal(f.root.querySelector(".echoink-agent-editor-back")?.parentElement, f.root.querySelector(".echoink-agent-editor-header"), "ordinary sidebar editor keeps its compact header");
     assert.equal(f.root.querySelector('[data-field="position"]')!.tagName, "INPUT");
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "例如：选题编辑");
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "一句话：负责什么");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "例如：小林");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "例如：选题编辑");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="positionDescription"]')!.placeholder, "一句话：负责什么");
     assert.equal(f.root.querySelector("details .echoink-agent-editor-avatar-grid"), null, "avatar choices stay directly visible");
     assert.equal(f.root.querySelectorAll("[data-persona-template]").length, 4);
     assert.equal(f.root.querySelector('[data-field="persona"]')!.tagName, "TEXTAREA");
@@ -272,17 +273,32 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.dispose(); console.log("PASS Sol persona editing, retained fallback, inline template replacement and 4000 Unicode limit");
   }
   {
+    const f = fixture(); await f.open();
+    const identity = ["name", "position", "positionDescription"].map(field => f.root.querySelector<HTMLInputElement>(`[data-field="${field}"]`)!);
+    assert.deepEqual([...f.root.querySelectorAll<HTMLInputElement>('[data-field="name"],[data-field="position"],[data-field="positionDescription"]')], identity, "three identity fields keep their editing order");
+    assert.equal(identity[0].required, true); assert.equal(identity[1].required, false); assert.equal(identity[2].required, false);
+    for (const [index, value] of [" 小林 ", " 编辑 ", " 写文章、整理资料 "].entries()) { identity[index].value = value; identity[index].dispatchEvent(new win.Event("input", { bubbles: true })); }
+    f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
+    assert.equal(f.saved[0].agent.name, "小林"); assert.equal(f.saved[0].agent.position, "编辑"); assert.equal(f.saved[0].agent.positionDescription, "写文章、整理资料");
+    await f.reopen(f.saved[0].agent.id);
+    for (const field of ["position", "positionDescription"]) { const control = f.root.querySelector<HTMLInputElement>(`[data-field="${field}"]`)!; control.value = ""; control.dispatchEvent(new win.Event("input", { bubbles: true })); }
+    f.root.querySelector<HTMLButtonElement>('[data-action="save-agent"]')!.click(); await settle();
+    assert.equal(f.saved[1].agent.position, ""); assert.equal(f.saved[1].agent.positionDescription, "");
+    f.dispose(); console.log("PASS three-field editor roundtrip and name-only validation");
+  }
+  {
     const f = fixture(); let dismissals = 0, about = 0;
     f.settings.agentRegistry.agents.push({ id: "expert-socrates", name: "苏格拉底", avatar: { kind: "preset", presetId: "lin" }, position: "追问到想明白", styleId: "analysis", kind: "expert",
       expert: { expertId: "socrates", hired: true, packageVersion: "1", summary: "公开简介", disclosureShown: false, events: [] }, capabilityIds: ["knowledge"] });
     f.host.dismissExpert = async () => { dismissals++; }; f.host.showExpertAbout = () => { about++; };
     await f.open("expert-socrates");
-    assert.equal(f.root.querySelectorAll('[data-field="name"],[data-field="position"],[data-field="persona"],[data-persona-template],[data-capability-id]').length, 0);
+    assert.equal(f.root.querySelectorAll('[data-field="name"],[data-field="position"],[data-field="positionDescription"],[data-field="persona"],[data-persona-template],[data-capability-id]').length, 0);
+    assert.deepEqual([...f.root.querySelectorAll("[data-identity-field]")].map(node => (node as HTMLElement).dataset.identityField), ["name", "position", "positionDescription"]);
     assert.equal(f.root.querySelector(".echoink-agent-editor-expert-summary")!.textContent, "公开简介");
     assert.equal(f.root.querySelector(".echoink-agent-editor-title")!.textContent, "苏格拉底");
     assert.equal(f.root.querySelector(".echoink-agent-editor-subtitle")!.textContent, "追问到想明白");
     assert.ok(f.root.querySelector('.echoink-agent-editor-footer [data-action="dismiss-expert"]'));
-    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-lock").length, 2); assert.equal(f.loads, 0);
+    assert.equal(f.root.querySelectorAll(".echoink-agent-editor-lock").length, 1); assert.equal(f.loads, 0);
     assert.equal(f.root.querySelector('[data-action="delete-agent"]'), null);
     assert.equal([...f.root.querySelectorAll("button")].some(node => node.textContent?.trim() === "关于" || node.textContent?.trim() === "About"), false);
     assert.equal(about, 0, "the form never exposes or invokes the retained internal About hook");
@@ -310,8 +326,9 @@ export async function runAgentEditorTests(win: Window & typeof globalThis): Prom
     f.root.querySelector<HTMLButtonElement>('[data-persona-template="analysis"]')!.click(); await settle();
     assert.equal(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, getAgentPersonaTemplate("analysis", "en"));
     assert.match(f.root.querySelector<HTMLTextAreaElement>('[data-field="persona"]')!.value, /Check assumptions, evidence/);
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "e.g., Topic Editor");
-    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "In one sentence: what it handles");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.placeholder, "e.g., Alex");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.placeholder, "e.g., Topic Editor");
+    assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="positionDescription"]')!.placeholder, "In one sentence: what it handles");
     input(f.root, ""); assert.match(f.root.textContent!, /Use 1–24 characters without line breaks or tabs/); input(f.root, "用户原名");
     f.setCounts({ total: 3, running: 0 }); f.root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle();
     assert.equal(f.root.querySelector(".echoink-agent-editor-confirm p")!.textContent, "Its 3 tasks will be transferred to the general assistant.");

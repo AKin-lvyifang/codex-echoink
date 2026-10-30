@@ -540,6 +540,7 @@ export interface CodexForObsidianSettings {
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
   inlineAgent: import("../inline-agent/settings").InlineAgentSettings;
+  expertsEnabled?: boolean;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
   productGeneration: "pi-agent-product-v1";
   settingsVersion: number;
@@ -596,6 +597,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
   inlineAgent: { enabled: true, trigger: "@", nldConflictNoticeShown: false },
+  expertsEnabled: undefined,
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
   productGeneration: "pi-agent-product-v1",
   settingsVersion: 54,
@@ -781,6 +783,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     tavily: normalizeTavilySettings(data.tavily),
     selectionAsk: normalizeSelectionAskSettings(data.selectionAsk),
     inlineAgent: normalizeInlineAgentSettings(data.inlineAgent),
+    expertsEnabled: typeof data.expertsEnabled === "boolean" ? data.expertsEnabled : undefined,
     autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
