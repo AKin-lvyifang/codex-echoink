@@ -358,6 +358,8 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  /** Initialization completed, or the user permanently dismissed its reminder. */
+  initialized?: boolean;
   autoLinkEnabled?: boolean;
   journalSearchDisclosureSeen?: boolean;
   folderBindings?: import("../knowledge-base/folder-bindings").KnowledgeFolderBindings | null;
@@ -536,6 +538,7 @@ export interface EchoInkTodoItem {
 export interface CodexForObsidianSettings {
   mcpServer: EchoInkMcpServerSettings;
   workbenchCheckin: WorkbenchCheckinData;
+  workbenchOnboardingDismissed?: boolean;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
@@ -592,6 +595,7 @@ export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   workbenchCheckin: { signedDates: [], agentDates: [] },
+  workbenchOnboardingDismissed: false,
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
@@ -654,6 +658,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   },
   resourceManagementTab: "plugins",
   knowledgeBase: {
+    initialized: false,
     autoLinkEnabled: true,
     lastRunAt: 0,
     lastRunStatus: "idle",
@@ -771,6 +776,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...DEFAULT_SETTINGS,
     ...currentData,
     workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
+    workbenchOnboardingDismissed: data.workbenchOnboardingDismissed === true,
     // Plan is a conversation/draft choice, never a default for future tasks.
     defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,
@@ -830,6 +836,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
       : ""
   };
 
+  if (settings.sessions.some(session => session.messages.some(message => message.role === "user"))) settings.workbenchOnboardingDismissed = true;
   settings.knowledgeBase.lastRunAt = currentProductData ? settings.knowledgeBase.lastRunAt : 0;
   settings.knowledgeBase.lastRunStatus = currentProductData ? settings.knowledgeBase.lastRunStatus : "idle";
   settings.knowledgeBase.lastReportPath = currentProductData ? settings.knowledgeBase.lastReportPath : "";
@@ -928,6 +935,7 @@ function hasLegacyTokenPlanCustomProvider(value: unknown): boolean {
 }
 
 const KNOWLEDGE_BASE_SETTINGS_KEYS = new Set<string>([
+  "initialized",
   "autoLinkEnabled",
   "journalSearchDisclosureSeen",
   "folderBindings",
@@ -1841,6 +1849,7 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    initialized: value.initialized === true,
     autoLinkEnabled: value.autoLinkEnabled !== false,
     ...(value.journalSearchDisclosureSeen === true ? { journalSearchDisclosureSeen: true } : {}),
     folderBindings: normalizeKnowledgeFolderBindings(value.folderBindings),
@@ -1857,6 +1866,8 @@ function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
     healthHistory: normalizeKnowledgeBaseHealthHistory(value?.healthHistory),
     maintenanceHistory: normalizeKnowledgeBaseMaintenanceHistory(value?.maintenanceHistory)
   };
+  if (normalized.initialization.status === "initialized" || normalized.initialization.initializedAt > 0
+    || typeof value.initialized !== "boolean" && Object.values(normalized.folderBindings?.roles ?? {}).some(binding => binding.readPaths.length > 0 || !!binding.writePath)) normalized.initialized = true;
   return normalized;
 }
 

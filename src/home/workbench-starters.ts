@@ -6,8 +6,8 @@ import { applyAmicroButton } from "../settings/amicro-buttons";
 import { WORKBENCH_ART, avatarWheelArt, inlineWorkbenchArt } from "./workbench-artwork";
 
 const cards = [
-  ["给你的助手换个头像、起个名字", "Give your assistant a name and avatar", "去设置", "Settings", "avatar"],
   ["把这个仓库设成知识库", "Make this vault your knowledge base", "去设置", "Settings", "knowledge"],
+  ["给你的助手换个头像、起个名字", "Give your assistant a name and avatar", "去设置", "Settings", "avatar"],
   ["换一套外观看看", "Try a different appearance", "去看看", "Take a look", "appearance"],
   ["帮我开始写今天的日记", "Help me start today's journal", "开始写", "Start writing", "diary"],
   ["带我精读一篇笔记", "Read a note closely with me", "选一篇", "Choose a note", "reading"],
@@ -27,6 +27,10 @@ export class WorkbenchStarters {
   private drag: { id: number; x: number; dx: number } | null = null;
   private dragged = false;
   private signature = "";
+  private active = true;
+  private hovered = false;
+  private disposed = false;
+  private rotationTimer: number | null = null;
   private readonly cleanups: (() => void)[] = [];
   constructor(parent: HTMLElement, private readonly options: {
     english(): boolean; hasPro(): boolean; avatar(): string; act(index: number): Promise<unknown>; upgrade(): Promise<unknown>; error(error: unknown): void;
@@ -45,6 +49,8 @@ export class WorkbenchStarters {
     cards.forEach((_, i) => { const dot = this.button(dots, "", () => this.go(i)); dot.setAttribute("aria-label", this.t(`第 ${i + 1} 张`, `Card ${i + 1}`)); this.dots.push(dot); });
     arrow(1);
     this.listen(this.element, "keydown", (e: KeyboardEvent) => { if (e.isComposing) return; if (e.key === "Escape" && this.locked !== null) { e.preventDefault(); this.closeLock(); return; } if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.go(this.targetIndex + (e.key === "ArrowLeft" ? -1 : 1)); } });
+    this.listen(this.element, "mouseenter", () => { this.hovered = true; this.resetRotation(); });
+    this.listen(this.element, "mouseleave", () => { this.hovered = false; this.resetRotation(); });
     this.listen(this.deck, "pointerdown", (e: PointerEvent) => { if (e.button !== 0) return; this.dragged = false; if ((e.target as Element).closest("button")) return; this.drag = { id: e.pointerId, x: e.clientX, dx: 0 }; });
     this.listen(this.deck, "pointermove", (e: PointerEvent) => { if (this.drag?.id === e.pointerId) { this.drag.dx = e.clientX - this.drag.x; if (Math.abs(this.drag.dx) > 6 && !this.dragged) { this.dragged = true; this.deck.setPointerCapture?.(e.pointerId); } } });
     this.listen(this.deck, "pointerup", (e: PointerEvent) => { if (this.drag?.id !== e.pointerId) return; const dx = this.drag.dx; this.drag = null; if (Math.abs(dx) > 40) this.go(this.targetIndex + (dx < 0 ? 1 : -1)); });
@@ -53,6 +59,7 @@ export class WorkbenchStarters {
     const Observer = parent.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { const observer = new Observer(() => this.layout(false)); observer.observe(this.deck); this.cleanups.push(() => observer.disconnect()); }
     this.update();
+    this.resetRotation();
   }
   private t(zh: string, en: string): string { return this.options.english() ? en : zh; }
   private listen(target: EventTarget, event: string, action: EventListener): void { target.addEventListener(event, action); this.cleanups.push(() => target.removeEventListener(event, action)); }
@@ -62,7 +69,7 @@ export class WorkbenchStarters {
   }
   update(): void {
     const signature = JSON.stringify([this.options.english(), this.options.hasPro(), this.options.avatar()]);
-    if (signature !== this.signature) { this.signature = signature; if (this.options.hasPro()) this.locked = null; this.setActive(false); this.clearCards(); }
+    if (signature !== this.signature) { this.signature = signature; if (this.options.hasPro()) this.locked = null; this.stopMotion(); this.clearCards(); this.resetRotation(); }
     if (!this.moving) this.layout(false);
   }
   private clearCards(): void { for (const node of this.nodes.values()) { disposeOriginControls(node); node.remove(); } this.nodes.clear(); }
@@ -71,6 +78,7 @@ export class WorkbenchStarters {
     this.targetIndex = (index + cards.length) % cards.length; this.locked = null;
     if (!this.moving) this.advance();
     if (focusedCard) this.deck.focus({ preventScroll: true });
+    this.resetRotation();
   }
   private advance(): void {
     if (this.targetIndex === this.index) { this.layout(false); return; }
@@ -112,6 +120,7 @@ export class WorkbenchStarters {
   }
   private closeLock(): void {
     this.locked = null; this.layout(false);
+    this.resetRotation();
     this.nodes.get(this.index)?.querySelector<HTMLButtonElement>(".wb-starter-actions button")?.focus({ preventScroll: true });
   }
   private layout(_moving: boolean): void {
@@ -139,14 +148,14 @@ export class WorkbenchStarters {
     card.setAttribute("aria-label", `${index + 1} / ${cards.length}`);
     card.onclick = () => { if (this.dragged) { this.dragged = false; return; } if (index !== this.index || this.moving) this.go(index); };
     const data = cards[index]; const art = card.createDiv({ cls: "wb-starter-art" });
-    art.append(index === 0 ? avatarWheelArt(card.ownerDocument, this.options.avatar()) : inlineWorkbenchArt(card.ownerDocument, WORKBENCH_ART[data[4]]));
+    art.append(data[4] === "avatar" ? avatarWheelArt(card.ownerDocument, this.options.avatar()) : inlineWorkbenchArt(card.ownerDocument, WORKBENCH_ART[data[4]]));
     if (index >= 5 && !this.options.hasPro()) card.createSpan({ cls: "wb-starter-pro", text: "PRO" });
     card.createEl("h3", { text: data[this.options.english() ? 1 : 0] });
     const actions = card.createDiv({ cls: "wb-starter-actions" });
     const locked = index >= 5 && !this.options.hasPro();
     const button = this.button(actions, locked ? this.t("了解 PRO", "About PRO") : data[this.options.english() ? 3 : 2], () => {
       if (index !== this.index || this.moving) { this.go(index); return; }
-      if (index >= 5 && !this.options.hasPro()) { this.locked = index; this.layout(false); return; }
+      if (index >= 5 && !this.options.hasPro()) { this.locked = index; this.layout(false); this.resetRotation(); return; }
       return this.options.act(index);
     }, true);
     const icon = locked ? "lock" : index < 2 ? "arrow-right" : undefined;
@@ -164,6 +173,14 @@ export class WorkbenchStarters {
     this.button(actions, this.t("升级 PRO", "Upgrade to PRO"), () => this.options.upgrade(), true);
     cancel.focus({ preventScroll: true });
   }
-  setActive(active: boolean): void { if (!active) { for (const control of this.animations) control.stop(); this.animations.clear(); this.moving = false; this.index = this.targetIndex; this.layout(false); } }
-  dispose(): void { this.setActive(false); for (const cleanup of this.cleanups) cleanup(); this.clearCards(); disposeOriginControls(this.element); this.element.remove(); }
+  private resetRotation(): void {
+    const win = this.element.ownerDocument.defaultView;
+    if (this.rotationTimer !== null) win?.clearTimeout(this.rotationTimer);
+    this.rotationTimer = null;
+    if (!this.active || this.hovered || this.disposed || this.locked !== null) return;
+    this.rotationTimer = win?.setTimeout(() => { this.rotationTimer = null; this.go(this.targetIndex + 1); }, 5_000) ?? null;
+  }
+  private stopMotion(): void { for (const control of this.animations) control.stop(); this.animations.clear(); this.moving = false; this.index = this.targetIndex; this.layout(false); }
+  setActive(active: boolean): void { this.active = active; if (!active) this.stopMotion(); this.resetRotation(); }
+  dispose(): void { this.disposed = true; this.setActive(false); for (const cleanup of this.cleanups) cleanup(); this.clearCards(); disposeOriginControls(this.element); this.element.remove(); }
 }

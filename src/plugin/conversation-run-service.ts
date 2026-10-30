@@ -303,6 +303,11 @@ export class ConversationRunService {
     });
     const context: CodexViewTurnContext = {
       onPiRunAccepted: async () => {
+        if (!plugin.settings.workbenchOnboardingDismissed) {
+          plugin.settings.workbenchOnboardingDismissed = true;
+          await this.flushSave();
+          this.notify(id);
+        }
         void plugin.onWorkbenchMessageAccepted?.(item).catch(() => undefined);
         const origin = Platform.isDesktopApp ? parseWorkbenchTaskSource(item.prefillSource) : null;
         if (origin) {

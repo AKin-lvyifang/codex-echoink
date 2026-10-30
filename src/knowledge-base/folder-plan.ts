@@ -87,6 +87,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   for (const key of ["journal", "review", "english", "expressions", "pdfOriginal"] as const) {
     const value = input.moduleDirectories?.[key];
     if (value === undefined) continue;
+    if (key !== "journal" && value.trim() === "") { moduleDirectories[key] = ""; continue; }
     if (key === "journal" && value.trim() === "") { moduleDirectories.journal = ""; continue; }
     let directory: string;
     try { directory = normalizeKnowledgeDirectory(value); }
@@ -95,7 +96,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
     moduleDirectories[key] = directory;
     const kind = await input.kind(directory);
     if (kind === "folder") reuse.add(directory);
-    else if (kind === "missing" && mode === "build") await addParents(directory);
+    else if (kind === "missing" && (mode === "build" || approved.has(directory))) await addParents(directory);
     else issues.push(`${knowledgeModuleLabels[key]}：${directory}：原位置已失效或不是目录`);
   }
   for (const role of roleScope) {

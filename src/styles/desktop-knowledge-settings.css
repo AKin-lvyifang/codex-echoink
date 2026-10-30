@@ -29,3 +29,46 @@
 }
 
 .echoink-settings-demo .echoink-knowledge-module-page .echoink-knowledge-init-actions { justify-content: flex-end; }
+
+/* Searchable folder picker: one shared Origin island, including its body portal. */
+.echoink-folder-picker { display: flex; flex-direction: column; gap: 6px; width: 100%; min-width: 0; max-width: 100%; }
+.echoink-folder-picker-controls { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.echoink-folder-picker-controls[hidden] { display: none; }
+.echoink-folder-picker .echoink-folder-picker-trigger { display: flex; flex: 1; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; min-height: 32px; height: auto; padding: 7px 10px; border: 1px solid var(--line, var(--background-modifier-border)); border-radius: 6px; background: var(--bg, var(--background-primary)); color: var(--text, var(--text-normal)); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; text-align: left; }
+.echoink-folder-picker-trigger-text { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+.echoink-folder-picker-trigger > svg { flex-shrink: 0; width: 16px; height: 16px; }
+.echoink-folder-picker-popover { z-index: var(--layer-popover, 1000); box-sizing: border-box; width: max(280px, var(--radix-popover-trigger-width)); max-width: calc(100vw - 24px); max-height: min(24rem, var(--radix-popover-content-available-height)); display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--line, var(--background-modifier-border)); border-radius: 6px; background: var(--bg, var(--background-primary)); color: var(--text, var(--text-normal)); font-family: var(--font-interface); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; box-shadow: var(--shadow-s); }
+.echoink-folder-picker-search { position: relative; flex-shrink: 0; }
+.echoink-folder-picker-search > svg { position: absolute; top: 50%; left: 9px; width: 14px; height: 14px; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; }
+.echoink-folder-picker-popover .echoink-folder-picker-search input.echoink-origin-control { box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px; height: auto; padding: 7px 10px 7px 28px; border: 1px solid var(--line, var(--background-modifier-border)); border-radius: 6px; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; background: var(--bg, var(--background-primary)); color: var(--text, var(--text-normal)); }
+.echoink-folder-picker-options { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.echoink-folder-picker-option { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 7px 10px; border-radius: 4px; cursor: pointer; }
+.echoink-folder-picker-option > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.echoink-folder-picker-check { display: grid; place-items: center; flex: 0 0 16px; width: 16px; height: 16px; }
+.echoink-folder-picker-option .echoink-origin-control[data-slot=checkbox] { pointer-events: none; flex: 0 0 16px; width: 16px; min-width: 16px; height: 16px; min-height: 16px; padding: 0; border: 1px solid var(--line, var(--background-modifier-border)); border-radius: 4px; background: var(--bg, var(--background-primary)); color: var(--text-on-accent); }
+.echoink-folder-picker-option .echoink-origin-control[data-slot=checkbox][data-state=checked] { border-color: var(--origin-accent, var(--interactive-accent)); background: var(--origin-accent, var(--interactive-accent)); }
+.echoink-folder-picker-option [data-slot=checkbox-indicator] { display: grid; place-items: center; }
+.echoink-folder-picker-option [data-slot=checkbox-indicator] svg { width: 9px; height: 9px; }
+.echoink-folder-picker-empty { padding: 12px 10px; color: var(--text-muted); }
+.echoink-folder-picker-popover .echoink-folder-picker-create { display: flex; flex-shrink: 0; justify-content: flex-start; gap: 8px; width: 100%; min-height: 32px; height: auto; padding: 7px 10px; border: 0; border-top: 1px solid var(--line, var(--background-modifier-border)); border-radius: 0 0 4px 4px; background: transparent; color: var(--text, var(--text-normal)); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; box-shadow: none; }
+.echoink-folder-picker-create svg { width: 16px; height: 16px; }
+.echoink-folder-picker-values { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.echoink-folder-picker-values:empty { display: none; }
+.echoink-folder-picker-tag { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 3px 2px 7px; border-radius: 4px; background: var(--soft, var(--background-secondary)); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-folder-picker-tag > span { min-width: 0; overflow-wrap: anywhere; }
+.echoink-folder-picker-draft { display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; }
+.echoink-folder-picker .echoink-folder-picker-draft input { flex: 1; width: 100%; min-width: 0; font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-folder-picker-new { flex-shrink: 0; padding: 2px 5px; border-radius: 4px; background: var(--soft, var(--background-secondary)); color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.4; }
+.echoink-folder-picker .echoink-folder-picker-remove { flex: 0 0 24px; width: 24px; min-width: 24px; height: 24px; min-height: 24px; padding: 4px; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); box-shadow: none; }
+.echoink-folder-picker-remove svg { width: 14px; height: 14px; }
+.echoink-folder-picker-error { color: var(--text-error); font-size: calc(var(--font-text-size, 16px) * .75); overflow-wrap: anywhere; }
+.echoink-folder-picker :is(button, input):is(:focus, :focus-visible),
+.echoink-folder-picker-popover :is(button, input, [role=option]):is(:focus, :focus-visible) { outline: none; box-shadow: none; border-color: var(--line, var(--background-modifier-border)); }
+.echoink-folder-picker .echoink-folder-picker-trigger:is(:hover, :focus-visible),
+.echoink-folder-picker :is(input, .echoink-folder-picker-remove):focus-visible,
+.echoink-folder-picker .echoink-folder-picker-remove:hover,
+.echoink-folder-picker-popover :is(.echoink-folder-picker-option, .echoink-folder-picker-create):is(:hover, :focus-visible),
+.echoink-folder-picker-option.is-selected,
+.echoink-folder-picker-popover input:is(:focus, :focus-visible) { background: var(--soft, var(--background-modifier-hover)); }
+.echoink-folder-picker :is(button, input):disabled { opacity: .45; cursor: default; }
+.echoink-folder-picker .echoink-folder-picker-trigger:disabled:hover { background: var(--bg, var(--background-primary)); }

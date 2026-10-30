@@ -10,12 +10,14 @@ import { createOriginButton, createOriginInput, createOriginCheck, createOriginS
 import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { applyDeleteButton } from "./amicro-buttons";
+import { createKnowledgeFolderPicker, type KnowledgeFolderChoice, type KnowledgeFolderPicker } from "./knowledge-folder-picker";
+import { initializationFolderIssues, type InitializationFolderField } from "../knowledge-base/initialization-choices";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
 const purposeExplanations: Record<Role, string> = {
   raw: "保存原始收藏和材料，网页、公众号、PDF 都放这里",
-  wiki: "保存提炼后的主题知识；固定为一个一级文件夹，Agent 在里面按主题建分类",
+  wiki: "保存提炼后的主题知识；选择一个文件夹，Agent 在里面按主题建分类",
   projects: "保存项目型知识",
   inbox: "保存临时笔记"
 };
@@ -37,7 +39,9 @@ export class DesktopKnowledgeSettings {
   private generation = 0;
   private previewing = false;
   private events: EventRef[] = [];
-  private pendingLeave: (() => void) | null = null;
+  private choices: Record<string, KnowledgeFolderChoice[]> = {};
+  private previewTimer?: number;
+  private folderPickers: KnowledgeFolderPicker[] = [];
   private initializationParent: "management" | null = null;
   private returnFocusKey: string | null = null;
   constructor(private readonly plugin: CodexForObsidianPlugin, private readonly navigation: {
@@ -74,20 +78,10 @@ export class DesktopKnowledgeSettings {
   }
   requestLeave(done: () => void): void {
     if (this.busy) return;
-    if (!this.hasDraft) { this.page = null; done(); return; }
-    this.pendingLeave = done;
-    if (this.host?.isConnected) this.renderLeavePrompt();
+    this.reset(); this.page = null; done();
   }
-  private renderLeavePrompt(): void {
-    if (!this.host || !this.pendingLeave) return;
-    const done = this.pendingLeave; this.pendingLeave = null;
-    const trigger = this.host.querySelector<HTMLButtonElement>(".settings-back") ?? createOriginButton(this.host, { text: "返回", cls: "text-button" });
-    showSettingsInlineConfirmation(this.host, trigger, { message: "还有未确认的目录方案，要放弃修改吗？", confirmLabel: "放弃修改", cancelLabel: "继续编辑", onConfirm: async () => {
-      this.reset(); this.page = null; done?.();
-    } });
-  }
-  private reset(): void { this.draft = null; this.mode = null; this.moduleDraft = {}; this.wikiChanged = false; this.plan = null; this.generation++; }
-  suspend(): void { this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.host = null; }
+  private reset(): void { this.draft = null; this.mode = null; this.moduleDraft = {}; this.choices = {}; this.wikiChanged = false; this.plan = null; this.previewing = false; this.error = ""; this.generation++; }
+  suspend(): void { if (this.previewTimer !== undefined) window.clearTimeout(this.previewTimer); this.previewTimer = undefined; this.events.splice(0).forEach(ref => this.plugin.app.vault.offref(ref)); this.folderPickers.splice(0).forEach(picker => picker.dispose()); this.host = null; }
   dispose(): void { this.suspend(); }
   private help(parent: HTMLElement, hint: string): void {
     const help = createOriginButton(parent, { cls: "is-icon echoink-settings-help-trigger echoink-knowledge-help-trigger", attr: { "aria-label": hint } });
@@ -180,7 +174,6 @@ export class DesktopKnowledgeSettings {
     else if (this.page === "management") this.renderManagement(page);
     else this.renderInitialization(page);
     this.restoreReturnFocus(page);
-    if (this.pendingLeave) this.renderLeavePrompt();
   }
   private openRole(role: Role): void { this.selectedRole = role; this.change("role"); }
   private renderRole(page: HTMLElement): void {
@@ -211,7 +204,7 @@ export class DesktopKnowledgeSettings {
     this.checkbox(page, "允许 Agent 检索这些资料", this.bindings().roles[role].searchEnabled !== false, "回答问题时，知识库检索与读取会使用上方所有资料文件夹；关闭后不再使用这些资料，文件、目录绑定和保存位置不变。你主动 @ 引用或提交到聊天的内容除外。此项不授权整理，也不影响 Obsidian 自带搜索。", async enabled => { const next = this.bindings(); next.roles[role].searchEnabled = enabled; await this.save(next); });
   }
   private chooseRole(role: Role): void {
-    this.picker = { title: role === "wiki" ? "知识成果 · 请选择一个一级文件夹" : `选择${titles[role]}文件夹`, role, back: this.page, onChoose: async path => {
+    this.picker = { title: role === "wiki" ? "知识成果 · 请选择一个文件夹" : `选择${titles[role]}文件夹`, role, back: this.page, onChoose: async path => {
       const next = this.bindings(), binding = next.roles[role];
       binding.readPaths = role === "raw" ? [...new Set([...binding.readPaths, path])] : [path];
       binding.writePath = role === "raw" && binding.writePath ? binding.writePath : path; binding.enabled = true; binding.searchEnabled = true;
@@ -224,7 +217,7 @@ export class DesktopKnowledgeSettings {
     const input = createOriginInput(page, { attr: { placeholder: "搜索文件夹", "aria-label": "搜索文件夹" } });
     const list = page.createDiv({ cls: "echoink-knowledge-folder-picker" });
     const render = () => { disposeOriginControls(list); list.empty();
-      const folders = this.plugin.app.vault.getAllFolders(false).filter(folder => !folder.path.split("/").some(part => part.startsWith(".")) && (picker.role !== "wiki" || !folder.path.includes("/")) && folder.path.toLocaleLowerCase().includes(input.value.toLocaleLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
+      const folders = this.plugin.app.vault.getAllFolders(false).filter(folder => !folder.path.split("/").some(part => part.startsWith(".")) && folder.path.toLocaleLowerCase().includes(input.value.toLocaleLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
       if (!folders.length) list.createDiv({ cls: "setting-item-description", text: "没有符合条件的文件夹" });
       for (const folder of folders) createSettingsNavigationRow(list, { title: folder.path, actionLabel: "选择", onActivate: () => { if (this.busy) return; void picker.onChoose(folder.path).catch(error => { new Notice(error instanceof Error ? error.message : String(error)); this.navigation.redraw(); }); } });
     }; input.oninput = render; render();
@@ -276,7 +269,7 @@ export class DesktopKnowledgeSettings {
       const routes = page.createDiv({ cls: "echoink-knowledge-init-routes" });
       for (const [mode, title, description] of [["build", "帮我搭建", "核对目录和实际搬迁计划，确认后执行。"], ["existing", "使用现有文件夹", "选择已有位置，只改绑定，不移动文件。"]] as const) {
         const row = createSettingsNavigationRow(routes, { title, description, onActivate: () => {
-        this.mode = mode; this.draft = this.bindings();
+        this.mode = mode; this.draft = this.bindings(); this.choices = {}; this.moduleDraft = {};
         const core = (this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { instance?: { options?: { folder?: string } } }> } }).internalPlugins?.plugins;
         // Journal/templates are owned by Obsidian; stale shared bindings are not a new directory choice.
         for (const [role, id] of [["journal", "daily-notes"], ["templates", "templates"]] as const) {
@@ -286,7 +279,7 @@ export class DesktopKnowledgeSettings {
           binding.readPaths = folder ? [folder] : []; binding.writePath = folder || null;
           binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => binding.readPaths.includes(path));
         }
-        if (mode === "build") for (const role of ["raw", "wiki"] as const) if (!this.draft.roles[role].enabled) { const binding = this.draft.roles[role]; binding.enabled = true; binding.readPaths = [role]; binding.writePath = role; if (role === "wiki") this.wikiChanged = true; }
+        if (mode === "build") for (const role of ["raw", "wiki", "projects", "inbox"] as const) { const binding = this.draft.roles[role]; binding.enabled = true; binding.readPaths = [role]; binding.writePath = role; if (role === "wiki") this.wikiChanged = true; }
         this.change("initialize");
         } });
         row.addClass("echoink-knowledge-init-route");
@@ -302,26 +295,53 @@ export class DesktopKnowledgeSettings {
       const section = createSettingsSection(fields, { title, surface: "flat" });
       return section.createDiv({ cls: "echoink-knowledge-init-group" });
     };
+    const native = readNativeJournalSettings(this.plugin.app, this.plugin.settings.journalDirectory, bindings);
+    const defaults: KnowledgeModuleDirectories = this.mode === "build"
+      ? { journal: "journal", review: "outputs", english: "outputs/english-diary", expressions: "outputs/english-diary/expressions", pdfOriginal: "raw/pdf" }
+      : { journal: native.folder, ...prepareKnowledgeModuleDirectories(this.plugin.settings, bindings,
+        (this.plugin.app.vault.getRoot?.().children ?? []).map(file => file.path)).directories };
+    const folders = () => this.plugin.app.vault.getAllFolders(false).map(folder => folder.path)
+      .filter(path => !path.split("/").some(part => part.startsWith(".")));
+    const formFields: InitializationFolderField[] = [];
+    const pickers = new Map<string, KnowledgeFolderPicker>();
+    const addField = (parent: HTMLElement, key: string, title: string, paths: string[], disabled: boolean, update: (paths: string[]) => void) => {
+      const row = new OriginSetting(parent).setName(title);
+      this.choices[key] ??= paths.filter(Boolean).map(path => ({ path, create: !folders().includes(path) }));
+      if (!disabled) {
+        formFields.push({ key, title, values: this.choices[key] });
+        update(this.choices[key].map(choice => choice.path.trim()).filter(Boolean));
+      }
+      const picker = createKnowledgeFolderPicker(row.controlEl, { label: `初始化${title}`, folders,
+        values: this.choices[key], multiple: key === "raw", disabled, app: this.plugin.app,
+        onChange: values => {
+          this.choices[key] = values;
+          const field = formFields.find(field => field.key === key); if (field) field.values = values;
+          update(values.map(choice => choice.path.trim()).filter(Boolean));
+          this.invalidatePlan(); refresh(); schedulePreview();
+        }
+      });
+      this.folderPickers.push(picker); pickers.set(key, picker);
+    };
     const knowledgeFields = fieldGroup("知识库");
     for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
-      const row = new OriginSetting(knowledgeFields).setName(titles[role]);
-      const input = createOriginInput(row.controlEl, { value: bindings.roles[role].writePath ?? "", attr: { "aria-label": `初始化${titles[role]}`, placeholder: role === "wiki" ? "一个一级文件夹" : "Vault 内文件夹" } });
-      input.oninput = () => { this.invalidatePlan(); const value = input.value.trim(); const binding = bindings.roles[role];
-        // Preserve existing multi-source/read scopes until the user edits this specific role.
-        binding.readPaths = role === "raw" ? [...new Set([...binding.readPaths.filter(path => path !== binding.writePath), ...(value ? [value] : [])])] : value ? [value] : [];
-        binding.writePath = value || null; binding.enabled = binding.readPaths.length > 0; if (role === "wiki") this.wikiChanged = true;
-      }; input.onblur = () => void preview();
-      if (role === "raw" && bindings.roles.raw.readPaths.length > 1) row.descEl.setText(`读取：${bindings.roles.raw.readPaths.join("、")}；新内容保存到所选位置。`);
+      addField(knowledgeFields, role, titles[role], bindings.roles[role].readPaths, false, paths => {
+        const binding = bindings.roles[role];
+        binding.readPaths = paths; binding.enabled = paths.length > 0;
+        binding.writePath = binding.writePath && paths.includes(binding.writePath) ? binding.writePath : paths[0] ?? null;
+        if (role === "raw" && bindings.collectionTargets) for (const kind of ["web", "wechat"] as const) {
+          if (!paths.includes(bindings.collectionTargets[kind] ?? "")) bindings.collectionTargets[kind] = binding.writePath;
+        }
+        binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => paths.includes(path));
+        if (role === "wiki" && paths.join("\n") !== this.bindings().roles.wiki.readPaths.join("\n")) this.wikiChanged = true;
+      });
     }
-    const native = readNativeJournalSettings(this.plugin.app, this.plugin.settings.journalDirectory, bindings);
-    const defaults: KnowledgeModuleDirectories = { journal: native.folder, review: this.plugin.settings.review.outputDir, english: this.plugin.settings.englishDiary.englishDirectory, expressions: this.plugin.settings.englishDiary.expressionDirectory, pdfOriginal: this.plugin.settings.pdfReading.originalDirectory ?? knowledgeCollectionDirectory(bindings, "web") ?? "",
-      ...prepareKnowledgeModuleDirectories(this.plugin.settings, bindings,
-        (this.plugin.app.vault.getRoot?.().children ?? []).map(file => file.path)).directories };
     const moduleFields = fieldGroup("模块保存位置");
     for (const [key, title] of [["journal", "日记"], ["review", "复盘输出"], ["english", "英文稿"], ["expressions", "表达库"], ["pdfOriginal", "原 PDF"]] as const) {
-      const row = new OriginSetting(moduleFields).setName(title); const input = createOriginInput(row.controlEl, { value: this.moduleDraft[key] ?? defaults[key] ?? "", attr: { "aria-label": `初始化${title}` } });
-      input.disabled = key === "review" ? !this.plugin.settings.review.enabled : key === "english" || key === "expressions" ? !this.plugin.settings.englishDiary.enabled : key === "pdfOriginal" ? !this.plugin.settings.pdfReading.enabled : false;
-      input.oninput = () => { this.moduleDraft[key] = input.value.trim(); this.invalidatePlan(); }; input.onblur = () => void preview();
+      const disabled = key === "review" ? !this.plugin.settings.review.enabled : key === "english" || key === "expressions" ? !this.plugin.settings.englishDiary.enabled : key === "pdfOriginal" ? !this.plugin.settings.pdfReading.enabled : false;
+      addField(moduleFields, key, title, [this.moduleDraft[key] ?? defaults[key] ?? ""], disabled, paths => {
+        if (key === "journal" && !paths.length) delete this.moduleDraft.journal;
+        else this.moduleDraft[key] = paths[0] ?? "";
+      });
     }
     const nativeFields = fieldGroup("待办、附件与模板");
     new OriginSetting(nativeFields).setName("待办源文件").setDesc(TODO_SOURCE_PATH);
@@ -331,30 +351,52 @@ export class DesktopKnowledgeSettings {
     const summary = actions.createSpan({ cls: "echoink-knowledge-init-impact" });
     const retry = createOriginButton(actions, { text: "重新核对" });
     const confirm = createOriginButton(actions, { cls: "mod-cta", text: "确认初始化" }); confirm.disabled = true;
+    const formIssues = () => {
+      const issues = initializationFolderIssues(formFields, folders());
+      if (this.mode === "build") for (const role of ["raw", "wiki"] as const) if (!bindings.roles[role].readPaths.length && !issues.has(role)) issues.set(role, ["请选择文件夹"]);
+      return issues;
+    };
     const refresh = () => { if (!page.isConnected) return; result.empty();
-      confirm.disabled = this.busy || this.previewing || !this.plan || this.plan.issues.length > 0; retry.disabled = this.busy || this.previewing;
-      summary.setText(this.busy ? "正在初始化…" : this.previewing ? "正在核对…" : this.plan ? `将新建 ${this.plan.create.length} 个文件夹 · 移动 ${this.plan.moves.length} 个文件` : "文件或设置已变化，请重新核对");
+      const issues = formIssues();
+      const unassigned: string[] = [];
+      for (const issue of this.plan?.issues ?? []) {
+        const matches = formFields.filter(field => issue.startsWith(field.title) || (field.key === "english" && issue.startsWith("英文日记")) || field.values.some(choice => choice.path && issue.includes(choice.path)));
+        if (!matches.length) unassigned.push(issue);
+        else for (const field of matches) issues.set(field.key, [...(issues.get(field.key) ?? []), issue]);
+      }
+      for (const [key, picker] of pickers) picker.setError(issues.get(key)?.join("；"));
+      confirm.disabled = this.busy || this.previewing || issues.size > 0 || !this.plan || this.plan.issues.length > 0;
+      retry.disabled = this.busy || this.previewing;
+      summary.setText(this.busy ? "正在初始化…" : issues.size ? "请修正标红的位置" : this.previewing ? "正在核对…" : this.plan ? `将新建 ${this.plan.create.length} 个文件夹 · 移动 ${this.plan.moves.length} 个文件` : "文件或设置已变化，请重新核对");
       if (this.error) result.createDiv({ cls: "settings-error", text: this.error, attr: { role: "alert" } });
-      if (this.plan) { for (const issue of this.plan.issues) result.createDiv({ cls: "settings-error", text: issue });
+      for (const issue of unassigned) result.createDiv({ cls: "settings-error", text: issue, attr: { role: "alert" } });
+      if (this.plan) {
         const details = result.createEl("details"); details.createEl("summary", { text: "查看实际变更" });
         for (const path of this.plan.create) details.createDiv({ text: `新建 ${path}` });
         for (const move of this.plan.moves) details.createDiv({ text: `${move.from} → ${move.to}` });
       }
     };
     const preview = async () => {
-      if (this.busy) return; const version = ++this.generation; this.plan = null; this.previewing = true; this.error = ""; refresh();
-      try { const createPaths = this.mode === "build" ? Object.values(bindings.roles).filter(binding => binding.enabled && !binding.native).flatMap(binding => binding.readPaths) : [];
+      if (this.busy) return;
+      if (formIssues().size) { this.invalidatePlan(); refresh(); return; }
+      const version = ++this.generation; this.plan = null; this.previewing = true; this.error = ""; refresh();
+      try {
+        const createPaths = formFields.flatMap(field => field.values.filter(choice => choice.create).map(choice => choice.path.trim()));
         const plan = await this.service().previewDirectoryPlan(bindings, createPaths, { mode: this.mode!, wikiChanged: this.wikiChanged, moduleDirectories: this.moduleDraft });
         if (version === this.generation) this.plan = plan;
       } catch (error) { if (version === this.generation) this.error = error instanceof Error ? error.message : String(error); }
       finally { if (version === this.generation) this.previewing = false; refresh(); }
     };
-    const invalidate = () => { if (!this.busy) { this.invalidatePlan(); refresh(); } };
+    const schedulePreview = () => {
+      if (this.previewTimer !== undefined) window.clearTimeout(this.previewTimer);
+      this.previewTimer = window.setTimeout(() => { this.previewTimer = undefined; if (page.isConnected) void preview(); }, 150);
+    };
+    const invalidate = () => { if (!this.busy) { this.invalidatePlan(); refresh(); schedulePreview(); } };
     this.events.push(this.plugin.app.vault.on("create", invalidate), this.plugin.app.vault.on("delete", invalidate), this.plugin.app.vault.on("rename", invalidate), this.plugin.app.vault.on("modify", invalidate));
-    fields.addEventListener("input", refresh); retry.onclick = () => void preview();
+    retry.onclick = () => void preview();
     confirm.onclick = async () => {
-      const plan = this.plan; if (!plan || this.busy || this.previewing || plan.issues.length) return;
-      this.busy = true; fields.querySelectorAll<HTMLInputElement>("input").forEach(input => { input.disabled = true; }); refresh();
+      const plan = this.plan; if (!plan || this.busy || this.previewing || plan.issues.length || formIssues().size) return;
+      this.busy = true; pickers.forEach(picker => picker.setDisabled(true)); refresh();
       try { const result = await this.service().applyDirectoryPlan(plan, false); new Notice(`已新建 ${result.created.length} 个文件夹，移动 ${result.moved.length} 个文件`); this.reset(); this.page = this.initializationParent; this.returnFocusKey = this.initializationParent ? "knowledge:onboarding" : "knowledge:management"; }
       catch (error) { this.error = error instanceof Error ? error.message : String(error); this.plan = null; }
       finally { this.busy = false; this.navigation.redraw(); }
