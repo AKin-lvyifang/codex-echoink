@@ -863,7 +863,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea):not(.echoink-mobile-finance-settings *):is(:focus,:focus-visible){border-color:var(--line);outline:none;box-shadow:none;background:var(--background-modifier-hover,var(--soft))}
 .echoink-settings-demo input[type=range]{accent-color:var(--accent);max-width:170px}
 .echoink-settings-demo [data-slot=checkbox],.echoink-settings-demo input[type=radio]{accent-color:var(--accent)}
-.echoink-settings-demo:not(.echoink-mobile-finance-settings) button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
+.echoink-settings-demo:not(.echoink-mobile-finance-settings) button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-settings-help-trigger):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
 .echoink-settings-demo .echoink-amicro-button,.echoink-settings-demo .mod-cta{--interactive-accent:var(--accent);--interactive-normal:var(--bg);--interactive-hover:var(--soft)}
 .echoink-settings-demo .echoink-settings-navigation-row{border:0;border-radius:0;border-top:1px solid var(--line);padding:17px 0;background:none;box-shadow:none;width:100%;height:auto;white-space:normal}
 .echoink-settings-demo .echoink-settings-navigation-row:first-child{border-top:0}
@@ -1115,8 +1115,17 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .health-card.is-unknown .health-score strong{color:var(--muted)}
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
-.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;border:1px solid var(--muted);border-radius:50%;background:none;color:var(--secondary);line-height:1}
-.echoink-settings-demo button.echoink-settings-help-trigger[type="button"]{padding:0;width:13px;min-height:13px;height:13px;font-size:9px}
+/* One circle comes from the Lucide icon; the help trigger has no button chrome. */
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger,
+.echoink-settings-demo button.echoink-settings-help-trigger.echoink-origin-control[data-slot=button] {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; align-self: center;
+  width: 14px; min-width: 14px; max-width: 14px; height: 14px; min-height: 14px; max-height: 14px;
+  margin: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; box-shadow: none;
+  color: var(--secondary); line-height: 1; vertical-align: middle; cursor: help;
+}
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger > svg { width: 14px; height: 14px; }
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger:is(:hover,:focus-visible) { background: var(--soft); outline: none; box-shadow: none; }
+
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row.has-echoink-inline-confirm{flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}
@@ -1167,10 +1176,18 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 /* Preserve the native checkbox event and checked state with the Demo switch. */
 
 /* Page structures use their existing controls and the single native scrollport. */
-.echoink-settings-demo .echoink-settings-inline-editor>.settings-back,.echoink-settings-demo .echoink-settings-page>.settings-back{margin:23px 0 2px}
 .echoink-settings-demo .echoink-settings-page>.settings-back+.page-intro{margin-top:14px}
-.echoink-settings-demo .echoink-settings-page>.settings-back{width:auto;max-width:100%;height:auto;min-height:30px;flex:0 0 auto;justify-content:flex-start;gap:6px;padding:6px 0;text-align:left;white-space:normal}
-.echoink-settings-demo .echoink-settings-page>.settings-back>span{min-width:0;overflow-wrap:anywhere}
+/* Shared by page, editor and legacy module return controls. */
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button] {
+  display: inline-flex; width: fit-content; max-width: 100%; height: auto; min-height: 30px; flex: 0 0 auto;
+  justify-content: flex-start; gap: 6px; margin: 0 0 8px; padding: 3px 0; text-align: left; white-space: normal;
+  border: 0; background: transparent; color: var(--secondary); box-shadow: none;
+  font-size: calc(var(--font-text-size,16px)*.75);
+  transition: var(--echoink-motion-transition, background-color 150ms, color 150ms);
+}
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button]:is(:hover,:focus-visible) { background: var(--soft); color: var(--text); outline: none; box-shadow: none; }
+.echoink-settings-demo button.echoink-settings-back > span { min-width: 0; overflow-wrap: anywhere; }
+.echoink-settings-demo button.echoink-settings-back svg { width: 13px; height: 13px; }
 .echoink-settings-demo .echoink-settings-page-heading,.echoink-settings-demo .codex-provider-add-copy{width:100%;text-align:left}
 .echoink-settings-demo .codex-provider-add-copy{flex:1;min-width:0}
 .echoink-settings-demo .codex-provider-add-section{align-items:flex-start}
@@ -1525,15 +1542,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions {
   justify-content: flex-end;
 }
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] {
-  width: auto; max-width: 100%; height: auto; min-height: 30px; flex: 0 0 auto;
-  justify-content: flex-start; gap: 6px; padding: 6px 0; text-align: left; white-space: normal;
-  border: 0; background: transparent; box-shadow: none;
-}
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button]:is(:hover, :focus, :focus-visible) {
-  background: var(--background-modifier-hover); outline: none; box-shadow: none; border: 0;
-}
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] > span { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-demo .echoink-knowledge-folder-panel .settings-error {
   color: var(--text-error);
 }
@@ -2381,7 +2389,6 @@ body:not(.is-mobile) .echoink-workbench .wb-module-lock-actions { display: flex;
 body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plugin-edition-badge { flex: none; }
 
 /* P11 desktop settings shell: retained forms, compact connections and service choices. */
-.echoink-settings-desktop .echoink-settings-inline-editor>.settings-back:is(:hover,:focus,:focus-visible){background:var(--hover);border-color:transparent;outline:none;box-shadow:none}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary{list-style:none;cursor:pointer;margin:-16px -18px;padding:16px 18px;border-radius:10px}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary::-webkit-details-marker{display:none}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary:hover,.echoink-settings-desktop .echoink-quick-chat-drawer>summary:focus-visible{background:var(--hover);outline:none;box-shadow:none}

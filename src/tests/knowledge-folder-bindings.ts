@@ -67,6 +67,12 @@ async function runCaptureSourceBindingTests(): Promise<void> {
 }
 
 export async function runKnowledgeFolderBindingsTests(): Promise<void> {
+  assert.equal(emptyKnowledgeFolderBindings().allowAgentSubfolders, true, "new installations allow subfolders by default");
+  const unsetChoice = emptyKnowledgeFolderBindings(); delete unsetChoice.allowAgentSubfolders;
+  assert.equal(normalizeKnowledgeFolderBindings(unsetChoice)!.allowAgentSubfolders, true, "legacy unset choices inherit the default");
+  const optedOut = { ...unsetChoice, allowAgentSubfolders: false };
+  const savedOptOut = normalizeSettingsData({ knowledgeBase: { folderBindings: optedOut } }).settings;
+  assert.equal(normalizeSettingsData(JSON.parse(JSON.stringify(savedOptOut))).settings.knowledgeBase.folderBindings?.allowAgentSubfolders, false, "an explicit opt-out survives settings save and reload");
   await assertDesktopRoleProjection();
   await runCaptureSourceBindingTests();
   const vault = await mkdtemp(path.join(tmpdir(), "echoink-bindings-"));

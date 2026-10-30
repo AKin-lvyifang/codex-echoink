@@ -443,15 +443,7 @@
   height: 16px;
 }
 
-.echoink-desktop-account-settings .desktop-account-detail .settings-back.echoink-origin-control[data-slot=button] {
-  display: inline-flex;
-  width: auto;
-  min-height: 30px;
-  padding: 6px 0;
-  justify-content: flex-start;
-  font-size: calc(var(--font-text-size, 16px) * .75);
-  white-space: normal;
-}
+
 
 .echoink-desktop-account-settings .echoink-account :is(.form-field, .device-row > div, .desktop-account-redemption, .membership-copy) {
   min-width: 0;

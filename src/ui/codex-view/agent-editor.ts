@@ -13,7 +13,7 @@ import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../agent-avatar-pre
 import { AvatarProcessingError, createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
 import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
-import { showSettingsInlineConfirmation } from "../../settings/settings-v2";
+import { applySettingsBackButton, showSettingsInlineConfirmation } from "../../settings/settings-v2";
 import { resolveMcpConnectionRecord } from "../../resources/mcp-connections";
 import type { EchoInkResource } from "../../resources/types";
 
@@ -159,7 +159,7 @@ export class AgentEditorController {
     back.classList.add("echoink-agent-editor-back"); setIcon(back, "arrow-left");
     back.setAttribute("aria-label", this.host.backLabel ?? this.t("返回 Agent 任务", "Back to Agent tasks"));
     if (settingsPresentation) {
-      this.el(back, "span", "", "Agent");
+      applySettingsBackButton(back, this.host.backLabel ?? this.t("返回 Agent 设置", "Back to Agent settings"));
       root.appendChild(header);
     }
     const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);

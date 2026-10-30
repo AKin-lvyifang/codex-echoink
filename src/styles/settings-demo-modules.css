@@ -194,9 +194,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-finance-analysis-location > form small { flex-basis: 100%; }
 .echoink-settings-aligned .echoink-finance-analysis-location > form small:empty { display: none; }
 .echoink-settings-aligned .echoink-finance-root-location > .echoink-module-path-value { max-width: 60%; text-align: right; }
-.echoink-settings-aligned .echoink-module-detail > :is(h2, .echoink-life-settings-back) { margin-inline: 18px; }
+.echoink-settings-aligned .echoink-module-detail > h2 { margin-inline: 18px; }
 .echoink-settings-aligned .echoink-module-detail > h2 { font-size: 17px; margin-top: 8px; margin-bottom: 16px; }
-.echoink-settings-aligned .echoink-module-detail > .echoink-life-settings-back { padding: 4px 6px; color: var(--secondary); background: transparent; border: 0; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-life-hint { margin: 0; padding: 0 18px 13px; font-size: 12px; line-height: 1.7; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 0 18px; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-item { padding: 13px 18px; border-top: 1px solid var(--line); gap: 8px; }
@@ -224,7 +223,6 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer-content.has-module-detail { border-top: 0; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > h2 { margin-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
 

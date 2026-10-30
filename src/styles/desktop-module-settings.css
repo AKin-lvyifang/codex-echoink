@@ -110,7 +110,6 @@
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel > div { display: flex; min-width: 0; flex-direction: column; }
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-file-input { display: none; }
-.echoink-settings-demo .echoink-settings-page.is-detail > .echoink-settings-back:is(:focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 @container (max-width: 520px) {
   .echoink-settings-demo .echoink-journal-template-management :is(.echoink-journal-template-grid, .echoink-journal-custom-list) { grid-template-columns: minmax(0, 1fr); }
   .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel { align-items: stretch; flex-direction: column; }

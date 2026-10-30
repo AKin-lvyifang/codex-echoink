@@ -5,7 +5,7 @@ import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { LifestyleKind } from "./settings";
 import { FinanceCatalogPanel } from "./finance-catalog-dialog";
-import { attachSettingsHelpTooltip, attachSettingsTooltip, createSettingsNavigationRow } from "../settings/settings-v2";
+import { attachSettingsHelpTooltip, attachSettingsTooltip, createSettingsNavigationRow, createSettingsBackButton } from "../settings/settings-v2";
 import { createOriginCheck, createOriginInput, createOriginSwitch, disposeOriginControls } from "../settings/origin-controls";
 
 export class LifestyleSettingsPanel {
@@ -34,8 +34,8 @@ export class LifestyleSettingsPanel {
       }
     }
     if (!this.embedded || this.financeCatalog) {
-    const back = page.createEl("button", { cls: "echoink-life-settings-back", text: `‹ ${this.financeCatalog?.backLabel() ?? "返回插件列表"}` });
-    back.onclick = this.financeCatalog ? () => this.financeCatalog?.back() : this.back;
+    const back = createSettingsBackButton(page, this.financeCatalog?.backLabel() ?? "返回插件列表", this.financeCatalog ? () => this.financeCatalog?.back() : this.back);
+    back.addClass("echoink-life-settings-back");
     back.disabled = this.financeCatalog?.isPending() ?? false;
     page.createEl("h2", { text: this.financeCatalog?.title() ?? `${this.plugin.lifestyle.label(this.kind)}设置` });
     }

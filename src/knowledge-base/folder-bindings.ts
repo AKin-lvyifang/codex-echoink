@@ -40,7 +40,7 @@ export function normalizeKnowledgeDirectory(value: string): string {
   return normalized;
 }
 export function emptyKnowledgeFolderBindings(): KnowledgeFolderBindings {
-  return { schemaVersion: 1, revision: 1, roles: Object.fromEntries(KNOWLEDGE_ROOT_ROLES.map((role) => [role,
+  return { schemaVersion: 1, revision: 1, allowAgentSubfolders: true, roles: Object.fromEntries(KNOWLEDGE_ROOT_ROLES.map((role) => [role,
     { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [], autoOrganizePaths: [] }])) as unknown as KnowledgeFolderBindings["roles"], migrationIssues: [] };
 }
 export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolderBindings | null {

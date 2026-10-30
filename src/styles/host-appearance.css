@@ -36,7 +36,9 @@ body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-theme-bounda
   background: var(--echoink-control-fill); color: var(--echoink-control-on-fill);
 }
 body[data-echoink-theme="host"] .echoink-origin-control [data-slot=switch-thumb] { background: var(--echoink-control-on-fill); }
-.echoink-theme-required { margin-right: 8px; }
+.echoink-theme-recommendation > .echoink-theme-required { color: var(--text-muted); }
+.echoink-theme-recommendation > a { color: var(--text-accent); text-decoration: underline; text-underline-offset: 2px; transition: var(--echoink-motion-transition, color 150ms); }
+.echoink-theme-recommendation > a:is(:hover,:focus-visible) { color: var(--text-accent-hover); background: var(--background-modifier-hover); outline: none; box-shadow: none; }
 /* Older conversation/account skins keep local color aliases; route those through
    the same host palette instead of their light/dark black overlays. */
 body[data-echoink-theme="host"] .codex-container {
