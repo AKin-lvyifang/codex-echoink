@@ -116,7 +116,7 @@ export function attachNativeTooltip(
       if (options.touch !== "notice") return;
       touchNotices.get(doc)?.hide();
       const created = new Notice(value, 0);
-      const nativeHide = created.hide.bind(created) as () => void;
+      const nativeHide = created.hide.bind(created);
       created.hide = () => {
         // Native notice clicks/gestures call this instance method before their fade ends.
         if (notice === created) { notice = undefined; hide(); }

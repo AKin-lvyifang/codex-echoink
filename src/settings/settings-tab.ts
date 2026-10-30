@@ -2,7 +2,7 @@ import { renderMcpServerSettings } from "./mcp-server-settings";
 import { isOfficialRemoteSkill, remoteSkillLocked, skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../membership/skill-delivery";
 import { ownedDiv } from "../ui/owned-dom";
-import { isImeKeyEvent } from "../ui/ime-composition";
+import { isImeKeyEvent, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
@@ -2345,7 +2345,7 @@ export class CodexSettingTab extends PluginSettingTab {
     };
     search.addEventListener("compositionstart", () => { composing = true; });
     search.addEventListener("compositionend", () => { composing = false; updateQuery(); });
-    search.oninput = (event) => { if (!composing && !(event as InputEvent).isComposing) updateQuery(); };
+    search.oninput = (event) => { if (!composing && !isComposingInput(event)) updateQuery(); };
 
     const section = createSettingsSection(page, {
       title: zh

@@ -1,6 +1,6 @@
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { openTaskMenu } from "../ui/codex-view/task-menu";
-import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
+import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { WorkbenchWeatherStage, type WorkbenchWeather } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
@@ -164,7 +164,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.unsubscribers.push(service.subscribe({ refresh: () => this.scheduleRefresh(), clearAcceptedDraft() {}, isTaskVisible: () => false }));
     this.registerDomEvent(this.contentEl, "keydown", event => this.handleKeys(event));
     this.registerDomEvent(this.contentEl, "input", event => {
-      if ((event.target as HTMLElement).dataset.wb === "search-input" && !(event as InputEvent).isComposing) this.scheduleSearch();
+      if ((event.target as HTMLElement).dataset.wb === "search-input" && !isComposingInput(event)) this.scheduleSearch();
     });
     this.registerDomEvent(this.contentEl, "compositionend", () => this.scheduleSearch());
     this.registerDomEvent(this.contentEl, "pointermove", event => {

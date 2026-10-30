@@ -196,7 +196,7 @@ export class EchoInkKnowledgeSurfaceService {
       },
       removeEmptyFolder: (relative) => this.removeEmptyCreatedFolder(relative)
     });
-    const createFolder = host.createFolder.bind(host) as typeof host.createFolder;
+    const createFolder = host.createFolder.bind(host);
     host.createFolder = async (relative) => {
       const parts = relative.split("/");
       for (let i = 1; i <= parts.length; i++) {

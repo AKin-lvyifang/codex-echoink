@@ -451,7 +451,7 @@ export class MobileSettingsPages {
     const modal = new AgentIdentityModal(this.host.app, { initialName: data.identity.displayName, initialAvatar: data.identity.avatar, language: "zh", mode: data.identity.revision === 0 ? "first-run" : "edit",
       onConfirm: async identity => { await this.services.saveAgentProfile({ identity, ...(templateId ? { templateId } : {}) }, data.version); if (templateId) this.ui.closeSheet(); } });
     modal.modalEl.classList.add("echoink-mobile-identity-modal"); modal.modalEl.classList.toggle("em-large-text", this.host.settings().mobileUi.largeText);
-    const close = modal.onClose.bind(modal) as () => void; modal.onClose = () => { close(); const target = restore?.isConnected ? restore : this.agentArticle?.querySelector<HTMLElement>(".em-profile-template"); target?.focus({ preventScroll: true }); };
+    const close = modal.onClose.bind(modal); modal.onClose = () => { close(); const target = restore?.isConnected ? restore : this.agentArticle?.querySelector<HTMLElement>(".em-profile-template"); target?.focus({ preventScroll: true }); };
     modal.open();
   }
   private selectAgentTemplate(data: MobileAgentProfile) {

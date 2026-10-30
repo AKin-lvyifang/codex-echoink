@@ -11,6 +11,7 @@ import { diaryButton, diaryError, diaryField } from "./ui";
 import { renderDiaryProgress } from "./activity";
 import { ForegroundView } from "../ui/foreground-view";
 import { filterExpressions, pathsOverlap } from "./expression-search";
+import { isComposingInput } from "../ui/ime-composition";
 
 export type ExpressionViewState = { query?: string; category?: string; expressionId?: string; page?: number };
 interface ExpressionBrowserOptions { embedded?: boolean; managed?: boolean; onChanged?: () => void }
@@ -251,7 +252,7 @@ export class EnglishExpressionBrowser {
     const search = createOriginInput(searchField, { cls: "echoink-expression-search", value: this.query, attr: { type: "search", placeholder: "搜索表达、意思、日期或日记", "aria-label": "搜索表达库" } });
     search.dataset.expressionField = "search";
     const searchChanged = () => { this.query = search.value; this.pageNumber = 1; this.listScroll = 0; this.contentEl.querySelector<HTMLElement>(".echoink-expression-list")?.scrollTo?.(0, 0); this.app.workspace.requestSaveLayout(); this.filterLoadedEntries(); };
-    search.addEventListener("input", (event) => { if (!(event as InputEvent).isComposing) searchChanged(); });
+    search.addEventListener("input", (event) => { if (!isComposingInput(event)) searchChanged(); });
     search.addEventListener("compositionend", searchChanged);
     if (this.query || this.category) diaryButton(tools, "清除筛选", () => { this.query = ""; this.category = ""; this.pageNumber = 1; this.listScroll = 0; const list = this.contentEl.querySelector<HTMLElement>(".echoink-expression-list"); if (list) list.scrollTop = 0; this.filterLoadedEntries(); this.app.workspace.requestSaveLayout(); }, { tertiary: true });
     const categories = browserTools.createDiv({ cls: "echoink-diary-filters echoink-expression-categories", attr: { role: "group", "aria-label": "按分类筛选" } });

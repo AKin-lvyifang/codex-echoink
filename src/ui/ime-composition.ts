@@ -31,6 +31,11 @@ export function watchImeComposition(root: HTMLElement): () => void {
   return () => { if (released) return; released = true; if (--current.references === 0) { current.dispose(); trackers.delete(root); } };
 }
 
+/** Input events are typed as Event or InputEvent depending on the DOM lib; read the flag either way. */
+export function isComposingInput(event: Event): boolean {
+  return "isComposing" in event && event.isComposing === true;
+}
+
 /** A composing Enter/Escape must not submit or close; composition-end's key stays in that event turn. */
 export function isImeKeyEvent(event: ImeKeyboardEvent): boolean {
   if (event.isComposing || event.key === "Process" || event.key === "Unidentified") return true;

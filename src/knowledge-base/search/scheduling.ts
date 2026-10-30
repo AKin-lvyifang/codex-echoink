@@ -60,11 +60,10 @@ export async function yieldSearchTask(signal?: AbortSignal): Promise<void> {
   checkAbort(signal);
   try {
     const scheduler = environment.scheduler;
-    const yieldMethod = scheduler?.yield;
-    if (typeof yieldMethod === "function") {
+    if (typeof scheduler?.yield === "function") {
+      const yielding: Required<SchedulerLike> = scheduler as Required<SchedulerLike>;
       await waitForTask(signal, (done, fail) => {
-        const task = yieldMethod.call(scheduler) as Promise<void>;
-        void task.then(done, fail);
+        void yielding.yield().then(done, fail);
       });
       checkAbort(signal);
       return;
