@@ -28,6 +28,8 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
   const vault = path.join(root, "vault");
   const fixture = await nativeJournalFixture(vault);
   const config = emptyKnowledgeFolderBindings();
+  // These cases exercise a user's explicit opt-out, independent of the install default.
+  config.allowAgentSubfolders = false;
   Object.assign(config.roles.raw, { enabled: true, readPaths: ["来源甲", "来源乙"], writePath: "来源甲" });
   Object.assign(config.roles.wiki, { enabled: true, readPaths: ["成果", "来源甲/知识"], writePath: "成果", compatibilityReadScopes: true });
   Object.assign(config.roles.projects, { enabled: true, readPaths: ["项目"], writePath: "项目" });

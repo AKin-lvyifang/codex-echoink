@@ -46,10 +46,10 @@ export function renderCompanionThemeRecommendation(container: HTMLElement, zh: b
   note.dataset.echoinkThemeRecommendation = "";
   // Settings pages can be built before their container is mounted.
   note.hidden = readCompanionTheme(doc).active;
-  note.createSpan({ cls: "echoink-theme-required", text: zh ? "安装配套主题后生效" : "Install the companion theme to enable appearance choices" });
+  note.createSpan({ cls: "echoink-theme-required", text: zh ? "安装配套主题后生效 · " : "Install the companion theme to enable appearance choices · " });
   const title = note.createEl("a");
   title.href = ECHOINK_COMPANION_THEME_URL; title.target = "_blank"; title.rel = "noopener noreferrer";
-  title.textContent = zh ? "下载配套主题 echoink-theme" : "Download the echoink-theme companion";
+  title.textContent = zh ? "下载 echoink-theme" : "Download echoink-theme";
   const details = note.createEl("details");
   const summary = details.createEl("summary");
   summary.textContent = zh ? "安装说明" : "Installation";

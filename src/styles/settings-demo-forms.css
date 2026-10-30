@@ -56,9 +56,6 @@
 .echoink-settings-aligned .codex-provider-combobox-search:focus-within { border-color: var(--line); background: var(--soft); outline: none; box-shadow: none; }
 .echoink-settings-aligned .codex-provider-combobox-option.is-selected { color: var(--text); background: var(--soft); }
 .echoink-settings-aligned :is(.provider-form-section h3, .codex-provider-modal-label, .codex-provider-manual-model-copy, .codex-provider-model-advanced-heading) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button] { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--secondary); vertical-align: middle; }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help) svg { width: 13px; height: 13px; }
 .echoink-settings-aligned :is(.codex-provider-modal-label.has-echoink-provider-help, .codex-mcp-server-label.has-echoink-mcp-help) { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; }
 .echoink-settings-aligned .codex-mcp-server-label > .echoink-mcp-form-help { margin-left: 0; }
 
@@ -142,11 +139,7 @@
 
 /* The settings variant has its own return row; the task sidebar keeps its header. */
 .echoink-settings-aligned .echoink-agent-editor.is-settings { height: auto; min-height: 0; overflow: visible; font-size: calc(var(--font-text-size, 16px) * .8125); }
-.echoink-settings-aligned .echoink-agent-editor.is-settings > .echoink-agent-editor-back {
-  display: inline-flex; align-items: center; align-self: flex-start; justify-content: flex-start; flex: none;
-  width: auto; min-height: 30px; padding: 6px 0; margin: 0 0 14px; gap: 6px; border: 0; color: var(--secondary);
-  font-size: calc(var(--font-text-size, 16px) * .75);
-}
+
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-header { gap: 10px; margin: 0 0 18px; padding: 0; border: 0; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-preview { flex-basis: 34px; width: 34px; height: 34px; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-title { font-size: calc(var(--font-text-size, 16px) * 1.0625); }

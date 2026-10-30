@@ -4,7 +4,7 @@ import { createOriginButton, createOriginInput, createOriginSelect, createOrigin
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { requireProPluginAction } from "../membership/access";
-import { createSettingsGroup, createSettingsSection } from "../settings/settings-v2";
+import { createSettingsBackButton, createSettingsGroup, createSettingsSection } from "../settings/settings-v2";
 
 export class PdfReadingSettingsPanel {
   private controls?: ProPluginControls;
@@ -16,7 +16,7 @@ export class PdfReadingSettingsPanel {
     const host = this.plugin.pdfReading!;
     const page = this.page = container.createDiv({ cls: "echoink-life-settings-page echoink-pdf-settings" });
     if (!options.embedded) {
-    const back = page.createEl("button", { cls: "echoink-life-settings-back", text: "‹ 返回插件列表" }); back.onclick = this.back;
+    createSettingsBackButton(page, "返回插件列表", this.back).addClass("echoink-life-settings-back");
     const heading = page.createDiv({ cls: "echoink-pdf-settings-heading" }); heading.createEl("h2", { text: "PDF 精读 · 提取" });
     createPluginEditionBadge(heading, "pro", this.plugin.settings.settingsLanguage);
     }

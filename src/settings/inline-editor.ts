@@ -1,6 +1,7 @@
+import { createSettingsBackButton } from "./settings-v2";
 import { isImeKeyEvent } from "../ui/ime-composition";
-import { type Modal, setIcon } from "obsidian";
-import { createOriginButton, disposeOriginControls } from "./origin-controls";
+import { type Modal } from "obsidian";
+import { disposeOriginControls } from "./origin-controls";
 
 export interface SettingsEditorHandle {
   (): void;
@@ -31,9 +32,7 @@ export function mountSettingsEditor(
   options: SettingsEditorMountOptions = {}
 ): SettingsEditorHandle {
   host.addClass("echoink-settings-inline-editor");
-  const back = createOriginButton(host, { cls: "settings-back text-button", attr: { type: "button" } });
-  setIcon(back.createSpan(), "chevron-left");
-  back.createSpan({ text: backLabel });
+  const back = createSettingsBackButton(host, backLabel, () => undefined);
   const surface = host.createDiv({ cls: "echoink-settings-inline-surface echoink-settings-modal" });
   modal.containerEl = surface;
   modal.modalEl = surface;

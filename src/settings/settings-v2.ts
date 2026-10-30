@@ -45,18 +45,7 @@ export function createSettingsPage(
     cls: `echoink-settings-page${options.detail ? " is-detail" : ""}`
   });
   if (options.onBack) {
-    const back = createOriginButton(page, {
-      cls: "echoink-settings-back settings-back text-button",
-      attr: {
-        type: "button",
-        "aria-label": options.backLabel ?? "Back",
-        "data-echoink-focus-key": "settings-detail:back"
-      }
-    });
-    setIcon(back.createSpan(), "chevron-left");
-    back.createSpan({ text: options.backLabel ?? "Back" });
-    applyAmicroButton(back, { variant: "tertiary" });
-    back.onclick = options.onBack;
+    createSettingsBackButton(page, options.backLabel ?? "Back", options.onBack);
   }
   const header = page.createDiv({ cls: "echoink-settings-page-header page-intro" });
   if (options.titleVisibility === "screen-reader") header.addClass("is-title-hidden");
@@ -74,16 +63,41 @@ export function createSettingsPage(
   return page;
 }
 
+/** All settings detail pages share the same quiet, content-width return control. */
+export function createSettingsBackButton(parent: HTMLElement, label: string, onBack: () => void): HTMLButtonElement {
+  const back = createOriginButton(parent, {
+    cls: "echoink-settings-back settings-back text-button",
+    attr: { type: "button", "aria-label": label, "data-echoink-focus-key": "settings-detail:back" }
+  });
+  applySettingsBackButton(back, label);
+  back.onclick = onBack;
+  return back;
+}
+
+/** Adopt the shared presentation without replacing a page's existing leave handler. */
+export function applySettingsBackButton(back: HTMLButtonElement, label: string): void {
+  back.addClass("echoink-settings-back", "settings-back", "text-button");
+  back.empty();
+  back.setAttribute("aria-label", label);
+  setIcon(back.createSpan({ attr: { "aria-hidden": "true" } }), "chevron-left");
+  back.createSpan({ text: label });
+  applyAmicroButton(back, { variant: "tertiary" });
+}
+
 export function createSettingsSection(
   page: HTMLElement,
   options: SettingsSectionOptions = {}
 ): HTMLElement {
+  const detail = page.closest<HTMLElement>(".echoink-settings-page.is-detail");
+  const duplicateTitle = detail && !detail.querySelector(".echoink-settings-section")
+    && detail.querySelector(".echoink-settings-page-heading h2")?.textContent === options.title;
+  const title = duplicateTitle ? undefined : options.title;
   const section = page.createEl("section", {
     cls: `echoink-settings-section is-${options.surface ?? "flat"}${options.surface === "group" ? " settings-card" : ""}`
   });
-  if (options.title || options.description) {
+  if (title || options.description) {
     const header = section.createDiv({ cls: "echoink-settings-section-header settings-card-header" });
-    if (options.title) header.createEl("h3", { text: options.title });
+    if (title) header.createEl("h3", { text: title });
     if (options.description) {
       header.createDiv({
         cls: "echoink-settings-section-description",
@@ -127,6 +141,8 @@ export function attachSettingsHelpTooltip(
   _wrapper = trigger,
   _options: { readonly interactive?: boolean } = {}
 ): void {
+  trigger.addClass("echoink-settings-help-trigger");
+  setIcon(trigger, "circle-alert");
   settingsTooltips.set(trigger, attachNativeTooltip(trigger, explanation, { preserveLabel: false, touch: "notice" }));
 }
 

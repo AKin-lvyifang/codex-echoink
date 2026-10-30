@@ -20827,7 +20827,7 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([type=radio]):not([type=range]),select,textarea):not(.echoink-mobile-finance-settings *):is(:focus,:focus-visible){border-color:var(--line);outline:none;box-shadow:none;background:var(--background-modifier-hover,var(--soft))}
 .echoink-settings-demo input[type=range]{accent-color:var(--accent);max-width:170px}
 .echoink-settings-demo [data-slot=checkbox],.echoink-settings-demo input[type=radio]{accent-color:var(--accent)}
-.echoink-settings-demo:not(.echoink-mobile-finance-settings) button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
+.echoink-settings-demo:not(.echoink-mobile-finance-settings) button:not(:where(.echoink-account .heat-cell)):not(.codex-settings-tab):not(.codex-resource-tab):not(.text-button):not(.todo-heatmap-cell):not(.provider-group-button):not(.codex-provider-combobox-option):not(.echoink-about-logo):not(.echoink-settings-navigation-row):not(.echoink-settings-help-trigger):not(.echoink-origin-control):not(.codex-resource-row-name):not(:where(.directory-planner button)){font-family:inherit;font-size:calc(var(--font-text-size,16px)*.6875);height:auto;min-height:30px;box-shadow:none}
 .echoink-settings-demo .echoink-amicro-button,.echoink-settings-demo .mod-cta{--interactive-accent:var(--accent);--interactive-normal:var(--bg);--interactive-hover:var(--soft)}
 .echoink-settings-demo .echoink-settings-navigation-row{border:0;border-radius:0;border-top:1px solid var(--line);padding:17px 0;background:none;box-shadow:none;width:100%;height:auto;white-space:normal}
 .echoink-settings-demo .echoink-settings-navigation-row:first-child{border-top:0}
@@ -21079,8 +21079,17 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .health-card.is-unknown .health-score strong{color:var(--muted)}
 .echoink-settings-demo{position:relative}
 .echoink-settings-demo .echoink-settings-help{display:inline-flex;position:relative;vertical-align:middle}
-.echoink-settings-demo .echoink-settings-help-trigger{display:grid;place-items:center;border:1px solid var(--muted);border-radius:50%;background:none;color:var(--secondary);line-height:1}
-.echoink-settings-demo button.echoink-settings-help-trigger[type="button"]{padding:0;width:13px;min-height:13px;height:13px;font-size:9px}
+/* One circle comes from the Lucide icon; the help trigger has no button chrome. */
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger,
+.echoink-settings-demo button.echoink-settings-help-trigger.echoink-origin-control[data-slot=button] {
+  display: inline-flex; align-items: center; justify-content: center; flex: 0 0 14px; align-self: center;
+  width: 14px; min-width: 14px; max-width: 14px; height: 14px; min-height: 14px; max-height: 14px;
+  margin: 0; padding: 0; border: 0; border-radius: 3px; background: transparent; box-shadow: none;
+  color: var(--secondary); line-height: 1; vertical-align: middle; cursor: help;
+}
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger > svg { width: 14px; height: 14px; }
+.echoink-settings-demo :is(button,span).echoink-settings-help-trigger:is(:hover,:focus-visible) { background: var(--soft); outline: none; box-shadow: none; }
+
 .echoink-settings-demo .echoink-settings-inline-confirm{flex-basis:100%;width:100%;min-width:0}
 .echoink-settings-demo .echoink-settings-compact-row.has-echoink-inline-confirm{flex-wrap:wrap}
 .echoink-settings-demo .echoink-memory-correction-card{padding:20px 22px;border:1px solid var(--line);border-radius:10px;margin:18px 0;background:var(--bg)}
@@ -21131,10 +21140,18 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 /* Preserve the native checkbox event and checked state with the Demo switch. */
 
 /* Page structures use their existing controls and the single native scrollport. */
-.echoink-settings-demo .echoink-settings-inline-editor>.settings-back,.echoink-settings-demo .echoink-settings-page>.settings-back{margin:23px 0 2px}
 .echoink-settings-demo .echoink-settings-page>.settings-back+.page-intro{margin-top:14px}
-.echoink-settings-demo .echoink-settings-page>.settings-back{width:auto;max-width:100%;height:auto;min-height:30px;flex:0 0 auto;justify-content:flex-start;gap:6px;padding:6px 0;text-align:left;white-space:normal}
-.echoink-settings-demo .echoink-settings-page>.settings-back>span{min-width:0;overflow-wrap:anywhere}
+/* Shared by page, editor and legacy module return controls. */
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button] {
+  display: inline-flex; width: fit-content; max-width: 100%; height: auto; min-height: 30px; flex: 0 0 auto;
+  justify-content: flex-start; gap: 6px; margin: 0 0 8px; padding: 3px 0; text-align: left; white-space: normal;
+  border: 0; background: transparent; color: var(--secondary); box-shadow: none;
+  font-size: calc(var(--font-text-size,16px)*.75);
+  transition: var(--echoink-motion-transition, background-color 150ms, color 150ms);
+}
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button]:is(:hover,:focus-visible) { background: var(--soft); color: var(--text); outline: none; box-shadow: none; }
+.echoink-settings-demo button.echoink-settings-back > span { min-width: 0; overflow-wrap: anywhere; }
+.echoink-settings-demo button.echoink-settings-back svg { width: 13px; height: 13px; }
 .echoink-settings-demo .echoink-settings-page-heading,.echoink-settings-demo .codex-provider-add-copy{width:100%;text-align:left}
 .echoink-settings-demo .codex-provider-add-copy{flex:1;min-width:0}
 .echoink-settings-demo .codex-provider-add-section{align-items:flex-start}
@@ -21489,15 +21506,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions {
   justify-content: flex-end;
 }
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] {
-  width: auto; max-width: 100%; height: auto; min-height: 30px; flex: 0 0 auto;
-  justify-content: flex-start; gap: 6px; padding: 6px 0; text-align: left; white-space: normal;
-  border: 0; background: transparent; box-shadow: none;
-}
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button]:is(:hover, :focus, :focus-visible) {
-  background: var(--background-modifier-hover); outline: none; box-shadow: none; border: 0;
-}
-.echoink-settings-demo .echoink-knowledge-folder-panel .settings-back.echoink-origin-control[data-slot=button] > span { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-demo .echoink-knowledge-folder-panel .settings-error {
   color: var(--text-error);
 }
@@ -22349,7 +22357,6 @@ body:not(.is-mobile) .echoink-workbench .wb-module-lock-actions { display: flex;
 body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plugin-edition-badge { flex: none; }
 
 /* P11 desktop settings shell: retained forms, compact connections and service choices. */
-.echoink-settings-desktop .echoink-settings-inline-editor>.settings-back:is(:hover,:focus,:focus-visible){background:var(--hover);border-color:transparent;outline:none;box-shadow:none}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary{list-style:none;cursor:pointer;margin:-16px -18px;padding:16px 18px;border-radius:10px}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary::-webkit-details-marker{display:none}
 .echoink-settings-desktop .echoink-quick-chat-drawer>summary:hover,.echoink-settings-desktop .echoink-quick-chat-drawer>summary:focus-visible{background:var(--hover);outline:none;box-shadow:none}
@@ -23265,7 +23272,6 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel > div { display: flex; min-width: 0; flex-direction: column; }
 .echoink-settings-demo .echoink-journal-template-management .echoink-journal-file-input { display: none; }
-.echoink-settings-demo .echoink-settings-page.is-detail > .echoink-settings-back:is(:focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 @container (max-width: 520px) {
   .echoink-settings-demo .echoink-journal-template-management :is(.echoink-journal-template-grid, .echoink-journal-custom-list) { grid-template-columns: minmax(0, 1fr); }
   .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel { align-items: stretch; flex-direction: column; }
@@ -23278,9 +23284,6 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-knowledge-module-page .echoink-settings-navigation-title,
 .echoink-knowledge-module-page .echoink-settings-navigation-value { overflow-wrap: anywhere; }
 .echoink-settings-aligned .echoink-knowledge-save-location [data-slot=select-trigger] { width: 230px; }
-/* Knowledge uses a single Lucide circle, without the legacy help-button circle. */
-.echoink-settings-demo button.echoink-knowledge-help-trigger.echoink-origin-control[data-slot=button] { width: 14px; min-width: 14px; height: 14px; min-height: 14px; padding: 0; border: 0; }
-.echoink-settings-demo button.echoink-knowledge-help-trigger > svg { width: 14px; height: 14px; }
 .echoink-knowledge-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .echoink-knowledge-sources-heading h3 { margin: 0; }
 .echoink-knowledge-source { display: grid; grid-template-columns: minmax(0, 1fr) 204px 30px; align-items: center; gap: 8px 12px; padding: 12px 0; }
@@ -23747,15 +23750,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
   height: 16px;
 }
 
-.echoink-desktop-account-settings .desktop-account-detail .settings-back.echoink-origin-control[data-slot=button] {
-  display: inline-flex;
-  width: auto;
-  min-height: 30px;
-  padding: 6px 0;
-  justify-content: flex-start;
-  font-size: calc(var(--font-text-size, 16px) * .75);
-  white-space: normal;
-}
+
 
 .echoink-desktop-account-settings .echoink-account :is(.form-field, .device-row > div, .desktop-account-redemption, .membership-copy) {
   min-width: 0;
@@ -23942,8 +23937,6 @@ body:not(.is-mobile) .echoink-settings-aligned button:is(.echoink-settings-help-
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-description { font-size: 12px; line-height: 1.55; margin-top: 1px; color: var(--secondary); }
 .echoink-settings-demo.echoink-settings-aligned .setting-item-control { flex: 0 1 auto; width: auto; max-width: 55%; gap: 8px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-section-description { font-size: 12px; color: var(--secondary); }
-.echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-editor > .settings-back,
-.echoink-settings-demo.echoink-settings-aligned .echoink-settings-page > .settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-inline-surface { margin: 0; padding: 0; border: 0; background: transparent; }
 
 /* Maintenance data uses the same quiet toolbar and continuous rows as settings details. */
@@ -24107,9 +24100,6 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-se
 .echoink-settings-aligned .codex-provider-combobox-search:focus-within { border-color: var(--line); background: var(--soft); outline: none; box-shadow: none; }
 .echoink-settings-aligned .codex-provider-combobox-option.is-selected { color: var(--text); background: var(--soft); }
 .echoink-settings-aligned :is(.provider-form-section h3, .codex-provider-modal-label, .codex-provider-manual-model-copy, .codex-provider-model-advanced-heading) { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button] { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; border: 0; background: transparent; color: var(--secondary); vertical-align: middle; }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help).echoink-origin-control[data-slot=button]:is(:hover, :focus-visible) { background: var(--soft); }
-.echoink-settings-aligned :is(button.echoink-provider-form-help, button.echoink-mcp-form-help) svg { width: 13px; height: 13px; }
 .echoink-settings-aligned :is(.codex-provider-modal-label.has-echoink-provider-help, .codex-mcp-server-label.has-echoink-mcp-help) { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 6px; }
 .echoink-settings-aligned .codex-mcp-server-label > .echoink-mcp-form-help { margin-left: 0; }
 
@@ -24193,11 +24183,7 @@ body:not(.is-mobile) .echoink-settings-demo.echoink-settings-aligned .echoink-se
 
 /* The settings variant has its own return row; the task sidebar keeps its header. */
 .echoink-settings-aligned .echoink-agent-editor.is-settings { height: auto; min-height: 0; overflow: visible; font-size: calc(var(--font-text-size, 16px) * .8125); }
-.echoink-settings-aligned .echoink-agent-editor.is-settings > .echoink-agent-editor-back {
-  display: inline-flex; align-items: center; align-self: flex-start; justify-content: flex-start; flex: none;
-  width: auto; min-height: 30px; padding: 6px 0; margin: 0 0 14px; gap: 6px; border: 0; color: var(--secondary);
-  font-size: calc(var(--font-text-size, 16px) * .75);
-}
+
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-header { gap: 10px; margin: 0 0 18px; padding: 0; border: 0; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-avatar-preview { flex-basis: 34px; width: 34px; height: 34px; }
 .echoink-settings-aligned .echoink-agent-editor.is-settings .echoink-agent-editor-title { font-size: calc(var(--font-text-size, 16px) * 1.0625); }
@@ -24452,9 +24438,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-finance-analysis-location > form small { flex-basis: 100%; }
 .echoink-settings-aligned .echoink-finance-analysis-location > form small:empty { display: none; }
 .echoink-settings-aligned .echoink-finance-root-location > .echoink-module-path-value { max-width: 60%; text-align: right; }
-.echoink-settings-aligned .echoink-module-detail > :is(h2, .echoink-life-settings-back) { margin-inline: 18px; }
+.echoink-settings-aligned .echoink-module-detail > h2 { margin-inline: 18px; }
 .echoink-settings-aligned .echoink-module-detail > h2 { font-size: 17px; margin-top: 8px; margin-bottom: 16px; }
-.echoink-settings-aligned .echoink-module-detail > .echoink-life-settings-back { padding: 4px 6px; color: var(--secondary); background: transparent; border: 0; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-life-hint { margin: 0; padding: 0 18px 13px; font-size: 12px; line-height: 1.7; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-list { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 0 18px; }
 .echoink-settings-aligned .echoink-finance-catalog-embedded .echoink-finance-catalog-item { padding: 13px 18px; border-top: 1px solid var(--line); gap: 8px; }
@@ -24482,7 +24467,6 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-drawer-content.has-module-detail { border-top: 0; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > h2 { margin-inline: 0; }
-.echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-settings-back { margin: 0 0 8px; min-height: 30px; padding: 3px 0; font-size: 12px; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > .echoink-life-hint { padding-inline: 0; }
 .echoink-settings-aligned .echoink-desktop-modules.has-module-detail .echoink-module-detail > :is(.echoink-finance-catalog-list, .echoink-finance-catalog-add, .echoink-finance-form) { margin-inline: 0; }
 
@@ -25073,7 +25057,9 @@ body[data-echoink-theme="host"] :is(.echoink-settings-demo,.echoink-theme-bounda
   background: var(--echoink-control-fill); color: var(--echoink-control-on-fill);
 }
 body[data-echoink-theme="host"] .echoink-origin-control [data-slot=switch-thumb] { background: var(--echoink-control-on-fill); }
-.echoink-theme-required { margin-right: 8px; }
+.echoink-theme-recommendation > .echoink-theme-required { color: var(--text-muted); }
+.echoink-theme-recommendation > a { color: var(--text-accent); text-decoration: underline; text-underline-offset: 2px; transition: var(--echoink-motion-transition, color 150ms); }
+.echoink-theme-recommendation > a:is(:hover,:focus-visible) { color: var(--text-accent-hover); background: var(--background-modifier-hover); outline: none; box-shadow: none; }
 /* Older conversation/account skins keep local color aliases; route those through
    the same host palette instead of their light/dark black overlays. */
 body[data-echoink-theme="host"] .codex-container {
@@ -26394,7 +26380,7 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-settings-demo .echoink-life-settings-page{max-width:860px;min-width:0;padding:16px 4px}
 .echoink-settings-demo .echoink-life-settings-page h2{margin:12px 0 24px;font-size:1.55em}
 .echoink-settings-demo .echoink-life-settings-back{border:0;background:transparent;color:var(--interactive-accent);cursor:pointer}
-.echoink-settings-demo .echoink-life-settings-page button:not(:where(.echoink-life-settings-back,.echoink-origin-control,.echoink-finance-color-swatch)){padding:6px 10px;border:1px solid var(--background-modifier-border);border-radius:7px;background:var(--background-secondary);color:var(--text-normal);cursor:pointer}
+.echoink-settings-demo .echoink-life-settings-page button:not(:where(.echoink-life-settings-back,.echoink-origin-control,.echoink-finance-color-swatch,.echoink-settings-help-trigger)){padding:6px 10px;border:1px solid var(--background-modifier-border);border-radius:7px;background:var(--background-secondary);color:var(--text-normal);cursor:pointer}
 .echoink-settings-demo .echoink-life-settings-page button.echoink-settings-navigation-row{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:center;justify-content:space-between;width:100%;height:auto;min-height:54px;padding:12px 4px;border:0;border-top:1px solid var(--background-modifier-border);border-radius:0;background:transparent;box-shadow:none;text-align:left;white-space:normal}
 .echoink-settings-demo .echoink-life-settings-page button.echoink-settings-navigation-row>.echoink-settings-navigation-copy{flex:1;min-width:0;width:auto;align-self:center;text-align:left}
 .echoink-settings-demo .echoink-life-settings-page button.echoink-settings-navigation-row:is(:hover,:focus-visible),.echoink-settings-demo .echoink-life-settings-back:focus-visible{background:var(--background-modifier-hover,var(--background-secondary));outline:none;box-shadow:none}
