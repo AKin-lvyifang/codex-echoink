@@ -90,6 +90,10 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
     control.dataset.expertFocus = `action:${expert.id}`;
     const message = errors.get(expert.id);
     if (message) { const error = element(document, parent, "p", "echoink-expert-card-error", message); error.setAttribute("role", "alert"); }
+    else if (!hired && hasPro() && !options.service.compatible(expert)) {
+      const error = element(document, parent, "p", "echoink-expert-card-error", `当前插件版本或设备不支持此专家。请更新至 ${expert.minPluginVersion} 或更新版本，并使用支持的设备。`);
+      error.setAttribute("role", "alert");
+    }
   };
   const back = (): void => { const control = button(root, "返回专家", "tertiary", showHall); control.classList.add("echoink-expert-back"); control.dataset.expertFocus = "back"; };
   const draw = (): void => {

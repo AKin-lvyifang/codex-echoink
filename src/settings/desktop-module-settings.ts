@@ -4,8 +4,9 @@ import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/a
 import { createOriginButton, createOriginSwitch, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { createSettingsSection } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
+import { expertModuleEnabled } from "../experts/module";
 
-export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf" | "inline-agent";
+export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf" | "inline-agent" | "experts";
 export interface DesktopModuleSettingsOptions {
   plugin: CodexForObsidianPlugin;
   expanded: Set<DesktopModuleId>;
@@ -25,7 +26,8 @@ const modules: readonly { id: DesktopModuleId; zh: string; en: string; icon: str
   { id: "finance", zh: "财务", en: "Finance", icon: "wallet", pro: true },
   { id: "english", zh: "英文日记", en: "English diary", icon: "languages", pro: true },
   { id: "pdf", zh: "PDF 精读 · 提取", en: "PDF reading and extraction", icon: "file-text", pro: true },
-  { id: "inline-agent", zh: "@Agent 正文管家", en: "@Agent in notes", icon: "at-sign", pro: true }
+  { id: "inline-agent", zh: "@Agent 正文管家", en: "@Agent in notes", icon: "at-sign", pro: true },
+  { id: "experts", zh: "专家", en: "Experts", icon: "sparkles", pro: true }
 ];
 
 /** Owns presentation and the original enable paths; the settings tab owns routes and expansion. */
@@ -45,6 +47,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
     }
     for (const module of modules.filter(item => Boolean(item.pro) === pro)) {
       const detail = options.details?.[module.id];
+      const configurable = module.id !== "experts";
       const card = createSettingsSection(group, { surface: "group" });
       card.addClass("echoink-module-drawer"); card.dataset.module = module.id;
       const header = card.createDiv({ cls: "echoink-module-drawer-header" });
@@ -69,7 +72,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       let animation: Animation | null = null;
       let wasOpen: boolean | undefined;
       disposers.push(() => animation?.cancel());
-      const enabled = () => module.id === "inline-agent" ? plugin.settings.inlineAgent.enabled : module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
+      const enabled = () => module.id === "experts" ? expertModuleEnabled(plugin) : module.id === "inline-agent" ? plugin.settings.inlineAgent.enabled : module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
       const setExpanded = (value: boolean) => {
         if (value) options.expanded.add(module.id); else options.expanded.delete(module.id);
         options.onExpandedChange?.(module.id, value);
@@ -79,7 +82,12 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         const value = toggle.checked;
         pending = true; refresh();
         void (async () => {
-          if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
+          if (module.id === "experts") {
+            const previous = plugin.settings.expertsEnabled;
+            plugin.settings.expertsEnabled = value;
+            try { await plugin.saveSettings(true); } catch (error) { plugin.settings.expertsEnabled = previous; throw error; }
+            plugin.notifyHomeSurfacesChanged();
+          } else if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
           else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error("PDF 精读尚未就绪"); await plugin.pdfReading.setEnabled(value); }
           else if (module.id === "english") { if (!plugin.englishDiary) throw new Error("英文日记尚未就绪"); await plugin.englishDiary.setEnabled(value); }
           else if (module.id === "inline-agent") {
@@ -92,7 +100,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
             plugin.settings.selectionAsk.enabled = value;
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
           }
-          if (!detail) setExpanded(value);
+          if (!detail && configurable) setExpanded(value);
         })().catch(error => { if (!disposed) new Notice(error instanceof Error ? error.message : String(error)); })
           .finally(() => { pending = false; refresh(true); });
       };
@@ -103,9 +111,9 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
         const previousHeight = content.hidden ? 0 : content.getBoundingClientRect().height;
         const active = enabled();
         const locked = pro && !hasProPluginAccess(access);
-        const open = !detail && !locked && options.expanded.has(module.id) && active;
-        trigger.disabled = pending || !locked && !active;
-        if (locked || detail) { trigger.removeAttribute("aria-expanded"); trigger.removeAttribute("aria-controls"); }
+        const open = configurable && !detail && !locked && options.expanded.has(module.id) && active;
+        trigger.disabled = pending || !locked && (!active || !configurable);
+        if (locked || detail || !configurable) { trigger.removeAttribute("aria-expanded"); trigger.removeAttribute("aria-controls"); }
         else { trigger.setAttribute("aria-expanded", String(open)); trigger.setAttribute("aria-controls", content.id); }
         card.toggleClass("is-expanded", open);
         card.toggleClass("is-disabled", !locked && !active);

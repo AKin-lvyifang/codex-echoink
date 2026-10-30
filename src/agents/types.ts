@@ -22,6 +22,8 @@ export interface AgentDefinition {
   name: string;
   avatar: AgentAvatarState;
   position: string;
+  /** Present (even when empty) after the one-time legacy position split. */
+  positionDescription?: string;
   styleId: AgentStyleId;
   /** User-authored identity; absent legacy values retain the selected style. */
   persona?: string;
@@ -49,6 +51,7 @@ export interface AgentRunSnapshot {
   readonly agentId: string;
   readonly name: string;
   readonly position: string;
+  readonly positionDescription?: string;
   readonly styleId: AgentStyleId;
   readonly persona?: string;
   readonly expertId?: string;

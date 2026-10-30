@@ -4,6 +4,7 @@ import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-co
 import { setIcon } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
+import { agentPositionDescription } from "../../agents/identity";
 import { AGENT_STYLES } from "../../agents/styles";
 import { AGENT_PERSONA_MAX_LENGTH, agentPersonaLength, getAgentPersonaTemplate, hasCustomAgentPersona, isExpertAgent, normalizeAgentPersona } from "../../agents/persona";
 import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../../agents/capability-policy";
@@ -70,7 +71,7 @@ export class AgentEditorController {
 
   get element(): HTMLElement | null { return this.root; }
   hasUnsavedChanges(): boolean {
-    return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim()));
+    return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim() || this.draft.agent.positionDescription?.trim()));
   }
   isPending(): boolean { return this.busy !== null; }
   public submitOnboarding(): Promise<void> {
@@ -134,7 +135,7 @@ export class AgentEditorController {
     const current = this.host.settings.agentRegistry.agents.find(agent => agent.id === agentId);
     const saved = formDrafts.get(this.host.draftCacheKey)?.get(this.cacheKey);
     this.draft = saved ? structuredClone(saved) : { agent: current ? structuredClone(current) : {
-      id: `agent-${window.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", styleId: "execution", capabilityIds: []
+      id: `agent-${window.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", positionDescription: "", styleId: "execution", capabilityIds: []
     }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) : [],
     baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) } : undefined,
     presetId: "", dirty: false, revision: 0 };
@@ -278,6 +279,16 @@ export class AgentEditorController {
 
   private renderIdentity(parent: HTMLElement): void {
     if (isExpertAgent(this.draft!.agent)) {
+      const section = this.el(parent, "section", "echoink-agent-editor-identity");
+      for (const [field, label, value] of [
+        ["name", this.t("名字", "Name"), this.draft!.agent.name],
+        ["position", this.t("职位", "Role"), this.draft!.agent.position],
+        ["positionDescription", this.t("职位简介", "Role description"), agentPositionDescription(this.draft!.agent)]
+      ]) {
+        const row = this.el(section, "div", "echoink-agent-editor-section");
+        this.el(row, "div", "echoink-agent-editor-label", label);
+        const copy = this.el(row, "div", `echoink-agent-editor-readonly${field === "positionDescription" ? " echoink-agent-editor-expert-summary" : ""}`, value || "—"); copy.dataset.identityField = field;
+      }
       return;
     }
     const settingsPresentation = this.root?.classList.contains("is-settings");
@@ -288,7 +299,7 @@ export class AgentEditorController {
     const nameField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
     const nameId = `${this.instanceId}-name`;
     const label = this.el(nameField, "label", "echoink-agent-editor-label", this.t("名字", "Name")); label.htmlFor = nameId;
-    this.nameInput = createOriginInput(nameField, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", placeholder: this.t("例如：选题编辑", "e.g., Topic Editor"), "aria-describedby": `${nameId}-error` } });
+    this.nameInput = createOriginInput(nameField, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", required: "true", placeholder: this.t("例如：小林", "e.g., Alex"), "aria-describedby": `${nameId}-error` } });
     this.nameInput.dataset.field = "name";
     this.nameError = this.el(nameField, "div", "echoink-agent-editor-error"); this.nameError.id = `${nameId}-error`; this.nameError.setAttribute("aria-live", "polite");
     this.nameInput.oninput = () => { this.draft!.agent.name = this.nameInput!.value; this.changed(); };
@@ -336,8 +347,13 @@ export class AgentEditorController {
     const positionField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(positionField, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;
-    const position = createOriginInput(positionField, { value: this.draft!.agent.position, attr: { id: positionId, placeholder: this.t("一句话：负责什么", "In one sentence: what it handles") } }); position.classList.add("echoink-agent-editor-position");
+    const position = createOriginInput(positionField, { value: this.draft!.agent.position, attr: { id: positionId, placeholder: this.t("例如：选题编辑", "e.g., Topic Editor") } }); position.classList.add("echoink-agent-editor-position");
     position.dataset.field = "position"; position.oninput = () => { this.draft!.agent.position = position.value; this.changed(); };
+    const descriptionField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
+    const descriptionId = `${this.instanceId}-position-description`;
+    const descriptionLabel = this.el(descriptionField, "label", "echoink-agent-editor-label", this.t("职位简介", "Role description")); descriptionLabel.htmlFor = descriptionId;
+    const description = createOriginInput(descriptionField, { value: agentPositionDescription(this.draft!.agent), attr: { id: descriptionId, placeholder: this.t("一句话：负责什么", "In one sentence: what it handles") } });
+    description.dataset.field = "positionDescription"; description.oninput = () => { this.draft!.agent.positionDescription = description.value; this.changed(); };
   }
   private setAvatarImage(image: HTMLImageElement): void {
     const url = resolveAgentAvatarUrl(this.draft!.agent.avatar) ?? resolveAgentAvatarUrl({ kind: "preset", presetId: "sol" }); if (url) image.src = url;
@@ -449,14 +465,9 @@ export class AgentEditorController {
   }
 
   private renderPersona(parent: HTMLElement): void {
+    if (isExpertAgent(this.draft!.agent)) return;
     const section = this.section(parent, this.t("人格", "Persona"));
     section.classList.add("echoink-agent-editor-major", "echoink-agent-editor-persona-section");
-    if (isExpertAgent(this.draft!.agent)) {
-      const lock = this.el(section.querySelector("h3")!, "span", "echoink-agent-editor-lock");
-      lock.setAttribute("aria-label", this.t("只读", "Read only")); setIcon(lock, "lock");
-      this.el(section, "div", "echoink-agent-editor-expert-summary", this.draft!.agent.expert?.summary ?? "");
-      return;
-    }
     const templates = this.el(section, "div", "echoink-agent-editor-persona-templates");
     templates.setAttribute("role", "group"); templates.setAttribute("aria-label", this.t("人格模板", "Persona templates"));
     for (const style of AGENT_STYLES) {
@@ -519,7 +530,7 @@ export class AgentEditorController {
     const name = normalizeAgentDisplayName(this.draft.agent.name);
     if (!name) { this.draft.dirty = true; this.refresh(); this.nameInput?.focus(); return; }
     const generation = this.generation, key = this.cacheKey, revision = this.draft.revision;
-    const agent = { ...structuredClone(this.draft.agent), name, position: this.draft.agent.position.trim() };
+    const agent = { ...structuredClone(this.draft.agent), name, position: this.draft.agent.position.trim(), positionDescription: agentPositionDescription(this.draft.agent).trim() };
     this.busy = "save"; this.error = ""; this.refresh();
     try {
       await this.host.saveAgent(agent, [...this.draft.moduleIds], this.draft.baseline ? structuredClone(this.draft.baseline) : undefined);

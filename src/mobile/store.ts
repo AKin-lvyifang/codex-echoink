@@ -163,6 +163,7 @@ function validRun(value: Record<string, unknown>): boolean {
     && ["completedAt", "interruptedAt"].every(key => value[key] === undefined || time(value[key]))
     && (value.interruption === undefined || (value.status === "interrupted" && validInterruption(value.interruption) && value.interruptedAt === (value.interruption as Record<string, unknown>).at))
     && (snapshot === undefined || (object(snapshot) && nonempty(snapshot.agentId) && typeof snapshot.name === "string" && typeof snapshot.position === "string"
+      && (snapshot.positionDescription === undefined || typeof snapshot.positionDescription === "string")
       && ["execution", "analysis", "companion", "creative"].includes(snapshot.styleId as string)
       && (snapshot.persona === undefined || typeof snapshot.persona === "string" && [...snapshot.persona].length <= 4000)
       && ["expertId", "expertPackageVersion"].every(key => snapshot[key] === undefined || nonempty(snapshot[key]))
@@ -172,7 +173,7 @@ function validQueue(value: unknown): boolean {
   return uniqueRecords(value) && value.every(turn => Object.keys(turn).every(key => ["id", "text", "createdAt", "agentSnapshot", "providerId", "modelId", "permission", "notePath", "skillId"].includes(key))
     && nonempty(turn.text) && time(turn.createdAt) && nonempty(turn.providerId) && nonempty(turn.modelId) && permission(turn.permission)
     && typeof turn.notePath === "string" && (turn.skillId === undefined || typeof turn.skillId === "string")
-    && object(turn.agentSnapshot) && Object.keys(turn.agentSnapshot).every(key => ["agentId", "name", "position", "styleId", "persona", "expertId", "expertPackageVersion", "capabilityIds", "disabledCapabilityIds"].includes(key))
+    && object(turn.agentSnapshot) && Object.keys(turn.agentSnapshot).every(key => ["agentId", "name", "position", "positionDescription", "styleId", "persona", "expertId", "expertPackageVersion", "capabilityIds", "disabledCapabilityIds"].includes(key))
     && validRun({ startedAt: turn.createdAt, agentSnapshot: turn.agentSnapshot }));
 }
 function validInteraction(value: unknown, session: Record<string, unknown>): boolean {

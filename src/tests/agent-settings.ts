@@ -1,4 +1,5 @@
 import { installObsidianDom } from "./obsidian-dom";
+import { runAgentIdentityFieldsTests } from "./agent-identity-fields";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { displayedTooltipsForTests, openTestModals, Platform } from "obsidian";
@@ -61,7 +62,9 @@ export async function runAgentSettingsTests(): Promise<void> {
   const panel = new DesktopAgentSettings(host, { redraw: () => redraws++, restoreFocus: value => { focused = value; } });
   const root = container();
   try {
+    runAgentIdentityFieldsTests(document);
     panel.renderSummary(root);
+    assert.equal(root.textContent?.includes("聘请专家"), false, "expert hiring lives on the workbench avatar bar");
     assert.equal(root.querySelectorAll(".echoink-agent-settings-row").length, 1); assert.equal(root.querySelectorAll(".echoink-agent-owner-row").length, 7);
     assert.equal(root.querySelectorAll('[role="combobox"]').length, 7); assert.ok(root.textContent?.includes("内置")); assert.equal(saves, 0);
     const moduleSummary = () => root.querySelector<HTMLElement>(".echoink-agent-settings-modules")!;
@@ -74,11 +77,13 @@ export async function runAgentSettingsTests(): Promise<void> {
     assert.equal(root.querySelector('[role="tooltip"]'), null);
     builtInRow.click(); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true, "the ownership tooltip preserves row navigation");
     panel.requestLeave(() => {}); panel.renderSummary(root);
-    settings.agentRegistry.agents.push({ id: "editor", name: "整理员", avatar: { kind: "preset", presetId: "nova" }, position: "整理知识", styleId: "analysis", capabilityIds: ["knowledge"] });
+    settings.agentRegistry.agents.push({ id: "editor", name: "整理员", avatar: { kind: "preset", presetId: "nova" }, position: "知识编辑", positionDescription: "整理知识", styleId: "analysis", capabilityIds: ["knowledge"] });
     const originalOwners = { ...settings.agentRegistry.moduleOwners };
     for (const module of ["knowledge-base", "journal", "review"] as const) settings.agentRegistry.moduleOwners[module] = "editor";
     panel.renderSummary(root);
     assert.equal(summaryLabel(), "负责 4 个模块");
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-title')?.textContent, "整理员（知识编辑）");
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-description')?.textContent, "整理知识");
     assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules')?.firstChild?.textContent, "负责 日记、知识库、复盘");
     settings.settingsLanguage = "en"; panel.renderSummary(root); assert.equal(summaryLabel(), "Responsible for 4 modules");
     settings.settingsLanguage = "zh-CN"; settings.agentRegistry.moduleOwners = originalOwners;

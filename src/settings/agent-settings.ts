@@ -1,4 +1,5 @@
 import { isAgentHired } from "../agents/persona";
+import { agentDisplayTitle, agentPositionDescription } from "../agents/identity";
 import { type App, setIcon } from "obsidian";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../agents/types";
 import { AgentEditorController } from "../ui/codex-view/agent-editor";
@@ -53,13 +54,12 @@ export class DesktopAgentSettings {
     const agents = createSettingsSection(root, { title: "Agent", surface: "flat" });
     const header = agents.querySelector<HTMLElement>(".echoink-settings-section-header")!;
     const actions = header.createDiv({ cls: "echoink-agent-settings-actions" });
-    const hire = createOriginButton(actions, { text: this.text("聘请专家", "Hire an expert") }); hire.onclick = () => { void this.host.openExpertHall?.(); };
     const add = createOriginButton(actions, { cls: "is-icon", attr: { "aria-label": this.text("新建 Agent", "New Agent"), "data-echoink-focus-key": "agent:new" } });
     setIcon(add, "plus"); add.onclick = () => this.open();
     const list = createSettingsGroup(agents); list.addClass("echoink-agent-settings-list");
     for (const agent of this.host.settings.agentRegistry.agents.filter(isAgentHired)) {
       const owned = AGENT_MODULE_IDS.filter(module => this.host.settings.agentRegistry.moduleOwners[module] === agent.id);
-      const row = createSettingsNavigationRow(list, { title: agent.name, description: agent.position || undefined,
+      const row = createSettingsNavigationRow(list, { title: agentDisplayTitle(agent, this.host.settings.settingsLanguage), description: agentPositionDescription(agent) || undefined,
         focusKey: `agent:${agent.id}:edit`, onActivate: () => this.open(agent.id) });
       row.addClass("echoink-agent-settings-row");
       if (owned.length) {

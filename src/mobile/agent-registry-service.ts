@@ -1,5 +1,6 @@
 import type { DataAdapter } from "obsidian";
 import { normalizeAgentId, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
+import { agentPositionDescription } from "../agents/identity";
 import { AGENT_STYLES, styleFromLegacyTemplate } from "../agents/styles";
 import { assertAgentPersonaLength, assertExpertAgentLocks, isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "../agents/persona";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry, type AgentStyleId, type AgentRunSnapshot } from "../agents/types";
@@ -182,7 +183,7 @@ export class MobileAgentRegistryService {
       if (!agent) throw new Error("agent_not_found");
       if (!isAgentHired(agent)) throw new Error("expert_agent_not_hired");
       const style = styleProfile(snapshot?.styleId ?? agent.styleId);
-      let content = `\n当前 Agent 身份：${JSON.stringify(snapshot ? { displayName: snapshot.name, position: snapshot.position } : { displayName: agent.name, avatar: agent.avatar.kind, ...(agent.avatar.kind === "preset" ? { presetId: agent.avatar.presetId } : {}) })}。以这个名称自称。`;
+      let content = `\n当前 Agent 身份：${JSON.stringify(snapshot ? { displayName: snapshot.name, position: snapshot.position, positionDescription: snapshot.positionDescription } : { displayName: agent.name, position: agent.position, positionDescription: agentPositionDescription(agent), avatar: agent.avatar.kind, ...(agent.avatar.kind === "preset" ? { presetId: agent.avatar.presetId } : {}) })}。以这个名称自称。`;
       // Expert prose is resolved privately by the runtime; Registry contains public metadata only.
       const expert = snapshot ? snapshot.expertId !== undefined : isExpertAgent(agent);
       const persona = expert ? "" : normalizeAgentPersona(snapshot ? snapshot.persona : agent.persona).trim();

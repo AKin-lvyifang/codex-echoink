@@ -1,5 +1,6 @@
 import { isAgentHired } from "../../agents/persona";
-import { Menu, setIcon } from "obsidian";
+import { Menu, setIcon, setTooltip } from "obsidian";
+import { agentDisplayTitle, agentPositionDescription } from "../../agents/identity";
 import type { SettingsLanguage } from "../../settings/settings";
 import type { AgentDefinition } from "../../agents/types";
 import { agentTaskCounts, type TaskEntry } from "../../agents/task-presentation";
@@ -26,9 +27,12 @@ export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefin
   disposeOriginControls(root); root.empty(); root.className = "echoink-agent-roster";
   for (const agent of agents.filter(isAgentHired)) {
     const counts = agentTaskCounts(entries, agent.id);
-    const label = language === "en" ? `${agent.name}, ${counts.total} tasks, ${counts.waiting} waiting, ${counts.interrupted} unfinished, ${counts.running} running, ${counts.unread} new results` : `${agent.name}，${counts.total}件事，${counts.waiting}件等你回应，${counts.interrupted}件没做完，${counts.running}件进行中，${counts.unread}件有新结果`;
+    const title = agentDisplayTitle(agent, language), description = agentPositionDescription(agent);
+    const status = language === "en" ? `${counts.total} tasks, ${counts.waiting} waiting, ${counts.interrupted} unfinished, ${counts.running} running, ${counts.unread} new results` : `${counts.total}件事，${counts.waiting}件等你回应，${counts.interrupted}件没做完，${counts.running}件进行中，${counts.unread}件有新结果`;
+    const label = [title, description].filter(Boolean).join("\n");
     const button = createOriginButton(root, { cls: `echoink-agent-roster-item${agent.id === selected ? " is-selected" : ""}`,
-      attr: { type: "button", "aria-label": label, "aria-pressed": agent.id === selected, "data-agent-id": agent.id } });
+      attr: { type: "button", "aria-label": label, "aria-description": status, "aria-pressed": agent.id === selected, "data-agent-id": agent.id } });
+    setTooltip(button, label);
     renderTaskAvatar(button, agent, 28);
     if (counts.waiting) button.createSpan({ cls: "echoink-agent-badge is-waiting", text: String(counts.waiting) });
     else if (counts.interrupted) button.createSpan({ cls: "echoink-agent-badge is-interrupted", text: "!" });

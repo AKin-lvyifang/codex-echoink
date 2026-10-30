@@ -1167,11 +1167,15 @@ function cloneProductRun(run: Readonly<PiProductRunRecord>): PiProductRunRecord 
 
 function requireAgentRunSnapshot(value: unknown): AgentRunSnapshot {
   const raw = requirePlainObject(value, "agentSnapshot");
-  requireExactKeys(raw, ["agentId", "name", "position", "styleId"], ["capabilityIds", "disabledCapabilityIds", "persona", "expertId", "expertPackageVersion"], "agentSnapshot");
+  requireExactKeys(raw, ["agentId", "name", "position", "styleId"], ["positionDescription", "capabilityIds", "disabledCapabilityIds", "persona", "expertId", "expertPackageVersion"], "agentSnapshot");
   if (typeof raw.position !== "string" || !["execution", "analysis", "companion", "creative"].includes(raw.styleId as string)) {
     throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot identity invalid");
   }
   const optional: Partial<AgentRunSnapshot> = {};
+  if (raw.positionDescription !== undefined) {
+    if (typeof raw.positionDescription !== "string") throw new PiNativeFileStoreError("invalid-input", "Agent run snapshot position description invalid");
+    Object.assign(optional, { positionDescription: raw.positionDescription });
+  }
   for (const key of ["expertId", "expertPackageVersion"] as const) {
     if (raw[key] !== undefined) Object.assign(optional, { [key]: requireNonEmptyString(raw[key], `agentSnapshot.${key}`) });
   }

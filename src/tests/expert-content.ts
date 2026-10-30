@@ -218,6 +218,7 @@ export async function runExpertHallTests(): Promise<void> {
       assert.equal(f.controls().length, 1); assert.equal(f.controls()[0].textContent, "开通 PRO"); assert.equal(f.privateRequests(), 0);
       f.pro(true); f.compatible(false); await hall.refresh();
       assert.equal(f.controls()[0].textContent, "聘请"); assert.equal(f.controls()[0].disabled, true); assert.match(f.controls()[0].title, /版本或设备/u);
+      assert.match(f.container.querySelector('[role="alert"]')!.textContent!, /当前插件版本或设备不支持/u, "compatibility failures are visible without hovering a disabled button");
       assert.equal(f.privateRequests(), 0);
     } finally { hall.dispose(); f.dom.window.close(); }
   });

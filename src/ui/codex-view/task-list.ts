@@ -1,5 +1,6 @@
 import { setTooltip } from "obsidian";
 import type { AgentDefinition } from "../../agents/types";
+import { agentDisplayTitle, agentPositionDescription } from "../../agents/identity";
 import { agentTaskCounts, groupAgentTasks, localTaskTime, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../../agents/task-presentation";
 import type { SettingsLanguage, StoredSession } from "../../settings/settings";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
@@ -14,8 +15,9 @@ export function renderAgentTaskList(root: HTMLElement, agent: AgentDefinition, e
   const header = root.createDiv({ cls: "echoink-agent-list-header" });
   renderTaskAvatar(header, agent);
   const copy = header.createDiv({ cls: "echoink-agent-list-identity" });
-  copy.createDiv({ cls: "echoink-agent-name", text: agent.name });
-  if (agent.position) copy.createDiv({ cls: "echoink-agent-position", text: agent.position });
+  copy.createDiv({ cls: "echoink-agent-name", text: agentDisplayTitle(agent, language) });
+  const description = agentPositionDescription(agent);
+  if (description) copy.createDiv({ cls: "echoink-agent-position", text: description });
   header.createSpan({ cls: "echoink-agent-task-count", text: language === "en" ? `${agentTaskCounts(entries, agent.id).total} tasks` : `${agentTaskCounts(entries, agent.id).total} 件事` });
   taskIconButton(header, language === "en" ? "Edit Agent" : "编辑 Agent", "ellipsis", () => actions.onEdit());
   const list = root.createDiv({ cls: "echoink-task-list-items" });
