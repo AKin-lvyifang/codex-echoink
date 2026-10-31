@@ -858,7 +858,9 @@ export class EchoInkWorkbenchView extends ItemView {
     } else if (toggle) { this.disposeControls(toggle); toggle.remove(); }
     const host = section.lastElementChild as HTMLElement; host.id = `${this.id}-signals`;
     this.syncRows(host, this.signalsExpanded ? signals : signals.slice(0, 5), signal => signal.key,
-      signal => JSON.stringify([this.language, signal, this.plugin.settings.agentRegistry, !!this.dataError]),
+      // A fresh capture time is not a visual change. Replacing the button between
+      // pointerdown and pointerup prevents the browser from firing its click.
+      signal => JSON.stringify([this.language, { ...signal, source: { ...signal.source, capturedAt: 0 } }, this.plugin.settings.agentRegistry, !!this.dataError]),
       signal => {
         const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
@@ -875,6 +877,7 @@ export class EchoInkWorkbenchView extends ItemView {
           }), "secondary");
         button.classList.add("is-small"); button.disabled = !!this.dataError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
         button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "data";
+        button.dataset.wbSignalLabel = this.t(`交给 ${owner.name}`, `Assign to ${owner.name}`);
         return row;
       });
   }
@@ -916,6 +919,9 @@ export class EchoInkWorkbenchView extends ItemView {
       button.disabled = pending || !!(button.dataset.wbSource === "tasks" ? this.taskError : this.dataError)
         || button.dataset.wbMemory === "true" && !!(this.memoryNotice || this.memoryError);
       setAmicroButtonPending(button, pending);
+      if (button.dataset.wbSignalLabel) {
+        for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在新建…", "Creating…") : button.dataset.wbSignalLabel;
+      }
       if (button.dataset.wbResume) {
         const recovery = taskId ? this.plugin.taskToolCallRecovery?.(taskId, this.interruptions.get(taskId)) : undefined;
         for (const child of Array.from(button.childNodes)) if (child.nodeType === 3) child.textContent = pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue");
