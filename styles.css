@@ -23310,15 +23310,16 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-init-tree { max-height: min(560px, 60vh); overflow-y: auto; min-width: 0; }
 .echoink-knowledge-module-page .echoink-init-tree details { margin: 0; }
 .echoink-init-tree-children { margin-inline-start: 20px; }
-.echoink-init-tree-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 7px 10px; border-radius: 4px; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; }
+.echoink-settings-demo .echoink-knowledge-module-page .echoink-init-tree .echoink-init-tree-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 34px; margin: 0; padding: 7px 10px; border-radius: 4px; font-size: calc(var(--font-text-size, 16px) * .75); font-weight: 400; line-height: 1.55; }
 .echoink-init-tree-row:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
-.echoink-init-tree-disclosure { display: flex; flex: 0 0 12px; width: 12px; color: var(--text-muted); }
-.echoink-init-tree-disclosure svg { width: 12px; height: 12px; }
-.echoink-init-tree-branch[open] > .echoink-init-tree-row > .echoink-init-tree-disclosure { transform: rotate(90deg); }
+.echoink-init-tree-disclosure { display: flex; align-items: center; justify-content: center; flex: 0 0 12px; width: 12px; height: 15px; color: var(--text-muted); }
+.echoink-init-tree .echoink-init-tree-disclosure svg { width: 12px; height: 12px; }
+.echoink-init-tree-branch[open] > .echoink-init-tree-row > .echoink-init-tree-disclosure svg { transform: rotate(90deg); }
 .echoink-init-tree-row::-webkit-details-marker { display: none; }
 .echoink-init-tree-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-.echoink-init-tree-icon { display: flex; flex: none; color: var(--text-muted); }
-.echoink-init-tree-icon svg { width: 15px; height: 15px; }
+.echoink-init-tree-name > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-init-tree-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 15px; width: 15px; height: 15px; color: var(--text-muted); }
+.echoink-init-tree .echoink-init-tree-icon svg { width: 15px; height: 15px; }
 .echoink-init-tree-purpose { margin-inline-start: auto; color: var(--text-muted); text-align: end; overflow-wrap: anywhere; }
 .echoink-init-tree-moved { color: var(--text-muted); }
 
@@ -23995,7 +23996,7 @@ body[data-echoink-theme] .echoink-knowledge-page .knowledge-legacy.echoink-setti
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-compact-title { font-size: 13px; font-weight: 500; line-height: 1.55; }
 /* A help icon belongs immediately after its label, including labels that wrap. */
 .echoink-settings-demo.echoink-settings-aligned .setting-item-name.has-echoink-help-trigger { display: block; }
-.echoink-settings-demo.echoink-settings-aligned .setting-item-name > .echoink-settings-help-trigger { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; }
+.echoink-settings-demo.echoink-settings-aligned .setting-item-name.has-echoink-help-trigger > .echoink-settings-help-trigger { display: inline-flex; vertical-align: middle; margin-inline-start: 6px; }
 body:not(.is-mobile) .echoink-settings-aligned button:is(.echoink-settings-help-trigger, .echoink-provider-form-help, .echoink-mcp-form-help):is(:hover, :focus, :focus-visible) { outline: none; box-shadow: none; background: var(--soft); }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title.has-echoink-navigation-help { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .echoink-settings-demo.echoink-settings-aligned .echoink-settings-navigation-title > .echoink-settings-help > svg { width: 13px; height: 13px; }
