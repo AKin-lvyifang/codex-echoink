@@ -33,18 +33,25 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
   const service = plugin.getKnowledgeSurfaceService()?.linking;
   const block = container.createDiv({ cls: "echoink-knowledge-linking-inline" });
   const row = new OriginSetting(block).setName(english ? "Complete knowledge links" : "补全知识关联");
-  row.settingEl.setAttribute("data-echoink-focus-key", "knowledge:linking");
-  let disposed = false, locateTimer: number | undefined;
+  // Focus the row's content, not Obsidian's navigable setting-item shell.
+  const focusTarget = row.infoEl;
+  focusTarget.setAttribute("data-echoink-focus-key", "knowledge:linking");
+  let disposed = false, locateTimer: number | undefined, locateFrame: number | undefined;
   const win = row.settingEl.ownerDocument.defaultView;
   if (locate) queueMicrotask(() => {
     if (disposed || !row.settingEl.isConnected) return;
-    row.settingEl.tabIndex = -1;
+    focusTarget.tabIndex = -1;
     row.settingEl.scrollIntoView?.({ block: "center" });
-    row.settingEl.focus({ preventScroll: true });
+    focusTarget.focus({ preventScroll: true });
+    // Obsidian autofocuses the first control when opening its settings modal.
+    // Reclaim the location after that host step, in the owning window.
+    locateFrame = win?.requestAnimationFrame(() => {
+      if (!disposed && row.settingEl.isConnected) focusTarget.focus({ preventScroll: true });
+    });
     row.settingEl.classList.add("echoink-knowledge-linking-located");
     locateTimer = win?.setTimeout(() => row.settingEl.classList.remove("echoink-knowledge-linking-located"), 1800);
   });
-  const releaseLocation = () => { disposed = true; if (locateTimer !== undefined) win?.clearTimeout(locateTimer); };
+  const releaseLocation = () => { disposed = true; if (locateTimer !== undefined) win?.clearTimeout(locateTimer); if (locateFrame !== undefined) win?.cancelAnimationFrame(locateFrame); };
   const hint = english
     ? "AI reads your knowledge notes, adds aliases and links mentions to other notes. This calls your model, uses quota per note and modifies notes."
     : "让 AI 读一遍知识库，给笔记补上别名，并把提到其他笔记的地方连成双链。会调用模型，按篇数消耗额度，并修改笔记。";

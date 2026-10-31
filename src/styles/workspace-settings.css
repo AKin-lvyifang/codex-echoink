@@ -1185,9 +1185,12 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
   font-size: calc(var(--font-text-size,16px)*.75);
   transition: var(--echoink-motion-transition, background-color 150ms, color 150ms);
 }
-.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button]:is(:hover,:focus-visible) { background: var(--soft); color: var(--text); outline: none; box-shadow: none; }
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button]:is(:hover,:focus,:active) { background: transparent; color: var(--text); outline: none; box-shadow: none; }
+.echoink-settings-demo button.echoink-settings-back.echoink-origin-control[data-slot=button].is-keyboard-focused:focus-visible { background: var(--soft); color: var(--text); outline: none; box-shadow: none; }
 .echoink-settings-demo button.echoink-settings-back > span { min-width: 0; overflow-wrap: anywhere; }
 .echoink-settings-demo button.echoink-settings-back svg { width: 13px; height: 13px; }
+.echoink-settings-demo .echoink-settings-page:focus,
+.echoink-settings-demo .echoink-knowledge-linking-inline [data-echoink-focus-key="knowledge:linking"]:focus { outline: none; box-shadow: none; }
 .echoink-settings-demo .echoink-settings-page-heading,.echoink-settings-demo .codex-provider-add-copy{width:100%;text-align:left}
 .echoink-settings-demo .codex-provider-add-copy{flex:1;min-width:0}
 .echoink-settings-demo .codex-provider-add-section{align-items:flex-start}

@@ -42,7 +42,8 @@ export function createSettingsPage(
   options: SettingsPageOptions
 ): HTMLElement {
   const page = container.createDiv({
-    cls: `echoink-settings-page${options.detail ? " is-detail" : ""}`
+    cls: `echoink-settings-page${options.detail ? " is-detail" : ""}`,
+    attr: { tabindex: "-1", "data-echoink-focus-key": "settings-detail:content" }
   });
   if (options.onBack) {
     createSettingsBackButton(page, options.backLabel ?? "Back", options.onBack);
@@ -82,6 +83,34 @@ export function applySettingsBackButton(back: HTMLButtonElement, label: string):
   setIcon(back.createSpan({ attr: { "aria-hidden": "true" } }), "chevron-left");
   back.createSpan({ text: label });
   applyAmicroButton(back, { variant: "tertiary" });
+  trackBackButtonKeyboardFocus(back);
+}
+
+// Chromium can retain :focus-visible for programmatic focus after keyboard use.
+// Only a Tab traversal should paint this quiet navigation control.
+const backFocusDocuments = new WeakMap<Document, { tabPending: boolean }>();
+const trackedBackButtons = new WeakSet<HTMLButtonElement>();
+function trackBackButtonKeyboardFocus(back: HTMLButtonElement): void {
+  if (trackedBackButtons.has(back)) return;
+  trackedBackButtons.add(back);
+  const document = back.ownerDocument;
+  let intent = backFocusDocuments.get(document);
+  if (!intent) {
+    intent = { tabPending: false };
+    backFocusDocuments.set(document, intent);
+    const state = intent;
+    document.addEventListener("keydown", event => {
+      state.tabPending = event.key === "Tab";
+      document.defaultView?.setTimeout(() => { state.tabPending = false; }, 0);
+    }, true);
+    document.addEventListener("pointerdown", () => {
+      state.tabPending = false;
+      document.querySelector(".echoink-settings-back.is-keyboard-focused")?.classList.remove("is-keyboard-focused");
+    }, true);
+  }
+  const state = intent;
+  back.addEventListener("focus", () => back.classList.toggle("is-keyboard-focused", state.tabPending));
+  back.addEventListener("blur", () => back.classList.remove("is-keyboard-focused"));
 }
 
 export function createSettingsSection(

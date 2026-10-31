@@ -347,7 +347,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (route.tab === "modules") this.plugin.settings.resourceManagementTab = "plugins";
     this.settingsDetail = null;
     if (route.focus === "providers:add" && this.plugin.isEchoInkOnboardingRequested() && this.plugin.getEchoInkOnboardingStep() === "provider") this.providerPickerOpen = true;
-    if (route.focus) this.settingsFocusIntent = `explicit:${route.focus.replace(/^explicit:/u, "")}`;
+    this.settingsFocusIntent = route.focus ? `explicit:${route.focus.replace(/^explicit:/u, "")}` : "explicit:settings-detail:content";
     if (/^knowledge:generation-template:/u.test(route.focus ?? "")) this.openGenerationTemplateEditor(route.focus!.slice("knowledge:generation-template:".length));
     else if (route.focus === "knowledge:generation-templates") this.openSettingsDetail("generation-templates");
     else if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
@@ -2693,7 +2693,7 @@ export class CodexSettingTab extends PluginSettingTab {
         const records = this.currentPersonalMemoryRecords(categoryId);
         const latest = this.personalMemoryState ? latestRecord(this.personalMemoryState) : undefined;
         const target = records.find(item => item.id === latest?.id) ?? records[Math.max(0, Math.min(originalIndex, records.length - 1))];
-        this.settingsFocusIntent = target ? `explicit:review:memory:${categoryId}:correct:${target.id}` : "explicit:settings-detail:back";
+        this.settingsFocusIntent = target ? `explicit:review:memory:${categoryId}:correct:${target.id}` : "explicit:settings-detail:content";
       }
       if (result === "saved") new Notice(zh ? "记忆已保存为新版本" : "Memory saved as a new version");
       this.scheduleDisplay();
@@ -3168,7 +3168,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (Platform.isDesktopApp && (detail === "knowledge-preferences" || detail === "knowledge-linking")) this.ensureDesktopKnowledge().open("permissions");
     if (Platform.isDesktopApp && (detail === "generation-templates" || detail === "generation-template")) this.desktopModuleExpanded.add("knowledge");
     this.settingsDetail = detail;
-    this.settingsFocusIntent = "explicit:settings-detail:back";
+    this.settingsFocusIntent = detail === "knowledge-linking" ? "explicit:knowledge:linking" : "explicit:settings-detail:content";
     if (typeof detail === "object" && detail.kind === "resource") {
       const resource = this.currentEchoInkResourceCatalog().find(
         (candidate) => candidate.id === detail.resourceId
