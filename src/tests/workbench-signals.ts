@@ -76,10 +76,7 @@ export async function runWorkbenchSignalsTests(): Promise<void> {
   mixed.tasks = [{ conversationId: "maintenance-origin", taskStatus: "running", businessKey: rawSignal.key }];
   assert.ok(!ids(mixed).includes(7), "an unknown busy scope keeps the original business-key suppression");
   mixed.maintenance = [{ originConversationId: "maintenance-origin", sourcePaths: mixed.raw.slice(0, 12).map(file => file.path), status: "running", updatedAt: now }];
-  const mixedSignal = calculateWorkbenchSignals(mixed).find(item => item.id === 7)!;
-  assert.ok(mixedSignal, "a known maintenance origin does not suppress unrelated remaining sources");
-  assert.equal(mixedSignal.source.objects.length, 15, "generator retains the full snapshot for the common remaining-scope projection");
-  assert.deepEqual(mixedSignal.source.objects.filter(path => !mixed.maintenance![0].sourcePaths.includes(path)), mixed.raw.slice(12).map(file => file.path));
+  assert.ok(!ids(mixed).includes(7), "known partial batches still own the entire reminder until the conversation ends");
   mixed.tasks = [...mixed.tasks, { conversationId: "ordinary-origin", taskStatus: "waiting", businessKey: rawSignal.key }];
   assert.ok(!ids(mixed).includes(7), "an ordinary busy task with the same key still suppresses the signal");
   mixed.tasks = mixed.tasks.slice(0, 1);
@@ -90,5 +87,11 @@ export async function runWorkbenchSignalsTests(): Promise<void> {
   mixed.maintenance = [{ originConversationId: "maintenance-origin", sourcePaths: [mixed.raw[0].path], status: "running", updatedAt: now },
     { originConversationId: "maintenance-origin", sourcePaths: [mixed.raw[0].path], status: "completed", updatedAt: now + 1 }];
   assert.ok(!ids(mixed).includes(7), "completed maintenance history cannot exempt a later ordinary busy task");
+  mixed.tasks = [{ conversationId: "maintenance-origin", taskStatus: "completed", businessKey: rawSignal.key }];
+  mixed.raw = mixed.raw.slice(12);
+  assert.equal(calculateWorkbenchSignals(mixed).find(item => item.id === 7)?.description, "3 篇资料待整理", "ended tasks re-evaluate the remaining data");
+  mixed.raw = mixed.raw.slice(0, 1);
+  assert.equal(calculateWorkbenchSignals(mixed).find(item => item.id === 7)?.description, "1 篇资料待整理", "even a final remainder below the initial threshold is shown");
+  mixed.raw = []; assert.ok(!ids(mixed).includes(7), "completed real work stays absent");
   console.log("Workbench signal rules: 13 signals, transitions, strict thresholds, local dates, PRO/module eligibility and task suppression passed");
 }

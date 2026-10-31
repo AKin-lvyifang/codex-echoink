@@ -25,7 +25,7 @@ export interface InboxObservation {
 export interface WorkbenchRecords {
   version: 1;
   inbox: Record<string, { observedAt: number; entries: Record<string, InboxObservation> }>;
-  tasks: Record<string, { source: WorkbenchTaskSource; acceptedAt: number }>;
+  tasks: Record<string, { source: WorkbenchTaskSource; acceptedAt: number; endedAt?: number }>;
   journals: Record<string, JournalTemplateBaseline>;
   reviews: Record<string, { completedAt: number; outputPath: string; taskId?: string }>;
 }

@@ -24,6 +24,7 @@ const fsp = getDesktopFsPromises();
 const path = getDesktopPath();
 
 type WorkbenchHost = Pick<CodexForObsidianPlugin, "app" | "settings" | "manifest" | "accountService" | "lifestyle" | "pdfReading" | "getVaultPath" | "getPluginDataDirName" | "listPiConversations" | "readPiConversationCatalogEntry" | "getKnowledgeSurfaceService"> & {
+  getConversationRunService?: CodexForObsidianPlugin["getConversationRunService"];
   getKnowledgeActivitySource?(): KnowledgeActivitySource | undefined;
   readWorkbenchTaskReceipts?(taskId: string): Promise<readonly DomainReceipt[]>;
 };
@@ -253,11 +254,26 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     // Discoverability does not authorize a module's data reads or Agent signals.
     const authorizedModules = modules.filter(id => !lockedModules.includes(id));
     const tasks = await attempt("任务读取失败", [], () => this.plugin.listPiConversations(["active"]));
+    const taskFacts = tasks.map(task => {
+      const businessKey = task.businessKey ?? records?.tasks[task.conversationId]?.source.businessKey;
+      if (!businessKey) return task;
+      const service = this.plugin.getConversationRunService?.();
+      const run = service?.runs.get(task.conversationId);
+      const queued = service && !service.turnQueue.isSessionQueuePaused(task.conversationId) && service.turnQueue.itemsForSession(task.conversationId).length > 0;
+      let unfinished = !!(run?.running || run?.flight || run?.queueStartInProgress || queued);
+      if (!unfinished && task.taskStatus === "interrupted") {
+        const assignment = records?.tasks[task.conversationId];
+        // Startup recovery changes running/waiting to interrupted. A live
+        // terminal event releases the persisted handoff; a restart does not.
+        unfinished = !assignment?.endedAt || assignment.endedAt < (task.taskStartedAt ?? 0);
+      }
+      return { ...task, businessKey, ...(unfinished ? { taskStatus: "running" as const } : {}) };
+    });
     const todos = await attempt("待办读取失败", [], async () => {
       const file = this.plugin.app.vault.getAbstractFileByPath("EchoInk/待办.md");
       return file instanceof TFile ? parseTodoMarkdown(await this.plugin.app.vault.read(file)).records : [];
     });
-    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks, maintenance: this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance,
+    const facts: WorkbenchFacts = { now, modules: authorizedModules, tasks: taskFacts, maintenance: this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance,
       todos, journals: [], englishMissing: null, inbox: [],
       inboxScope: scopeKey(this.roots("inbox")), raw: [], rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null,
       isolated: null, knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: this.plugin.settings.settingsLanguage };
@@ -361,6 +377,11 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     await this.ready;
     if (!taskId || source.version !== 1) throw new Error("工作台任务来源无效");
     await this.records.update(draft => { draft.tasks[taskId] = { source: structuredClone(source), acceptedAt: source.capturedAt }; });
+    this.changed();
+  }
+  async recordTaskEnded(taskId: string): Promise<void> {
+    await this.ready;
+    await this.records.update(draft => { const assignment = draft.tasks[taskId]; if (assignment) assignment.endedAt = Date.now(); });
     this.changed();
   }
   async recordTaskCompleted(taskId: string): Promise<void> {

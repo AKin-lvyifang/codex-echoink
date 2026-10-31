@@ -43,5 +43,6 @@ export interface WorkbenchDataPort {
   subscribe(listener: () => void): () => void;
   recordTaskAccepted(taskId: string, source: WorkbenchTaskSource): Promise<void>;
   recordTaskCompleted(taskId: string): Promise<void>;
+  recordTaskEnded?(taskId: string): Promise<void>;
   dispose(): void;
 }

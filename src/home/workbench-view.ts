@@ -73,20 +73,6 @@ export function groupWorkbenchTasks(entries: readonly TaskEntry[], now = Date.no
   return groups;
 }
 
-/** One remaining source set supplies both the reminder count and its draft scope. */
-export function workbenchSignalsWithoutActiveMaintenance(signals: readonly WorkbenchSignal[], covered: ReadonlySet<string>, english = false): WorkbenchSignal[] {
-  return signals.flatMap(signal => {
-    if (signal.id !== 7 || signal.moduleId !== "knowledge-base") return [signal];
-    const objects = signal.source.objects.filter(path => !covered.has(path));
-    if (objects.length === signal.source.objects.length) return [signal];
-    if (!objects.length) return [];
-    return [{ ...signal, description: english ? `${objects.length} sources to organize` : `${objects.length} 篇资料待整理`,
-      source: { ...signal.source, objects, ...(signal.source.versions ? {
-        versions: Object.fromEntries(Object.entries(signal.source.versions).filter(([path]) => objects.includes(path)))
-      } : {}) } }];
-  });
-}
-
 /** Only a current, single-choice question can be answered from the overview. */
 export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<EchoInkTurnInteraction>): Readonly<EchoInkQuestionPrompt> | undefined {
   if (!pending || pending.kind !== "question" || pending.status !== "pending"
@@ -314,8 +300,8 @@ export class EchoInkWorkbenchView extends ItemView {
     if (query !== null) { (this.field("search-input") as HTMLInputElement).value = query; this.openSearch(); }
     await this.refresh();
   }
-  refreshIfSettingsChanged(): void { this.scheduleRefresh(0); }
-  refreshHomeSurfaces(): void { this.scheduleRefresh(0); }
+  refreshIfSettingsChanged(): void { this.refreshHomeSurfaces(); }
+  refreshHomeSurfaces(): void { if (this.snapshot && !this.closed) this.renderSignals(); this.scheduleRefresh(0); }
   private scheduleClock(): void {
     if (!this.active()) return;
     const win = this.contentEl.ownerDocument.defaultView;
@@ -838,9 +824,11 @@ export class EchoInkWorkbenchView extends ItemView {
     return row;
   }
   private remainingSignals(signals: readonly WorkbenchSignal[]): WorkbenchSignal[] {
-    const activeIds = new Set((this.entries ?? []).filter(entry => entry.status === "active" && isUserTask(entry)).map(entry => entry.conversationId));
-    const covered = new Set([...this.maintenance.values()].filter(activity => activeIds.has(activity.originConversationId) && activity.status !== "completed").flatMap(activity => activity.sourcePaths));
-    return workbenchSignalsWithoutActiveMaintenance(signals, covered, this.language === "en");
+    const busyKeys = new Set([
+      ...(this.entries ?? []).filter(entry => entry.status === "active" && (entry.pendingResponse || entry.taskStatus === "running" || entry.taskStatus === "waiting")),
+      ...this.plugin.settings.sessions.filter(session => session.pendingResponse || session.taskStatus === "running" || session.taskStatus === "waiting")
+    ].map(task => task.businessKey).filter(Boolean));
+    return signals.filter(signal => !busyKeys.has(signal.key));
   }
   private renderSignals(): void {
     const signals = this.remainingSignals(this.snapshot?.signals ?? []);
