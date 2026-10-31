@@ -1,6 +1,7 @@
 import { ownedDiv } from "../owned-dom";
 import { Notice } from "obsidian";
 import { isExpertAgent } from "../../agents/persona";
+import { normalizeExpertDisclosure } from "../../experts/disclosure";
 import type { AgentDefinition } from "../../agents/types";
 import type { ChatMessage } from "../../settings/settings";
 import { createOriginButton } from "../../settings/origin-controls";
@@ -22,7 +23,7 @@ export function renderExpertConversationDecorations(root: HTMLElement, agent: Ag
     // turn an old declaration into a new event appended at the visible end.
     if (!anchor || !root.contains(anchor)) continue;
     const row = ownedDiv(root.ownerDocument); row.className = "echoink-expert-event";
-    row.textContent = event.id === "disclosure" ? `我以${agent.name}的视角和你聊，基于公开著作推断。`
+    row.textContent = event.id === "disclosure" ? normalizeExpertDisclosure(agent.expert.disclosure) ?? `我以${agent.name}的视角和你聊，基于公开著作推断。`
       : `重新聘请 · ${new Date(event.at).toLocaleDateString()}`;
     if (!following) anchor.append(row);
     else {

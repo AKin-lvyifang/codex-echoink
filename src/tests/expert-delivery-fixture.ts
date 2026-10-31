@@ -28,9 +28,10 @@ export function expertFixtureFiles(root: string): ExpertContentFiles {
   };
 }
 /** Production AccountService, ES256 device proof and signed leases; synthetic HTTP data only. */
-export async function createExpertAccountFixture(options: { pro?: boolean; leaseDurationMs?: number } = {}) {
+export async function createExpertAccountFixture(options: { pro?: boolean; leaseDurationMs?: number; bodyFields?: Record<string, unknown> } = {}) {
   let now = Date.parse("2026-10-29T12:00:00Z"), pro = options.pro ?? true, offline = false, version = "fixture-1";
   let refusal: string | null = null, corrupt = false, blocked: (() => Promise<void>) | null = null, forceNotModified = false;
+  let bodyFields = structuredClone(options.bodyFields ?? {}), forceFullBody = false;
   const signer = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const keys = [{ kid: "expert-fixture", alg: "ES256", publicKey: await crypto.subtle.exportKey("jwk", signer.publicKey) }];
   const identity = await deviceIdentity();
@@ -70,8 +71,8 @@ export async function createExpertAccountFixture(options: { pro?: boolean; lease
       if (refusal) throw new MembershipApiError(refusal);
       if (!pro) throw new MembershipApiError("PRO_REQUIRED");
       if (!token || input?.deviceId !== `device-${token}` || typeof input.lease !== "string" || !["desktop", "ios", "android"].includes(String(input.platform))) throw new Error("invalid expert request contract");
-      if (forceNotModified || input.knownVersion === version) return { id: fixtureExpertId, version, notModified: true };
-      const content = JSON.stringify(expertFixtureBody(version));
+      if (forceNotModified || !forceFullBody && input.knownVersion === version) return { id: fixtureExpertId, version, notModified: true };
+      const content = JSON.stringify({ ...expertFixtureBody(version), ...bodyFields });
       const delivery = { id: fixtureExpertId, version, content, sha256: corrupt ? "0".repeat(64) : sha256Hex(content), issuedAt: now, maxOfflineSeconds: 604800 };
       deliveries.push(delivery); return delivery;
     }
@@ -81,5 +82,6 @@ export async function createExpertAccountFixture(options: { pro?: boolean; lease
   await service.initialize();
   return { service, calls, deliveries, now: () => now, at: (value: number) => { now = value; }, offline: (value: boolean) => { offline = value; },
     version: (value: string) => { version = value; }, corrupt: (value: boolean) => { corrupt = value; }, refusal: (value: string | null) => { refusal = value; },
-    block: (value: (() => Promise<void>) | null) => { blocked = value; }, notModified: (value: boolean) => { forceNotModified = value; } };
+    block: (value: (() => Promise<void>) | null) => { blocked = value; }, notModified: (value: boolean) => { forceNotModified = value; },
+    bodyFields: (value: Record<string, unknown>) => { bodyFields = structuredClone(value); }, fullBody: (value: boolean) => { forceFullBody = value; } };
 }

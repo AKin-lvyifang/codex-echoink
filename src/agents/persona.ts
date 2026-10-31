@@ -1,4 +1,5 @@
 import { AGENT_STYLES } from "./styles";
+import { normalizeExpertDisclosure } from "../experts/disclosure";
 import type { AgentDefinition, AgentStyleId, ExpertAgentState } from "./types";
 
 export const AGENT_PERSONA_MAX_LENGTH = 4000;
@@ -58,7 +59,9 @@ export function normalizeExpertAgentState(value: unknown): ExpertAgentState | un
     if (typeof event.id !== "string" || !event.id || typeof event.at !== "number" || !Number.isFinite(event.at)) continue;
     events.push({ id: event.id, at: event.at, ...(typeof event.conversationId === "string" && event.conversationId ? { conversationId: event.conversationId } : {}) });
   }
+  const disclosure = normalizeExpertDisclosure(raw.disclosure);
   return { expertId: raw.expertId, hired: raw.hired === true, packageVersion: typeof raw.packageVersion === "string" ? raw.packageVersion : "",
+    ...(disclosure ? { disclosure } : {}),
     summary: typeof raw.summary === "string" ? raw.summary : "", disclosureShown: raw.disclosureShown === true,
     ...(typeof raw.lastConversationId === "string" && raw.lastConversationId ? { lastConversationId: raw.lastConversationId } : {}), events };
 }

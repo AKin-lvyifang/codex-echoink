@@ -12,6 +12,7 @@ export interface ExpertAgentState {
   hired: boolean;
   packageVersion: string;
   summary: string;
+  disclosure?: string;
   disclosureShown: boolean;
   lastConversationId?: string;
   events: Array<{ id: string; at: number; conversationId?: string }>;

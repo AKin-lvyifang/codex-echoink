@@ -1,5 +1,6 @@
 import type { AgentDefinition } from "../../agents/types";
 import { isExpertAgent } from "../../agents/persona";
+import { normalizeExpertDisclosure } from "../../experts/disclosure";
 import { WORKSPACE_ROOT, workspacePath } from "../../workspace/service";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { shellElement } from "./shell-controls";
@@ -7,7 +8,7 @@ import { shellElement } from "./shell-controls";
 export function mobileExpertEvents(agent: AgentDefinition | undefined, conversationId: string): Array<{ id: string; at: number; text: string }> {
   if (!isExpertAgent(agent)) return [];
   return agent.expert.events.filter(event => event.conversationId === conversationId).map(event => ({ id: event.id, at: event.at,
-    text: event.id === "disclosure" ? `我以${agent.name}的视角和你聊，依据公开著作与资料推断。` : `重新聘请 · ${formatMobileDateTime(event.at)}`
+    text: event.id === "disclosure" ? normalizeExpertDisclosure(agent.expert.disclosure) ?? `我以${agent.name}的视角和你聊，依据公开著作与资料推断。` : `重新聘请 · ${formatMobileDateTime(event.at)}`
   })).sort((a, b) => a.at - b.at);
 }
 
