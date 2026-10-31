@@ -3,6 +3,7 @@ import { JSDOM } from "jsdom";
 import type { AgentDefinition } from "../agents/types";
 import type { ChatMessage, StoredSession } from "../settings/settings";
 import { renderExpertConversationDecorations } from "../ui/codex-view/expert-decorations";
+import { mobileExpertEvents } from "../ui/mobile/expert-ui";
 import { renderMessages, type CodexMessageHost } from "../ui/codex-view/message-controller";
 import { CodexMessageListRenderer, type MessageListRenderedRow } from "../ui/codex-view/message-list";
 import { installObsidianDom } from "./obsidian-dom";
@@ -94,6 +95,19 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
   };
   const agent: AgentDefinition = { id: "expert-fixture", kind: "expert", name: "测试专家", position: "产品", styleId: "execution", avatar: { kind: "builtin", id: "sol" } as never,
     expert: { expertId: "fixture", hired: true, packageVersion: "1", summary: "Public", disclosureShown: true, events: [{ id: "disclosure", at: 150, conversationId: "conversation" }, { id: "rehired", at: 250, conversationId: "conversation" }] } };
+  const defaultDesktopOpening = "我以测试专家的视角和你聊，基于公开著作推断。";
+  const defaultMobileOpening = "我以测试专家的视角和你聊，依据公开著作与资料推断。";
+  const customOpening = "我以自己的视角聊：<img src=x onerror=alert(1)> **原样** & 𠮷";
+  const invalidOpenings: unknown[] = [undefined, "", " \n\t　 ", "😀".repeat(81), 123, null, false, { text: "开场" }, ["开场"]];
+  const publicEvents = JSON.stringify(agent.expert!.events);
+  for (const disclosure of [customOpening, ...invalidOpenings]) {
+    const mobile = { ...agent, expert: { ...agent.expert!, disclosure } } as unknown as AgentDefinition;
+    const events = mobileExpertEvents(mobile, "conversation");
+    assert.equal(events.length, 2); assert.equal(events[0].text, disclosure === customOpening ? customOpening : defaultMobileOpening);
+    assert.deepEqual(mobileExpertEvents(mobile, "conversation"), events, "mobile redraw is stable without adding lifecycle events");
+    assert.deepEqual(mobileExpertEvents(mobile, "other-conversation"), []);
+    assert.equal(JSON.stringify(mobile.expert!.events), publicEvents);
+  }
   const messages = projectWorkspaceResult();
   const toolMessageId = messages.find(message => message.role === "tool")!.id;
   const session = { id: "conversation", title: "Fixture", messages, createdAt: 100, updatedAt: 310 } as StoredSession;
@@ -117,10 +131,13 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
       calls++; renderExpertConversationDecorations(root, agent, current.id, current.messages, async path => { opened.push(path); }, rows);
     }
   } as unknown as CodexMessageHost;
+  let expectedOpening = defaultDesktopOpening;
   const assertDecorations = () => {
     const events = [...virtualListEl.querySelectorAll<HTMLElement>(".echoink-expert-event")];
     assert.equal(events.length, 2);
-    assert.match(events[0].textContent ?? "", /视角/u); assert.match(events[1].textContent ?? "", /重新聘请/u);
+    assert.equal(events[0].textContent, expectedOpening); assert.equal(events[0].childElementCount, 0, "the opening remains plain text rather than rendered HTML or Markdown");
+    assert.match(events[1].textContent ?? "", /重新聘请/u);
+    assert.equal(JSON.stringify(agent.expert!.events), publicEvents, "rendering never mutates or duplicates lifecycle events");
     for (const event of events) { assert(event.parentElement?.classList.contains("codex-virtual-row")); assert.equal(event.closest("details"), null); }
     assert.equal(virtualListEl.querySelectorAll(".echoink-workspace-preview-action").length, 1);
   };
@@ -128,6 +145,14 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
     renderMessages(host, { preserveScroll: true }); assertDecorations();
     assert(measuredDecoratedRows > 0, "public events must already exist when their virtual row is measured");
     const beforeMeasureRerender = calls; flushFrames(); assert(calls > beforeMeasureRerender); assertDecorations();
+    for (const disclosure of invalidOpenings) {
+      Object.assign(agent.expert!, { disclosure });
+      renderExpertConversationDecorations(virtualListEl, agent, session.id, messages, async () => {});
+      assertDecorations();
+    }
+    agent.expert!.disclosure = customOpening; expectedOpening = customOpening;
+    renderMessages(host, { preserveScroll: true }); flushFrames(); assertDecorations();
+    renderExpertConversationDecorations(virtualListEl, agent, session.id, messages, async () => {}); assertDecorations();
     const firstButton = virtualListEl.querySelector<HTMLButtonElement>(".echoink-workspace-preview-action")!;
     firstButton.click(); await Promise.resolve(); assert.deepEqual(opened, ["EchoInk/工作区/demo.html"]);
     const viewportObserver = observers.find(observer => observer.targets.includes(messagesEl))!;
@@ -149,6 +174,8 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
     assert.equal([...virtualListEl.querySelectorAll<HTMLElement>("[data-message-id]")].some(node => node.dataset.messageId === toolMessageId), false);
     assert.equal(virtualListEl.querySelectorAll(".echoink-expert-event").length, 0, "an offscreen old event must not be appended at the visible conversation end");
     assert([...virtualListEl.children].every(row => row.classList.contains("codex-virtual-row")));
+    messagesEl.scrollTop = 0; renderer.resetVirtualWindow();
+    renderMessages(host, { preserveScroll: true }); flushFrames(); assertDecorations();
 
     // This pass uses the unmodified body renderer as well as the real Pi
     // projection and decorations: the public artifact must reach the actual
@@ -168,7 +195,7 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
       assert.doesNotMatch(virtualListEl.textContent ?? "", /PRIVATE_HTML_BODY_SENTINEL|PRIVATE_SECRET_SENTINEL/u);
       preview.click(); await Promise.resolve(); assert.equal(opened.at(-1), workspaceResultDetails.previewPath);
     } finally { actualRenderer.dispose(); component.unload(); }
-    console.log("expert message decorations: real Pi branch/runtime projection, private-body isolation, trusted workspace metadata, measurement/self-rerender, resize, reopen, collapsed process, preview action and offscreen chronology passed");
+    console.log("expert message decorations: custom plain-text openings, separate desktop/mobile defaults and invalid fallbacks; real Pi projection, private-body isolation, measurement/redraw, resize, reopen, scroll-away/return and preview action passed");
   } finally {
     renderer.dispose(); dom.window.close();
     for (const [key, descriptor] of Object.entries(previous)) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

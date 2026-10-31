@@ -15,6 +15,7 @@ export interface ExpertContentFiles {
 }
 export interface ResolvedExpertPackage {
   id: string; version: string; revision: string; meta: ExpertMetadata; summary: string; name: string;
+  disclosure?: string;
   avatar: { kind: "custom"; mimeType: "image/webp" | "image/png"; dataUrl: string; width: 256; height: 256 };
   assertAvailable(): void;
   /** Return only for a transient private system context, never messages or persisted run reports. */
@@ -141,9 +142,9 @@ export class ExpertContentService {
       if (!this.compatible(body)) throw new Error("请更新插件，或在支持的设备上使用此专家。");
     };
     assertAvailable();
-    const { persona: _persona, skills: _skills, avatar, licenses: _licenses, schema: _schema, ...meta } = body;
+    const { persona: _persona, skills: _skills, avatar, licenses: _licenses, schema: _schema, disclosure, ...meta } = body;
     return {
-      id: body.id, name: body.name, summary: body.summary, version: body.version, meta,
+      id: body.id, name: body.name, summary: body.summary, version: body.version, meta, ...(disclosure ? { disclosure } : {}),
       revision: sha256Hex(`${body.version}\0${cache.response.sha256}`),
       avatar: { kind: "custom", mimeType: avatar.mimeType, dataUrl: `data:${avatar.mimeType};base64,${avatar.base64}`, width: 256, height: 256 },
       assertAvailable,

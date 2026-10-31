@@ -140,7 +140,7 @@ export class MobileServices implements HomeHost {
     const current = await this.profileProtocol.snapshot();
     const live = current.registry.agents.find(item => item.id === agent.id);
     if (!isExpertAgent(live) || !isAgentHired(live)) throw new Error("专家已解聘。");
-    if (live.expert.packageVersion !== pack.version) await this.profileProtocol.updateExpert(registry => {
+    if (live.expert.packageVersion !== pack.version || live.expert.disclosure !== pack.disclosure) await this.profileProtocol.updateExpert(registry => {
       const latest = registry.agents.find(item => item.id === agent.id);
       if (!isExpertAgent(latest) || !isAgentHired(latest)) throw new Error("专家已解聘。");
       pack.assertAvailable(); hireExpert(registry, pack);

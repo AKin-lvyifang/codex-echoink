@@ -12,6 +12,9 @@ import { installObsidianDom } from "./obsidian-dom";
 import { renderExpertHall, type ExpertHallOptions } from "../experts/hall";
 import { ExpertHallView } from "../experts/view";
 import type { AgentDefinition } from "../agents/types";
+import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
+import { hireExpert } from "../agents/expert-lifecycle";
+import { assertExpertAgentLocks } from "../agents/persona";
 
 export async function runExpertContentTests(): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "echoink-expert-content-"));
@@ -48,6 +51,30 @@ export async function runExpertContentTests(): Promise<void> {
       assert.throws(() => parseExpertPackage({ ...valid, content: JSON.stringify(body) }, "https://fixture.invalid"), /内容无效/u);
       assert.throws(() => parseExpertPackage({ ...valid, content: "PRIVATE SECRET MALFORMED JSON" }, "https://fixture.invalid"), error => error instanceof Error && !error.message.includes("PRIVATE"));
     });
+    await test("correctly hashed packages accept optional public openings and count 80 Unicode code points", () => {
+      const unicode80 = "😀".repeat(40) + "𠮷".repeat(40);
+      const cases: Array<[string, Record<string, unknown>, string | undefined]> = [
+        ["absent", {}, undefined], ["custom", { disclosure: "  我陪你把问题想清楚。\n" }, "我陪你把问题想清楚。"],
+        ["80 BMP", { disclosure: "字".repeat(80) }, "字".repeat(80)],
+        ["80 supplementary characters", { disclosure: ` ${unicode80} ` }, unicode80],
+        ["81 BMP", { disclosure: "字".repeat(81) }, undefined],
+        ["81 supplementary characters", { disclosure: unicode80 + "😀" }, undefined],
+        ["empty", { disclosure: "" }, undefined], ["blank", { disclosure: " \n\t　 " }, undefined],
+        ["null", { disclosure: null }, undefined], ["number", { disclosure: 80 }, undefined],
+        ["boolean", { disclosure: true }, undefined], ["object", { disclosure: { text: "开场" } }, undefined],
+        ["array", { disclosure: ["开场"] }, undefined]
+      ];
+      const original = expertFixtureBody();
+      for (const [label, fields, expected] of cases) {
+        const content = JSON.stringify({ ...original, ...fields });
+        const response = { id: fixtureExpertId, version: original.version, content, sha256: createHash("sha256").update(content, "utf8").digest("hex"), issuedAt: Date.now(), maxOfflineSeconds: 604800 };
+        assert.doesNotThrow(() => parseExpertDelivery(response, fixtureExpertId), `${label}: original content hash remains valid`);
+        const parsed = parseExpertPackage(response, "https://fixture.invalid");
+        assert.equal(parsed.disclosure, expected, label);
+        assert.equal(parsed.persona, original.persona, `${label}: an invalid optional opening never rejects or strips the package body`);
+        assert.equal(Object.hasOwn(parsed, "disclosure"), expected !== undefined, label);
+      }
+    });
     const free = await account({ pro: false });
     const make = (f: typeof free, name = "paid", platform: "desktop" | "ios" | "android" = "desktop") => new ExpertContentService({
       files: expertFixtureFiles(path.join(root, name)), cacheRoot: ".custom/plugins/echoink/expert-cache", account: () => f.service,
@@ -81,6 +108,38 @@ export async function runExpertContentTests(): Promise<void> {
       assert.equal((f.calls.filter(call => call.path.endsWith("/package")).at(-1)!.body as { knownVersion: string }).knownVersion, "fixture-1");
       f.offline(true); service = make(f); (await service.resolve(fixtureExpertId)).assertAvailable();
       assert.equal(service.deliveryState(fixtureExpertId)?.kind, "offline"); f.offline(false);
+    });
+    await test("same-version full delivery updates the opening, then notModified and cold offline reads retain only its public handle", async () => {
+      const custom = await account({ bodyFields: { disclosure: "第一次公开开场。" } });
+      const resolver = make(custom, "disclosure-cache");
+      const first = await resolver.resolve(fixtureExpertId);
+      assert.equal(first.disclosure, "第一次公开开场。");
+      const registry = defaultAgentRegistry();
+      const hired = hireExpert(registry, first);
+      assert.equal(hired.expert!.disclosure, first.disclosure);
+      const saved = normalizeAgentRegistry(JSON.parse(JSON.stringify(registry)));
+      const savedExpert = saved.agents.find(agent => agent.id === hired.id)!;
+      assert.equal(savedExpert.expert!.disclosure, first.disclosure);
+      assert.throws(() => assertExpertAgentLocks(savedExpert, { ...savedExpert, expert: { ...savedExpert.expert!, disclosure: "自行修改开场" } }), /expert_agent_locked/u);
+      assert.doesNotMatch(JSON.stringify(saved), /PRIVATE PERSONA|PRIVATE PLAN|PRIVATE REVIEW|PRIVATE BUDGET/u);
+
+      custom.bodyFields({ disclosure: "同一版本的新开场。" }); custom.fullBody(true);
+      const updated = await resolver.resolve(fixtureExpertId); custom.fullBody(false);
+      assert.equal(updated.version, first.version); assert.notEqual(updated.revision, first.revision);
+      assert.equal(updated.disclosure, "同一版本的新开场。"); assert.equal(first.disclosure, "第一次公开开场。");
+      assert.equal(custom.deliveries.length, 2, "both distinct correctly hashed full bodies were delivered");
+      const same = await resolver.resolve(fixtureExpertId);
+      assert.equal(custom.deliveries.length, 2, "knownVersion now returns notModified rather than another body");
+      assert.equal((custom.calls.filter(call => call.path.endsWith("/package")).at(-1)!.body as { knownVersion: string }).knownVersion, updated.version);
+      assert.equal(same.disclosure, updated.disclosure); assert.equal(same.revision, updated.revision);
+
+      custom.offline(true);
+      const coldResolver = make(custom, "disclosure-cache"), cold = await coldResolver.resolve(fixtureExpertId);
+      cold.assertAvailable(); assert.equal(coldResolver.deliveryState(fixtureExpertId)?.kind, "offline");
+      assert.equal(cold.disclosure, updated.disclosure); assert.equal(cold.revision, updated.revision);
+      assert.match(JSON.stringify(cold), /同一版本的新开场/u);
+      assert.doesNotMatch(JSON.stringify(cold), /PRIVATE|SYNTHETIC LICENSE/u);
+      assert.match(cold.buildTransientPrompt({ text: "你好" }), /PRIVATE PERSONA/u, "the private persona remains available only through the transient prompt");
     });
     await test("expired caches request full body and reject forged notModified even with a renewed lease", async () => {
       f.at(issuedAt + 6 * 86400000); await f.service.refresh(true);

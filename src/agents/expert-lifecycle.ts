@@ -1,6 +1,7 @@
 import type { AgentDefinition, AgentRegistry } from "./types";
 import { GENERAL_ASSISTANT_ID, AGENT_MODULE_IDS } from "./types";
 import { isExpertAgent } from "./persona";
+import { normalizeExpertDisclosure } from "../experts/disclosure";
 import type { ResolvedExpertPackage } from "../experts/service";
 
 /** No package body or credential belongs in the Agent registry. */
@@ -11,10 +12,12 @@ export function hireExpert(registry: AgentRegistry, pack: ResolvedExpertPackage,
   if (previous && (!isExpertAgent(previous) || previous.expert.expertId !== pack.id)) throw new Error("专家身份已被其他 Agent 使用。");
   const rehired = !!previous && !previous.expert?.hired;
   const expert = previous?.expert;
+  const disclosure = normalizeExpertDisclosure(pack.disclosure);
   const next: AgentDefinition = {
     id, kind: "expert", name: pack.name, position: pack.meta.scene, positionDescription: pack.summary, avatar: pack.avatar,
     styleId: "execution", identityEdited: true,
     expert: { expertId: pack.id, hired: true, packageVersion: pack.version, summary: pack.summary,
+      ...(disclosure ? { disclosure } : {}),
       disclosureShown: expert?.disclosureShown ?? false,
       ...(expert?.lastConversationId ? { lastConversationId: expert.lastConversationId } : {}),
       events: [...(expert?.events ?? []), ...(rehired ? [{ id: crypto.randomUUID(), at }] : [])] }

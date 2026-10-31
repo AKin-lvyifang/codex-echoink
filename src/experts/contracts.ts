@@ -1,5 +1,6 @@
 import { skillPluginVersionSupported, type SkillPlatform } from "../membership/skill-delivery";
 import { sha256Hex } from "../utils/sha256";
+import { normalizeExpertDisclosure } from "./disclosure";
 
 export type ExpertPlatform = SkillPlatform;
 /** The service counts the complete compact UTF-8 delivery envelope, including base64. */
@@ -21,6 +22,7 @@ export interface ExpertSkill {
 export interface ExpertLicense { name: string; source: string; text: string }
 export interface ExpertPackageBody extends ExpertMetadata {
   schema: 1; persona: string; skills: ExpertSkill[];
+  disclosure?: string;
   avatar: { mimeType: "image/webp" | "image/png"; base64: string };
   licenses: ExpertLicense[];
 }
@@ -107,6 +109,7 @@ export function parseExpertPackage(response: ExpertPackageResponse, baseUrl: str
   const avatar = record(data.avatar);
   if (!["image/webp", "image/png"].includes(String(avatar.mimeType)) || typeof avatar.base64 !== "string"
     || !avatar.base64 || avatar.base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/u.test(avatar.base64)) throw new Error("专家头像格式无效。");
-  return { ...metadata, schema: 1, persona: data.persona, skills, licenses,
+  const disclosure = normalizeExpertDisclosure(data.disclosure);
+  return { ...metadata, schema: 1, persona: data.persona, skills, licenses, ...(disclosure ? { disclosure } : {}),
     avatar: { mimeType: avatar.mimeType as ExpertPackageBody["avatar"]["mimeType"], base64: avatar.base64 } };
 }

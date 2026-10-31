@@ -38,11 +38,12 @@ export class DesktopExpertController {
     };
     assertAvailable();
     // Public metadata may be refreshed; the secret body stays in the request closure.
-    if (agent.expert.packageVersion !== pack.version) await this.plugin.mutateExpertRegistry(registry => {
+    if (agent.expert.packageVersion !== pack.version || agent.expert.disclosure !== pack.disclosure) await this.plugin.mutateExpertRegistry(registry => {
       assertAvailable(); const current = registry.agents.find(item => item.id === agentId)!;
       current.name = pack.name; current.avatar = pack.avatar; current.position = pack.meta.scene;
       current.positionDescription = pack.summary;
       current.expert!.packageVersion = pack.version; current.expert!.summary = pack.summary;
+      if (pack.disclosure) current.expert!.disclosure = pack.disclosure; else delete current.expert!.disclosure;
     });
     await this.plugin.mutateExpertRegistry(registry => { assertAvailable(); rememberExpertConversation(registry, agentId, conversationId); });
     return { prompt: `${pack.buildTransientPrompt({ text })}\n首次视角声明由产品在会话中展示，不重复声明。`, assertAvailable: () => {

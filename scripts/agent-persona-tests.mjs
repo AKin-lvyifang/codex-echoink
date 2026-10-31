@@ -18,7 +18,7 @@ api.installObsidianDom(window);
 const plain = value => JSON.parse(JSON.stringify(value));
 const flush = async () => { for (let turn = 0; turn < 3; turn++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const expert = { id: "expert-socrates", name: "苏格拉底", avatar: { kind: "preset", presetId: "lin" }, position: "思考伙伴", positionDescription: "公开简介", styleId: "analysis", kind: "expert",
-  expert: { expertId: "socrates", hired: true, packageVersion: "draft-1", summary: "公开简介", disclosureShown: true, lastConversationId: "conversation-1", events: [{ id: "rehired", at: 123, conversationId: "conversation-1" }] }, capabilityIds: ["knowledge"] };
+  expert: { expertId: "socrates", hired: true, packageVersion: "draft-1", summary: "公开简介", disclosure: "我陪你把问题想清楚。", disclosureShown: true, lastConversationId: "conversation-1", events: [{ id: "rehired", at: 123, conversationId: "conversation-1" }] }, capabilityIds: ["knowledge"] };
 function fixture(registry = api.defaultAgentRegistry()) {
   registry.legacyMigrationVersion = 1;
   const settings = api.loadMobileSettings({ agentRegistry: plain(registry) });
@@ -63,11 +63,31 @@ try {
       assert.equal(api.hasCustomAgentPersona(api.getAgentPersonaTemplate(style, "en")), false);
     }
   });
+  await test("public openings survive registry save/load while invalid optional copy falls back", async () => {
+    const unicode80 = "😀".repeat(40) + "𠮷".repeat(40);
+    for (const disclosure of [expert.expert.disclosure, ` ${unicode80}\n`]) {
+      const raw = plain(expert); raw.expert.disclosure = disclosure;
+      const registry = api.defaultAgentRegistry(); registry.agents.push(raw);
+      const normalized = api.normalizeAgentRegistry(registry);
+      assert.equal(normalized.agents[1].expert.disclosure, disclosure.trim());
+      const { service } = fixture(normalized);
+      const state = await service.snapshot();
+      assert.equal(state.registry.agents[1].expert.disclosure, disclosure.trim());
+      assert.equal(JSON.stringify(state.registry).includes("persona"), false);
+    }
+    for (const disclosure of [undefined, null, "", " \n\t　 ", "😀".repeat(81), 123, false, { text: "开场" }, ["开场"]]) {
+      const raw = plain(expert); raw.expert.disclosure = disclosure;
+      const normalized = api.normalizeExpertAgentState(raw.expert);
+      assert.ok(normalized); assert.equal(Object.hasOwn(normalized, "disclosure"), false);
+      assert.equal(normalized.summary, expert.expert.summary);
+      assert.deepEqual(plain(normalized.events), expert.expert.events);
+    }
+  });
   await test("normal update and patch reject expert lock edits and deletion; explicit lifecycle retains identity", async () => {
     const { service } = fixture(); let state = await service.snapshot();
     await assert.rejects(service.createAgent(plain(expert), state.version), /hiring_flow/u);
     state = await service.updateExpert(registry => { registry.agents.push(plain(expert)); }, state.version);
-    for (const patch of [{ name: "改名" }, { position: "改职位" }, { positionDescription: "改简介" }, { avatar: { kind: "default" } }, { persona: "私有正文" }, { capabilityIds: [] }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...expert.expert, hired: false } }]) {
+    for (const patch of [{ name: "改名" }, { position: "改职位" }, { positionDescription: "改简介" }, { avatar: { kind: "default" } }, { persona: "私有正文" }, { capabilityIds: [] }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...expert.expert, hired: false } }, { expert: { ...expert.expert, disclosure: "自己修改开场" } }, { expert: { ...expert.expert, disclosure: undefined } }]) {
       await assert.rejects(service.patchAgent(expert.id, patch, state.version), /expert_agent_locked/u);
     }
     await assert.rejects(service.update(registry => { registry.agents = registry.agents.filter(agent => agent.id !== expert.id); }, state.version), /expert_agent_locked/u);
