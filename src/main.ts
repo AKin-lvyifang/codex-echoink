@@ -598,6 +598,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   getWorkbenchModuleOwner(moduleId: AgentModuleId): AgentDefinition { return workbenchModuleOwner(this, moduleId); }
   async prefillWorkbenchModule(moduleId: AgentModuleId, text: string): Promise<boolean> { return prefillWorkbenchModule(this, moduleId, text); }
   setSettingsTabInstance(tab: CodexSettingTab): void { this.settingsTabInstance = tab; }
+  refreshFolderSettingsSurfaces(from?: string, to?: string): void {
+    for (const tab of this.settingsNavigationTargets()) tab.refreshFolderPaths(from, to);
+  }
   private settingsNavigationTargets(): CodexSettingTab[] {
     const targets = this.settingsTabInstance ? [this.settingsTabInstance] : [];
     // Native settings search may display a host-owned copy of the registered

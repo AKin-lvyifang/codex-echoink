@@ -23306,12 +23306,27 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 
 .echoink-settings-demo .echoink-knowledge-module-page .echoink-knowledge-init-actions { justify-content: flex-end; }
 
+/* Initialization preview lives in the settings page, using native folder disclosure. */
+.echoink-init-tree { max-height: min(560px, 60vh); overflow-y: auto; min-width: 0; }
+.echoink-knowledge-module-page .echoink-init-tree details { margin: 0; }
+.echoink-init-tree-children { margin-inline-start: 20px; }
+.echoink-init-tree-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; padding: 7px 10px; border-radius: 4px; font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; }
+.echoink-init-tree-row:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-init-tree-disclosure { display: flex; flex: 0 0 12px; width: 12px; color: var(--text-muted); }
+.echoink-init-tree-disclosure svg { width: 12px; height: 12px; }
+.echoink-init-tree-branch[open] > .echoink-init-tree-row > .echoink-init-tree-disclosure { transform: rotate(90deg); }
+.echoink-init-tree-row::-webkit-details-marker { display: none; }
+.echoink-init-tree-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.echoink-init-tree-icon { display: flex; flex: none; color: var(--text-muted); }
+.echoink-init-tree-icon svg { width: 15px; height: 15px; }
+.echoink-init-tree-purpose { margin-inline-start: auto; color: var(--text-muted); text-align: end; overflow-wrap: anywhere; }
+.echoink-init-tree-moved { color: var(--text-muted); }
+
 /* Searchable folder picker: Origin Select slots supply the shared control skin. */
-.echoink-folder-picker { display: flex; flex: 0 1 230px; flex-direction: column; gap: 6px; width: 230px; min-width: 0; max-width: 100%; margin-inline-start: auto; }
-.echoink-folder-picker-values { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; min-width: 0; max-width: 100%; }
+.echoink-folder-picker { box-sizing: border-box; display: flex; flex: 0 0 230px; flex-direction: column; gap: 6px; width: 230px; min-width: 0; max-width: 100%; margin-inline-start: auto; }
+.echoink-folder-picker-values { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; width: 100%; min-width: 0; max-width: 100%; }
 .echoink-folder-picker-controls { min-width: 0; max-width: 100%; width: 100%; }
-.echoink-folder-picker-values.is-multiple .echoink-folder-picker-controls { flex: 0 1 auto; width: auto; }
-.echoink-folder-picker-values.is-multiple .echoink-folder-picker-controls.is-editing { flex: 1 0 100%; width: 100%; }
+.echoink-folder-picker-values.is-multiple .echoink-folder-picker-controls { flex: 0 0 100%; width: 100%; }
 .echoink-folder-picker .echoink-folder-picker-trigger[data-slot=select-trigger],
 .echoink-folder-picker .echoink-folder-picker-draft[data-slot=input] { width: 100%; }
 .echoink-folder-picker .echoink-folder-picker-trigger-value[data-slot=select-value] { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -23329,8 +23344,8 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-folder-picker-empty { padding: 12px 10px; color: var(--text-muted); }
 .echoink-folder-picker-popover .echoink-folder-picker-create { flex-shrink: 0; justify-content: flex-start; width: 100%; height: auto; margin: 0; border: 0; border-top: 1px solid var(--origin-line); border-radius: 0 0 4px 4px; background: transparent; color: var(--origin-text); font: inherit; text-align: start; box-shadow: none; }
 .echoink-folder-picker-create svg { width: 16px; height: 16px; }
-.echoink-folder-picker-tag { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px 3px 2px 7px; border-radius: 4px; background: var(--soft, var(--background-secondary)); color: var(--text, var(--text-normal)); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; }
-.echoink-folder-picker-tag-path { min-width: 0; overflow-wrap: anywhere; }
+.echoink-folder-picker-tag { box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 100%; padding: 2px 3px 2px 7px; border-radius: 4px; background: var(--soft, var(--background-secondary)); color: var(--text, var(--text-normal)); font-size: calc(var(--font-text-size, 16px) * .75); line-height: 1.55; }
+.echoink-folder-picker-tag-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .echoink-folder-picker-new { flex-shrink: 0; padding: 2px 5px; border-radius: 4px; background: var(--soft, var(--background-secondary)); color: var(--text-muted); font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.4; }
 .echoink-folder-picker-tag .echoink-folder-picker-new { background: var(--background-primary-alt, var(--background-primary)); }
 .echoink-folder-picker .echoink-folder-picker-remove { display: grid; place-items: center; flex: 0 0 18px; width: 18px; min-width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 2px; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); box-shadow: none; }

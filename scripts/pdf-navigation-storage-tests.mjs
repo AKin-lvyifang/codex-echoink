@@ -18,16 +18,17 @@ try {
     bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent", loader: { ".md": "text", ".webp": "dataurl", ".svg": "dataurl", ".txt": "text" },
     banner: { js: `import {createRequire as createPdfStorageRequire} from "node:module"; const require = createPdfStorageRequire(${JSON.stringify(path.join(root, "package.json"))});` },
     plugins: [{ name: "pdf-storage-workspace-host", setup(build) {
+      build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(root, "src/tests/origin-controls-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, "src/tests/obsidian-shim.ts") }));
       build.onResolve({ filter: /provider-brand-icons$/ }, () => ({ path: path.join(root, "src/tests/composer-provider-brand-shim.ts") }));
       build.onResolve({ filter: /^[^./]/ }, args => { if (args.path === "electron") return { path: args.path, external: true }; const resolved = import.meta.resolve(args.path); return { path: resolved.startsWith("node:") ? resolved : fileURLToPath(resolved), external: true }; });
     } }] });
-  const result = spawnSync(process.execPath, [output], { cwd: root, env: { ...process.env, PI_OFFLINE: "1", TMPDIR: directory, ECHOINK_PDF_TEST_ROOT: legacyRoot }, stdio: "inherit" });
+  const result = spawnSync(process.execPath, [output], { cwd: root, env: { ...process.env, PI_OFFLINE: "1", TMPDIR: process.env.TMPDIR || directory, ECHOINK_PDF_TEST_ROOT: legacyRoot }, stdio: "inherit" });
   process.exitCode = result.status ?? 1;
   if (!process.exitCode && process.argv.includes("--typecheck")) {
     const ts = createRequire(import.meta.url)("typescript"), config = ts.readConfigFile(path.join(root, "tsconfig.json"), ts.sys.readFile);
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-    const owned = ["src/pdf-reading/service.ts", "src/pdf-reading/vault-files.ts", "src/pdf-reading/controller.ts", "src/tests/pdf-navigation-storage.ts"].map(file => path.join(root, file));
+    const owned = ["src/pdf-reading/service.ts", "src/pdf-reading/vault-files.ts", "src/pdf-reading/controller.ts", "src/pdf-reading/settings-panel.ts", "src/tests/pdf-navigation-storage.ts"].map(file => path.join(root, file));
     const diagnostics = ts.getPreEmitDiagnostics(ts.createProgram([...owned, path.join(root, "node_modules/obsidian/obsidian.d.ts")], { ...parsed.options, noEmit: true }));
     const relevant = diagnostics.filter(item => !item.file || owned.includes(item.file.fileName));
     if (relevant.length) throw new Error(ts.formatDiagnosticsWithColorAndContext(relevant, { getCurrentDirectory: () => root, getCanonicalFileName: value => value, getNewLine: () => "\n" }));

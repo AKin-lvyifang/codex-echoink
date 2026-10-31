@@ -13,10 +13,14 @@ export function initializationFolderIssues(fields: readonly InitializationFolder
   for (const field of fields) for (const choice of field.values) {
     let path: string;
     try {
-      path = normalizeKnowledgeDirectory(choice.path); assertKnowledgeModulePath(path, field.title);
-    } catch { add(field.key, choice.path.trim() ? "请选择合法的库内文件夹" : "请输入新文件夹名"); continue; }
+      if (choice.create && /[\\:*?"<>|]/u.test(choice.path)) throw new Error("invalid folder name");
+      path = normalizeKnowledgeDirectory(choice.path);
+      if (path !== choice.path.trim()) throw new Error("invalid folder path");
+      assertKnowledgeModulePath(path, field.title);
+    } catch { add(field.key, choice.path.trim() ? "请选择合法的库内文件夹" : "请输入新文件夹名称"); continue; }
     const name = path.toLocaleLowerCase();
     if (choice.create && existing.has(name)) add(field.key, `${path} 文件夹重名，请修改`);
+    if (!choice.create && !existing.has(name)) add(field.key, "文件夹不存在");
     const selected = owners.get(name) ?? [];
     selected.push({ key: field.key, path }); owners.set(name, selected);
   }

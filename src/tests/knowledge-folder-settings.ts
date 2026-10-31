@@ -10,6 +10,7 @@ import { TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
+import { initializationFolderTree } from "../settings/knowledge-initialization-tree";
 import { DesktopKnowledgeSettings } from "../settings/desktop-knowledge-settings";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
@@ -81,7 +82,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     async previewDirectoryPlan(bindings: typeof saved, createPaths: string[], options: any) {
       previewCalls++;
       return previewKnowledgeDirectoryPlan({ baseRevision: saved.revision, baseline: saved, roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES,
-        bindings, createPaths, mode: options.mode, kind: async () => "folder", sourcePaths: [], files: [] });
+        bindings, createPaths, moduleDirectories: options.moduleDirectories, mode: options.mode, kind: async path => folders.some(folder => folder.path === path) ? "folder" : "missing", sourcePaths: [], files: [] });
     },
     async applyDirectoryPlan(plan: KnowledgeDirectoryPlan) {
       applyCalls++;
@@ -123,21 +124,42 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     section.open("initialize"); button("使用现有文件夹").click(); await flush();
     assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields .echoink-folder-picker').length, 9, "initialization uses searchable folder choices for the four purposes and five module locations");
     for (const label of ["初始化复盘输出", "初始化英文稿", "初始化表达库", "初始化原 PDF"]) {
-      assert.equal(host.querySelector<HTMLButtonElement>(`[role="combobox"][aria-label="${label}"]`)!.disabled, true, "disabled modules keep their displayed values without permitting edits");
+      assert.equal(host.querySelector<HTMLButtonElement>(`[role="combobox"][aria-label="${label}"]`)!.disabled, false, "module folders can be configured before enabling the modules");
     }
     assert(previewCalls > 0); assert.equal(applyCalls, 0, "rendering and previewing cannot apply directory changes");
     assert.equal(JSON.stringify(saved), beforeInitialization);
-    applyFails = true; button("确认初始化").click(); await flush();
+    assert(!host.textContent?.includes("重新核对") && !host.textContent?.includes("查看实际变更"));
+    button("预览").click(); await flush();
+    assert(host.querySelector(".echoink-init-tree"), "preview opens a folder tree inside the settings page");
+    assert(host.textContent?.includes("资料来源"));
+    const previewBranch = host.querySelector<HTMLDetailsElement>(".echoink-init-tree-branch")!;
+    assert.equal(previewBranch.open, true);
+    previewBranch.querySelector("summary")!.click(); assert.equal(previewBranch.open, false);
+    button("返回初始化文件夹").click(); await flush();
+    assert(host.querySelector('[aria-label="初始化资料来源"]'), "return retains the selected form");
+    applyFails = true; button("预览").click(); await flush(); button("确认初始化").click(); await flush();
     assert.equal(applyCalls, 1);
     assert.equal(JSON.stringify(saved), beforeInitialization, "failed confirmation preserves the current configuration");
     assert(host.textContent?.includes("fixture application failed"));
-    assert.equal(button("确认初始化").disabled, true, "failure requires a fresh preview");
-    applyFails = false; button("重新核对").click(); await flush(); button("确认初始化").click(); await flush();
+    assert.equal(button("确认初始化").disabled, false, "the preview automatically rechecks the current selections after a failed application");
+    applyFails = false; button("返回初始化文件夹").click(); await flush(); button("确认初始化").click(); await flush();
     assert.equal(applyCalls, 2); assert.equal(section.isDetail, false);
     assert.equal(saved.roles.work.writePath, "工作兼容"); assert.equal(saved.roles.archive.writePath, "归档兼容");
     section.open("initialize"); button("帮我搭建").click(); await flush();
     assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields [role="combobox"]').length, 9, "each location initially has one selector, including pending new folders");
     assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields input').length, 0, "new-folder names do not leave permanent input rows");
+    button("预览").click(); await flush();
+    assert(host.querySelector('.echoink-init-tree-row[data-folder-path="raw"]')?.textContent?.includes("新建"));
+    assert(host.querySelector('.echoink-init-tree-row[data-folder-path="outputs/english-diary"]')?.textContent?.includes("英文稿"));
+    const treePlan = (section as any).plan as KnowledgeDirectoryPlan;
+    const tree = initializationFolderTree(["old", "old/deep"], { ...treePlan, moves: [{ from: "note.md", to: "raw/note.md", size: 1, mtime: 1 }] });
+    assert.equal(tree.find(folder => folder.path === "raw")?.moved, 1);
+    assert.equal(tree.find(folder => folder.path === "old")?.created, false);
+    const beforeFolderRefresh = previewCalls;
+    section.followFolderRename("unselected-folder", "moved-folder"); draw(); await flush();
+    assert(previewCalls > beforeFolderRefresh, "redrawing the preview after a folder event recalculates the invalidated plan");
+    assert.equal(button("确认初始化").disabled, false, "folder-event redraw cannot strand the preview without a plan");
+    button("返回初始化文件夹").click(); await flush();
     const applyCount = applyCalls;
     let left = false; section.requestLeave(() => { left = true; draw(); });
     assert(left && !section.hasDraft && !section.isDetail, "return immediately discards the unconfirmed plan");

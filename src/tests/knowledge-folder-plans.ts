@@ -93,22 +93,27 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
 
   const baseline = emptyKnowledgeFolderBindings();
   Object.assign(baseline.roles.raw, { enabled: true, readPaths: ["旧来源"], writePath: "旧来源" });
-  const pure = await previewKnowledgeDirectoryPlan({ baseRevision: 1, baseline, bindings: buildBindings(), createPaths: ["资料/原文", "资料/知识"], mode: "build",
-    kind: async relative => ["旧来源", "资料"].includes(relative) ? "folder" : "missing",
+  const selected = buildBindings();
+  selected.roles.raw.readPaths.push("课程");
+  selected.roles.wiki.allowedSubdirectories = ["默认分类"];
+  const pure = await previewKnowledgeDirectoryPlan({ baseRevision: 1, baseline, bindings: selected, createPaths: ["资料/原文", "资料/知识"], mode: "build",
+    kind: async relative => ["旧来源", "资料", "课程"].includes(relative) ? "folder" : "missing",
     sourcePaths: ["旧来源/原笔记.md", "课程/材料.md"], files: ["旧来源/原笔记.md", "课程/材料.md", "课程/图片.png", "private/state.json", "config/core.json"].map(relative => ({ path: relative, size: 3, mtime: 1 })), protectedPaths: ["private", "config"] });
   assert.deepEqual(pure.issues, []);
-  assert(pure.moves.some(move => move.from === "旧来源/原笔记.md"), "a previous Raw is moved into the replacement Raw during first build");
-  assert(pure.moves.some(move => move.from === "课程/图片.png"), "source attachments move with their hierarchy");
-  assert.equal(pure.moves.length, 3);
-  assert(pure.create.includes("资料/原文/课程"));
-  assert.deepEqual(pure.sources, ["资料/原文/旧来源/原笔记.md", "资料/原文/课程/材料.md"].sort());
+  assert.deepEqual(pure.moves, [], "building folders never relocates selected or unselected materials");
+  assert.deepEqual(pure.create, ["资料/原文", "资料/知识"], "saved category permissions do not implicitly create folders");
+  assert.deepEqual(pure.bindings.roles.wiki.allowedSubdirectories, ["默认分类"], "creation approval does not erase saved organization permissions");
+  assert.deepEqual(pure.sources, ["课程/材料.md"], "selected source folders are consumed in place; unselected old sources are omitted");
+  const category = await previewKnowledgeDirectoryPlan({ baseRevision: 1, baseline: selected, bindings: selected, createPaths: ["资料/知识/默认分类"], sourcePaths: [], mode: "build",
+    kind: async relative => relative === "资料/知识/默认分类" ? "missing" : "folder" });
+  assert.deepEqual(category.create, ["资料/知识/默认分类"], "an explicit category creation still works");
 
   const root = await fs.realpath(await fs.mkdtemp(path.join(process.env.ECHOINK_MODULES_TEST_ROOT ?? os.tmpdir(), "echoink-folder-plan-v2-")));
   try {
     await assertPlanApplication(path.join(root, "success"));
     await assertRestoreNativeEmptyDirectoryCleanup(path.join(root, "restore-native-api"));
     await assertStaleAndConflicts(path.join(root, "stale"));
-    await assertFailedMoveRecovery(path.join(root, "rollback"));
+    await assertFailedCreateRecovery(path.join(root, "rollback"));
     await assertFailedSaveRecovery(path.join(root, "save-failure"));
     await assertRestoreKeepsNewContent(path.join(root, "restore-retained"));
     await assertRenamedLegacyConsentRestores(path.join(root, "restore-legacy"));
@@ -116,7 +121,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
     await assertRetiredBindingsSurviveDesktopEdits(path.join(root, "retired-roles"));
     await assertInitializationModuleRegression(path.join(root, "module-regression"));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
-  console.log("Knowledge directory plans, relocation and recovery: PASS");
+  console.log("Knowledge directory plans, in-place sources and recovery: PASS");
 }
 
 async function assertRetiredBindingsSurviveDesktopEdits(root: string): Promise<void> {
@@ -173,28 +178,20 @@ async function assertPlanApplication(root: string) {
     Object.assign(plugin.settings.knowledgeBase.folderBindings.roles.projects, { enabled: true, readPaths: ["既有项目"], writePath: "既有项目" });
     const binds = buildBindings();
     const calls: { from: string; to: string }[] = [];
-    const renameFile = app.fileManager.renameFile.bind(app.fileManager);
-    app.fileManager.renameFile = async (file, target) => {
-      const from = file.path;
-      await renameFile(file, target);
-      calls.push({ from, to: target });
-      // Emulate the native API updating a resolved link in another pending note.
-      if (from === "课程/a.md") {
-        await fs.writeFile(path.join(root, "课程/b.md"), "# B\n[[资料/原文/课程/a.md]]\n");
-      }
-    };
+    app.fileManager.renameFile = async (file, target) => { calls.push({ from: file.path, to: target }); throw new Error("initialization must not rename files"); };
     const plan = await service.previewDirectoryPlan(binds, ["资料/原文", "资料/知识"], { mode: "build" });
     assert.deepEqual(plan.issues, []);
-    assert.deepEqual(plan.moves.map(move => move.from), ["课程/a.md", "课程/a.png", "课程/b.md"]);
+    assert.deepEqual(plan.moves, []);
     assert(plan.excluded.some(item => item.path === "private-state/runtime.json"));
     const result = await service.applyDirectoryPlan(plan, true);
     assert.equal(plugin.settings.knowledgeBase.initialized, true, "successful setup persists the homepage reminder completion marker");
     assert.equal(result.configured, true);
-    assert.equal(result.refinement, "not-started", "missing Provider cannot block configuring or relocation");
-    assert.match(result.refinementError!, /提炼尚未开始/u);
+    assert.equal(result.refinement, "not-started", "missing Provider cannot block directory setup");
+    assert.equal(result.refinementError, undefined, "unselected loose materials do not start extraction");
     assert.equal(fixture.providerCalls(), 0);
-    assert.deepEqual(calls, plan.moves.map(move => ({ from: move.from, to: move.to })), "every reviewed file goes through Obsidian renameFile");
-    assert.equal(await fs.readFile(path.join(root, "资料/原文/课程/b.md"), "utf8"), "# B\n[[资料/原文/课程/a.md]]\n", "link changes caused by this batch do not falsely stale the next move");
+    assert.deepEqual(calls, [], "setup does not invoke the file-moving API");
+    assert.equal(await fs.readFile(path.join(root, "课程/b.md"), "utf8"), "# B\n[[课程/a.md]]\n", "source links and locations stay unchanged");
+    assert.equal(await fs.readFile(path.join(root, "课程/a.png"), "utf8"), "image bytes");
     for (const [relative, content] of [["private-state/runtime.json", "PRIVATE"], ["custom-config/plugins/example/state.json", "CONFIG"], ["产物/英文日记.md", "DIARY"], ["既有项目/result.md", "PROJECT"], ["EchoInk/待办.md", "TODO"], ["financial/transactions/row.md", "FINANCE"]]) assert.equal(await fs.readFile(path.join(root, relative), "utf8"), content);
     assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, []);
     const existing = structuredClone(plugin.settings.knowledgeBase.folderBindings);
@@ -203,7 +200,7 @@ async function assertPlanApplication(root: string) {
     assert.deepEqual(edit.moves, [], "rebinding or permissions never trigger implicit relocation");
     await service.applyDirectoryPlan(edit);
     assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, ["资料/原文"]);
-    assert.equal((await service.getOriginalDirectoryStatus())!.files > 0, true, "original positions are durably recorded");
+    assert((await service.getOriginalDirectoryStatus())!.files > 0, "the original layout snapshot is retained for restoring setup folders and bindings");
     await service.restoreOriginalDirectories();
     assert.equal(await fs.readFile(path.join(root, "课程/a.md"), "utf8"), "# A\n");
     assert.equal(plugin.settings.knowledgeBase.folderBindings.roles.raw.enabled, false, "restoration also restores setup bindings, even when only organization consent changed later");
@@ -235,7 +232,7 @@ async function assertRestoreNativeEmptyDirectoryCleanup(root: string) {
       await fs.rm(path.join(root, relative), { maxRetries: 5, recursive });
     };
     const result = await fixture.service.restoreOriginalDirectories();
-    assert.equal(result.restored, 1);
+    assert.equal(result.restored, 0);
     assert.equal(deleteCalls, 0, "avoid the host file-delete implementation for folders");
     assert.equal(adapterDeleteCalls, 0, "avoid adapter.rmdir(false) routing to fs.rm");
     assert.equal(await fs.stat(path.join(root, "资料/原文")).catch(() => null), null);
@@ -259,42 +256,44 @@ async function assertStaleAndConflicts(root: string) {
     await fixture.write("资料/原文/notes/source.md", "occupied");
     await assert.rejects(fixture.service.applyDirectoryPlan(plan), /重新预览/u);
     assert.equal(await fs.readFile(path.join(root, "资料/原文/notes/source.md"), "utf8"), "occupied");
-    const conflicted = await build();
-    assert(conflicted.issues.some(issue => issue.includes("不会覆盖")));
+    const refreshed = await build();
+    assert.deepEqual(refreshed.issues, [], "an unrelated file at the old automatic relocation target is harmless");
+    assert.deepEqual(refreshed.moves, []);
     await fs.rm(path.join(root, "资料"), { recursive: true });
     plan = await build();
     fixture.plugin.settings.knowledgeBase.folderBindings.roles.inbox.enabled = true;
     await assert.rejects(fixture.service.applyDirectoryPlan(plan), /配置已改变/u);
     fixture.plugin.settings.knowledgeBase.folderBindings.roles.inbox.enabled = false;
     (fixture.app.vault as any).setConfig("alwaysUpdateLinks", false);
-    await assert.rejects(fixture.service.applyDirectoryPlan(await build()), /自动更新内部链接/u);
+    await fixture.service.applyDirectoryPlan(await build());
+    assert.equal(await fs.readFile(path.join(root, "notes/source.md"), "utf8"), "changed since preview", "setup does not require automatic link updates when no files move");
   } finally { fixture.release(); }
 }
 
-async function assertFailedMoveRecovery(root: string) {
+async function assertFailedCreateRecovery(root: string) {
   const fixture = await fixtureAt(root);
   try {
     await fixture.write("旧来源/a.md", "A"); await fixture.write("旧来源/b.md", "B");
     Object.assign(fixture.plugin.settings.knowledgeBase.folderBindings.roles.raw, { enabled: true, readPaths: ["旧来源"], writePath: "旧来源" });
     await fixture.write("outputs/.ingest-tracker.md", "# Tracker\n- `旧来源/a.md`\n");
-    const renameFile = fixture.app.fileManager.renameFile.bind(fixture.app.fileManager);
-    fixture.app.fileManager.renameFile = async (file, target) => {
-      if (file.path === "旧来源/b.md") throw new Error("fixture move failed");
-      await renameFile(file, target);
+    const createFolder = fixture.app.vault.createFolder.bind(fixture.app.vault);
+    fixture.app.vault.createFolder = async directory => {
+      if (directory === "资料/知识") throw new Error("fixture create failed");
+      return await createFolder(directory);
     };
     const before = knowledgeFolderBindingsSignature(fixture.plugin.settings.knowledgeBase.folderBindings);
     const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
-    await assert.rejects(fixture.service.applyDirectoryPlan(plan), /已恢复本次搬迁的 1 个文件/u);
+    await assert.rejects(fixture.service.applyDirectoryPlan(plan), /fixture create failed/u);
     assert.equal(await fs.readFile(path.join(root, "旧来源/a.md"), "utf8"), "A");
     assert.equal(await fs.readFile(path.join(root, "旧来源/b.md"), "utf8"), "B");
-    assert.equal(await fs.readFile(path.join(root, "outputs/.ingest-tracker.md"), "utf8"), "# Tracker\n- `旧来源/a.md`\n", "rollback restores legacy source references as well as positions");
+    assert.equal(await fs.readFile(path.join(root, "outputs/.ingest-tracker.md"), "utf8"), "# Tracker\n- `旧来源/a.md`\n", "failed setup leaves existing source references unchanged");
     assert.equal(knowledgeFolderBindingsSignature(fixture.plugin.settings.knowledgeBase.folderBindings), before);
     assert.equal(await fixture.service.getInitializationState(), null, "failure never marks sources processed or starts extraction");
     assert.equal(await fs.stat(path.join(root, "资料")).catch(() => null), null);
-    fixture.app.fileManager.renameFile = renameFile;
+    fixture.app.vault.createFolder = createFolder;
     const retried = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
     await fixture.service.applyDirectoryPlan(retried);
-    assert.equal(await fs.readFile(path.join(root, "资料/原文/旧来源/b.md"), "utf8"), "B");
+    assert.equal(await fs.readFile(path.join(root, "旧来源/b.md"), "utf8"), "B");
   } finally { fixture.release(); }
 }
 
@@ -358,8 +357,7 @@ async function assertRootNativeJournalProtection(root: string) {
       assert.deepEqual(plan.issues, []);
       assert(!plan.moves.some(move => move.from === entry.journal), `root native daily note stays in place for ${entry.format || "the native default"}`);
       assert(plan.excluded.some(item => item.path === entry.journal));
-      assert(plan.moves.some(move => move.from === entry.ordinary), "only a valid date matching the configured native format is protected");
-      assert(plan.moves.some(move => move.from === "普通资料/笔记.md"), "root journal configuration never excludes the whole Vault");
+      assert.deepEqual(plan.moves, [], "ordinary notes and native daily notes both remain in place");
       assert(!plan.sources.includes(entry.journal), "the preserved native daily note does not enter the new Raw extraction queue");
     } finally { fixture.release(); }
   }
@@ -367,7 +365,7 @@ async function assertRootNativeJournalProtection(root: string) {
   try {
     await unconfigured.write("2026-10-15.md", "ORDINARY DATE NOTE");
     const plan = await unconfigured.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
-    assert(plan.moves.some(move => move.from === "2026-10-15.md"), "a date-like name alone does not imply a configured native diary");
+    assert.deepEqual(plan.moves, [], "unconfigured date-like notes also remain in place");
   } finally { unconfigured.release(); }
 }
 
@@ -407,15 +405,23 @@ async function assertInitializationModuleRegression(root: string): Promise<void>
     Object.assign(f.plugin.settings.englishDiary, { enabled: false, englishDirectory: "closed-english", legacyEnglishDirectories: ["outputs/.english-diary/diaries"] });
     const before = JSON.stringify(f.plugin.settings.englishDiary);
     let refreshed = 0; f.plugin.englishDiary = { refreshStoragePaths() { refreshed++; } } as any;
-    const disabled = await f.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build", moduleDirectories: { review: "/ignored", english: "/ignored", expressions: "missing" } });
+    const invalidDisabled = await f.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build", moduleDirectories: { review: "/invalid", english: "/invalid" } });
+    assert.match(invalidDisabled.issues.join("；"), /Vault 相对目录/u, "explicit choices are validated even while their modules are disabled");
+    const disabled = await f.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
     assert.deepEqual(disabled.issues, []); assert.ok(!disabled.moves.some(move => /^(closed-review|closed-english)\//u.test(move.from)));
     await f.service.applyDirectoryPlan(disabled); assert.equal(JSON.stringify(f.plugin.settings.englishDiary), before); assert.equal(refreshed, 0);
     await fs.mkdir(path.join(root, "mapped-output"));
     Object.assign(f.plugin.settings.knowledgeBase.folderBindings!.roles.outputs, { enabled: true, readPaths: ["mapped-output"], writePath: "mapped-output" });
     Object.assign(f.plugin.settings.englishDiary, { enabled: true, englishDirectory: "outputs/英文日记", expressionDirectory: "outputs/英文日记/表达库", englishDirectoryMode: "role", expressionDirectoryMode: "role" });
-    const role = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), [], { mode: "build" });
+    const role = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), ["mapped-output/英文日记", "mapped-output/英文日记/表达库"], { mode: "build" });
     assert.deepEqual(role.issues, []); assert.equal(role.moduleDirectories!.english, "mapped-output/英文日记");
     await f.service.applyDirectoryPlan(role); assert.equal(f.plugin.settings.englishDiary.englishDirectoryMode, "role"); assert.equal(f.plugin.settings.englishDiary.expressionDirectoryMode, "role");
+    const explicit = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), [], { mode: "existing", moduleDirectories: { english: "mapped-output/英文日记", expressions: "mapped-output/英文日记/表达库" } });
+    assert.deepEqual(explicit.moduleDirectoryModes, { english: "custom", expressions: "custom" }, "an explicit choice is a literal folder even if it matches the current role location");
+    await f.service.applyDirectoryPlan(explicit);
+    assert.equal(f.plugin.settings.englishDiary.englishDirectory, "mapped-output/英文日记");
+    assert.equal(f.plugin.settings.englishDiary.englishDirectoryMode, "custom");
+    assert.equal(f.plugin.settings.englishDiary.expressionDirectoryMode, "custom");
     f.plugin.settings.englishDiary.enabled = false;
     f.records["daily-notes"].instance.options.folder = "/08-生活/日记";
     const invalid = await f.service.previewDirectoryPlan(structuredClone(f.plugin.settings.knowledgeBase.folderBindings!), [], { mode: "build", moduleDirectories: { journal: "new-journal" } });

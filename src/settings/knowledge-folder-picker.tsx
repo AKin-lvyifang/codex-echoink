@@ -1,4 +1,4 @@
-import { Scope, setIcon, type App } from "obsidian";
+import { Scope, setIcon, setTooltip, type App } from "obsidian";
 import { Popover } from "radix-ui";
 import { CheckIcon, ChevronDownIcon, MagnifyingGlassIcon, PlusIcon } from "@radix-ui/react-icons";
 import { createPortal, flushSync } from "react-dom";
@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Input } from "../ui/components/origin/input";
 import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
+import { initializationFolderIssues } from "../knowledge-base/initialization-choices";
 
 export type KnowledgeFolderChoice = { path: string; create: boolean };
 export type KnowledgeFolderPickerOptions = {
@@ -17,6 +18,8 @@ export type KnowledgeFolderPickerOptions = {
   disabled?: boolean;
   app?: Pick<App, "keymap" | "scope">;
   onChange(values: KnowledgeFolderChoice[]): void;
+  /** Unconfirmed or invalid drafts must block the containing form's submit. */
+  onEditingChange?(editing: boolean): void;
 };
 export type KnowledgeFolderPicker = {
   element: HTMLElement;
@@ -45,6 +48,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   let draft: Draft | null = null;
   let disabled = Boolean(options.disabled);
   let error = "";
+  let draftError = "";
   let open = false;
   let query = "";
   let disposed = false;
@@ -56,13 +60,18 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   let folderItems: { path: string; search: string }[] = [];
   const escapeScope = options.app ? new Scope(options.app.scope) : null;
   let scopeActive = false;
+  const tooltipNodes = new WeakSet<HTMLElement>();
+  const pathTooltip = (node: HTMLElement | null, path: string) => {
+    if (!node || tooltipNodes.has(node)) return;
+    tooltipNodes.add(node);
+    setTooltip(node, path);
+  };
 
   const folders = () => [...new Set(options.folders().filter(Boolean))];
   const normalize = (values: KnowledgeFolderChoice[]): Entry[] => {
-    const existing = new Set(folders());
     return (options.multiple ? values : values.slice(0, 1))
       .filter(value => value.path.trim() !== "")
-      .map(value => ({ path: value.path, create: value.create || !existing.has(value.path), id: ++nextEntry }));
+      .map(value => ({ ...value, id: ++nextEntry }));
   };
   entries = normalize(options.values);
   const values = () => entries.map(({ path, create }) => ({ path, create }));
@@ -114,8 +123,10 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
     if (!draft) return;
     // Consume before unmount/blur so Escape cannot submit the same draft later.
     draft = null;
+    draftError = "";
     syncOpenListeners();
     render();
+    options.onEditingChange?.(false);
     focusTrigger();
   };
   const closeCurrent = () => { if (draft) cancelDraft(); else setOpen(false, true); };
@@ -140,6 +151,12 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   };
   const choose = (path: string | null) => {
     if (disabled || disposed) return;
+    if (path !== null && !folders().includes(path)) {
+      error = "文件夹不存在";
+      setOpen(false, true);
+      return;
+    }
+    error = "";
     if (path === null) {
       if (options.required || options.multiple) return;
       entries = [];
@@ -154,23 +171,32 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
     if (disabled || disposed) return;
     open = false;
     draft = { path: "", id: ++nextEntry };
+    draftError = "";
+    error = "";
     syncOpenListeners();
     render();
+    options.onEditingChange?.(true);
     draftInput?.focus({ preventScroll: true });
+  };
+  const validateDraft = (path: string) => {
+    const issues = initializationFolderIssues([{ key: "draft", title: options.label, values: [{ path, create: true }] }], folders());
+    if (options.multiple && entries.some(entry => entry.path.toLocaleLowerCase() === path.toLocaleLowerCase())) return `${path} 文件夹重名，请修改`;
+    return issues.get("draft")?.join("；") ?? "";
   };
   const finishCreate = (id: number, path: string) => {
     if (disposed || disabled || draft?.id !== id) return;
     const next = path.trim();
+    draftError = validateDraft(next);
+    if (draftError) { render(); return; }
     // Enter may cause blur. The consumed draft makes that second event a no-op.
     draft = null;
-    const duplicate = options.multiple && entries.some(entry => entry.path === next);
-    if (next && !duplicate) {
-      const entry = { path: next, create: true, id: ++nextEntry };
-      entries = options.multiple ? [...entries, entry] : [entry];
-    }
+    error = "";
+    const entry = { path: next, create: true, id: ++nextEntry };
+    entries = options.multiple ? [...entries, entry] : [entry];
     syncOpenListeners();
     render();
-    if (next && !duplicate) notify();
+    notify();
+    options.onEditingChange?.(false);
   };
   const navigate = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (isImeKeyEvent(event.nativeEvent) || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
@@ -195,9 +221,10 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
     const visible = folderItems.filter(item => (!options.multiple || !selected.has(item.path)) && item.search.includes(term));
     const single = !options.multiple ? entries[0] : undefined;
     const currentDraft = draft;
+    const message = draftError || error;
     flushSync(() => root.render(createPortal(<>
       <div className={`echoink-folder-picker-values${options.multiple ? " is-multiple" : ""}`}>
-        {options.multiple && entries.map(entry => <span key={entry.id} className="echoink-folder-picker-tag">
+        {options.multiple && entries.map(entry => <span key={entry.id} className="echoink-folder-picker-tag" ref={node => pathTooltip(node, entry.path)}>
           <span className="echoink-folder-picker-tag-path">{entry.path}</span>
           {entry.create && <span className="echoink-folder-picker-new">新建</span>}
           <button type="button" className="echoink-origin-control echoink-folder-picker-remove" disabled={disabled} aria-label={`移除${entry.path}`} onClick={() => remove(entry)}>
@@ -205,8 +232,8 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
           </button>
         </span>)}
         <div className={`echoink-folder-picker-controls${currentDraft ? " is-editing" : ""}`}>
-          {currentDraft ? <Input key="draft" ref={node => { draftInput = node; }} className="echoink-origin-control echoink-folder-picker-draft" value={currentDraft.path} data-folder-draft={currentDraft.id} aria-label={options.label} aria-invalid={Boolean(error)} aria-describedby={error ? errorId : undefined} disabled={disabled} placeholder="文件夹路径"
-            onInput={event => { if (draft?.id === currentDraft.id) { draft.path = event.currentTarget.value; render(); } }}
+          {currentDraft ? <Input key="draft" ref={node => { draftInput = node; }} className="echoink-origin-control echoink-folder-picker-draft" value={currentDraft.path} data-folder-draft={currentDraft.id} aria-label={options.label} aria-invalid={Boolean(message)} aria-describedby={message ? errorId : undefined} disabled={disabled} placeholder="新文件夹名称"
+            onInput={event => { if (draft?.id === currentDraft.id) { draft.path = event.currentTarget.value; if (draftError) draftError = validateDraft(draft.path.trim()); render(); } }}
             onBlur={event => finishCreate(currentDraft.id, event.currentTarget.value)}
             onKeyDown={event => {
               if (isImeKeyEvent(event.nativeEvent)) return;
@@ -244,13 +271,14 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
           </Popover.Root>}
         </div>
       </div>
-      {error && <div className="echoink-folder-picker-error" id={errorId} role="alert">{error}</div>}
+      {message && <div className="echoink-folder-picker-error" id={errorId} role="alert">{message}</div>}
     </>, element)));
   };
 
   const dispose = () => {
     if (disposed) return;
     disposed = true;
+    const wasEditing = Boolean(draft);
     draft = null;
     clearOpenListeners();
     stopIme();
@@ -258,21 +286,28 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
     ownerWindow.removeEventListener("beforeunload", dispose);
     root.unmount();
     element.remove();
+    if (wasEditing) options.onEditingChange?.(false);
   };
   ownerWindow.addEventListener("pagehide", dispose);
   ownerWindow.addEventListener("beforeunload", dispose);
   render();
-  if (entries.some((entry, index) => entry.create !== options.values[index]?.create)) queueMicrotask(() => { if (!disposed) notify(); });
   return {
     element,
     setDisabled(next) {
       if (disposed) return;
       disabled = next;
-      if (disabled) { open = false; draft = null; syncOpenListeners(); }
+      const wasEditing = Boolean(draft);
+      if (disabled) { open = false; draft = null; draftError = ""; syncOpenListeners(); }
       render();
+      if (disabled && wasEditing) options.onEditingChange?.(false);
     },
     setError(message = "") { if (disposed || error === message) return; error = message; render(); },
-    setValues(next) { if (disposed) return; entries = normalize(next); open = false; draft = null; syncOpenListeners(); render(); },
+    setValues(next) {
+      if (disposed) return;
+      const wasEditing = Boolean(draft);
+      entries = normalize(next); open = false; draft = null; draftError = ""; syncOpenListeners(); render();
+      if (wasEditing) options.onEditingChange?.(false);
+    },
     dispose
   };
 }

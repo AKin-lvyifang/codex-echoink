@@ -19,18 +19,19 @@ export function assertKnowledgeModulePath(value: string, label: string, allowRoo
   } catch { throw new Error(`${label}：请选择合法的 Vault 相对目录（${JSON.stringify(value)}）。`); }
 }
 
-/** Disabled settings stay untouched; explicit custom choices never depend on Outputs. */
+/** Disabled modules participate only when explicitly selected; custom choices never depend on Outputs. */
 export function prepareKnowledgeModuleDirectories(settings: KnowledgeModuleSettings, bindings: KnowledgeFolderBindings | null | undefined,
-  roots: readonly string[], choices: KnowledgeModuleDirectories = {}, savedBindings = bindings) {
+  roots: readonly string[], choices: KnowledgeModuleDirectories = {}, _savedBindings = bindings) {
   const directories: KnowledgeModuleDirectories = {}, modes: KnowledgeEnglishDirectoryModes = {}, issues: string[] = [];
   if (choices.journal !== undefined) directories.journal = choices.journal;
-  if (settings.review.enabled) directories.review = choices.review ?? settings.review.outputDir;
-  if (settings.pdfReading?.enabled && (choices.pdfOriginal ?? settings.pdfReading.originalDirectory) !== undefined) directories.pdfOriginal = choices.pdfOriginal ?? settings.pdfReading.originalDirectory;
-  if (settings.englishDiary.enabled) {
-    const paths = resolveEnglishStoragePaths(settings.englishDiary, bindings, roots), previous = resolveEnglishStoragePaths(settings.englishDiary, savedBindings, roots);
-    for (const [key, pathKey, roleKey, storedKey] of [["english", "englishDirectory", "roleEnglish", "englishDirectory"], ["expressions", "expressionDirectory", "roleExpressions", "expressionDirectory"]] as const) {
+  if (choices.review !== undefined || settings.review.enabled) directories.review = choices.review ?? settings.review.outputDir;
+  if (choices.pdfOriginal !== undefined || settings.pdfReading?.enabled) directories.pdfOriginal = choices.pdfOriginal ?? settings.pdfReading?.originalDirectory;
+  if (settings.englishDiary.enabled || choices.english !== undefined || choices.expressions !== undefined) {
+    const paths = resolveEnglishStoragePaths(settings.englishDiary, bindings, roots);
+    for (const [key, pathKey, roleKey] of [["english", "englishDirectory", "roleEnglish"], ["expressions", "expressionDirectory", "roleExpressions"]] as const) {
       const choice = choices[key];
-      const role = paths[roleKey] && (choice === undefined || choice === paths[pathKey] || choice === previous[pathKey] || choice === settings.englishDiary[storedKey]);
+      if (!settings.englishDiary.enabled && choice === undefined) continue;
+      const role = choice === undefined && settings.englishDiary.enabled && paths[roleKey];
       modes[key] = role ? "role" : "custom";
       if (choice === "" || role && (!bindings?.roles.outputs.enabled || !bindings.roles.outputs.writePath || !bindings.roles.outputs.readPaths.includes(bindings.roles.outputs.writePath))) {
         // Optional locations can be skipped without changing the module's saved settings.

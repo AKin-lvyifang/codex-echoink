@@ -160,7 +160,7 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
     Object.assign(buildConfig.roles.inbox, { enabled: true, readPaths: ["资料备选/验收收件箱"], writePath: "资料备选/验收收件箱", allowedSubdirectories: ["附件"] });
     const unapprovedPlan = await surface.previewDirectoryPlan(buildConfig, []);
     assert(unapprovedPlan.issues.some((issue: string) => issue.includes("原位置已失效")), "missing existing bindings remain invalid");
-    const buildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱"]);
+    const buildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱", "资料备选/验收收件箱/附件"]);
     assert.deepEqual(buildPlan.issues, [], "a confirmed new directory is not mistaken for an unsafe existing path");
     assert.deepEqual(new Set(buildPlan.create), new Set(["资料备选/验收收件箱", "资料备选/验收收件箱/附件"]));
     const linkedConfig = structuredClone(buildConfig);
@@ -183,7 +183,7 @@ export async function runKnowledgeFolderBindingsTests(): Promise<void> {
       createdDirectories.push(relative);
     };
     await assert.rejects(surface.applyDirectoryPlan(buildPlan), /重新预览/u, "changing write permission invalidates the earlier read-only preview");
-    const reviewedBuildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱"]);
+    const reviewedBuildPlan = await surface.previewDirectoryPlan(buildConfig, ["资料备选/验收收件箱", "资料备选/验收收件箱/附件"]);
     await surface.applyDirectoryPlan(reviewedBuildPlan);
     assert.deepEqual(createdDirectories, reviewedBuildPlan.create, "application creates exactly the reviewed directories");
     assert.equal(config.roles.inbox.writePath, "资料备选/验收收件箱");

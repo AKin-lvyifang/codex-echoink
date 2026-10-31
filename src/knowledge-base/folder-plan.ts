@@ -96,7 +96,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
     moduleDirectories[key] = directory;
     const kind = await input.kind(directory);
     if (kind === "folder") reuse.add(directory);
-    else if (kind === "missing" && (mode === "build" || approved.has(directory))) await addParents(directory);
+    else if (kind === "missing" && approved.has(directory)) await addParents(directory);
     else issues.push(`${knowledgeModuleLabels[key]}：${directory}：原位置已失效或不是目录`);
   }
   for (const role of roleScope) {
@@ -114,12 +114,11 @@ export async function previewKnowledgeDirectoryPlan(input: {
       else {
         await addParents(directory);
       }
-      // Existing-directory setup only saves consent. Legacy child approvals do
-      // not implicitly create folders when no new root was explicitly selected.
-      if (mode === "existing" && !approved.has(directory)) continue;
       for (const child of binding.allowedSubdirectories) {
         if (!(binding.allowedSubdirectoryRoots ?? binding.readPaths).includes(directory)) continue;
         const target = `${directory}/${normalizeKnowledgeDirectory(child)}`;
+        // Saved category permissions are not a request to create a category.
+        if (!approved.has(target)) continue;
         if (await input.kind(target) === "missing") {
           await addParents(target);
         }
@@ -130,9 +129,6 @@ export async function previewKnowledgeDirectoryPlan(input: {
   const excluded: KnowledgeDirectoryPlan["excluded"] = [];
   const files: KnowledgeDirectoryFile[] = [...(input.files ?? input.sourcePaths.map(relative => ({ path: relative, size: 0, mtime: 0 })))].sort((a, b) => a.path.localeCompare(b.path));
   if (mode === "build") {
-    const raw = bindings.roles.raw;
-    if (!raw.writePath || !raw.readPaths.includes(raw.writePath)) issues.push("资料来源：请选择一个明确的搬迁目的地。");
-    const destination = raw.writePath;
     for (const file of files) {
       const segments = file.path.split("/");
       let reason = "";
@@ -140,20 +136,12 @@ export async function previewKnowledgeDirectoryPlan(input: {
         || ["agents.md", "llm-wiki.md"].includes(segments.at(-1)?.toLowerCase() ?? "")) reason = "配置或私有状态保持原位";
       else if (input.protectedPaths?.some(directory => pathInKnowledgeDirectory(file.path, directory))) reason = "其他功能产物保持原位";
       else if (classifyKnowledgePath(bindings, file.path) || (input.baseline && classifyKnowledgePath(input.baseline, file.path) && classifyKnowledgePath(input.baseline, file.path) !== "raw")) reason = "已绑定资料保持原位";
-      if (reason) { excluded.push({ path: file.path, reason }); continue; }
-      if (!destination) continue;
-      let from: string;
-      try { from = normalizeKnowledgeDirectory(file.path); } catch { excluded.push({ path: file.path, reason: "路径不可安全搬迁" }); continue; }
-      const to = `${destination}/${from}`;
-      if (classifyKnowledgePath(bindings, to) !== "raw") { issues.push(`${to}：搬迁目标不属于资料来源`); continue; }
-      if (await input.kind(to) !== "missing") issues.push(`${to}：搬迁目标已存在，不会覆盖`);
-      const parent = to.slice(0, to.lastIndexOf("/"));
-      await addParents(parent);
-      moves.push({ from, to, size: file.size, mtime: file.mtime });
+      // Setup binds the selected sources in place. Organization is a separate,
+      // explicitly authorized operation, never implied by choosing build mode.
+      excluded.push({ path: file.path, reason: reason || "未选择的资料保持原位" });
     }
   }
-  const targetPaths = new Map(moves.map(move => [move.from, move.to]));
-  const sources = input.sourcePaths.map(relative => targetPaths.get(relative) ?? relative).filter(relative => classifyKnowledgePath(bindings, relative) === "raw");
+  const sources = input.sourcePaths.filter(relative => classifyKnowledgePath(bindings, relative) === "raw");
   const changes = roleScope.filter(role => knowledgeFolderBindingsSignature({ ...bindings, roles: { ...bindings.roles, [role]: input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] } } }) !== knowledgeFolderBindingsSignature(bindings))
     .map(role => ({ role, before: structuredClone(input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] }), after: structuredClone(bindings.roles[role]) }));
   return { baseRevision: input.baseRevision, baseSignature: knowledgeFolderBindingsSignature(input.baseline), baseSettingsSignature: input.baseSettingsSignature, wikiChanged: input.wikiChanged,

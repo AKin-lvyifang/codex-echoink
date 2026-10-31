@@ -4,7 +4,8 @@ import { validateDirectoryModuleSettings } from "../knowledge-base/initializatio
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { KnowledgeActivityService } from "./knowledge-activity-service";
 import { createProductionKnowledgeUpgradeService, type KnowledgeUpgradeService } from "./knowledge-upgrade-service";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, rebaseKnowledgeFolderBindings, knowledgePathRole } from "../knowledge-base/root-paths";
+import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole } from "../knowledge-base/root-paths";
+import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -220,7 +221,11 @@ export class EchoInkKnowledgeSurfaceService {
     plugin.registerEvent(plugin.app.vault.on("rename", (file, oldPath) => {
       const target = file.path;
       if (this.ownedRenames.has(`${oldPath}→${target}`)) return;
-      this.renameSyncQueue = this.renameSyncQueue.then(() => this.syncRenamedPaths(oldPath, target)).catch((error) => { this.folderOperationMessage = `目录或历史路径同步未完成：${knowledgeErrorDetail(error)}`; });
+      const folder = file instanceof TFolder;
+      this.renameSyncQueue = this.renameSyncQueue.then(() => this.syncRenamedPaths(oldPath, target, folder)).catch((error) => { this.folderOperationMessage = `目录或历史路径同步未完成：${knowledgeErrorDetail(error)}`; });
+    }));
+    plugin.registerEvent(plugin.app.vault.on("delete", file => {
+      if (file instanceof TFolder) plugin.refreshFolderSettingsSurfaces?.();
     }));
     // 插件 onload 早于 Vault 文件索引完全就绪；等 Obsidian layoutReady 后
     // 再读取并升级旧指南，否则 getFileByPath 可能暂时返回 null 而被跳过。
@@ -389,23 +394,25 @@ export class EchoInkKnowledgeSurfaceService {
     const folderLinks = await captureFolderLinkRenames(this.plugin.app, source, target);
     const key = `${source}→${target}`;
     this.ownedRenames.add(key);
-    try { await this.plugin.app.fileManager.renameFile(file, target); await this.syncRenamedPaths(source, target); }
+    try { await this.plugin.app.fileManager.renameFile(file, target); await this.syncRenamedPaths(source, target, file instanceof TFolder); }
     finally { this.ownedRenames.delete(key); }
     await applyFolderLinkRenames(this.plugin.app, folderLinks);
   }
 
-  private async syncRenamedPaths(from: string, to: string): Promise<void> {
+  private async syncRenamedPaths(from: string, to: string, folder: boolean): Promise<void> {
     const bindings = this.plugin.settings.knowledgeBase.folderBindings;
     const wasSource = knowledgePathRole(this.plugin.getVaultPath(), from) === "raw" || knowledgePathRole(this.plugin.getVaultPath(), to) === "raw" || bindings?.roles.raw.readPaths.some((directory) => directory.startsWith(`${from}/`) || directory.startsWith(`${to}/`));
-    this.plugin.settings.knowledgeBase = rebaseKnowledgePathRecords(this.plugin.settings.knowledgeBase, from, to);
-    if (bindings) this.plugin.settings.knowledgeBase.folderBindings = rebaseKnowledgeFolderBindings(bindings, from, to);
-    this.plugin.settings.englishDiary = rebaseKnowledgePathRecords(this.plugin.settings.englishDiary, from, to);
+    const settings = this.plugin.settings;
+    // Histories follow file and folder moves. Directory choices only follow folders.
+    const { folderBindings, ...knowledgeState } = settings.knowledgeBase;
+    settings.knowledgeBase = { ...rebaseKnowledgePathRecords(knowledgeState, from, to), folderBindings };
+    const { englishDirectory, expressionDirectory, legacyEnglishDirectories, legacyExpressionDirectories, ...englishState } = settings.englishDiary;
+    settings.englishDiary = { ...rebaseKnowledgePathRecords(englishState, from, to), englishDirectory, expressionDirectory, legacyEnglishDirectories, legacyExpressionDirectories };
+    if (folder) Object.assign(settings, rebaseFolderSettingsPaths(settings, { type: "rename", kind: "folder", from, to }));
     const privateRoot = knowledgePrivateRoot(this.plugin.getVaultPath());
     if (privateRoot) await rebasePrivateMaintenanceRecords(privateRoot, from, to);
     await this.plugin.pdfReading?.api.rebasePaths(from, to);
     this.plugin.englishDiary?.refreshStoragePaths();
-    this.plugin.settings.journalDirectory = rebaseKnowledgePath(this.plugin.settings.journalDirectory, from, to);
-    for (const session of this.plugin.settings.sessions) if (session.journalDirectory) session.journalDirectory = rebaseKnowledgePath(session.journalDirectory, from, to);
     const registry = await readRawDigestRegistry(this.plugin.getVaultPath(), true);
     if (Object.keys(registry.entries).length) await writeRawDigestRegistry(this.plugin.getVaultPath(), rebaseKnowledgePathRecords(registry, from, to));
     if (wasSource) {
@@ -436,11 +443,12 @@ export class EchoInkKnowledgeSurfaceService {
         }
       }
     }
-    await rebaseNativeJournalPaths(this.plugin.app, from, to);
+    if (folder) await rebaseNativeJournalPaths(this.plugin.app, from, to);
     await this.initializer.rebasePaths(from, to);
     await this.plugin.saveSettings(true);
     this.dashboardSnapshot = null;
     this.plugin.refreshKnowledgeBaseSurfaces();
+    if (folder) this.plugin.refreshFolderSettingsSurfaces?.(from, to);
   }
 
   async getMaintenanceRecords() {
@@ -546,7 +554,7 @@ export class EchoInkKnowledgeSurfaceService {
     const vaultRoot = this.plugin.getVaultPath();
     const baseline = structuredClone(this.plugin.settings.knowledgeBase.folderBindings);
     const rootNames = (vault.getRoot?.().children ?? []).map(file => file.path);
-    const selection = prepareKnowledgeModuleDirectories(this.plugin.settings, bindings, rootNames, options.moduleDirectories, baseline);
+    const selection = prepareKnowledgeModuleDirectories(this.plugin.settings, bindings, rootNames, options.moduleDirectories);
     options = { ...options, moduleDirectories: selection.directories };
     const baseSettingsSignature = await this.directorySettingsSignature();
     const observedFiles = await Promise.all((vault.getFiles?.() ?? vault.getMarkdownFiles()).map(async file => {
@@ -711,7 +719,9 @@ export class EchoInkKnowledgeSurfaceService {
       if ((this.plugin.settings.knowledgeBase.folderBindings?.revision ?? 0) !== plan.baseRevision) throw new Error("目录配置已改变，请重新预览。");
       if (knowledgeFolderBindingsSignature(this.plugin.settings.knowledgeBase.folderBindings) !== plan.baseSignature) throw new Error("目录配置已改变，请重新预览。");
       if (await this.directorySettingsSignature() !== plan.baseSettingsSignature) throw new Error("文件或设置已变化，请重新核对；请重新预览。");
-      const checked = await this.previewDirectoryPlan(plan.bindings, plan.create, { mode: plan.mode, wikiChanged: plan.wikiChanged, moduleDirectories: plan.moduleDirectories });
+      const moduleSelections = { ...plan.moduleDirectories };
+      for (const key of ["english", "expressions"] as const) if (plan.moduleDirectoryModes?.[key] === "role") delete moduleSelections[key];
+      const checked = await this.previewDirectoryPlan(plan.bindings, plan.create, { mode: plan.mode, wikiChanged: plan.wikiChanged, moduleDirectories: moduleSelections });
       if (checked.issues.length || knowledgeDirectoryPlanSignature(checked) !== knowledgeDirectoryPlanSignature(plan)) throw new Error("目录或文件已改变，请重新预览。");
       if (plan.moves.length && (this.plugin.app.vault as unknown as { getConfig(key: string): unknown }).getConfig?.("alwaysUpdateLinks") !== true) throw new Error("请在 Obsidian 开启自动更新内部链接，再重新预览搬迁。");
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
@@ -818,10 +828,10 @@ export class EchoInkKnowledgeSurfaceService {
     for (const key of ["review", "english", "expressions", "pdfOriginal"] as const) if (next[key] === "") delete next[key];
     const current = this.directoryModuleSettings(choices);
     if (next.journal === settings.journalDirectory && next.journal === current.nativeJournal?.folder) delete next.journal;
-    if (!settings.review.enabled || next.review === settings.review.outputDir) delete next.review;
-    if (!settings.englishDiary.enabled || modes.english === "role" || next.english === settings.englishDiary.englishDirectory) delete next.english;
-    if (!settings.englishDiary.enabled || modes.expressions === "role" || next.expressions === settings.englishDiary.expressionDirectory) delete next.expressions;
-    if (!settings.pdfReading.enabled || next.pdfOriginal === settings.pdfReading.originalDirectory) delete next.pdfOriginal;
+    if (next.review === settings.review.outputDir) delete next.review;
+    if (modes.english === "role" || next.english === settings.englishDiary.englishDirectory && settings.englishDiary.englishDirectoryMode === "custom") delete next.english;
+    if (modes.expressions === "role" || next.expressions === settings.englishDiary.expressionDirectory && settings.englishDiary.expressionDirectoryMode === "custom") delete next.expressions;
+    if (next.pdfOriginal === settings.pdfReading.originalDirectory) delete next.pdfOriginal;
     return next;
   }
   private intendedDirectoryModuleSettings(choices: KnowledgeModuleDirectories): DirectoryModuleSettings {
