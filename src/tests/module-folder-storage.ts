@@ -144,7 +144,7 @@ async function assertInitializationSnapshot(root: string) {
     const before = await inventory(root);
     let plan = await preview();
     assert.deepEqual(plan.issues, []);
-    assert.deepEqual(plan.moves.map(item => item.to), ["来源乙/课程/资料.md"], "multiple read roots share one explicit relocation target");
+    assert.deepEqual(plan.moves, [], "initialization keeps unselected loose files in their original locations");
     assert(plan.sources.includes("来源甲/keep.md"), "all source roots remain readable");
     assert.deepEqual(await inventory(root), before, "preview is strictly read-only");
     plugin.settings.review.outputDir = "新的复盘位置";
@@ -161,7 +161,8 @@ async function assertInitializationSnapshot(root: string) {
     const result = await service.applyDirectoryPlan(plan);
     assert.deepEqual(result.created, plan.create);
     assert.deepEqual(result.moved, plan.moves);
-    assert.equal(await fs.readFile(path.join(root, "来源乙/课程/资料.md"), "utf8"), "SOURCE");
+    assert.equal(await fs.readFile(path.join(root, "课程/资料.md"), "utf8"), "SOURCE");
+    assert.equal(await fs.stat(path.join(root, "来源乙/课程")).catch(() => null), null, "setup creates only explicitly selected folders");
     assert.equal(await fs.readFile(path.join(root, "来源甲/keep.md"), "utf8"), "ALREADY BOUND");
     assert.equal(await fs.readFile(path.join(root, "PDF原件/original.pdf"), "utf8"), "PDF CHANGED AFTER PREVIEW");
     assert.equal(fixture.providerCalls(), 0);
@@ -229,7 +230,10 @@ async function assertModuleDirectoryChoices(root: string) {
     const existing = await service.previewDirectoryPlan(plugin.settings.knowledgeBase.folderBindings, [], { mode: "existing", moduleDirectories });
     assert(existing.issues.some(issue => issue.includes("原位置已失效")), "existing mode does not invent module directories");
     assert.deepEqual(existing.create, []);
-    const plan = await service.previewDirectoryPlan(plugin.settings.knowledgeBase.folderBindings, [], { mode: "build", moduleDirectories });
+    const unapproved = await service.previewDirectoryPlan(plugin.settings.knowledgeBase.folderBindings, [], { mode: "build", moduleDirectories });
+    assert(unapproved.issues.some(issue => issue.includes("原位置已失效")), "build mode also requires explicit creation approval");
+    assert.deepEqual(unapproved.create, []);
+    const plan = await service.previewDirectoryPlan(plugin.settings.knowledgeBase.folderBindings, Object.values(moduleDirectories), { mode: "build", moduleDirectories });
     assert.deepEqual(plan.issues, []);
     assert.deepEqual(new Set(plan.create), new Set(Object.values(moduleDirectories)));
     assert.deepEqual(plan.moves, [], "both old and selected module output paths stay in place");
@@ -284,7 +288,7 @@ async function assertPersistentOptionalModuleRestore(root: string) {
     for (const folder of ["来源甲", "来源乙", "知识成果"]) await fixture.write(`${folder}/keep.md`, folder);
     plugin.settings.knowledgeBase.folderBindings = sourceBindings();
     const originalJournal = plugin.settings.journalDirectory;
-    const plan = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build", moduleDirectories: { journal: "新日记", english: "新英文", pdfOriginal: "新PDF" } });
+    const plan = await service.previewDirectoryPlan(sourceBindings(), ["新日记", "新英文", "新PDF"], { mode: "build", moduleDirectories: { journal: "新日记", english: "新英文", pdfOriginal: "新PDF" } });
     await service.applyDirectoryPlan(plan);
     plugin.settings.englishDiary.englishDirectoryMode = "role";
     let failOnce = true;
@@ -308,13 +312,33 @@ async function assertSkippedModuleDirectoryChoices(root: string) {
     for (const folder of ["来源甲", "来源乙", "知识成果"]) await fixture.write(`${folder}/keep.md`, folder);
     plugin.settings.knowledgeBase.folderBindings = sourceBindings();
     const before = structuredClone({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading });
-    const disabled = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build",
-      moduleDirectories: { journal: "新日记", review: "新复盘", english: "新英文", expressions: "新表达", pdfOriginal: "新PDF" } });
-    assert.deepEqual(disabled.issues, []);
-    assert.deepEqual(disabled.create, ["新日记"], "disabled optional modules ignore directory choices");
-    await service.applyDirectoryPlan(disabled);
+    const omitted = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build" });
+    assert.deepEqual(omitted.issues, []);
+    assert.deepEqual(omitted.create, [], "omitted choices never create disabled modules' default folders");
+    assert.equal(omitted.moduleDirectories, undefined);
+    await service.applyDirectoryPlan(omitted);
     assert.deepEqual({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading }, before);
+    const moduleDirectories = { review: "新复盘", english: "新英文", expressions: "新表达", pdfOriginal: "新PDF" };
+    Object.assign(plugin.settings.englishDiary, { englishDirectory: moduleDirectories.english, englishDirectoryMode: "role" });
+    const disabled = await service.previewDirectoryPlan(sourceBindings(), Object.values(moduleDirectories), { mode: "build", moduleDirectories });
+    assert.deepEqual(disabled.issues, []);
+    assert.deepEqual(new Set(disabled.create), new Set(Object.values(moduleDirectories)), "explicit choices create folders even while modules are disabled");
+    await service.applyDirectoryPlan(disabled);
+    assert.equal(plugin.settings.review.enabled, false);
+    assert.equal(plugin.settings.englishDiary.enabled, false);
+    assert.equal(plugin.settings.pdfReading.enabled, false);
+    assert.equal(plugin.settings.review.outputDir, moduleDirectories.review);
+    assert.equal(plugin.settings.englishDiary.englishDirectory, moduleDirectories.english);
+    assert.equal(plugin.settings.englishDiary.expressionDirectory, moduleDirectories.expressions);
+    assert.equal(plugin.settings.englishDiary.englishDirectoryMode, "custom");
+    assert.equal(plugin.settings.englishDiary.expressionDirectoryMode, "custom");
+    assert.equal(plugin.settings.pdfReading.originalDirectory, moduleDirectories.pdfOriginal);
+    for (const directory of Object.values(moduleDirectories)) assert((await fs.stat(path.join(root, directory))).isDirectory());
     plugin.settings.review.enabled = plugin.settings.englishDiary.enabled = plugin.settings.pdfReading.enabled = true;
+    const activated = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build" });
+    assert.deepEqual(activated.issues, []);
+    assert.deepEqual(activated.moduleDirectories, moduleDirectories, "enabling modules resolves their saved locations");
+    assert.deepEqual(activated.create, []);
     const enabled = structuredClone({ review: plugin.settings.review, english: plugin.settings.englishDiary, pdf: plugin.settings.pdfReading });
     const skipped = await service.previewDirectoryPlan(sourceBindings(), [], { mode: "build",
       moduleDirectories: { review: "", english: "", expressions: "", pdfOriginal: "" } });
@@ -339,7 +363,7 @@ async function assertModuleDirectoryFailureRecovery(root: string) {
     const original = structuredClone(plugin.settings);
     await fixture.write("课程/资料.md", "SOURCE TO RESTORE");
     const moduleDirectories = { journal: "新日记", review: "新复盘", english: "新英文", expressions: "新表达", pdfOriginal: "新PDF" };
-    const plan = await service.previewDirectoryPlan(sourceBindings(), ["来源甲", "来源乙", "知识成果"], { mode: "build", moduleDirectories });
+    const plan = await service.previewDirectoryPlan(sourceBindings(), ["来源甲", "来源乙", "知识成果", ...Object.values(moduleDirectories)], { mode: "build", moduleDirectories });
     let failOnce = true;
     plugin.saveSettings = async () => { if (failOnce && plugin.settings.knowledgeBase.folderBindings.configured) { failOnce = false; throw new Error("module settings save failed"); } };
     await assert.rejects(service.applyDirectoryPlan(plan), /module settings save failed/u);
@@ -363,10 +387,11 @@ async function assertRootJournalChoice(root: string) {
     const plan = await fixture.service.previewDirectoryPlan(sourceBindings(), ["来源甲", "来源乙", "知识成果"], { mode: "build", moduleDirectories: { journal: "" } });
     assert.deepEqual(plan.issues, []);
     assert(!plan.moves.some(move => move.from === "2026-10-19.md"), "choosing the Vault root protects matching native daily notes");
-    assert(plan.moves.some(move => move.from === "课程.md"));
+    assert.deepEqual(plan.moves, [], "root journal setup does not move ordinary unselected notes either");
     await fixture.service.applyDirectoryPlan(plan);
     assert.equal(fixture.records["daily-notes"].instance.options.folder, "");
     assert.equal(await fs.readFile(path.join(root, "2026-10-19.md"), "utf8"), "ROOT DAILY NOTE");
+    assert.equal(await fs.readFile(path.join(root, "课程.md"), "utf8"), "ORDINARY NOTE");
   } finally { fixture.release(); }
 }
 

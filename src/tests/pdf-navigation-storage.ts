@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { TFile, TFolder, type App } from "obsidian";
+import { JSDOM } from "jsdom";
 import { PdfReadingService, type PdfDependencies } from "../pdf-reading/service";
 import { PdfReadingController } from "../pdf-reading/controller";
 import { PdfVaultFiles } from "../pdf-reading/vault-files";
+import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
+import { installObsidianDom } from "./obsidian-dom";
 import type { PdfFiles, PdfJob, PdfOptions, PdfStartContext, PdfNavigationArtifact } from "../pdf-reading/types";
 import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
@@ -269,7 +272,80 @@ function vaultHost(root: string) {
     readPiConversationCatalogEntry: async (id: string) => ({ conversationId: id, taskStatus: "running" }) };
   const host = new PdfReadingController(plugin);
   host.api.deps.local = async () => { parserCalls++; assert.ok([...data.keys()].some(value => value.endsWith(".pdf"))); return { pages: [{ number: 1, markdown: "Saved original source." }], images: [], warnings: [], engine: "local" }; };
-  return { app, plugin, host, data, mutations, opens, bindings, folder, file, paid: (value: boolean) => { paid = value; }, parserCalls: () => parserCalls };
+  return { app, plugin, host, data, mutations, opens, bindings, folder, file, paid: (value: boolean) => { paid = value; }, parserCalls: () => parserCalls,
+    removeFolder(value: string) {
+      for (const key of folders.keys()) if (key === value || key.startsWith(`${value}/`)) folders.delete(key);
+      const parent = folders.get(value.includes("/") ? value.slice(0, value.lastIndexOf("/")) : "");
+      if (parent) parent.children = parent.children.filter(item => item.path !== value);
+    } };
+}
+
+async function configuredOriginalDirectory(root: string): Promise<void> {
+  await mkdir(path.join(root, "raw"), { recursive: true });
+  const f = vaultHost(root), release = registerKnowledgeFolderBindings(root, () => f.bindings);
+  try {
+    f.folder("PDF原件/课程"); f.folder("PDF原件其他");
+    delete f.plugin.settings.pdfReading.originalDirectory;
+    assert.equal(f.host.defaultOriginalDirectory(), "raw", "without an explicit saved location, originals still default to Raw");
+    assert(!f.host.originalDirectories().includes("PDF原件"));
+    await assert.rejects(() => f.host.api.prepareStartIntent("Scope.pdf", pdf, base, "unsaved-original", { originalDirectory: "PDF原件" }), /范围内/u);
+    f.plugin.settings.pdfReading.originalDirectory = "PDF原件";
+    const before = structuredClone(f.bindings);
+    assert.equal(f.host.defaultOriginalDirectory(), "PDF原件", "the initialized independent original-PDF directory is usable");
+    assert.deepEqual(f.host.originalDirectories(), ["PDF原件", "PDF原件/课程", "raw", "raw/originals"].sort((a, b) => a.localeCompare(b)));
+    f.plugin.pdfReading = f.host;
+    assertOriginalDirectorySettings(f.plugin, false);
+    await assert.rejects(() => f.host.api.prepareStartIntent("Scope.pdf", pdf, base, "sibling-original", { originalDirectory: "PDF原件其他" }), /范围内/u);
+    const intent = await f.host.api.prepareStartIntent("Selected.pdf", pdf, base, "selected-original", { originalDirectory: "PDF原件/课程", conversationId: "selected-task" });
+    assert.equal(f.mutations.length, 0, "choosing the upload destination does not write files");
+    f.paid(false);
+    await assert.rejects(() => f.host.api.start("Selected.pdf", pdf, base, undefined, intent.id, undefined, { intent }), /PRO/u);
+    assert.equal(f.mutations.length, 0);
+    f.paid(true);
+    const job = await f.host.api.start("Selected.pdf", pdf, base, undefined, intent.id, undefined, { intent });
+    assert.equal(job.state, "completed", job.error);
+    assert.equal(job.original!.savedPath, "PDF原件/课程/Selected-selected-original.pdf");
+    assert.deepEqual(await f.host.api.files.readBinary!(job.original!.savedPath!), pdf);
+    assert(job.artifacts.find(item => item.kind === "raw")!.path.startsWith("raw/"), "extracted text stays within its existing Raw scope");
+    await assert.rejects(async () => f.host.api.deps.validateArtifactDirectory!("PDF原件", "raw"), /绑定范围/u);
+    await assert.rejects(async () => f.host.api.deps.validateArtifactDirectory!("PDF原件", "assets"), /绑定范围/u);
+    assert.deepEqual(f.bindings, before, "an original-PDF destination never adds knowledge or retrieval bindings");
+    f.removeFolder("PDF原件");
+    assert.equal(f.host.defaultOriginalDirectory(), "", "a deleted explicit location cannot silently fall back to Raw");
+    assert(!f.host.originalDirectories().some(value => value.startsWith("PDF原件")));
+    assertOriginalDirectorySettings(f.plugin, true);
+    await assert.rejects(() => f.host.api.prepareStartIntent("Missing.pdf", pdf, base, "missing-original"), /保存位置/u);
+  } finally { release(); }
+}
+
+function assertOriginalDirectorySettings(plugin: ReturnType<typeof vaultHost>["plugin"], missing: boolean): void {
+  const dom = new JSDOM("<body><main></main></body>", { pretendToBeVisual: true });
+  const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement };
+  installObsidianDom(dom.window);
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement });
+  const proto = dom.window.HTMLElement.prototype as any;
+  proto.addClass = function (...names: string[]) { this.classList.add(...names); };
+  proto.createEl = function (tag: string, options: any = {}) {
+    const element = this.ownerDocument.createElement(tag);
+    if (options.cls) element.className = options.cls;
+    if (options.text !== undefined) element.textContent = options.text;
+    if (options.value !== undefined) element.value = options.value;
+    if (options.type !== undefined) element.type = options.type;
+    for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, String(value));
+    this.appendChild(element); return element;
+  };
+  proto.createDiv = function (options: any) { return this.createEl("div", options); };
+  proto.createSpan = function (options: any) { return this.createEl("span", options); };
+  const panel = new PdfReadingSettingsPanel(plugin, () => {});
+  try {
+    const root = dom.window.document.querySelector<HTMLElement>("main")!;
+    panel.render(root, { embedded: true });
+    const label = [...root.querySelectorAll("label")].find(item => item.querySelector(".echoink-pdf-setting-name")?.textContent === "原 PDF 保存位置")!;
+    const select = label.querySelector<HTMLSelectElement>("select")!;
+    assert.equal(select.value, "PDF原件", "settings retain the initialized selection instead of silently displaying Raw");
+    assert.equal(select.selectedOptions[0].textContent, missing ? "PDF原件（文件夹不存在）" : "PDF原件");
+    assert.equal(select.selectedOptions[0].disabled, missing);
+  } finally { panel.dispose(); Object.assign(globalThis, previous); dom.window.close(); }
 }
 async function controllerAndPort(root: string): Promise<void> {
   await Promise.all(["raw", "raw/originals", "wiki"].map(value => mkdir(path.join(root, value), { recursive: true })));
@@ -277,7 +353,7 @@ async function controllerAndPort(root: string): Promise<void> {
   try {
     const outside = f.folder("unrelated"); Object.defineProperty(outside, "children", { get() { throw new Error("do not scan unrelated Vault trees"); } });
     assert.deepEqual(f.host.originalDirectories(), ["raw", "raw/originals"]); assert.equal(f.host.defaultOriginalDirectory(), "raw/originals");
-    f.plugin.settings.pdfReading.originalDirectory = "wiki"; assert.equal(f.host.defaultOriginalDirectory(), ""); f.plugin.settings.pdfReading.originalDirectory = "raw/originals";
+    await assert.rejects(() => f.host.api.prepareStartIntent("Other.pdf", pdf, base, "unsaved-wiki", { originalDirectory: "wiki" }), /范围内/u);
     const before = f.mutations.length;
     const intent = await f.host.api.prepareStartIntent("Desktop.pdf", pdf, base, "desktop", { conversationId: "task-desktop" });
     assert.equal(f.mutations.length, before);
@@ -334,6 +410,6 @@ async function controllerAndPort(root: string): Promise<void> {
   console.log("PASS real PDF controller/vault port: bound original directories, binary storage, read-only current-stage/history projection, verified original status, selected Wiki anchors and expired-PRO local reads.");
 }
 export async function runPdfNavigationStorageTests(root: string): Promise<void> {
-  await serviceBoundaries(); await controllerAndPort(root);
+  await serviceBoundaries(); await configuredOriginalDirectory(path.join(root, "configured-original")); await controllerAndPort(root);
   console.log("P10 PDF navigation storage: all targeted checks passed.");
 }

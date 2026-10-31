@@ -7,7 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { TFile, TFolder, type App } from "obsidian";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
-import { readNativeJournalContext, readNativeJournalSettings, QUICK_JOURNAL_TEMPLATE } from "../home/native-journal";
+import { readNativeJournalContext, readNativeJournalSettings, rebaseNativeJournalPaths, QUICK_JOURNAL_TEMPLATE } from "../home/native-journal";
 import { HomeWorkbenchDataService, defaultJournalTemplateChoice } from "../home/home-workbench-data";
 import { createObsidianNativePort } from "../plugin/obsidian-native-tools";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
@@ -21,8 +21,107 @@ import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization
 import { FileDomainReceiptStore } from "../harness/pi-native/domain-receipt-store";
 import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteExecutionPort } from "../plugin/pi-vault-tool-production";
 import { officialCliFixture, runOfficialCliTests } from "./obsidian-cli";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
+import { EnglishDiaryController } from "../english-diary/controller";
+import { DEFAULT_ENGLISH_DIARY_SETTINGS } from "../english-diary/types";
+
+function assertEnglishStorageRenameRefresh(): void {
+  const english = "库/输出/英文日记", expressions = `${english}/表达库`;
+  const scenarios = [
+    { from: english, to: "库/输出/英语", english: "库/输出/英语", expressions: "库/输出/英语/表达库", englishMode: "custom", expressionMode: "custom" },
+    { from: expressions, to: "库/输出/Expressions", english, expressions: "库/输出/Expressions", englishMode: "role", expressionMode: "custom" },
+    { from: "库", to: "归档/资料", english: "归档/资料/输出/英文日记", expressions: "归档/资料/输出/英文日记/表达库", englishMode: "custom", expressionMode: "custom" }
+  ];
+  for (const enabled of [true, false]) for (const scenario of scenarios) {
+    const folderBindings = emptyKnowledgeFolderBindings();
+    Object.assign(folderBindings.roles.outputs, { enabled: true, readPaths: ["库/输出"], writePath: "库/输出" });
+    const plugin = {
+      manifest: { id: "folder-rename-fixture" },
+      settings: { knowledgeBase: { folderBindings }, englishDiary: { ...structuredClone(DEFAULT_ENGLISH_DIARY_SETTINGS),
+        enabled, englishDirectory: english, expressionDirectory: expressions, englishDirectoryMode: "role" as const, expressionDirectoryMode: "role" as const } },
+      app: { vault: { configDir: ".obsidian", getRoot: () => ({ children: ["库", "归档"].map(directory => Object.assign(new TFolder(), { path: directory })) }) } }
+    };
+    const controller = new EnglishDiaryController(plugin as unknown as ConstructorParameters<typeof EnglishDiaryController>[0]);
+    Object.assign(plugin.settings, rebaseFolderSettingsPaths(plugin.settings, { type: "rename", kind: "folder", from: scenario.from, to: scenario.to }));
+    controller.refreshStoragePaths();
+    const settings = plugin.settings.englishDiary;
+    assert.equal(settings.englishDirectory, scenario.english, `controller refresh retains the renamed diary directory (enabled=${enabled})`);
+    assert.equal(settings.expressionDirectory, scenario.expressions, `controller refresh retains the renamed expression directory (enabled=${enabled})`);
+    assert.equal(settings.englishDirectoryMode, scenario.englishMode);
+    assert.equal(settings.expressionDirectoryMode, scenario.expressionMode);
+    assert.equal(settings.enabled, enabled);
+    const repository = controller.api.repository as unknown as { options: { englishDirectory: string; expressionDirectory: string } };
+    assert.equal(repository.options.englishDirectory, scenario.english);
+    assert.equal(repository.options.expressionDirectory, scenario.expressions, "the actual repository also uses the renamed destination");
+  }
+}
+
+export async function runNativeFolderRenameTests(): Promise<void> {
+  assertEnglishStorageRenameRefresh();
+  const saved: Record<string, Record<string, unknown>> = {
+    "daily-notes": { folder: "库/日记", template: "库/模板/每日", format: "YYYY/MM/DD", userOption: { retained: true } },
+    templates: { folder: "库/模板", dateFormat: "DD/MM/YYYY", timeFormat: "HH:mm:ss", userOption: "keep" }
+  };
+  let writes = 0, enables = 0, attachmentWrites = 0, attachmentFolder = "库/附件";
+  const records = Object.fromEntries(Object.keys(saved).map(id => {
+    const instance = {
+      options: id === "daily-notes" ? { folder: "旧缓存/日记", format: "stale", staleOption: true } as Record<string, unknown> : {},
+      async onExternalSettingsChange() { instance.options = structuredClone(saved[id]); }
+    };
+    const record = { enabled: false, instance,
+      async enable() { enables++; throw new Error("path updates must never enable native plugins"); },
+      async loadData() { return structuredClone(saved[id]); },
+      async saveData(options: Record<string, unknown>) { saved[id] = structuredClone(options); writes++; }
+    };
+    return [id, record];
+  }));
+  const app = { internalPlugins: { plugins: records, getPluginById: (id: string) => records[id] }, vault: {
+    getConfig: (key: string) => key === "attachmentFolderPath" ? attachmentFolder : undefined,
+    setConfig: (key: string, value: string) => { assert.equal(key, "attachmentFolderPath"); attachmentFolder = value; attachmentWrites++; }
+  } } as unknown as App;
+
+  await rebaseNativeJournalPaths(app, "库", "笔记/知识");
+  assert.deepEqual(saved["daily-notes"], { folder: "笔记/知识/日记", template: "笔记/知识/模板/每日", format: "YYYY/MM/DD", userOption: { retained: true } });
+  assert.deepEqual(saved.templates, { folder: "笔记/知识/模板", dateFormat: "DD/MM/YYYY", timeFormat: "HH:mm:ss", userOption: "keep" });
+  for (const [id, record] of Object.entries(records)) {
+    assert.equal(record.enabled, false);
+    assert.deepEqual(record.instance.options, saved[id], "native live options match the persisted settings after a rename");
+  }
+  assert.equal(enables, 0);
+  assert.equal(writes, 2, "each disabled native plugin saves its affected settings once");
+  assert.equal(attachmentFolder, "笔记/知识/附件");
+  assert.equal(attachmentWrites, 1);
+
+  records["daily-notes"].enabled = true;
+  records["daily-notes"].instance.options = { ...saved["daily-notes"], folder: "笔记/知识/实时日记", liveOption: "keep too" };
+  await rebaseNativeJournalPaths(app, "笔记/知识", "移动/知识");
+  assert.equal(saved["daily-notes"].folder, "移动/知识/实时日记", "enabled plugins retain their current live choices");
+  assert.deepEqual(saved["daily-notes"].userOption, { retained: true });
+  assert.equal(saved["daily-notes"].liveOption, "keep too");
+  assert.deepEqual(records["daily-notes"].instance.options, saved["daily-notes"]);
+
+  const savedWrites = writes;
+  for (const location of ["/", ".", "./", "./库/附件", "库-old/附件"]) {
+    attachmentFolder = location;
+    const before = attachmentWrites;
+    await rebaseNativeJournalPaths(app, "库", "新库");
+    assert.equal(attachmentFolder, location, "native special and note-relative attachment locations keep their meaning");
+    assert.equal(attachmentWrites, before);
+  }
+  attachmentFolder = "库/附件";
+  await rebaseNativeJournalPaths(app, "库", "新分组/新库");
+  assert.equal(attachmentFolder, "新分组/新库/附件");
+  attachmentFolder = "库";
+  await rebaseNativeJournalPaths(app, "库", "新附件目录");
+  assert.equal(attachmentFolder, "新附件目录", "an exact native attachment directory follows its rename");
+  assert.equal(writes, savedWrites, "unaffected native settings are not rewritten");
+  assert.equal(enables, 0);
+  console.log("Native folder rename tests passed: disabled daily/templates, persisted and live options, attachment locations.");
+}
 
 export async function runNativeJournalTests(): Promise<void> {
+  await runNativeFolderRenameTests();
   assertJournalRootSnapshots();
   await assertHomeJournalBuildSnapshots();
   const root = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-native-journal-")));

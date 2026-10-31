@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -26,12 +26,12 @@ try {
     plugins: [{ name: "folder-picker-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "folder-picker-host" }));
       build.onLoad({ filter: /.*/, namespace: "folder-picker-host" }, () => ({
-        contents: `export {Scope} from ${JSON.stringify(path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts"))}; export function setIcon(element, icon) { element.dataset.testIcon = icon; }`, loader: "js", resolveDir: rootDir
+        contents: `export {Scope} from ${JSON.stringify(path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts"))}; export function setIcon(element, icon) { element.dataset.testIcon = icon; } export function setTooltip(element, text) { element.dataset.testTooltip = text; }`, loader: "js", resolveDir: rootDir
       }));
     } }]
   });
   const { runKnowledgeFolderPickerTests } = await import(pathToFileURL(output));
-  await runKnowledgeFolderPickerTests(win);
+  await runKnowledgeFolderPickerTests(win, await readFile(path.join(rootDir, "src/styles/desktop-knowledge-settings.css"), "utf8"));
 } finally {
   win.close();
   for (const [name, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, name, descriptor); else Reflect.deleteProperty(globalThis, name); }

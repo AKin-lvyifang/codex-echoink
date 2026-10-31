@@ -1,4 +1,5 @@
 import { resolveKnowledgeRoleTarget, knowledgeRoleStatus, getKnowledgeFolderBindings, resolveKnowledgePathFromRoots, normalizeKnowledgeDirectory, classifyKnowledgePath } from "../knowledge-base/root-paths";
+import { assertKnowledgeModulePath } from "../knowledge-base/module-directories";
 import { TFile, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { getProPluginAccess, requireProPluginAction, unavailableCapabilityAccess } from "../membership/access";
@@ -17,7 +18,7 @@ export class PdfReadingController {
       sourceDirectory: () => getKnowledgeFolderBindings(plugin.getVaultPath()) ? resolveKnowledgeRoleTarget(plugin.getVaultPath(), "raw") : undefined as never,
       originalDirectory: () => {
         const directory = this.defaultOriginalDirectory();
-        if (!directory) throw new Error("请先在设置中选择可用的资料来源，作为原 PDF 保存位置。");
+        if (!directory) throw new Error("请先在设置中选择可用的原 PDF 保存位置。");
         return directory;
       },
       validateOriginalDirectory: directory => this.validateOriginalDirectory(directory),
@@ -30,8 +31,17 @@ export class PdfReadingController {
     });
   }
   private bindings() { return getKnowledgeFolderBindings(this.plugin.getVaultPath()) ?? this.plugin.settings.knowledgeBase.folderBindings ?? null; }
+  private configuredOriginalDirectory(): string | undefined {
+    const saved = this.plugin.settings.pdfReading.originalDirectory;
+    if (!saved) return;
+    try { assertKnowledgeModulePath(saved, "原 PDF 保存位置"); } catch { return; }
+    return this.plugin.app.vault.getAbstractFileByPath(saved) instanceof TFolder ? saved : undefined;
+  }
   private validateOriginalDirectory(directory: string): void {
-    if (normalizeKnowledgeDirectory(directory) !== directory || !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) throw new Error("原 PDF 保存位置已失效，请重新选择资料来源位置。");
+    try { assertKnowledgeModulePath(directory, "原 PDF 保存位置"); } catch { throw new Error("原 PDF 保存位置已失效，请重新选择。"); }
+    if (!(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) throw new Error("原 PDF 保存位置已失效，请重新选择。");
+    const saved = this.configuredOriginalDirectory();
+    if (saved && (directory === saved || directory.startsWith(`${saved}/`))) return;
     const bindings = this.bindings();
     if (bindings ? !bindings.roles.raw.enabled || bindings.migrationIssues.some(issue => issue.startsWith("raw：")) || classifyKnowledgePath(bindings, directory) !== "raw"
       : directory !== resolveKnowledgePathFromRoots("raw", this.api.files.roots()) && !directory.startsWith(`${resolveKnowledgePathFromRoots("raw", this.api.files.roots())}/`)) throw new Error("原 PDF 只能保存在已绑定的资料来源范围内。");
@@ -48,7 +58,8 @@ export class PdfReadingController {
   originalDirectories(): string[] {
     const walk = (folder: TFolder): TFolder[] => [folder, ...folder.children.flatMap(child => child instanceof TFolder ? walk(child) : [])];
     const bindings = this.bindings();
-    const roots = bindings ? bindings.roles.raw.enabled ? bindings.roles.raw.readPaths : [] : [resolveKnowledgePathFromRoots("raw", this.api.files.roots())];
+    const saved = this.configuredOriginalDirectory();
+    const roots = [...(saved ? [saved] : []), ...(bindings ? bindings.roles.raw.enabled ? bindings.roles.raw.readPaths : [] : [resolveKnowledgePathFromRoots("raw", this.api.files.roots())])];
     return [...new Set(roots.flatMap(path => {
       const folder = this.plugin.app.vault.getAbstractFileByPath(path); return folder instanceof TFolder ? walk(folder).map(item => item.path) : [];
     }))].filter(directory => {

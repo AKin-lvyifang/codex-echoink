@@ -41,7 +41,7 @@ import { ReleaseUpdateController } from "./release-update";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { checkAgentSkill, mcpToolCapabilityId } from "../agents/capability-policy";
-import { Component, MarkdownRenderer, Modal, Notice, Platform, PluginSettingTab, Setting, setIcon, setTooltip } from "obsidian";
+import { Component, MarkdownRenderer, Modal, Notice, Platform, PluginSettingTab, Setting, TFolder, setIcon, setTooltip } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
 import { desktopSettingsCategoryDefinitions, settingsCategoryDefinitions } from "./settings-search";
 import type CodexForObsidianPlugin from "../main";
@@ -825,6 +825,11 @@ export class CodexSettingTab extends PluginSettingTab {
     }
   }
 
+  refreshFolderPaths(from?: string, to?: string): void {
+    if (from && to) this.desktopKnowledge?.followFolderRename(from, to);
+    if (this.activeSettingsTab() === "modules") this.scheduleDisplay();
+  }
+
   private scheduleDisplay(): void {
     if (!this.settingsVisible) return;
     if (this.displayFrame !== null) return;
@@ -1347,7 +1352,7 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: embedded ? "flat" : "group"
     });
     const journalGroup = createSettingsGroup(journalSection);
-    applySettingsRow(new OriginSetting(journalGroup)
+    const journalSetting = applySettingsRow(new OriginSetting(journalGroup)
       .setName(zh ? "日记保存文件夹" : "Journal folder")
       .setDesc(zh
         ? embedded ? "与 Obsidian 原生日记共用文件夹、日期格式和模板。" : "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
@@ -1380,6 +1385,9 @@ export class CodexSettingTab extends PluginSettingTab {
           text.inputEl.blur();
         });
       }));
+
+    const journalFolder = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder;
+    if (journalFolder && !(this.app.vault.getAbstractFileByPath(journalFolder) instanceof TFolder)) journalSetting.infoEl.createDiv({ cls: "settings-error", text: zh ? "文件夹不存在" : "Folder does not exist" });
 
     if (Platform.isDesktopApp) {
       const automatic = new OriginSetting(journalGroup)
@@ -1610,7 +1618,7 @@ export class CodexSettingTab extends PluginSettingTab {
         const pdf = this.plugin.settings.pdfReading;
         const baseline = location === "pdf" && !field.disabled ? ({ "解析方式": pdf.engine, "MinerU 专用 Token": pdf.mineruToken, "默认翻译语言": pdf.translationLanguage,
           "原 PDF 保存位置": this.plugin.pdfReading?.defaultOriginalDirectory() ?? pdf.originalDirectory } as Record<string, string>)[key] ?? this.moduleInputBaselines.get(field) : this.moduleInputBaselines.get(field);
-        if (field.value === baseline) this.moduleInputDrafts.delete(`${location}:${key}`);
+        if (field.value === this.moduleInputBaselines.get(field) || field.value === baseline) this.moduleInputDrafts.delete(`${location}:${key}`);
         else this.moduleInputDrafts.set(`${location}:${key}`, field.value);
       }
     });
@@ -2216,6 +2224,9 @@ export class CodexSettingTab extends PluginSettingTab {
         .setButtonText(zh ? "选择" : "Choose")
         .onClick(() => void this.chooseReviewOutputFolder())));
     outputSetting.settingEl.dataset.echoinkFocusKey = "review:output-dir";
+    if (settings.outputDir && settings.outputDir !== "." && !(this.app.vault.getAbstractFileByPath(settings.outputDir) instanceof TFolder)) {
+      outputSetting.infoEl.createDiv({ cls: "settings-error", text: zh ? "文件夹不存在" : "Folder does not exist" });
+    }
     this.addReviewRangeMode(controls, embedded);
     this.addReviewOpenAfterRun(controls, embedded);
 
@@ -5016,6 +5027,7 @@ export class CodexSettingTab extends PluginSettingTab {
       row.setName(name); applySettingsRow(row);
       if (Platform.isDesktopApp && embedded) row.addOriginText(text => { text.setValue(value); text.inputEl.readOnly = true; text.inputEl.setAttr("aria-label", name); });
       else row.setDesc(value);
+      if (value && !(this.app.vault.getAbstractFileByPath(value) instanceof TFolder)) row.infoEl.createDiv({ cls: "settings-error", text: this.plugin.settings.settingsLanguage === "en" ? "Folder does not exist" : "文件夹不存在" });
     }
     const openLibrary = async () => {
       try {

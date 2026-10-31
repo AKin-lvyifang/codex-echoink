@@ -42,9 +42,13 @@ export class PdfReadingSettingsPanel {
     fields.createEl("p", { text: "增强解析会将 PDF 发送至 MinerU，使用单独 Token 与第三方额度。第三方留存由 MinerU 决定。" });
     const directoryLabel = settingField("原 PDF 保存位置");
     const directories = host.originalDirectories();
+    const currentDirectory = this.plugin.settings.pdfReading.originalDirectory || host.defaultOriginalDirectory();
+    const missingDirectory = currentDirectory && !directories.includes(currentDirectory);
+    const choices = directories.map(value => ({ value, label: value }));
     const originalDirectory = createOriginSelect(directoryLabel, { attr: { "aria-label": "原 PDF 保存位置" } },
-      directories.length ? directories.map(value => ({ value, label: value })) : [{ value: "", label: "请先设置资料来源位置" }],
-      host.defaultOriginalDirectory(), this.plugin.app).element;
+      [...(missingDirectory ? [{ value: currentDirectory, label: `${currentDirectory}（文件夹不存在）`, disabled: true }] : []),
+        ...(choices.length ? choices : currentDirectory ? [] : [{ value: "", label: "请先设置资料来源位置" }])],
+      currentDirectory, this.plugin.app).element;
     if (!directories.length) {
       const configure = createOriginButton(directoryLabel, { text: "去设置资料来源", cls: "mod-muted", attr: { type: "button" } });
       configure.onclick = () => { void this.plugin.openEchoInkKnowledgeSettings(); };
@@ -59,7 +63,7 @@ export class PdfReadingSettingsPanel {
     form.onsubmit = event => { event.preventDefault(); if (saving) return; void (async () => {
       requireProPluginAction(host.api.deps.access, this.plugin.settings.pdfReading.enabled, "write");
       const previous = this.plugin.settings.pdfReading;
-      if (!host.originalDirectories().includes(originalDirectory.value)) throw new Error("原 PDF 保存位置已失效，请重新选择资料来源位置。");
+      if (!host.originalDirectories().includes(originalDirectory.value)) throw new Error("原 PDF 保存位置已失效，请重新选择。");
       if (!language.value.trim()) throw new Error("请填写默认翻译语言。");
       saving = true; this.controls?.refresh();
       this.plugin.settings.pdfReading = { ...previous, engine: engine.value as "local" | "mineru", originalDirectory: originalDirectory.value, mineruToken: token.value.trim(), translationLanguage: language.value.trim().slice(0, 40) };

@@ -10857,7 +10857,7 @@ async function assertReviewFolderInlineLifecycle(): Promise<void> {
   settings.settingsTab = "review";
   let saves = 0;
   const plugin = withSettingsTabDefaults({
-    app: { vault: { getAllFolders: () => [{ path: "" }, { path: "outputs" }, { path: "reports/weekly" }] } },
+    app: { vault: { getAllFolders: () => [{ path: "" }, { path: "outputs" }, { path: "reports/weekly" }], getAbstractFileByPath: (path: string) => ["outputs", "reports/weekly"].includes(path) ? Object.assign(new TFolder(), { path }) : null } },
     settings,
     manifest: { id: "codex-echoink" },
     saveSettings: async () => { saves++; }
@@ -10880,6 +10880,19 @@ async function assertReviewFolderInlineLifecycle(): Promise<void> {
   assert.equal(saves, 1);
   assert.equal(settings.review.outputDir, "reports/weekly");
   assert.equal(tab.containerEl.querySelector(".echoink-settings-inline-editor"), null);
+  const pdfFields = tab.containerEl.createDiv();
+  pdfFields.dataset.moduleDraftLocation = "pdf";
+  const directoryField = pdfFields.createEl("input", { attr: { "aria-label": "原 PDF 保存位置" } });
+  directoryField.value = "before/pdf";
+  mutable.settingsBodyEl = { querySelectorAll: () => [pdfFields] };
+  mutable.moduleInputFields = () => [["原 PDF 保存位置", directoryField]];
+  mutable.moduleInputBaselines.set(directoryField, "before/pdf");
+  settings.pdfReading.originalDirectory = "after/pdf";
+  (plugin as any).pdfReading = { defaultOriginalDirectory: () => "after/pdf" };
+  mutable.captureModuleInputs();
+  assert.equal(mutable.moduleInputDrafts.has("pdf:原 PDF 保存位置"), false, "an unchanged selector cannot be captured as a stale draft after a folder rename");
+  directoryField.value = "user-edited/pdf"; mutable.captureModuleInputs();
+  assert.equal(mutable.moduleInputDrafts.get("pdf:原 PDF 保存位置"), "user-edited/pdf", "actual user edits remain drafts");
   tab.hide();
   console.log("PASS settings: inline report folder cancellation is inert and selection persists once");
 }

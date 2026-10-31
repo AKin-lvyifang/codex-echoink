@@ -81,13 +81,28 @@ function actualJournalPath(value: string, roots: readonly string[]): string {
 
 export async function rebaseNativeJournalPaths(app: App, from: string, to: string): Promise<void> {
   for (const [id, keys] of [["daily-notes", ["folder", "template"]], ["templates", ["folder"]]] as const) {
-    const options = optionsOf(app, id);
-    const patch: Record<string, unknown> = {};
+    const record = corePlugin(app, id), instance = record?.instance;
+    const storage = instance?.plugin ?? record;
+    const data = await storage?.loadData?.();
+    const saved = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
+    // A disabled core plugin has not necessarily loaded its options this run.
+    // Its saved choices remain authoritative; an enabled plugin can have newer
+    // live choices, while unknown saved options must survive either way.
+    const options = record?.enabled === false ? saved : { ...saved, ...instance?.options };
+    const next = { ...options };
+    let changed = false;
     for (const key of keys) if (typeof options[key] === "string") {
-      const next = rebaseKnowledgePath(options[key], from, to);
-      if (next !== options[key]) patch[key] = next;
+      const rebased = rebaseKnowledgePath(options[key], from, to);
+      if (rebased !== options[key]) { next[key] = rebased; changed = true; }
     }
-    if (Object.keys(patch).length) await updateCoreOptions(app, id, patch, false);
+    if (changed) {
+      if (!storage?.saveData) throw new Error(`Obsidian 原生插件 ${id} 设置不可用。`);
+      await storage.saveData(next);
+      if (instance) {
+        instance.options = next;
+        await instance.onExternalSettingsChange?.();
+      }
+    }
   }
   const vault = app.vault as unknown as { getConfig?(key: string): unknown; setConfig?(key: string, value: string): void };
   const attachments = vault.getConfig?.("attachmentFolderPath");
