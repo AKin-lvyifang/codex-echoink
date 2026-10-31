@@ -531,7 +531,59 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     await checkDesktopEnableSwitches(primary, scheduler);
     await checkDesktopInlineProModule(primary, scheduler);
     await checkDesktopSettingPolish(primary, scheduler);
+    await checkSettingsEntryFocus(primary, scheduler);
   } finally { Platform.isDesktopApp = false; }
+}
+
+async function checkSettingsEntryFocus(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  const f = fixture(win, "zh-CN");
+  const mount = mountDefinitions(f.tab);
+  try {
+    await scheduler.flush();
+    for (const focus of ["todo:categories", "journal:templates", "knowledge:generation-templates", "selection-ask", "review:archives"]) {
+      f.tab.openDesktopRoute({ tab: focus.startsWith("review:") ? "agent" : "modules", focus });
+      await scheduler.flush();
+      const back = f.tab.containerEl.querySelector<HTMLButtonElement>(".echoink-settings-back");
+      assert.ok(back, `detail entry ${focus} has a return control`);
+      assert.notEqual(win.document.activeElement, back, `programmatic entry ${focus} never targets Return`);
+      assert.equal(win.document.activeElement?.getAttribute("data-echoink-focus-key"), "settings-detail:content", `entry ${focus} focuses the content instead`);
+    }
+    f.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:linking" });
+    await scheduler.flush();
+    const row = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:linking"]')!;
+    const back = f.tab.containerEl.querySelector<HTMLButtonElement>(".echoink-settings-back")!;
+    assert.ok(row && back);
+    assert.equal(win.document.activeElement, row, "the full settings renderer preserves linking row focus after detail redraws");
+    assert.ok(row.closest(".setting-item")?.classList.contains("echoink-knowledge-linking-located"));
+    // Simulate the host moving focus to the first control during modal opening.
+    back.focus();
+    f.state.settingsFocusIntent = "explicit:knowledge:linking";
+    f.state.restoreSettingsFocusIntent();
+    await scheduler.flush();
+    assert.equal(win.document.activeElement, row, "scheduled location wins over host autofocus");
+    back.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    back.focus();
+    assert.ok(back.classList.contains("is-keyboard-focused"), "Tab traversal retains the keyboard focus treatment");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    row.focus(); back.focus();
+    assert.equal(back.classList.contains("is-keyboard-focused"), false, "programmatic focus after keyboard use cannot inherit the gray background");
+    row.focus();
+    row.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); back.focus();
+    back.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true }));
+    assert.equal(back.classList.contains("is-keyboard-focused"), false, "pointer activation clears a previous keyboard focus treatment");
+    console.log("PASS settings entry focus: system linking location and five other programmatic detail routes avoid Return");
+  } finally {
+    mount.cleanup(); f.tab.hide(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove();
+    await scheduler.flush();
+  }
+}
+
+export async function runSettingsEntryFocusTests(win: Window & typeof globalThis) {
+  const scheduler = prepareDocument(win);
+  const desktop = Platform.isDesktopApp;
+  Platform.isDesktopApp = true;
+  try { await checkSettingsEntryFocus(win, scheduler); }
+  finally { Platform.isDesktopApp = desktop; }
 }
 
 
