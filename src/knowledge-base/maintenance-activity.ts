@@ -61,6 +61,8 @@ export interface LinkingActivity {
 }
 export type KnowledgeActivity = MaintenanceActivity | LinkingActivity;
 export interface KnowledgeActivitySnapshot {
+  /** All phases remain available to the workbench, independently of the live activity slots. */
+  linking?: Readonly<KnowledgeLinkingTask> | null;
   primary: Readonly<KnowledgeActivity> | null;
   other: Readonly<KnowledgeActivity> | null;
   maintenance: readonly Readonly<MaintenanceActivity>[];

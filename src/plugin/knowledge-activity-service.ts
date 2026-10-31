@@ -77,7 +77,7 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
     const activities: KnowledgeActivity[] = [...visible, ...(linked ? [linked] : [])];
     const rank = (activity: KnowledgeActivity) => activity.status === "waiting" ? 0 : activity.kind === "maintenance" && activity.status === "running" ? 1 : activity.kind === "linking" ? 2 : 3;
     activities.sort((a,b) => rank(a) - rank(b) || b.updatedAt - a.updatedAt);
-    this.value = deepFreeze({ primary: activities[0] ?? null, other: activities[1] ?? null, maintenance });
+    this.value = deepFreeze({ primary: activities[0] ?? null, other: activities[1] ?? null, maintenance, linking: task });
     const signature = JSON.stringify(this.value, (key, value: unknown) => key === "updatedAt" || key === "activeElapsedMs" ? undefined : key === "etaMs" && typeof value === "number" ? Math.ceil(value / 60_000) : value);
     if (signature === this.visibleSignature) return;
     this.visibleSignature = signature;

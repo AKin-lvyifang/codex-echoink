@@ -61,6 +61,7 @@
 .echoink-workbench .wb-section-heading > button { margin-left: auto; }
 .echoink-workbench .wb-count { color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr)); align-items: start; gap: 10px; }
+.echoink-workbench .wb-grid > .wb-rows { grid-column: 1 / -1; }
 .echoink-workbench .wb-task { min-width: 0; padding: 12px 14px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); display: flex; flex-direction: column; gap: 10px; }
 /* Retain the former relational selector's specificity and body-only feedback. */
 .echoink-workbench .wb-task.wb-task.has-active-task-body,

@@ -51,6 +51,7 @@ import { sourceLineRangeLabel, sourceLineRanges } from "../ui/codex-view/source-
 import { InteractionDockController } from "../ui/codex-view/interaction-dock";
 import { renderCodexTabs } from "../ui/codex-view/tabs";
 import { CodexView } from "../ui/codex-view";
+import { refreshViewShellCopy, renderViewShell, type CodexViewShellHost } from "../ui/codex-view/view-shell";
 
 type TestEventHandler = (event: {
   preventDefault(): void;
@@ -774,7 +775,64 @@ function clickElement(element: FakeElement): void {
   } as never);
 }
 
-async function assertMaintenanceLinkingResultVisibleFromPiProjection(): Promise<void> {
+function assertConversationShellIgnoresGlobalKnowledgeActivity(): void {
+  const createSvg = Object.getOwnPropertyDescriptor(window, "createSvg");
+  Object.defineProperty(window, "createSvg", { configurable: true, value: (tag: string) => new FakeElement(tag) });
+  try {
+    for (const hasActivitySource of [true, false]) {
+      let activityReads = 0, linkingReads = 0, subscriptions = 0;
+      const cleanups: Array<() => void> = [];
+      const content = new FakeElement("main");
+      const host = {
+        contentEl: content,
+        plugin: {
+          settings: { settingsLanguage: "zh-CN" },
+          getEchoInkAgentIdentityView: () => ({ displayName: "EchoInk", avatarUrl: null }),
+          getKnowledgeActivitySource: () => {
+            activityReads++;
+            return hasActivitySource ? {
+              snapshot: () => ({ primary: null, other: null, maintenance: [] }),
+              subscribe: () => { subscriptions++; return () => {}; }
+            } : null;
+          },
+          getKnowledgeSurfaceService: () => {
+            linkingReads++;
+            return { linking: { subscribe: () => { subscriptions++; return () => {}; } } };
+          }
+        },
+        register: (cleanup: () => void) => { cleanups.push(cleanup); },
+        registerDomEvent: (element: FakeElement, type: string, callback: TestEventHandler) => {
+          if (element instanceof FakeElement) element.addEventListener(type, callback);
+        },
+        renderToolbar: () => {},
+        updateInputPlaceholder: () => {}
+      } as unknown as CodexViewShellHost;
+      try {
+        renderViewShell(host);
+        const messages = host.messagesEl, input = host.inputEl;
+        input.value = "当前会话的草稿";
+        host.plugin.settings.settingsLanguage = "en";
+        refreshViewShellCopy(host);
+        assert.equal(host.messagesEl, messages, "copy refresh preserves the conversation viewport");
+        assert.equal(host.inputEl, input);
+        assert.equal(input.value, "当前会话的草稿");
+        assert.ok(content.findByClass("codex-virtual-list"));
+        assert.ok(content.findByClass("codex-task-plan-dock"));
+        assert.ok(content.findByClass("codex-interaction-dock"));
+        assert.equal(content.findByClass("echoink-knowledge-activity-slot"), null, "conversation shell has no global activity slot");
+        assert.equal(content.findByClass("echoink-knowledge-linking-progress"), null);
+        renderViewShell(host);
+        assert.deepEqual({ activityReads, linkingReads, subscriptions }, { activityReads: 0, linkingReads: 0, subscriptions: 0 },
+          "open, refresh and remount never read or subscribe to either global knowledge source");
+      } finally { for (const cleanup of cleanups) cleanup(); }
+    }
+  } finally {
+    if (createSvg) Object.defineProperty(window, "createSvg", createSvg);
+    else Reflect.deleteProperty(window, "createSvg");
+  }
+}
+
+async function assertMaintenanceReportStaysConversationLocalFromPiProjection(): Promise<void> {
   const taskId = "maintenance-linking-original";
   const result = {
     status: "completed",
@@ -839,65 +897,48 @@ async function assertMaintenanceLinkingResultVisibleFromPiProjection(): Promise<
     const row = buildAgentTurnProjection(view.messages).find(item => item.kind === "assistantTurn");
     assert.ok(row?.kind === "assistantTurn");
     const context = createTestContext();
-    const detailsOpened: string[] = [];
+    let serviceReads = 0, subscriptions = 0;
     const readIds: string[] = [];
-    let listener: ((task: KnowledgeLinkingTask | null) => void) | undefined;
     let unsubscribed = 0;
     Object.assign(context.component as object, { plugin: {
-      getKnowledgeSurfaceService: () => ({ linking: {
-        subscribe(callback: (task: KnowledgeLinkingTask | null) => void) {
-          listener = callback;
-          callback(mode === "live" ? { ...completedTask, phase: "interrupted", results: [] } : { ...completedTask, id: "another-current-task" });
-          return () => { unsubscribed++; };
-        },
-        async readTask(id: string) { readIds.push(id); return mode === "live" ? null : completedTask; }
-      } }),
-      openKnowledgeLinkingDetails: (id: string) => { detailsOpened.push(id); }
+      getKnowledgeSurfaceService: () => {
+        serviceReads++;
+        return { linking: {
+          subscribe(callback: (task: KnowledgeLinkingTask | null) => void) {
+            subscriptions++;
+            callback({ ...completedTask, id: "another-current-task" });
+            return () => { unsubscribed++; };
+          },
+          async readTask(id: string) { readIds.push(id); return completedTask; }
+        } };
+      }
     } });
     const renderer = new CodexMessageListRenderer();
     bindRenderer(renderer, context);
     const surface = new FakeElement("div");
     (renderer as unknown as { renderAssistantTurn(container: unknown, turn: AgentTurnView, showAgentHeader: boolean): void })
       .renderAssistantTurn(surface, row.turn, false);
-    const linking = surface.findByClass("codex-kb-maintain-linking");
-    assert.ok(linking, `${mode}: the grouped Assistant Turn displays linking results`);
-    assert.equal(linking.closest(".codex-assistant-turn-process"), null,
-      `${mode}: linking status is outside the folded work record`);
-    assert.equal(linking.closest(".codex-assistant-turn-resource"), null,
-      `${mode}: linking results do not need a nested artifact disclosure`);
+    assert.equal(surface.findByClass("codex-kb-maintain-linking"), null,
+      `${mode}: the Assistant Turn does not display live linking progress or results`);
     assert.equal(surface.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true,
       `${mode}: the successful work record remains folded; status=${row.turn.status}; nodes=${row.turn.processNodes.map(node => node.kind).join(",")}; answer=${row.turn.finalAnswer?.id}`);
     assert.ok(surface.findByClass("codex-kb-maintain-card")?.closest(".codex-assistant-turn-resource"),
       `${mode}: the existing maintenance report retains its previous location`);
-    assert.equal(surface.findAllByClass("codex-kb-maintain-linking").length, 1,
-      `${mode}: no second linking block remains inside the old report`);
-    if (mode === "live") {
-      assert.equal(linking.findAllByTag("a").length, 0);
-      assert.match(renderedText(linking), /可继续/u);
-      listener?.({ ...completedTask, phase: "judging", results: [] });
-      assert.doesNotMatch(renderedText(linking), /可继续/u);
-      listener?.({ ...completedTask, phase: "writing", results: [] });
-      assert.match(renderedText(linking), /写入/u);
-      listener?.(completedTask);
-    }
+    assert.match(renderedText(surface), /已生成新知识/u, `${mode}: the conversation keeps its final answer`);
+    const reportMessage = view.messages.find(message => message.knowledgeBaseUi?.kind === "maintain-report")!;
+    const standalone = renderMessage(renderer, reportMessage, { showAgentHeader: false, showAgentFooter: false });
+    assert.ok(standalone.findByClass("codex-kb-maintain-card"), `${mode}: standalone maintenance reports still render`);
+    assert.equal(standalone.findByClass("codex-kb-maintain-linking"), null,
+      `${mode}: standalone report cards do not inject live linking progress or results`);
+    assert.match(renderedText(standalone), /新知识|实际回读摘要/u, `${mode}: the report retains its own recorded content`);
     await Promise.resolve();
     await Promise.resolve();
-    assert.match(renderedText(linking), /本次补链接的老笔记/u);
-    assert.match(renderedText(linking), /projects\/Alpha\.md/u);
-    assert.doesNotMatch(renderedText(linking), /outputs\/Result\.md/u,
-      "newly produced knowledge stays in the artifacts and is not presented as an old note");
-    assert.equal(linking.findAllByTag("a").length, 1);
-    const status = linking.findAllByTag("button")[0]!;
-    assert.match(renderedText(status), /已完成/u);
-    clickElement(status);
-    assert.deepEqual(detailsOpened, [taskId]);
-    clickElement(linking.findAllByTag("a")[0]!);
-    await Promise.resolve();
-    assert.deepEqual(context.openedPaths, ["projects/Alpha.md"]);
-    assert.ok(readIds.length > 0 && readIds.every(id => id === taskId),
-      `${mode}: restoration reads the receipt's archive even when a different task is current`);
+    assert.doesNotMatch(renderedText(surface), /本次补链接的老笔记|projects\/Alpha\.md/u);
+    assert.equal(serviceReads, 0, `${mode}: report rendering does not read global linking state`);
+    assert.equal(subscriptions, 0);
+    assert.deepEqual(readIds, []);
     renderer.resetVirtualWindow();
-    assert.equal(unsubscribed, 1);
+    assert.equal(unsubscribed, 0, "there are no live linking subscriptions to retain or release");
   }
 }
 
@@ -2329,7 +2370,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     await assertReasoningTransitionRendererContracts();
     await assertInlineApprovalDockIntegration();
     await assertAnswerSaveUiContracts();
-    await assertMaintenanceLinkingResultVisibleFromPiProjection();
+    assertConversationShellIgnoresGlobalKnowledgeActivity();
+    await assertMaintenanceReportStaysConversationLocalFromPiProjection();
     const answer = renderMessage(renderer, {
       id: "smooth:entry:answer-1",
       role: "assistant",

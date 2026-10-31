@@ -2376,6 +2376,11 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-knowledge-linking-preview-note, .echoink-knowledge-linking-result-note { padding-block: 12px; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-knowledge-linking-preview-note p { white-space: pre-wrap; }
 .echoink-knowledge-linking-error { color: var(--text-error); }
+.echoink-knowledge-linking-located { animation: echoink-linking-locate 1.8s ease-out; }
+@keyframes echoink-linking-locate {
+  0%, 55% { background-color: var(--background-modifier-hover); }
+  100% { background-color: transparent; }
+}
 .echoink-knowledge-linking-inline .setting-item { border: 0; }
 .echoink-knowledge-linking-inline-details { padding: 0 18px 13px; }
 .echoink-knowledge-linking-inline-details summary { cursor: pointer; color: var(--text-muted); }

@@ -177,7 +177,10 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     }, { async load() { return savedTask; }, async save(task) { savedTask = structuredClone(task); history.set(task.id, structuredClone(task)); }, async loadTask(id) { return history.get(id) ?? null; } });
     (manager as any).linking = linking;
     await linking.start(); await linking.waitForIdle();
-    let closeLinking = renderKnowledgeLinkingSection(host, plugin);
+    let closeLinking = renderKnowledgeLinkingSection(host, plugin, undefined, true);
+    await flush();
+    assert.equal(host.querySelector(".echoink-knowledge-linking-located"), host.querySelector('[data-echoink-focus-key="knowledge:linking"]'), "deep link highlights the actual linking row");
+    assert.equal(dom.win.document.activeElement, host.querySelector('[data-echoink-focus-key="knowledge:linking"]'), "deep link focuses the row in its owning settings document");
     assert(host.textContent?.includes("待确认"), JSON.stringify(linking.snapshot())); assert(host.textContent?.includes("B → wiki/B.md"), host.textContent ?? "");
     const previewQuote = host.querySelector(".echoink-knowledge-linking-preview-note p")!.textContent!;
     assert.equal(previewQuote, "B 帮助理解原句。", "preview quotes the original mention line and excludes its inline source comment");

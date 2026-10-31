@@ -28,12 +28,23 @@ function previewMentionLine(content: string, start: number, end: number): string
 }
 
 /** Only the subscription belongs to settings; the plugin owns the background job. */
-export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: CodexForObsidianPlugin, taskId?: string): () => void {
+export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: CodexForObsidianPlugin, taskId?: string, locate = false): () => void {
   const english = plugin.settings.settingsLanguage === "en";
   const service = plugin.getKnowledgeSurfaceService()?.linking;
   const block = container.createDiv({ cls: "echoink-knowledge-linking-inline" });
   const row = new OriginSetting(block).setName(english ? "Complete knowledge links" : "补全知识关联");
   row.settingEl.setAttribute("data-echoink-focus-key", "knowledge:linking");
+  let disposed = false, locateTimer: number | undefined;
+  const win = row.settingEl.ownerDocument.defaultView;
+  if (locate) queueMicrotask(() => {
+    if (disposed || !row.settingEl.isConnected) return;
+    row.settingEl.tabIndex = -1;
+    row.settingEl.scrollIntoView?.({ block: "center" });
+    row.settingEl.focus({ preventScroll: true });
+    row.settingEl.classList.add("echoink-knowledge-linking-located");
+    locateTimer = win?.setTimeout(() => row.settingEl.classList.remove("echoink-knowledge-linking-located"), 1800);
+  });
+  const releaseLocation = () => { disposed = true; if (locateTimer !== undefined) win?.clearTimeout(locateTimer); };
   const hint = english
     ? "AI reads your knowledge notes, adds aliases and links mentions to other notes. This calls your model, uses quota per note and modifies notes."
     : "让 AI 读一遍知识库，给笔记补上别名，并把提到其他笔记的地方连成双链。会调用模型，按篇数消耗额度，并修改笔记。";
@@ -52,7 +63,7 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
   if (!service) {
     action.onclick = () => new Notice(english ? "Knowledge service is unavailable. Try again shortly." : "知识库服务尚未就绪，请稍后重试。");
     cancel.hidden = details.hidden = true;
-    return () => disposeOriginControls(block);
+    return () => { releaseLocation(); disposeOriginControls(block); };
   }
   let rendered = "", pagination = 0, closed = false, pending = false;
   let current: KnowledgeLinkingTask | null = null;
@@ -125,5 +136,5 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
     void service.readTask(taskId).then(saved => { if (!closed) render(saved ?? task); });
   };
   const unsubscribe = service.subscribe(selected);
-  return () => { closed = true; unsubscribe(); disposeOriginControls(block); };
+  return () => { closed = true; releaseLocation(); unsubscribe(); disposeOriginControls(block); };
 }

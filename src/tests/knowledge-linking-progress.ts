@@ -2,6 +2,7 @@ import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import { knowledgeLinkingProgressText, mountKnowledgeLinkingProgress } from "../ui/codex-view/knowledge-linking-progress";
+import { KnowledgeActivityService } from "../plugin/knowledge-activity-service";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 
 export async function runKnowledgeLinkingProgressTests(): Promise<void> {
@@ -32,6 +33,14 @@ export async function runKnowledgeLinkingProgressTests(): Promise<void> {
   task.phase = "partial"; listener(task); assert.equal(mount.hidden, false); assert.match(mount.textContent!, /部分完成/u);
   task.phase = "completed"; listener(task); assert.equal(mount.hidden, true);
   task.phase = "interrupted"; listener(task); assert.equal(knowledgeLinkingProgressText(task), "可继续");
+  let publish: (task: KnowledgeLinkingTask | null) => void = () => undefined;
+  const activity = new KnowledgeActivityService({ ready: Promise.resolve(), subscribe(listener) { publish = listener; return () => undefined; } }, async () => []);
+  await activity.ready;
+  for (const phase of ["awaiting-confirmation", "partial", "failed", "interrupted", "completed", "cancelled"] as const) {
+    publish({ ...task, phase });
+    assert.equal(activity.snapshot().linking?.phase, phase, "all phases survive the activity projection for workbench decisions");
+  }
+  activity.dispose();
   dispose(); assert.equal(subscriptions, 0); assert.equal(task.phase, "interrupted", "view destruction never cancels the Vault task");
   const reopen = mountKnowledgeLinkingProgress(mount, source, () => opened++); assert.equal(subscriptions, 1); assert.equal(mount.hidden, false); reopen();
   dom.window.close(); console.log("PASS knowledge-linking progress lifecycle (cross-conversation source, confirmation, completion, partial, reopen).");
