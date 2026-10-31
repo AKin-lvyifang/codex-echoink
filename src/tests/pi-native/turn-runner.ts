@@ -3746,37 +3746,61 @@ export async function runWorkbenchComposerTests(): Promise<void> {
 async function workbenchSignalDispatch(): Promise<void> {
   const dom = new JSDOM("<!doctype html><body></body>"); installObsidianDom(dom.window);
   try {
-    const settings = createQueueImageProviderSettings();
-    const created: any[] = [], started: any[] = [], opened: string[] = [], deleted: string[] = [];
-    let rejected = false;
-    const plugin: any = { settings, getVaultPath: () => "/fixture", getTaskResumeError: () => "执行器未受理",
-      createPiConversation: async (input: any) => { created.push(input); return { ...input, piSessionId: "pi", status: "active", createdAt: 1, updatedAt: 1 }; },
-      setPiConversationStatus: async (id: string) => { deleted.push(id); },
-      getConversationRunService: () => ({ start: async (item: any) => { started.push(item); return rejected ? "failed" : "running"; } }) };
-    const view: any = new CodexView({} as any, plugin);
-    view.inputEl = dom.window.document.createElement("textarea"); view.inputEl.value = "不能丢的草稿";
-    view.attachments = [{ type: "file", name: "保留.md", path: "/fixture/保留.md" }];
-    view.saveTaskComposerDraft = () => undefined; view.reloadTaskCatalog = async () => undefined;
-    view.openTaskDetail = async (id: string) => { opened.push(id); };
-    view.sessionHost = () => ({ plugin }); view.ensureChatWorkspaceSelected = async () => true;
-    const options = { providerSettingsId: settings.apiProviders[0].id, runtimeProviderId: settings.apiProviders[0].runtimeProviderId,
-      model: "queue-image-model", reasoning: "none", permission: "workspace-write", mode: "agent", mcpEnabled: false };
-    view.currentTurnOptions = () => options;
-    const source = { version: 1 as const, signalId: 9 as const, moduleId: "review" as const, businessKey: "review-week", objects: ["2026-10-26"], prompt: "完成本周复盘", capturedAt: 1 };
-    const signal: WorkbenchSignal = { id: 9, key: source.businessKey, moduleId: "review", icon: "calendar-check", description: "本周还没有完成复盘", prompt: source.prompt, source };
-    const id = await view.startWorkbenchSignalTask("sol", signal);
-    assert.equal(created[0].agentId, "sol"); assert.equal(created[0].cwd, "/fixture");
-    assert.equal(started[0].sessionId, id); assert.equal(started[0].text, signal.prompt);
-    assert.deepEqual(JSON.parse(started[0].prefillSource), source); assert.deepEqual(opened, [id]);
-    assert.equal(view.inputEl.value, "不能丢的草稿"); assert.equal(view.attachments[0].name, "保留.md");
-    assert.equal(view.composerTransfers.size, 0, "isolated dispatch must never transfer the visible Composer");
-    options.model = "missing";
-    await assert.rejects(view.startWorkbenchSignalTask("sol", signal), (error: unknown) => error instanceof WorkbenchSetupRequired && error.target === "models");
-    assert.equal(created.length, 1, "preflight fails before creating a durable task");
-    options.model = "queue-image-model"; rejected = true;
-    await assert.rejects(view.startWorkbenchSignalTask("sol", signal), /执行器未受理/);
-    assert.deepEqual(deleted, [created[1].conversationId]); assert.equal(settings.sessions.length, 1, "rejected tasks are cleaned up");
-    assert.equal(view.inputEl.value, "不能丢的草稿");
+    for (const state of ["idle", "running", "other-agent"] as const) {
+      const settings = createQueueImageProviderSettings();
+      const oldId = `original-${state}`, old = piSessionShell(oldId); old.agentId = state === "other-agent" ? "accountant" : "sol";
+      settings.sessions = [old]; settings.activeSessionId = oldId;
+      settings.taskWorkspace.page = { kind: "detail", taskId: oldId };
+      settings.taskWorkspace.replyDrafts[oldId] = { text: "不能丢的草稿", attachments: [{ type: "file", name: "保留.md", path: "/fixture/保留.md" }] };
+      const original = structuredClone({ session: old, draft: settings.taskWorkspace.replyDrafts[oldId] });
+      const oldRun = { running: state === "running" };
+      const created: any[] = [], started: any[] = [], opened: string[] = [], deleted: string[] = [], metadata: any[] = [];
+      const queue = new RuntimeTurnQueue();
+      const options = { providerSettingsId: settings.apiProviders[0].id, runtimeProviderId: settings.apiProviders[0].runtimeProviderId,
+        model: "queue-image-model", reasoning: "none" as const, permission: "workspace-write" as const, mode: "agent" as const, mcpEnabled: false };
+      const pending = { id: "keep-queued", sessionId: oldId, text: "原会话的队列", attachments: [], skill: null, kind: "chat" as const, createdAt: 1, turnOptions: options };
+      queue.enqueue(pending); const originalQueue = structuredClone(queue.itemsForSession(oldId));
+      let rejected = false; const acceptance = deferred<"running">();
+      const plugin: any = { settings, getVaultPath: () => "/fixture", getTaskResumeError: () => "执行器未受理",
+        createPiConversation: async (input: any) => { created.push(input); return { ...input, piSessionId: "pi", status: "active", createdAt: 1, updatedAt: 1 }; },
+        setPiConversationTaskMetadata: async (id: string, value: any) => { metadata.push({ id, ...value }); },
+        setPiConversationStatus: async (id: string) => { deleted.push(id); },
+        getConversationRunService: () => ({ turnQueue: queue, runs: new Map([[oldId, oldRun]]), start: async (item: any) => {
+          assert.equal(settings.activeSessionId, item.sessionId, "new conversation is visible before runtime accepts it");
+          assert.equal(metadata.at(-1).taskStatus, "running", "the workbench card exists while preparation is in flight");
+          started.push(item); return rejected ? "failed" : await acceptance.promise;
+        } }) };
+      const view: any = new CodexView({} as any, plugin);
+      view.inputEl = dom.window.document.createElement("textarea"); view.inputEl.value = "不能丢的草稿";
+      view.attachments = structuredClone(original.draft.attachments);
+      view.saveTaskComposerDraft = () => undefined; view.reloadTaskCatalog = async () => undefined;
+      view.openTaskDetail = async (id: string) => {
+        opened.push(id); view.taskNavigation.navigate({ kind: "detail", taskId: id }); settings.activeSessionId = id;
+        view.inputEl.value = settings.taskWorkspace.replyDrafts[id]?.text ?? "";
+      };
+      view.sessionHost = () => ({ plugin }); view.ensureChatWorkspaceSelected = async () => true; view.currentTurnOptions = () => options;
+      const source = { version: 1 as const, signalId: 9 as const, moduleId: "review" as const, businessKey: "review-week", objects: ["2026-10-26"], prompt: "完成本周复盘", capturedAt: 1 };
+      const signal: WorkbenchSignal = { id: 9, key: source.businessKey, moduleId: "review", icon: "calendar-check", description: "本周还没有完成复盘", prompt: source.prompt, source };
+      const first = view.startWorkbenchSignalTask("sol", signal), duplicate = view.startWorkbenchSignalTask("sol", signal);
+      assert.equal(first, duplicate, "repeat clicks share one launch until acceptance");
+      await waitFor(() => started.length === 1);
+      assert.equal(created.length, 1); assert.equal(created[0].agentId, "sol"); assert.equal(created[0].cwd, "/fixture");
+      assert.notEqual(started[0].sessionId, oldId); assert.equal(started[0].text, signal.prompt);
+      assert.deepEqual(JSON.parse(started[0].prefillSource), source);
+      assert.deepEqual(queue.itemsForSession(oldId), originalQueue); assert.equal(oldRun.running, state === "running");
+      assert.deepEqual(old, original.session); assert.deepEqual(settings.taskWorkspace.replyDrafts[oldId], original.draft);
+      assert.equal(view.composerTransfers.size, 0, "isolated dispatch must never transfer the original Composer");
+      acceptance.resolve("running"); const id = await first; assert.equal(await duplicate, id); assert.deepEqual(opened, [id]);
+      options.model = "missing";
+      await assert.rejects(view.startWorkbenchSignalTask("sol", signal), (error: unknown) => error instanceof WorkbenchSetupRequired && error.target === "models");
+      assert.equal(created.length, 1, "missing prerequisites cannot leave an empty task");
+      options.model = "queue-image-model"; rejected = true;
+      await assert.rejects(view.startWorkbenchSignalTask("sol", signal), /执行器未受理/);
+      assert.deepEqual(deleted, [created[1].conversationId]); assert.equal(settings.sessions.length, 2, "rejected tasks are cleaned up");
+      assert.equal(settings.activeSessionId, id, "failed launch returns to the previous conversation");
+      await view.openTaskDetail(oldId); assert.equal(view.inputEl.value, original.draft.text);
+      assert.deepEqual(queue.itemsForSession(oldId), originalQueue); assert.equal(oldRun.running, state === "running");
+    }
   } finally { dom.window.close(); }
 }
 

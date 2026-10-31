@@ -772,7 +772,17 @@ export class CodexView extends ItemView {
     return this.plugin.getAgentCapabilityAvailability(id, this.currentEchoInkResourceCatalog());
   }
 
-  async startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
+  private readonly workbenchSignalFlights = new Map<string, Promise<string>>();
+  startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
+    const existing = this.workbenchSignalFlights.get(signal.key);
+    if (existing) return existing;
+    const flight = Promise.resolve().then(() => this.createWorkbenchSignalTask(agentId, signal))
+      .finally(() => { if (this.workbenchSignalFlights.get(signal.key) === flight) this.workbenchSignalFlights.delete(signal.key); });
+    this.workbenchSignalFlights.set(signal.key, flight);
+    return flight;
+  }
+
+  private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
     if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists."));
     this.saveTaskComposerDraft();
     const draft: StoredSession = { id: newId("workbench-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
@@ -798,16 +808,24 @@ export class CodexView extends ItemView {
       agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
     const session = createPiConversationShell(this.sessionHost(), entry);
     this.plugin.settings.sessions.push(session); item.sessionId = session.id;
+    const previousPage = { ...this.taskNavigation.page };
     try {
+      // Expose the new card before runtime preparation/acceptance, which may do
+      // disk IO. The old conversation keeps its own run, queue and saved draft.
+      await this.plugin.setPiConversationTaskMetadata(session.id, { taskStatus: "running", taskStartedAt: Date.now() });
+      await this.reloadTaskCatalog(); await this.openTaskDetail(session.id);
       const outcome = await this.plugin.getConversationRunService().start(item, "composer");
       if (outcome === "running") item.piUserEntryAccepted = true;
       if (!item.piUserEntryAccepted) throw new Error(this.plugin.getTaskResumeError(session.id) ?? failure);
-      await this.reloadTaskCatalog(); await this.openTaskDetail(session.id);
       return session.id;
     } catch (error) {
       if (!item.piUserEntryAccepted) {
         await this.plugin.setPiConversationStatus(session.id, "deleted");
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(value => value.id !== session.id);
+        if (this.taskNavigation.page.kind === "detail" && this.taskNavigation.page.taskId === session.id) {
+          if (previousPage.kind === "detail") await this.openTaskDetail(previousPage.taskId);
+          else if (previousPage.kind === "list") await this.openAgentTaskList(previousPage.agentId);
+        }
       }
       throw error;
     }

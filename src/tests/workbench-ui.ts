@@ -64,6 +64,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     for (const listener of activityListeners) listener(activitySnapshot);
   };
   let dispatchError: Error | undefined;
+  let dispatchGate: Promise<void> | undefined;
   let snapshot: WorkbenchSnapshot = { generatedAt: Date.now(), signals: [], todayTodos: [], modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"], issues: [] };
   const port: WorkbenchDataPort = {
     async load() { dataReads++; if (failData) throw new Error("本地事项读取失败"); return snapshot; },
@@ -110,7 +111,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
-    async startWorkbenchSignalTask(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["dispatch", ...args]); return "new-task"; },
+    async startWorkbenchSignalTask(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["dispatch", ...args]); await dispatchGate; return "new-task"; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
     async activateKnowledgeView() { calls.push(["knowledge"]); },
@@ -325,6 +326,11 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.match(content.textContent ?? "", /被你停止/);
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
     const retained = button("signal-signal-0");
+    retained.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+    snapshot = { ...snapshot, generatedAt: Date.now() + 1, signals: snapshot.signals.map(signal => ({ ...signal, source: { ...signal.source, capturedAt: signal.source.capturedAt + 1 } })) };
+    await view.refresh();
+    assert.equal(button("signal-signal-0"), retained, "timestamp-only refresh cannot replace a pressed button and swallow click");
+    retained.dispatchEvent(new Event("pointerup", { bubbles: true }));
     button("signal-toggle").focus(); await click("signal-toggle");
     assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 7);
     assert.equal(button("signal-signal-0"), retained, "expansion preserves existing controls");
@@ -360,6 +366,14 @@ export async function runWorkbenchUiTests(): Promise<void> {
     content.querySelector<HTMLElement>('[data-task="wait"] .wb-question > div')!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["detail", "wait"], "the question card still opens the complete question and supplement");
     await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "dispatch"); assert.equal(snapshot.signals.length, 7, "dispatch does not invent completion");
+    let releaseDispatch!: () => void;
+    dispatchGate = new Promise(resolve => { releaseDispatch = resolve; });
+    const dispatches = calls.filter(call => call[0] === "dispatch").length;
+    button("signal-signal-0").click(); button("signal-signal-0").click(); await tick();
+    assert.equal(button("signal-signal-0").disabled, true);
+    assert.match(button("signal-signal-0").textContent!, /正在新建/);
+    assert.equal(calls.filter(call => call[0] === "dispatch").length, dispatches + 1, "double click dispatches once while pending");
+    releaseDispatch(); await tick(); dispatchGate = undefined;
     dispatchError = new Error("真实派发异常");
     await click("signal-signal-0");
     assert.match(openTestNoticeMessages.at(-1)!, /操作未完成：真实派发异常/);
