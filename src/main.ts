@@ -874,9 +874,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   getCodexView(): CodexView | null { return this.getViewService().getCodexView(); }
   refreshKnowledgeBaseSurfaces(): void { this.getViewService().refreshKnowledgeBaseSurfaces(); }
   async refreshLanguageSurfaces(): Promise<void> { await this.getViewService().refreshLanguageSurfaces(); }
-  async openWorkbenchSetup(target: "agent" | "knowledge" | "appearance"): Promise<void> {
-    await this.getViewService().openEchoInkSettings(target === "knowledge" ? "knowledgeBase" : "general",
-      target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : "general:appearance");
+  async openWorkbenchSetup(target: "agent" | "knowledge" | "appearance" | "models"): Promise<void> {
+    await this.getViewService().openEchoInkSettings(target === "knowledge" ? "knowledgeBase" : target === "models" ? "providers" : "general",
+      target === "agent" ? "general:personality-template" : target === "knowledge" ? "knowledge:onboarding" : target === "models" ? "models:default" : "general:appearance");
   }
   async openEchoInkGeneralSettings(): Promise<void> { await this.getViewService().openEchoInkSettings("general"); }
   async openWorkbenchModuleSettings(id: import("./agents/types").AgentModuleId): Promise<void> {
@@ -1519,6 +1519,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     await this.activateView();
     const view = this.getCodexView();
     return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath) : false;
+  }
+  async startWorkbenchSignalTask(agentId: string, signal: import("./home/workbench-types").WorkbenchSignal): Promise<string> {
+    await this.activateView();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) throw new Error(this.settings.settingsLanguage === "en" ? "The conversation panel is not ready. Please try again." : "对话栏尚未就绪，请重试。");
+    return view.startWorkbenchSignalTask(agentId, signal);
   }
   async deleteAgent(agentId: string): Promise<void> {
     if (isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘。 ");

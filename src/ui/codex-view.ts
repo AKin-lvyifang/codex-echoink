@@ -10,6 +10,8 @@ import { GenerationModal } from "../generation/modal";
 import { getGenerationService } from "../generation/service";
 import { freezePdfTaskRequest } from "../pdf-reading/task-context";
 import { workbenchModuleOwner } from "../home/module-navigation";
+import type { WorkbenchSignal } from "../home/workbench-types";
+import { WorkbenchSetupRequired } from "../home/workbench-action-feedback";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
 import { isUserTask, maintenanceActivityForTask, taskEntryWithMaintenance, taskState, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import { maintenanceActivityText, maintenanceTaskTitle, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
@@ -37,7 +39,7 @@ import { cloneSelectionAnnotations, selectionAnnotationsMatch, type SelectionAnn
 import { ItemView, Notice, Platform, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { ChatMessage, StoredAttachment, StoredSession } from "../settings/settings";
-import { newId, providerConnectionLabel } from "../settings/settings";
+import { newId, providerConnectionLabel, apiProviderHasUsableCredential, getApiProviderModel, validateApiProvider } from "../settings/settings";
 import type { EchoInkResource } from "../resources/types";
 import type {
   PermissionMode,
@@ -768,6 +770,47 @@ export class CodexView extends ItemView {
   }
   private taskCapabilityAvailability(id: string): { available: boolean; reason?: string } {
     return this.plugin.getAgentCapabilityAvailability(id, this.currentEchoInkResourceCatalog());
+  }
+
+  async startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
+    if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists."));
+    this.saveTaskComposerDraft();
+    const draft: StoredSession = { id: newId("workbench-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
+    const options = this.currentTurnOptions(draft);
+    const provider = this.plugin.settings.apiProviders.find(value => value.id === options.providerSettingsId);
+    if (!provider || !getApiProviderModel(provider, options.model) || !apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential) || validateApiProvider(provider).length) {
+      throw new WorkbenchSetupRequired(this.taskText("先配置可用的模型。", "Set up an available model first."), "models");
+    }
+    if (options.mode === "plan") throw new WorkbenchSetupRequired(this.taskText("先切换到 Agent 模式，再交给它执行。", "Switch to Agent mode before assigning this task."), "conversation");
+    // A data-only Composer preserves unsent text, files and references in every existing task.
+    const inputEl = ownedEl(this.inputEl.ownerDocument, "textarea"); inputEl.value = signal.prompt;
+    const adapter = Object.create(this) as CodexViewTurnContext;
+    Object.defineProperties(adapter, {
+      inputEl: { value: inputEl }, attachments: { value: [] }, selectedSkill: { value: null },
+      ensureSession: { value: () => draft }, currentTurnOptions: { value: () => options },
+      onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined }
+    });
+    let failure = this.taskText("任务尚未发送，请检查对话栏设置后重试。", "The task was not sent. Check the conversation settings and try again.");
+    const item = await createQueuedTurnFromComposerRunner(adapter, { allowLocalKnowledgeCommands: false, onError: message => { failure = message; } });
+    if (!item || !await validateTaskTurnBeforeCreation(adapter, item)) throw new Error(failure);
+    item.prefillSource = JSON.stringify(signal.source);
+    const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: signal.description,
+      agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+    const session = createPiConversationShell(this.sessionHost(), entry);
+    this.plugin.settings.sessions.push(session); item.sessionId = session.id;
+    try {
+      const outcome = await this.plugin.getConversationRunService().start(item, "composer");
+      if (outcome === "running") item.piUserEntryAccepted = true;
+      if (!item.piUserEntryAccepted) throw new Error(this.plugin.getTaskResumeError(session.id) ?? failure);
+      await this.reloadTaskCatalog(); await this.openTaskDetail(session.id);
+      return session.id;
+    } catch (error) {
+      if (!item.piUserEntryAccepted) {
+        await this.plugin.setPiConversationStatus(session.id, "deleted");
+        this.plugin.settings.sessions = this.plugin.settings.sessions.filter(value => value.id !== session.id);
+      }
+      throw error;
+    }
   }
 
   async startPdfNavigationTask(input: PdfNavigationStart): Promise<string> {

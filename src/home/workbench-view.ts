@@ -23,6 +23,7 @@ import { formatHomeRelativeTime } from "./home-i18n";
 import { getWorkbenchDataService } from "./workbench-data";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "./workbench-types";
 import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher";
+import { showWorkbenchActionFailure } from "./workbench-action-feedback";
 import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
 import { expertModuleEnabled } from "../experts/module";
 import type { ParsedTodoRecord } from "./todo-markdown";
@@ -335,7 +336,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (variant === "icon") { button.textContent = ""; attachNativeTooltip(button, text); }
     applyAmicroButton(button, { variant });
     if (icon) { const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } }); setIcon(node, icon); button.prepend(node); }
-    button.onclick = () => { void Promise.resolve().then(action).catch(error => new Notice(message(error))); };
+    button.onclick = () => { void Promise.resolve().then(action).catch(error => showWorkbenchActionFailure(this.plugin, error)); };
     return button;
   }
   private renderShell(): void {
@@ -892,7 +893,7 @@ export class EchoInkWorkbenchView extends ItemView {
       check.dataset.wbBusy = key; check.dataset.wbSource = "data";
       check.addEventListener("change", () => {
         check.checked = todo.done;
-        void this.runAction(key, () => this.plugin.getTodoStore().toggleDone(todo, true)).catch(error => new Notice(message(error)));
+        void this.runAction(key, () => this.plugin.getTodoStore().toggleDone(todo, true));
       });
       const copy = row.createSpan({ cls: "wb-grow" });
       copy.createSpan({ text: todo.title });
@@ -925,6 +926,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.busy.has(key)) return;
     this.busy.add(key); this.render();
     try { await action(); }
+    catch (error) { showWorkbenchActionFailure(this.plugin, error); }
     finally { this.busy.delete(key); if (!this.closed) { this.render(); this.scheduleRefresh(0); } }
   }
   private async openTask(id: string): Promise<void> { this.selectedTask = id; this.updateSelection(); await this.plugin.openTaskDetail(id); }
