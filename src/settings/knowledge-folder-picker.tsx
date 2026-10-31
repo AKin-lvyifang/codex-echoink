@@ -1,4 +1,4 @@
-import { Scope, setIcon, setTooltip, type App } from "obsidian";
+import { Scope, setIcon, type App } from "obsidian";
 import { Popover } from "radix-ui";
 import { CheckIcon, ChevronDownIcon, MagnifyingGlassIcon, PlusIcon } from "@radix-ui/react-icons";
 import { createPortal, flushSync } from "react-dom";
@@ -7,6 +7,7 @@ import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Input } from "../ui/components/origin/input";
 import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { initializationFolderIssues } from "../knowledge-base/initialization-choices";
+import { attachNativeTooltip, type NativeTooltipHandle } from "../ui/native-tooltip";
 
 export type KnowledgeFolderChoice = { path: string; create: boolean };
 export type KnowledgeFolderPickerOptions = {
@@ -60,11 +61,11 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   let folderItems: { path: string; search: string }[] = [];
   const escapeScope = options.app ? new Scope(options.app.scope) : null;
   let scopeActive = false;
-  const tooltipNodes = new WeakSet<HTMLElement>();
+  const tooltipNodes = new Map<HTMLElement, { path: string; handle: NativeTooltipHandle }>();
   const pathTooltip = (node: HTMLElement | null, path: string) => {
-    if (!node || tooltipNodes.has(node)) return;
-    tooltipNodes.add(node);
-    setTooltip(node, path);
+    if (!node || tooltipNodes.get(node)?.path === path) return;
+    tooltipNodes.get(node)?.handle.dispose();
+    tooltipNodes.set(node, { path, handle: attachNativeTooltip(node, path) });
   };
 
   const folders = () => [...new Set(options.folders().filter(Boolean))];
@@ -273,6 +274,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
       </div>
       {message && <div className="echoink-folder-picker-error" id={errorId} role="alert">{message}</div>}
     </>, element)));
+    for (const [node, tooltip] of tooltipNodes) if (!node.isConnected) { tooltip.handle.dispose(); tooltipNodes.delete(node); }
   };
 
   const dispose = () => {
@@ -285,6 +287,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
     ownerWindow.removeEventListener("pagehide", dispose);
     ownerWindow.removeEventListener("beforeunload", dispose);
     root.unmount();
+    tooltipNodes.forEach(tooltip => tooltip.handle.dispose()); tooltipNodes.clear();
     element.remove();
     if (wasEditing) options.onEditingChange?.(false);
   };
