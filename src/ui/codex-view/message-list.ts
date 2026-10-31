@@ -4,9 +4,6 @@ import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
-import type CodexForObsidianPlugin from "../../main";
-import { knowledgeLinkingProgressText } from "./knowledge-linking-progress";
-import type { KnowledgeLinkingTask } from "../../knowledge-base/knowledge-linking-types";
 import { openSelectionAnnotationSource } from "../../selection-ask/navigation";
 import { renderSelectionAnnotationSummary } from "./selection-annotations";
 import { Notice, normalizePath, setIcon, TFile, type App, type Component, type Editor } from "obsidian";
@@ -420,7 +417,6 @@ interface TextSelectionBookmark {
 
 export class CodexMessageListRenderer {
   private readonly answerMarkdown = new AnswerMarkdownRenderer();
-  private readonly linkingResultSubscriptions = new Map<HTMLElement, () => void>();
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
   private currentRows: MessageRenderRow[] = [];
@@ -695,8 +691,6 @@ export class CodexMessageListRenderer {
   }
 
   resetVirtualWindow(): void {
-    for (const cleanup of this.linkingResultSubscriptions.values()) cleanup();
-    this.linkingResultSubscriptions.clear();
     this.cancelAllDisclosureAutoFolds();
     this.virtualSessionId = "";
     this.virtualRowHeights.clear();
@@ -2031,7 +2025,6 @@ export class CodexMessageListRenderer {
         void this.openKnowledgeBasePath(payload.reportPath);
       };
     }
-    if (!container.closest(".codex-assistant-turn-spine")) this.renderKnowledgeLinkingResult(card, payload);
     const executionItems = knowledgeBaseMaintainExecutionItems(payload, language);
     if (executionItems.length) {
       const execution = card.createDiv({ cls: "codex-kb-maintain-execution" });
@@ -2099,48 +2092,6 @@ export class CodexMessageListRenderer {
         }
       }
     }
-  }
-
-  private renderKnowledgeLinkingResult(container: HTMLElement, payload: KnowledgeBaseMaintainReportPayload): void {
-    const taskId = payload.linkingTaskId;
-    if (!taskId) return;
-    const language = this.requireEnv().settingsLanguage;
-    const plugin = (this.requireEnv().component as Component & { plugin?: CodexForObsidianPlugin }).plugin;
-    const service = plugin?.getKnowledgeSurfaceService()?.linking;
-    if (!service) return;
-    for (const [element, cleanup] of this.linkingResultSubscriptions) {
-      if (!element.isConnected) { cleanup(); this.linkingResultSubscriptions.delete(element); }
-    }
-    const linking = container.createDiv({ cls: "codex-kb-maintain-care codex-kb-maintain-linking" });
-    const state = linking.createEl("button", { cls: "codex-kb-maintain-open", attr: { type: "button" } });
-    state.setText(conversationUiText(language, "知识关联 · 进行中", "Knowledge links · In progress"));
-    state.onclick = () => void plugin?.openKnowledgeLinkingDetails(taskId);
-    const notes = linking.createDiv({ cls: "codex-kb-maintain-care-list" });
-    const producedPaths = new Set(payload.sections.find(section => section.id === "knowledge-notes")?.items.flatMap(item => item.path ? [item.path] : []) ?? []);
-    let terminal = false;
-    const renderLinking = (task: KnowledgeLinkingTask | null) => {
-      if (!this.env || terminal || !task || task.id !== taskId) return;
-      state.setText(`${conversationUiText(language, "知识关联", "Knowledge links")} · ${knowledgeLinkingProgressText(task, language === "en")}`);
-      notes.empty();
-      const oldNotes = task.results.filter(result => !producedPaths.has(result.path)).slice(0, 20);
-      if (oldNotes.length) notes.createDiv({ cls: "codex-kb-maintain-section-title", text: conversationUiText(language, "本次补链接的老笔记", "Existing notes linked this time") });
-      for (const result of oldNotes) {
-        const row = notes.createDiv({ cls: "codex-kb-maintain-care-item" });
-        const open = row.createEl("a", { cls: "codex-kb-maintain-care-text", text: result.path, attr: { href: "#" } });
-        open.onclick = event => { event.preventDefault(); void this.openKnowledgeBasePath(result.path); };
-        row.createSpan({ text: result.status === "written" ? ` · ${result.links} ${conversationUiText(language, "处关联", "links")}` : ` · ${result.message ?? result.status}` });
-      }
-      terminal = ["completed", "partial", "failed", "cancelled"].includes(task.phase);
-      this.requireEnv().onScheduleMeasure();
-    };
-    const readSaved = () => { void service.readTask(taskId).then(renderLinking); };
-    const unsubscribe = service.subscribe(current => {
-      if (terminal) return;
-      if (current?.id === taskId) renderLinking(current);
-      else readSaved();
-    });
-    this.linkingResultSubscriptions.set(linking, unsubscribe);
-    readSaved();
   }
 
   private async openKnowledgeBasePath(path: string): Promise<void> {
@@ -2439,14 +2390,6 @@ export class CodexMessageListRenderer {
 
     if (turn.processNodes.length) {
       this.renderAssistantTurnProcess(bodyHost, turn);
-    }
-
-    const linkingTasks = new Set<string>();
-    for (const message of turn.messages) {
-      const payload = message.knowledgeBaseUi;
-      if (payload?.kind !== "maintain-report" || !payload.linkingTaskId || linkingTasks.has(payload.linkingTaskId)) continue;
-      linkingTasks.add(payload.linkingTaskId);
-      this.renderKnowledgeLinkingResult(bodyHost, payload);
     }
 
     const answer = turn.finalAnswer;

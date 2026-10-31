@@ -30,7 +30,8 @@ export class DesktopKnowledgeSettings {
   private page: Page = null;
   private linkingCleanup: (() => void) | null = null;
   private linkingTaskId?: string;
-  openLinking(taskId?: string): void { this.linkingTaskId = taskId; this.change("permissions"); }
+  private locateLinking = false;
+  openLinking(taskId?: string): void { this.linkingTaskId = taskId; this.locateLinking = true; this.change("permissions"); }
   private selectedRole: Role = "wiki";
   private host: HTMLElement | null = null;
   private error = "";
@@ -174,7 +175,8 @@ export class DesktopKnowledgeSettings {
       void this.plugin.getEchoInkKnowledgeMaintenancePreferenceState().then(state => { showPreference(state.state === "custom" ? "已自定义" : "使用默认"); })
         .catch(() => { showPreference(undefined, "知识提炼偏好读取失败"); });
     } else showPreference(undefined, "知识提炼偏好状态暂不可用");
-    this.linkingCleanup = renderKnowledgeLinkingSection(permissions, this.plugin, this.linkingTaskId);
+    this.linkingCleanup = renderKnowledgeLinkingSection(permissions, this.plugin, this.linkingTaskId, this.locateLinking);
+    this.locateLinking = false;
     this.linkingTaskId = undefined;
   }
   private renderManagement(page: HTMLElement): void {

@@ -14,6 +14,12 @@ export function knowledgeLinkingProgressText(task: KnowledgeLinkingTask, english
 export function knowledgeLinkingProgressVisible(task: KnowledgeLinkingTask | null): boolean {
   return !!task && !task.dismissed && !["completed", "cancelled"].includes(task.phase);
 }
+/** System jobs use the existing workbench groups without borrowing an Agent task. */
+export function knowledgeLinkingTaskGroup(task: Readonly<KnowledgeLinkingTask> | null): "running" | "waiting" | "interrupted" | null {
+  if (!task || task.dismissed || ["completed", "cancelled"].includes(task.phase)) return null;
+  if (task.phase === "awaiting-confirmation") return "waiting";
+  return ["scanning", "judging", "writing", "queued"].includes(task.phase) ? "running" : "interrupted";
+}
 export function mountKnowledgeLinkingProgress(container: HTMLElement, source: KnowledgeLinkingProgressSource, open: (taskId?: string) => void, english = false): () => void {
   const document = container.ownerDocument;
   container.classList.add("echoink-knowledge-linking-progress");

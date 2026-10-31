@@ -30,7 +30,8 @@ import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 import { isProWorkbenchModule, renderWorkbenchModuleLock, workbenchHasPro } from "./workbench-module-lock";
 import { maintenanceActivityText, maintenanceTaskTitle, maintenanceTaskStatus, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import type { MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
-import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
+import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
+import { knowledgeLinkingProgressText, knowledgeLinkingTaskGroup, renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking-progress";
 import { renderVaultMemoryBanner } from "./vault-memory-banner";
 import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
 import { diaryHomeSummary } from "./diary-organizer-summary";
@@ -120,6 +121,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private entries: readonly TaskEntry[] | null = null;
   private snapshot: WorkbenchSnapshot | null = null;
   private knowledgeSource?: KnowledgeActivitySource;
+  private linkingTask: Readonly<KnowledgeLinkingTask> | null = null;
   private knowledgeUnsubscribe?: () => void;
   private maintenanceActivities: readonly Readonly<MaintenanceActivity>[] = [];
   private maintenance = new Map<string, Readonly<MaintenanceActivity>>();
@@ -195,7 +197,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.foreground?.dispose(); this.foreground = null;
     this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
-    this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear();
+    this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear(); this.linkingTask = null;
     this.clearTimers(); this.stopSearchWork();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
   }
@@ -227,9 +229,12 @@ export class EchoInkWorkbenchView extends ItemView {
     const source = this.plugin.getKnowledgeActivitySource?.();
     if (source === this.knowledgeSource) return;
     this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = source;
-    this.maintenanceActivities = source?.snapshot().maintenance ?? [];
+    const initial = source?.snapshot();
+    this.linkingTask = initial?.linking ?? [initial?.primary, initial?.other].find(activity => activity?.kind === "linking")?.task ?? null;
+    this.maintenanceActivities = initial?.maintenance ?? [];
     this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries ?? []);
     if (source) this.knowledgeUnsubscribe = source.subscribe(snapshot => {
+      this.linkingTask = snapshot.linking ?? [snapshot.primary, snapshot.other].find(activity => activity?.kind === "linking")?.task ?? null;
       this.maintenanceActivities = snapshot.maintenance;
       this.maintenance = latestMaintenanceActivities(this.maintenanceActivities, this.entries ?? []);
       if (this.active()) this.render(); else this.refreshPending = true;
@@ -547,9 +552,11 @@ export class EchoInkWorkbenchView extends ItemView {
       error: () => { new Notice(this.t("记忆恢复未完成，原内容和备份已保留。", "Memory recovery could not finish. Your original content and backup are preserved.")); void this.refresh(); }
     });
     const groups = this.taskGroups(now);
+    const linkingGroup = knowledgeLinkingTaskGroup(this.linkingTask);
+    const counts = Object.fromEntries(Object.entries(groups).map(([key, entries]) => [key, entries.length + (key === linkingGroup ? 1 : 0)])) as Record<keyof TaskGroups, number>;
     const weather: WorkbenchWeather | null = this.taskError || this.entries === null ? null
-      : groups.interrupted.length ? "drizzle" : groups.waiting.length ? "overcast" : groups.running.length ? "breeze" : groups.completed.length ? "fair" : "still";
-    const count = weather === "drizzle" ? groups.interrupted.length : weather === "overcast" ? groups.waiting.length : weather === "breeze" ? groups.running.length : groups.completed.length;
+      : counts.interrupted ? "drizzle" : counts.waiting ? "overcast" : counts.running ? "breeze" : counts.completed ? "fair" : "still";
+    const count = weather === "drizzle" ? counts.interrupted : weather === "overcast" ? counts.waiting : weather === "breeze" ? counts.running : counts.completed;
     this.weatherStage?.update(weather, weather === "drizzle" ? this.t(`${count} 件没做完`, `${count} unfinished`) : weather === "overcast" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : weather === "breeze" ? this.t(`${count} 件在跑`, `${count} in progress`) : weather === "fair" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
@@ -662,13 +669,26 @@ export class EchoInkWorkbenchView extends ItemView {
     disposeOriginControls(root);
   }
   private taskGroup(state: keyof TaskGroups, title: string, entries: readonly TaskEntry[], now: number): void {
-    const section = this.group(state, title, entries.length, state === "completed");
+    const linking = knowledgeLinkingTaskGroup(this.linkingTask) === state ? this.linkingTask : null;
+    const section = this.group(state, title, entries.length + (linking ? 1 : 0), state === "completed");
     if (!section) return;
     const host = section.lastElementChild as HTMLElement;
-    this.syncRows(host, entries, entry => entry.conversationId,
-      entry => JSON.stringify([this.language, entry, this.maintenance.get(entry.conversationId), this.agent(entry), this.summary(entry), this.pending(entry), this.interruptions.get(entry.conversationId), this.plugin.taskToolCallRecovery?.(entry.conversationId, this.interruptions.get(entry.conversationId)), this.interruptionErrors.has(entry.conversationId), !!this.taskError]),
-      entry => state === "completed" ? this.completedRow(entry) : this.taskCard(entry));
+    type Item = { kind: "task"; entry: TaskEntry } | { kind: "linking"; task: Readonly<KnowledgeLinkingTask> };
+    const items: Item[] = entries.map(entry => ({ kind: "task", entry }));
+    if (linking) items.push({ kind: "linking", task: linking });
+    this.syncRows(host, items, item => item.kind === "linking" ? `system-linking:${item.task.id}` : item.entry.conversationId,
+      item => item.kind === "linking" ? JSON.stringify([this.language, item.task]) : JSON.stringify([this.language, item.entry, this.maintenance.get(item.entry.conversationId), this.agent(item.entry), this.summary(item.entry), this.pending(item.entry), this.interruptions.get(item.entry.conversationId), this.plugin.taskToolCallRecovery?.(item.entry.conversationId, this.interruptions.get(item.entry.conversationId)), this.interruptionErrors.has(item.entry.conversationId), !!this.taskError]),
+      item => item.kind === "linking" ? this.linkingRow(item.task) : state === "completed" ? this.completedRow(item.entry) : this.taskCard(item.entry));
     host.querySelectorAll<HTMLElement>("[data-started-at]").forEach(time => { time.textContent = this.elapsed(Number(time.dataset.startedAt), now); });
+  }
+  private linkingRow(task: Readonly<KnowledgeLinkingTask>): HTMLElement {
+    const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-rows";
+    row.dataset.wb = "knowledge-linking";
+    const button = this.button(row, "", `system-linking-${task.id}`, () => this.plugin.openKnowledgeLinkingDetails(task.id), "tertiary");
+    button.classList.add("wb-completed-body");
+    button.createSpan({ cls: "wb-grow", text: this.t("补全知识关联", "Complete knowledge links") });
+    button.createSpan({ cls: "wb-time", text: knowledgeLinkingProgressText(task, this.language === "en") });
+    return row;
   }
   private agent(entry: TaskEntry): AgentDefinition {
     const registry = this.plugin.settings.agentRegistry;

@@ -4,6 +4,8 @@ import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks,
 import { openWorkbenchModule } from "../home/module-navigation";
 import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
 import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
+import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
+import { knowledgeLinkingProgressText } from "../ui/codex-view/knowledge-linking-progress";
 import type { TaskEntry } from "../agents/task-presentation";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "../home/workbench-types";
 import type { EchoInkQuestionInteraction } from "../types/conversation-turn";
@@ -116,6 +118,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
+    async openKnowledgeLinkingDetails(id?: string) { calls.push(["linking-settings", id]); },
     async openWorkbenchModuleSettings(id: string) { calls.push(["module-settings", id]); },
     lifestyle: { async open(kind: string) { calls.push(["lifestyle", kind]); } },
     englishDiary: { async openToday() { calls.push(["english"]); } },
@@ -168,6 +171,22 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(host.settings.knowledgeBase.initialized, true);
     assert.equal((savedSettings.at(-1) as typeof host.settings).knowledgeBase.initialized, true);
     assert.equal(reminder.hidden, true); await view.refresh(); assert.equal(reminder.hidden, true);
+    for (const [phase, group] of [["scanning", "running"], ["judging", "running"], ["writing", "running"], ["queued", "running"], ["awaiting-confirmation", "waiting"], ["partial", "interrupted"], ["failed", "interrupted"], ["interrupted", "interrupted"], ["completed", null], ["cancelled", null]] as const) {
+      const linking: KnowledgeLinkingTask = { schemaVersion: 1, id: "system-linking", mode: "manual", phase, judgment: "aliases", bindingSignature: "test", createdAt: 1, updatedAt: 2, processed: 9, total: 20, proposals: [], patches: [], results: [] };
+      activitySnapshot = { primary: null, other: null, maintenance: [], linking };
+      for (const listener of activityListeners) listener(activitySnapshot);
+      const row = content.querySelector<HTMLElement>('[data-wb="knowledge-linking"]');
+      if (!group) { assert.equal(row, null, `${phase} needs no workbench action`); continue; }
+      assert.ok(row, `${phase} remains visible even without a conversation task`);
+      assert.equal(row.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, group);
+      assert.match(row.textContent!, /补全知识关联/u);
+      assert.ok(row.textContent!.includes(knowledgeLinkingProgressText(linking)));
+      assert.equal(row.closest("section")?.querySelector(".wb-count")?.textContent, "1");
+      row.querySelector<HTMLButtonElement>("button")!.click(); await tick();
+      assert.deepEqual(calls.at(-1), ["linking-settings", "system-linking"]);
+    }
+    activitySnapshot = { primary: null, other: null, maintenance: [], linking: null };
+    for (const listener of activityListeners) listener(activitySnapshot);
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="empty"]').length, 0);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
     assert.equal(content.querySelector("time")?.getAttribute("datetime"), localDate(new Date()));

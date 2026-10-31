@@ -22340,6 +22340,11 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-knowledge-linking-preview-note, .echoink-knowledge-linking-result-note { padding-block: 12px; border-bottom: 1px solid var(--background-modifier-border); }
 .echoink-knowledge-linking-preview-note p { white-space: pre-wrap; }
 .echoink-knowledge-linking-error { color: var(--text-error); }
+.echoink-knowledge-linking-located { animation: echoink-linking-locate 1.8s ease-out; }
+@keyframes echoink-linking-locate {
+  0%, 55% { background-color: var(--background-modifier-hover); }
+  100% { background-color: transparent; }
+}
 .echoink-knowledge-linking-inline .setting-item { border: 0; }
 .echoink-knowledge-linking-inline-details { padding: 0 18px 13px; }
 .echoink-knowledge-linking-inline-details summary { cursor: pointer; color: var(--text-muted); }
@@ -27960,6 +27965,7 @@ body:not(.is-mobile).has-echoink-host-status-bar .echoink-agent-tasks .echoink-a
 .echoink-workbench .wb-section-heading > button { margin-left: auto; }
 .echoink-workbench .wb-count { color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
 .echoink-workbench .wb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr)); align-items: start; gap: 10px; }
+.echoink-workbench .wb-grid > .wb-rows { grid-column: 1 / -1; }
 .echoink-workbench .wb-task { min-width: 0; padding: 12px 14px; border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); display: flex; flex-direction: column; gap: 10px; }
 /* Retain the former relational selector's specificity and body-only feedback. */
 .echoink-workbench .wb-task.wb-task.has-active-task-body,

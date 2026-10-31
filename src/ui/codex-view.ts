@@ -153,7 +153,7 @@ import {
   clearTurnWatchdog as clearTurnWatchdogAction,
   type CodexTurnLifecycleHost
 } from "./codex-view/turn-lifecycle";
-import { refreshViewShellCopy, renderViewShell, moveKnowledgeProgressToTaskDetail, type CodexViewShellHost } from "./codex-view/view-shell";
+import { refreshViewShellCopy, renderViewShell, type CodexViewShellHost } from "./codex-view/view-shell";
 import { TurnNavigator } from "./codex-view/turn-navigator";
 import { conversationUiText } from "./codex-view/ui-i18n";
 import { TaskPlanDockController } from "./codex-view/task-plan-dock";
@@ -314,7 +314,6 @@ export class CodexView extends ItemView {
     this.inlineTaskBodyEl = this.taskDetailEl.createDiv({ cls: "echoink-inline-task-body" });
     this.inlineTaskDetail = new InlineTaskDetailView(this.inlineTaskBodyEl, () => inlineTaskHost(this.plugin));
     this.inlineTaskBodyEl.hidden = true;
-    moveKnowledgeProgressToTaskDetail(shell, this.taskDetailEl);
     this.taskDetailEl.append(shell, this.taskPlanDockEl, this.interactionDockEl);
     this.taskInterruptionEl = this.messagesEl.createDiv({ cls: "echoink-task-interruption" });
     this.taskInterruptionEl.dataset.messageTail = "interruption";
@@ -1084,7 +1083,6 @@ export class CodexView extends ItemView {
   refreshSelectionAnnotationSummary(): void { this.renderAttachments(); }
   private rootEl!: HTMLElement;
   private tabBarEl!: HTMLElement;
-  private knowledgeLinkingProgressDispose?: () => void;
   private messagesEl!: HTMLElement;
   private virtualListEl!: HTMLElement;
   private jumpToLatestEl!: HTMLButtonElement;
@@ -1366,7 +1364,6 @@ export class CodexView extends ItemView {
     this.taskCatalogDispose?.(); this.taskCatalogDispose = undefined;
     this.inlineTaskDispose?.(); this.inlineTaskDispose = undefined; this.inlineTaskObservedHost = undefined;
     this.inlineTaskDetail?.dispose(); this.inlineTaskDetail = undefined;
-    this.knowledgeLinkingProgressDispose?.(); this.knowledgeLinkingProgressDispose = undefined;
     this.viewLifecycleGeneration++;
     this.viewLifecycleAbortController?.abort();
     try {
