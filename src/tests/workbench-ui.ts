@@ -17,6 +17,8 @@ import { runDesktopModuleSettingsTests } from "./desktop-module-settings";
 import { MAINTENANCE_ACTIVITY_STAGES, maintenanceCompletionText, type KnowledgeActivitySnapshot, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
+import { openTestNotices, openTestNoticeMessages } from "./obsidian-shim";
+import { WorkbenchSetupRequired } from "../home/workbench-action-feedback";
 
 const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
@@ -59,6 +61,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     activitySnapshot = { primary: activities[0] ?? null, other: null, maintenance: activities };
     for (const listener of activityListeners) listener(activitySnapshot);
   };
+  let dispatchError: Error | undefined;
   let snapshot: WorkbenchSnapshot = { generatedAt: Date.now(), signals: [], todayTodos: [], modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"], issues: [] };
   const port: WorkbenchDataPort = {
     async load() { dataReads++; if (failData) throw new Error("本地事项读取失败"); return snapshot; },
@@ -71,7 +74,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     app: {
       vault: { getMarkdownFiles: () => files, cachedRead: async () => "正文检索测试", getAbstractFileByPath: (path: string) => files.find(file => file.path === path) },
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
-      workspace: { on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
+      workspace: { containerEl: document.body, on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
     settings: { expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
     async saveSettings() { savedSettings.push(structuredClone(host.settings)); },
@@ -105,6 +108,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
+    async startWorkbenchSignalTask(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["dispatch", ...args]); return "new-task"; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
     async activateKnowledgeView() { calls.push(["knowledge"]); },
@@ -336,7 +340,19 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.deepEqual(Array.from(content.querySelectorAll('[data-task="wait"] .wb-options button')).map(node => node.textContent), ["选项 A", "其他"]);
     content.querySelector<HTMLElement>('[data-task="wait"] .wb-question > div')!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["detail", "wait"], "the question card still opens the complete question and supplement");
-    await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "list"); assert.equal(snapshot.signals.length, 7, "prefill does not consume a signal");
+    await click("signal-signal-0"); assert.equal(calls.at(-1)?.[0], "dispatch"); assert.equal(snapshot.signals.length, 7, "dispatch does not invent completion");
+    dispatchError = new Error("真实派发异常");
+    await click("signal-signal-0");
+    assert.match(openTestNoticeMessages.at(-1)!, /操作未完成：真实派发异常/);
+    assert.equal(button("signal-signal-0").disabled, false, "errors release the action's busy state");
+    dispatchError = new WorkbenchSetupRequired("先配置可用的模型。", "models");
+    await click("signal-signal-0");
+    const setupContent = openTestNotices.at(-1)!.message as unknown as DocumentFragment;
+    assert.match(setupContent.textContent!, /先配置可用的模型/);
+    assert.equal(setupContent.querySelector("button")?.textContent, "去设置模型");
+    setupContent.querySelector("button")!.click(); await tick();
+    assert.deepEqual(calls.at(-1), ["setup", "models"]);
+    dispatchError = undefined;
     assert.ok([...subscribers].every(listener => listener.isTaskVisible("done") === false), "overview never marks all tasks read");
     assert.equal(content.querySelectorAll("button button").length, 0);
 

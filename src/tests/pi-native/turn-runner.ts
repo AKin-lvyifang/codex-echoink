@@ -7,6 +7,10 @@ import { applyConversationTaskMetadata, patchConversationTaskMetadata, type Conv
 import { restoreSelectionDraft, emptySelectionDraft } from "../../selection-ask/draft";
 import * as assert from "node:assert/strict";
 import { CodexView } from "../../ui/codex-view";
+import { JSDOM } from "jsdom";
+import { installObsidianDom } from "../obsidian-dom";
+import { WorkbenchSetupRequired } from "../../home/workbench-action-feedback";
+import type { WorkbenchSignal } from "../../home/workbench-types";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -3670,6 +3674,7 @@ if (process.env.ECHOINK_RUN_PI_TURN_RUNNER_TESTS === "1") {
 
 /** Focused B/C regression: uses production transfer handlers and queue, never a Provider. */
 export async function runWorkbenchComposerTests(): Promise<void> {
+  await workbenchSignalDispatch();
   for (const newDraft of [false, true]) {
     const session = piSessionShell(`workbench-transfer-${newDraft}`);
     const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
@@ -3736,6 +3741,43 @@ export async function runWorkbenchComposerTests(): Promise<void> {
   await workbenchListComposerOwnership();
   await workbenchMaintenanceBatches();
   console.log("Workbench Composer: PASS immediate transfer, concurrent drafts, attachments, cancellation, list ownership handoff, insertion success/failure/deduplication, 23-source serial batches, paused queues and accepted-entry deduplication");
+}
+
+async function workbenchSignalDispatch(): Promise<void> {
+  const dom = new JSDOM("<!doctype html><body></body>"); installObsidianDom(dom.window);
+  try {
+    const settings = createQueueImageProviderSettings();
+    const created: any[] = [], started: any[] = [], opened: string[] = [], deleted: string[] = [];
+    let rejected = false;
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getTaskResumeError: () => "执行器未受理",
+      createPiConversation: async (input: any) => { created.push(input); return { ...input, piSessionId: "pi", status: "active", createdAt: 1, updatedAt: 1 }; },
+      setPiConversationStatus: async (id: string) => { deleted.push(id); },
+      getConversationRunService: () => ({ start: async (item: any) => { started.push(item); return rejected ? "failed" : "running"; } }) };
+    const view: any = new CodexView({} as any, plugin);
+    view.inputEl = dom.window.document.createElement("textarea"); view.inputEl.value = "不能丢的草稿";
+    view.attachments = [{ type: "file", name: "保留.md", path: "/fixture/保留.md" }];
+    view.saveTaskComposerDraft = () => undefined; view.reloadTaskCatalog = async () => undefined;
+    view.openTaskDetail = async (id: string) => { opened.push(id); };
+    view.sessionHost = () => ({ plugin }); view.ensureChatWorkspaceSelected = async () => true;
+    const options = { providerSettingsId: settings.apiProviders[0].id, runtimeProviderId: settings.apiProviders[0].runtimeProviderId,
+      model: "queue-image-model", reasoning: "none", permission: "workspace-write", mode: "agent", mcpEnabled: false };
+    view.currentTurnOptions = () => options;
+    const source = { version: 1 as const, signalId: 9 as const, moduleId: "review" as const, businessKey: "review-week", objects: ["2026-10-26"], prompt: "完成本周复盘", capturedAt: 1 };
+    const signal: WorkbenchSignal = { id: 9, key: source.businessKey, moduleId: "review", icon: "calendar-check", description: "本周还没有完成复盘", prompt: source.prompt, source };
+    const id = await view.startWorkbenchSignalTask("sol", signal);
+    assert.equal(created[0].agentId, "sol"); assert.equal(created[0].cwd, "/fixture");
+    assert.equal(started[0].sessionId, id); assert.equal(started[0].text, signal.prompt);
+    assert.deepEqual(JSON.parse(started[0].prefillSource), source); assert.deepEqual(opened, [id]);
+    assert.equal(view.inputEl.value, "不能丢的草稿"); assert.equal(view.attachments[0].name, "保留.md");
+    assert.equal(view.composerTransfers.size, 0, "isolated dispatch must never transfer the visible Composer");
+    options.model = "missing";
+    await assert.rejects(view.startWorkbenchSignalTask("sol", signal), (error: unknown) => error instanceof WorkbenchSetupRequired && error.target === "models");
+    assert.equal(created.length, 1, "preflight fails before creating a durable task");
+    options.model = "queue-image-model"; rejected = true;
+    await assert.rejects(view.startWorkbenchSignalTask("sol", signal), /执行器未受理/);
+    assert.deepEqual(deleted, [created[1].conversationId]); assert.equal(settings.sessions.length, 1, "rejected tasks are cleaned up");
+    assert.equal(view.inputEl.value, "不能丢的草稿");
+  } finally { dom.window.close(); }
 }
 
 async function workbenchListComposerOwnership(): Promise<void> {

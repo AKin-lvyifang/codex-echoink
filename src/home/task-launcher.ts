@@ -1,9 +1,10 @@
-import { Notice } from "obsidian";
+import { Notice, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID } from "../agents/types";
 import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchTaskSource } from "./workbench-types";
 import { getWorkbenchDataService } from "./workbench-data";
+import { WorkbenchSetupRequired } from "./workbench-action-feedback";
 
 const SIGNAL_IDS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]);
 
@@ -23,7 +24,7 @@ export function parseWorkbenchTaskSource(value: unknown): WorkbenchTaskSource | 
   } catch { return null; }
 }
 
-/** Recheck a stale row and only navigate/prefill; never create a Conversation or run. */
+/** Recheck scope and dispatch an isolated task; never send another Composer's draft. */
 export async function launchWorkbenchSignal(
   plugin: CodexForObsidianPlugin,
   signal: WorkbenchSignal,
@@ -38,7 +39,17 @@ export async function launchWorkbenchSignal(
   const registry = plugin.settings.agentRegistry;
   const assigned = registry.moduleOwners[current.moduleId];
   const owner = registry.agents.some(agent => agent.id === assigned) ? assigned : GENERAL_ASSISTANT_ID;
-  return plugin.openAgentTaskList(owner, current.prompt, JSON.stringify(current.source));
+  if (current.moduleId === "knowledge-base") {
+    const roles = plugin.settings.knowledgeBase.folderBindings?.roles;
+    const exists = (path: string) => plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder;
+    const sources = roles?.raw.enabled && roles.raw.readPaths.some(exists);
+    const outcomes = roles && [roles.wiki, roles.projects].some(role => role.enabled && !!role.writePath && exists(role.writePath));
+    if (!outcomes || current.id !== 14 && !sources) throw new WorkbenchSetupRequired(
+      plugin.settings.settingsLanguage === "en" ? "Set up knowledge folders first." : "先设置知识库目录。", "knowledge");
+  }
+  const taskId = await plugin.startWorkbenchSignalTask(owner, current);
+  if (!taskId) throw new Error(plugin.settings.settingsLanguage === "en" ? "The task was not accepted. Please try again." : "任务尚未受理，请重试。");
+  return true;
 }
 
 /** Keep the question's identity when another task is active in the sidebar. */
