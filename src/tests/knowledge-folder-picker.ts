@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { installObsidianDom } from "./obsidian-dom";
 import { JSDOM } from "jsdom";
 import { parse } from "postcss";
 import { createKnowledgeFolderPicker, type KnowledgeFolderChoice, type KnowledgeFolderPickerOptions } from "../settings/knowledge-folder-picker";
@@ -6,6 +7,7 @@ import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { initializationFolderIssues } from "../knowledge-base/initialization-choices";
 
 function installWindow(value: unknown): void {
+  installObsidianDom(value);
   const win = value as Window & typeof globalThis;
   Object.assign(win.HTMLElement.prototype, {
     createDiv(this: HTMLElement, options: { cls?: string } = {}) {
@@ -140,7 +142,11 @@ export async function runKnowledgeFolderPickerTests(value: unknown, pickerCss: s
     assert.equal(host.querySelectorAll(".echoink-folder-picker-tag").length, 2);
     assert.equal(host.querySelectorAll(".echoink-folder-picker-new").length, 1);
     assert.equal(host.querySelectorAll("input").length, 0); assert.equal(trigger().textContent, "添加");
-    assert.equal(host.querySelector<HTMLElement>(".echoink-folder-picker-tag")?.dataset.testTooltip, "raw", "full tag paths use Obsidian setTooltip");
+    const tooltipTag = host.querySelector<HTMLElement>(".echoink-folder-picker-tag")!;
+    tooltipTag.dispatchEvent(new win.MouseEvent("mouseenter")); await tick();
+    assert.equal(win.document.querySelector(".tooltip")?.textContent, "raw", "full tag paths use the window-aware native tooltip adapter");
+    tooltipTag.dispatchEvent(new win.MouseEvent("mouseleave")); await tick();
+    assert.equal(win.document.querySelector(".tooltip"), null, "native path tooltips leave with hover");
     assert.equal(host.querySelectorAll('[data-test-icon="x"]').length, 2, "tag removal uses the host Lucide icon");
     trigger().click(); await tick();
     assert(!menuOption("raw") && !menuOption("待新建同名"), "both existing and confirmed-new selections are excluded");

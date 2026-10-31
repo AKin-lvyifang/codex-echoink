@@ -26,7 +26,7 @@ try {
     plugins: [{ name: "folder-picker-host", setup(build) {
       build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "host", namespace: "folder-picker-host" }));
       build.onLoad({ filter: /.*/, namespace: "folder-picker-host" }, () => ({
-        contents: `export {Scope} from ${JSON.stringify(path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts"))}; export function setIcon(element, icon) { element.dataset.testIcon = icon; } export function setTooltip(element, text) { element.dataset.testTooltip = text; }`, loader: "js", resolveDir: rootDir
+        contents: `export {Scope} from ${JSON.stringify(path.join(rootDir, "src/tests/origin-obsidian-dom-shim.ts"))}; export function setIcon(element, icon) { element.dataset.testIcon = icon; } export const Platform = {isDesktopApp: true}; export class Notice { hide() {} } export function displayTooltip(element, text, options) { const tip = element.ownerDocument.createElement("div"); tip.className = "tooltip " + (options?.classes ?? []).join(" "); tip.textContent = text; element.ownerDocument.body.append(tip); }`, loader: "js", resolveDir: rootDir
       }));
     } }]
   });
