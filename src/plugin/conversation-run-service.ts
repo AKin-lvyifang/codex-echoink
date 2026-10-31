@@ -22,6 +22,7 @@ export interface ConversationRunState {
   turnStartedAt: number;
   turnWatchdog: number | null;
   queueStartInProgress: boolean;
+  stopReason?: TaskInterruptionReason;
   readonly controller: AbortController;
   context?: CodexViewTurnContext;
   flight?: Promise<QueuedTurnOutcome>;
@@ -190,11 +191,14 @@ export class ConversationRunService {
           const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
           const maintenance = this.plugin.getKnowledgeActivitySource()?.snapshot().maintenance.filter(activity => activity.originConversationId === session.id && (activity.status !== "completed" || (activity.completedAt ?? 0) >= state.turnStartedAt)).sort((a,b) => b.updatedAt - a.updatedAt)[0];
           const businessComplete = !maintenance || maintenance.status === "completed";
-          await this.plugin.setPiConversationTaskMetadata(session.id, outcome === "completed" && !waiting && businessComplete
+          const queued = this.turnQueue.itemsForSession(session.id).length > 0 && !this.turnQueue.isSessionQueuePaused(session.id);
+          const continuing = outcome === "completed" && !waiting && queued;
+          await this.plugin.setPiConversationTaskMetadata(session.id, continuing ? { taskStatus: "running", taskCompletedAt: undefined }
+            : outcome === "completed" && !waiting && businessComplete
             ? { taskStatus: "completed", taskCompletedAt: maintenance?.completedAt ?? Date.now(), taskInterruptedAt: undefined, pendingResponse: undefined, taskStage: undefined }
             : waiting ? { taskStatus: "waiting" }
               : { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined });
-          if (Platform.isDesktopApp && outcome === "completed" && !waiting && businessComplete && session.businessKey) {
+          if (Platform.isDesktopApp && outcome === "completed" && !waiting && !queued && businessComplete && session.businessKey) {
             await getWorkbenchDataService(this.plugin).recordTaskCompleted(session.id).catch(error => {
               console.warn("EchoInk workbench could not record the task result.", error);
               new Notice("任务已完成，但工作台事项尚未更新，请稍后重试。");
@@ -211,6 +215,15 @@ export class ConversationRunService {
         this.clearWatchdog(state);
         this.clearActiveRun(session.id, state);
         const next = this.turnQueue.settleSessionQueue(session.id, outcome === "completed");
+        const pending = this.pendingInteractions.get(session.id);
+        const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
+        if (Platform.isDesktopApp && frozen.piUserEntryAccepted && session.businessKey && !waiting && next !== "continue"
+          && !this.disposed && state.stopReason !== "app_closed" && state.stopReason !== "plugin_disabled") {
+          await Promise.resolve().then(() => getWorkbenchDataService(this.plugin).recordTaskEnded?.(session.id)).catch(error => {
+            console.warn("Workbench handoff could not settle", error);
+            new Notice("任务已结束，但提醒状态未保存，请稍后重试。");
+          });
+        }
         await this.flushSave();
         this.notify(session.id);
         if (next === "continue" && !this.disposed && !this.blockedAgents.has(session.agentId ?? "sol")) {
@@ -245,7 +258,7 @@ export class ConversationRunService {
     const flight = state?.flight;
     this.turnQueue.pauseSessionQueue(id);
     await this.plugin.recordTaskInterruption?.(id, reason).catch(error => console.error("Task interruption cause could not be saved", error));
-    if (state) { state.controller.abort(); this.clearWatchdog(state); }
+    if (state) { state.stopReason = reason; state.controller.abort(); this.clearWatchdog(state); }
     await this.plugin.abortPiConversation(id);
     if (flight) await flight;
     if (resumeFlight) await resumeFlight.catch(() => undefined);

@@ -5,6 +5,7 @@ import { TFile } from "obsidian";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { paidTestAccess } from "./membership-access";
 import { WorkbenchDataService } from "../home/workbench-data";
+import { preparePluginDataRoot } from "../plugin/plugin-data-paths";
 import { HomeWorkbenchDataService, defaultJournalTemplateChoice } from "../home/home-workbench-data";
 import { journalTemplateBaseline, readWorkbenchJournalDay, recordWorkbenchJournalTemplate } from "../home/workbench-journal";
 import { getWorkbenchRecordStore, localWorkbenchDate, recordWorkbenchReviewSaved, WorkbenchRecordStore, workbenchFingerprint, workbenchWeekKey } from "../home/workbench-records";
@@ -51,9 +52,11 @@ async function fixture(root: string) {
   }
   bindings.roles.journal.native = true;
   plugin.settings.knowledgeBase.folderBindings = bindings;
-  const unregister = registerKnowledgeFolderBindings(root, () => bindings);
+  const unregisterBindings = registerKnowledgeFolderBindings(root, () => bindings);
   registerKnowledgePrivateRoot(root, path.join(root, ".obsidian/plugins/codex-echoink/pi-agent-product-v1/knowledge"));
   plugin.manifest = { id: "codex-echoink" };
+  const pluginRoot = await preparePluginDataRoot(root, plugin.manifest, app.vault.configDir);
+  const unregister = () => { unregisterBindings(); pluginRoot.dispose(); };
   plugin.accountService = paidTestAccess;
   plugin.settings.lifestyle.finance.enabled = true;
   plugin.settings.pdfReading.enabled = true;
@@ -135,7 +138,7 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   assert.ok((await service.load(Date.now())).signals.some(signal => signal.id === 6), "renaming inside Inbox preserves the original arrival");
   await f.move("inbox/renamed.md", "wiki/organized.md");
   assert.ok(!(await service.load(Date.now())).signals.some(signal => signal.id === 6), "only the actually moved item is removed");
-  const records = getWorkbenchRecordStore(f.root);
+  const records = getWorkbenchRecordStore(f.root, f.plugin.getPluginDataDirName());
   let persisted = await new WorkbenchRecordStore(records.filePath).snapshot();
   assert.ok(Object.values(persisted.inbox).some(scope => Object.values(scope.entries).some(item => item.processed?.resultPath === "wiki/organized.md")), "native move success survives reload");
   await f.write("inbox/new-4.md", "稍后加入");
@@ -265,7 +268,7 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   agent.receipts.set("formal-review", [receipt("outputs/agent-week-review.md", Date.now())]);
   await agentService.recordTaskCompleted("formal-review");
   assert.ok(!(await agentService.load(now)).signals.some(signal => signal.id === 9));
-  const durable = await new WorkbenchRecordStore(getWorkbenchRecordStore(agent.root).filePath).snapshot();
+  const durable = await new WorkbenchRecordStore(getWorkbenchRecordStore(agent.root, agent.plugin.getPluginDataDirName()).filePath).snapshot();
   assert.equal(durable.reviews[workbenchWeekKey(now)].taskId, "formal-review");
   assert.equal(durable.tasks["formal-review"].source.businessKey, source.businessKey, "accepted source survives disk reload");
   agentService.dispose(); agent.unregister();
@@ -334,17 +337,32 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   const knownActivity = { originConversationId: "mixed-maintenance", status: "running" as const, sourcePaths: mixedPaths.slice(0, 12), updatedAt: now };
   mixed.setMaintenanceActivities([knownActivity]);
   assert.ok(maintenanceRefreshes > 0, "maintenance source changes refresh the data projection");
-  const knownMixed = await mixedService.load(now), knownSignal = knownMixed.signals.find(signal => signal.id === 7)!;
-  assert.ok(knownSignal, "same-key known maintenance leaves the full candidate signal for remaining-scope display and action");
-  assert.deepEqual(knownSignal.source.objects, mixedPaths);
-  assert.deepEqual(knownSignal.source.objects.filter(target => !knownActivity.sourcePaths.includes(target)), mixedPaths.slice(12), "15 candidates minus 12 real maintenance sources leaves exactly 3 candidates");
-  assert.equal(knownMixed.todayTodos[0].title, "保留其他待办");
-  mixed.tasks.push({ conversationId: "ordinary-busy", taskStatus: "running", status: "active", businessKey: mixedSignal.key });
-  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7), "data service does not exempt another ordinary same-key busy task");
-  mixed.tasks.pop(); mixed.setMaintenanceActivities([{ ...knownActivity, sourcePaths: [], updatedAt: now + 1 }]);
-  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7));
-  mixed.setMaintenanceActivities([{ ...knownActivity, status: "completed", updatedAt: now + 2 }]);
-  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7));
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7), "a partial batch keeps the whole reminder assigned");
+  const assignment = mixed.tasks[0];
+  await mixedService.recordTaskAccepted(assignment.conversationId, mixedSignal.source);
+  assignment.taskStatus = "waiting";
+  assert.ok(!(await mixedService.load(now)).signals.some(signal => signal.id === 7), "waiting still owns the reminder");
+  assignment.taskStatus = "interrupted";
+  mixedService.dispose();
+  const afterRestart = new WorkbenchDataService(mixed.plugin);
+  assert.ok(!(await afterRestart.load(now)).signals.some(signal => signal.id === 7), "startup interruption does not release a persisted assignment");
+  const onDisk = await new WorkbenchRecordStore(getWorkbenchRecordStore(mixed.root, mixed.plugin.getPluginDataDirName()).filePath).snapshot();
+  assert.equal(onDisk.tasks[assignment.conversationId].source.businessKey, mixedSignal.key, "assignment survives a new store instance");
+  await afterRestart.recordTaskEnded(assignment.conversationId);
+  assert.equal((await afterRestart.load(now)).signals.find(signal => signal.id === 7)?.source.objects.length, 15, "explicit end restores unresolved actual sources");
+  assignment.taskStatus = "completed";
+  for (const target of mixedPaths.slice(0, 12)) {
+    const body = Buffer.from(await mixed.app.vault.read(mixed.app.vault.getAbstractFileByPath(target)));
+    mixed.maintenance.push({ at: now, sources: [{ path: target, fingerprint: rawDigestFingerprint(target, body), status: "processed" }] });
+  }
+  const remaining = (await afterRestart.load(now)).signals.find(signal => signal.id === 7)!;
+  assert.equal(remaining.description, "3 篇资料待整理"); assert.deepEqual(remaining.source.objects, mixedPaths.slice(12));
+  for (const target of mixedPaths.slice(12)) {
+    const body = Buffer.from(await mixed.app.vault.read(mixed.app.vault.getAbstractFileByPath(target)));
+    mixed.maintenance.push({ at: now + 1, sources: [{ path: target, fingerprint: rawDigestFingerprint(target, body), status: "processed" }] });
+  }
+  assert.ok(!(await afterRestart.load(now)).signals.some(signal => signal.id === 7), "completed fingerprints, rather than dispatch, close the reminder");
+  afterRestart.dispose();
   stopMixedRefresh(); mixedService.dispose();
   assert.equal(mixed.maintenanceSubscriptions(), 0, "data disposal releases the shared maintenance subscription");
   mixed.unregister();

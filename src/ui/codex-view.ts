@@ -812,7 +812,8 @@ export class CodexView extends ItemView {
     try {
       // Expose the new card before runtime preparation/acceptance, which may do
       // disk IO. The old conversation keeps its own run, queue and saved draft.
-      await this.plugin.setPiConversationTaskMetadata(session.id, { taskStatus: "running", taskStartedAt: Date.now() });
+      await this.plugin.setPiConversationTaskMetadata(session.id, { taskStatus: "running", taskStartedAt: Date.now(), businessKey: signal.source.businessKey });
+      this.plugin.notifyHomeSurfacesChanged();
       await this.reloadTaskCatalog(); await this.openTaskDetail(session.id);
       const outcome = await this.plugin.getConversationRunService().start(item, "composer");
       if (outcome === "running") item.piUserEntryAccepted = true;
@@ -822,6 +823,7 @@ export class CodexView extends ItemView {
       if (!item.piUserEntryAccepted) {
         await this.plugin.setPiConversationStatus(session.id, "deleted");
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(value => value.id !== session.id);
+        this.plugin.notifyHomeSurfacesChanged();
         if (this.taskNavigation.page.kind === "detail" && this.taskNavigation.page.taskId === session.id) {
           if (previousPage.kind === "detail") await this.openTaskDetail(previousPage.taskId);
           else if (previousPage.kind === "list") await this.openAgentTaskList(previousPage.agentId);

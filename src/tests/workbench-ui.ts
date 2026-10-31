@@ -386,6 +386,18 @@ export async function runWorkbenchUiTests(): Promise<void> {
     setupContent.querySelector("button")!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["setup", "models"]);
     dispatchError = undefined;
+    const claims = snapshot.signals.map((signal, index) => ({ id: `claimed-${index}`, messages: [] as ChatMessage[], taskStatus: "running", businessKey: signal.key }));
+    host.settings.sessions.push(claims[0]); view.refreshHomeSurfaces();
+    assert.equal(button("signal-signal-0"), undefined, "new live handoff removes the row before the next data load");
+    assert.equal(content.querySelector('[data-wb-group="signals"] .wb-count')?.textContent, "6");
+    claims[0].taskStatus = "waiting"; await view.refresh();
+    assert.equal(button("signal-signal-0"), undefined, "waiting never restores the assign button");
+    host.settings.sessions.push(...claims.slice(1)); view.refreshHomeSurfaces();
+    assert.equal(content.querySelector('[data-wb-group="signals"]'), null, "zero unassigned signals hides the whole section");
+    for (const claim of claims) claim.taskStatus = "completed";
+    await view.refresh();
+    assert.ok(button("signal-signal-0"), "ended conversations re-evaluate the current data");
+    host.settings.sessions = host.settings.sessions.filter(session => !session.id.startsWith("claimed-"));
     assert.ok([...subscribers].every(listener => listener.isTaskVisible("done") === false), "overview never marks all tasks read");
     assert.equal(content.querySelectorAll("button button").length, 0);
 

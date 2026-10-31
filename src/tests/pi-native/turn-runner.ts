@@ -3762,12 +3762,14 @@ async function workbenchSignalDispatch(): Promise<void> {
       queue.enqueue(pending); const originalQueue = structuredClone(queue.itemsForSession(oldId));
       let rejected = false; const acceptance = deferred<"running">();
       const plugin: any = { settings, getVaultPath: () => "/fixture", getTaskResumeError: () => "执行器未受理",
+        notifyHomeSurfacesChanged() {},
         createPiConversation: async (input: any) => { created.push(input); return { ...input, piSessionId: "pi", status: "active", createdAt: 1, updatedAt: 1 }; },
         setPiConversationTaskMetadata: async (id: string, value: any) => { metadata.push({ id, ...value }); },
         setPiConversationStatus: async (id: string) => { deleted.push(id); },
         getConversationRunService: () => ({ turnQueue: queue, runs: new Map([[oldId, oldRun]]), start: async (item: any) => {
           assert.equal(settings.activeSessionId, item.sessionId, "new conversation is visible before runtime accepts it");
           assert.equal(metadata.at(-1).taskStatus, "running", "the workbench card exists while preparation is in flight");
+          assert.equal(metadata.at(-1).businessKey, "review-week", "handoff identity is durable before runtime acceptance");
           started.push(item); return rejected ? "failed" : await acceptance.promise;
         } }) };
       const view: any = new CodexView({} as any, plugin);
@@ -3873,6 +3875,12 @@ async function workbenchMaintenanceBatches(): Promise<void> {
         abortPiConversation: async () => { await settle(requests.length - 1, "cancelled"); }
       };
       service = attachTestConversationRunService(plugin);
+      const batchStatuses: string[] = [];
+      const writeMetadata = plugin.setPiConversationTaskMetadata;
+      plugin.setPiConversationTaskMetadata = async (id: string, patch: ConversationTaskMetadataPatch) => {
+        if (patch.taskStatus) batchStatuses.push(patch.taskStatus);
+        return writeMetadata(id, patch);
+      };
       const record = (state: "completed" | "failed" | "cancelled", index: number): Readonly<PiProductRunRecord> => ({
         productRunId: `batch-${index + 1}`, conversationId: session.id, piSessionId: session.piSessionId!, userEntryId: `entry-${index + 1}`,
         assistantEntryId: "answer", toolCallIds: [], memoryMode: "normal", state: "product_run_settled", terminalState: state,
@@ -3921,6 +3929,7 @@ async function workbenchMaintenanceBatches(): Promise<void> {
       else await settle(0, terminal);
       if (terminal === "completed") {
         await waitFor(() => requests.length === 2);
+        assert.ok(!batchStatuses.includes("completed"), "queued batches keep the whole handoff in progress between runs");
         assert.equal(prepareCalls, 1, "later batches do not expand or restart the original scope");
         assert.match(requests[1].text, /^\/maintain /u);
         assert.deepEqual(requests[1].maintenanceScope, { mode: "batch", sourcePaths: sourcePaths.slice(20), folderBindingsRevision: 2 });
