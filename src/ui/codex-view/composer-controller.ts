@@ -132,8 +132,6 @@ export interface CodexComposerHost {
   renderQueue(): void;
   renderAttachments(): void;
   updateContext(tokenUsage: StoredSession["tokenUsage"], persist: boolean): void;
-  runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void>;
-  pickKnowledgeBaseFiles(): void;
   openKnowledgeCommandMenu(event: MouseEvent): void;
   openWorkspaceMenu(event: MouseEvent, session: StoredSession): void;
   openModelMenu(event: MouseEvent): void;

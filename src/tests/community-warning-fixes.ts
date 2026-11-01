@@ -14,19 +14,14 @@ import { PersonalMemoryRepository } from "../harness/memory/personal-memory-repo
 import { HomeActivityService } from "../home/home-activity-service";
 import { refreshKnowledgeBaseIndex, commitKnowledgeBaseIndexCheckpoint, clearKnowledgeBaseIndexMemoryCache } from "../knowledge-base/incremental-index";
 import { CodexMessageListRenderer } from "../ui/codex-view/message-list";
-import { runKnowledgeBaseShortcut } from "../ui/codex-view/turn-runner";
-import { openTestNoticeMessages } from "./obsidian-shim";
-export { Notice } from "./obsidian-shim";
-export { conversationUiText } from "../ui/codex-view/ui-i18n";
 
-export async function runCommunityWarningFixesTests(first: Window, second: Window, createCapture: (host: any) => () => void) {
+export async function runCommunityWarningFixesTests(first: Window, second: Window) {
   processEventPayloads();
   customConfigProtection();
   await dataRoots();
   await maintenanceConfigBoundary();
   measuredRows(first, second);
   providerIcons(first, second);
-  await runShortcutFailureTests(createCapture);
   console.log("Community warning fixes regression: PASS");
 }
 
@@ -263,59 +258,4 @@ function measuredRows(first: Window, second: Window) {
   assert.deepEqual(observedFallback, [row]);
   fallback.dispose();
   console.log("Two-window production row measurement and ResizeObserver registration/callback: PASS");
-}
-
-export async function runShortcutFailureTests(createCapture: (host: any) => () => void) {
-  const unhandled: unknown[] = [];
-  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
-  process.on("unhandledRejection", onUnhandled);
-  try {
-    for (const fail of ["initial-save", "all-saves", "runner", "final-save", "externalize", "mutation-final", "success", "entry-rejection"]) {
-      openTestNoticeMessages.length = 0;
-      const session = { id: "fixture", messages: [] as any[], updatedAt: 0 };
-      let saves = 0, runners = 0, mutations = 0, statuses = 0;
-      let finished: Promise<void> = Promise.resolve();
-      const host: any = {
-        running: false, ensureSession: () => session,
-        renderTabs() {}, renderMessages() {}, renderToolbar() {}, applyStatus() { statuses += 1; },
-        plugin: {
-          settings: { settingsLanguage: "en" },
-          withEchoInkConversationMutation: async (_: string, action: () => Promise<void>) => {
-            mutations += 1;
-            if (fail === "mutation-final" && mutations === 2) throw new Error("mutation-final");
-            return action();
-          },
-          saveSettings: async () => {
-            saves += 1;
-            if (fail === "all-saves" || (fail === "initial-save" && saves === 1) || (fail === "final-save" && saves === 2)) throw new Error(fail);
-          },
-          externalizeMessageText: async () => { if (fail === "externalize") throw new Error(fail); },
-          getKnowledgeSurfaceService: () => ({ captureLink: async () => {
-            runners += 1;
-            if (fail === "runner") throw new Error(fail);
-            return ["Saved.md"];
-          } })
-        },
-        runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>) {
-          finished = fail === "entry-rejection" ? Promise.reject(new Error(fail)) : runKnowledgeBaseShortcut(host, label, runner);
-          return finished;
-        }
-      };
-      createCapture(host)();
-      // Let the DOM callback's detached promise settle without adding a test catch.
-      await new Promise(resolve => setImmediate(resolve));
-      await new Promise(resolve => setImmediate(resolve));
-      assert.deepEqual(unhandled, [], fail);
-      assert.equal(host.running, false, fail);
-      if (fail !== "entry-rejection") {
-        await finished;
-        assert.equal(statuses, 1, fail);
-        assert.equal(session.messages[1].status, fail === "success" ? "completed" : "failed", fail);
-      }
-      assert.equal(runners, ["initial-save", "all-saves", "entry-rejection"].includes(fail) ? 0 : 1, fail);
-      assert.equal(openTestNoticeMessages.length, 1, fail);
-      assert.match(openTestNoticeMessages[0]!, fail === "success" ? /^Save$/ : /failed|Could not save/i, fail);
-    }
-    console.log("Real capture callback: initial/final persistence failures, operation failure, entry rejection and success; no unhandled rejection: PASS");
-  } finally { process.off("unhandledRejection", onUnhandled); }
 }

@@ -62,7 +62,6 @@ import {
   createQueuedTurnFromComposer as createQueuedTurnFromComposerRunner,
   enqueueComposerDraft as enqueueComposerDraftRunner,
   handlePiTaskPlanAction as handlePiTaskPlanActionRunner,
-  runKnowledgeBaseShortcut as runKnowledgeBaseShortcutRunner,
   sendMessage as sendMessageRunner,
   steerPiChatFromComposer as steerPiChatFromComposerRunner,
   resourceMatchesSkillId
@@ -84,7 +83,6 @@ import {
   handleDroppedFiles as handleDroppedFilesAction,
   handlePastedFiles as handlePastedFilesAction,
   pickFiles as pickFilesAction,
-  pickKnowledgeBaseFiles as pickKnowledgeBaseFilesAction,
   renderAttachmentsView,
   type CodexAttachmentHost
 } from "./codex-view/attachments";
@@ -2217,7 +2215,6 @@ export class CodexView extends ItemView {
   }
   private async startQueuedTurnItemSafely(item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
   private async startChatTurn(_session: StoredSession, item: QueuedTurnItem, source: "composer" | "queue"): Promise<"running" | "completed" | "failed" | "cancelled"> { return await this.startQueuedTurnItem(item, source); }
-  private async runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void> { await runKnowledgeBaseShortcutRunner(this.turnRunnerContext, label, runner); }
   private async stopTurn(): Promise<void> {
     const inline = this.taskUiMounted ? this.currentInlineTask() : undefined;
     if (inline) { await inlineTaskHost(this.plugin)?.runtime.stop(inline.taskId); return; }
@@ -2329,7 +2326,6 @@ export class CodexView extends ItemView {
 
   private attachActiveFile(): void { attachActiveFileAction(this.attachmentHost()); }
   private pickFiles(imagesOnly: boolean): void { pickFilesAction(this.attachmentHost(), imagesOnly); }
-  private pickKnowledgeBaseFiles(): void { pickKnowledgeBaseFilesAction(this.attachmentHost()); }
   private handleDroppedFiles(event: DragEvent): void { handleDroppedFilesAction(this.attachmentHost(), event); }
   private async handlePastedFiles(event: ClipboardEvent): Promise<void> { await handlePastedFilesAction(this.attachmentHost(), event); }
 }
