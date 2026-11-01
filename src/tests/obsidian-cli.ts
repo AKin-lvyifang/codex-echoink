@@ -92,6 +92,14 @@ export function officialCliFixture(fixture: Fixture, root: string) {
     if (command === "help") return done(state.advertised.join("\n"));
     if (command === "version") return done("1.13.7 (installer 1.12.7)");
     if (command === "read") return done(await readFile(path.join(root, values.path!), "utf8"));
+    if (command === "search" || command === "search:context") {
+      const hits: string[] = [];
+      for (const file of fixture.app.vault.getMarkdownFiles()) {
+        if (values.path && file.path !== values.path && !file.path.startsWith(`${values.path}/`)) continue;
+        if ((await fixture.app.vault.read(file)).includes(values.query!)) hits.push(file.path);
+      }
+      return done(hits.join("\n"));
+    }
     if (command === "diff") return done("local versions");
     if (command === "daily:path") return done(dailyPath());
     if (command === "daily:read") return done(await readFile(path.join(root, dailyPath()), "utf8"));

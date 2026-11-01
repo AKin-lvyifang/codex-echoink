@@ -27,7 +27,7 @@ export interface AgentCapabilityToolAdapters {
   isFinanceTool(name: string): boolean;
   financeEffect(name: string, args: Readonly<Record<string, unknown>>): string;
   obsidianCli(args: Record<string, unknown>): {
-    request: { readonly file?: unknown; readonly active?: unknown; readonly ref?: unknown };
+    request: { readonly command?: unknown; readonly file?: unknown; readonly active?: unknown; readonly ref?: unknown };
     scope: { readonly capability: string; readonly write: boolean; readonly broad?: boolean; readonly exactTarget?: boolean };
   };
 }
@@ -62,6 +62,7 @@ const MODULE_SKILLS: Readonly<Record<string, AgentModuleCapability>> = {
 const BASE_TOOLS = new Set(["task_update", "user_question"]);
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
 const VAULT_TOOLS = new Set(["vault_search", "note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete"]);
+const ORDINARY_READ_CLI_COMMANDS = new Set(["read", "search", "search:context", "file", "files", "folder", "folders", "outline", "wordcount"]);
 const KNOWLEDGE_TOOLS = new Set(["explore_concept", "knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
 const PATH_FIELDS = new Set(["path", "paths", "relativepath", "relativepaths", "vaultrelativepath", "vaultpath", "scopepath", "sourcepath", "sourcepaths", "targetpath", "targetpaths", "destinationpath", "folder", "directory", "dailypath", "recordpath", "file", "files", "filepath", "filepaths", "fileuri", "fileurl"]);
 export function isAgentCapabilityPathField(key: string): boolean { return PATH_FIELDS.has(key.replaceAll("_", "").replaceAll("-", "").toLowerCase()); }
@@ -149,7 +150,22 @@ function inside(value: string, root: string): boolean { return value === root ||
 function moduleForRole(context: AgentCapabilityContext, role: string): AgentModuleCapability | null {
   return role === "journal" ? "journal" : (context.knowledgeRoles ?? ["raw", "wiki", "projects", "inbox", "outputs", "work", "archive", "templates", "assets"]).includes(role) ? "knowledge" : null;
 }
-export function checkAgentTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false): AgentCapabilityDecision {
+/** Ordinary reads skip directory availability only, preserving live grants and module switches. */
+function checkOrdinaryReadCapability(context: AgentCapabilityContext, capability: string): AgentCapabilityDecision {
+  if (capability !== "knowledge" && capability !== "journal") return checkAgentCapability(context, capability, "read");
+  return checkAgentCapability({ ...context, settings: { ...context.settings,
+    knowledgeBase: { ...context.settings.knowledgeBase, folderBindings: null } } }, capability, "read");
+}
+function checkUnscopedOrdinaryRead(context: AgentCapabilityContext, result: AgentCapabilityDecision): AgentCapabilityDecision {
+  // Other failures and the existing partially scoped Agent rules stay authoritative.
+  if (result.reason !== "module_disabled" || result.capabilityId !== "knowledge" || context.moduleEnabled?.knowledge === false) return result;
+  const bindings = context.settings.knowledgeBase.folderBindings;
+  if (bindings && Object.entries(bindings.roles).some(([role, binding]) => moduleForRole(context, role) !== null
+    && !binding.enabled && (binding.readPaths.some(Boolean) || !!binding.writePath))) return decision("knowledge", "scope_required");
+  return checkOrdinaryReadCapability(context, "knowledge");
+}
+export function checkAgentTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false,
+  options: { readonly ordinaryRead?: boolean } = {}): AgentCapabilityDecision {
   const value = relativeTarget(context, target);
   if (!value) return decision(target, "invalid_target");
   const matches: Array<{ root: string; capability: AgentModuleCapability; enabled: boolean }> = [];
@@ -163,10 +179,12 @@ export function checkAgentTarget(context: AgentCapabilityContext, target: string
   // More specific module outputs (English/finance/review) override the generic outputs root.
   const longest = Math.max(0, ...matches.filter(match => inside(value, match.root)).map(match => match.root.length));
   const relevant = broad ? matches : matches.filter(match => match.root.length === longest);
-  if (!relevant.length) return checkAgentCapability(context, "knowledge", effect);
+  const capabilityCheck = (capability: string) => options.ordinaryRead && effect === "read"
+    ? checkOrdinaryReadCapability(context, capability) : checkAgentCapability(context, capability, effect);
+  if (!relevant.length) return capabilityCheck("knowledge");
   for (const match of relevant) {
     if (!match.enabled) return decision(match.capability, "module_disabled");
-    const result = checkAgentCapability(context, match.capability, effect); if (!result.allowed) return result;
+    const result = capabilityCheck(match.capability); if (!result.allowed) return result;
   }
   return decision(relevant[0].capability, "allowed");
 }
@@ -182,8 +200,8 @@ function structuredTargets(value: unknown): string[] {
   }
   return result;
 }
-function checkTargets(context: AgentCapabilityContext, targets: readonly string[], effect: Effect, broad = false): AgentCapabilityDecision {
-  for (const target of targets) { const result = checkAgentTarget(context, target, effect, broad); if (!result.allowed) return result; }
+function checkTargets(context: AgentCapabilityContext, targets: readonly string[], effect: Effect, broad = false, ordinaryRead = false): AgentCapabilityDecision {
+  for (const target of targets) { const result = checkAgentTarget(context, target, effect, broad, { ordinaryRead }); if (!result.allowed) return result; }
   return decision("conversation", "allowed");
 }
 /** An extra undeclared `path` argument cannot manufacture a local MCP scope. */
@@ -237,6 +255,12 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     for (const key of ["originalPath", "rawDirectory"] as const) if (typeof target?.[key] === "string" && !relativeTarget(context, target[key])) return decision("pdf-reading", "invalid_target");
     return capability;
   }
+  if (toolName === "diagram_create") {
+    const capability = checkAgentCapability(context, "conversation", "write"); if (!capability.allowed) return capability;
+    const sources = structuredTargets(args); const read = checkTargets(context, sources, "read"); if (!read.allowed) return read;
+    const target = resolvedTarget && typeof resolvedTarget === "object" ? resolvedTarget as Record<string, unknown> : null;
+    return typeof target?.path === "string" ? checkTargets(context, [target.path], "write") : capability;
+  }
   if (toolName === "english_diary_generate") {
     const capability = checkAgentCapability(context, "english-diary", "write");
     if (!capability.allowed) return capability;
@@ -251,15 +275,18 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     if (!args) return checkAgentCapability(context, "conversation");
     const { request, scope } = context.toolAdapters.obsidianCli({ ...args });
     const capability = scope.capability;
+    const ordinaryRead = !scope.write && typeof request.command === "string" && ORDINARY_READ_CLI_COMMANDS.has(request.command);
     const targets = structuredTargets(resolvedTarget ?? { ...args, file: undefined });
     if (!targets.length && scope.broad && currentAgent(context) && !hasAllModuleCapabilities(context)) return decision(capability, "scope_required");
     // Ordinary file commands derive their module from the resolved path. A
     // journal-only Agent does not need Knowledge permission to read its diary.
-    const result = checkAgentCapability(context, capability === "knowledge" && (targets.length || scope.exactTarget) ? "conversation" : capability, scope.write ? "write" : "read"); if (!result.allowed) return result;
+    const initial = checkAgentCapability(context, capability === "knowledge" && (targets.length || scope.exactTarget) ? "conversation" : capability, scope.write ? "write" : "read");
+    const result = ordinaryRead && !targets.length && !scope.exactTarget ? checkUnscopedOrdinaryRead(context, initial) : initial;
+    if (!result.allowed) return result;
     // file/active selectors are resolved by the native port before execution.
     if (!targets.length && scope.exactTarget && resolvedTarget === undefined && (request.file || request.active || request.ref)) return result;
     if (!targets.length && scope.exactTarget) return decision(capability, "scope_required");
-    return targets.length ? checkTargets(context, targets, scope.write ? "write" : "read", scope.broad) : result;
+    return targets.length ? checkTargets(context, targets, scope.write ? "write" : "read", scope.broad, ordinaryRead) : result;
   }
   if (KNOWLEDGE_TOOLS.has(toolName)) {
     // Linking classification only records a proposal; its production write port
@@ -269,16 +296,18 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     return args ? checkTargets(context, structuredTargets(args), effect) : result;
   }
   if (VAULT_TOOLS.has(toolName)) {
-    const effect = toolName === "vault_search" || toolName === "note_read" ? "read" : "write";
+    const ordinaryRead = toolName === "vault_search" || toolName === "note_read";
+    const effect = ordinaryRead ? "read" : "write";
     if (!args) {
-      const allowed = AGENT_MODULE_CAPABILITIES.some(capability => checkAgentCapability(context, capability, effect).allowed);
+      const allowed = AGENT_MODULE_CAPABILITIES.some(capability => (ordinaryRead ? checkOrdinaryReadCapability(context, capability) : checkAgentCapability(context, capability, effect)).allowed);
       return allowed ? decision("conversation", "allowed") : decision("knowledge", "agent_disabled");
     }
     const targets = [args.relativePath, args.sourcePath, args.targetPath, args.scopePath].filter((value): value is string => typeof value === "string");
-    if (!targets.length) return hasAllModuleCapabilities(context)
-      ? checkAgentCapability(context, "knowledge", effect)
-      : decision("knowledge", "scope_required");
-    return checkTargets(context, targets, effect, toolName === "vault_search");
+    if (!targets.length) {
+      const result = hasAllModuleCapabilities(context) ? checkAgentCapability(context, "knowledge", effect) : decision("knowledge", "scope_required");
+      return ordinaryRead ? checkUnscopedOrdinaryRead(context, result) : result;
+    }
+    return checkTargets(context, targets, effect, toolName === "vault_search", ordinaryRead);
   }
   // Pi builtins and unclassified registered Tools never obtain implicit authority.
   return decision(toolName, "unknown_tool");

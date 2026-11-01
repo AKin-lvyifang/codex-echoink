@@ -1,6 +1,6 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
-import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
@@ -10,7 +10,7 @@ import { pushSettingsPage, settingsBody, settingsButton, settingsError, settings
 
 const PLAN_NAMES: Record<MembershipPlanId, string> = { early: "早鸟买断", month: "月卡", quarter: "季卡", year: "年卡" };
 const STATE_NAMES: Record<MembershipState, string> = {
-  unavailable: "账号服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "2.x 买断权益",
+  unavailable: "账号服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "终生买断权益",
   "offline-valid": "离线可用", "verification-required": "需要联网验证", expired: "已到期", revoked: "已撤销", scheduled: "尚未生效",
   "device-limit": "设备名额已满", "device-required": "本机待激活"
 };
@@ -45,7 +45,7 @@ export class IPhoneAccountPages {
       finally { if (!disposed && operation === epoch) { busy = false; render(); } }
     })(); }, "is-primary"); redeemFields.append(redeem);
     const plans = el(ctx.document, "div", "ip-account-plans"); body.append(plans);
-    const scope = el(ctx.document, "details", "ip-account-scope"); scope.append(settingsMessage(ctx, el(ctx.document, "summary", ""), "买断包含什么"), settingsMessage(ctx, el(ctx.document, "div", ""), "包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权。")); body.append(scope);
+    const scope = el(ctx.document, "details", "ip-account-scope"); scope.append(settingsMessage(ctx, el(ctx.document, "summary", ""), "买断包含什么"), settingsMessage(ctx, el(ctx.document, "div", ""), "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。")); body.append(scope);
     let disposed = false, busy = false, epoch = 0, identityKey = this.identityKey(), redeemCode = "", redeemOpen = false;
     const syncRedeem = () => { const vm = this.adapter.read(); redeemInput.disabled = busy; redeem.disabled = busy || !vm.serviceAvailable || !this.adapter.actions.redeem || !redeemCode.trim(); this.buttonText(redeem, busy ? "兑换中…" : "兑换"); redemption.setAttribute("aria-busy", String(busy)); if (busy) { this.disable(accountLinks, true); this.disable(statusActions, true); } };
     const runAccountAction = async (action: () => Promise<void>) => {
@@ -207,30 +207,37 @@ export class IPhoneAccountPages {
     }
   }
   private plans(parent: HTMLElement, vm: AccountMembershipViewModel): void {
-    const { ctx } = this; let timeZone: string | undefined; try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* The pricing contract handles an unknown zone. */ }
-    const currency = resolveMembershipCurrency(timeZone), currentPlan = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null); parent.replaceChildren();
-    for (const plan of getMembershipPlanPricing(currency, vm.products)) {
-      const currency = plan.currency, symbol = currency === "CNY" ? "¥" : "US$";
-      const money = (minor: number) => (minor / 100).toLocaleString(this.language(), { minimumFractionDigits: currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
+    const { ctx } = this, currentPlan = vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null); parent.replaceChildren();
+    for (const plan of getMembershipPlanPricing("CNY", vm.products)) {
+      const symbol = "¥";
+      const money = (minor: number) => (minor / 100).toLocaleString(this.language(), { minimumFractionDigits: 0, maximumFractionDigits: 2 });
       const current = this.valid(vm) && currentPlan === plan.id, card = el(ctx.document, "article", `ip-account-plan${plan.id === "early" ? " is-early" : ""}`); card.dataset.planId = plan.id;
       const title = el(ctx.document, "div", "ip-account-plan-name", settingsText(ctx, PLAN_NAMES[plan.id])); if (current) title.append(settingsMessage(ctx, el(ctx.document, "span", "ip-account-current-plan"), "使用中")); card.append(title);
       const price = el(ctx.document, "div", "ip-account-price"); price.append(el(ctx.document, "span", "ip-account-currency", symbol), el(ctx.document, "span", "", money(plan.amountMinor)));
       if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "ip-account-savings", this.text(`省 ${plan.savingsPercent}%`, `Save ${plan.savingsPercent}%`))); card.append(price);
-      card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.days === null ? settingsText(ctx, "一次购买") : this.text(`${plan.days} 天`, `${plan.days} days`)));
-      card.append(el(ctx.document, "div", "ip-account-plan-detail", plan.dailyAmountMinor === null ? settingsText(ctx, "当前 2.x 版本长期可用") : this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
-      const { purchasable, zh, en } = membershipPlanAction(vm, plan.id, currency, current, !!this.adapter.actions.selectPlan);
+      if (plan.id === "early") {
+        card.append(settingsMessage(ctx, el(ctx.document, "div", "ip-account-plan-detail"), "一次买断，终生可用"));
+        const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
+        if (offerEndDate) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(offerEndDate.zh, offerEndDate.en)));
+      } else {
+        card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(`${plan.days} 天`, `${plan.days} days`)));
+        if (plan.dailyAmountMinor !== null) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
+      }
+      const action = (snapshot: AccountMembershipViewModel) => membershipPlanAction(snapshot, plan.id, "CNY", this.valid(snapshot) && (snapshot.membership.planId ?? (snapshot.membership.state === "lifetime" ? "early" : null)) === plan.id, !!this.adapter.actions.selectPlan);
+      const { purchasable, zh, en } = action(vm);
       const label = this.text(zh, en);
       const feedback = settingsError(ctx, card);
       const purchase = settingsButton(ctx, label, () => {
-        if (purchase.disabled) return;
+        if (purchase.disabled || !action(this.adapter.read()).purchasable) return;
         purchase.disabled = true; feedback.show();
-        void this.adapter.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => feedback.show(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !purchasable; });
+        void this.adapter.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => feedback.show(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !action(this.adapter.read()).purchasable; });
       }); purchase.disabled = !purchasable; if (current) purchase.setAttribute("aria-current", "true"); card.append(purchase); parent.append(card);
     }
   }
   private membershipLine(vm: AccountMembershipViewModel): string {
-    const member = vm.membership, planName = member.planName || (member.planId && PLAN_NAMES[member.planId as MembershipPlanId] ? settingsText(this.ctx, PLAN_NAMES[member.planId as MembershipPlanId]) : "");
-    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`${formatMobileDate(member.startsAt)} 生效`, `Starts ${formatMobileDate(member.startsAt)}`) : "", member.expiresAt && member.state !== "lifetime" ? this.text(`${formatMobileDate(member.expiresAt)} 到期`, `Expires ${formatMobileDate(member.expiresAt)}`) : "", member.verifiedAt ? this.text(`${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")} 已验证`, `Verified ${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${formatMobileDate(member.offlineUntil)}`, `Offline until ${formatMobileDate(member.offlineUntil)}`) : ""].filter(Boolean).join(" · ");
+    const member = vm.membership, lifetime = member.state === "lifetime" || member.planId === "early";
+    const planName = lifetime ? settingsText(this.ctx, PLAN_NAMES.early) : member.planName || (member.planId && PLAN_NAMES[member.planId as MembershipPlanId] ? settingsText(this.ctx, PLAN_NAMES[member.planId as MembershipPlanId]) : "");
+    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`${formatMobileDate(member.startsAt)} 生效`, `Starts ${formatMobileDate(member.startsAt)}`) : "", member.expiresAt && !lifetime ? this.text(`${formatMobileDate(member.expiresAt)} 到期`, `Expires ${formatMobileDate(member.expiresAt)}`) : "", member.verifiedAt ? this.text(`${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")} 已验证`, `Verified ${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${formatMobileDate(member.offlineUntil)}`, `Offline until ${formatMobileDate(member.offlineUntil)}`) : ""].filter(Boolean).join(" · ");
   }
   private valid(vm: AccountMembershipViewModel): boolean { return ["active", "lifetime", "offline-valid"].includes(vm.membership.state); }
   private avatar(identity: AccountIdentity | null): HTMLElement { const { ctx } = this; if (identity && identity.avatar !== "initial") { const image = el(ctx.document, "img", "ip-account-avatar"); image.src = identity.avatar.url; image.alt = ""; return image; } const avatar = el(ctx.document, "span", `ip-account-avatar${identity ? "" : " is-anonymous"}`); avatar.setAttribute("aria-hidden", "true"); if (identity) avatar.textContent = Array.from(identity.name)[0]?.toUpperCase() || "?"; else avatar.append(iphoneIcon(ctx.document, "user")); return avatar; }

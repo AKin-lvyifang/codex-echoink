@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../settings/settings";
+import { drawingApprovalPresentation } from "../excalidraw/presentation";
 import type { GenerationRequest, GenerationResult } from "./types";
 import { GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY, generationRequestSummary } from "./request";
 import type { GenerationStage } from "./runtime";
@@ -134,13 +135,15 @@ export function positionGenerationMessages(messages: ChatMessage[], targetRunId?
 }
 /** Display-only conversion; authorization strings and decision binding stay untouched. */
 export function generationApprovalPresentation(target?: string, preview?: string): { target?: string; preview?: string } {
+  const drawing = drawingApprovalPresentation(preview);
+  if (drawing) return drawing;
   let readableTarget = target, readablePreview = preview;
   try {
     const value = JSON.parse(target ?? "") as { relativePath?: unknown };
     if (typeof value?.relativePath === "string") readableTarget = value.relativePath;
   } catch { /* An already readable path remains literal. */ }
   try {
-    const value = JSON.parse(preview ?? "") as { content?: unknown; change?: { diff?: unknown; truncated?: unknown } };
+    const value = JSON.parse(preview ?? "") as { domain?: unknown; path?: unknown; style?: unknown; boxCount?: unknown; arrowCount?: unknown; content?: unknown; change?: { diff?: unknown; truncated?: unknown } };
     if (typeof value?.change?.diff === "string") readablePreview = value.change.diff + (value.change.truncated === true ? "\n差异预览已截短。" : "");
     else if (typeof value?.content === "string") readablePreview = value.content;
   } catch { /* An already readable preview remains literal. */ }

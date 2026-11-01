@@ -5,7 +5,7 @@ import { mountAccountMembership, appendAccountComingSoon } from "../settings/acc
 import { createUnavailableAccountAdapter, type AccountMembershipViewModel } from "../settings/account-membership-model";
 import { normalizeSettingsData, DEFAULT_SETTINGS } from "../settings/settings";
 import { prepareDocument, fixture, mountDefinitions } from "./settings-search-dom";
-import { runAccountMembershipPricingTests } from "./account-membership-pricing";
+import { pricingProducts, runAccountMembershipPricingTests } from "./account-membership-pricing";
 import { runAccountMembershipSubscriptionTests } from "./account-membership-subscription";
 import { displayedTooltipsForTests } from "./obsidian-shim";
 
@@ -44,7 +44,8 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   assert.match(statisticsDialog.contentEl.textContent ?? "", /此前历史不补算/);
   assert.match(statisticsDialog.contentEl.textContent ?? "", /多次模型调用仍只算一轮/);
   statisticsDialog.close();
-  assert.equal(parent.querySelectorAll(".plan").length, 4);
+  assert.equal(parent.querySelectorAll(".plan").length, 0);
+  assert.equal(parent.querySelector(".price-amount"), null, "missing catalogue never shows fallback amounts");
   assert.equal(findButton(parent, "新建计划").disabled, true);
   assert.equal(findButton(parent, "生成讲解").disabled, true);
   assert.equal(parent.querySelectorAll(".plugin-feature-card").length, 3);
@@ -164,20 +165,21 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
   try {
     for (const [timeZone, language, prices, savings] of [
-      ["Asia/Shanghai", "en", ["¥19.9", "¥9", "¥19", "¥49"], ["-59%", "-30%", "-55%"]],
-      ["America/New_York", "zh-CN", ["US$9.99", "US$2.99", "US$6.99", "US$19.99"], ["-50%", "-22%", "-44%"]]
+      ["Asia/Shanghai", "en", ["¥29.9", "¥9", "¥19", "¥49"], ["-30%", "-55%"]],
+      ["America/New_York", "zh-CN", ["¥29.9", "¥9", "¥19", "¥49"], ["-30%", "-55%"]]
     ] as const) {
       Intl.DateTimeFormat.prototype.resolvedOptions = function () { return { ...resolvedOptions.call(this), timeZone }; };
-      page = mountAccountMembership(parent, { app: new App(), viewModel: vm, language, openProviders() {} });
-      assert.deepEqual([...parent.querySelectorAll(".price-amount")].map(node => node.textContent), prices, "pricing follows device time zone independently of UI language");
+      page = mountAccountMembership(parent, { app: new App(), viewModel: { ...vm, products: pricingProducts }, language, openProviders() {} });
+      assert.deepEqual([...parent.querySelectorAll(".price-amount")].map(node => node.textContent), prices, "server CNY pricing is independent of time zone and UI language");
       assert.deepEqual([...parent.querySelectorAll(".plan-saving-percent")].map(node => node.textContent), savings);
       assert.equal(parent.querySelectorAll(".plan")[1].querySelector(".plan-saving"), null, "monthly pass has no discount");
-      assert.ok(parent.querySelector(".is-early .plan-comparison")?.textContent?.includes(language === "en" ? "annual pass" : "比年卡少付"), "early comparison names its annual-pass baseline");
+      assert.equal(parent.querySelector(".is-early .plan-saving"), null, "lifetime does not compare with annual subscriptions");
+      assert.doesNotMatch(parent.textContent ?? "", /2\.x|限量|US\$|比年卡少付/);
       page.dispose();
     }
     Intl.DateTimeFormat.prototype.resolvedOptions = function () { throw new Error("Time zone unavailable"); };
     page = mount();
-    assert.equal(parent.querySelector(".price-amount")?.textContent, "US$9.99", "time zone failure keeps the page usable with international prices");
+    assert.equal(parent.querySelector(".price-amount"), null, "no catalogue means no prices even when time zone is unavailable");
     page.dispose();
   } finally { Intl.DateTimeFormat.prototype.resolvedOptions = resolvedOptions; }
   for (const count of [2, 3]) { const card = appendAccountComingSoon(parent, count, true); assert.equal(card.classList.contains("span-full"), count % 2 === 0); card.remove(); }

@@ -28,18 +28,18 @@ export interface CodexAttachmentHost {
   attachmentsEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
   attachments: StoredAttachment[];
+  drawingRequested?: boolean;
   selectedSkill: EchoInkResource | null;
   renderToolbar(): void;
   onInputChanged?(): void;
   renderAttachments(): void;
-  runKnowledgeBaseShortcut(label: string, runner: () => Promise<string>): Promise<void>;
 }
 
 export function renderAttachmentsView(host: CodexAttachmentHost): void {
   if (!host.attachmentsEl) return;
   renderComposerAttachments(host.attachmentsEl, {
     language: host.plugin.settings.settingsLanguage,
-    selectedSkill: host.selectedSkill,
+    selectedSkill: host.selectedSkill, drawingRequested: host.drawingRequested,
     noteMentions: composerNoteMentionSelections(host.inputEl),
     attachments: host.attachments,
     attachmentResolver: createAttachmentResourceResolver(
@@ -48,6 +48,7 @@ export function renderAttachmentsView(host: CodexAttachmentHost): void {
       host.plugin.settings.settingsLanguage
     )
   }, {
+    onRemoveDrawing: () => { host.drawingRequested = false; host.onInputChanged?.(); host.renderAttachments(); host.renderToolbar(); },
     onRemoveSkill: () => {
       host.selectedSkill = null;
       host.renderAttachments();
@@ -147,39 +148,6 @@ export function pickFiles(host: CodexAttachmentHost, imagesOnly: boolean): void 
       appendPiChatFile(host, file);
     }
     host.renderAttachments();
-  };
-  input.click();
-}
-
-export function pickKnowledgeBaseFiles(host: CodexAttachmentHost): void {
-  const input = window.createEl("input");
-  input.type = "file";
-  input.multiple = true;
-  input.accept = ".pdf,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain";
-  input.onchange = () => {
-    const files = Array.from(input.files ?? []);
-    const attachments: StoredAttachment[] = [];
-    for (const file of files) {
-      const filePath = (file as File & { path?: string }).path;
-      if (!filePath) continue;
-      attachments.push({
-        type: "file",
-        name: file.name,
-        path: filePath
-      });
-    }
-    void host.runKnowledgeBaseShortcut(
-      conversationUiText(host.plugin.settings.settingsLanguage, "文件收藏", "Save files"),
-      async () => {
-      const paths = await host.plugin.getKnowledgeSurfaceService()?.captureExternalFiles(attachments);
-      return paths?.length
-        ? conversationUiText(
-          host.plugin.settings.settingsLanguage,
-          `已收藏文件：\n${paths.map((item) => `- ${item}`).join("\n")}`,
-          `Saved files:\n${paths.map((item) => `- ${item}`).join("\n")}`
-        )
-        : conversationUiText(host.plugin.settings.settingsLanguage, "未选择文件。", "No files were selected.");
-    });
   };
   input.click();
 }

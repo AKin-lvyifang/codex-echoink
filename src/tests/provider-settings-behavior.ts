@@ -7814,7 +7814,8 @@ async function assertQwenTokenPlanTransportContract(): Promise<void> {
         "openai-completions": adapter
       })
     });
-    assert.deepEqual(result, { status: "failed", failure: entry.failure, detail: { status: entry.status } });
+    assert.deepEqual(result, { status: "failed", failure: entry.failure, detail: { status: entry.status,
+      ...(entry.status === 400 || entry.status === 422 ? { message: "fixture failure" } : {}) } });
     assert.equal(JSON.stringify(result).includes(fixtureKey), false);
   }
   const overflowTransport = new PiProviderProtocolTransport({

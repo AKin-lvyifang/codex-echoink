@@ -1,3 +1,11 @@
+import { TFile } from "obsidian";
+import { PiDiagramToolSecurity, createPiDiagramToolDefinition } from "../harness/pi-native/pi-diagram-tools";
+import { getExcalidrawService } from "../excalidraw/service";
+import { parseDrawingOutput } from "../excalidraw/elements";
+import { drawingToolPrompt } from "../excalidraw/prompt";
+import { assertDrawingDestination } from "./drawing-production";
+import { assertGenerationPathSafe } from "../generation/sources";
+import { generationFileStem } from "../generation/output";
 import { isExpertAgent } from "../agents/persona";
 import { PiWorkspaceToolSecurity, createPiWorkspaceToolDefinitions } from "../harness/pi-native/pi-workspace-tools";
 import type { WorkspaceService } from "../workspace/service";
@@ -211,6 +219,7 @@ import type {
 } from "../harness/pi/production-pi-model-resolver";
 import {
   apiProviderModelSupportsImage,
+  apiProviderModelUsesAutoOutputLimit,
   getActiveApiProviderModel,
   getApiProviderModel,
   selectActiveConversationSession,
@@ -231,7 +240,8 @@ import {
 } from "../settings/provider-presets";
 import { PiLocalDataService } from "./pi-local-data-service";
 import {
-  createConfiguredPiProviderProtocolDispatcher
+  createConfiguredPiProviderProtocolDispatcher,
+  createConfiguredPiAutoOutputLimitPolicy
 } from "./configured-pi-provider-dispatcher";
 import {
   ObsidianVaultDomainAdapter,
@@ -655,6 +665,8 @@ export async function createPiProductionRuntimeBundle(
       },
       generation: createGenerationRuntimePort({
         app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
+        confirmDrawing: (preview, identity, requestId) => approvalBroker.waitForDecision({ requestId: `drawing-${requestId}`, conversationId: identity.conversationId, piSessionId: identity.piSessionId,
+          productRunId: identity.productRunId, toolCallId: `generation-${requestId}`, target: canonicalJsonStringify({ relativePath: preview.path }), preview: canonicalJsonStringify(preview), signal: identity.signal }),
         directoryReady: async directory => (await import("./conversation-content-settings")).rememberConversationContentDirectory(plugin, directory, "generation"),
         domain: vaultDomainService, writeExecution,
         assertRead: async (relativePath, identity) => {
@@ -1251,6 +1263,9 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentTaskResumeContext?(): TaskResumeContext | undefined;
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
+  currentDrawingRequested?(): boolean;
+  currentRequestText?(): string;
+  drawingPrompt?(requested: boolean): Promise<string>;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentInlineProposalRequest?(): Readonly<InlineModelRequest> | null;
   currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
@@ -1338,7 +1353,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         const generation = input.currentGenerationContext?.();
         if (generation) {
           transientTurnContext = null; transientResourceContextSignature = null;
-          const systemPrompt = [generationSystemPrompt(generation.request, generation.attempt), agentContext].filter(Boolean).join("\n\n");
+          const systemPrompt = [generationSystemPrompt(generation.request, generation.attempt, generation.assessment.drawingSchema), agentContext].filter(Boolean).join("\n\n");
           const message = generationContextMessage(generation.request, generation.assessment.sources, generation.attempt);
           input.contextLedger?.captureBeforeAgentStart({ ...event, systemPrompt });
           input.contextLedger?.captureTransientContextMessages([]);
@@ -1372,6 +1387,12 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         let systemPrompt = inlineProposal ? INLINE_PROPOSAL_SYSTEM_PROMPT : access
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access, input.supportsToolCalling !== false)}`
           : event.systemPrompt;
+        const drawingRequested = input.currentDrawingRequested?.() === true;
+        if (!inlineProposal && input.drawingPrompt
+          && (drawingRequested || /excalidraw|手绘图/iu.test(input.currentRequestText?.() ?? event.prompt ?? ""))) {
+          const drawingPrompt = await input.drawingPrompt(drawingRequested);
+          if (drawingPrompt) systemPrompt += "\n\n" + drawingPrompt;
+        }
         const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
         const workbenchMessage = inlineProposal ? null : buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
         const pdfMessage = inlineProposal ? null : buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
@@ -2135,7 +2156,7 @@ async function createProductionAgentSession(input: {
       runtimeProviderId: configured.providerId,
       apiProtocol: configured.apiProtocol,
       baseUrl: configured.baseUrl
-    })
+    }, {}, createConfiguredPiAutoOutputLimitPolicy(input.plugin, configured.provider, configured.modelRef))
   });
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -2193,7 +2214,7 @@ async function createProductionAgentSession(input: {
       externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
     } : undefined));
     const resume = input.input.currentTaskResumeContext?.();
-    if (resume) await assertTaskResumeToolAllowed({ snapshot: resume.safety, receipts: input.receipts, approvals: input.approvals,
+    if (resume && !(name === "diagram_create" && resolvedTarget === undefined)) await assertTaskResumeToolAllowed({ snapshot: resume.safety, receipts: input.receipts, approvals: input.approvals,
       vaultRootPath: input.plugin.getVaultPath(), toolName: descriptor?.approvalToolId ?? name, arguments: args,
       resolvedTarget: resolvedTarget ?? (descriptor ? { resourceId: descriptor.resourceId, toolName: descriptor.toolName } : undefined), currentOperation });
     if (!configured.toolCalling && PI_PERSONAL_MEMORY_TOOL_IDS.some(tool => tool === name)) throw new Error("agent_capability_memory_tool_calling_disabled");
@@ -2327,6 +2348,36 @@ async function createProductionAgentSession(input: {
     } }
   });
   const todoTools = createPiTodoToolDefinitions({ store: input.plugin.getTodoStore({ initialize: false }), projects: () => getTodoProjects(input.plugin) }, todoSecurity);
+  const drawingService = getExcalidrawService(input.plugin.app);
+  const drawingBindings = () => input.plugin.settings.knowledgeBase.folderBindings;
+  const diagramSecurity = new PiDiagramToolSecurity({
+    identity: () => { const c = input.input.currentToolExecutionContext(); return { vaultId: c.vaultId, conversationId: c.conversationId, piSessionId: c.piSessionId, productRunId: c.productRunId, userEntryId: c.userEntryId }; }, access: () => input.input.currentWorkspaceAccess?.(),
+    resumeOperationIds: () => input.input.currentTaskResumeContext?.()?.safety.operations.map(operation => operation.operationIdentity) ?? [],
+    assertToolAllowed, approvals: input.approvals, receipts: input.receipts,
+    userId: localPiVaultUserId(input.deviceScope.deviceIdDigest), deviceId: input.deviceScope.deviceIdDigest,
+    confirm: request => input.approvalBroker.waitForDecision({ requestId: request.requestId, conversationId: request.conversationId, piSessionId: request.piSessionId, productRunId: request.productRunId, toolCallId: request.toolCallId, target: canonicalJsonStringify(request.target), preview: canonicalJsonStringify(request.preview), signal: request.signal }),
+    port: {
+      disabledReason: () => drawingService.disabledReason(),
+      prepare: async (value, requestId) => {
+        const directory = assertDrawingDestination({ app: input.plugin.app, bindings: drawingBindings });
+        const sourcePaths = [...new Set((Array.isArray(value.elements) ? value.elements : []).flatMap((element: unknown) => {
+          const paths = element && typeof element === "object" ? (element as Record<string, unknown>).sourcePaths : undefined;
+          return Array.isArray(paths) ? paths.filter((path: unknown): path is string => typeof path === "string") : [];
+        }))];
+        for (const path of sourcePaths) { const file = typeof path === "string" ? input.plugin.app.vault.getAbstractFileByPath(path) : null;
+          if (!(file instanceof TFile) || file.extension !== "md" || file.path.endsWith(".excalidraw.md")) throw new Error("来源必须是真实存在的库内笔记路径；没有来源时请省略 sourcePaths。"); }
+        const style = value.style === "blackboard" ? "blackboard" : "white";
+        const output = parseDrawingOutput(value, sourcePaths, style, false);
+        await assertGenerationPathSafe(input.plugin.getVaultPath(), directory, true);
+        return { requestId, path: drawingService.choosePath(directory, generationFileStem(output.title, "手绘图")), style, output };
+      },
+      check: async creation => { assertDrawingDestination({ app: input.plugin.app, bindings: drawingBindings }, creation.path.split("/").slice(0, -1).join("/")); await assertGenerationPathSafe(input.plugin.getVaultPath(), creation.path.split("/").slice(0, -1).join("/"), true); },
+      create: creation => drawingService.create(creation), reconcile: creation => drawingService.reconcile(creation),
+      version: async path => { const file = input.plugin.app.vault.getAbstractFileByPath(path); if (!(file instanceof TFile)) throw new Error("图文件尚未就绪。"); return createHash("sha256").update(new Uint8Array(await input.plugin.app.vault.readBinary(file))).digest("hex"); },
+      open: creation => drawingService.openOnce(creation.requestId, creation.path)
+    }
+  });
+  const diagramTool = createPiDiagramToolDefinition(diagramSecurity);
   const englishDiarySecurity = new PiEnglishDiaryToolSecurity({ assertToolAllowed,
     currentRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
     currentUserEntry: () => { const context = input.input.currentToolExecutionContext(); return { entryId: context.userEntryId, text: context.userEntryText }; },
@@ -2493,6 +2544,7 @@ async function createProductionAgentSession(input: {
       obsidianSecurity,
       todoSecurity,
       englishDiarySecurity,
+      diagramSecurity,
       pdfSecurity,
       ...(workspaceSecurity ? [workspaceSecurity] : [])
     ],
@@ -2581,6 +2633,8 @@ async function createProductionAgentSession(input: {
     controlledStream,
     model,
     maxTokens: configured.requestMaxOutputTokens,
+    automaticOutputLimit: apiProviderModelUsesAutoOutputLimit(productProviderId,
+      configured.provider.models.find(candidate => candidate.id === configured.modelRef)!, configured.providerId),
     supportsToolCalling: configured.toolCalling,
     currentExecutionContext: () => input.input.currentExecutionContext(),
     ...(isExpertAgent(input.plugin.settings.agentRegistry.agents.find(agent => agent.id === input.input.catalog.agentId))
@@ -2601,6 +2655,14 @@ async function createProductionAgentSession(input: {
     currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
     currentPdfTaskRequest: () => input.input.currentPdfTaskRequest?.(),
+    currentDrawingRequested: () => input.input.currentDrawingRequested?.() === true,
+    currentRequestText: () => input.input.currentRequestText?.() ?? "",
+    drawingPrompt: async requested => {
+      if (!configured.toolCalling || drawingService.disabledReason()) return requested ? (drawingService.disabledReason() ?? "当前模型不支持工具，无法创建手绘图。") : "";
+      const access = input.input.currentWorkspaceAccess?.();
+      if (access?.mode === "plan" || access?.permission === "read-only") return "当前模式只讨论手绘图方案，不创建文件。切换到 Agent 模式并允许写入后才能调用 diagram_create。";
+      return drawingToolPrompt(await drawingService.schema(), requested);
+    },
     currentEnglishDiaryRequest: () => input.input.currentEnglishDiaryRequest?.() ?? null,
     currentInlineProposalRequest: () => input.input.currentInlineProposalRequest?.() ?? null,
     currentGenerationContext: () => input.input.currentGenerationContext?.() ?? null,
@@ -2693,6 +2755,7 @@ async function createProductionAgentSession(input: {
     ...obsidianTools,
     ...todoTools,
     ...englishDiaryTools,
+    diagramTool,
     ...pdfTools,
     maintenanceTool,
     taskPlanTool,
@@ -2759,6 +2822,7 @@ async function createProductionAgentSession(input: {
     ...PI_OBSIDIAN_TOOL_IDS,
     ...PI_TODO_TOOL_IDS,
     ...englishDiaryTools.map(tool => tool.name),
+    diagramTool.name,
     ...PDF_TOOL_NAMES,
     maintenanceTool.name,
     taskPlanTool.name,
@@ -2798,7 +2862,7 @@ async function createProductionAgentSession(input: {
     providerDisplayName: configured.provider.name,
     supportsToolCalling: configured.toolCalling,
     isToolCurrentlyEnabled: (name) => {
-      if (!configured.toolCalling) return false;
+      if (!configured.toolCalling || name === "diagram_create" && drawingService.disabledReason()) return false;
       const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
       const context = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
       // Publication is advisory; dispatch and execute re-read Catalog, settings and resources.

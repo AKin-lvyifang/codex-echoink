@@ -1,6 +1,6 @@
 import { PiChatUiProjector, piProjectedEntryMessageId, type PiChatUiViewModel } from "../harness/pi-native/pi-chat-ui-projector";
 import { GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../generation/request";
-import { GENERATION_STAGE_ENTRY, projectGenerationEntries } from "../generation/projection";
+import { GENERATION_STAGE_ENTRY, projectGenerationEntries, generationStageMessage } from "../generation/projection";
 import { createReasoningSummary, closeReasoningSummary } from "../harness/pi-native/pi-reasoning-summary";
 import type { PiChatRuntimeEvent } from "../harness/pi-native/contracts";
 import assert from "node:assert/strict";
@@ -9,6 +9,7 @@ import { createGenerationRequest } from "../generation/request";
 import { renderGenerationResultCard } from "../generation/message-ui";
 import { CodexMessageListRenderer } from "../ui/codex-view/message-list";
 import { buildAgentTurns } from "../ui/codex-view/agent-turn-process";
+import { buildActionTimeline } from "../ui/codex-view/action-timeline";
 import { FakeElement, createTestContext, renderedText } from "./smooth-conversation-ui";
 
 export async function runGenerationMessageTests(): Promise<void> {
@@ -38,7 +39,8 @@ export async function runGenerationMessageTests(): Promise<void> {
   await Promise.resolve(); assert.deepEqual(context.openedPaths, ["projects/Alpha.md"]);
   rendered = render(answer);
   assert.ok(rendered.findByClass("codex-generation-result")); assert.equal(rendered.findByClass("codex-answer-save"), null);
-  assert.match(renderedText(rendered), /outputs\/Result.md · 1,240 字/u);
+  assert.equal(rendered.findByClass("codex-generation-result-name")?.textContent, "Result");
+  assert.equal(rendered.findByClass("codex-generation-result-path"), null);
   await rendered.findByClass("codex-generation-open")?.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
   assert.deepEqual(context.openedPaths, ["projects/Alpha.md", "outputs/Result.md"]);
   const turnHost = new FakeElement("div");
@@ -50,7 +52,12 @@ export async function runGenerationMessageTests(): Promise<void> {
   assert.equal(failed.findByClass("codex-generation-result"), null); assert.equal(failed.findByClass("codex-answer-save"), null);
   const missing = new FakeElement("div");
   renderGenerationResultCard(missing as never, { app: context.app as never, language: "zh-CN", result: { ...result, path: "outputs/Moved.canvas", outputKind: "canvas", branchCount: 3 } });
-  assert.equal(missing.findByClass("codex-generation-open")?.disabled, true); assert.match(renderedText(missing), /文件已不存在或已移动/u); assert.match(renderedText(missing), /3 个分支/u);
+  assert.equal(missing.findByClass("codex-generation-open")?.disabled, true); assert.match(renderedText(missing), /文件已不存在或已移动/u);
+  assert.equal(missing.findByClass("codex-generation-result-name")?.textContent, "Moved");
+  const drawingCard = new FakeElement("div");
+  renderGenerationResultCard(drawingCard as never, { app: context.app as never, language: "zh-CN", result: { ...result, path: "输出/手冲咖啡步骤与参数 · 手绘图.excalidraw.md", outputKind: "excalidraw", title: "手冲咖啡步骤与参数", boxCount: 10, arrowCount: 4 } });
+  assert.equal(drawingCard.findByClass("codex-generation-result-name")?.textContent, "手冲咖啡步骤与参数");
+  assert.equal(drawingCard.findByClass("codex-generation-result-path"), null);
   const uncertain = new FakeElement("div"); renderGenerationResultCard(uncertain as never, { app: context.app as never, language: "zh-CN", result: { ...result, writeState: "unconfirmed" } }); assert.match(renderedText(uncertain), /核对文件/u);
   const app = context.app as { vault: { getAbstractFileByPath(path: string): unknown } };
   const lookup = app.vault.getAbstractFileByPath;
@@ -60,6 +67,21 @@ export async function runGenerationMessageTests(): Promise<void> {
   assert.equal(context.openedPaths.length, 2, "deletion after render cannot open another file or silently report success");
   app.vault.getAbstractFileByPath = lookup;
   await assertGenerationNativeGrouping(context, request);
+  const privateTarget = JSON.stringify({ creation: { output: { elements: [{ id: "PRIVATE_COMPLETE_ELEMENT", x: 42 }] }, path: "输出/图 2.excalidraw.md", style: "white" } });
+  const privatePreview = JSON.stringify({ domain: "excalidraw", path: "输出/图 2.excalidraw.md", style: "手绘白底", boxCount: 8, arrowCount: 7 });
+  const drawing: ChatMessage = { id: "drawing-approval", role: "tool", itemType: "dynamicToolCall", title: "diagram_create", text: "", status: "waiting_approval", approval: { target: privateTarget, preview: privatePreview } };
+  const binding = { target: privateTarget, preview: privatePreview, decide: () => true };
+  (renderer as unknown as { env: Record<string, unknown> }).env.resolveApprovalDecision = () => binding;
+  const card = (message: ChatMessage) => { const host = new FakeElement("div"); (renderer as any).renderApprovalCard(host, message); return host; };
+  const a = card(drawing), b = card({ ...generationStageMessage({ productRunId: "drawing-b", requestId: "drawing-request", stage: "approval", status: "running", at: 1 }), approval: drawing.approval });
+  assert.equal(renderedText(a), renderedText(b), "both entries use the same card and drawing projection");
+  assert.match(renderedText(a), /输出\/图 2.excalidraw.md/u); assert.match(renderedText(a), /手绘白底/u); assert.match(renderedText(a), /8 个框 · 7 条连线/u);
+  assert(!renderedText(a).includes("creation")); assert(!renderedText(a).includes("PRIVATE_COMPLETE_ELEMENT"));
+  assert.equal((renderer as any).approvalStepTitle(drawing, "2.excalidraw"), "等你确认写入");
+  const actionHeading = new FakeElement("div");
+  (renderer as any).renderActionItemTitle(actionHeading, buildActionTimeline([drawing]).groups[0].items[0]);
+  assert.equal(renderedText(actionHeading), "等你确认写入", "the action/file-link branch also uses a readable drawing step title");
+  assert.equal(binding.target, privateTarget); assert.equal(drawing.approval!.target, privateTarget, "display never mutates the complete approval binding");
   renderer.dispose();
   console.log("PASS generation messages: expandable frozen sources, private template body, native open, persistent result cards, deleted files, uncertain writes and hidden Save as note");
   } finally { if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument); else delete (globalThis as { document?: unknown }).document; }

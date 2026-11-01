@@ -434,9 +434,15 @@ await test("shared knowledge bindings: disabled UI, multiple sources/default, st
   ui.mount();ui.showPage("knowledge");
   assert.match(container.textContent,/资料来源|未启用/u);
   const rawRow=[...container.querySelectorAll("button")].find(button=>button.textContent.includes("资料来源"));rawRow.click();await settle();
-  assert.equal(container.querySelectorAll('.em-sheet select option[value="Sources A"]').length,2);
+  const directoryOptions = container.querySelector('.em-sheet select[aria-label="选择已有目录"]');
+  assert.ok(directoryOptions.querySelector('option[value="Sources A"]'));
+  assert.ok(directoryOptions.querySelector('option[value="Sources B"]'));
+  const boundPaths = () => [...container.querySelectorAll('.em-sheet .em-row-label')].map(node => node.textContent).filter(text => text.startsWith("Sources "));
+  assert.deepEqual(boundPaths(), ["Sources A", "Sources B"]);
   const save=[...container.querySelectorAll("button")].find(button=>button.textContent.trim()==="保存");save.click();await settle();
-  assert.match(container.textContent,/fixture save failure/);assert.equal(container.querySelector('.em-sheet select[aria-label="新资料默认保存位置"]').value,"Sources B");
+  assert.match(container.textContent,/fixture save failure/);
+  assert.deepEqual(boundPaths(), ["Sources A", "Sources B"], "failed save keeps both bound source rows open");
+  assert.equal(config.knowledgeBase.folderBindings.roles.raw.writePath,"Sources B", "failed save retains the existing write location");
   ui.destroy();container.remove();await services.dispose();
 });
 await test("mobile identity migrates once: canonical defaults, every preset/custom and malformed source refusal", async () => {
@@ -1115,7 +1121,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
   class Component {}
   const exports = { exports: {} };
   const context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, FileView: obsidian.exports.FileView, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
+    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, FileView: obsidian.exports.FileView, Component, Modal: class {}, TFile: FixtureTFile, TFolder: obsidian.exports.TFolder, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   for (const id of ["insert-gallery", "group-selected-images", "split-gallery"]) assert.ok(commands.includes(id), `Mobile gallery command missing: ${id}`);
@@ -1160,7 +1166,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
       async open(parent) { parent.append(this.containerEl); await this.onOpen(); }
     }
     const exports = { exports: {} }, context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, FileView: obsidian.exports.FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
+      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, FileView: obsidian.exports.FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, TFolder: obsidian.exports.TFolder, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
     });
     vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports, plugin = new MobilePlugin();
     try {

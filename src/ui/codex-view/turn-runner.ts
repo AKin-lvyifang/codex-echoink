@@ -1,3 +1,4 @@
+import { getExcalidrawService } from "../../excalidraw/service";
 import { agentCapabilityErrorText } from "../../agents/capability-denial";
 import { runErrors } from "../../run-reports/recent-errors";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
@@ -466,7 +467,7 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
 
 export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean; onError?: (message: string) => void }): Promise<QueuedTurnItem | null> {
   const session = view.ensureSession();
-  const turnOptions = view.currentTurnOptions(session);
+  const turnOptions = { ...view.currentTurnOptions(session), drawingRequested: view.drawingRequested === true };
   const text = view.inputEl.value.trim();
   const composerTextSnapshot = view.inputEl.value;
   const attachments = view.attachments.map((attachment) => ({ ...attachment }));
@@ -591,7 +592,7 @@ export async function startQueuedTurnItem(view: CodexViewTurnContext, item: Queu
     for (const mention of item.noteMentions ?? []) addComposerNoteMentionSelection(input, mention);
     const adapter = Object.create(view) as CodexViewTurnContext;
     Object.defineProperties(adapter, {
-      inputEl: { value: input }, attachments: { value: item.attachments }, selectedSkill: { value: item.skill },
+      inputEl: { value: input }, attachments: { value: item.attachments }, selectedSkill: { value: item.skill }, drawingRequested: { value: item.turnOptions.drawingRequested },
       ensureSession: { value: () => view.sessionById(item.sessionId)! }, currentTurnOptions: { value: () => item.turnOptions },
       onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined }, isComposerTransferCancelled: { value: undefined }
     });
@@ -672,6 +673,14 @@ async function prepareTurnProviderModel(
     (provider) => provider.id === selection.providerSettingsId
   );
   const targetModel = target && getApiProviderModel(target, selection.model);
+  if (selection.drawingRequested) {
+    const reason = selection.mode === "plan" ? "计划模式只讨论方案，请切换到 Agent 模式后画图。"
+      : selection.permission === "read-only" ? "当前是只读权限，请允许写入后再画图。"
+        : targetModel?.toolCalling === false ? "当前模型不支持工具调用，请选择支持工具的模型后画图。"
+          : getExcalidrawService(view.app).disabledReason();
+    if (reason) { new Notice(reason); view.onPiRunFailure?.(reason); return false; }
+  }
+
   if (
     !target
     || !targetModel
@@ -950,6 +959,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
       ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.turnOptions.drawingRequested ? { drawingRequested: true } : {}),
       ...(item.generationRequest ? { generationRequest: item.generationRequest } : {}),
       ...(item.pdfTaskRequest ? { pdfTaskRequest: item.pdfTaskRequest } : {}),
       ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
@@ -1956,6 +1966,7 @@ function composerStillMatchesQueuedTurn(
       composerNoteMentionSelections(view.inputEl),
       item.noteMentions ?? []
     )
+    && Boolean(view.drawingRequested) === Boolean(item.turnOptions?.drawingRequested)
     && (view.selectedSkill?.id ?? null) === (item.skill?.id ?? null);
 }
 
@@ -2059,78 +2070,5 @@ function isActivePiChatRun(
     && view.running
     && view.activeRunKind === "chat"
     && view.activeRunSessionId === session.id
-  );
-}
-
-export async function runKnowledgeBaseShortcut(view: CodexViewTurnContext, label: string, runner: () => Promise<string>): Promise<void> {
-  const active = view.ensureSession();
-  const userMessage: ChatMessage = {
-    id: newId("msg"),
-    role: "user",
-    text: label,
-    createdAt: Date.now()
-  };
-  const assistantMessage: ChatMessage = {
-    id: newId("msg"),
-    role: "assistant",
-    title: uiText(view, "知识库管理", "Knowledge management"),
-    itemType: "knowledgeBase",
-    status: "running",
-    text: uiText(view, "正在执行...", "Running..."),
-    createdAt: Date.now()
-  };
-  let terminalStatus = "completed";
-  let terminalText = "";
-  try {
-    await withConversationMutation(view, active.id, async () => {
-      active.messages.push(userMessage, assistantMessage);
-      active.updatedAt = Date.now();
-      view.running = true;
-      view.renderTabs();
-      view.renderMessages({ forceBottom: true });
-      view.renderToolbar();
-      await view.plugin.saveSettings(true);
-    });
-    terminalText = await runner();
-  } catch (error) {
-    terminalStatus = "failed";
-    terminalText = error instanceof Error ? error.message : String(error);
-  } finally {
-    try {
-      await withConversationMutation(view, active.id, async () => {
-        assistantMessage.status = terminalStatus;
-        assistantMessage.text = terminalText;
-        active.updatedAt = Date.now();
-        await view.plugin.externalizeMessageText(assistantMessage, assistantMessage.text);
-        await view.plugin.saveSettings(true);
-      });
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      terminalText = [terminalText, uiText(view, `结果保存失败：${detail}`, `Could not save the result: ${detail}`)].filter(Boolean).join("\n");
-      terminalStatus = "failed";
-      assistantMessage.status = terminalStatus;
-      assistantMessage.text = terminalText;
-    } finally {
-      view.running = false;
-      view.renderMessages(messageRenderOptionsForRunUpdate(view));
-      view.renderToolbar();
-      view.applyStatus();
-    }
-    new Notice(terminalStatus === "completed" ? label : uiText(
-      view,
-      `知识库管理失败：${terminalText}`,
-      `Knowledge management failed: ${terminalText}`
-    ));
-  }
-}
-
-async function withConversationMutation<T>(
-  view: CodexViewTurnContext,
-  conversationId: string,
-  action: () => Promise<T>
-): Promise<T> {
-  return await view.plugin.withEchoInkConversationMutation(
-    conversationId,
-    action
   );
 }

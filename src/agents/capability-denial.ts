@@ -1,6 +1,9 @@
 /** User-facing copy shared by submission and resume checks. Keep internal faults separate. */
 export function agentCapabilityDenialText(reason: string, capability: string, language: string): string {
   const en = language === "en";
+  if (reason === "module_disabled" && capability === "knowledge") return en
+    ? "Knowledge is currently unavailable. Go to Settings → Knowledge to check the folder configuration."
+    : "知识库当前不可用，请前往设置 → 知识库检查目录配置。";
   const names: Record<string, [string, string]> = { knowledge: ["知识库", "Knowledge"], journal: ["日记", "Journal"], todos: ["待办", "Tasks"], finance: ["财务", "Finance"], "english-diary": ["英文日记", "English diary"], "pdf-reading": ["PDF 精读", "PDF reading"], review: ["复盘", "Review"], "web-search": ["联网搜索", "Web search"] };
   const label = names[capability]?.[en ? 1 : 0] ?? (capability.startsWith("mcp:") ? "MCP" : capability.startsWith("vault-skill:") ? (en ? "Skill" : "我的 Skill") : (en ? "This capability" : "这项能力"));
   const messages: Record<string, [string, string]> = {

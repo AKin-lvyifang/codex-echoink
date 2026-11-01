@@ -140,7 +140,7 @@ export async function requestLoopbackProvider(
   }
   const timeoutMs = boundedInteger(
     input.timeoutMs,
-    1_000,
+    1,
     120_000,
     DEFAULT_LOOPBACK_TIMEOUT_MS
   );
@@ -400,7 +400,7 @@ function loopbackControlledInput(
       maxRetries: 0,
       timeoutMs: boundedInteger(
         options.timeoutMs,
-        1_000,
+        1,
         120_000,
         DEFAULT_LOOPBACK_TIMEOUT_MS
       )

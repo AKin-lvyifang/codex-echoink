@@ -4,25 +4,28 @@ import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
 import { mobileBuildOptions } from "./mobile-build.mjs";
 
-const built = await esbuild.build({ ...mobileBuildOptions("src/ui/iphone/account-pages.ts"), metafile: true });
+const { entryPoints: _entryPoints, ...options } = mobileBuildOptions();
+const built = await esbuild.build({ ...options, stdin: { contents: 'export * from "./src/ui/iphone/account-pages"; export { installObsidianDom } from "./src/tests/obsidian-dom";', resolveDir: process.cwd(), loader: "ts" }, metafile: true });
 assert.equal(Object.keys(built.metafile.inputs).some(path => /(?:^|\/)account-membership\.ts$/.test(path)), false, "The independent page does not bundle the old account DOM or Modals");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://iphone-account.invalid" });
 const { document, Event } = dom.window; dom.window.HTMLElement.prototype.scrollIntoView = function () {};
 dom.window.HTMLElement.prototype.createSpan = function (options = {}) { const node = document.createElement("span"); node.className = options.cls ?? ""; node.textContent = options.text ?? ""; for (const [name, value] of Object.entries(options.attr ?? {})) node.setAttribute(name, value); this.append(node); return node; };
 const compiled = { exports: {} }, icon = (parent, name) => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("data-icon", name); parent.replaceChildren(svg); };
-let now = 1_700_000_000_000;
+let now = Date.parse("2026-11-01T04:00:00Z");
 class ClockDate extends Date { static now() { return now; } }
 vm.runInNewContext(built.outputFiles[0].text, {
-  module: compiled, exports: compiled.exports, document, window: dom.window, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder, Date: ClockDate,
-  Intl: { NumberFormat: Intl.NumberFormat, DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: "Asia/Shanghai" }) }) },
+  module: compiled, exports: compiled.exports, document, window: dom.window, console, Error, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder, Date: ClockDate,
+  Intl: { NumberFormat: Intl.NumberFormat, DateTimeFormat: () => ({ resolvedOptions: () => ({ timeZone: "America/Los_Angeles" }) }) },
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, SVGElement: dom.window.SVGElement,
   require: name => { assert.equal(name, "obsidian"); return { setIcon: icon, getIcon: name => { const parent = document.createElement("span"); icon(parent, name); return parent.firstChild; } }; }
 });
+compiled.exports.installObsidianDom(dom.window);
 const { IPhoneAccountPages } = compiled.exports, clone = value => structuredClone(value), tick = async () => { for (let i = 0; i < 8; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const accountA = { name: "测试用户", email: "account-a@example.invalid", joinedAt: null, avatar: "initial", passwordSet: true }, accountB = { ...accountA, name: "另一账号", email: "account-b@example.invalid" };
 const stats = { totalTokens: null, totalTurns: null, currentStreak: null, bestStreak: null, coverage: null, days: [], rankings: {}, assets: {} };
 let model = { identity: null, statistics: stats, membership: { state: "anonymous", planId: null, planName: null, expiresAt: null, verifiedAt: null, offlineUntil: null, devices: [{ id: "current", name: "本机手机", description: "iPhone · 当前设备", current: true }, { id: "other", name: "另一台电脑", description: "macOS · 最近使用", current: false }], deviceLimit: 3 }, provider: "configured", serviceAvailable: true,
-  products: [{ id: "early", prices: { CNY: 1999, USD: 999 }, days: null }, { id: "month", prices: { CNY: 1234, USD: 299 }, days: 31 }, { id: "quarter", prices: { CNY: 2987, USD: 699 }, days: 93 }, { id: "year", prices: { CNY: 4000, USD: 1999 }, days: 366 }] };
+  products: [{ id: "early", prices: { CNY: 2990, USD: 999 }, days: null, available: false, availability: "unavailable", currencies: ["CNY"] }, { id: "month", prices: { CNY: 1234, USD: 299 }, days: 31, available: true, availability: "available", currencies: ["CNY"] }, { id: "quarter", prices: { CNY: 2987, USD: 699 }, days: 93, available: true, availability: "available", currencies: ["CNY"] }, { id: "year", prices: { CNY: 4000, USD: 1999 }, days: 366, available: true, availability: "available", currencies: ["CNY"] }],
+  earlyOffer: { enabled: true, limit: null, sold: 5, remaining: null, major: null, endsAt: "2026-12-31" } };
 const listeners = new Set(), emit = () => { for (const listener of listeners) listener(); };
 const calls = { code: [], signIn: [], redeem: [], saveProfile: [], removeDevice: [], signOut: 0, purchase: 0, orders: 0 };
 let failCode = true, failLogin = true, failRedeem = true, failProfile = true, failDevice = true, pendingRedeem, pendingProfile, pendingLogin, deferRedeem = false, deferProfile = false, deferLogin = false;
@@ -46,23 +49,42 @@ const shell = {
   async back() { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.pop().dispose?.(); mount(pages.at(-1)); return true; },
   async backTo(id) { while (pages.at(-1).id !== id) if (!await this.back()) return false; return true; }
 };
-const ctx = { document, shell, host: { accountService: adapter, settings: () => ({ settingsLanguage: "zh-CN" }) }, error: error => { throw error; } }, ui = new IPhoneAccountPages(ctx);
+let language = "zh-CN";
+const ctx = { document, shell, host: { accountService: adapter, settings: () => ({ settingsLanguage: language }) }, error: error => { throw error; } }, ui = new IPhoneAccountPages(ctx);
 const body = () => pages.at(-1).content, buttons = text => [...document.querySelectorAll("button")].filter(button => button.textContent.trim() === text);
 const click = async (text, index = 0) => { const button = buttons(text)[index]; assert.ok(button, `Button ${text} exists`); assert.equal(button.disabled, false, `Button ${text} is enabled`); button.click(); await tick(); };
 const input = (label, value) => { const node = body().querySelector(`[aria-label="${label}"]`); assert.ok(node, `Input ${label} exists`); node.value = value; node.dispatchEvent(new Event("input", { bubbles: true })); return node; };
 const clickConfirm = async text => { const confirmation = body().querySelector(".ip-settings-confirm"); assert.ok(confirmation); const button = [...confirmation.querySelectorAll("button")].find(button => button.textContent === text); assert.ok(button); button.click(); await tick(); };
 try {
   await ui.open(); assert.match(body().textContent, /未登录/); assert.match(body().textContent, /注册送激活码/); assert.equal(body().querySelectorAll(".ip-account-stat").length, 4); assert.equal([...body().querySelectorAll(".ip-account-stat strong")].every(node => node.textContent === "—"), true); assert.equal(body().querySelectorAll(".ip-account-plan").length, 4); assert.match(body().querySelector('[data-plan-id="month"]').textContent, /12.34/); assert.match(body().querySelector('[data-plan-id="month"]').textContent, /31 天/); assert.equal([...body().querySelectorAll(".ip-account-plan button")].every(button => button.disabled), true); assert.equal(body().querySelector(".heatmap,.account-activity-grid"), null);
+  assert.equal([...body().querySelectorAll(".ip-account-currency")].every(node => node.textContent === "¥"), true, "international timezone still uses server CNY prices");
+  assert.match(body().querySelector('[data-plan-id="quarter"]').textContent, /省 19%/); assert.match(body().querySelector('[data-plan-id="year"]').textContent, /省 73%/);
+  assert.doesNotMatch(body().textContent, /限量|2\.x|US\$|查看人民币套餐|比年卡少付/);
+  assert.match(body().querySelector(".ip-account-scope").textContent, /覆盖以后所有版本的 PRO.*不含模型调用额度.*定期联网更新授权/);
+  const products = model.products;
+  model.products = undefined; emit(); await tick(); assert.equal(body().querySelectorAll("[data-plan-id]").length, 0, "missing catalogue never uses fallback prices");
+  model.products = products.map(product => product.id === "month" ? { ...product, prices: { USD: 299 } } : product); emit(); await tick(); assert.equal(body().querySelector('[data-plan-id="month"]'), null, "missing CNY hides the plan even when USD exists");
+  model.products = products; emit(); await tick();
   await click("我的订单"); assert.equal(calls.orders, 1); assert.equal(shell.activePageId, "iphone-settings-account");
   const originalMembership = structuredClone(model.membership);
   model.salesOpen = true; model.membership = { ...model.membership, state: "active", planId: "quarter" }; emit(); await tick();
   const planButton = id => body().querySelector(`[data-plan-id="${id}"] button`);
   assert.equal(planButton("month").textContent.trim(), "立即订阅"); assert.equal(planButton("quarter").textContent.trim(), "续费"); assert.equal(planButton("early").disabled, true);
   planButton("month").click(); await tick(); assert.equal(calls.purchase, 1);
+  const staleMonthButton = planButton("month"); model.products = []; staleMonthButton.click(); await tick(); assert.equal(calls.purchase, 1, "click rechecks the current catalogue before purchase"); emit(); await tick(); assert.equal(body().querySelectorAll("[data-plan-id]").length, 0); model.products = products; emit(); await tick();
   const early = model.products[0], originalEarly = structuredClone(early);
   Object.assign(early, { available: true, availability: "available", currencies: ["CNY"], prices: { CNY: 2370, USD: 999 } }); emit(); await tick();
   assert.equal(planButton("early").textContent.trim(), "立即购买"); assert.equal(planButton("early").disabled, false);
   assert.match(body().querySelector('[data-plan-id="early"]').textContent, /¥23[.,]7/);
+  const earlyCard = () => body().querySelector('[data-plan-id="early"]');
+  assert.match(earlyCard().textContent, /一次买断，终生可用/); assert.match(earlyCard().textContent, /活动截止 2026年12月31日/);
+  assert.equal([...body().querySelectorAll(".ip-account-plan-detail")].filter(node => /活动截止/.test(node.textContent)).length, 1, "only early shows an offer end date");
+  model.earlyOffer = { ...model.earlyOffer, endsAt: "2026-11-03" }; emit(); await tick(); assert.match(earlyCard().textContent, /活动截止 2026年11月3日/);
+  model.earlyOffer.endsAt = "2026-11-01"; emit(); await tick(); assert.match(earlyCard().textContent, /活动截止 2026年11月1日/);
+  language = "en"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Nov 1, 2026/); assert.match(earlyCard().textContent, /One payment, lifetime access/);
+  model.earlyOffer.endsAt = "2026-12-31"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Dec 31, 2026/);
+  for (const endsAt of ["2026-10-31", "invalid", null]) { model.earlyOffer.endsAt = endsAt; emit(); await tick(); assert.doesNotMatch(earlyCard().textContent, /Offer ends/); assert.equal(planButton("early").disabled, false, "the display date never changes availability"); }
+  language = "zh-CN"; model.earlyOffer.endsAt = "2026-12-31"; emit(); await tick();
   planButton("early").click(); await tick(); assert.equal(calls.purchase, 2);
   for (const availability of ["owned", "paused", "sold_out"]) {
     early.available = false; early.availability = availability; emit(); await tick();
@@ -89,13 +111,14 @@ try {
   await click("编辑资料"); const nameInput = input("名字", "保留的姓名草稿"); await click("保存"); assert.equal(nameInput.value, "保留的姓名草稿"); assert.match(body().textContent, /资料保存失败/); model.statistics.totalTurns = 5; emit(); assert.equal(body().querySelector('[aria-label="名字"]'), nameInput); assert.equal(nameInput.value, "保留的姓名草稿"); failProfile = false; await click("保存"); assert.equal(shell.activePageId, "iphone-settings-account"); assert.match(body().textContent, /保留的姓名草稿/); assert.deepEqual(calls.saveProfile.at(-1), { name: "保留的姓名草稿" }, "Saving the name leaves the avatar untouched");
   await click("设备管理2 / 3"); assert.equal(buttons("移除").length, 1, "The current device has no remove action"); await click("移除"); assert.equal(calls.removeDevice.length, 0); await clickConfirm("移除"); assert.equal(calls.removeDevice.length, 1); assert.match(body().textContent, /设备移除失败/); assert.match(body().textContent, /另一台电脑/); failDevice = false; await clickConfirm("移除"); assert.equal(body().querySelectorAll(".ip-account-device").length, 1); await shell.back(); await tick();
   await click("使用兑换码"); const redeemInput = input("兑换码", "fixture-invalid-code"); await click("兑换"); assert.equal(redeemInput.value, "fixture-invalid-code"); assert.match(body().textContent, /兑换码无效/); assert.doesNotMatch(body().textContent, /fixture-invalid-code/); assert.equal(shell.activePageId, "iphone-settings-account"); failRedeem = false; await click("兑换"); assert.match(body().textContent, /真实季卡/); assert.match(body().textContent, /2027-01-20/); assert.ok(body().querySelector('[data-plan-id="quarter"] [aria-current="true"]')); assert.equal(body().querySelector('[data-plan-id="year"] [aria-current="true"]'), null);
-  model.membership = { ...model.membership, state: "lifetime", planId: "early", planName: "2.x 买断", expiresAt: null }; emit(); assert.ok(body().querySelector('[data-plan-id="early"] [aria-current="true"]')); assert.doesNotMatch(body().querySelector(".ip-account-sub").textContent, /到期/);
+  model.membership = { ...model.membership, state: "lifetime", planId: "early", planName: "2.x 买断", expiresAt: null }; emit(); assert.ok(body().querySelector('[data-plan-id="early"] [aria-current="true"]')); assert.doesNotMatch(body().querySelector(".ip-account-sub").textContent, /到期|2\.x/); assert.match(body().querySelector(".ip-account-sub").textContent, /早鸟买断.*终生买断权益/);
+  language = "en"; emit(); await tick(); assert.match(body().querySelector(".ip-account-sub").textContent, /Early lifetime.*Lifetime access/); assert.doesNotMatch(body().querySelector(".ip-account-sub").textContent, /2\.x|买断/); language = "zh-CN"; emit(); await tick();
   model.membership = { ...model.membership, state: "offline-valid", offlineUntil: "2026-10-21" }; emit(); assert.match(body().textContent, /离线可用至 2026-10-21/); model.membership = { ...model.membership, state: "device-limit" }; emit(); assert.match(body().textContent, /设备名额已满/);
   const beforeStats = [...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent); await click("退出登录"); assert.equal(calls.signOut, 0); await clickConfirm("退出登录"); assert.equal(calls.signOut, 1); assert.deepEqual([...body().querySelectorAll(".ip-account-stat strong")].map(node => node.textContent), beforeStats); assert.equal(calls.purchase, 2);
   model.identity = clone(accountA); model.membership.state = "free"; emit(); input("兑换码", "pending-private-code"); deferRedeem = true; await click("兑换"); model.identity = clone(accountB); emit(); assert.equal(body().querySelector('[aria-label="兑换码"]').value, ""); pendingRedeem.reject(new Error("old redemption error")); await tick(); assert.doesNotMatch(body().textContent, /old redemption error/); assert.match(body().textContent, /另一账号/);
   await click("编辑资料"); input("名字", "account B draft"); deferProfile = true; await click("保存"); model.identity = clone(accountA); emit(); assert.match(body().textContent, /账号已变化/); assert.equal(body().querySelector('[aria-label="名字"]').value, ""); pendingProfile(); await tick(); assert.equal(shell.activePageId, "iphone-settings-account-profile"); await shell.back();
   model.identity = null; model.membership.state = "anonymous"; emit(); await click("登录 / 注册"); assert.equal(body().querySelector('[aria-label="邮箱"]').value, accountA.email, "Only the email survives leaving and reopening login"); assert.equal(body().querySelector('[aria-label="密码"]').value, ""); input("邮箱验证码", "654321"); deferLogin = true; await click("登录"); model.identity = clone(accountB); model.membership.state = "free"; emit(); pendingLogin(); await tick(); assert.match(body().textContent, /账号已变化/); assert.equal(body().querySelector('[aria-label="邮箱验证码"]').value, ""); await shell.back(); await shell.back();
   assert.equal(listeners.size, 0); assert.equal(document.querySelector(".modal-container"), null); assert.equal(dom.window.localStorage.length, 0);
-  const unavailable = new IPhoneAccountPages({ ...ctx, host: { settings: ctx.host.settings } }); await unavailable.open(); assert.equal(buttons("登录 / 注册")[0].disabled, true); assert.match(body().textContent, /账号服务暂不可用/); assert.equal(body().querySelectorAll(".ip-account-stat").length, 4); await shell.back();
+  const unavailable = new IPhoneAccountPages({ ...ctx, host: { settings: ctx.host.settings } }); await unavailable.open(); assert.equal(buttons("登录 / 注册")[0].disabled, true); assert.match(body().textContent, /账号服务暂不可用/); assert.equal(body().querySelectorAll(".ip-account-stat").length, 4); assert.equal(body().querySelectorAll("[data-plan-id]").length, 0); await shell.back();
   console.log("PASS iPhone account UI: unavailable/anonymous/free/PRO, formal pricing, code deadlines, failed drafts, inline redemption, profile/device controls, local statistics, identity races and secret disposal");
 } finally { for (const page of pages) page.dispose?.(); dom.window.close(); }

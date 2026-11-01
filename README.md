@@ -50,6 +50,8 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 ## Privacy and data
 
+- Weather is optional. Searching for a city sends the search text to echoink.cn. Once you select a city, EchoInk stores its ID and name in this vault's plugin settings and sends only the city ID to echoink.cn when the workbench opens and every 30 minutes while visible. Weather requests contain no login token or account data; EchoInk does not read device location or store weather history. Weather is a near-term estimate from MET Norway, not a local observation. Weather and city sources, licenses and adaptations remain visible in General settings.
+
 - Conversations, notes, knowledge, memory, diary content, and financial records are stored locally. The plugin does not upload your entire vault by default.
 - EchoInk's account service at **https://echoink.cn** handles registration, sign-in, email verification, redemption, subscriptions, and device authorization. It receives the account information and authorization data required for those requests, including a generated device identity. An EchoInk account and an active entitlement are required for PRO plugins; ordinary chat and Knowledge do not require an EchoInk account.
 - Official PRO Skills download on demand from **https://echoink.cn**. Seven methodology Skills are delivered remotely; knowledge review retains its complete local basic version and uses a remote enhancement when PRO is valid. The catalog is public, including names, summaries and available comparison links. Content requires sign-in, unified PRO access and an activated device. Finance, English Diary, basic Obsidian operations, Quick Journal and to-do Skills remain bundled.

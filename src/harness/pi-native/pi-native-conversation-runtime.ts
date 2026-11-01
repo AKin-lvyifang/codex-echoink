@@ -256,6 +256,8 @@ export interface PiNativeAgentSessionFactoryInput {
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   bindPdfDeliveryJob?(jobId: string): void;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
+  currentDrawingRequested?(): boolean;
+  currentRequestText?(): string;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   /** Lazily opens the current, capability-authorized ordinary-chat read workflow. */
@@ -740,6 +742,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  drawingRequested?: boolean;
   inlineProposal?: { request: Readonly<InlineModelRequest>; previousAutoCompaction?: boolean };
   generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; attempt?: GenerationAttempt; inputBudget?: number; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
   pdfTaskRequest?: Readonly<PdfTaskRequest>;
@@ -1582,7 +1585,8 @@ export class PiNativeConversationRuntime {
     if (request.englishDiarySourcePath && !normalizeEnglishDiarySourcePath(request.englishDiarySourcePath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记原稿位置无效，请从英文日记页重新选择。");
     if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
     if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
-    if (!active.supportsToolCalling && (mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
+    if (request.drawingRequested && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", mode === "plan" ? "计划模式只讨论方案，请切换到 Agent 模式后画图；输入已保留。" : "当前是只读权限，请允许写入后画图；输入已保留。");
+    if (!active.supportsToolCalling && (request.drawingRequested || mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
       throw new PiNativeConversationRuntimeError("agent_session_invalid", toolCallingDisabledMessage("desktop", active.providerDisplayName, active.session.model?.name ?? active.session.model?.id));
     }
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
@@ -1635,6 +1639,7 @@ export class PiNativeConversationRuntime {
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
       ...(request.inlineProposalRequest ? { inlineProposal: { request: request.inlineProposalRequest } } : {}),
+      ...(request.drawingRequested ? { drawingRequested: true } : {}),
       ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
       ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
@@ -1752,7 +1757,7 @@ export class PiNativeConversationRuntime {
         execution.generation.assessment = await this.options.generation.prepare(execution.generation.request, this.generationIdentity(active, execution));
         const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
         execution.generation.inputBudget = inputBudget;
-        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, generationModelPrompt(execution.generation.request, request.text));
+        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, generationModelPrompt(execution.generation.request, request.text), undefined, execution.generation.assessment.drawingSchema);
         await this.setGenerationStage(active, execution, "writing");
       } else if (englishDiarySourcePath) {
         active.knowledgeTurnContext = null;
@@ -3062,6 +3067,8 @@ export class PiNativeConversationRuntime {
       currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
       bindPdfDeliveryJob: jobId => { const run = holder.active?.currentRun; if (run) (run.pdfDeliveryJobs ??= new Set()).add(jobId); },
       currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
+      currentDrawingRequested: () => holder.active?.currentRun?.drawingRequested === true,
+      currentRequestText: () => holder.active?.currentRun?.requestText ?? "",
       currentEnglishDiaryRequest: () => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run?.englishDiarySourcePath) return null;
@@ -3522,19 +3529,108 @@ export class PiNativeConversationRuntime {
         let modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
         let modelAttempts = 1, canvasFallback = false, continuationError: unknown;
         const canvasValidationErrors: string[] = [];
-        // Repair only pure output validation. Nothing from permission, Provider,
-        // cancellation or the write layer can re-enter this loop.
-        while (generation.request.outputKind === "canvas" && terminalState === "completed" && modelText !== null) {
+        let canvasFailure: string | undefined;
+        // Drawing format errors and output truncation share exactly one repair.
+        // Permission, network, cancellation and write failures cannot re-enter it.
+        const drawingValidationErrors: string[] = [];
+        let drawingFailure: string | undefined;
+        const generationOutputLimited = () => terminalState !== "cancelled"
+          && (!promptError || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached")
+          && (generatedAssistant?.message.stopReason === "length"
+            || safeProviderFailureCode(generatedAssistant?.message.errorMessage) === "provider_output_limit_reached"
+            || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached");
+        while (generation.request.outputKind === "excalidraw" && !execution.abortRequested && !execution.knowledgeAbort.signal.aborted) {
           try {
+            if (generationOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简到最多 8 个短框，重新输出完整 JSON，不续写残缺内容。");
+            if (terminalState !== "completed" || modelText === null) break;
+            prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
+            break;
+          } catch (error) {
+            if (!(error instanceof GenerationOutputValidationError)) throw error;
+            drawingValidationErrors.push(error.message);
+            if (generation.attempt?.kind === "repair") {
+              drawingFailure = generationOutputLimited()
+                ? "已精简重试一次，模型输出仍被截断，尚未创建手绘图。请减少本次资料，或选择输出额度更大的模型后重试。"
+                : `手绘图精简重试后仍未通过检查，尚未创建文件：${error.message}`;
+              break;
+            }
+            const attempt: GenerationAttempt = { kind: "repair", failedOutput: modelText ?? (generatedAssistant ? publicMessageText(generatedAssistant.message) : ""), validationError: error.message };
+            try {
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const retryText = generationModelPrompt(generation.request);
+              assertGenerationInputBudget(generation.request, assessment.sources, generation.inputBudget!, retryText, attempt, assessment.drawingSchema);
+              generation.attempt = attempt;
+              await this.setGenerationStage(active, execution, "writing");
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const attemptBaseline = new Set(active.sessionManager.getEntries().map(entry => entry.id));
+              execution.agentSettledSeen = false;
+              promptError = null;
+              modelAttempts++;
+              try {
+                const retryStart = { readyAt: undefined as number | undefined, settled: false, error: undefined as unknown };
+                const retryPromise = active.session.prompt(retryText, { source: "interactive", preflightResult: accepted => {
+                  assertPiSubmissionActive(execution.knowledgeAbort.signal);
+                  if (accepted) retryStart.readyAt = Date.now();
+                } });
+                void retryPromise.then(() => { retryStart.settled = true; }, error => { retryStart.error = error; retryStart.settled = true; });
+                try {
+                  const userEntry = await waitForNewUserEntry(active.sessionManager, attemptBaseline, USER_ENTRY_WAIT_TIMEOUT_MS, retryStart);
+                  this.appendGenerationEntry(active, GENERATION_ATTEMPT_ENTRY, { productRunId: execution.productRunId, requestId: generation.request.id, userEntryId: userEntry.id });
+                  await retryPromise;
+                } catch (error) {
+                  if (active.session.isStreaming) await active.session.abort();
+                  await retryPromise.catch(() => undefined);
+                  throw error;
+                }
+              } catch (error) { promptError = error; }
+              await active.session.waitForIdle().catch(error => { promptError ??= error; });
+              await active.eventLane;
+              await active.queuePersistenceLane;
+              const eventError = execution.eventError as unknown;
+              if (eventError !== null) {
+                throw eventError instanceof Error
+                  ? eventError
+                  : new Error("Pi runtime event handling failed", {
+                    cause: eventError
+                  });
+              }
+              if (!execution.agentSettledSeen) promptError ??= new Error("Pi AgentSession stopped without native agent_settled");
+              entries = active.sessionManager.getEntries();
+              runEntries = entries.filter(entry => !execution.baselineEntryIds.has(entry.id));
+              const attemptEntries = entries.filter(entry => !attemptBaseline.has(entry.id));
+              terminalState = classifyTerminalState(attemptEntries, execution.abortRequested, promptError);
+              generatedAssistant = lastAssistantEntry(attemptEntries);
+              modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
+            } catch (error) {
+              continuationError = error;
+              promptError = error;
+              terminalState = execution.abortRequested || execution.knowledgeAbort.signal.aborted ? "cancelled" : "failed";
+              modelText = null;
+              break;
+            }
+          }
+        }
+        while (generation.request.outputKind === "canvas" && !execution.abortRequested && !execution.knowledgeAbort.signal.aborted) {
+          try {
+            if (generationOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简关键要点并缩短文字，重新从头输出完整 JSON，不续写残缺内容。");
+            if (terminalState !== "completed" || modelText === null) break;
             prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
             break;
           } catch (error) {
             if (!(error instanceof GenerationOutputValidationError)) throw error;
             canvasValidationErrors.push(error.message);
-            if (generation.attempt?.kind === "fallback") break;
+            if (generation.attempt?.kind === "fallback") {
+              if (generationOutputLimited()) {
+                canvasFailure = "已精简重试并尝试旧层级兜底，模型输出仍被截断，尚未创建 Canvas 文件。请减少本次资料，或在模型设置中调高单次输出上限、调低思考后重试。";
+                modelText = null;
+              }
+              break;
+            }
             const attempt: GenerationAttempt = generation.attempt?.kind === "repair"
               ? { kind: "fallback" }
-              : { kind: "repair", failedOutput: modelText, validationError: error.message };
+              : { kind: "repair", failedOutput: modelText ?? (generatedAssistant ? publicMessageText(generatedAssistant.message) : ""), validationError: error.message };
             try {
               assertPiSubmissionActive(execution.knowledgeAbort.signal);
               await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
@@ -3596,9 +3692,22 @@ export class PiNativeConversationRuntime {
         const result = await port.finish(generation.request, assessment, modelText,
           this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage), generation.attempt);
         result.modelAttempts = modelAttempts;
+        if (generation.request.outputKind === "excalidraw") {
+          result.drawingValidationErrors = drawingValidationErrors;
+          if (drawingFailure && result.writeState === "not_written") {
+            result.error = drawingFailure;
+            terminalState = "failed";
+            promptError = new Error(drawingFailure, { cause: promptError });
+          }
+        }
         if (generation.request.outputKind === "canvas") {
           result.canvasFallback = canvasFallback;
           result.canvasValidationErrors = canvasValidationErrors;
+          if (canvasFailure && result.writeState === "not_written") {
+            result.error = canvasFailure;
+            terminalState = "failed";
+            promptError = new Error(canvasFailure, { cause: promptError });
+          }
         }
         if (continuationError && result.writeState === "not_written" && terminalState !== "cancelled") {
           result.error = continuationError instanceof Error ? continuationError.message : "生成未完成，尚未写入文件。";
@@ -4285,7 +4394,7 @@ export class PiNativeConversationRuntime {
           this.now()
         );
         const text = publicMessageText(event.message);
-        if (!execution.outputContinuation && !execution.inlineProposal && isAssistantMessage(event.message)
+        if (!execution.outputContinuation && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && execution.generation?.request.outputKind !== "canvas" && isAssistantMessage(event.message)
           && (event.message.stopReason === "length" || event.message.errorMessage === "provider_output_limit_reached")) {
           execution.outputContinuation = {
             messageKey: key, firstFingerprint: messageFingerprint(event.message), text,

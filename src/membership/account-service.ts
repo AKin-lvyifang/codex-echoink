@@ -3,6 +3,7 @@
 import { membershipWebsiteLink } from "./website-links";
 import {
   createUnavailableAccountAdapter,
+  membershipPlanAction,
   type AccountActions,
   type AccountMembershipViewModel,
   type AccountStatistics,
@@ -16,6 +17,7 @@ import type {
   CapabilityAccess,
   MembershipApiResponses,
   MembershipProduct,
+  MembershipEarlyOffer,
   MembershipRights,
   CheckInSummary,
   CheckInResult,
@@ -100,6 +102,7 @@ export class AccountService implements CapabilityAccess {
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
   private salesOpen = false;
+  private earlyOffer: MembershipEarlyOffer | null = null;
   private betaOffer: MembershipRights["betaOffer"] = null;
   private expiryTimer: number | null = null;
   private statisticsSource: AccountStatisticsSource | null = null;
@@ -174,9 +177,10 @@ export class AccountService implements CapabilityAccess {
       openOrders: async () => {
         this.openWebsite(membershipWebsiteLink("plugin.account.orders", { baseURL: this.websiteUrl }));
       },
-      selectPlan: async ({ planId, currency }) => {
-        if (!this.salesOpen || !["early", "month", "quarter", "year"].includes(planId) || planId === "early" && !this.products.some(product => product.id === "early" && product.available === true && product.availability === "available" && Number.isSafeInteger(product.prices.CNY) && product.prices.CNY > 0)) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
-        this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency }));
+      selectPlan: async ({ planId }) => {
+        this.assertCurrent(this.operation());
+        if (!["early", "month", "quarter", "year"].includes(planId) || !membershipPlanAction(this.read(), planId, "CNY", false, true).purchasable) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
+        this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency: "CNY" }));
       },
     };
   }
@@ -347,6 +351,7 @@ export class AccountService implements CapabilityAccess {
     ++this.skillGeneration;
     this.claims = null;
     this.state = {};
+    this.clearProducts();
     const operation = this.operation();
     await this.persist();
     this.assertCurrent(operation);
@@ -366,6 +371,7 @@ export class AccountService implements CapabilityAccess {
     ++this.skillGeneration;
     this.claims = null;
     this.state = {};
+    this.clearProducts();
     try {
       await this.persist();
     } finally {
@@ -394,6 +400,7 @@ export class AccountService implements CapabilityAccess {
     ++this.generation;
     ++this.skillGeneration;
     this.claims = null;
+    this.clearProducts();
     // Password rotation is still the same identity; preserve the profile while
     // refreshing the new token so subscribers do not observe a fake sign-out.
     // Authorization is deliberately rebuilt: no old claims, rights or lease.
@@ -567,6 +574,17 @@ export class AccountService implements CapabilityAccess {
     });
     return strict ? this.refreshFlight : this.refreshFlight.catch(() => undefined);
   }
+  private clearProducts(): void {
+    this.products = [];
+    this.salesOpen = false;
+    this.earlyOffer = null;
+  }
+  private updateProducts(products: MembershipApiResponses["/api/products"]): void {
+    this.products = products.products;
+    this.salesOpen = products.salesOpen === true;
+    this.earlyOffer = products.earlyOffer ?? null;
+    this.betaOffer = products.betaOffer ?? null;
+  }
   private async refreshOnce(): Promise<void> {
     const operation = this.operation();
     if (!operation.token) {
@@ -580,28 +598,39 @@ export class AccountService implements CapabilityAccess {
             operation,
           );
           this.assertCurrent(operation);
-          this.products = products.products;
-          this.salesOpen = products.salesOpen === true;
-          this.betaOffer = products.betaOffer ?? null;
-        } catch {
-          /* Unauthenticated free use remains available. */
+          this.updateProducts(products);
+          this.refreshError = null;
+        } catch (error) {
+          if (!this.isCurrent(operation)) return;
+          this.clearProducts();
+          this.refreshError = error instanceof Error ? error.message : "商品信息加载失败，请重试。";
         }
-      }
+      } else this.clearProducts();
       if (this.isCurrent(operation)) await this.persist();
       return;
     }
     try {
-      const [account, rights, products] = await Promise.all([
+      const [accountResult, rightsResult, productsResult] = await Promise.allSettled([
         this.call("/api/account", "GET", undefined, operation),
         this.call("/api/membership", "GET", undefined, operation),
-        this.call("/api/products", "GET", undefined, operation),
+        this.call("/api/products", "GET", undefined, operation).catch(error => {
+          if (this.isCurrent(operation)) {
+            this.clearProducts();
+            this.emit();
+          }
+          throw error;
+        }),
       ]);
       this.assertCurrent(operation);
-      this.products = products.products;
-      this.salesOpen = products.salesOpen === true;
-      this.betaOffer = products.betaOffer ?? null;
+      if (productsResult.status === "fulfilled") this.updateProducts(productsResult.value);
+      else this.clearProducts();
+      if (accountResult.status === "rejected") throw accountResult.reason;
+      if (rightsResult.status === "rejected") throw rightsResult.reason;
+      const account = accountResult.value, rights = rightsResult.value;
       this.connected = true;
-      this.refreshError = null;
+      this.refreshError = productsResult.status === "rejected"
+        ? productsResult.reason instanceof Error ? productsResult.reason.message : "商品信息加载失败，请重试。"
+        : null;
       this.state = {
         ...this.state,
         account,
@@ -636,6 +665,7 @@ export class AccountService implements CapabilityAccess {
       ) {
         this.state = {};
         this.claims = null;
+        this.clearProducts();
       } else if (
         error instanceof MembershipApiError &&
         [
@@ -757,6 +787,7 @@ export class AccountService implements CapabilityAccess {
       },
       products: this.products,
       salesOpen: this.salesOpen,
+      earlyOffer: this.earlyOffer,
       activityGifts: rights?.activityGifts ?? [],
       betaOffer: rights?.betaOffer ?? this.betaOffer,
       serviceAvailable: !!this.apiUrl && !this.initializing,
@@ -816,6 +847,7 @@ export class AccountService implements CapabilityAccess {
     this.listeners.clear();
     this.claims = null;
     this.state = {};
+    this.clearProducts();
   }
 }
 

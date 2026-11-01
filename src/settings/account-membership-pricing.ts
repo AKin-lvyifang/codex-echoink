@@ -26,50 +26,42 @@ export interface MembershipPlanPricing {
   readonly savingsPercent: number | null;
 }
 
-const mainlandTimeZones = new Set([
-  "Asia/Shanghai", "Asia/Urumqi", "Asia/Chongqing", "Asia/Chungking", "Asia/Harbin", "PRC"
-]);
-
-/** A display default based on the current device time zone, not a location check. */
-export function resolveMembershipCurrency(timeZone?: string | null): MembershipCurrency {
-  return mainlandTimeZones.has(timeZone ?? "") ? "CNY" : "USD";
-}
-
-const prices: Record<MembershipCurrency, Record<MembershipPlanId, number>> = {
-  CNY: { early: 1990, month: 900, quarter: 1900, year: 4900 },
-  USD: { early: 999, month: 299, quarter: 699, year: 1999 }
-};
-const periods: readonly { readonly id: MembershipPlanId; readonly days: number | null }[] = [
-  { id: "early", days: null },
-  { id: "month", days: 30 },
-  { id: "quarter", days: 90 },
-  { id: "year", days: 365 }
-];
-
-export function getMembershipPlanPricing(currency: MembershipCurrency, products?: readonly MembershipProductPricing[] | null): readonly MembershipPlanPricing[] {
-  const resolvePrice = (period: typeof periods[number], displayCurrency: MembershipCurrency) => {
-    const product = products?.find(product => product?.id === period.id
-      && Number.isSafeInteger(product.prices?.[displayCurrency]) && product.prices[displayCurrency] >= 0
-      && (period.days === null ? product.days === null : Number.isSafeInteger(product.days) && product.days! > 0));
-    return { id: period.id, currency: displayCurrency, amountMinor: product?.prices[displayCurrency] ?? prices[displayCurrency][period.id], days: product ? product.days : period.days };
-  };
-  const resolved = periods.map(period => {
-    const offered = products?.find(product => product.id === period.id);
-    const displayCurrency = period.id === "early" && offered?.currencies?.includes("CNY") && !offered.currencies.includes("USD") ? "CNY" : currency;
-    return resolvePrice(period, displayCurrency);
+/** Prices and billing periods come only from the current server catalogue. */
+export function getMembershipPlanPricing(_currency: MembershipCurrency, products?: readonly MembershipProductPricing[] | null): readonly MembershipPlanPricing[] {
+  const ids: readonly MembershipPlanId[] = ["early", "month", "quarter", "year"];
+  const resolved = ids.flatMap(id => {
+    const product = products?.find(product => product?.id === id && isValidMembershipProduct(product));
+    return product ? [{ id, currency: "CNY" as const, amountMinor: product.prices.CNY, days: product.days }] : [];
   });
-  const amounts = Object.fromEntries(resolved.map(plan => [plan.id, plan.amountMinor])) as Record<MembershipPlanId, number>;
-  return resolved.map(({ id, days, amountMinor, currency: displayCurrency }) => {
-    const comparisonAmountMinor = id === "early" ? resolvePrice(periods[3], displayCurrency).amountMinor
-      : id === "quarter" ? amounts.month * 3
-      : id === "year" ? amounts.month * 12 : null;
-    const savingsAmountMinor = comparisonAmountMinor == null ? null : comparisonAmountMinor - amountMinor;
+  const month = resolved.find(plan => plan.id === "month");
+  return resolved.map(plan => {
+    const comparisonAmountMinor = month && (plan.id === "quarter" || plan.id === "year")
+      ? month.amountMinor * (plan.id === "quarter" ? 3 : 12) : null;
+    const savingsAmountMinor = comparisonAmountMinor == null ? null : comparisonAmountMinor - plan.amountMinor;
     return {
-      id, amountMinor, days, currency: displayCurrency,
-      dailyAmountMinor: days == null ? null : amountMinor / days,
-      comparisonAmountMinor,
-      savingsAmountMinor,
-      savingsPercent: comparisonAmountMinor == null || comparisonAmountMinor <= 0 ? null : Math.round(savingsAmountMinor! / comparisonAmountMinor * 100)
+      ...plan,
+      dailyAmountMinor: plan.days == null ? null : plan.amountMinor / plan.days,
+      comparisonAmountMinor, savingsAmountMinor,
+      savingsPercent: comparisonAmountMinor == null ? null : Math.round(savingsAmountMinor! / comparisonAmountMinor * 100)
     };
   });
+}
+
+/** Shared by pricing and purchase actions; absent or invalid CNY never falls back. */
+export function isValidMembershipProduct(product: MembershipProductPricing): boolean {
+  return Number.isSafeInteger(product.prices?.CNY) && product.prices.CNY > 0
+    && (!product.currencies || product.currencies.includes("CNY"))
+    && (product.id === "early" ? product.days === null : Number.isSafeInteger(product.days) && product.days! > 0);
+}
+
+/** Display the server's offer date while it is current in Beijing; never closes sales. */
+export function formatEarlyOfferEndDate(endsAt?: string | null, now = Date.now()): { zh: string; en: string } | null {
+  if (!endsAt || !/^\d{4}-\d{2}-\d{2}$/.test(endsAt) || !Number.isFinite(now)) return null;
+  const end = Date.parse(`${endsAt}T00:00:00Z`);
+  if (!Number.isFinite(end) || new Date(end).toISOString().slice(0, 10) !== endsAt) return null;
+  const today = Math.floor((now + 8 * 60 * 60 * 1000) / 86400000);
+  if (end / 86400000 < today) return null;
+  const [year, month, day] = endsAt.split("-").map(Number);
+  const monthName = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1];
+  return { zh: `活动截止 ${year}年${month}月${day}日`, en: `Offer ends ${monthName} ${day}, ${year}` };
 }

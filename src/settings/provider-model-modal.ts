@@ -16,6 +16,8 @@ import type {
 import {
   applyApiProviderModelLimitsOverride,
   apiProviderModelSupportsImage,
+  apiProviderModelUsesAutoOutputLimit,
+  apiProviderModelAutomaticOutputTarget,
   createApiProviderConfig,
   createApiProviderModelConfig,
   createDiscoveredApiProviderModelConfig,
@@ -1413,6 +1415,9 @@ export class ProviderModelModal extends Modal {
     const id = `${this.accessibilityId}-${model.id.replace(/[^A-Za-z0-9_-]/gu, "-")}-${key}`;
     const focusKey = `model:${model.id}:${key}`;
     const invalidDraft = this.numberDrafts.get(focusKey);
+    const displayedValue = (): number => key === "maxOutputTokens"
+      && apiProviderModelUsesAutoOutputLimit(this.providerId, model, this.draft.runtimeProviderId)
+      ? apiProviderModelAutomaticOutputTarget(model) : model[key];
     field.createEl("label", { text: label, attr: { for: id } });
     const input = createOriginInput(field, {
       cls: "codex-provider-modal-input",
@@ -1425,7 +1430,7 @@ export class ProviderModelModal extends Modal {
         value: invalidDraft ? invalidDraft.raw : model.limitsOverride?.[key] === undefined
           ? ""
           : String(model.limitsOverride[key]),
-        placeholder: this.modelLimitPlaceholder(model[key]),
+        placeholder: this.modelLimitPlaceholder(displayedValue()),
         "data-modal-focus-key": focusKey
       }
     });
@@ -1440,7 +1445,7 @@ export class ProviderModelModal extends Modal {
       input.setAttr("aria-invalid", String(Boolean(invalid)));
       hint.toggleClass("codex-provider-field-error", Boolean(invalid));
       if (invalid) { hint.setText(invalid.message); return; }
-      const formattedValue = this.formatModelLimit(model[key]);
+      const formattedValue = this.formatModelLimit(displayedValue());
       const requested = model.limitsOverride?.[key];
       if (requested !== undefined && requested !== model[key]) {
         hint.setText(this.label(
@@ -1481,7 +1486,7 @@ export class ProviderModelModal extends Modal {
           this.draft.runtimeProviderId,
           limitsOverride
         );
-        input.placeholder = this.modelLimitPlaceholder(model[key]);
+        input.placeholder = this.modelLimitPlaceholder(displayedValue());
         updateHint();
         this.invalidatePreflight();
         return;
@@ -1494,7 +1499,7 @@ export class ProviderModelModal extends Modal {
         limitsOverride
       );
       if (model.limitsOverride?.[key] === undefined) input.value = "";
-      input.placeholder = this.modelLimitPlaceholder(model[key]);
+      input.placeholder = this.modelLimitPlaceholder(displayedValue());
       updateHint();
       this.invalidatePreflight();
     };
@@ -1503,8 +1508,8 @@ export class ProviderModelModal extends Modal {
   private modelCapabilityDescription(model: ApiProviderModelConfig): string {
     if (model.metadataSource === "unknown") {
       return this.label(
-        "尚无可靠能力元数据；以下开关使用保守状态，可按 Provider 文档覆盖。",
-        "Reliable capability metadata is unavailable. The controls use conservative states and can be overridden from the provider documentation."
+        "尚无可靠能力元数据，可按 Provider 文档确认或覆盖以下开关。",
+        "Reliable capability metadata is unavailable. Confirm or override the controls using the provider documentation."
       );
     }
     if (model.metadataSource === "manual") {
@@ -2131,9 +2136,15 @@ export class ProviderModelModal extends Modal {
   }
 
   private invalidatePreflight(identityChanged = false): void {
-    const refreshModelCard = identityChanged && (this.preflight.state.models.length > 0 || this.draft.models.some((model) => model.discovery));
+    const refreshModelCard = identityChanged && (this.preflight.state.models.length > 0 || this.draft.models.some((model) => model.discovery || model.autoLimits));
     if (identityChanged) this.draft.models = this.draft.models.map((model) => {
-      if (!model.discovery) return model;
+      if (!model.discovery) {
+        if (!model.autoLimits) return model;
+        const cleared = { ...model };
+        delete cleared.autoLimits;
+        applyApiProviderModelLimitsOverride(cleared, this.providerId, this.draft.runtimeProviderId, cleared.limitsOverride);
+        return cleared;
+      }
       const baseline = createApiProviderModelConfig(this.providerId, model.id, this.draft.runtimeProviderId);
       if (model.capabilityOverrides) Object.assign(baseline, model.capabilityOverrides, { capabilityOverrides: model.capabilityOverrides, metadataSource: "manual" });
       // Keep field ownership through an identity change, even when no capability

@@ -1,7 +1,7 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
-import { getMembershipPlanPricing, resolveMembershipCurrency, type MembershipCurrency, type MembershipPlanId } from "../../settings/account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { ipadIcon } from "./workbench-elements";
@@ -12,7 +12,7 @@ const validPro = (vm: AccountMembershipViewModel): boolean => ["active", "lifeti
 const accountKey = (api: AccountMembershipAdapter): string | null => api.read().identity?.email.trim().toLowerCase() ?? null;
 const english = (ctx: IPadSettingsContext): boolean => ctx.host.settings().settingsLanguage === "en";
 const planNames: Record<MembershipPlanId, string> = { early: "早鸟买断", month: "月卡", quarter: "季卡", year: "年卡" };
-const stateNames: Record<MembershipState, string> = { unavailable: "服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "2.x 买断权益", "offline-valid": "离线可用", "verification-required": "需要联网验证", expired: "已到期", revoked: "已撤销", "device-limit": "设备名额已满", "device-required": "本机待激活", scheduled: "尚未生效" };
+const stateNames: Record<MembershipState, string> = { unavailable: "服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "终生买断权益", "offline-valid": "离线可用", "verification-required": "需要联网验证", expired: "已到期", revoked: "已撤销", "device-limit": "设备名额已满", "device-required": "本机待激活", scheduled: "尚未生效" };
 const emailValid = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email.trim());
 function cleanFailure(failure: unknown, secrets: string[]): string {
   let message = failure instanceof Error ? failure.message : String(failure);
@@ -90,7 +90,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
     redeemOpen = !redeemOpen; redemption.hidden = !redeemOpen; toggle.setAttribute("aria-expanded", String(redeemOpen));
     if (redeemOpen) { if (!api.read().identity) showSettingsError(redeemFeedback, t(ctx, "请先登录账号。")); code.focus(); }
   }); toggle.classList.add("pd-account-text-action"); toggle.setAttribute("aria-expanded", "false"); purchaseHeading.append(toggle); v.fields.append(redemption, plans);
-  const lifetime = el(ctx.document, "details", "pd-account-lifetime"); lifetime.append(el(ctx.document, "summary", "", t(ctx, "买断包含什么")), el(ctx.document, "div", "pd-account-lifetime-body", t(ctx, "包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权。"))); v.fields.append(lifetime);
+  const lifetime = el(ctx.document, "details", "pd-account-lifetime"); lifetime.append(el(ctx.document, "summary", "", t(ctx, "买断包含什么")), el(ctx.document, "div", "pd-account-lifetime-body", t(ctx, "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。"))); v.fields.append(lifetime);
   v.dirty = () => !!redeemCode.trim(); v.discard = () => { redeemCode = ""; code.value = ""; };
   v.cleanup(() => { redeemCode = ""; });
   function update(): void { if (!v.alive) return; const vm = api.read(); redeem.disabled = v.busy || !vm.identity || !vm.serviceAvailable || !api.actions.redeem || !redeemCode.trim(); setLabel(redeem, t(ctx, v.busy && redeeming ? "兑换中…" : "兑换")); }
@@ -107,8 +107,9 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
       name.append(el(ctx.document, "span", "", vm.identity?.name || vm.identity?.email || t(ctx, "未登录")));
       if (vm.identity) {
         if (validPro(vm)) edition(ctx, name); else name.append(el(ctx.document, "span", "pd-account-free", t(ctx, stateNames[vm.membership.state])));
-        const membership = vm.membership, planId = membership.planId ?? (membership.state === "lifetime" ? "early" : null), plan = membership.planName || (planId && planId in planNames ? t(ctx, planNames[planId as MembershipPlanId]) : "");
+        const membership = vm.membership, planId = membership.planId ?? (membership.state === "lifetime" ? "early" : null);
         const lifetime = membership.state === "lifetime" || planId === "early";
+        const plan = lifetime ? t(ctx, planNames.early) : membership.planName || (planId && planId in planNames ? t(ctx, planNames[planId as MembershipPlanId]) : "");
         const details = validPro(vm) || plan ? [plan, !lifetime && membership.expiresAt ? `${formatMobileDate(membership.expiresAt)} ${t(ctx, "到期")}` : "", membership.verifiedAt ? `${formatMobileDateTime(membership.verifiedAt, Date.now(), english(ctx) ? "en" : "zh-CN")} ${t(ctx, "已验证")}` : "", !["active", "lifetime", "free"].includes(membership.state) ? t(ctx, stateNames[membership.state]) : ""].filter(Boolean).join(" · ") : vm.identity.email;
         copy.append(name, el(ctx.document, "div", "pd-account-sub", details));
       } else {
@@ -143,11 +144,11 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
     if (language !== nextLanguage) {
       language = nextLanguage; renderBenefits(ctx, benefits); usageHeading.querySelector("h2")!.textContent = t(ctx, "我的使用"); usageHeading.querySelector(".pd-account-location")!.textContent = t(ctx, "当前 Vault · 本地");
       benefitsHeading.querySelector("h2")!.textContent = t(ctx, "权益对比"); purchaseHeading.querySelector("h2")!.textContent = t(ctx, "购买方案"); setLabel(toggle, t(ctx, "使用兑换码"));
-      lifetime.querySelector("summary")!.textContent = t(ctx, "买断包含什么"); lifetime.lastElementChild!.textContent = t(ctx, "包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权。");
+      lifetime.querySelector("summary")!.textContent = t(ctx, "买断包含什么"); lifetime.lastElementChild!.textContent = t(ctx, "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。");
       code.setAttribute("aria-label", t(ctx, "兑换码")); code.placeholder = t(ctx, "输入兑换码");
     }
     renderStatistics(ctx, usage, vm);
-    const nextPlans = JSON.stringify([vm.salesOpen, vm.products, vm.membership.planId, vm.membership.state, nextLanguage]);
+    const nextPlans = JSON.stringify([vm.salesOpen, vm.products, vm.earlyOffer, vm.membership.planId, vm.membership.state, nextLanguage]);
     if (planKey !== nextPlans) { planKey = nextPlans; renderPlans(ctx, plans, vm, api); }
     update();
   }
@@ -181,27 +182,34 @@ function renderBenefits(ctx: IPadSettingsContext, parent: HTMLElement): void {
   table.append(body); scroll.append(table); parent.append(scroll);
 }
 function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountMembershipViewModel, api: AccountMembershipAdapter): void {
-  let zone: string | undefined; try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* Formal pricing supplies the international fallback. */ }
-  const currency: MembershipCurrency = resolveMembershipCurrency(zone);
   parent.replaceChildren();
-  for (const plan of getMembershipPlanPricing(currency, vm.products)) {
-    const currency = plan.currency, symbol = currency === "CNY" ? "¥" : "US$";
-    const money = (minor: number, daily = false) => (minor / 100).toLocaleString(english(ctx) ? "en-US" : "zh-CN", { minimumFractionDigits: daily || currency === "USD" ? 2 : 0, maximumFractionDigits: 2 });
+  for (const plan of getMembershipPlanPricing("CNY", vm.products)) {
+    const symbol = "¥";
+    const money = (minor: number, daily = false) => (minor / 100).toLocaleString(english(ctx) ? "en-US" : "zh-CN", { minimumFractionDigits: daily ? 2 : 0, maximumFractionDigits: 2 });
     const active = validPro(vm) && (vm.membership.planId ?? (vm.membership.state === "lifetime" ? "early" : null)) === plan.id;
     const card = el(ctx.document, "article", `pd-account-plan${plan.id === "early" ? " is-early" : ""}`); card.dataset.planId = plan.id;
     const name = el(ctx.document, "div", "pd-account-plan-name", t(ctx, planNames[plan.id]));
     if (active) name.append(el(ctx.document, "span", "pd-account-current-plan", t(ctx, "使用中")));
     const price = el(ctx.document, "div", "pd-account-price"); price.append(el(ctx.document, "span", "pd-account-currency", symbol), el(ctx.document, "span", "", money(plan.amountMinor)));
     if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "pd-account-saving", english(ctx) ? `Save ${plan.savingsPercent}%` : `省 ${plan.savingsPercent}%`));
-    card.append(name, price, el(ctx.document, "div", "pd-account-plan-detail", plan.days === null ? t(ctx, "一次购买") : english(ctx) ? `${plan.days} days` : `${plan.days} 天`), el(ctx.document, "div", "pd-account-plan-detail", plan.dailyAmountMinor === null ? t(ctx, "当前 2.x 版本长期可用") : english(ctx) ? `About ${symbol}${money(plan.dailyAmountMinor, true)} / day` : `每天约 ${symbol}${money(plan.dailyAmountMinor, true)}`));
-    const { purchasable, zh, en } = membershipPlanAction(vm, plan.id, currency, active, !!api.actions.selectPlan);
+    card.append(name, price);
+    if (plan.id === "early") {
+      card.append(el(ctx.document, "div", "pd-account-plan-detail", t(ctx, "一次买断，终生可用")));
+      const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
+      if (offerEndDate) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? offerEndDate.en : offerEndDate.zh));
+    } else {
+      card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? `${plan.days} days` : `${plan.days} 天`));
+      if (plan.dailyAmountMinor !== null) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? `About ${symbol}${money(plan.dailyAmountMinor, true)} / day` : `每天约 ${symbol}${money(plan.dailyAmountMinor, true)}`));
+    }
+    const action = (current: AccountMembershipViewModel) => membershipPlanAction(current, plan.id, "CNY", validPro(current) && (current.membership.planId ?? (current.membership.state === "lifetime" ? "early" : null)) === plan.id, !!api.actions.selectPlan);
+    const { purchasable, zh, en } = action(vm);
     const label = english(ctx) ? en : zh;
     const feedback = settingsError(ctx), button = el(ctx.document, "button", "pd-settings-action"); button.type = "button"; button.disabled = !purchasable;
     button.append(el(ctx.document, "span", "pd-settings-action-visible", label));
     button.onclick = () => {
-      if (button.disabled) return;
+      if (button.disabled || !action(api.read()).purchasable) return;
       button.disabled = true; feedback.hidden = true;
-      void api.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => showSettingsError(feedback, error)).finally(() => { button.disabled = !purchasable; });
+      void api.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => showSettingsError(feedback, error)).finally(() => { button.disabled = !action(api.read()).purchasable; });
     };
     card.append(button, feedback); parent.append(card);
   }

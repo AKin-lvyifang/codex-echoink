@@ -28,6 +28,7 @@ export function formatApprovalPresentation(input: Readonly<{
   const preview = parseDisplayValue(input.preview);
   const targetObject = objectValue(target);
   const previewObject = objectValue(preview);
+  const drawing = previewObject?.domain === "excalidraw" ? previewObject : typeof previewObject?.content === "string" ? objectValue(parseDisplayValue(previewObject.content)) : undefined;
   const mcp = targetObject?.kind === "mcp_tool"
     || (typeof previewObject?.server === "string" && typeof previewObject?.tool === "string");
   const destination: ApprovalPresentationField[] = [];
@@ -42,7 +43,15 @@ export function formatApprovalPresentation(input: Readonly<{
   const targetPaths = pathFields(targetObject);
   const previewPaths = pathFields(previewObject);
 
-  if (previewObject?.domain === "todos" && ["todo_add", "todo_update", "todo_complete"].includes(String(previewObject.action))) {
+  if (drawing?.domain === "excalidraw" && typeof drawing.path === "string" && drawing.path.endsWith(".excalidraw.md")) {
+    action = text("创建手绘图", "Create drawing");
+    add(destination, text("保存到", "Save to"), drawing.path);
+    add(changes, text("样式", "Style"), drawing.style);
+    add(changes, text("框", "Boxes"), drawing.boxCount);
+    add(changes, text("连线", "Arrows"), drawing.arrowCount);
+    Object.keys(targetObject ?? {}).forEach(key => consumedTarget.add(key));
+    Object.keys(previewObject ?? {}).forEach(key => consumedPreview.add(key));
+  } else if (previewObject?.domain === "todos" && ["todo_add", "todo_update", "todo_complete"].includes(String(previewObject.action))) {
     action = previewObject.action === "todo_add" ? text("新增待办", "Add a to-do")
       : previewObject.action === "todo_complete" ? text("更改待办完成状态", "Change to-do completion") : text("修改待办", "Update a to-do");
     for (const field of targetPaths) { add(destination, pathLabel(field.label, english), field.value); consumedTarget.add(field.label); }

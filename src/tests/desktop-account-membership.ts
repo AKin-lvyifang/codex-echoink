@@ -4,6 +4,7 @@ import { installProviderBrowserHost } from "./provider-discovery-dom-host";
 import { mountDesktopAccountMembership } from "../settings/desktop-account-membership";
 import { mountAccountMembership } from "../settings/account-membership";
 import { createUnavailableAccountAdapter, type AccountActions, type AccountMembershipViewModel, type MembershipState } from "../settings/account-membership-model";
+import { pricingProducts } from "./account-membership-pricing";
 
 const tick = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 async function until(condition: () => boolean) { for (let i = 0; i < 180; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail("Account UI did not settle"); }
@@ -13,7 +14,7 @@ function fill(input: HTMLInputElement, value: string) { input.value = value; inp
 function submit(form: HTMLFormElement) { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }
 function initial(state: MembershipState = "free"): AccountMembershipViewModel {
   const empty = createUnavailableAccountAdapter().read();
-  return { ...empty, identity: { name: "测试账号", email: "fixture@example.invalid", joinedAt: "2026-10-01", avatar: "initial", passwordSet: false }, serviceAvailable: true,
+  return { ...empty, products: pricingProducts, identity: { name: "测试账号", email: "fixture@example.invalid", joinedAt: "2026-10-01", avatar: "initial", passwordSet: false }, serviceAvailable: true,
     membership: { ...empty.membership, state, devices: [{ id: "device-a", name: "测试设备", description: "本地测试", current: true }], deviceLimit: 2 } };
 }
 function fixture(value = initial(), actions: AccountActions = {}) {
@@ -39,7 +40,7 @@ async function anonymousOverview() {
     const header = f.host.querySelector<HTMLElement>(".desktop-account-header")!;
     assert.equal((header.textContent!.match(/未登录/g) ?? []).length, 1);
     assert.equal(header.querySelector(".profile-copy h2")?.textContent, "未登录");
-    assert.match(header.querySelector(".profile-copy .membership-copy p")!.textContent!, /财务和英文日记需要 PRO/);
+    assert.match(header.querySelector(".profile-copy .membership-copy p")!.textContent!, /财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO/);
     assert.equal(header.querySelector(".desktop-account-plan-status"), null);
     assert.equal(header.querySelectorAll(".profile-actions button").length, 1);
     const login = button(header, "登录 / 注册");
@@ -95,7 +96,7 @@ async function structure() {
   const models = { models: [{ name: "真实模型 A", count: 4 }], skills: [{ name: "不应出现的 Skill", count: 7 }] };
   f.set({ ...f.vm, products: [{ id: "month", prices: { CNY: 1200, USD: 450 }, days: 40 }], statistics: { ...f.vm.statistics, totalTokens: 0, rankings: { 30: models, 90: { ...models, models: [{ name: "真实模型 B", count: 9 }] }, all: models } } });
   assert.equal(f.host.querySelector(".metrics strong")?.textContent, "0");
-  assert.equal(f.host.querySelectorAll(".plan").length, 4, "partial server pricing retains all fallback plans");
+  assert.equal(f.host.querySelectorAll(".plan").length, 1, "partial catalogue never invents missing plan prices");
   const more = f.host.querySelector<HTMLDetailsElement>(".desktop-account-more-usage")!; assert(more); assert.equal(more.open, false);
   assert.equal(Array.from(more.querySelectorAll("h2, h3")).filter(node => node.textContent === "常用模型").length, 1);
   assert.equal(more.textContent?.includes("不应出现的 Skill"), false);
@@ -213,7 +214,7 @@ async function confirmations() {
   assert(!button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").classList.contains("echoink-delete-button"));
   button(f.host.querySelector(".echoink-settings-inline-confirm")!, "取消").click(); assert.equal(signouts, 0);
   button(f.host, "退出登录").click(); button(f.host.querySelector(".echoink-settings-inline-confirm")!, "退出登录").click(); await tick(); assert.equal(signouts, 1); assert.match(f.host.textContent!, /退出失败/);
-  f.host.querySelector<HTMLButtonElement>('.membership-footer [aria-label^="设备管理"]')!.click(); const detail = f.detail();
+  f.host.querySelector<HTMLButtonElement>('.desktop-account-device-navigation')!.click(); const detail = f.detail();
   assert(button(detail, "解绑本机").classList.contains("echoink-delete-button"));
   button(detail, "解绑本机").click();
   assert(button(detail, "确认解绑").classList.contains("echoink-delete-button"));

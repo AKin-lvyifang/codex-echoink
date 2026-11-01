@@ -36,7 +36,7 @@ const temporary = await mkdtemp(path.join(base, ".workbench-ui-"));
 try {
   await symlink(path.resolve("node_modules"), path.join(temporary, "node_modules"), "dir");
   const build = await esbuild.build({
-    stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh"; export { runWorkbenchCheckinTests } from "./src/tests/workbench-checkin";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "esm",
+    stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh"; export { runWorkbenchCheckinTests } from "./src/tests/workbench-checkin"; export { runWorkbenchWeatherTests } from "./src/tests/workbench-weather";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "esm",
     banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
     alias: { obsidian: path.resolve("src/tests/obsidian-shim.ts") },
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
@@ -51,5 +51,6 @@ try {
   await module.runWorkbenchUiTests();
   await module.runWorkbenchHomeRefreshTests();
   await module.runWorkbenchCheckinTests();
+  await module.runWorkbenchWeatherTests();
   console.log("PASS Workbench memory banners, adoption, inline reset/cancel, English text and existing DOM regressions (native appearance unverified)");
 } finally { win.close(); await rm(temporary, { recursive: true, force: true }); }
