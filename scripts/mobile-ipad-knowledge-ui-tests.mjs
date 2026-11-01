@@ -19,7 +19,7 @@ vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports,
 module.exports.installObsidianDom(dom.window);
 const ui = module.exports, clone = structuredClone, tick = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const bindings = ui.emptyKnowledgeFolderBindings();
-Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["Sources", "Clippings"], writePath: "Sources" }); bindings.collectionTargets = { web: "Sources", wechat: "Clippings", text: "收藏/对话" }; bindings.conversationDirectoryPending = true;
+Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["Sources", "Clippings"], writePath: "Sources" }); bindings.collectionTargets = { web: "Sources", wechat: "Clippings", answer: "收藏/回答", generation: "收藏/生成" }; bindings.answerDirectoryPending = true; bindings.generationDirectoryPending = true;
 Object.assign(bindings.roles.wiki, { enabled: true, readPaths: ["Legacy/One", "Legacy/Two"], writePath: "Legacy/One", compatibilityReadScopes: true });
 Object.assign(bindings.roles.inbox, { enabled: true, readPaths: ["Missing/Inbox"], writePath: "Missing/Inbox" });
 Object.assign(bindings.roles.assets, { enabled: true, readPaths: ["Existing/Assets"], writePath: "Existing/Assets", allowedSubdirectories: ["images"] });
@@ -47,18 +47,38 @@ const open = async () => { await shell.push(ui.createIPadKnowledgeSettingsPage(c
 try {
   const existingState = clone(state); state.bindings = null;
   await open(); await click("资料来源"); await click("选择已有目录"); await change("Sources", true); await click("确认选择");
-  assert.deepEqual(state.bindings.roles.raw.readPaths, ["Sources"]); assert.equal(state.bindings.collectionTargets.text, "收藏/对话", "A new user's first source binding retains the conversation default"); assert.equal(state.bindings.conversationDirectoryPending, true);
+  assert.deepEqual(state.bindings.roles.raw.readPaths, ["Sources"]); assert.equal(state.bindings.collectionTargets.answer, "收藏/回答", "A new user's first source binding retains the answer default"); assert.equal(state.bindings.answerDirectoryPending, true); assert.equal(state.bindings.collectionTargets.generation, "收藏/生成"); assert.equal(state.bindings.generationDirectoryPending, true);
   await shell.back(); await shell.back(); state.bindings = null; await open(); await click("重新初始化"); await change("帮我搭建", true);
-  assert.equal(calls.previews.at(-1).bindings.collectionTargets.text, "收藏/对话", "Setup materializes the conversation default before assigning source roles"); assert.equal(calls.previews.at(-1).bindings.conversationDirectoryPending, true);
+  assert.equal(calls.previews.at(-1).bindings.collectionTargets.answer, "收藏/回答", "Setup materializes the answer default before assigning source roles"); assert.equal(calls.previews.at(-1).bindings.answerDirectoryPending, true); assert.equal(calls.previews.at(-1).bindings.collectionTargets.generation, "收藏/生成"); assert.equal(calls.previews.at(-1).bindings.generationDirectoryPending, true);
   await shell.back(); await shell.back(); state = existingState; calls.saves.length = 0; calls.previews.length = 0; calls.applies.length = 0;
   failRead = true; await open(); assert.match(current().textContent, /读取目录失败/); assert.doesNotMatch(current().textContent, /正在读取/); failRead = false; await click("重新读取"); assert.equal(current().querySelectorAll(".pd-settings-group")[0].querySelectorAll("button").length, 5); assert.match(current().textContent, /位置失效：Missing\/Inbox/); assert.equal(current().querySelector("[class*=heat]"), null);
   await click("项目"); await change("启用", true); assert.match(shell.activePageId, /picker/); assert.equal(calls.saves.length, 0); await click("取消"); assert.equal(field("启用").checked, false); await change("启用", true); await change("Projects", true); await click("确认选择"); assert.equal(state.bindings.roles.projects.enabled, true); assert.deepEqual(state.bindings.roles.projects.readPaths, ["Projects"]); await shell.back();
   await click("资料来源"); assert.equal(current().querySelector('[aria-label="默认保存到"]'), null); await click("选择已有目录"); assert.equal(current().querySelector('[aria-label="库根目录"]'), null, "Knowledge purposes cannot select the Vault root"); await change("Clippings", false); failSave = true; await click("确认选择"); assert.match(current().textContent, /绑定保存失败/); assert.equal(field("Clippings").checked, false); assert.equal(state.bindings.roles.raw.readPaths.length, 2); failSave = false; await click("确认选择"); assert.deepEqual(state.bindings.roles.raw.readPaths, ["Sources"]); assert.equal(state.bindings.collectionTargets.wechat, "Clippings", "Changing a purpose retains existing collection preferences"); const savesBeforeCancel = calls.saves.length; await click("选择已有目录"); await change("Sources", false); await click("取消"); assert.equal(calls.saves.length, savesBeforeCancel); await click("选择已有目录"); await change("Clippings", true); await click("确认选择"); await shell.back();
-  await click("收藏保存位置"); assert.equal(field("网页链接").value, "Sources"); await change("网页链接", "Clippings"); assert.equal(state.bindings.collectionTargets.web, "Clippings");
-  assert.equal(field("对话栏内容").value, "收藏/对话"); assert.match(field("对话栏内容").selectedOptions[0].textContent, /新建/); assert.equal(field("对话栏内容").parentElement.querySelector('[role="alert"]'), null, "Pending conversation defaults are not missing-folder errors");
-  assert.ok([...field("对话栏内容").options].some(option => option.value === "Sources-other")); assert.equal([...field("网页链接").options].some(option => option.value === "Sources-other"), false, "Other collection destinations remain source-bound");
-  await change("对话栏内容", "Sources-other"); assert.equal(state.bindings.collectionTargets.text, "Sources-other"); assert.equal(state.bindings.conversationDirectoryPending, false);
-  state.bindings.collectionTargets.text = "Missing/Conversation"; await shell.back(); await shell.back(); await open(); await click("收藏保存位置"); assert.match(field("对话栏内容").parentElement.textContent, /文件夹不存在/); assert.equal(field("对话栏内容").value, "Missing/Conversation"); await change("对话栏内容", "Sources-other"); assert.equal(field("对话栏内容").parentElement.querySelector('[role="alert"]'), null); await shell.back();
+  await click("Agent 产出物保存到"); assert.equal(field("网页").value, "Sources"); await change("网页", "Clippings"); assert.equal(state.bindings.collectionTargets.web, "Clippings");
+  for (const [label, directory] of [["存为笔记的回答", "收藏/回答"], ["从资料生成", "收藏/生成"]]) {
+    assert.equal(field(label).value, directory); assert.match(field(label).selectedOptions[0].textContent, /新建/);
+    assert.equal(field(label).parentElement.querySelector('[role="alert"]'), null, "Pending output defaults are not missing-folder errors");
+    assert.ok([...field(label).options].some(option => option.value === "Sources-other"), "Output locations may be outside Knowledge source folders");
+  }
+  assert.match(field("存为笔记的回答").parentElement.textContent, /存为笔记.*整段回答/);
+  assert.match(field("从资料生成").parentElement.textContent, /生成模板.*笔记或 Canvas/);
+  assert.equal([...field("网页").options].some(option => option.value === "Sources-other"), false, "Web collection destinations remain source-bound");
+  const pendingOutputs = clone(state.bindings); failSave = true; await change("从资料生成", "Sources-other");
+  assert.match(current().textContent, /绑定保存失败/); assert.deepEqual(state.bindings, pendingOutputs, "A failed generation save preserves both first-save flags and locations");
+  failSave = false; await change("从资料生成", "Inbox");
+  assert.equal(state.bindings.collectionTargets.generation, "Inbox"); assert.equal(state.bindings.generationDirectoryPending, false);
+  assert.equal(state.bindings.collectionTargets.answer, "收藏/回答"); assert.equal(state.bindings.answerDirectoryPending, true, "Selecting generation does not initialize answers");
+  await change("存为笔记的回答", "Sources-other"); assert.equal(state.bindings.collectionTargets.answer, "Sources-other"); assert.equal(state.bindings.answerDirectoryPending, false);
+  assert.equal(state.bindings.collectionTargets.generation, "Inbox"); assert.equal(state.bindings.generationDirectoryPending, false);
+  assert.deepEqual(state.bindings.roles.raw.readPaths, pendingOutputs.roles.raw.readPaths, "Saving output locations never grants retrieval access to those folders");
+  state.bindings.collectionTargets.answer = "Missing/Answer"; state.bindings.collectionTargets.generation = "Missing/Generation";
+  await shell.back(); await shell.back(); await open(); await click("Agent 产出物保存到");
+  for (const [label, directory] of [["存为笔记的回答", "Missing/Answer"], ["从资料生成", "Missing/Generation"]]) {
+    assert.match(field(label).parentElement.textContent, /文件夹不存在/); assert.equal(field(label).value, directory);
+  }
+  await change("存为笔记的回答", "Sources-other"); assert.equal(field("存为笔记的回答").parentElement.querySelector('[role="alert"]'), null);
+  assert.ok(field("从资料生成").parentElement.querySelector('[role="alert"]'), "Repairing answers leaves the missing generation location visible");
+  await change("从资料生成", "Inbox"); assert.equal(field("从资料生成").parentElement.querySelector('[role="alert"]'), null); await shell.back();
   await click("知识成果"); await click("选择已有目录"); assert.equal(field("Legacy/One").disabled, true); await click("确认选择"); assert.equal(state.bindings.roles.wiki.compatibilityReadScopes, true); assert.equal(state.bindings.roles.wiki.readPaths.length, 2); await click("选择已有目录"); await change("Wiki", true); await click("确认选择"); assert.deepEqual(state.bindings.roles.wiki.readPaths, ["Wiki"]); assert.equal(state.bindings.roles.wiki.compatibilityReadScopes, false); assert.deepEqual(state.bindings.roles.assets.readPaths, ["Existing/Assets"]); await shell.back();
   await click("知识成果"); assert.doesNotMatch(current().textContent, /子目录许可/); assert.equal(current().querySelector('[aria-label="允许 Agent 在知识成果和项目中新建子文件夹"]'), null); await shell.back();
   const writesBeforeOrganization = calls.saves.length; await click("Agent 权限与维护"); assert.equal(calls.saves.length, writesBeforeOrganization); assert.equal(field("允许 Agent 分类整理").checked, true); assert.equal(field("范围").value, "all"); assert.equal(field("范围").tagName, "SELECT");

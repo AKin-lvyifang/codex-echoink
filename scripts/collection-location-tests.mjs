@@ -11,9 +11,9 @@ const directory = await realpath(await mkdtemp(path.join(fixtureRoot, "collectio
 try {
   const output = path.join(directory, "tests.mjs");
   await esbuild.build({
-    stdin: { contents: `import { JSDOM } from "jsdom"; import { runKnowledgeCollectionTargetTests } from "./src/tests/module-runtime";
-      const dom = new JSDOM("<!doctype html><body></body>"); globalThis.DOMParser = dom.window.DOMParser; globalThis.Node = dom.window.Node;
-      try { await runKnowledgeCollectionTargetTests(${JSON.stringify(directory)}); console.log("Collection locations: migration, independent writes and withdrawn sources PASS"); } finally { dom.window.close(); }`, resolveDir: root, loader: "ts" },
+    stdin: { contents: `import { runKnowledgeCollectionTargetTests } from "./src/tests/module-runtime";
+      globalThis.DOMParser = window.DOMParser;
+      try { await runKnowledgeCollectionTargetTests(${JSON.stringify(directory)}); console.log("Collection locations: migration, independent writes and withdrawn sources PASS"); } finally { window.close(); }`, resolveDir: root, loader: "ts" },
     outfile: output, bundle: true, platform: "node", target: "node22", format: "esm",
     banner: { js: `import {createRequire as runtimeRequire} from "node:module"; const require = runtimeRequire(${JSON.stringify(path.join(root, "package.json"))});` },
     loader: { ".md": "text", ".txt": "text", ".svg": "dataurl", ".webp": "dataurl" },
@@ -27,6 +27,6 @@ try {
       });
     } }]
   });
-  const result = spawnSync(process.execPath, [output], { cwd: root, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
+  const result = spawnSync(process.execPath, ["--import", path.join(root, "scripts/desktop-dom-test-preload.mjs"), output], { cwd: root, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
   process.exitCode = result.status ?? 1;
 } finally { await rm(directory, { recursive: true, force: true }); }

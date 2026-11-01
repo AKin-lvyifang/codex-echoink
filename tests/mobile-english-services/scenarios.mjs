@@ -121,7 +121,19 @@ export async function runEnglishScenarios(api, root) {
   await uncertain.write(".obsidian/plugins/echoink/english-diary/expression-operation.json",JSON.stringify({schema:1,phase:"apply",changes:[]}));uncertain.reset();
   const reopened=uncertain.cold();const unknown=await reopened.readPage();assert.equal(unknown.expressionCount,null);await assert.rejects(reopened.api.generate(sourcePath),/确认|重放/u);
   assert.equal(uncertain.calls.writes.length,0);assert.equal(uncertain.requests.length,0);assert.ok(await uncertain.adapter.exists(".obsidian/plugins/echoink/english-diary/expression-operation.json"));reopened.dispose();uncertain.service.dispose();
-  const denied=await make(api,root,"unapproved-directory");denied.settings.knowledgeBase.folderBindings.roles.outputs.allowedSubdirectories=[];denied.reset();
-  await denied.service.readPage();await denied.service.inspectSource(sourcePath);await assert.rejects(denied.service.api.generate(sourcePath),/子目录|确认/u);assert.equal(denied.calls.writes.length,0);denied.service.dispose();
-  await tick();console.log("PASS interrupted cold start and unapproved output child: no recovery, replay, implicit migration or folder creation; actual unknown counts preserved.");
+  const own=await make(api,root,"module-owned-directory");
+  own.settings.knowledgeBase.folderBindings.roles.outputs.enabled=false;
+  own.settings.knowledgeBase.folderBindings.roles.outputs.allowedSubdirectories=[];
+  own.settings.knowledgeBase.folderBindings.collectionTargets={answer:"其他回答",generation:"其他生成"};
+  own.settings.englishDiary.englishDirectory="我的英文日记";own.settings.englishDiary.expressionDirectory="我的表达库";
+  own.settings.englishDiary.englishDirectoryMode="custom";own.settings.englishDiary.expressionDirectoryMode="custom";
+  await own.adapter.mkdir("我的英文日记");await own.adapter.mkdir("我的表达库");await own.approve();own.reset();
+  await own.service.readPage();const ownInput=await own.service.inspectSource(sourcePath);
+  assert.equal(own.calls.writes.length,0,"reading never creates module directories");
+  const ownSaved=await own.service.api.generate(sourcePath,{privacy:privacy(ownInput)});
+  assert.ok(ownSaved.englishPath.startsWith("我的英文日记/"));
+  assert.ok((await own.service.readPage()).expressions.every(entry=>entry.path.startsWith("我的表达库/")));
+  assert.equal(await own.adapter.exists("其他回答"),false);assert.equal(await own.adapter.exists("其他生成"),false);
+  own.service.dispose();
+  await tick();console.log("PASS interrupted cold start retains unknown counts; English saves use module directories with old outputs disabled and keep answer/generation untouched.");
 }

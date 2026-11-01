@@ -572,8 +572,8 @@ async function checkSettingsEntryFocus(win: Window & typeof globalThis, schedule
     row.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); back.focus();
     back.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true }));
     assert.equal(back.classList.contains("is-keyboard-focused"), false, "pointer activation clears a previous keyboard focus treatment");
-    for (const entry of ["direct", "对话栏内容", "Conversation content"]) {
-      if (entry === "direct") f.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:collections:text" });
+    for (const kind of ["answer", "generation"] as const) for (const entry of ["direct", ...(kind === "answer" ? ["存为笔记的回答", "Saved answers"] : ["从资料生成", "Generated materials"])]) {
+      if (entry === "direct") f.tab.openDesktopRoute({ tab: "modules", focus: `knowledge:collections:${kind}` });
       else {
         assert.ok(mount.definition.items[DESKTOP_SETTINGS_TABS.indexOf("modules")].aliases?.includes(entry));
         const search = win.document.createElement("input"); search.value = entry;
@@ -582,13 +582,13 @@ async function checkSettingsEntryFocus(win: Window & typeof globalThis, schedule
         nativeRow.tabIndex = -1; nativeRow.focus();
       }
       await scheduler.flush();
-      const conversation = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]')!;
+      const conversation = f.tab.containerEl.querySelector<HTMLElement>(`[data-echoink-focus-key="knowledge:collections:${kind}"]`)!;
       assert.ok(conversation, "conversation location opens the existing collection settings page");
-      assert.equal(conversation.closest<HTMLElement>("[data-collection-kind]")?.dataset.collectionKind, "text");
+      assert.equal(conversation.closest<HTMLElement>("[data-collection-kind]")?.dataset.collectionKind, kind);
       assert.equal(win.document.activeElement, conversation, `${entry} focuses the conversation setting instead of Return`);
       assert.ok(conversation.closest(".setting-item")?.classList.contains("echoink-knowledge-linking-located"), "the matched setting reuses the neutral location highlight");
       f.tab.containerEl.querySelector<HTMLButtonElement>(".echoink-settings-back")!.focus();
-      f.state.settingsFocusIntent = "explicit:knowledge:collections:text"; f.state.restoreSettingsFocusIntent(); await scheduler.flush();
+      f.state.settingsFocusIntent = `explicit:knowledge:collections:${kind}`; f.state.restoreSettingsFocusIntent(); await scheduler.flush();
       assert.equal(win.document.activeElement, conversation, "scheduled conversation location wins over host autofocus");
     }
     let reopened: ReturnType<typeof mountDefinitions> | undefined;
@@ -599,11 +599,11 @@ async function checkSettingsEntryFocus(win: Window & typeof globalThis, schedule
       openTabById: () => { routeOrder.push("tab"); reopened = mountDefinitions(f.tab); }
     } });
     try {
-      await new EchoInkViewService(f.plugin as never).openEchoInkSettings("knowledgeBase", "knowledge:collections:text");
+      await new EchoInkViewService(f.plugin as never).openEchoInkSettings("knowledgeBase", "knowledge:collections:answer");
       await scheduler.flush();
       assert.deepEqual(routeOrder, ["route", "open", "tab", "route"], "closed settings reapply the conversation route after the host resets and opens the tab");
       assert.equal(f.state.desktopKnowledge?.navigationKey(), "collections:");
-      const conversation = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]')!;
+      const conversation = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:answer"]')!;
       assert.ok(conversation, "the closed-to-open service path restores the collection subpage, not only the stored route token");
       assert.equal(win.document.activeElement, conversation);
     } finally { reopened?.cleanup(); }

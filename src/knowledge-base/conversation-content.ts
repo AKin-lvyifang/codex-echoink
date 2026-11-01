@@ -1,7 +1,10 @@
-import { knowledgeConversationLocation, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "./folder-bindings";
+import { knowledgeOutputLocation, normalizeKnowledgeDirectory, type KnowledgeFolderBindings, type KnowledgeOutputKind } from "./folder-bindings";
 
 export class ConversationContentLocationError extends Error {
-  constructor() { super("对话栏内容的保存位置不存在，去设置"); this.name = "ConversationContentLocationError"; }
+  constructor(readonly kind: KnowledgeOutputKind = "answer") {
+    super(`${kind === "answer" ? "存为笔记的回答" : "从资料生成"}的保存位置不存在，去设置`);
+    this.name = "ConversationContentLocationError";
+  }
 }
 export interface ConversationContentDirectoryHost {
   kind(directory: string): Promise<"folder" | "file" | "missing">;
@@ -10,16 +13,16 @@ export interface ConversationContentDirectoryHost {
 }
 
 /** Explicit manual save only. Never recreate a user's deleted or invalid destination. */
-export async function ensureConversationContentDirectory(host: ConversationContentDirectoryHost, bindings: KnowledgeFolderBindings | null | undefined): Promise<string> {
-  const location = knowledgeConversationLocation(bindings);
+export async function ensureConversationContentDirectory(host: ConversationContentDirectoryHost, bindings: KnowledgeFolderBindings | null | undefined, kind: KnowledgeOutputKind = "answer"): Promise<string> {
+  const location = knowledgeOutputLocation(bindings, kind);
   try { if (normalizeKnowledgeDirectory(location.directory) !== location.directory) throw new Error("invalid"); }
-  catch { throw new ConversationContentLocationError(); }
+  catch { throw new ConversationContentLocationError(kind); }
   let directory = "";
   for (const segment of location.directory.split("/")) {
     directory = directory ? `${directory}/${segment}` : segment;
-    const kind = await host.kind(directory);
-    if (kind === "folder") continue;
-    if (kind !== "missing" || !location.createIfMissing) throw new ConversationContentLocationError();
+    const entryKind = await host.kind(directory);
+    if (entryKind === "folder") continue;
+    if (entryKind !== "missing" || !location.createIfMissing) throw new ConversationContentLocationError(kind);
     try { await host.createFolder(directory); }
     catch (error) { if (await host.kind(directory) !== "folder") throw error; }
   }

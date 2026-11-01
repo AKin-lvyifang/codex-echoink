@@ -106,8 +106,8 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
 
     await test("only a pending default selection can recursively create its missing location", async ({ vault, writes }) => {
       const folderBindings = emptyKnowledgeFolderBindings();
-      folderBindings.collectionTargets = { web: null, wechat: null, text: DEFAULT_CONVERSATION_CONTENT_DIRECTORY };
-      folderBindings.conversationDirectoryPending = true;
+      folderBindings.collectionTargets = { answer: DEFAULT_CONVERSATION_CONTENT_DIRECTORY };
+      folderBindings.answerDirectoryPending = true;
       const saved = await Promise.all([
         saveAnswerAsNote(vault, answerInput({ folderBindings, answerMarkdown: "第一条" })),
         saveAnswerAsNote(vault, answerInput({ folderBindings, answerMarkdown: "第二条" }))
@@ -116,14 +116,16 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       assert.deepEqual(writes, { folders: 2, files: 2 });
     });
 
-    await test("the text collection location wins over legacy output and receives notes directly", async ({ vault, writes, seedFolder }) => {
-      await seedFolder("收藏/文字"); await seedFolder("成果/输出");
-      const folderBindings = bindingsAt(); folderBindings.collectionTargets = { web: null, wechat: null, text: "收藏/文字" };
+    await test("the answer location wins over generation, text and legacy output and receives notes directly", async ({ vault, writes, seedFolder }) => {
+      await seedFolder("收藏/回答"); await seedFolder("收藏/生成"); await seedFolder("收藏/文字"); await seedFolder("成果/输出");
+      const folderBindings = bindingsAt(); folderBindings.collectionTargets = { answer: "收藏/回答", generation: "收藏/生成", text: "收藏/文字" };
       const ready: string[] = [];
       const saved = await saveAnswerAsNote(vault, answerInput({ folderBindings, onDirectoryReady: async directory => { ready.push(directory); } }));
-      assert.equal(saved, "收藏/文字/如何做好知识整理.md");
+      assert.equal(saved, "收藏/回答/如何做好知识整理.md");
       assert.deepEqual(ready, [], "Explicit locations do not need default-location persistence");
-      assert.equal(vault.getAbstractFileByPath("收藏/文字/摘录"), null);
+      assert.equal(vault.getAbstractFileByPath("收藏/回答/摘录"), null);
+      assert.equal(vault.getAbstractFileByPath("收藏/生成/如何做好知识整理.md"), null);
+      assert.equal(vault.getAbstractFileByPath("收藏/文字/如何做好知识整理.md"), null);
       assert.deepEqual(writes, { folders: 0, files: 1 });
     });
 
@@ -134,22 +136,22 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       assert.equal(vault.getAbstractFileByPath(DEFAULT_CONVERSATION_CONTENT_DIRECTORY), null);
     });
 
-    await test("legacy implicit text collection remains in its actual source folder", async ({ vault, writes, seedFolder }) => {
+    await test("legacy raw and text collection locations never override the answer output migration", async ({ vault, writes, seedFolder }) => {
       await seedFolder("原有收藏"); await seedFolder("成果/输出");
-      const folderBindings = bindingsAt(); Object.assign(folderBindings.roles.raw, { enabled: true, readPaths: ["原有收藏"], writePath: "原有收藏" });
-      assert.equal(await saveAnswerAsNote(vault, answerInput({ folderBindings })), "原有收藏/如何做好知识整理.md");
+      const folderBindings = bindingsAt(); folderBindings.collectionTargets = { text: "原有收藏" }; Object.assign(folderBindings.roles.raw, { enabled: true, readPaths: ["原有收藏"], writePath: "原有收藏" });
+      assert.equal(await saveAnswerAsNote(vault, answerInput({ folderBindings })), "成果/输出/如何做好知识整理.md");
       assert.deepEqual(writes, { folders: 0, files: 1 });
     });
 
     await test("unsafe or stale explicit locations never rebuild or fall back", async ({ vault, writes, seedFile, seedFolder }) => {
-      const message = /对话栏内容的保存位置不存在，去设置/u;
+      const message = /回答.*保存位置不存在，去设置/u;
       await seedFolder("成果/输出");
       for (const directory of ["../外部", "/绝对路径", "C:\\外部", "成果/../外部", "./成果", "成果//输出", ".obsidian", "成果\\输出", " 成果/输出", "已删除", DEFAULT_CONVERSATION_CONTENT_DIRECTORY]) {
-        const folderBindings = bindingsAt(); folderBindings.collectionTargets = { web: null, wechat: null, text: directory };
+        const folderBindings = bindingsAt(); folderBindings.collectionTargets = { answer: directory, generation: "成果/输出" };
         await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings })), message);
       }
       await seedFile("收藏文件", "a file is not a bound folder");
-      const occupied = bindingsAt(); occupied.collectionTargets = { web: null, wechat: null, text: "收藏文件" };
+      const occupied = bindingsAt(); occupied.collectionTargets = { answer: "收藏文件", generation: "成果/输出" };
       await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: occupied })), message);
       await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: bindingsAt("旧输出已删除") })), message);
       assert.deepEqual(writes, { folders: 0, files: 0 });
@@ -308,7 +310,7 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
 
     await test("a file occupying the default parent is retained", async ({ vault, writes, seedFile, read }) => {
       await seedFile("收藏", "KEEP");
-      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null })), /对话栏内容的保存位置不存在，去设置/u);
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null })), /回答.*保存位置不存在，去设置/u);
       assert.equal(await read("收藏"), "KEEP"); assert.deepEqual(writes, { folders: 0, files: 0 });
     });
 

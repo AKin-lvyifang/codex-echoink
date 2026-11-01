@@ -3,6 +3,7 @@ import { RAW_DIGEST_REGISTRY_PATH, RAW_DIGEST_SCHEMA_VERSION, RAW_DIGEST_FIELDS,
   type RawDigestFrontmatterRecord, type RawDigestRegistryEntry, type RawDigestRegistry } from "./raw-digest-core";
 export * from "./raw-digest-core";
 import { resolveKnowledgePath, knowledgeRootEntries, knowledgeRootRole, knowledgePrivateRoot, getKnowledgeFolderBindings } from "./root-paths";
+import { knowledgeOutputLocation } from "./folder-bindings";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 
@@ -98,6 +99,9 @@ export async function readRawDigestRegistrySources(vaultPath: string, strict = f
   const privateRoot = knowledgePrivateRoot(vaultPath);
   const bindings = getKnowledgeFolderBindings(vaultPath);
   const roots = [...new Set([
+    knowledgeOutputLocation(bindings, "answer").directory,
+    knowledgeOutputLocation(bindings, "generation").directory,
+    // Read old receipt stores without treating the whole Raw collection as output.
     ...(bindings?.roles.outputs.readPaths ?? []),
     ...knowledgeRootEntries(vaultPath).filter(root => knowledgeRootRole(root) === "outputs").sort(),
     "outputs", "Outputs"

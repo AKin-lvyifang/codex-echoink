@@ -43,11 +43,14 @@ function assertBindingCompatibility() {
   bindings.collectionTargets = { web: "来源甲", wechat: "来源乙" };
   bindings.inboxRecallExclusions = ["旧收件箱/资料"];
   const normalized = normalizeKnowledgeFolderBindings(bindings)!;
-  assert.equal(normalized.allowAgentSubfolders, true);
-  assert.deepEqual(normalized.collectionTargets, { ...bindings.collectionTargets, files: "来源乙", images: "来源乙", text: "来源乙" });
+  assert.equal(normalized.allowAgentSubfolders, undefined, "legacy organization grants are retired during normalization");
+  assert.deepEqual(normalized.collectionTargets, { ...bindings.collectionTargets, files: "来源乙", images: "来源乙", answer: "收藏/回答", generation: "收藏/生成" });
+  assert.equal(normalized.answerDirectoryPending, true);
+  assert.equal(normalized.generationDirectoryPending, true);
   normalized.roles.raw.writePath = "来源甲";
   assert.equal(knowledgeCollectionDirectory(normalized, "files"), "来源乙", "imports retain their migrated destination");
-  assert.equal(knowledgeCollectionDirectory(normalized, "text"), "来源乙", "manual text retains its migrated destination");
+  assert.equal(knowledgeCollectionDirectory(normalized, "answer"), "收藏/回答", "answer saving remains independent of the source default");
+  assert.equal(knowledgeCollectionDirectory(normalized, "generation"), "收藏/生成", "generated notes keep their separate default");
   assert.equal(knowledgeCollectionDirectory(normalized, "web"), "来源甲");
   const signature = knowledgeFolderBindingsSignature(normalized);
   normalized.collectionTargets!.web = "来源乙";
@@ -57,7 +60,7 @@ function assertBindingCompatibility() {
   normalized.collectionTargets!.web = null;
   assert.equal(knowledgeCollectionDirectory(normalized, "web"), null);
   normalized.allowAgentSubfolders = false;
-  assert.equal(normalizeKnowledgeFolderBindings(normalized)!.allowAgentSubfolders, false);
+  assert.equal(normalizeKnowledgeFolderBindings(normalized)!.allowAgentSubfolders, undefined);
   const rebased = rebaseKnowledgeFolderBindings(bindings, "来源甲", "资料/甲");
   assert.equal(rebased.collectionTargets!.web, "资料/甲");
   assert.equal(rebased.collectionTargets!.wechat, "来源乙");
@@ -78,6 +81,7 @@ async function assertImmediateBindingSave(root: string) {
     Object.assign(legacy.roles.outputs, { enabled: true, readPaths: ["旧失效输出"], writePath: "旧失效输出" });
     Object.assign(legacy.roles.archive, { enabled: true, readPaths: ["旧失效归档甲", "旧失效归档乙"], writePath: null });
     Object.assign(legacy.roles.inbox, { enabled: true, readPaths: ["收件箱"], writePath: "收件箱" });
+    Object.assign(legacy, normalizeKnowledgeFolderBindings(legacy)!);
     plugin.settings.knowledgeBase.folderBindings = legacy;
     plugin.settings.defaultPermission = "read-only";
     let creates = 0, moves = 0, deletes = 0, saves = 0;
@@ -291,7 +295,7 @@ async function assertPersistentOptionalModuleRestore(root: string) {
     for (const folder of ["来源甲", "来源乙", "知识成果"]) await fixture.write(`${folder}/keep.md`, folder);
     plugin.settings.knowledgeBase.folderBindings = sourceBindings();
     const originalJournal = plugin.settings.journalDirectory;
-    const plan = await service.previewDirectoryPlan(sourceBindings(), ["新日记", "新英文", "新PDF"], { mode: "build", moduleDirectories: { journal: "新日记", english: "新英文", pdfOriginal: "新PDF" } });
+    const plan = await service.previewDirectoryPlan(sourceBindings(), ["新日记", "新英文", "新PDF"], { mode: "build", moduleDirectories: { journal: "新日记", english: "新英文", expressions: "", pdfOriginal: "新PDF" } });
     await service.applyDirectoryPlan(plan);
     plugin.settings.englishDiary.englishDirectoryMode = "role";
     let failOnce = true;

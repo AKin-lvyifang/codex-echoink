@@ -38,9 +38,31 @@ export async function runFolderScenarios(api, root) {
     f.hooks({ save() { throw Error("settings-save-failed"); } });
     await assert.rejects(f.service.saveBindings(next, before.token), /settings-save-failed/u); assert.deepEqual(plain(f.settings.knowledgeBase.folderBindings), plain(before.bindings));
   });
+  await test("answer and generation save independently outside Sources and failed saves preserve both pending states", async () => {
+    const f = await fixture({ "sources/a.md": "A", "answer-only/keep.md": "ANSWER", "generation-only/keep.md": "GENERATION" });
+    let before = await f.service.read(), next = api.emptyKnowledgeFolderBindings();
+    Object.assign(next.roles.raw, { enabled: true, readPaths: ["sources"], writePath: "sources" });
+    next.collectionTargets = { web: "sources", wechat: "sources", answer: "收藏/回答", generation: "收藏/生成" };
+    next.answerDirectoryPending = true; next.generationDirectoryPending = true;
+    before = await f.service.saveBindings(next, before.token); f.reset();
+    next = structuredClone(before.bindings); next.collectionTargets.answer = "answer-only"; next.answerDirectoryPending = false;
+    before = await f.service.saveBindings(next, before.token);
+    assert.equal(before.bindings.collectionTargets.answer, "answer-only"); assert.equal(before.bindings.answerDirectoryPending, false);
+    assert.equal(before.bindings.collectionTargets.generation, "收藏/生成"); assert.equal(before.bindings.generationDirectoryPending, true);
+    next = structuredClone(before.bindings); next.collectionTargets.generation = "generation-only"; next.generationDirectoryPending = false;
+    f.hooks({ save() { throw Error("output-settings-save-failed"); } });
+    await assert.rejects(f.service.saveBindings(next, before.token), /output-settings-save-failed/u);
+    assert.deepEqual(plain(f.settings.knowledgeBase.folderBindings), plain(before.bindings), "failed generation selection preserves the saved answer and pending generation");
+    f.hooks({}); const saved = await f.service.saveBindings(next, before.token);
+    assert.equal(saved.bindings.collectionTargets.generation, "generation-only"); assert.equal(saved.bindings.generationDirectoryPending, false);
+    assert.equal(saved.bindings.collectionTargets.answer, "answer-only"); assert.equal(saved.bindings.answerDirectoryPending, false);
+    assert.deepEqual(plain(saved.bindings.roles.raw.readPaths), ["sources"], "output selections do not expand Knowledge retrieval");
+    assert.ok(f.calls.writes.every(item => item === ".obsidian/plugins/echoink/data.json"));
+    assert.equal(await f.read("answer-only/keep.md"), "ANSWER"); assert.equal(await f.read("generation-only/keep.md"), "GENERATION");
+  });
   await test("disabling Sources retains saved collection paths, withdraws access, and re-enabling revalidates them", async () => {
     const f = await fixture({ "deep/sources/a.md": "A", "more/b.md": "B" }), config = api.emptyKnowledgeFolderBindings();
-    Object.assign(config.roles.raw, { enabled: true, readPaths: ["deep/sources", "more"], writePath: "deep/sources" }); config.collectionTargets = { web: "deep/sources", wechat: "more" };
+    Object.assign(config.roles.raw, { enabled: true, readPaths: ["deep/sources", "more"], writePath: "deep/sources" }); config.collectionTargets = { web: "deep/sources", wechat: "more", files: "deep/sources", images: "deep/sources", answer: "收藏/回答", generation: "收藏/生成" }; config.answerDirectoryPending = true; config.generationDirectoryPending = true;
     f.settings.knowledgeBase.folderBindings = config;
     let snapshot = await f.service.read(), next = structuredClone(config); next.roles.raw.enabled = false;
     snapshot = await f.service.saveBindings(next, snapshot.token);
@@ -195,11 +217,20 @@ export function runOrganizationConfigurationScenarios(api) {
   const preserved = intended.call({}, prepared, edited);
   assert.deepEqual(JSON.parse(JSON.stringify(preserved.bindings.organization)), JSON.parse(JSON.stringify(edited.bindings.organization)), "later user choice wins over restore");
   const pending = api.emptyKnowledgeFolderBindings();
-  pending.collectionTargets = { web: null, wechat: null, text: "收藏/对话" }; pending.conversationDirectoryPending = true;
-  const oldApplied = structuredClone(pending); oldApplied.collectionTargets.text = "old-output"; oldApplied.conversationDirectoryPending = false;
+  pending.collectionTargets = { web: null, wechat: null, answer: "收藏/回答", generation: "收藏/生成" }; pending.answerDirectoryPending = true; pending.generationDirectoryPending = true;
+  const oldApplied = structuredClone(pending); oldApplied.collectionTargets.answer = "old-answer"; oldApplied.collectionTargets.generation = "old-generation"; oldApplied.answerDirectoryPending = false; oldApplied.generationDirectoryPending = false;
   const pendingBefore = { ...before, bindings: pending }, pendingApplied = { ...before, bindings: oldApplied };
   const pendingRestore = intended.call({}, { preview: { request: { kind: "restore" }, moves: [] }, original: { before: pendingBefore, after: pendingApplied }, baseline: { inventory: { files: [] } } }, pendingApplied);
-  assert.equal(pendingRestore.bindings.collectionTargets.text, "收藏/对话");
-  assert.equal(pendingRestore.bindings.conversationDirectoryPending, true, "restoring an uninitialized default keeps its first-save creation state");
+  assert.equal(pendingRestore.bindings.collectionTargets.answer, "收藏/回答");
+  assert.equal(pendingRestore.bindings.collectionTargets.generation, "收藏/生成");
+  assert.equal(pendingRestore.bindings.answerDirectoryPending, true, "restoring an uninitialized answer default keeps its first-save state");
+  assert.equal(pendingRestore.bindings.generationDirectoryPending, true, "restoring an uninitialized generation default keeps its first-save state");
+  const laterAnswer = structuredClone(pendingApplied); laterAnswer.bindings.collectionTargets.answer = "user-answer";
+  const outputPrepared = { preview: { request: { kind: "restore" }, moves: [] }, original: { before: pendingBefore, after: pendingApplied }, baseline: { inventory: { files: [] } } };
+  const independentRestore = intended.call({}, outputPrepared, laterAnswer);
+  assert.equal(independentRestore.bindings.collectionTargets.answer, "user-answer");
+  assert.equal(independentRestore.bindings.answerDirectoryPending, false, "a later explicit answer choice survives restoration");
+  assert.equal(independentRestore.bindings.collectionTargets.generation, "收藏/生成");
+  assert.equal(independentRestore.bindings.generationDirectoryPending, true, "the unchanged generation default restores independently");
   console.log("PASS mobile organization rename/restore and later-choice preservation");
 }

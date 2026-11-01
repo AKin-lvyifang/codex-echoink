@@ -9,7 +9,7 @@ import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole }
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeConversationLocation, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOutputLocation, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -154,7 +154,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (JSON.stringify(knowledgeOrganizationSettings(current)) === JSON.stringify(knowledgeOrganizationSettings(applied))) restored.organization = knowledgeOrganizationSettings(originalConfig);
         const currentTargets = knowledgeCollectionTargets(current), appliedTargets = knowledgeCollectionTargets(applied), originalTargets = knowledgeCollectionTargets(originalConfig);
         restored.collectionTargets = { ...currentTargets };
-        if (currentTargets.text === appliedTargets.text && knowledgeConversationLocation(current).createIfMissing === knowledgeConversationLocation(applied).createIfMissing) restored.conversationDirectoryPending = knowledgeConversationLocation(originalConfig).createIfMissing;
+        for (const output of ["answer", "generation"] as const) if (currentTargets[output] === appliedTargets[output] && knowledgeOutputLocation(current, output).createIfMissing === knowledgeOutputLocation(applied, output).createIfMissing) restored[output === "answer" ? "answerDirectoryPending" : "generationDirectoryPending"] = knowledgeOutputLocation(originalConfig, output).createIfMissing;
         for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
           if (kind === "fileText" && originalTargets[kind] === undefined) delete restored.collectionTargets.fileText;
           else restored.collectionTargets[kind] = originalTargets[kind] ?? null;
@@ -665,7 +665,10 @@ export class EchoInkKnowledgeSurfaceService {
     if (!next) throw new Error("目录绑定无效。");
     return await this.withStructureMutation(async () => {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
-      next.collectionTargets = !bindings.collectionTargets && previous?.roles.raw.readPaths.length ? knowledgeCollectionTargets(previous) : knowledgeCollectionTargets(next);
+      const collectionBase = !bindings.collectionTargets && previous?.roles.raw.readPaths.length ? previous : next;
+      const answer = knowledgeOutputLocation(collectionBase, "answer"), generation = knowledgeOutputLocation(collectionBase, "generation");
+      next.collectionTargets = knowledgeCollectionTargets(collectionBase);
+      next.answerDirectoryPending = answer.createIfMissing; next.generationDirectoryPending = generation.createIfMissing;
       if (previous && next.revision !== previous.revision) throw new Error("目录配置已改变，请重新选择。");
       for (const role of KNOWLEDGE_ROOT_ROLES) if (!DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(role) && previous) next.roles[role] = structuredClone(previous.roles[role]);
       const baseSignature = knowledgeFolderBindingsSignature(previous);
@@ -695,7 +698,7 @@ export class EchoInkKnowledgeSurfaceService {
         checkPaths.add(directory);
       }
       for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
-        if (kind === "text" && knowledgeConversationLocation(next).createIfMissing) continue;
+        if ((kind === "answer" || kind === "generation") && knowledgeOutputLocation(next, kind).createIfMissing) continue;
         const target = next.collectionTargets?.[kind];
         const oldTarget = previous ? knowledgeCollectionTargets(previous)[kind] : null;
         if (target && target !== oldTarget) {
@@ -714,6 +717,9 @@ export class EchoInkKnowledgeSurfaceService {
       this.plugin.settings.knowledgeBase.folderBindings = next;
       try { await this.plugin.saveSettings(true); }
       catch (failure) {
+        // A concurrent first output save can have committed a newer binding.
+        // This transaction must not erase its cleared first-save marker.
+        if (this.plugin.settings.knowledgeBase.folderBindings !== next) throw new Error(`绑定保存失败，保留较新的配置：${knowledgeErrorDetail(failure)}`);
         this.plugin.settings.knowledgeBase.folderBindings = previous;
         let recovery = "";
         try { await this.plugin.saveSettings(true); } catch (error) { recovery = `；原配置恢复保存失败：${knowledgeErrorDetail(error)}`; }

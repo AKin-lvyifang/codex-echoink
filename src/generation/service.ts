@@ -1,7 +1,7 @@
 import { createPiAgentCapabilityContext } from "../plugin/pi-production-runtime-composition";
 import { checkAgentTool, requireAgentCapability } from "../agents/capability-policy";
 import { TFolder } from "obsidian";
-import { knowledgeConversationLocation, normalizeKnowledgeDirectory } from "../knowledge-base/folder-bindings";
+import { knowledgeOutputLocation, normalizeKnowledgeDirectory } from "../knowledge-base/folder-bindings";
 import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 import type EchoInkPlugin from "../main";
 import type { StoredSession } from "../settings/settings";
@@ -12,16 +12,16 @@ import type { GenerationRequest, GenerationTemplate, GenerationOutputKind } from
 export class GenerationService {
   constructor(private readonly plugin: EchoInkPlugin) {}
   outputRoot(): string {
-    const location = knowledgeConversationLocation(this.plugin.settings.knowledgeBase.folderBindings);
+    const location = knowledgeOutputLocation(this.plugin.settings.knowledgeBase.folderBindings, "generation");
     try { if (normalizeKnowledgeDirectory(location.directory) !== location.directory) throw new Error("invalid"); }
-    catch { throw new ConversationContentLocationError(); }
+    catch { throw new ConversationContentLocationError("generation"); }
     const directory = this.plugin.app.vault.getAbstractFileByPath(location.directory);
-    if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError();
+    if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError("generation");
     return location.directory;
   }
   outputDirectory(kind: GenerationOutputKind): string { return `${this.outputRoot()}/${kind === "canvas" ? "导图" : "报告"}`; }
   private outputRoots(): string[] {
-    const root = knowledgeConversationLocation(this.plugin.settings.knowledgeBase.folderBindings).directory;
+    const root = knowledgeOutputLocation(this.plugin.settings.knowledgeBase.folderBindings, "generation").directory;
     return [`${root}/报告`, `${root}/导图`];
   }
   sourcesFromSession(session: StoredSession): string[] { return generationSourcesFromMessages(session.messages, this.outputRoots()); }
@@ -38,7 +38,7 @@ export class GenerationService {
     if (input.mode === "plan") return "请切换到 Agent 模式后生成。";
     if (input.permission === "read-only") return "请切换到可写权限后生成。";
     if (input.sessionId && (this.plugin.getConversationRunService().runs.get(input.sessionId)?.running || this.plugin.getConversationRunService().runs.get(input.sessionId)?.flight)) return "等这一轮结束。";
-    try { this.outputRoot(); return null; } catch (error) { return error instanceof Error ? error.message : "请到设置 → 模块 → 知识库 → 收藏保存位置 → 对话栏内容检查保存位置。"; }
+    try { this.outputRoot(); return null; } catch (error) { return error instanceof Error ? error.message : "请到设置 → 模块 → 知识库 → Agent 产出物保存到 → 从资料生成检查保存位置。"; }
   }
   createRequest(template: GenerationTemplate, paths: readonly string[]): GenerationRequest { return createGenerationRequest(template, paths, this.outputRoot()); }
   async submit(sessionId: string, request: GenerationRequest, turnOptions: TurnOptions) {

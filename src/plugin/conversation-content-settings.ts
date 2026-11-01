@@ -1,15 +1,18 @@
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, knowledgeCollectionTargets, knowledgeConversationLocation } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionTargets, knowledgeOutputLocation, type KnowledgeOutputKind } from "../knowledge-base/folder-bindings";
 
 /** Persist the first default save without marking the Knowledge setup as completed. */
-export async function rememberConversationContentDirectory(plugin: Pick<CodexForObsidianPlugin, "settings" | "saveSettings">, directory: string): Promise<void> {
+export async function rememberConversationContentDirectory(plugin: Pick<CodexForObsidianPlugin, "settings" | "saveSettings">, directory: string, kind: KnowledgeOutputKind = "answer"): Promise<void> {
   const previous = plugin.settings.knowledgeBase.folderBindings;
-  const location = knowledgeConversationLocation(previous);
+  const location = knowledgeOutputLocation(previous, kind);
   if (!location.createIfMissing || location.directory !== directory) return;
   const next = structuredClone(previous ?? emptyKnowledgeFolderBindings());
+  next.answerDirectoryPending = knowledgeOutputLocation(next, "answer").createIfMissing;
+  next.generationDirectoryPending = knowledgeOutputLocation(next, "generation").createIfMissing;
   next.collectionTargets = knowledgeCollectionTargets(next);
-  next.collectionTargets.text = directory;
-  next.conversationDirectoryPending = false;
+  next.collectionTargets[kind] = directory;
+  if (kind === "answer") next.answerDirectoryPending = false;
+  else next.generationDirectoryPending = false;
   next.revision++;
   plugin.settings.knowledgeBase.folderBindings = next;
   try { await plugin.saveSettings(true); }

@@ -353,7 +353,7 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
     else if (/todo:categories/u.test(route.focus ?? "")) this.openSettingsDetail("todo-categories");
     else if (/knowledge:sources/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open("sources"); }
-    else if (/^knowledge:(?:collections(?::text)?|permissions|management)$/u.test(route.focus ?? "")) {
+    else if (/^knowledge:(?:collections(?::(?:answer|generation))?|permissions|management)$/u.test(route.focus ?? "")) {
       this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open(route.focus!.split(":")[1] as "collections" | "permissions" | "management");
     }
     else if (route.resourceId) this.openSettingsDetail({ kind: "resource", resourceId: route.resourceId });
@@ -893,8 +893,8 @@ export class CodexSettingTab extends PluginSettingTab {
     const sharedKey = settingsContainerFocusIntents.get(this.containerEl);
     const key = sharedKey ?? this.settingsFocusIntent;
     if (!key) return;
-    if (key === "explicit:knowledge:collections:text") {
-      const target = this.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]');
+    if (/^explicit:knowledge:collections:(answer|generation)$/u.test(key)) {
+      const target = this.containerEl.querySelector<HTMLElement>(`[data-echoink-focus-key="${key.slice('explicit:'.length)}"]`);
       if (!target) return;
       const owner = this.containerEl.ownerDocument.defaultView ?? window;
       const row = target.closest<HTMLElement>(".setting-item") ?? target;

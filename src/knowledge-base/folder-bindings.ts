@@ -1,10 +1,13 @@
 import { COLLECTION_DOCUMENT_TYPES, COLLECTION_IMAGE_TYPES } from "./collection-file-types";
 import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKnowledgePath, type KnowledgeRootRole } from "./root-paths-core";
 
-export const KNOWLEDGE_COLLECTION_KINDS = ["web", "wechat", "files", "images", "text", "fileText"] as const;
+export const KNOWLEDGE_COLLECTION_KINDS = ["web", "wechat", "files", "images", "answer", "generation", "fileText"] as const;
 export type KnowledgeCollectionKind = typeof KNOWLEDGE_COLLECTION_KINDS[number];
-export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页链接", wechat: "公众号文章", files: "拖入或附加的文档", images: "拖入或附加的图片", text: "对话栏内容", fileText: "拖入或附加的文档" };
-export type KnowledgeCollectionTargets = { web: string | null; wechat: string | null; files?: string | null; images?: string | null; text?: string | null; fileText?: string | null };
+export type KnowledgeOutputKind = "answer" | "generation";
+export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页", wechat: "公众号文章", files: "拖入或附加的文档", images: "拖入或附加的图片", answer: "存为笔记的回答", generation: "从资料生成", fileText: "拖入或附加的文档" };
+export type KnowledgeCollectionTargets = { web: string | null; wechat: string | null; files?: string | null; images?: string | null; answer?: string | null; generation?: string | null; fileText?: string | null;
+  /** Legacy input only; never an effective collection destination. */
+  text?: string | null };
 
 export interface KnowledgeFolderBinding {
   enabled: boolean;
@@ -38,7 +41,10 @@ export interface KnowledgeFolderBindings {
   allowAgentSubfolders?: boolean;
   /** Each capture entry owns a literal destination. Missing fields are migrated once. */
   collectionTargets?: KnowledgeCollectionTargets;
-  /** Only the new default location can be created once, by an explicit save. */
+  /** Only each new default location can be created once, by an explicit save. */
+  answerDirectoryPending?: boolean;
+  generationDirectoryPending?: boolean;
+  /** Legacy input only; never grants creation for either output destination. */
   conversationDirectoryPending?: boolean;
   /** Former Inbox roots withdrawn from ordinary-chat recall consent. */
   inboxRecallExclusions?: string[];
@@ -82,9 +88,10 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
       allowedSubdirectories: paths(saved.allowedSubdirectories), allowedSubdirectoryRoots: paths(Array.isArray(saved.allowedSubdirectoryRoots) ? saved.allowedSubdirectoryRoots : saved.readPaths).filter(directory => readPaths.includes(directory)),
       compatibilityReadScopes: saved.compatibilityReadScopes === true, native: (role === "journal" || role === "templates") && saved.native === true };
   }
-  const collectionInput = { ...result, collectionTargets: input.collectionTargets, conversationDirectoryPending: input.conversationDirectoryPending };
+  const collectionInput = { ...result, collectionTargets: input.collectionTargets, answerDirectoryPending: input.answerDirectoryPending, generationDirectoryPending: input.generationDirectoryPending };
   result.collectionTargets = knowledgeCollectionTargets(collectionInput);
-  result.conversationDirectoryPending = knowledgeConversationLocation(collectionInput).createIfMissing;
+  result.answerDirectoryPending = knowledgeOutputLocation(collectionInput, "answer").createIfMissing;
+  result.generationDirectoryPending = knowledgeOutputLocation(collectionInput, "generation").createIfMissing;
   // Collection migration still needs legacy child destinations. Materialize before retiring grants.
   for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
     result.roles[role].allowedSubdirectories = [];
@@ -104,25 +111,32 @@ export function knowledgeOrganizationSettings(config: KnowledgeFolderBindings | 
     }))] };
 }
 
-export const DEFAULT_CONVERSATION_CONTENT_DIRECTORY = "收藏/对话";
+export const DEFAULT_ANSWER_CONTENT_DIRECTORY = "收藏/回答";
+export const DEFAULT_GENERATION_CONTENT_DIRECTORY = "收藏/生成";
+/** Compatibility alias for callers that save an answer as a note. */
+export const DEFAULT_CONVERSATION_CONTENT_DIRECTORY = DEFAULT_ANSWER_CONTENT_DIRECTORY;
 
-/** Preserve the old text collector first, including its pre-migration literal location. */
-export function knowledgeConversationLocation(config: KnowledgeFolderBindings | null | undefined): { directory: string; createIfMissing: boolean } {
-  const text = config?.collectionTargets?.text;
-  if (typeof text === "string" && text.length) return { directory: text, createIfMissing: config?.conversationDirectoryPending === true && text === DEFAULT_CONVERSATION_CONTENT_DIRECTORY };
-  const raw = config?.roles.raw;
-  const legacyRaw = raw?.writePath ?? (raw?.readPaths.length === 1 ? raw.readPaths[0] : null);
-  if (legacyRaw) {
-    const child = raw!.allowedSubdirectories.includes("articles/手动收集") && (raw!.allowedSubdirectoryRoots ?? raw!.readPaths).includes(legacyRaw) ? "/articles/手动收集" : "";
-    return { directory: `${legacyRaw}${child}`, createIfMissing: false };
+/** Answer and generation migrate independently; legacy text never owns either location. */
+export function knowledgeOutputLocation(config: KnowledgeFolderBindings | null | undefined, kind: KnowledgeOutputKind): { directory: string; createIfMissing: boolean } {
+  const defaultDirectory = kind === "answer" ? DEFAULT_ANSWER_CONTENT_DIRECTORY : DEFAULT_GENERATION_CONTENT_DIRECTORY;
+  const pending = kind === "answer" ? config?.answerDirectoryPending : config?.generationDirectoryPending;
+  if (config?.collectionTargets && Object.hasOwn(config.collectionTargets, kind)) {
+    const saved = config.collectionTargets[kind];
+    // Preserve an explicit invalid choice for repair instead of redirecting the save.
+    const directory = typeof saved === "string" ? saved : "";
+    return { directory, createIfMissing: pending === true && directory === defaultDirectory };
   }
   const output = config?.roles.outputs.writePath;
   if (output) return { directory: output, createIfMissing: false };
-  return { directory: DEFAULT_CONVERSATION_CONTENT_DIRECTORY, createIfMissing: true };
+  return { directory: defaultDirectory, createIfMissing: true };
+}
+
+export function knowledgeConversationLocation(config: KnowledgeFolderBindings | null | undefined): { directory: string; createIfMissing: boolean } {
+  return knowledgeOutputLocation(config, "answer");
 }
 
 /** Materialize the legacy effective destinations; later source edits never retarget them. */
-export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Required<Pick<KnowledgeCollectionTargets, "web" | "wechat" | "files" | "images" | "text">> & Pick<KnowledgeCollectionTargets, "fileText"> {
+export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Required<Pick<KnowledgeCollectionTargets, "web" | "wechat" | "files" | "images" | "answer" | "generation">> & Pick<KnowledgeCollectionTargets, "fileText"> {
   const raw = config.roles.raw;
   const legacy = raw.writePath ?? (raw.readPaths.length === 1 ? raw.readPaths[0] : null);
   const saved = config.collectionTargets && typeof config.collectionTargets === "object" ? config.collectionTargets : undefined;
@@ -135,7 +149,8 @@ export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Req
     web: target(saved && "web" in saved ? saved.web : legacy),
     wechat: target(saved && "wechat" in saved ? saved.wechat : legacy),
     files: target(saved && "files" in saved ? saved.files : legacyFiles),
-    text: knowledgeConversationLocation(config).directory
+    answer: target(knowledgeOutputLocation(config, "answer").directory),
+    generation: target(knowledgeOutputLocation(config, "generation").directory)
   };
   return { ...result, images: target(saved && "images" in saved ? saved.images : result.files), ...(saved && Object.hasOwn(saved, "fileText") ? { fileText: target(saved.fileText) }
     : (!saved || !Object.hasOwn(saved, "files")) && legacyTextFiles !== legacyFiles ? { fileText: target(legacyTextFiles) } : {}) };
@@ -150,15 +165,36 @@ export function knowledgeCollectionLabel(kind: KnowledgeCollectionKind, config?:
   const separateText = config && Object.hasOwn(knowledgeCollectionTargets(config), "fileText");
   const types: readonly { readonly label: string; readonly extensions: readonly string[] }[] = kind === "images" ? COLLECTION_IMAGE_TYPES : kind === "files" || textOnly
     ? COLLECTION_DOCUMENT_TYPES.filter(type => textOnly ? type.label === "Markdown" || type.label === "TXT" : !separateText || type.label !== "Markdown" && type.label !== "TXT") : [];
-  const title = language === "zh" ? KNOWLEDGE_COLLECTION_LABELS[kind] : ({ web: "Web links", wechat: "WeChat articles", files: "Dragged or attached documents", images: "Dragged or attached images", text: "Conversation content", fileText: "Dragged or attached documents" })[kind];
+  const title = language === "zh" ? KNOWLEDGE_COLLECTION_LABELS[kind] : ({ web: "Web links", wechat: "WeChat articles", files: "Dragged or attached documents", images: "Dragged or attached images", answer: "Answers saved as notes", generation: "Generate from sources", fileText: "Dragged or attached documents" })[kind];
   const formats = types.map(type => type.label).join(language === "zh" ? "、" : ", ");
   return `${title}${formats ? language === "zh" ? `（${formats}）` : ` (${formats})` : ""}`;
 }
 
+export function knowledgeCollectionDescription(kind: KnowledgeCollectionKind, _config?: KnowledgeFolderBindings, language: "zh" | "en" = "zh"): string {
+  const descriptions: Record<KnowledgeCollectionKind, string> = language === "zh" ? {
+    web: "对话栏点「收藏」并选「网页」时，保存的网页正文",
+    wechat: "对话栏点「收藏」并选「公众号」时，保存的文章正文",
+    files: "拖进对话栏或附加的文档原件",
+    images: "拖进对话栏或附加后点收藏的图片",
+    answer: "回答下方点「存为笔记」保存的整段回答",
+    generation: "用生成模板（简报、学习指南、博文、思维导图等）生成的笔记或 Canvas",
+    fileText: "拖进对话栏或附加的文档原件"
+  } : {
+    web: "Choose Collect, then Web in chat to save a web page's main content.",
+    wechat: "Choose Collect, then WeChat in chat to save an article's main content.",
+    files: "Original documents dragged into or attached to chat.",
+    images: "Images dragged into or attached to chat, then collected.",
+    answer: "Choose Save as note below an answer to save the entire answer.",
+    generation: "Notes or Canvases generated with templates such as briefings, study guides, blog posts, or mind maps.",
+    fileText: "Original documents dragged into or attached to chat."
+  };
+  return descriptions[kind];
+}
+
 /** An explicit missing/invalid choice must never fall back to another source. */
 export function knowledgeCollectionDirectory(config: KnowledgeFolderBindings | null | undefined, kind: KnowledgeCollectionKind): string | null {
-  if (kind === "text") {
-    const location = knowledgeConversationLocation(config).directory;
+  if (kind === "answer" || kind === "generation") {
+    const location = knowledgeOutputLocation(config, kind).directory;
     try { return normalizeKnowledgeDirectory(location) === location ? location : null; } catch { return null; }
   }
   const raw = config?.roles.raw;
@@ -240,7 +276,11 @@ export function migrateKnowledgeFolderBindings(directories: readonly string[], m
   }
   for (const role of KNOWLEDGE_ROOT_ROLES) if (result.migrationIssues.some((issue) => issue.startsWith(`${role}：`))) result.roles[role].writePath = null;
   const migrated = preferExistingBilingualKnowledgeDefaults(result, directories);
-  if (migrated.roles.raw.readPaths.length) migrated.collectionTargets = knowledgeCollectionTargets(migrated);
+  if (migrated.roles.raw.readPaths.length) {
+    migrated.answerDirectoryPending = knowledgeOutputLocation(migrated, "answer").createIfMissing;
+    migrated.generationDirectoryPending = knowledgeOutputLocation(migrated, "generation").createIfMissing;
+    migrated.collectionTargets = knowledgeCollectionTargets(migrated);
+  }
   return migrated;
 }
 
@@ -262,7 +302,7 @@ export function preferExistingBilingualKnowledgeDefaults(config: KnowledgeFolder
     binding.readPaths = [...new Set([...binding.readPaths, chinese])];
     binding.writePath = chinese;
     binding.compatibilityReadScopes = binding.readPaths.length > 1;
-    if (role === "raw" && next.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
+    if (role === "raw" && next.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS.filter(kind => kind !== "answer" && kind !== "generation")) {
       if (next.collectionTargets[kind] === role) next.collectionTargets[kind] = chinese;
     }
     changed = true;
@@ -292,7 +332,8 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
   return JSON.stringify({ organization: { ...knowledgeOrganizationSettings(config), paths: knowledgeOrganizationSettings(config).paths.sort() },
     collectionTargets: config ? knowledgeCollectionTargets(config) : null,
-    conversationDirectoryPending: knowledgeConversationLocation(config).createIfMissing,
+    answerDirectoryPending: knowledgeOutputLocation(config, "answer").createIfMissing,
+    generationDirectoryPending: knowledgeOutputLocation(config, "generation").createIfMissing,
     inboxRecallExclusions: [...(config?.inboxRecallExclusions ?? [])].sort(),
     roles: KNOWLEDGE_ROOT_ROLES.map(role => {
     const binding = config?.roles[role];

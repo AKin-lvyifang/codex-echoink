@@ -121,10 +121,10 @@ export async function protectedPaths(services: MobileServices, files: FolderInve
   if (services.lifestyle) paths.add(services.lifestyle.finance.ledger.paths().root);
   const values = (input: unknown): string[] => Object.values(object(input)).filter((value): value is string => typeof value === "string");
   const english = resolveEnglishStoragePaths(settings.englishDiary, settings.knowledgeBase.folderBindings, (services.app.vault.getRoot?.().children ?? []).map(file => file.path));
-  // Protection is independent of enablement and includes stored and role-resolved paths.
+  // Protection is independent of enablement and includes module-owned and legacy read paths.
   for (const path of [native.folder, settings.journalDirectory, settings.review.outputDir, settings.englishDiary.englishDirectory,
     settings.englishDiary.expressionDirectory, english.englishDirectory, english.expressionDirectory, object(settings.pdfReading).originalDirectory,
-    ...(settings.knowledgeBase.folderBindings?.roles.outputs.readPaths ?? []).flatMap(root => [`${root}/英文日记`, `${root}/英文日记/表达库`]),
+    ...english.legacyEnglishDirectories, ...english.legacyExpressionDirectories,
     ...values(modules), native.templatesFolder,
     ...(settings.englishDiary.legacyEnglishDirectories ?? []), ...(settings.englishDiary.legacyExpressionDirectories ?? [])]) if (typeof path === "string" && path) paths.add(path);
   for (const file of files.files) {

@@ -1,5 +1,6 @@
 import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
+import { confirmCaptureLinkForTest } from "./knowledge-capture-link-helpers";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -170,9 +171,8 @@ async function assertBuiltInWeChatCapture(vaultPath: string): Promise<void> {
   const { JSDOM } = createRequire(import.meta.url)("jsdom");
   const dom = new JSDOM();
   installObsidianDom(dom.window);
-  const previousGlobals = ["DOMParser", "Node"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
-  globalThis.DOMParser = dom.window.DOMParser;
-  globalThis.Node = dom.window.Node;
+  const previousGlobals = ["DOMParser", "Node", "document", "window", "Event"].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
+  for (const [name] of previousGlobals) Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? dom.window : dom.window[name] });
   const url = "https://mp.weixin.qq.com/s/fixture-article";
   let html = '<html><head><title>收藏测试</title></head><body><h1 id="activity-name">收藏测试</h1><div id="js_content"><p>BUILT_IN_CAPTURE_TOKEN</p></div></body></html>';
   let requests = 0;
@@ -185,7 +185,7 @@ async function assertBuiltInWeChatCapture(vaultPath: string): Promise<void> {
     return { status: 200, headers: {}, text: html, arrayBuffer: new ArrayBuffer(0), json: undefined };
   });
   try {
-    const paths = await capture.captureChatInput("raw-articles", url, []);
+    const paths = await confirmCaptureLinkForTest(capture.captureChatInput("raw-articles", url, []));
     assert.equal(paths.length, 1);
     assert.match(paths[0], /articles\/微信公众号\//u);
     const saved = await fs.readFile(path.join(vaultPath, paths[0]), "utf8");
@@ -194,7 +194,7 @@ async function assertBuiltInWeChatCapture(vaultPath: string): Promise<void> {
     const directory = path.dirname(path.join(vaultPath, paths[0]));
     const before = await fs.readdir(directory);
     html = '<html><body>环境异常，请完成验证</body></html>';
-    await assert.rejects(capture.captureChatInput("raw-articles", url, []), /需要验证或登录/u);
+    await assert.rejects(confirmCaptureLinkForTest(capture.captureChatInput("raw-articles", url, [])), /需要验证或登录/u);
     assert.deepEqual(await fs.readdir(directory), before, "verification pages must not be saved as articles");
     assert.equal(requests, 2, "both captures use the built-in Obsidian request path");
   } finally {

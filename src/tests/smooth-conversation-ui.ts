@@ -520,13 +520,13 @@ async function assertAnswerSaveUiContracts(): Promise<void> {
   };
   const activate = async (button: FakeElement) => await button.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
   const missingLocation = emptyKnowledgeFolderBindings();
-  missingLocation.collectionTargets = { web: null, wechat: null, text: "已删除目录" };
+  missingLocation.collectionTargets = { answer: "已删除目录", generation: "成果" };
   env.knowledgeFolderBindings = missingLocation;
   const unbound = renderButton();
   await activate(unbound);
   assert.equal(writes.length, 0, "a missing explicitly selected conversation folder does not write a note");
   assert.equal(unbound.disabled, false, "a failed save remains available for a deliberate retry");
-  assert.match(unbound.attributes.get("aria-label")!, /对话栏内容的保存位置不存在/u);
+  assert.match(unbound.attributes.get("aria-label")!, /回答.*保存位置不存在/u);
   const bindings = emptyKnowledgeFolderBindings();
   Object.assign(bindings.roles.outputs, { enabled: true, readPaths: ["成果"], writePath: "成果" });
   (renderer as unknown as { env: Record<string, unknown> }).env.knowledgeFolderBindings = bindings;
@@ -556,7 +556,7 @@ async function assertAnswerSaveUiContracts(): Promise<void> {
   currentBindings = missingLocation;
   await activate(beforeUnbinding);
   assert.equal(writes.length, 1, "a deleted selected location after rendering never falls back to the stale static location");
-  assert.match(beforeUnbinding.attributes.get("aria-label")!, /对话栏内容的保存位置不存在/u);
+  assert.match(beforeUnbinding.attributes.get("aria-label")!, /回答.*保存位置不存在/u);
   const beforeReplacement = renderButton();
   currentBindings = emptyKnowledgeFolderBindings();
   Object.assign(currentBindings.roles.outputs, { enabled: true, readPaths: ["新的成果"], writePath: "新的成果" });

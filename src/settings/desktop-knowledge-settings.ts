@@ -1,6 +1,6 @@
 import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeConversationLocation, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionDescription, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeOutputLocation, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
@@ -139,7 +139,7 @@ export class DesktopKnowledgeSettings {
       row.addClass("echoink-knowledge-purpose-row");
       row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-knowledge-purpose-commands", text: role === "inbox" ? "召回" : "/ask /maintain 召回" });
     }
-    for (const [target, title] of [["collections", "收藏保存位置"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
+    for (const [target, title] of [["collections", "Agent 产出物保存到"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
       createSettingsNavigationRow(folders, { title, focusKey: `knowledge:${target}`, onActivate: () => this.change(target) });
     }
     if (this.error) parent.createDiv({ cls: "settings-error", text: this.error, attr: { role: "alert" } });
@@ -148,23 +148,25 @@ export class DesktopKnowledgeSettings {
   }
   private renderCollections(page: HTMLElement): void {
     const bindings = this.bindings();
-    page.querySelector(".echoink-settings-page-heading")?.createDiv({ cls: "echoink-settings-page-description", text: "EchoInk 收藏或导入的资料存到这里；不影响你自己新建的笔记，修改不会移动已有文件。" });
+    page.querySelector(".echoink-settings-page-heading")?.createDiv({ cls: "echoink-settings-page-description", text: "Agent 和收藏写出的文件存到这里；不影响你自己新建的笔记，修改不会移动已有文件。" });
     const targets = createSettingsGroup(createSettingsSection(page, { surface: "flat" }));
     targets.addClass("echoink-knowledge-collection-fields");
     const saved = knowledgeCollectionTargets(bindings);
     for (const key of knowledgeCollectionKinds(bindings)) {
       const title = knowledgeCollectionLabel(key, bindings);
-      const conversation = key === "text" ? knowledgeConversationLocation(bindings) : null;
+      const output = key === "answer" || key === "generation";
+      const conversation = output ? knowledgeOutputLocation(bindings, key) : null;
       const directory = conversation?.directory ?? saved[key];
       const pending = conversation?.createIfMissing === true;
-      const row = new OriginSetting(targets).setName(title);
+      const row = new OriginSetting(targets).setName(title).setDesc(knowledgeCollectionDescription(key, bindings));
       row.settingEl.dataset.collectionKind = key;
       const picker = createKnowledgeFolderPicker(row.controlEl, { label: `${title}保存位置`,
-        folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => key === "text" || roots.some(root => pathInKnowledgeDirectory(path, root))); },
+        folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => output || roots.some(root => pathInKnowledgeDirectory(path, root))); },
         values: directory ? [{ path: directory, create: pending }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
         onChange: values => {
           const next = this.bindings(); next.collectionTargets = knowledgeCollectionTargets(next); next.collectionTargets[key] = values[0]?.path ?? null;
-          if (key === "text") next.conversationDirectoryPending = false;
+          if (key === "answer") next.answerDirectoryPending = false;
+          if (key === "generation") next.generationDirectoryPending = false;
           picker.setDisabled(true);
           void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
         }
@@ -172,7 +174,7 @@ export class DesktopKnowledgeSettings {
       picker.element.querySelector<HTMLElement>('[role="combobox"]')?.setAttribute("data-echoink-focus-key", `knowledge:collections:${key}`);
       this.folderPickers.push(picker);
       const missing = directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
-      if (missing || key !== "text" && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
+      if (missing || !output && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
     }
   }
   private renderPermissions(page: HTMLElement): void {
@@ -273,7 +275,7 @@ export class DesktopKnowledgeSettings {
   }
   renderDetail(container: HTMLElement): void {
     this.suspend();
-    const title = this.page === "sources" ? "资料来源" : this.page === "role" ? titles[this.selectedRole] : this.page === "picker" ? this.picker?.title ?? "选择文件夹" : this.page === "collections" ? "收藏保存位置" : this.page === "permissions" ? "Agent 权限与维护" : this.page === "management" ? "目录管理" : this.page === "initialize-preview" ? "预览" : "初始化文件夹";
+    const title = this.page === "sources" ? "资料来源" : this.page === "role" ? titles[this.selectedRole] : this.page === "picker" ? this.picker?.title ?? "选择文件夹" : this.page === "collections" ? "Agent 产出物保存到" : this.page === "permissions" ? "Agent 权限与维护" : this.page === "management" ? "目录管理" : this.page === "initialize-preview" ? "预览" : "初始化文件夹";
     const page = createSettingsPage(container, { title, detail: true, backLabel: this.page === "initialize-preview" ? "返回初始化文件夹" : this.page === "picker" ? "返回" : this.page === "initialize" && this.initializationParent ? "返回目录管理" : "返回模块", onBack: () => this.back() });
     page.addClass("echoink-knowledge-module-page"); this.host = page;
     if (this.error) page.createDiv({ cls: "settings-error", text: this.error, attr: { role: "alert" } });
@@ -341,7 +343,7 @@ export class DesktopKnowledgeSettings {
       try { await this.save(next);
         if (role === "raw") {
           const affected = knowledgeCollectionKinds(next).filter(kind => !knowledgeCollectionDirectory(next, kind));
-          if (affected.length) new Notice(`${affected.map(kind => KNOWLEDGE_COLLECTION_LABELS[kind]).join("、")}的保存位置已失效，请到收藏保存位置重新选择。`);
+          if (affected.length) new Notice(`${affected.map(kind => KNOWLEDGE_COLLECTION_LABELS[kind]).join("、")}的保存位置已失效，请到Agent 产出物保存到重新选择。`);
         }
         this.change(role === "raw" ? "sources" : null); }
       catch { this.navigation.redraw(); }

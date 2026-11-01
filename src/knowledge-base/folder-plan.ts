@@ -1,4 +1,4 @@
-import { knowledgeCollectionTargets } from "./folder-bindings";
+import { knowledgeCollectionTargets, knowledgeOutputLocation } from "./folder-bindings";
 import { assertKnowledgeModulePath, knowledgeModuleLabels, type KnowledgeEnglishDirectoryModes } from "./module-directories";
 import { KNOWLEDGE_ROOT_ROLES } from "./root-paths-core";
 import { classifyKnowledgePath, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeMaintenanceFolderIssues, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
@@ -54,7 +54,10 @@ export async function previewKnowledgeDirectoryPlan(input: {
 }): Promise<KnowledgeDirectoryPlan> {
   const roleScope = input.roleScope ?? KNOWLEDGE_ROOT_ROLES;
   const bindings = structuredClone(input.bindings);
-  bindings.collectionTargets = !input.bindings.collectionTargets && input.baseline?.roles.raw.readPaths.length ? knowledgeCollectionTargets(input.baseline) : knowledgeCollectionTargets(bindings);
+  const collectionBase = !input.bindings.collectionTargets && input.baseline?.roles.raw.readPaths.length ? input.baseline : bindings;
+  const answer = knowledgeOutputLocation(collectionBase, "answer"), generation = knowledgeOutputLocation(collectionBase, "generation");
+  bindings.collectionTargets = knowledgeCollectionTargets(collectionBase);
+  bindings.answerDirectoryPending = answer.createIfMissing; bindings.generationDirectoryPending = generation.createIfMissing;
   // A desktop draft cannot overwrite roles owned by the mobile compatibility path.
   for (const role of KNOWLEDGE_ROOT_ROLES) if (!roleScope.includes(role) && input.baseline) bindings.roles[role] = structuredClone(input.baseline.roles[role]);
   const inboxRecallExclusions = knowledgeInboxRecallExclusions(input.baseline, bindings);

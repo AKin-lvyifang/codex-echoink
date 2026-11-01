@@ -105,14 +105,14 @@ export async function runGenerationModalTests(): Promise<void> {
   const app = { vault: { getMarkdownFiles: () => files }, metadataCache: { getFileCache: () => ({ frontmatter: {} }) },
     setting: { open() { settingsOpens++; }, openTabById() {} }, keymap: { pushScope() {}, popScope() {} } };
   const plugin = { app, settings, manifest: { id: "echoink" }, prepareDesktopSettingsRoute(route: unknown) { routes.push(route); }, applyAppearanceTheme() {},
-    openEchoInkConversationContentSettings() { routes.push({ tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:text" }); settingsOpens++; },
+    openEchoInkOutputLocationSettings(kind: "answer" | "generation") { routes.push({ tab: "modules", section: "knowledgeBase", focus: `knowledge:collections:${kind}` }); settingsOpens++; },
     async saveSettings() { if (failTemplateSave) throw new Error("测试模板保存失败"); } } as unknown as EchoInkPlugin;
   const service: GenerationModalService = {
     availableNotes: () => files.filter(file => !file.path.startsWith("Outputs/")).map(file => file.path),
     async assessSources(paths) { return { sources: paths.map(path => ({ path, content: "测试资料", bytes: 12 })), totalBytes: paths.length * 12, readFailures: [], ...(assessError ? { error: assessError } : {}) }; },
     disabledReason: input => input.mode === "plan" ? "请切换到 Agent 模式后生成。" : input.permission === "read-only" ? "请切换到可写权限后生成。" : outputError || null,
     createRequest: (template, paths) => ({ version: 1, id: "request", createdAt: new Date().toISOString(), template: { ...template }, sourcePaths: [...paths], outputKind: template.outputKind, outputRoot: "Outputs", outputDirectory: `Outputs/${template.outputKind === "canvas" ? "导图" : "报告"}` }),
-    outputDirectory: kind => { if (outputError) throw new ConversationContentLocationError(); return `Outputs/${kind === "canvas" ? "导图" : "报告"}`; },
+    outputDirectory: kind => { if (outputError) throw new ConversationContentLocationError("generation"); return `Outputs/${kind === "canvas" ? "导图" : "报告"}`; },
     recommend: (paths, signal, sessionId) => new Promise((resolve, reject) => { recommendations.push({ paths: [...paths], signal, sessionId, resolve, reject }); })
   };
   const open = (paths: string[] = ["Raw/甲.md"], sessionId: string | null = "task-1", templateId?: string) => {
@@ -158,10 +158,10 @@ export async function runGenerationModalTests(): Promise<void> {
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /暂无资料/);
   modal.close(); assessError = "资料太多，请缩小范围"; modal = open(); await flush();
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /资料太多/);
-  modal.close(); assessError = ""; outputError = new ConversationContentLocationError().message; modal = open(); await flush();
-  assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /对话栏内容的保存位置不存在/);
+  modal.close(); assessError = ""; outputError = new ConversationContentLocationError("generation").message; modal = open(); await flush();
+  assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /从资料生成的保存位置不存在/);
   button(modal, "去设置").click();
-  assert.deepEqual(routes.at(-1), { tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:text" }); assert.equal(settingsOpens, 1);
+  assert.deepEqual(routes.at(-1), { tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:generation" }); assert.equal(settingsOpens, 1);
   modal.close(); outputError = ""; turnOptions.mode = "plan"; modal = open(); await flush();
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /Agent 模式/);
   modal.close(); turnOptions.mode = "agent"; submitError = "测试提交失败"; modal = open(["Raw/甲.md"], null, "mind"); await flush();

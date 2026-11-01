@@ -82,6 +82,7 @@ import {
 import { conversationUiText } from "./ui-i18n";
 
 let contextPopoverId = 0;
+const pendingKnowledgeCaptures = new WeakSet<CodexComposerHost>();
 
 export interface CodexComposerHost {
   readonly app: App;
@@ -192,6 +193,8 @@ export function renderToolbar(host: CodexComposerHost): void {
       onMentionNote: () => openNoteMentionPicker(host),
       onEnhancePrompt: () => host.enhancePrompt(),
       onCaptureKnowledgeSource: () => {
+        if (host.running || pendingKnowledgeCaptures.has(host)) return;
+        pendingKnowledgeCaptures.add(host);
         const text = host.inputEl.value.trim();
         const attachments = host.attachments.map(attachment => ({ ...attachment }));
         void host.runKnowledgeBaseShortcut(
@@ -223,7 +226,7 @@ export function renderToolbar(host: CodexComposerHost): void {
             `收藏失败：${detail}`,
             `Save failed: ${detail}`
           ));
-        });
+        }).finally(() => pendingKnowledgeCaptures.delete(host));
       },
       onPermissionChange: (value) => {
         host.selectedPermission = value;

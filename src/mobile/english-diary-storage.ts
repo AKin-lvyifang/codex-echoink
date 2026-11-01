@@ -10,16 +10,13 @@ export function mobileEnglishStorage(services: MobileServices) {
   return { ...paths, englishDirectory: normalizeDiaryPath(paths.englishDirectory), expressionDirectory: normalizeDiaryPath(paths.expressionDirectory) };
 }
 export function assertMobileEnglishStorage(services: MobileServices): void {
-  const paths = mobileEnglishStorage(services), output = services.settings.knowledgeBase.folderBindings?.roles.outputs;
+  const paths = mobileEnglishStorage(services);
   for (const [directory, role] of [[paths.englishDirectory, paths.roleEnglish], [paths.expressionDirectory, paths.roleExpressions]] as const) {
     const existing = services.app.vault.getAbstractFileByPath(directory);
     if (!role) {
       if (!(existing instanceof TFolder)) throw new Error("请在目录方案中确认可用的英文日记和表达库位置；已有资料仍可查看。");
       continue;
     }
-    if (!output?.enabled || !output.writePath || !output.readPaths.includes(output.writePath) || !directory.startsWith(output.writePath + "/") || !(services.app.vault.getAbstractFileByPath(output.writePath) instanceof TFolder)) throw new Error("请先选择可用的输出位置；已有英文日记仍可查看。");
-    if (existing instanceof TFolder) continue;
-    const child = directory.slice(output.writePath.length + 1);
-    if (existing || !output.allowedSubdirectories.includes(child) || !(output.allowedSubdirectoryRoots ?? output.readPaths).includes(output.writePath)) throw new Error(`请在目录方案中确认子目录：${child}`);
+    if (existing && !(existing instanceof TFolder)) throw new Error("英文日记或表达库的保存位置被文件占用，请重新选择文件夹；已有资料仍可查看。");
   }
 }
