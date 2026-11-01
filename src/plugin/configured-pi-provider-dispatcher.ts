@@ -1,6 +1,13 @@
 import type {
   ProviderStreams
 } from "@earendil-works/pi-ai";
+import type { PiAutoOutputLimitPolicy } from "../harness/pi/auto-output-limit";
+import {
+  apiProviderModelUsesAutoOutputLimit,
+  normalizeApiProviderAutoLimits,
+  type ApiProviderConfig,
+  type CodexForObsidianSettings
+} from "../settings/settings";
 import {
   PiProviderProtocolDispatcher
 } from "../harness/pi/pi-provider-protocol-adapter";
@@ -49,20 +56,49 @@ export function createConfiguredPiProviderProtocolDispatcher(
   adapters: Readonly<{
     loopback?: ProviderStreams;
     qwenTokenPlan?: ProviderStreams;
-  }> = {}
+  }> = {},
+  autoOutputLimits?: PiAutoOutputLimitPolicy
 ): PiProviderProtocolDispatcher {
   switch (resolveConfiguredPiProviderTransportKind(input)) {
     case "loopback":
       return new PiProviderProtocolDispatcher({
         "openai-completions": adapters.loopback
           ?? createLoopbackOpenAICompletionsAdapter()
-      });
+      }, autoOutputLimits);
     case "qwen-token-plan":
       return new PiProviderProtocolDispatcher({
         "openai-completions": adapters.qwenTokenPlan
           ?? createQwenTokenPlanOpenAICompletionsAdapter()
-      });
+      }, autoOutputLimits);
     default:
-      return new PiProviderProtocolDispatcher();
+      return new PiProviderProtocolDispatcher({}, autoOutputLimits);
   }
+}
+
+/** Bound to one saved connection; no credentials are copied into the policy. */
+export function createConfiguredPiAutoOutputLimitPolicy(
+  host: { readonly settings: CodexForObsidianSettings; saveSettings(force?: boolean): Promise<void> },
+  provider: Pick<ApiProviderConfig, "id" | "baseUrl">,
+  modelId: string
+): PiAutoOutputLimitPolicy {
+  const providerId = provider.id, baseUrl = provider.baseUrl;
+  const current = () => {
+    const connection = host.settings.apiProviders.find(candidate => candidate.id === providerId && candidate.baseUrl === baseUrl);
+    const model = connection?.models.find(candidate => candidate.id === modelId);
+    return connection && model && apiProviderModelUsesAutoOutputLimit(connection.providerId ?? "custom", model, connection.runtimeProviderId)
+      ? model : undefined;
+  };
+  return {
+    read: model => {
+      const target = model.id === modelId ? current() : undefined;
+      return target ? target.autoLimits ?? {} : null;
+    },
+    remember: async (model, limits) => {
+      const target = model.id === modelId ? current() : undefined;
+      const accepted = normalizeApiProviderAutoLimits(limits);
+      if (!target || !accepted) return;
+      target.autoLimits = { ...target.autoLimits, ...accepted };
+      await host.saveSettings();
+    }
+  };
 }

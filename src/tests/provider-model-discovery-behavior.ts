@@ -1,4 +1,5 @@
 import * as assert from "node:assert/strict";
+import { runProviderAutoLimitSettingsTests } from "./provider-auto-limits";
 import { App } from "obsidian";
 import { createAssistantMessageEventStream, type AssistantMessage, type Context, type Model, type Api, type ProviderStreams } from "@earendil-works/pi-ai";
 import { isRetryableAssistantError } from "@earendil-works/pi-ai/compat";
@@ -77,6 +78,7 @@ async function assertLongModelListScroll(): Promise<void> {
 export async function runProviderModelDiscoveryRegression(installDom: () => void): Promise<void> {
   assert.equal(normalizeDiscoveredProviderModel({ id: "fixture-model", displayName: "模\0型\u007f名称\u0085" })?.displayName, "模型名称");
   installDom();
+  await runProviderAutoLimitSettingsTests();
   await assertLongModelListScroll();
   const provider = createApiProviderConfig("deepseek", "discovery-fixture");
   provider.apiKey = key;

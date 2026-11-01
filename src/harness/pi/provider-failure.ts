@@ -46,7 +46,7 @@ export function sanitizeProviderFailureDetail(status: number | null, raw: unknow
   const message = typeof candidate?.message === "string" ? candidate.message : text;
   const param = safeField(candidate?.param) ?? safeField(message.match(/(?:parameter|param)\s*[:=]?\s*[`'"]?([A-Za-z][A-Za-z0-9_.-]*)/iu)?.[1]);
   const code = safeField(candidate?.code);
-  const effectiveStatus = status ?? providerFailureHttpStatus(text);
+  const effectiveStatus = status ?? (typeof candidate?.status === "number" ? candidate.status : providerFailureHttpStatus(text));
   const reason = effectiveStatus === 401 || effectiveStatus === 403 ? undefined
     : /unsupported|not supported|unknown parameter/iu.test(message) ? "unsupported"
     : /must|range|exceed|maximum|limit/iu.test(message) ? "out_of_range"
@@ -96,6 +96,7 @@ const PROVIDER_FAILURE_CODES = new Set([
   "controlled_transport_aborted",
   "provider_api_key_missing",
   "provider_auth_failed",
+  "provider_auto_output_request_rejected",
   "provider_content_filtered",
   "provider_certificate_failed",
   "provider_proxy_failed",
@@ -111,6 +112,7 @@ const PROVIDER_FAILURE_CODES = new Set([
   "provider_network_interrupted",
   "provider_oauth_relogin_required",
   "provider_output_limit_reached",
+  "provider_output_limit_rejected",
   "provider_partial_interrupted_context",
   "provider_partial_interrupted_deadline",
   "provider_partial_interrupted_network",
@@ -188,6 +190,10 @@ export function providerFailureText(value: unknown): string | null {
   const code = safeProviderFailureCode(value);
   if (!code) return null;
   switch (code) {
+    case "provider_auto_output_request_rejected":
+      return "服务商拒绝了这次请求";
+    case "provider_output_limit_rejected":
+      return "服务商拒绝了输出上限，请到模型设置手动填写。";
     case "provider_output_limit_reached":
       return "达到输出上限，回答未完整生成。";
     case "provider_content_filtered":

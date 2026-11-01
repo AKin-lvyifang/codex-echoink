@@ -6499,10 +6499,10 @@ class ControlledAgentSession {
     return flight;
   }
 
-  finishResilientResponse(text: string, stopReason: AssistantMessage["stopReason"]): void {
+  finishResilientResponse(text: string, stopReason: AssistantMessage["stopReason"], errorMessage?: string): void {
     const resolve = this.resolvePrompt;
     assert.ok(resolve, "expected a pending model response");
-    const message = { ...assistantMessage(text, 300_000 + this.promptSequence), stopReason };
+    const message = { ...assistantMessage(text, 300_000 + this.promptSequence), stopReason, ...(errorMessage ? { errorMessage } : {}) };
     this.emit({ type: "message_start", message });
     this.sessionManager.appendMessage(message);
     this.emit({ type: "message_end", message });
@@ -7043,7 +7043,32 @@ export async function runGenerationRuntimeTests(): Promise<void> {
 }
 
 async function assertCanvasGenerationAttempts(): Promise<void> {
-  for (const mode of ["first", "repair", "fallback", "exhausted", "cancel", "permission", "write_denied", "provider", "budget", "uncertain"] as const) {
+  const scenarios = [
+    { mode: "first", attempts: 1, validationErrors: 0, success: true },
+    { mode: "repair", attempts: 2, validationErrors: 1, success: true },
+    { mode: "fallback", attempts: 3, validationErrors: 2, success: true },
+    { mode: "exhausted", attempts: 3, validationErrors: 3, success: false },
+    { mode: "cancel", attempts: 2, validationErrors: 1, success: false },
+    { mode: "permission", attempts: 1, validationErrors: 1, success: false },
+    { mode: "write_denied", attempts: 1, validationErrors: 0, success: false },
+    { mode: "provider", attempts: 1, validationErrors: 0, success: false },
+    { mode: "budget", attempts: 1, validationErrors: 1, success: false },
+    { mode: "uncertain", attempts: 1, validationErrors: 0, success: false },
+    { mode: "truncated_empty", attempts: 2, validationErrors: 1, success: true },
+    { mode: "limit_error_empty", attempts: 2, validationErrors: 1, success: true },
+    { mode: "truncated_fallback", attempts: 3, validationErrors: 2, success: true },
+    { mode: "truncated_exhausted", attempts: 3, validationErrors: 3, success: false },
+    { mode: "limit_error_exhausted", attempts: 3, validationErrors: 3, success: false },
+    { mode: "truncated_permission", attempts: 1, validationErrors: 1, success: false },
+    { mode: "truncated_provider", attempts: 2, validationErrors: 1, success: false },
+    { mode: "truncated_cancel", attempts: 2, validationErrors: 1, success: false },
+    { mode: "truncated_write_denied", attempts: 2, validationErrors: 1, success: false },
+    { mode: "aborted", attempts: 1, validationErrors: 0, success: false }
+  ] as const;
+  for (const { mode, attempts: expectedAttempts, validationErrors, success } of scenarios) {
+    const initiallyLimited = mode.startsWith("truncated") || mode.startsWith("limit_error");
+    const hierarchyFallback = mode === "fallback" || mode === "truncated_fallback";
+    const cancelled = mode === "cancel" || mode === "truncated_cancel" || mode === "aborted";
     let port: GenerationRuntimePort, prepared = 0, writes = 0, finishes = 0;
     const id = `canvas-attempts-${mode}`;
     await withFixture([id], async fixture => {
@@ -7053,14 +7078,14 @@ async function assertCanvasGenerationAttempts(): Promise<void> {
       port = createGenerationRuntimePort({
         app: { vault: { getAbstractFileByPath: (name: string) => files.get(name), createFolder: async (name: string) => { await mkdir(path.join(fixture.root, name)); files.set(name, new TFolder()); } } } as never,
         vaultRoot: fixture.root, bindings: () => ({ roles: { outputs: { enabled: true, writePath: "输出", readPaths: ["输出"] } } }) as never,
-        assertRead: async () => { if (mode === "permission" && prepared) throw new Error("重试读取权限已撤销"); },
-        assertWrite: async () => { if (mode === "write_denied") throw new Error("写入权限已撤销"); },
+        assertRead: async () => { if (["permission", "truncated_permission"].includes(mode) && prepared) throw new Error("重试读取权限已撤销"); },
+        assertWrite: async () => { if (mode === "write_denied" || mode === "truncated_write_denied" && finishes) throw new Error("写入权限已撤销"); },
         authorization: () => ({ authorize: async () => ({ authorizationKind: "approval_ticket", effectType: "user_write", operationIdentity: "op" }) as never }),
         domain: { noteCreate: async (input: any) => {
           await input.beforeSideEffect(); writes++;
           const canvas = JSON.parse(input.content);
           assert.deepEqual(Object.keys(canvas).sort(), ["edges", "nodes"], "outer title must not reach the Canvas file");
-          if (mode === "fallback") assert.equal(canvas.nodes[0].id, "generation-center");
+          if (hierarchyFallback) assert.equal(canvas.nodes[0].id, "generation-center");
           else assert.equal(canvas.nodes[0].id, "model-node");
           return { operationIdentity: "op", operation: "note_create", status: mode === "uncertain" ? "uncertain" : "completed", readbackVerified: mode !== "uncertain", sideEffectStarted: true } as VaultOperationResult;
         } } as never,
@@ -7076,49 +7101,70 @@ async function assertCanvasGenerationAttempts(): Promise<void> {
       const fallback = JSON.stringify({ title: "旧层级主题", branches: Array.from({ length: 3 }, (_, index) => ({ title: `分支${index}`, points: [{ text: "要点一" }, { text: "要点二", sourcePaths: ["资料/原文.md"] }] })) });
       const immediate = ["first", "uncertain", "write_denied"].includes(mode);
       if (mode === "provider") session.finishFailed("Provider unavailable");
+      else if (mode === "aborted") session.finishAborted();
+      else if (initiallyLimited) session.finishResilientResponse("", mode.startsWith("limit_error") ? "error" : "length", mode.startsWith("limit_error") ? "provider_output_limit_reached" : undefined);
       // Spaces keep tokenization linear while a possible 30K-token response
       // still exceeds the next request's input budget once repair context is added.
       else session.finishSuccessful(immediate ? full : mode === "budget" ? "INVALID ".repeat(30_000) : '{"title":"INVALID_FIRST"}');
-      if (["repair", "fallback", "exhausted", "cancel"].includes(mode)) {
+      if (expectedAttempts >= 2) {
         await waitForTestCondition(() => session.promptTexts.length === 2);
         const context = fixture.currentGenerationContext()!;
         assert.equal(context.attempt?.kind, "repair");
-        if (context.attempt?.kind === "repair") { assert.match(context.attempt.failedOutput, /INVALID_FIRST/u); assert.ok(context.attempt.validationError); }
+        if (context.attempt?.kind === "repair") {
+          if (initiallyLimited) {
+            assert.equal(context.attempt.failedOutput, "", "thinking can exhaust output before any JSON text");
+            assert.match(context.attempt.validationError, /截断/u);
+          } else assert.match(context.attempt.failedOutput, /INVALID_FIRST/u);
+          assert.ok(context.attempt.validationError);
+        }
         assert.equal(context.assessment.sources[0].content, "本轮快照 https://example.com/source");
         await writeFile(path.join(fixture.root, "资料/原文.md"), "此后修改不得重新读取");
-        if (mode === "cancel") await fixture.runtime.abort(id);
-        else session.finishSuccessful(mode === "repair" ? full : '{"title":"INVALID_SECOND"}');
+        if (cancelled) await fixture.runtime.abort(id);
+        else if (mode === "truncated_provider") session.finishFailed("network request failed");
+        else if (mode === "limit_error_exhausted") session.finishResilientResponse("", "error", "provider_output_limit_reached");
+        else if (mode === "truncated_exhausted" || mode === "truncated_fallback") session.finishResilientResponse('{"title":"TRUNCATED_SECOND"', "length");
+        else session.finishSuccessful(expectedAttempts === 2 ? full : '{"title":"INVALID_SECOND"}');
       }
-      if (mode === "fallback" || mode === "exhausted") {
+      if (expectedAttempts === 3) {
         await waitForTestCondition(() => session.promptTexts.length === 3);
         assert.equal(fixture.currentGenerationContext()!.attempt?.kind, "fallback");
         assert.equal(fixture.currentGenerationContext()!.assessment.sources[0].content, "本轮快照 https://example.com/source");
-        session.finishSuccessful(mode === "fallback" ? fallback : '{"title":"INVALID_THIRD"}');
+        // Even parseable JSON must not be written when the provider marks it truncated.
+        if (mode === "truncated_exhausted") session.finishResilientResponse(fallback, "length");
+        else if (mode === "limit_error_exhausted") session.finishResilientResponse(fallback, "error", "provider_output_limit_reached");
+        else session.finishSuccessful(hierarchyFallback ? fallback : '{"title":"INVALID_THIRD"}');
       }
       const settled = await handle.result;
       const projection = await fixture.runtime.readProjection(id);
       const result = projection.messages.find(message => message.generationResult)?.generationResult;
       assert.ok(result, `${mode}: final result persisted`);
-      const expectedAttempts = mode === "fallback" || mode === "exhausted" ? 3 : mode === "repair" || mode === "cancel" ? 2 : 1;
       assert.equal(session.promptTexts.length, expectedAttempts, `${mode}: bounded prompt requests`);
+      assert.equal(session.continuationMessages.length, 0, `${mode}: Canvas must never send echoink.output-continuation-instruction.v1`);
       assert.ok(session.promptTexts.every(text => text === generationModelPrompt(request) && !text.includes("思维导图")), `${mode}: every actual Canvas attempt uses the neutral model prompt`);
       assert.equal(result.modelAttempts, expectedAttempts);
       assert.equal(result.canvasFallback, expectedAttempts === 3);
-      assert.equal(result.canvasValidationErrors?.length, mode === "exhausted" ? 3 : mode === "fallback" ? 2 : ["repair", "cancel", "permission", "budget"].includes(mode) ? 1 : 0);
+      assert.equal(result.canvasValidationErrors?.length, validationErrors);
       assert.equal(prepared, 1, `${mode}: successful read snapshot prepared once`);
       assert.equal(finishes, 1, `${mode}: write path entered once`);
-      const success = ["first", "repair", "fallback"].includes(mode);
-      assert.equal(settled.terminalState, success ? "completed" : mode === "cancel" ? "cancelled" : "failed");
+      assert.equal(settled.terminalState, success ? "completed" : cancelled ? "cancelled" : "failed");
       assert.equal(writes, success || mode === "uncertain" ? 1 : 0);
-      if (success && mode !== "fallback") { assert.equal(result.title, "模型主题"); assert.equal(result.branchCount, undefined); }
-      if (mode === "fallback") assert.equal(result.branchCount, 3);
-      if (mode === "permission") assert.match(result.error!, /权限已撤销/u);
+      if (success && !hierarchyFallback) { assert.equal(result.title, "模型主题"); assert.equal(result.branchCount, undefined); }
+      if (hierarchyFallback) assert.equal(result.branchCount, 3);
+      if (["permission", "truncated_permission", "write_denied", "truncated_write_denied"].includes(mode)) assert.match(result.error!, /权限已撤销/u);
+      if (mode === "truncated_exhausted" || mode === "limit_error_exhausted") {
+        assert.equal(result.writeState, "not_written");
+        assert.equal(result.path, undefined);
+        assert.match(result.error!, /仍被截断.*尚未创建/u);
+        assert.match(result.error!, /减少.*资料/u);
+        assert.match(result.error!, /单次输出上限/u);
+        assert.match(result.error!, /调低思考/u);
+      }
       if (mode === "budget") assert.match(result.error!, /本轮预算/u);
       if (mode === "uncertain") assert.equal(result.writeState, "unconfirmed");
       assert.equal(projection.messages.filter(message => message.role === "user" && message.generationRequest).length, 1);
       assert.equal(projection.messages.filter(message => message.generationResult).length, 1);
-      assert.equal(projection.messages.some(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|model-node/u.test(message.text)), false,
-        JSON.stringify({ generationRun: handle.productRunId, leaked: projection.messages.filter(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|model-node/u.test(message.text))
+      assert.equal(projection.messages.some(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|TRUNCATED_SECOND|model-node/u.test(message.text)), false,
+        JSON.stringify({ generationRun: handle.productRunId, leaked: projection.messages.filter(message => /INVALID_FIRST|INVALID_SECOND|INVALID_THIRD|TRUNCATED_SECOND|model-node/u.test(message.text))
           .map(message => ({ id: message.id, role: message.role, runId: message.runId, turnId: message.turnId, processKind: message.processKind, itemType: message.itemType, text: message.text.slice(0, 160) })) }));
       assert.deepEqual(session.activeToolSelections.at(-1), []);
       await fixture.runtime.shutdown();

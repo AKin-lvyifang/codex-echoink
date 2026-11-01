@@ -60,6 +60,13 @@ import {
   calculatePiEffectiveInputBudget,
   estimatePiContextTokens
 } from "../pi-native/pi-context-budget";
+import {
+  streamWithPiAutoOutputLimit,
+  PI_OUTPUT_LIMIT_REJECTED,
+  PI_AUTO_OUTPUT_REQUEST_REJECTED,
+  type PiAutoOutputLimitPolicy,
+  type PiAutoOutputLimitRequestState
+} from "./auto-output-limit";
 
 export type PiProviderProtocolAdapters = Readonly<
   Record<ApiProviderProtocol, ProviderStreams>
@@ -89,7 +96,10 @@ const PI_CONTEXT_OVERFLOW_PATTERNS = getOverflowPatterns();
 export class PiProviderProtocolDispatcher {
   readonly adapters: PiProviderProtocolAdapters;
 
-  constructor(adapters: Partial<PiProviderProtocolAdapters> = {}) {
+  constructor(
+    adapters: Partial<PiProviderProtocolAdapters> = {},
+    private readonly autoOutputLimits?: PiAutoOutputLimitPolicy
+  ) {
     this.adapters = Object.freeze({
       ...DEFAULT_PI_PROVIDER_PROTOCOL_ADAPTERS,
       ...adapters
@@ -110,10 +120,11 @@ export class PiProviderProtocolDispatcher {
     const reasoningEffort = clampedReasoning === "off"
       ? undefined
       : clampedReasoning;
-    return this.adapters[protocol].stream(
-      input.model,
-      input.context,
-      {
+    return streamWithPiAutoOutputLimit({
+      model: input.model,
+      context: input.context,
+      policy: this.autoOutputLimits,
+      options: {
         ...streamOptions,
         ...(reasoningEffort ? { reasoningEffort } : {}),
         onPayload: composeReasoningPayloadTransform(
@@ -121,8 +132,9 @@ export class PiProviderProtocolDispatcher {
           onPayload
         ),
         apiKey: input.apiKey
-      }
-    );
+      },
+      start: (model, options) => this.adapters[protocol].stream(model, input.context, options)
+    });
   }
 
   streamSimple(input: {
@@ -130,24 +142,28 @@ export class PiProviderProtocolDispatcher {
     context: Context;
     apiKey: string;
     options: Omit<SimpleStreamOptions, "apiKey">;
+    autoOutputLimitState?: PiAutoOutputLimitRequestState;
   }): AssistantMessageEventStream {
     const protocol = requireApiProviderProtocol(input.model.api);
     const { onPayload, ...streamOptions } = input.options;
     const clampedReasoning = input.options.reasoning
       ? clampThinkingLevel(input.model, input.options.reasoning)
       : undefined;
-    return this.adapters[protocol].streamSimple(
-      input.model,
-      input.context,
-      {
+    return streamWithPiAutoOutputLimit({
+      model: input.model,
+      context: input.context,
+      policy: this.autoOutputLimits,
+      state: input.autoOutputLimitState,
+      options: {
         ...streamOptions,
         onPayload: composeReasoningPayloadTransform(
           clampedReasoning,
           onPayload
         ),
         apiKey: input.apiKey
-      }
-    );
+      },
+      start: (model, options) => this.adapters[protocol].streamSimple(model, input.context, options)
+    });
   }
 }
 
@@ -222,6 +238,12 @@ implements ControlledPiStreamPort {
         ...input.context,
         messages: validProviderHistory(input.context.messages, input.model)
       };
+      const autoOutputLimitState: PiAutoOutputLimitRequestState = {
+        retried: false,
+        ...(input.options.timeoutMs && input.options.timeoutMs > 0
+          ? { deadline: Date.now() + input.options.timeoutMs }
+          : {})
+      };
       const dispatchRequest = (
         context: Context,
         injectNativeDocuments: boolean
@@ -234,6 +256,7 @@ implements ControlledPiStreamPort {
         model: input.model,
         context,
         apiKey,
+        autoOutputLimitState,
         options: {
           signal: input.options.signal,
           ...(input.options.reasoning
@@ -506,6 +529,7 @@ function runtimeProviderFailureCode(
   assistantMessage?: AssistantMessage,
   contextWindow?: number
 ): string {
+  if (message === PI_OUTPUT_LIMIT_REJECTED || message === PI_AUTO_OUTPUT_REQUEST_REJECTED) return message;
   for (const code of [
     PI_ANTHROPIC_DOCUMENT_REQUEST_TOO_LARGE,
     PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED
@@ -538,6 +562,7 @@ function thrownProviderFailureCode(
   message: string,
   partial?: AssistantMessage
 ): string {
+  if (message === PI_OUTPUT_LIMIT_REJECTED || message === PI_AUTO_OUTPUT_REQUEST_REJECTED) return message;
   for (const code of [
     PI_ANTHROPIC_DOCUMENT_REQUEST_TOO_LARGE,
     PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED
@@ -556,6 +581,7 @@ function isExplicitDocumentUnsupported(
   status: number | null,
   message: string
 ): boolean {
+  status = status ?? providerFailureHttpStatus(message);
   if (status !== 400 && status !== 415 && status !== 422) return false;
   const normalized = message.trim().toLowerCase();
   return /(?:\b(?:pdf|documents?(?:\s+(?:inputs?|types?|blocks?(?:\s+types?)?))?|files?(?:\s+(?:inputs?|types?|blocks?))?|(?:content\s+)?blocks?(?:\s+types?)?(?:\s*[:=]?\s*documents?)?)\b\s+(?:(?:is|are|was|were)\s+)?(?:unsupported|not\s+supported)\b)|(?:\b(?:unsupported|not\s+supported)\b\s+(?:pdf|documents?(?:\s+(?:inputs?|types?|blocks?(?:\s+types?)?))?|files?(?:\s+(?:inputs?|types?|blocks?))?|(?:content\s+)?blocks?(?:\s+types?)?(?:\s*[:=]?\s*documents?)?)\b)/u
