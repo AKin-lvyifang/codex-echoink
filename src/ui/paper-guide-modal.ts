@@ -1,5 +1,7 @@
 import { Modal, Notice, setIcon, type App } from "obsidian";
-import { createOriginButton, createOriginInput, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
+import { createOriginButton, createOriginCheck, createOriginInput, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
+import { createKnowledgeFolderPicker, type KnowledgeFolderPicker } from "../settings/knowledge-folder-picker";
+import { defaultOnboardingChoices, type OnboardingSetupChoices } from "../knowledge-base/onboarding-setup-choices";
 import { applyAmicroButton } from "../settings/amicro-buttons";
 import { apiProviderPresetDisplayName, getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
 import { providerServiceCategories } from "../settings/provider-service-categories";
@@ -12,18 +14,19 @@ export interface PaperGuideModelResult { available: boolean; message: string }
 export type PaperGuideProgress = (step: "folders" | "bindings", completed: number, total: number) => void;
 export interface PaperGuideModalOptions {
   language: "zh-CN" | "en";
-  preview(): Promise<OnboardingSetupPlan>;
+  preview(choices?: OnboardingSetupChoices): Promise<OnboardingSetupPlan>;
   apply(plan: OnboardingSetupPlan, progress: PaperGuideProgress): Promise<KnowledgeDirectoryApplyResult>;
   model(): string | null;
   connect(provider: ApiProviderId, key: string): Promise<PaperGuideModelResult>;
   writeGuide(plan: OnboardingSetupPlan, created: readonly string[]): Promise<OnboardingGuideResult>;
   openGuide(path: string): Promise<void>;
+  refine(plan: OnboardingSetupPlan): Promise<string>;
   onManual(): Promise<void>;
   onTry(): Promise<boolean>;
   onDismiss(): Promise<void>;
   onClosed(): void;
 }
-type View = "choose" | "confirm" | "running" | "done" | "connect";
+type View = "choose" | "guided" | "confirm" | "running" | "done" | "connect";
 
 /** One native modal; only explicit confirmation writes folders or provider settings. */
 export class PaperGuideModal extends Modal {
@@ -40,7 +43,14 @@ export class PaperGuideModal extends Modal {
   private key = "";
   private provider: ApiProviderId = "deepseek";
   private modelRequested = false;
-  private progress: { step: "folders" | "bindings" | "model" | "guide"; completed: number; total: number } | null = null;
+  private guidedStep = 0;
+  private choices: OnboardingSetupChoices | null = null;
+  private fromGuided = false;
+  private pickers: KnowledgeFolderPicker[] = [];
+  private editing = new Set<string>();
+  private refinementTask = "";
+  private refinementError = "";
+  private progress: { step: "folders" | "bindings" | "model" | "guide" | "refinement"; completed: number; total: number } | null = null;
   private body!: HTMLElement;
   private footer!: HTMLElement;
 
@@ -61,17 +71,20 @@ export class PaperGuideModal extends Modal {
   onClose(): void {
     if (this.closed) return;
     this.closed = true; this.key = "";
+    this.pickers.splice(0).forEach(picker => picker.dispose());
     disposeOriginControls(this.contentEl); this.contentEl.empty(); this.options.onClosed();
   }
 
   private render(): void {
     if (this.closed || this.disposed) return;
+    this.pickers.splice(0).forEach(picker => picker.dispose()); this.editing.clear();
     disposeOriginControls(this.contentEl); this.contentEl.empty();
     this.modalEl.toggleClass("is-setup-detail", this.view !== "choose");
     this.modalEl.setAttribute("data-setup-view", this.view);
     const failed = Boolean(this.modelError || this.guideError);
     this.setTitle(this.label(this.view === "choose" ? "你想怎么开始？" : this.view === "confirm" ? "确认后我会做这些" : this.view === "running" ? "正在设置…" : this.view === "connect" ? "连接模型" : failed ? "目录已设置完成" : "设置好了",
       this.view === "choose" ? "How would you like to start?" : this.view === "confirm" ? "Review your setup" : this.view === "running" ? "Setting up…" : this.view === "connect" ? "Connect a model" : failed ? "Directories are ready" : "All set"));
+    if (this.view === "guided") this.setTitle(this.label(["哪些算资料？", "东西放哪？", "AI 能做什么？"][this.guidedStep], ["Which folders are sources?", "Where should things go?", "What can AI do?"][this.guidedStep]));
     if (this.view === "choose") {
       const mascot = this.titleEl.createSpan({ cls: "echoink-paper-guide-mascot", attr: { "aria-hidden": "true" } });
       for (const part of ["eyes", "mouth", "feet"]) mascot.createSpan({ cls: `echoink-paper-guide-${part}` });
@@ -80,6 +93,7 @@ export class PaperGuideModal extends Modal {
     this.body = this.contentEl.createDiv({ cls: "echoink-setup-body" });
     this.footer = this.contentEl.createDiv({ cls: "echoink-setup-footer" });
     if (this.view === "choose") this.renderChoices();
+    else if (this.view === "guided") this.renderGuided();
     else if (this.view === "confirm") this.renderConfirmation();
     else if (this.view === "running") this.renderProgress();
     else if (this.view === "connect") {
@@ -116,7 +130,7 @@ export class PaperGuideModal extends Modal {
     const choices = this.body.createDiv({ cls: "echoink-paper-guide-choices" });
     for (const [id, icon, title, description] of [
       ["auto", "zap", this.label("全自动", "Automatic"), this.label("我是新手，一键设好就能用", "Set things up for me")],
-      ["guided", "sliders-horizontal", this.label("半自动", "Guided"), this.label("先看看建议的设置", "Review the suggested setup")],
+      ["guided", "sliders-horizontal", this.label("半自动", "Guided"), this.label("回答三个问题，其余交给 EchoInk", "Answer three questions; EchoInk handles the rest")],
       ["manual", "wrench", this.label("手动", "Manual"), this.label("我喜欢 DIY，自己一项项设置", "Configure each setting myself")]
     ]) {
       const button = createOriginButton(choices, { cls: "echoink-paper-guide-choice", attr: { "data-setup-choice": id } });
@@ -125,16 +139,85 @@ export class PaperGuideModal extends Modal {
       copy.createSpan({ cls: "echoink-paper-guide-choice-title", text: title });
       copy.createSpan({ cls: "echoink-paper-guide-description", text: description });
       setIcon(button.createSpan({ cls: "echoink-paper-guide-arrow" }), "arrow-right");
-      button.onclick = () => { if (!this.busy) void (id === "manual" ? this.navigate(() => this.options.onManual()) : this.scan()); };
+      button.onclick = () => { if (!this.busy) void (id === "manual" ? this.navigate(() => this.options.onManual()) : this.scan(id === "guided")); };
     }
     this.action(this.label("以后再说", "Maybe later"), () => this.navigate());
   }
 
-  private async scan(): Promise<void> {
+  private async scan(guided = this.fromGuided): Promise<void> {
     if (this.busy) return;
     this.busy = true; this.error = ""; this.view = "confirm"; this.plan = null; this.render();
-    try { this.plan = await this.options.preview(); }
+    try {
+      this.plan = await this.options.preview(guided && this.choices ? this.choices : undefined);
+      this.fromGuided = guided;
+      if (guided) { this.choices = this.plan.choices ?? defaultOnboardingChoices(this.plan); this.guidedStep = 0; this.view = "guided"; }
+    }
     catch (error) { this.error = this.errorText(error); }
+    finally { this.busy = false; this.render(); }
+  }
+
+  private beginGuided(): void {
+    if (!this.plan) return;
+    this.choices = this.plan.choices ?? defaultOnboardingChoices(this.plan); this.fromGuided = true; this.guidedStep = 0; this.view = "guided"; this.error = ""; this.render();
+  }
+
+  private renderGuided(): void {
+    const plan = this.plan, choices = this.choices;
+    if (!plan || !choices) return;
+    const steps = this.body.createDiv({ cls: "echoink-setup-steps", attr: { "aria-label": this.label(`第 ${this.guidedStep + 1} 步，共 3 步`, `Step ${this.guidedStep + 1} of 3`) } });
+    for (let i = 0; i < 3; i++) steps.createSpan({ cls: i <= this.guidedStep ? "is-active" : "" });
+    const rows = this.group();
+    const check = (text: string, value: boolean, change: (checked: boolean) => void, disabled = false, detail?: string) => {
+      const row = rows.createDiv({ cls: "echoink-setup-check-row" });
+      const control = createOriginCheck(row, { attr: { "aria-label": text } }); control.checked = value; control.disabled = disabled;
+      if (disabled) control.dataset.setupDisabled = "true";
+      const copy = row.createDiv(); copy.createDiv({ text }); if (detail) copy.createDiv({ cls: "echoink-setup-safety", text: detail });
+      control.addEventListener("change", () => change(control.checked));
+      return row;
+    };
+    if (this.guidedStep === 0) {
+      const candidates = (plan.sourceCandidates ?? plan.sources).filter(source => plan.folders?.includes(source.path));
+      if (!candidates.length) rows.createDiv({ cls: "echoink-setup-row", text: this.label("仓库还没有资料，之后放进资料来源即可。", "No sources yet. Add notes to your source folder later.") });
+      for (const source of candidates) {
+        const row = check(source.path, choices.sources.includes(source.path), selected => { choices.sources = selected ? [...new Set([...choices.sources, source.path])] : choices.sources.filter(path => path !== source.path); });
+        row.createSpan({ cls: "echoink-setup-count", text: this.label(`${source.noteCount} 篇`, `${source.noteCount} notes`) });
+      }
+      this.body.createEl("p", { cls: "echoink-setup-safety", text: this.label("不勾的，不进 /ask 默认范围；普通对话仍能搜到。", "Unchecked folders stay out of /ask. Ordinary chat can still search them.") });
+    } else if (this.guidedStep === 1) {
+      for (const [role, zh, en] of [["wiki", "知识成果", "Knowledge"], ["inbox", "收件箱", "Inbox"], ["outputs", "产出", "Outputs"], ["journal", "日记", "Journal"]] as const) {
+        const row = rows.createDiv({ cls: "echoink-setup-location-row" }); row.createSpan({ text: this.label(zh, en) });
+        const picker = createKnowledgeFolderPicker(row, { app: this.app, language: this.options.language, label: this.label(zh, en),
+          folders: () => plan.folders ?? [], values: choices.locations[role] ? [{ path: choices.locations[role], create: !plan.folders?.includes(choices.locations[role]) }] : [],
+          multiple: false, required: role !== "journal", emptyLabel: this.label("仓库根目录", "Vault root"),
+          onChange: values => {
+            choices.locations[role] = values[0]?.path ?? "";
+            choices.sources = choices.sources.filter(source => !Object.values(choices.locations).some(location => location && (source === location || source.startsWith(location + "/") || location.startsWith(source + "/"))));
+          }, onEditingChange: editing => { if (editing) this.editing.add(role); else this.editing.delete(role); const next = this.footer.querySelector<HTMLButtonElement>(".mod-cta"); if (next) next.disabled = this.editing.size > 0; } });
+        this.pickers.push(picker);
+      }
+      this.body.createEl("p", { cls: "echoink-setup-safety", text: this.label("这些位置会自动退出资料来源。", "These locations are removed from your source selection.") });
+    } else {
+      check(this.label("允许分类整理", "Allow classification"), choices.organize, value => { choices.organize = value; });
+      check(this.label("自动补链", "Automatically link notes"), choices.autoLink, value => { choices.autoLink = value; });
+      const canRefine = Boolean(this.options.model()) && plan.sources.some(source => source.noteCount > 0);
+      if (!canRefine) choices.refine = false;
+      check(this.label("马上提炼最近 20 篇", "Distill up to 20 recent notes now"), choices.refine, value => { choices.refine = value; }, !canRefine,
+        this.options.model() ? this.label("会用模型额度，设置完成后作为独立任务进行。", "Uses model credits. Runs as a separate task after setup.") : this.label("需要先连接模型，会用模型额度。", "Connect a model first. Uses model credits."));
+    }
+    this.action(this.label("上一步", "Back"), () => { this.error = ""; if (this.guidedStep) this.guidedStep--; else this.view = "choose"; this.render(); });
+    this.action(this.guidedStep === 2 ? this.label("看确认清单", "Review setup") : this.label("下一步", "Next"), () => this.nextGuided(), true);
+  }
+
+  private async nextGuided(): Promise<void> {
+    if (this.busy || this.editing.size || !this.choices) return;
+    if (this.guidedStep === 0) { this.guidedStep = 1; this.render(); return; }
+    this.busy = true; this.setBusyState(); this.error = "";
+    try {
+      const plan = await this.options.preview(this.choices); this.plan = plan; this.choices = plan.choices ?? this.choices;
+      if (plan.directoryPlan.issues.length) this.error = plan.directoryPlan.issues.join("；");
+      else if (this.guidedStep === 1) this.guidedStep = 2;
+      else this.view = "confirm";
+    } catch (error) { this.error = this.errorText(error); }
     finally { this.busy = false; this.render(); }
   }
 
@@ -160,10 +243,12 @@ export class PaperGuideModal extends Modal {
         for (const item of plan.skipped) details.createDiv({ cls: "echoink-setup-skipped-row", text: `${item.path} · ${item.reason}` });
       }
       this.renderModel(this.group(this.label("模型", "Model")));
-      this.body.createEl("p", { cls: "echoink-setup-safety", text: this.label("不删除文件，不移动、不改你的笔记，不用模型处理笔记。", "No files deleted or moved. Your notes stay unchanged and are not processed by a model.") });
+      if (plan.choices?.refine) this.row(outputs, "sparkles", this.label("设置完成后独立提炼最近最多 20 篇，会用模型额度。", "Distill up to 20 recent notes in a separate task after setup. Uses model credits."));
+      this.body.createEl("p", { cls: "echoink-setup-safety", text: plan.choices?.refine ? this.label("原笔记留在原位，提炼结果写进知识成果。", "Original notes stay in place. Distilled notes are written to Knowledge.") : this.label("不删除文件，不移动、不改你的笔记，不用模型处理笔记。", "No files deleted or moved. Your notes stay unchanged and are not processed by a model.") });
       if (plan.directoryPlan.issues.length) this.body.createDiv({ cls: "echoink-setup-error", text: plan.directoryPlan.issues.join("；"), attr: { role: "alert" } });
     }
-    this.action(this.label("返回", "Back"), () => { this.error = ""; this.view = "choose"; this.render(); });
+    this.action(this.fromGuided ? this.label("上一步", "Back") : this.label("返回", "Back"), () => { this.error = ""; this.view = this.fromGuided ? "guided" : "choose"; this.guidedStep = 2; this.render(); });
+    if (!this.fromGuided && plan) this.action(this.label("我要调整", "Adjust setup"), () => this.beginGuided());
     if ((!plan && !this.busy) || plan?.directoryPlan.issues.length) this.action(this.label("重新扫描", "Scan again"), () => this.scan());
     this.action(this.label("确认，开始", "Confirm and start"), () => this.run(), true, !plan || !!plan.directoryPlan.issues.length);
   }
@@ -190,11 +275,11 @@ export class PaperGuideModal extends Modal {
 
   private renderProgress(): void {
     const rows = this.group();
-    const steps = ["folders", "bindings", ...(this.modelRequested ? ["model"] : []), "guide"];
+    const steps = ["folders", "bindings", ...(this.modelRequested ? ["model"] : []), "guide", ...(this.plan?.choices?.refine ? ["refinement"] : [])];
     const current = steps.indexOf(this.progress?.step ?? "folders");
     for (const [index, step] of steps.entries()) {
       const done = index < current || (index === current && this.progress && this.progress.completed === this.progress.total);
-      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : step === "model" ? this.label("测试模型连接", "Test model connection") : this.label("写清单和新手指南", "Write setup summary and guide");
+      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : step === "model" ? this.label("测试模型连接", "Test model connection") : step === "refinement" ? this.label("单独开始提炼任务", "Start a separate distillation task") : this.label("写清单和新手指南", "Write setup summary and guide");
       const row = this.row(rows, done ? "circle-check" : index === current ? "loader-circle" : "circle", text,
         index === current && this.progress ? `${this.progress.completed} / ${this.progress.total}` : undefined);
       if (!done && index === current) row.addClass("is-running");
@@ -213,6 +298,11 @@ export class PaperGuideModal extends Modal {
       }
       this.progress = { step: "guide", completed: 0, total: 1 }; this.render();
       await this.finishGuide();
+      if (this.plan.choices?.refine) {
+        this.progress = { step: "refinement", completed: 0, total: 1 }; this.render();
+        try { this.refinementTask = await this.options.refine(this.plan); }
+        catch (error) { this.refinementError = this.errorText(error); }
+      }
       this.view = "done";
     } catch (error) {
       this.error = this.errorText(error); this.view = this.result ? "done" : "confirm";
@@ -261,6 +351,8 @@ export class PaperGuideModal extends Modal {
     if (this.modelError) this.body.createDiv({ cls: "echoink-setup-error", text: this.modelError, attr: { role: "alert" } });
     if (this.guide) this.row(rows, "file-text", this.guide.path, this.guide.action === "preserved" ? this.label("已保留现有文件", "Existing file kept") : undefined);
     if (this.guideError) this.body.createDiv({ cls: "echoink-setup-error", text: this.label(`指南未完成：${this.guideError}`, `Guide not ready: ${this.guideError}`), attr: { role: "alert" } });
+    if (this.refinementTask) this.row(rows, "sparkles", this.label(`已单独开始提炼 ${this.plan?.refinementSources?.length ?? 0} 篇`, `Started a separate task for ${this.plan?.refinementSources?.length ?? 0} notes`));
+    if (this.refinementError) this.body.createDiv({ cls: "echoink-setup-error", text: this.refinementError, attr: { role: "alert" } });
     if (this.guide) this.action(this.label("看指南", "View guide"), () => this.navigate(() => this.options.openGuide(this.guide!.path)));
     else this.action(this.label("关闭", "Close"), () => this.navigate());
     if (this.guideError) {

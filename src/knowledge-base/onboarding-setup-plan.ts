@@ -1,6 +1,7 @@
 import { emptyKnowledgeFolderBindings, knowledgeCollectionTargets, normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBindings } from "./folder-bindings";
 import type { KnowledgeDirectoryFile, KnowledgeDirectoryPlan, KnowledgeDirectoryPlanOptions, KnowledgeModuleDirectories } from "./folder-plan";
 import { KNOWLEDGE_ROOT_NAMES, type KnowledgeRootRole } from "./root-paths-core";
+import { customizeOnboardingSetup, type OnboardingSetupChoices } from "./onboarding-setup-choices";
 
 const NAMES = {
   zh: { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱", outputs: "产出", journal: "日记" },
@@ -9,6 +10,11 @@ const NAMES = {
 type SetupRole = keyof typeof NAMES.zh;
 export interface OnboardingProtectedPath { path: string; reason: string }
 export interface OnboardingSetupPlan {
+  choices?: OnboardingSetupChoices;
+  autoLinkEnabled?: boolean;
+  folders?: string[];
+  sourceCandidates?: { path: string; noteCount: number }[];
+  refinementSources?: string[];
   language?: "zh" | "en";
   /** Metadata preview; apply via applyOnboardingSetupPlan to refresh the disk snapshot. */
   directoryPlan: KnowledgeDirectoryPlan;
@@ -20,6 +26,8 @@ export interface OnboardingSetupPlan {
   guide: { path: string; action: "create" | "preserve" | "blocked" };
 }
 export interface OnboardingSetupInput {
+  choices?: OnboardingSetupChoices;
+  autoLinkEnabled?: boolean;
   language: "zh" | "en";
   baseline?: KnowledgeFolderBindings | null;
   /** Actual directory topology, including empty and excluded directories. */
@@ -45,7 +53,7 @@ export function onboardingSetupConfirmationSignature(plan: OnboardingSetupPlan):
     baseSettingsSignature: directory.baseSettingsSignature, create: directory.create, reuse: directory.reuse,
     modules: directory.moduleDirectories, modes: directory.moduleDirectoryModes, moves: directory.moves,
     sources: plan.sources, skipped: plan.skipped, rootNotes: plan.rootNotes, noteCount: plan.noteCount,
-    outputLocations: plan.outputLocations, guide: plan.guide });
+    outputLocations: plan.outputLocations, guide: plan.guide, choices: plan.choices, autoLinkEnabled: plan.autoLinkEnabled });
 }
 
 /** Read-only: choose purposes first, then bind eligible top-level sources in place. */
@@ -206,7 +214,12 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
     }
     if (++batch % 512 === 0) await yieldOnboardingScan();
   }
-  return {
+  const result: OnboardingSetupPlan = {
+    autoLinkEnabled: input.autoLinkEnabled,
+    folders: input.folders.filter(directory => !directory.split("/").some(part => part.startsWith(".") || part === "node_modules")),
+    sourceCandidates: [...new Set([...input.folders.filter(directory => !directory.includes("/")), ...sourcePaths])]
+      .filter(directory => !directory.startsWith(".") && directory !== "node_modules" && !input.protectedPaths.some(item => /私有|配置|依赖/u.test(item.reason) && overlaps(directory, item.path)))
+      .map(path => ({ path, noteCount: counts.get(path) ?? 0 })),
     language: input.language,
     directoryPlan,
     sources: sourcePaths.map(path => ({ path, noteCount: counts.get(path) ?? 0, existingBinding: originalSources.has(path) })),
@@ -214,4 +227,5 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
     noteCount, outputLocations: { answer: targets.answer ?? "", generation: targets.generation ?? "" },
     guide: { path: guidePath, action: fileExists ? "preserve" : folderExists ? "blocked" : "create" }
   };
+  return input.choices ? customizeOnboardingSetup(input, result, input.choices) : result;
 }

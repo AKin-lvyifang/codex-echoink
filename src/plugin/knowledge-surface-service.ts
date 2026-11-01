@@ -1,4 +1,5 @@
 import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
+import type { OnboardingSetupChoices } from "../knowledge-base/onboarding-setup-choices";
 import { renderOnboardingGuide, type OnboardingGuideResult } from "../knowledge-base/onboarding-guide";
 import { generateOnboardingSetupPlan, onboardingSetupConfirmationSignature, yieldOnboardingScan, type OnboardingProtectedPath, type OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
@@ -12,7 +13,7 @@ import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole }
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOutputLocation, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, classifyKnowledgePath, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOutputLocation, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -593,7 +594,7 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   /** No settings writes, note reads, model calls or link-setting changes. */
-  async previewOnboardingSetupPlan(language: "zh" | "en" = this.plugin.settings.settingsLanguage === "en" ? "en" : "zh"): Promise<OnboardingSetupPlan> {
+  async previewOnboardingSetupPlan(language: "zh" | "en" = this.plugin.settings.settingsLanguage === "en" ? "en" : "zh", choices?: OnboardingSetupChoices): Promise<OnboardingSetupPlan> {
     const vault = this.plugin.app.vault, settings = this.plugin.settings, root = this.plugin.getVaultPath();
     const baseline = structuredClone(settings.knowledgeBase.folderBindings);
     const settingsSignature = await this.directorySettingsSignature();
@@ -652,7 +653,7 @@ export class EchoInkKnowledgeSurfaceService {
     const modules = prepareKnowledgeModuleDirectories(settings, baseline, roots).directories;
     const journalDirectory = settings.journalDirectory !== "journal" ? settings.journalDirectory
       : nativeJournal !== undefined ? nativeJournal : folders.includes("journal") ? "journal" : undefined;
-    const result = await generateOnboardingSetupPlan({ language, baseline, folders, files, protectedPaths, journalDirectory, moduleDirectories: modules,
+    const result = await generateOnboardingSetupPlan({ language, choices, autoLinkEnabled: settings.knowledgeBase.autoLinkEnabled !== false, baseline, folders, files, protectedPaths, journalDirectory, moduleDirectories: modules,
       preview: (bindings, createPaths, options) => this.previewDirectoryPlan(bindings, createPaths, { ...options, metadataOnly: true }) });
     if (settingsSignature !== await this.directorySettingsSignature() || knowledgeFolderBindingsSignature(baseline) !== knowledgeFolderBindingsSignature(settings.knowledgeBase.folderBindings)) {
       result.directoryPlan.issues.push("文件或设置已变化，请重新核对。");
@@ -859,7 +860,7 @@ export class EchoInkKnowledgeSurfaceService {
 
   /** Refresh only this confirmation path. Other callers keep exact snapshot checks. */
   async applyOnboardingSetupPlan(shown: OnboardingSetupPlan, onProgress?: (step: "folders" | "bindings", completed: number, total: number) => void): Promise<KnowledgeDirectoryApplyResult> {
-    const fresh = await this.previewOnboardingSetupPlan(shown.language);
+    const fresh = await this.previewOnboardingSetupPlan(shown.language, shown.choices);
     if (fresh.directoryPlan.issues.length) throw new Error(fresh.directoryPlan.issues.join("；"));
     if (onboardingSetupConfirmationSignature(shown) !== onboardingSetupConfirmationSignature(fresh)) throw new Error("仓库或设置已变化，请重新扫描并核对清单。");
     const selections = { ...fresh.directoryPlan.moduleDirectories };
@@ -868,10 +869,15 @@ export class EchoInkKnowledgeSurfaceService {
     if (full.issues.length || full.moves.length || JSON.stringify(full.create) !== JSON.stringify(fresh.directoryPlan.create)
       || JSON.stringify(full.reuse) !== JSON.stringify(fresh.directoryPlan.reuse)
       || knowledgeFolderBindingsSignature(full.bindings) !== knowledgeFolderBindingsSignature(fresh.directoryPlan.bindings)) throw new Error("目录或设置已变化，请重新扫描并核对清单。");
-    return await this.applyDirectoryPlan(full, false, { onboarding: true, onProgress });
+    if (shown.choices?.refine) {
+      const files = this.plugin.app.vault.getMarkdownFiles().filter(file => file.path !== fresh.guide.path
+        && classifyKnowledgePath(fresh.directoryPlan.bindings, file.path) === "raw");
+      shown.refinementSources = files.sort((a, b) => b.stat.mtime - a.stat.mtime || a.path.localeCompare(b.path)).slice(0, 20).map(file => file.path);
+    }
+    return await this.applyDirectoryPlan(full, false, { onboarding: true, onProgress, autoLinkEnabled: fresh.autoLinkEnabled });
   }
 
-  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false, options: { onboarding?: boolean; onProgress?: (step: "folders" | "bindings", completed: number, total: number) => void } = {}): Promise<KnowledgeDirectoryApplyResult> {
+  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false, options: { onboarding?: boolean; autoLinkEnabled?: boolean; onProgress?: (step: "folders" | "bindings", completed: number, total: number) => void } = {}): Promise<KnowledgeDirectoryApplyResult> {
     if (this.folderOperationBusy || ((plan.create.length > 0 || plan.moves.length > 0 || optimize) && !this.directoryWritable)) throw new Error("当前只读或已有目录操作，请稍后重试。");
     if (plan.issues.length) throw new Error(plan.issues.join("；"));
     this.directoryPlanBusy = true;
@@ -888,14 +894,16 @@ export class EchoInkKnowledgeSurfaceService {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       const previousDiary = structuredClone(this.plugin.settings.englishDiary);
       const previousInitialized = this.plugin.settings.knowledgeBase.initialized;
+      const previousAutoLink = this.plugin.settings.knowledgeBase.autoLinkEnabled;
       const previousJournal = this.plugin.settings.journalDirectory;
       const previousReview = this.plugin.settings.review.outputDir;
       const previousPdfOriginal = this.plugin.settings.pdfReading.originalDirectory;
       const previousPdfOriginalConfigured = Object.hasOwn(this.plugin.settings.pdfReading, "originalDirectory");
       const choices = this.directoryModuleChanges(plan.moduleDirectories ?? {}, plan.moduleDirectoryModes ?? {});
       const nativeJournal = choices.journal !== undefined ? await this.captureNativeJournalSettings() : null;
-      const moduleSettings = Object.keys(choices).length ? this.directoryModuleSettings(choices) : null;
+      const moduleSettings = Object.keys(choices).length || options.autoLinkEnabled !== undefined ? this.directoryModuleSettings(choices) : null;
       const intendedModules = moduleSettings ? this.intendedDirectoryModuleSettings(choices) : null;
+      if (moduleSettings && intendedModules && options.autoLinkEnabled !== undefined) { moduleSettings.autoLink = { enabled: previousAutoLink }; intendedModules.autoLink = { enabled: options.autoLinkEnabled }; }
       let nativeJournalChanged = false;
       let onboardingCaptured = false;
       try {
@@ -924,6 +932,7 @@ export class EchoInkKnowledgeSurfaceService {
         options.onProgress?.("bindings", 0, 1);
         this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 };
         this.plugin.settings.knowledgeBase.initialized = true;
+        if (options.autoLinkEnabled !== undefined) this.plugin.settings.knowledgeBase.autoLinkEnabled = options.autoLinkEnabled;
         const modules = choices;
         if (modules?.journal !== undefined) {
           nativeJournalChanged = true; // Native save can complete before its refresh hook fails.
@@ -950,6 +959,7 @@ export class EchoInkKnowledgeSurfaceService {
       } catch (failure) {
         this.plugin.settings.knowledgeBase.folderBindings = previous;
         this.plugin.settings.knowledgeBase.initialized = previousInitialized;
+        this.plugin.settings.knowledgeBase.autoLinkEnabled = previousAutoLink;
         this.plugin.settings.englishDiary = previousDiary;
         this.plugin.settings.journalDirectory = previousJournal;
         this.plugin.settings.review.outputDir = previousReview;
@@ -1035,10 +1045,12 @@ export class EchoInkKnowledgeSurfaceService {
     const current = this.directoryModuleSettings({ journal: applied.nativeJournal ? "" : undefined, review: applied.review,
       english: applied.english?.directory, expressions: applied.expressions?.directory, pdfOriginal: applied.pdfOriginal ? "" : undefined });
     const previous = { journal: settings.journalDirectory, review: settings.review.outputDir, english: structuredClone(settings.englishDiary), pdf: structuredClone(settings.pdfReading) };
+    const previousAutoLink = settings.knowledgeBase.autoLinkEnabled;
     const native = original.nativeJournal && JSON.stringify(current.nativeJournal) === JSON.stringify(applied.nativeJournal)
       && JSON.stringify(current.nativeJournal) !== JSON.stringify(original.nativeJournal) ? await this.captureNativeJournalSettings() : null;
     let changed = false;
     try {
+      if (original.autoLink && applied.autoLink && settings.knowledgeBase.autoLinkEnabled === applied.autoLink.enabled) { settings.knowledgeBase.autoLinkEnabled = original.autoLink.enabled; changed = true; }
       if (native) { changed = true; await native.restoreFolder(original.nativeJournal!.folder); }
       if (original.journal !== undefined && current.journal === applied.journal && current.journal !== original.journal) { settings.journalDirectory = original.journal; changed = true; }
       if (original.review !== undefined && current.review === applied.review && current.review !== original.review) { settings.review.outputDir = original.review; changed = true; }
@@ -1069,6 +1081,7 @@ export class EchoInkKnowledgeSurfaceService {
       settings.review.outputDir = previous.review;
       settings.englishDiary = previous.english;
       settings.pdfReading = previous.pdf;
+      settings.knowledgeBase.autoLinkEnabled = previousAutoLink;
       const recovery: string[] = [];
       if (native) try { await native.restore(); } catch (error) { recovery.push(`Obsidian 日记设置：${knowledgeErrorDetail(error)}`); }
       this.plugin.englishDiary?.refreshStoragePaths();

@@ -772,20 +772,20 @@ export class CodexView extends ItemView {
   }
 
   private readonly workbenchSignalFlights = new Map<string, Promise<string>>();
-  startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
+  startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>): Promise<string> {
     const existing = this.workbenchSignalFlights.get(signal.key);
     if (existing) return existing;
-    const flight = Promise.resolve().then(() => this.createWorkbenchSignalTask(agentId, signal))
+    const flight = Promise.resolve().then(() => this.createWorkbenchSignalTask(agentId, signal, onboardingScope))
       .finally(() => { if (this.workbenchSignalFlights.get(signal.key) === flight) this.workbenchSignalFlights.delete(signal.key); });
     this.workbenchSignalFlights.set(signal.key, flight);
     return flight;
   }
 
-  private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal): Promise<string> {
+  private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>): Promise<string> {
     if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists."));
     this.saveTaskComposerDraft();
     const draft: StoredSession = { id: newId("workbench-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
-    const options = this.currentTurnOptions(draft);
+    const options = { ...this.currentTurnOptions(draft), ...(onboardingScope ? { mode: "agent" as const, permission: "workspace-write" as const } : {}) };
     const provider = this.plugin.settings.apiProviders.find(value => value.id === options.providerSettingsId);
     if (!provider || !getApiProviderModel(provider, options.model) || !apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential) || validateApiProvider(provider).length) {
       throw new WorkbenchSetupRequired(this.taskText("先配置可用的模型。", "Set up an available model first."), "models");
@@ -803,6 +803,7 @@ export class CodexView extends ItemView {
     const item = await createQueuedTurnFromComposerRunner(adapter, { allowLocalKnowledgeCommands: false, onError: message => { failure = message; } });
     if (!item || !await validateTaskTurnBeforeCreation(adapter, item)) throw new Error(failure);
     item.prefillSource = JSON.stringify(signal.source);
+    if (onboardingScope) item.maintenanceScope = structuredClone(onboardingScope);
     const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: signal.description,
       agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
     const session = createPiConversationShell(this.sessionHost(), entry);

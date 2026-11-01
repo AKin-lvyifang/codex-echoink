@@ -14,6 +14,7 @@ interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }
 export interface OnboardingEnglishHistory { english?: string[]; expressions?: string[] }
 export interface DirectoryModuleSettings {
+  autoLink?: { enabled?: boolean };
   journal?: string;
   nativeJournal?: { folder?: string };
   review?: string;
@@ -63,6 +64,7 @@ export interface DirectoryHistoryHost {
 /** The writer and reader share exactly the same persisted-settings validation. */
 export function validateDirectoryModuleSettings(modules: DirectoryModuleSettings): void {
   if (!modules || typeof modules !== "object" || Array.isArray(modules)) throw new Error("初始化模块目录记录损坏");
+  if (modules.autoLink?.enabled !== undefined && typeof modules.autoLink.enabled !== "boolean") throw new Error("自动补链恢复记录无效");
   const relative = (directory: unknown, label: string, optional = false) => {
     if (optional && directory === undefined) return;
     if (typeof directory !== "string" || directory.startsWith("/") || /^[a-z]:/iu.test(directory)

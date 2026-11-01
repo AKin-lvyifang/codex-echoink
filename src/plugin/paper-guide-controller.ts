@@ -6,8 +6,7 @@ import { activateApiProvider, apiProviderModelSupportsImage, createApiProviderCo
 import { getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
 import { settingsCopy } from "../settings/i18n";
 import { providerFailureDetailText } from "../harness/pi/provider-failure";
-import { knowledgeFolderIssues } from "../knowledge-base/folder-bindings";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
+import { onboardingSetupComplete } from "../settings/onboarding-setup-status";
 
 /** Owns automatic/manual entry and delegates mutations to the existing services. */
 export class PaperGuideController {
@@ -32,10 +31,10 @@ export class PaperGuideController {
         || home.getClientRects().length === 0 || home.ownerDocument.hidden || home.ownerDocument.querySelector(".modal-container")))) return;
       this.modal = new PaperGuideModal(this.plugin.app, {
         language: this.plugin.settings.settingsLanguage,
-        preview: async () => {
+        preview: async choices => {
           const service = this.plugin.getKnowledgeSurfaceService();
           if (!service) throw new Error("目录服务尚未就绪，请稍后重试。");
-          return await service.previewOnboardingSetupPlan();
+          return await service.previewOnboardingSetupPlan(undefined, choices);
         },
         apply: async (plan, progress) => {
           const service = this.plugin.getKnowledgeSurfaceService();
@@ -54,6 +53,7 @@ export class PaperGuideController {
           if (!service) throw new Error("目录服务尚未就绪，请稍后重试。");
           await service.openOnboardingSetupGuide(path);
         },
+        refine: plan => this.plugin.startOnboardingRefinement(plan.refinementSources ?? []),
         onManual: () => this.plugin.openEchoInkKnowledgeInitializationSettings(),
         onTry: async () => {
           return await this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, this.plugin.settings.settingsLanguage === "en"
@@ -77,12 +77,8 @@ export class PaperGuideController {
   }
 
   private canShow(): boolean {
-    const bindings = this.plugin.settings.knowledgeBase.folderBindings;
-    const directoriesReady = Boolean(bindings && bindings.roles.raw.enabled && bindings.roles.raw.readPaths.length
-      && [bindings.roles.wiki, bindings.roles.projects].some(role => role.enabled && role.readPaths.length)
-      && !knowledgeFolderIssues(bindings, DESKTOP_KNOWLEDGE_ROOT_ROLES).length);
     return !this.disposed && !this.plugin.isEchoInkOnboardingRequested() && this.plugin.settings.setup.completedAt > 0
-      && this.plugin.settings.setup.paperGuideDismissedAt === 0 && !(directoriesReady && this.modelName());
+      && this.plugin.settings.setup.paperGuideDismissedAt === 0 && !onboardingSetupComplete(this.plugin.settings);
   }
 
   private afterPaint(win: Window): Promise<void> {

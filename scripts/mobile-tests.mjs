@@ -110,6 +110,26 @@ await test("shared finance settings retain the native mobile controls without a 
 });
 
 await originControlScenarios(test);
+await test("desktop onboarding bindings retain Chinese paths and readable sources on mobile", async () => {
+  const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
+  const roles = Object.fromEntries([["raw","资料来源"],["wiki","知识成果"],["projects","项目"],["inbox","收件箱"],["outputs","产出"],["journal","日记"]]
+    .map(([role, folder]) => [role, { enabled: true, readPaths: [folder], writePath: folder, allowedSubdirectories: [] }]));
+  const config = loadMobileSettings({ knowledgeBase: { folderBindings: { schemaVersion: 1, revision: 4, configured: true, roles,
+    collectionTargets: { answer: "产出", generation: "产出", web: "资料来源", wechat: "资料来源" }, onboardingGuidePath: "产出/开始使用 EchoInk.md" } } });
+  const bindings = config.knowledgeBase.folderBindings;
+  assert.equal(bindings.roles.raw.writePath, "资料来源"); assert.equal(bindings.roles.wiki.writePath, "知识成果");
+  assert.equal(bindings.collectionTargets.answer, "产出");
+  for (const folder of ["资料来源", "知识成果", "项目", "收件箱", "产出"]) state.files.set(`${folder}/中文笔记.md`, `R4_MOBILE_${folder} 正文`);
+  state.files.set("产出/开始使用 EchoInk.md", "R4_MOBILE_GUIDE_ONLY");
+  const tools = mobileTools(state.app, state.store, () => "", () => bindings);
+  const search = tools.find(tool => tool.name === "vault_search"), read = tools.find(tool => tool.name === "note_read");
+  const hits = (await search.execute("r4-bound", { query: "R4_MOBILE_资料来源" })).details.hits;
+  assert.ok(hits.some(hit => hit.vaultRelativePath === "资料来源/中文笔记.md" && hit.kind === "raw"));
+  assert.ok(JSON.stringify(await read.execute("r4-read", { path: "知识成果/中文笔记.md" })).includes("R4_MOBILE_知识成果"));
+  assert.equal((await search.execute("r4-guide", { query: "R4_MOBILE_GUIDE_ONLY" })).details.hits.length, 0);
+  assert.ok((await search.execute("r4-other-output", { query: "R4_MOBILE_产出" })).details.hits.some(hit => hit.vaultRelativePath === "产出/中文笔记.md"));
+  state.runtime.dispose();
+});
 await test("plugin shared settings queue isolates failed Agent identity and publishes successful identity before later saves", async () => {
   const state = await setup("openai-completions", async () => answer("openai-completions", "ok"));
   const plugin = new EchoInkMobilePlugin(state.app, { id: "codex-echoink", dir: "plugin", version: "fixture" });

@@ -1562,6 +1562,19 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!view || !await view.waitForTaskUiReady()) throw new Error(this.settings.settingsLanguage === "en" ? "The conversation panel is not ready. Please try again." : "对话栏尚未就绪，请重试。");
     return view.startWorkbenchSignalTask(agentId, signal);
   }
+  async startOnboardingRefinement(sourcePaths: readonly string[]): Promise<string> {
+    if (!sourcePaths.length || sourcePaths.length > 20) throw new Error("没有可提炼的资料，或名单超过 20 篇。");
+    const unique = [...new Set(sourcePaths)];
+    const revision = this.settings.knowledgeBase.folderBindings?.revision ?? 0;
+    const key = newId("onboarding-refinement");
+    const prompt = `/maintain 请只提炼本次开局设置冻结的 ${unique.length} 篇资料，名单不能扩大：\n${unique.join("\n")}`;
+    await this.activateView();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) throw new Error("对话栏尚未就绪，请重试。");
+    return await view.startWorkbenchSignalTask(GENERAL_ASSISTANT_ID, { id: 7, key, moduleId: "knowledge-base", icon: "library", description: `提炼最近 ${unique.length} 篇资料`, prompt,
+      source: { version: 1, signalId: 7, businessKey: key, moduleId: "knowledge-base", objects: unique, prompt, capturedAt: Date.now() } },
+      { mode: "batch", sourcePaths: unique, folderBindingsRevision: revision });
+  }
   async deleteAgent(agentId: string): Promise<void> {
     if (isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘。 ");
     if (agentId === GENERAL_ASSISTANT_ID) throw new Error("general_assistant_cannot_be_deleted");

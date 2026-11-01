@@ -15,6 +15,7 @@ import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, 
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
+import { onboardingSetupComplete, onboardingDirectoriesReady } from "../settings/onboarding-setup-status";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { renderTaskAvatar } from "../ui/codex-view/agent-roster";
 import { ForegroundView } from "../ui/foreground-view";
@@ -447,6 +448,7 @@ export class EchoInkWorkbenchView extends ItemView {
       english: () => this.language === "en", hasPro: () => workbenchHasPro(this.plugin),
       avatar: () => { const avatar = this.plugin.settings.agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.avatar; return avatar?.kind === "preset" ? avatar.presetId : "sol"; },
       act: async index => {
+        if (index === 0) return this.plugin.openPaperGuideAfterOnboarding(true);
         if (index < 3) return this.plugin.openWorkbenchSetup((["knowledge", "agent", "appearance"] as const)[index]);
         if (index === 3 || index === 4) return this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, index === 3
           ? this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first.") : this.t("带我精读 @", "Read closely @"));
@@ -457,20 +459,21 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.lockedModule) this.starters.setActive(false);
   }
   private renderKnowledgeReminder(): void {
-    const host = this.field("knowledge-reminder"), initialized = this.plugin.settings.knowledgeBase?.initialized === true;
+    const host = this.field("knowledge-reminder"), initialized = onboardingSetupComplete(this.plugin.settings) || (this.plugin.settings.setup?.knowledgeReminderDismissedAt ?? 0) > 0;
     host.hidden = initialized;
     if (initialized) { this.disposeControls(host); host.empty(); delete host.dataset.signature; return; }
-    if (host.dataset.signature === this.language) return;
-    this.disposeControls(host); host.empty(); host.dataset.signature = this.language;
+    const reminderSignature = JSON.stringify([this.language, onboardingDirectoriesReady(this.plugin.settings)]);
+    if (host.dataset.signature === reminderSignature) return;
+    this.disposeControls(host); host.empty(); host.dataset.signature = reminderSignature;
     const row = host.createDiv({ cls: "wb-knowledge-reminder" });
-    row.createSpan({ cls: "wb-grow", text: this.t("还没设置知识库", "Knowledge base not set up") });
-    this.button(row, this.t("去初始化", "Set up"), "knowledge-reminder-settings", () => this.plugin.openWorkbenchSetup("knowledge"), "secondary", "arrow-right").classList.add("is-small");
+    row.createSpan({ cls: "wb-grow", text: onboardingDirectoriesReady(this.plugin.settings) ? this.t("还没连接模型", "Model not connected") : this.t("还没设置知识库", "Knowledge base not set up") });
+    this.button(row, this.t("去初始化", "Set up"), "knowledge-reminder-settings", () => this.plugin.openPaperGuideAfterOnboarding(true), "secondary", "arrow-right").classList.add("is-small");
     this.button(row, this.t("关闭知识库提醒", "Dismiss knowledge base reminder"), "knowledge-reminder-dismiss", async () => {
       if (this.busy.has("knowledge-reminder-dismiss")) return;
       await this.runAction("knowledge-reminder-dismiss", async () => {
-        this.plugin.settings.knowledgeBase.initialized = true;
+        this.plugin.settings.setup.knowledgeReminderDismissedAt = Date.now();
         try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
-        catch (error) { this.plugin.settings.knowledgeBase.initialized = false; throw error; }
+        catch (error) { this.plugin.settings.setup.knowledgeReminderDismissedAt = 0; throw error; }
         this.plugin.notifyHomeSurfacesChanged();
       });
     }, "icon", "x");

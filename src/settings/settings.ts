@@ -300,6 +300,7 @@ export type ReviewRangeMode = "previous-week" | "current-week";
 export type SettingsLanguage = "zh-CN" | "en";
 
 export interface SetupSettings {
+  knowledgeReminderDismissedAt?: number;
   completedAt: number;
   paperGuideDismissedAt: number;
   lastCheckedAt: number;
@@ -649,6 +650,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   customWelcomeTitle: DEFAULT_ECHOINK_WELCOME_TITLE,
   customWelcomeSubtitle: DEFAULT_ECHOINK_WELCOME_SUBTITLE,
   setup: {
+    knowledgeReminderDismissedAt: 0,
     completedAt: 0,
     paperGuideDismissedAt: 0,
     lastCheckedAt: 0,
@@ -1871,6 +1873,7 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
   return {
     completedAt: normalizeNonNegativeNumber(value?.completedAt),
     paperGuideDismissedAt: normalizeNonNegativeNumber(value?.paperGuideDismissedAt),
+    knowledgeReminderDismissedAt: normalizeNonNegativeNumber(value?.knowledgeReminderDismissedAt),
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion),
     tutorialVersion: normalizeOptionalText(value?.tutorialVersion),

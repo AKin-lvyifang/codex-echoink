@@ -16,6 +16,7 @@ import { normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from 
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 import { privateMaintenanceSourceScope } from "../plugin/pi-knowledge-maintenance-production";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
+import { defaultOnboardingChoices } from "../knowledge-base/onboarding-setup-choices";
 
 function memoryInput(paths: string[] = [], extra: Partial<OnboardingSetupInput> = {}): OnboardingSetupInput {
   const files: KnowledgeDirectoryFile[] = paths.filter(value => !value.endsWith("/")).map(path => ({ path, size: 17, mtime: 23 }));
@@ -139,9 +140,55 @@ export async function runOnboardingSetupPlanTests(): Promise<void> {
     await assertOnboardingRollback(path.join(root, "rollback"));
     for (const state of ["created", "preserved", "modified", "failed", "english", "moved", "moved-preserved"] as const) await assertGuideLifecycle(path.join(root, `guide-${state}`), state);
     for (const mode of ["new", "reused", "user-history", "content"] as const) await assertRepeatableSetup(path.join(root, `repeat-${mode}`), mode);
+    await assertGuidedSetup(path.join(root, "guided"));
   }
   finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Onboarding setup plans: empty/existing/bindings/reuse/collisions/protected/conflicts/50k/integration PASS");
+}
+
+async function assertGuidedSetup(root: string) {
+  const fixture = await nativeJournalFixture(root), { plugin } = fixture;
+  plugin.settings.defaultPermission = "workspace-write";
+  plugin.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  registerKnowledgePrivateRoot(root, path.join(root, ".private"));
+  await fixture.write("甲资料/笔记.md", "A"); await fixture.write("乙资料/笔记.md", "B");
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  try {
+    const automatic = await service.previewOnboardingSetupPlan("zh");
+    const defaults = defaultOnboardingChoices(automatic);
+    const same = await service.previewOnboardingSetupPlan("zh", defaults);
+    assert.deepEqual(same.directoryPlan, automatic.directoryPlan, "three default answers preserve the automatic execution plan");
+    const choices = structuredClone(defaults); choices.locations.outputs = "乙资料"; choices.organize = false; choices.autoLink = false; choices.refine = true;
+    const custom = await service.previewOnboardingSetupPlan("zh", choices);
+    assert.deepEqual(custom.directoryPlan.issues, []);
+    assert(!custom.sources.some(source => source.path === "乙资料"));
+    assert(custom.skipped.some(source => source.path === "乙资料" && source.reason === "保留给其他用途"));
+    assert.equal(custom.outputLocations.answer, "乙资料"); assert.equal(custom.outputLocations.generation, "乙资料");
+    assert.equal(custom.noteCount, 1);
+    assert(!custom.directoryPlan.create.includes("产出"), "unused automatic defaults are not created");
+    const applied = await service.applyOnboardingSetupPlan(custom);
+    assert.deepEqual(custom.refinementSources, ["甲资料/笔记.md"], "freeze only the selected actual sources before directory execution");
+    assert.equal(plugin.settings.knowledgeBase.folderBindings.organization.enabled, false);
+    assert.equal(plugin.settings.knowledgeBase.autoLinkEnabled, false);
+    assert.equal(fixture.providerCalls(), 0, "configuration never runs extraction inside the directory executor");
+    await service.writeOnboardingSetupGuide(custom, applied.created);
+    await service.restoreOriginalDirectories();
+    assert.equal(plugin.settings.knowledgeBase.autoLinkEnabled, true);
+    const cancel = structuredClone(defaults); cancel.sources = cancel.sources.filter(path => path !== "甲资料"); cancel.locations.outputs = "我的产出";
+    const reduced = await service.previewOnboardingSetupPlan("zh", cancel);
+    assert(!reduced.sources.some(source => source.path === "甲资料")); assert(reduced.directoryPlan.create.includes("我的产出"));
+    assert(reduced.skipped.some(source => source.path === "甲资料" && source.reason === "未选作资料来源"));
+    const conflict = structuredClone(defaults); conflict.locations.outputs = defaults.locations.wiki;
+    assert((await service.previewOnboardingSetupPlan("zh", conflict)).directoryPlan.issues.length > 0);
+    await fixture.write("资料来源/取消的笔记.md", "EXCLUDED");
+    const existingDefault = await service.previewOnboardingSetupPlan("zh");
+    const unchecked = defaultOnboardingChoices(existingDefault); unchecked.sources = unchecked.sources.filter(directory => directory !== "资料来源");
+    const withoutDefault = await service.previewOnboardingSetupPlan("zh", unchecked);
+    assert(!withoutDefault.sources.some(source => source.path === "资料来源"), "unchecking an existing default source must exclude its notes too");
+    assert.equal(withoutDefault.noteCount, 2);
+  } finally { release(); }
 }
 
 async function assertGuideLifecycle(root: string, state: "created" | "preserved" | "modified" | "failed" | "english" | "moved" | "moved-preserved") {
