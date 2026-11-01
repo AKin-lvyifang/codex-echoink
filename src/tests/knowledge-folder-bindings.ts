@@ -22,13 +22,14 @@ async function runCaptureSourceBindingTests(): Promise<void> {
     const vault = path.join(temporaryRoot, "vault");
     const rawDirectory = "资料/来源";
     const assetsDirectory = "资源/附件";
-    const config = emptyKnowledgeFolderBindings();
+    let config = emptyKnowledgeFolderBindings();
     Object.assign(config.roles.raw, { enabled: true, readPaths: [rawDirectory], writePath: rawDirectory, allowedSubdirectories: allowAttachments ? ["attachments"] : [] });
     Object.assign(config.roles.assets, { enabled: true, readPaths: [assetsDirectory], writePath: assetsDirectory });
+    config = normalizeKnowledgeFolderBindings(config)!;
     await mkdir(vault);
     const release = registerKnowledgeFolderBindings(vault, () => config);
     try {
-      for (const directory of [rawDirectory, assetsDirectory, "工作"]) await mkdir(path.join(vault, directory), { recursive: true });
+      for (const directory of [rawDirectory, ...(allowAttachments ? [`${rawDirectory}/attachments`] : []), assetsDirectory, "工作"]) await mkdir(path.join(vault, directory), { recursive: true });
       const fixtures = [
         { name: "external.pdf", source: path.join(temporaryRoot, "external.pdf"), body: "external PDF source" },
         { name: "external.docx", source: path.join(temporaryRoot, "external.docx"), body: "external DOCX source" },
@@ -49,7 +50,7 @@ async function runCaptureSourceBindingTests(): Promise<void> {
       await capture.captureActiveAttachment();
       const targetDirectory = path.posix.join(rawDirectory, allowAttachments ? "attachments" : "");
       const collectedNames = await readdir(path.join(vault, targetDirectory));
-      assert.equal(collectedNames.length, 4, "all collection entry points write to the source default or its approved attachments child");
+      assert.equal(collectedNames.length, 4, "legacy approved attachment children remain the explicit import destination");
       const collectedPaths = collectedNames.map(name => path.posix.join(targetDirectory, name));
       for (const relative of [...externalPaths, ...chatPaths, ...collectedPaths]) {
         assert.equal(path.posix.dirname(relative), targetDirectory);

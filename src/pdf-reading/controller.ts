@@ -18,7 +18,7 @@ export class PdfReadingController {
       sourceDirectory: () => getKnowledgeFolderBindings(plugin.getVaultPath()) ? resolveKnowledgeRoleTarget(plugin.getVaultPath(), "raw") : undefined as never,
       originalDirectory: () => {
         const directory = this.defaultOriginalDirectory();
-        if (!directory) throw new Error("请先在设置中选择可用的原 PDF 保存位置。");
+        if (!directory) throw new Error("请先在 PDF 精读设置中选择原 PDF 保存位置。");
         return directory;
       },
       validateOriginalDirectory: directory => this.validateOriginalDirectory(directory),
@@ -67,10 +67,7 @@ export class PdfReadingController {
     }).sort((a, b) => a.localeCompare(b));
   }
   defaultOriginalDirectory(): string {
-    const saved = this.plugin.settings.pdfReading.originalDirectory;
-    const bindings = this.bindings();
-    const candidate = saved || (bindings ? bindings.roles.raw.writePath ?? "" : resolveKnowledgePathFromRoots("raw", this.api.files.roots()));
-    try { this.validateOriginalDirectory(candidate); return candidate; } catch { return ""; }
+    return this.configuredOriginalDirectory() ?? "";
   }
   async navigationData(jobId?: string): Promise<PdfNavigationData> {
     const errors: string[] = [];

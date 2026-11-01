@@ -281,19 +281,31 @@ function vaultHost(root: string) {
 }
 
 async function configuredOriginalDirectory(root: string): Promise<void> {
-  await mkdir(path.join(root, "raw"), { recursive: true });
+  await mkdir(path.join(root, "raw/originals"), { recursive: true });
   const f = vaultHost(root), release = registerKnowledgeFolderBindings(root, () => f.bindings);
   try {
     f.folder("PDF原件/课程"); f.folder("PDF原件其他");
+    f.plugin.pdfReading = f.host;
     delete f.plugin.settings.pdfReading.originalDirectory;
-    assert.equal(f.host.defaultOriginalDirectory(), "raw", "without an explicit saved location, originals still default to Raw");
+    assert.equal(f.host.defaultOriginalDirectory(), "", "without an explicit PDF location, originals cannot inherit Raw's save location");
+    assertOriginalDirectorySettings(f.plugin, "unset");
+    await assert.rejects(() => f.host.api.prepareStartIntent("Unset.pdf", pdf, base, "unset-original"), /PDF 精读设置.*原 PDF 保存位置/u);
+    f.bindings.roles.raw.writePath = "raw/originals";
+    f.bindings.roles.raw.readPaths = ["raw", "raw/originals"];
+    assert.equal(f.host.defaultOriginalDirectory(), "", "changing the source save location cannot initialize PDF originals");
+    await assert.rejects(() => f.host.api.prepareStartIntent("Unset.pdf", pdf, base, "unset-original-moved"), /PDF 精读设置/u);
+    assert.equal(f.mutations.length, 0, "an unset PDF location fails before any task or original is saved");
+    f.bindings.roles.raw.writePath = "raw";
+    f.bindings.roles.raw.readPaths = ["raw"];
     assert(!f.host.originalDirectories().includes("PDF原件"));
     await assert.rejects(() => f.host.api.prepareStartIntent("Scope.pdf", pdf, base, "unsaved-original", { originalDirectory: "PDF原件" }), /范围内/u);
     f.plugin.settings.pdfReading.originalDirectory = "PDF原件";
     const before = structuredClone(f.bindings);
     assert.equal(f.host.defaultOriginalDirectory(), "PDF原件", "the initialized independent original-PDF directory is usable");
+    f.bindings.roles.raw.writePath = "raw/originals";
+    assert.equal(f.host.defaultOriginalDirectory(), "PDF原件", "changing the source save location preserves the independent PDF location");
+    f.bindings.roles.raw.writePath = "raw";
     assert.deepEqual(f.host.originalDirectories(), ["PDF原件", "PDF原件/课程", "raw", "raw/originals"].sort((a, b) => a.localeCompare(b)));
-    f.plugin.pdfReading = f.host;
     assertOriginalDirectorySettings(f.plugin, false);
     await assert.rejects(() => f.host.api.prepareStartIntent("Scope.pdf", pdf, base, "sibling-original", { originalDirectory: "PDF原件其他" }), /范围内/u);
     const intent = await f.host.api.prepareStartIntent("Selected.pdf", pdf, base, "selected-original", { originalDirectory: "PDF原件/课程", conversationId: "selected-task" });
@@ -316,9 +328,15 @@ async function configuredOriginalDirectory(root: string): Promise<void> {
     assertOriginalDirectorySettings(f.plugin, true);
     await assert.rejects(() => f.host.api.prepareStartIntent("Missing.pdf", pdf, base, "missing-original"), /保存位置/u);
   } finally { release(); }
+  const legacy = vaultHost(`${root}-legacy`);
+  delete legacy.plugin.settings.knowledgeBase.folderBindings;
+  delete legacy.plugin.settings.pdfReading.originalDirectory;
+  assert.equal(legacy.host.defaultOriginalDirectory(), "", "legacy hosts without folder bindings do not silently default PDF originals to Raw either");
+  await assert.rejects(() => legacy.host.api.prepareStartIntent("Legacy.pdf", pdf, base, "legacy-unset-original"), /PDF 精读设置/u);
+  assert.equal(legacy.mutations.length, 0);
 }
 
-function assertOriginalDirectorySettings(plugin: ReturnType<typeof vaultHost>["plugin"], missing: boolean): void {
+function assertOriginalDirectorySettings(plugin: ReturnType<typeof vaultHost>["plugin"], missing: boolean | "unset"): void {
   const dom = new JSDOM("<body><main></main></body>", { pretendToBeVisual: true });
   const previous = { window: globalThis.window, document: globalThis.document, HTMLElement: globalThis.HTMLElement };
   installObsidianDom(dom.window);
@@ -342,9 +360,10 @@ function assertOriginalDirectorySettings(plugin: ReturnType<typeof vaultHost>["p
     panel.render(root, { embedded: true });
     const label = [...root.querySelectorAll("label")].find(item => item.querySelector(".echoink-pdf-setting-name")?.textContent === "原 PDF 保存位置")!;
     const select = label.querySelector<HTMLSelectElement>("select")!;
-    assert.equal(select.value, "PDF原件", "settings retain the initialized selection instead of silently displaying Raw");
-    assert.equal(select.selectedOptions[0].textContent, missing ? "PDF原件（文件夹不存在）" : "PDF原件");
-    assert.equal(select.selectedOptions[0].disabled, missing);
+    assert.equal(select.value, missing === "unset" ? "" : "PDF原件", "settings retain the explicit PDF selection and never auto-select a source candidate");
+    assert.equal(select.selectedOptions[0].textContent, missing === "unset" ? "请选择原 PDF 保存位置" : missing ? "PDF原件（文件夹不存在）" : "PDF原件");
+    assert.equal(select.selectedOptions[0].disabled, missing !== false);
+    assert([...select.options].some(option => option.value === "raw"), "source folders remain available as explicit PDF choices");
   } finally { panel.dispose(); Object.assign(globalThis, previous); dom.window.close(); }
 }
 async function controllerAndPort(root: string): Promise<void> {

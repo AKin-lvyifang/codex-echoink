@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { emptyKnowledgeFolderBindings, knowledgeCollectionDirectory, knowledgeFolderBindingsSignature, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeFolderBindingsSignature, normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { nativeJournalFixture } from "./native-journal-fixture";
@@ -44,7 +44,10 @@ function assertBindingCompatibility() {
   bindings.inboxRecallExclusions = ["旧收件箱/资料"];
   const normalized = normalizeKnowledgeFolderBindings(bindings)!;
   assert.equal(normalized.allowAgentSubfolders, true);
-  assert.deepEqual(normalized.collectionTargets, bindings.collectionTargets);
+  assert.deepEqual(normalized.collectionTargets, { ...bindings.collectionTargets, files: "来源乙", text: "来源乙" });
+  normalized.roles.raw.writePath = "来源甲";
+  assert.equal(knowledgeCollectionDirectory(normalized, "files"), "来源乙", "imports retain their migrated destination");
+  assert.equal(knowledgeCollectionDirectory(normalized, "text"), "来源乙", "manual text retains its migrated destination");
   assert.equal(knowledgeCollectionDirectory(normalized, "web"), "来源甲");
   const signature = knowledgeFolderBindingsSignature(normalized);
   normalized.collectionTargets!.web = "来源乙";
@@ -395,8 +398,30 @@ async function assertRootJournalChoice(root: string) {
   } finally { fixture.release(); }
 }
 
+async function assertLegacyCollectionRestore(root: string) {
+  const fixture = await fixtureAt(root);
+  try {
+    await fixture.write("A/keep.md", "original source"); await fs.mkdir(path.join(root, "B"));
+    for (const allowedSubdirectories of [[], ["attachments", "articles/文件收藏", "articles/手动收集"]]) {
+    const original = emptyKnowledgeFolderBindings(); Object.assign(original.roles.raw, { enabled: true, readPaths: ["A"], writePath: "A", allowedSubdirectories });
+    const applied = structuredClone(original); Object.assign(applied.roles.raw, { readPaths: ["B"], writePath: "B" });
+    const restore = (fixture.service as unknown as { directoryHistory: { host: { restorePlanBindings(original: KnowledgeFolderBindings, applied: KnowledgeFolderBindings): Promise<void> } } }).directoryHistory.host.restorePlanBindings;
+    fixture.plugin.settings.knowledgeBase.folderBindings = normalizeKnowledgeFolderBindings(applied)!;
+    await restore(original, applied);
+    const restored = fixture.plugin.settings.knowledgeBase.folderBindings;
+    assert.deepEqual(restored.roles.raw.readPaths, ["A"]);
+    assert.deepEqual(restored.collectionTargets, knowledgeCollectionTargets(original), "restoring pre-migration history restores each effective destination too");
+    fixture.plugin.settings.knowledgeBase.folderBindings = normalizeKnowledgeFolderBindings(applied)!;
+    fixture.plugin.settings.knowledgeBase.folderBindings.collectionTargets!.files = "C";
+    await restore(original, applied);
+    assert.deepEqual(fixture.plugin.settings.knowledgeBase.folderBindings.collectionTargets, { ...knowledgeCollectionTargets(original), files: "C" }, "a later per-entry user edit wins without blocking restoration of the other entries");
+    }
+  } finally { fixture.release(); }
+}
+
 export async function runModuleFolderStorageTests(root: string): Promise<void> {
   assertBindingCompatibility();
+  await assertLegacyCollectionRestore(path.join(root, "legacy-collection-restore"));
   await assertImmediateBindingSave(path.join(root, "binding-save"));
   await assertInitializationSnapshot(path.join(root, "initialization"));
   await assertRollbackRetainsNewUserContent(path.join(root, "rollback-user-content"));

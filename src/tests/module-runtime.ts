@@ -4,7 +4,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import type { App } from "obsidian";
 import { setRequestUrlForTests } from "./obsidian-shim";
-import { emptyKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionKinds, knowledgeCollectionTargets, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
@@ -34,7 +34,7 @@ import { PiObsidianToolSecurity, createPiObsidianToolDefinitions } from "../harn
 import { runVaultBodySearchWorkflowNavigationTests } from "./vault-body-search";
 
 export async function runModuleRuntimeTests(root: string): Promise<void> {
-  await collectionTargets(path.join(root, "collection"));
+  await runKnowledgeCollectionTargetTests(path.join(root, "collection"));
   await directoryExecution(path.join(root, "directories"), path.join(root, "state"));
   await chatRecall(path.join(root, "recall"));
   await runVaultBodySearchWorkflowNavigationTests(path.join(root, "workflow-navigation"));
@@ -420,10 +420,10 @@ async function knowledgeTools(root: string, index: KnowledgeAgentIndex, bindings
   assert.equal((await search("INBOX_ONLY_TOKEN")).resource.hits?.[0].vaultRelativePath, "收件箱/想法.md", "turning off Inbox search keeps the independent project authority");
 }
 
-async function collectionTargets(root: string): Promise<void> {
+export async function runKnowledgeCollectionTargetTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   for (const directory of ["网页资料", "公众号资料", "旧资料"]) await fs.mkdir(path.join(root, directory));
-  const bindings = emptyKnowledgeFolderBindings();
+  let bindings = emptyKnowledgeFolderBindings();
   Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["网页资料", "公众号资料", "旧资料"], writePath: "旧资料" });
   bindings.collectionTargets = { web: "网页资料", wechat: "公众号资料" };
   const release = registerKnowledgeFolderBindings(root, () => bindings);
@@ -440,7 +440,30 @@ async function collectionTargets(root: string): Promise<void> {
     assert((await collect("https://mp.weixin.qq.com/s/synthetic"))[0].startsWith("公众号资料/"));
     assert.equal((await fs.readdir(path.join(root, "旧资料"))).length, 0);
     delete bindings.collectionTargets;
+    bindings = normalizeKnowledgeFolderBindings(bindings)!;
+    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料", text: "旧资料" });
     assert((await collect("https://example.invalid/legacy"))[0].startsWith("旧资料/"));
+    bindings.roles.raw.writePath = "网页资料";
+    assert((await collect("https://mp.weixin.qq.com/s/after-migration"))[0].startsWith("旧资料/"), "materialized destinations no longer follow the old default");
+    const fixtureFile = path.join(root, "input.md"); await fs.writeFile(fixtureFile, "imported content");
+    const imported = () => capture.captureExternalFiles([{ type: "file", path: fixtureFile, name: "input.md" }]);
+    assert((await imported())[0].startsWith("旧资料/"));
+    assert((await collect("manual capture before editing"))[0].startsWith("旧资料/"));
+    bindings.collectionTargets!.files = "网页资料";
+    bindings.collectionTargets!.text = "公众号资料";
+    assert((await imported())[0].startsWith("网页资料/"));
+    assert((await collect("manual capture after editing"))[0].startsWith("公众号资料/"));
+    const reloaded = normalizeSettingsData({ knowledgeBase: { folderBindings: bindings } });
+    assert.deepEqual(reloaded.settings.knowledgeBase.folderBindings?.collectionTargets, knowledgeCollectionTargets(bindings));
+    assert.equal(reloaded.changed, true);
+    const removed = normalizeKnowledgeFolderBindings(bindings)!; removed.roles.raw.readPaths = ["网页资料"];
+    assert.equal(removed.collectionTargets!.text, "公众号资料", "source removal retains the literal destination for visible repair");
+    for (const kind of knowledgeCollectionKinds(removed)) assert(Object.hasOwn(removed.collectionTargets!, kind));
+    const retained = bindings; bindings = removed;
+    await assert.rejects(() => collect("manual after source removal"), /重新选择/u);
+    bindings.collectionTargets!.files = "公众号资料";
+    await assert.rejects(imported, /重新选择/u);
+    bindings = retained;
     bindings.collectionTargets = { web: "已解绑", wechat: null };
     const before = requests;
     await assert.rejects(() => collect("https://example.invalid/invalid"), /收藏位置/u);
@@ -455,7 +478,27 @@ async function collectionTargets(root: string): Promise<void> {
     await assert.rejects(() => collect("https://example.invalid/rebound"), /已更改/u);
     onRequest = () => { bindings.roles.raw.readPaths = []; };
     await assert.rejects(() => collect("https://example.invalid/unbound"), /收藏位置/u);
-    assert.equal((await fs.readdir(path.join(root, "网页资料"))).length, 1, "in-flight rebinding never writes the previous target");
+    assert.equal((await fs.readdir(path.join(root, "网页资料"))).length, 2, "in-flight rebinding never writes the previous target");
+    onRequest = undefined;
+    bindings = emptyKnowledgeFolderBindings();
+    Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["网页资料", "公众号资料", "旧资料"], writePath: "旧资料" });
+    bindings.collectionTargets = { web: "网页资料", wechat: "公众号资料", files: "网页资料", text: "公众号资料" };
+    const image = path.join(root, "input.png"); await fs.writeFile(image, "synthetic image bytes");
+    const imageAndText = await capture.captureChatInput("raw-articles", "A note alongside the imported image", [{ type: "image", name: "input.png", path: image }]);
+    assert.equal(imageAndText.length, 2);
+    assert(imageAndText[0].startsWith("网页资料/") && imageAndText[1].startsWith("公众号资料/"));
+    assert((await fs.readFile(path.join(root, imageAndText[1]), "utf8")).includes(imageAndText[0]), "the user's note and attachment reference survive collection");
+    const legacy = emptyKnowledgeFolderBindings();
+    Object.assign(legacy.roles.raw, { enabled: true, readPaths: ["旧资料"], writePath: "旧资料", allowedSubdirectories: ["attachments", "articles/文件收藏", "articles/手动收集"] });
+    bindings = normalizeKnowledgeFolderBindings(legacy)!;
+    assert.deepEqual(bindings.roles.raw.readPaths, ["旧资料"], "migration keeps the original source scopes");
+    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料/attachments", text: "旧资料/articles/手动收集", fileText: "旧资料/articles/文件收藏" });
+    for (const target of Object.values(bindings.collectionTargets!)) await fs.mkdir(path.join(root, target!), { recursive: true });
+    const legacyText = (await imported())[0]; assert(legacyText.startsWith("旧资料/articles/文件收藏/"));
+    assert((await capture.captureExternalFiles([{ type: "image", name: "input.png", path: image }]))[0].startsWith("旧资料/attachments/"));
+    assert((await collect("legacy manual text"))[0].startsWith("旧资料/articles/手动收集/"));
+    assert.deepEqual(normalizeKnowledgeFolderBindings(bindings)!.collectionTargets, bindings.collectionTargets, "legacy child destinations are materialized only once");
+
   } finally { restore(); release(); }
 }
 

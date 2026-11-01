@@ -111,6 +111,17 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.deepEqual([...host.querySelectorAll(".echoink-knowledge-purpose-row .echoink-settings-navigation-title")].map(item => item.firstChild?.textContent), ["资料来源", "知识成果", "项目", "收件箱"]);
     assert(!host.textContent?.includes("工作兼容") && !host.textContent?.includes("归档兼容"), "saved compatibility purposes do not return to the desktop page");
     section.open("sources");
+    assert(!host.textContent?.includes("资料默认保存到") && !host.querySelector(".echoink-knowledge-save-location"), "sources page only controls reading folders");
+    section.open("collections");
+    assert.equal(host.querySelectorAll('[role="combobox"]').length, 4, "every capture entry has one searchable destination control");
+    assert(host.textContent?.includes("不影响你自己新建的笔记"));
+    assert(!host.textContent?.includes("跟随默认"));
+    saved.collectionTargets = { web: "已移除来源", wechat: "阅读/资料", files: "阅读/资料", text: "阅读/资料" };
+    section.open("collections");
+    assert(host.textContent?.includes("文件夹不存在，请重新选择"));
+    assert.equal(saved.collectionTargets.web, "已移除来源");
+    saved.collectionTargets.web = "阅读/资料";
+    section.open("sources");
     const original = JSON.stringify(saved);
     const organization = host.querySelector<HTMLInputElement>('input[aria-label="允许 Agent 自动整理"]')!;
     assert(organization);

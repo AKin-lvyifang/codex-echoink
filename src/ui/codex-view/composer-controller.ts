@@ -190,17 +190,23 @@ export function renderToolbar(host: CodexComposerHost): void {
       onMentionNote: () => openNoteMentionPicker(host),
       onEnhancePrompt: () => host.enhancePrompt(),
       onCaptureKnowledgeSource: () => {
+        const text = host.inputEl.value.trim();
+        const attachments = host.attachments.map(attachment => ({ ...attachment }));
         void host.runKnowledgeBaseShortcut(
           conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
           async () => {
-            const paths = await host.plugin.getKnowledgeSurfaceService()?.captureLink();
-            return paths?.length
+            const capture = host.plugin.getKnowledgeSurfaceService();
+            if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
+            const paths = text || attachments.length
+              ? await capture.captureTextInput(text, attachments) : await capture.captureLink();
+            const result = paths.length
               ? conversationUiText(
                 host.plugin.settings.settingsLanguage,
                 `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
                 `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
               )
               : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
+            return result;
           }
         ).catch((error: unknown) => {
           host.running = false;

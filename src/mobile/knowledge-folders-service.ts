@@ -1,6 +1,6 @@
 import type { MobileKnowledgeFoldersPort, MobileKnowledgeFolderPreview, MobileKnowledgeFolderApplyResult } from "./knowledge-folders-contracts";
 import type { MobileServices } from "./services";
-import { emptyKnowledgeFolderBindings, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
   normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
 import { rebaseKnowledgePath, KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
@@ -63,10 +63,10 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       if (!binding.enabled || binding.native || digest(binding) === digest(before)) continue;
       for (const path of binding.readPaths) if (await kind(this.services.app.vault.adapter, path) !== "folder") issues.push(`原位置已失效：${path}`);
     }
-    for (const source of ["web", "wechat"] as const) {
-      const selected = normalized.collectionTargets?.[source], old = previous?.collectionTargets ? previous.collectionTargets[source] : previous?.roles.raw.writePath;
+    for (const source of KNOWLEDGE_COLLECTION_KINDS) {
+      const selected = normalized.collectionTargets?.[source], old = previous ? knowledgeCollectionTargets(previous)[source] : null;
       const newlyEnabled = normalized.roles.raw.enabled && previous?.roles.raw.enabled !== true;
-      if (selected && (selected !== old || newlyEnabled) && (!normalized.roles.raw.enabled || !normalized.roles.raw.readPaths.includes(selected)
+      if (selected && (selected !== old || newlyEnabled) && (knowledgeCollectionDirectory(normalized, source) !== selected
         || await kind(this.services.app.vault.adapter, selected) !== "folder")) issues.push("收藏目的地只能选择已绑定的资料来源目录。");
     }
     if (issues.length) throw new Error(issues.join("；"));
@@ -220,7 +220,9 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
         next.legacyExpressions = next.legacyExpressions?.map(path => rebaseKnowledgePath(path, move.from, move.to));
       }
     } else if (prepared.original?.after) {
-      const original = prepared.original, applied = original.after!;
+      const original = structuredClone(prepared.original), applied = original.after!;
+      if (applied.bindings) applied.bindings = normalizeKnowledgeFolderBindings(applied.bindings);
+      if (original.before.bindings) original.before.bindings = normalizeKnowledgeFolderBindings(original.before.bindings);
       if (Object.hasOwn(applied, "bindings")) {
         const config = structuredClone(before.bindings ?? emptyKnowledgeFolderBindings());
         for (const role of KNOWLEDGE_ROOT_ROLES) if (digest(before.bindings?.roles[role]) === digest(applied.bindings?.roles[role])) {
@@ -237,7 +239,15 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
             restored.allowedSubdirectories = [...new Set([...prior.allowedSubdirectories, ...current.allowedSubdirectories])];
           }
         }
-        if (digest(before.bindings?.collectionTargets) === digest(applied.bindings?.collectionTargets)) config.collectionTargets = structuredClone(original.before.bindings?.collectionTargets);
+        if (before.bindings && applied.bindings) {
+          const currentTargets = knowledgeCollectionTargets(before.bindings), appliedTargets = knowledgeCollectionTargets(applied.bindings);
+          const originalTargets = knowledgeCollectionTargets(original.before.bindings ?? emptyKnowledgeFolderBindings());
+          config.collectionTargets = { ...currentTargets };
+          for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
+            if (kind === "fileText" && originalTargets[kind] === undefined) delete config.collectionTargets.fileText;
+            else config.collectionTargets[kind] = originalTargets[kind] ?? null;
+          }
+        }
         config.revision = (before.bindings?.revision ?? 0) + 1; next.bindings = config;
       }
       for (const key of ["journal", "nativeJournal", "review", "english", "expressions", "englishMode", "expressionMode", "legacyEnglish", "legacyExpressions", "pdfOriginal"] as const) {

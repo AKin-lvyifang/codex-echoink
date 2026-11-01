@@ -8,7 +8,7 @@ import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole }
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { emptyKnowledgeFolderBindings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -133,7 +133,7 @@ export class EchoInkKnowledgeSurfaceService {
           if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
         }
-        if (restored.collectionTargets) for (const kind of ["web", "wechat"] as const) {
+        if (restored.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
           const target = restored.collectionTargets[kind];
           if (target && (target === from || target.startsWith(`${from}/`)) && originalBindings?.roles.raw.readPaths.includes(rebaseKnowledgePath(target, from, to))) {
             restored.collectionTargets[kind] = rebaseKnowledgePath(target, from, to);
@@ -147,9 +147,15 @@ export class EchoInkKnowledgeSurfaceService {
         const current = this.plugin.settings.knowledgeBase.folderBindings;
         if (!current) return;
         const restored = structuredClone(current);
-        const originalConfig = original ?? emptyKnowledgeFolderBindings();
+        const originalConfig = normalizeKnowledgeFolderBindings(original) ?? emptyKnowledgeFolderBindings();
+        applied = normalizeKnowledgeFolderBindings(applied) ?? applied;
         if (current.allowAgentSubfolders === applied.allowAgentSubfolders) restored.allowAgentSubfolders = originalConfig.allowAgentSubfolders;
-        if (JSON.stringify(current.collectionTargets) === JSON.stringify(applied.collectionTargets)) restored.collectionTargets = structuredClone(originalConfig.collectionTargets);
+        const currentTargets = knowledgeCollectionTargets(current), appliedTargets = knowledgeCollectionTargets(applied), originalTargets = knowledgeCollectionTargets(originalConfig);
+        restored.collectionTargets = { ...currentTargets };
+        for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
+          if (kind === "fileText" && originalTargets[kind] === undefined) delete restored.collectionTargets.fileText;
+          else restored.collectionTargets[kind] = originalTargets[kind] ?? null;
+        }
         if (JSON.stringify(current.inboxRecallExclusions) === JSON.stringify(applied.inboxRecallExclusions)) restored.inboxRecallExclusions = structuredClone(originalConfig.inboxRecallExclusions);
         for (const role of Object.keys(current.roles) as (keyof typeof current.roles)[]) {
           const currentOnly = emptyKnowledgeFolderBindings(); currentOnly.roles[role] = { ...current.roles[role], autoOrganizePaths: [] };
@@ -655,6 +661,7 @@ export class EchoInkKnowledgeSurfaceService {
     const next = structuredClone(bindings);
     return await this.withStructureMutation(async () => {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
+      next.collectionTargets = !bindings.collectionTargets && previous?.roles.raw.readPaths.length ? knowledgeCollectionTargets(previous) : knowledgeCollectionTargets(next);
       if (previous && next.revision !== previous.revision) throw new Error("目录配置已改变，请重新选择。");
       for (const role of KNOWLEDGE_ROOT_ROLES) if (!DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(role) && previous) next.roles[role] = structuredClone(previous.roles[role]);
       const baseSignature = knowledgeFolderBindingsSignature(previous);
@@ -680,11 +687,11 @@ export class EchoInkKnowledgeSurfaceService {
             || (binding.writePath === directory && binding.writePath !== before?.writePath)) checkPaths.add(directory);
         }
       }
-      for (const kind of ["web", "wechat"] as const) {
+      for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
         const target = next.collectionTargets?.[kind];
-        const oldTarget = previous?.collectionTargets ? previous.collectionTargets[kind] : previous?.roles.raw.writePath;
+        const oldTarget = previous ? knowledgeCollectionTargets(previous)[kind] : null;
         if (target && target !== oldTarget) {
-          if (!next.roles.raw.enabled || !next.roles.raw.readPaths.includes(target)) throw new Error("收藏目的地只能选择已绑定的资料来源目录。");
+          if (knowledgeCollectionDirectory(next, kind) !== target) throw new Error("收藏目的地只能选择已绑定的资料来源目录。");
           checkPaths.add(target);
         }
       }
@@ -970,6 +977,10 @@ export class EchoInkKnowledgeSurfaceService {
 
   async captureLink(): Promise<string[]> {
     return await this.captureService.captureLink();
+  }
+
+  async captureTextInput(text: string, attachments: StoredAttachment[] = []): Promise<string[]> {
+    return await this.captureService.captureChatInput("raw-articles", text, attachments);
   }
 
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {

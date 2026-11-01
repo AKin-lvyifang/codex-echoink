@@ -15,6 +15,8 @@ export type KnowledgeFolderPickerOptions = {
   values: KnowledgeFolderChoice[];
   multiple: boolean;
   required?: boolean;
+  /** Capture destinations may only select an already bound source. */
+  allowCreate?: boolean;
   label: string;
   disabled?: boolean;
   app?: Pick<App, "keymap" | "scope">;
@@ -266,7 +268,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
                   </div>)}
                   {!visible.length && <div className="echoink-folder-picker-empty" role="status">没有匹配的文件夹</div>}
                 </div>
-                <button type="button" data-slot="select-item" className="echoink-origin-control echoink-folder-picker-option echoink-folder-picker-create" data-folder-option="" onClick={startCreate}><span className="echoink-folder-picker-check"><PlusIcon aria-hidden="true" /></span><span>新建文件夹…</span></button>
+                {options.allowCreate !== false && <button type="button" data-slot="select-item" className="echoink-origin-control echoink-folder-picker-option echoink-folder-picker-create" data-folder-option="" onClick={startCreate}><span className="echoink-folder-picker-check"><PlusIcon aria-hidden="true" /></span><span>新建文件夹…</span></button>}
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>}

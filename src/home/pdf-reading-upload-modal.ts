@@ -61,14 +61,14 @@ export class PdfReadingUploadModal extends Modal {
     const directories = this.plugin.pdfReading?.originalDirectories() ?? [];
     if (!directories.includes(this.directory)) this.directory = "";
     if (directories.length) {
-      const choices = [...(!this.directory ? [{ value: "", label: this.t("请选择资料来源位置", "Choose a source folder"), disabled: true }] : []), ...directories.map(value => ({ value, label: value }))];
+      const choices = [...(!this.directory ? [{ value: "", label: this.t("请选择原 PDF 保存位置", "Choose an original PDF folder"), disabled: true }] : []), ...directories.map(value => ({ value, label: value }))];
       const select = createOriginSelect(directory, { attr: { "aria-labelledby": directoryLabel.id }, cls: "pdf-upload-directory" }, choices, this.directory, this.app).element;
       select.onchange = () => { this.directory = select.value; this.error = ""; this.update(); };
       this.lockedControls.push(select);
     } else {
-      directory.createDiv({ cls: "pdf-page-message", text: this.t("还没有可写的资料来源位置", "No writable source folder is configured") });
-      this.button(directory, this.t("去设置资料来源", "Configure source folders"), () => { this.close(); void this.plugin.openEchoInkKnowledgeSettings(); }, "tertiary");
+      directory.createDiv({ cls: "pdf-page-message", text: this.t("还没有可用的原 PDF 保存位置", "No original PDF folder is available") });
     }
+    if (!this.directory) this.button(directory, this.t("去 PDF 设置", "Open PDF settings"), () => { this.close(); void this.plugin.openWorkbenchModuleSettings("pdf-reading"); }, "tertiary");
     const outputs = body.createEl("fieldset", { cls: "pdf-upload-outputs" });
     outputs.createEl("legend", { text: this.t("要哪些成果", "Outputs") });
     this.checkbox(outputs, "raw", this.t("提取原文（用于引用来源）", "Extract source text (for citations)"), true, () => {}, true);
@@ -125,7 +125,7 @@ export class PdfReadingUploadModal extends Modal {
   }
   private unavailable(): string {
     if (!this.attachment) return this.t("请先选择一份 PDF", "Choose a PDF first");
-    if (!(this.plugin.pdfReading?.originalDirectories() ?? []).includes(this.directory)) return this.t("请先设置可写的资料来源位置", "Configure a writable source folder first");
+    if (!(this.plugin.pdfReading?.originalDirectories() ?? []).includes(this.directory)) return this.t("请先在 PDF 精读设置中选择原 PDF 保存位置", "Choose an original PDF folder in PDF settings first");
     if (this.translation && !this.language.trim()) return this.t("请填写翻译语言", "Enter a translation language");
     return this.plugin.pdfNavigationStartReason(this.options());
   }
