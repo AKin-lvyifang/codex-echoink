@@ -6,6 +6,7 @@ import {showEchoInkMenu} from "../theme-boundary";
 import { Menu, Notice, setIcon } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
 import type { GenerationTemplate } from "../../generation/types";
+import { setGenerationIcon } from "../../generation/icons";
 import { filterSkillResources } from "../../resources/registry";
 import { resourcePresentation } from "../../resources/resource-presentation";
 import type { EchoInkResource } from "../../resources/types";
@@ -39,6 +40,7 @@ export interface SkillMatchesState {
   selectedSkill: EchoInkResource | null;
   generationTemplates?: GenerationTemplate[];
   generationEntryReason?: string | null;
+  generationTemplateReasons?: Record<string, string | null>;
 }
 
 export interface SkillMatchesCallbacks {
@@ -383,17 +385,18 @@ export function renderKnowledgeCommandMatches(
     const allCommands = knowledgeCommandOptions("");
     const names = new Set([...state.skills.map(skill => resourcePresentation(skill, language).name), ...allCommands.flatMap(command => [command.text.trim().replace(/^\//u, ""), command.title])].map(name => name.toLocaleLowerCase()));
     for (const template of state.generationTemplates ?? []) {
+      const reason = state.generationEntryReason || state.generationTemplateReasons?.[template.id];
       if (term && !`${template.name} ${template.description}`.toLocaleLowerCase().includes(term)) continue;
       const item = container.createEl("button", { cls: "codex-command-item codex-command-generation", attr: { type: "button", role: "option", "aria-selected": "false", id: `${container.id}-option-${index}` } });
-      const icon = item.createSpan({ cls: "codex-command-icon" }); setIcon(icon, template.outputKind === "canvas" ? "layout-dashboard" : "file-text");
+      const icon = item.createSpan({ cls: "codex-command-icon" }); setGenerationIcon(icon, template.outputKind);
       const body = item.createDiv({ cls: "codex-command-body" });
       body.createSpan({ cls: "codex-command-text", text: names.has(template.name.toLocaleLowerCase()) ? `生成·${template.name}` : `/${template.name}` });
-      body.createSpan({ cls: "codex-command-desc", text: state.generationEntryReason || template.description });
-      item.setAttr("aria-disabled", String(Boolean(state.generationEntryReason))); item.toggleClass("is-disabled", Boolean(state.generationEntryReason));
+      body.createSpan({ cls: "codex-command-desc", text: reason || template.description });
+      item.setAttr("aria-disabled", String(Boolean(reason))); item.toggleClass("is-disabled", Boolean(reason));
       const itemIndex = index++;
       item.onmouseenter = () => selectKnowledgeCommandItem(input, container, itemIndex);
       item.onmousedown = event => event.preventDefault();
-      item.onclick = () => { if (!state.generationEntryReason) callbacks.onSelectGenerationTemplate!(template); };
+      item.onclick = () => { if (!reason) callbacks.onSelectGenerationTemplate!(template); };
     }
   }
   if (index === 0) {

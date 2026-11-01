@@ -11128,7 +11128,7 @@ button.codex-message-note-mention-chip:focus-visible {
 }
 
 :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 58%, transparent);
+  box-shadow: none;
 }
 
 .codex-composer-resource-row.is-active .codex-composer-resource-name {
@@ -11170,6 +11170,17 @@ button.codex-message-note-mention-chip:focus-visible {
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.codex-composer-resource-row.is-drawing-plugin .codex-composer-resource-name {
+  flex: 0 0 auto;
+}
+
+.codex-composer-resource-row.is-drawing-plugin .codex-composer-resource-description {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .codex-composer-resource-row.is-mcp-status-failed .codex-composer-resource-description {
@@ -23197,7 +23208,8 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-pdf-settings-form label { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:calc(var(--font-text-size,16px)*.75); }
 .echoink-pdf-settings-form p { color:var(--text-muted); font-size:calc(var(--font-text-size,16px)*.6875); line-height:1.85; }
 .echoink-pdf-settings-actions { display:flex; justify-content:flex-end; }
-.codex-composer-resource-row.is-pdf-plugin .codex-composer-resource-name { display:flex; align-items:center; gap:8px; }
+.codex-composer-resource-row.is-pdf-plugin .codex-composer-resource-name { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.codex-composer-resource-row.is-pdf-plugin .echoink-plugin-edition-badge { flex-shrink:0; }
 /* Desktop module drawers reuse the settings surface and Origin controls. */
 .echoink-settings-demo .echoink-desktop-modules .echoink-module-group > .echoink-settings-section-header {
   display: flex;
@@ -24825,6 +24837,25 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-desktop-modules .echoink
   .echoink-generation-template-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) { .modal.echoink-generation-modal { padding: 18px 16px 0; } }
+
+.echoink-generation-modal .echoink-generation-output-segments {
+  position: relative; display: inline-flex; flex-direction: row; gap: 0; padding: 3px;
+  border-radius: 8px; background: var(--soft, var(--background-modifier-hover)); isolation: isolate;
+}
+.echoink-generation-modal .echoink-generation-output-segments::before {
+  content: ""; position: absolute; inset: 3px auto 3px 3px; width: calc((100% - 6px) / 2);
+  background: var(--bg, var(--background-primary)); border-radius: 6px; transition: var(--echoink-motion-transition, transform 180ms ease);
+}
+.echoink-generation-modal .echoink-generation-output-segments[data-drawing-style="blackboard"]::before { transform: translateX(100%); }
+.echoink-generation-modal .echoink-generation-output-segment { position: relative; display: grid; place-items: center; min-width: 112px; min-height: 32px; padding: 5px 10px; font-size: 12px; line-height: 1.55; }
+.echoink-generation-modal .echoink-generation-output-segment > span { pointer-events: none; z-index: 1; }
+.echoink-generation-modal .echoink-generation-output-segment > [role="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; }
+.echoink-generation-modal .echoink-generation-output-segment.has-echoink-checked-control { font-weight: 500; }
+.echoink-generation-modal .echoink-generation-output-segment.has-echoink-visible-focus { background: var(--soft, var(--background-modifier-hover)); border-radius: 6px; }
+
+.echoink-generation-template-card.is-disabled { opacity: .45; cursor: default; }
+.echoink-generation-template-card-title > span > svg { width: 15px; height: 15px; }
+.echoink-generation-style-heading { display: flex; align-items: center; gap: 4px; }
 /* Native Markdown owns formatting; the conversation owns reading density. */
 .echoink-chat-surface .echoink-answer-markdown {
   --p-spacing: 10px;

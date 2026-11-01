@@ -1,4 +1,6 @@
-import { Modal, Notice, setIcon } from "obsidian";
+import { Modal, Notice, Platform, setIcon, setTooltip } from "obsidian";
+import type { DrawingStyle } from "../excalidraw/elements";
+import { setGenerationIcon } from "./icons";
 import type EchoInkPlugin from "../main";
 import type { TurnOptions } from "../ui/turn-options";
 import type { GenerationService } from "./service";
@@ -10,7 +12,7 @@ import { buildVaultNoteMentionCatalog } from "../ui/codex-view/note-mentions";
 import { mountGenerationNotePicker } from "./note-picker";
 import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 
-export type GenerationModalService = Pick<GenerationService, "availableNotes" | "assessSources" | "disabledReason" | "createRequest" | "outputDirectory" | "recommend">;
+export type GenerationModalService = Pick<GenerationService, "availableNotes" | "assessSources" | "disabledReason" | "createRequest" | "outputDirectory" | "recommend"> & Partial<Pick<GenerationService, "templateDisabledReason">>;
 export interface GenerationModalOptions {
   sourcePaths: readonly string[];
   sessionId?: string;
@@ -63,11 +65,15 @@ export class GenerationModal extends Modal {
   private customInstructions = "";
   private saveCustom = false;
   private customName: string;
+  private drawingStyle: DrawingStyle = "white";
+  private styleEl!: HTMLElement;
+  private availabilityTimer?: number;
+  private drawingReason: string | null = null;
 
   constructor(private readonly plugin: EchoInkPlugin, private readonly options: GenerationModalOptions) {
     super(plugin.app);
     this.paths = [...new Set(options.sourcePaths)]; this.selectedPaths = new Set(this.paths);
-    this.templates = normalizeGenerationTemplates(plugin.settings.generationTemplates);
+    this.templates = normalizeGenerationTemplates(plugin.settings.generationTemplates).filter(template => Platform.isDesktopApp || template.outputKind !== "excalidraw");
     this.selectedTemplateId = this.templates.some(item => item.id === options.templateId) ? options.templateId! : this.templates[0].id;
     this.customName = uniqueGenerationTemplateName(this.templates);
     this.sourceExpanded = !this.paths.length;
@@ -90,6 +96,7 @@ export class GenerationModal extends Modal {
     body.createDiv({ cls: "echoink-generation-label", text: "模板" });
     this.templateEl = body.createDiv();
     this.customEl = body.createDiv({ cls: "echoink-generation-custom" });
+    this.styleEl = body.createDiv();
     body.createDiv({ cls: "echoink-generation-label", text: "根据这批资料" });
     const recommendRow = body.createDiv({ cls: "echoink-generation-recommend-row" });
     this.recommendationButton = createOriginButton(recommendRow, { cls: "text-button" });
@@ -107,9 +114,15 @@ export class GenerationModal extends Modal {
     this.generateButton = createOriginButton(actions, { cls: "button mod-cta", text: "生成" }); this.generateButton.onclick = () => { void this.submit(); };
     this.renderTemplates(); this.renderCustom(); this.updateSummary(); this.updateFooter();
     void this.assess();
+    this.availabilityTimer = window.setInterval(() => {
+      const drawing = this.templates.find(template => template.outputKind === "excalidraw");
+      const reason = drawing ? this.options.service.templateDisabledReason?.(drawing) ?? null : null;
+      if (reason !== this.drawingReason) { this.drawingReason = reason; this.renderTemplates(); this.updateFooter(); }
+    }, 1000);
   }
 
   onClose(): void {
+    if (this.availabilityTimer !== undefined) window.clearInterval(this.availabilityTimer);
     this.active = false; this.assessmentVersion++; this.recommendationVersion++;
     this.assessmentAbort?.abort(); this.recommendationAbort?.abort(); this.pickerDispose?.(); this.pickerDispose = null;
     disposeOriginControls(this.contentEl); this.contentEl.empty();
@@ -152,6 +165,8 @@ export class GenerationModal extends Modal {
   }
 
   private renderTemplates(): void {
+    const drawing = this.templates.find(template => template.outputKind === "excalidraw");
+    this.drawingReason = drawing ? this.options.service.templateDisabledReason?.(drawing) ?? null : null;
     const render = (container: HTMLElement, templates: GenerationTemplate[], custom = false) => {
       disposeOriginControls(container); container.empty();
       const radio = createOriginRadioGroup(container, this.selectedTemplateId, "生成模板", id => {
@@ -163,11 +178,14 @@ export class GenerationModal extends Modal {
       const cards = custom ? [...templates, { id: "custom", name: "自制格式", description: "写下本次的结构、风格和语气", instructions: "", outputKind: "markdown" as const }] : templates;
       for (const template of cards) {
         const card = radio.element.createDiv({ cls: "echoink-generation-template-card" });
-        const selector = radio.addItem(card, template.id, this.submitting); selector.setAttr("aria-label", template.name);
+        const reason = this.options.service.templateDisabledReason?.(template);
+        card.toggleClass("is-disabled", Boolean(reason));
+        const selector = radio.addItem(card, template.id, this.submitting || Boolean(reason)); selector.setAttr("aria-label", template.name);
         const copy = card.createDiv({ cls: "echoink-generation-template-card-copy" });
         const title = copy.createDiv({ cls: "echoink-generation-template-card-title", text: template.name });
+        if (template.outputKind === "excalidraw") { const icon = title.createSpan({ attr: { "aria-hidden": "true" } }); setGenerationIcon(icon, template.outputKind); title.prepend(icon); }
         if (template.outputKind === "canvas") title.createSpan({ cls: "echoink-generation-canvas-badge", text: "Canvas" });
-        if (template.description) copy.createDiv({ cls: "echoink-generation-template-card-description", text: template.description });
+        if (reason || template.description) copy.createDiv({ cls: "echoink-generation-template-card-description", text: reason || template.description });
         if (this.temporaryTemplates.some(item => item.id === template.id)) {
           const instructions = copy.createEl("details", { cls: "echoink-generation-template-card-instructions" });
           instructions.createEl("summary", { text: "写作要求" }); instructions.createDiv({ text: template.instructions });
@@ -176,11 +194,26 @@ export class GenerationModal extends Modal {
           const edit = createOriginButton(card, { cls: "icon-button echoink-generation-template-edit", attr: { "aria-label": `编辑模板「${template.name}」` } });
           setIcon(edit, "pencil"); edit.onclick = () => { if (this.submitting) return; this.close(); openGenerationTemplateSettings(this.plugin, template.id); };
         }
-        card.onclick = event => { if (!(event.target as HTMLElement).closest("button")) selector.click(); };
+        card.onclick = event => { if (!reason && !(event.target as HTMLElement).closest("button")) selector.click(); };
       }
     };
     render(this.templateEl, this.templates, true);
     render(this.recommendationsEl, this.temporaryTemplates);
+    this.renderDrawingStyle();
+  }
+
+  private renderDrawingStyle(): void {
+    disposeOriginControls(this.styleEl); this.styleEl.empty(); this.styleEl.hidden = this.selected().outputKind !== "excalidraw";
+    if (this.styleEl.hidden) return;
+    const heading = this.styleEl.createDiv({ cls: "echoink-generation-label echoink-generation-style-heading", text: "样式" });
+    const hint = "中文默认可读。想使用中文手写体，可自行在 Excalidraw 设置中开启中文字体并准备字体资源。";
+    const help = createOriginButton(heading, { cls: "icon-button", attr: { "aria-label": hint } }); setIcon(help, "circle-alert"); setTooltip(help, hint);
+    const radio = createOriginRadioGroup(this.styleEl, this.drawingStyle, "手绘图样式", value => { this.drawingStyle = value as DrawingStyle; radio.element.dataset.drawingStyle = value; });
+    radio.element.addClass("echoink-generation-output-segments"); radio.element.dataset.drawingStyle = this.drawingStyle;
+    for (const [value, label] of [["white", "手绘白底"], ["blackboard", "黑板"]]) {
+      const item = radio.element.createDiv({ cls: "echoink-generation-output-segment" }); item.createSpan({ text: label, attr: { "aria-hidden": "true" } });
+      radio.addItem(item, value, this.submitting).setAttr("aria-label", label);
+    }
   }
 
   private renderCustom(): void {
@@ -213,7 +246,8 @@ export class GenerationModal extends Modal {
 
   private disabledReason(): string {
     const turnOptions = this.options.turnOptions();
-    return this.options.service.disabledReason({ sessionId: this.options.sessionId, permission: turnOptions.permission, mode: turnOptions.mode })
+    return this.options.service.disabledReason({ sessionId: this.options.sessionId, permission: turnOptions.permission, mode: turnOptions.mode, outputKind: this.selected().outputKind })
+      || this.options.service.templateDisabledReason?.(this.selected())
       || (this.selectedPaths.size ? "" : "请先选择资料。") || (this.assessing ? "正在检查资料…" : this.assessmentError)
       || (!this.selected().instructions.trim() ? "请填写写作要求。" : "");
   }
@@ -264,7 +298,7 @@ export class GenerationModal extends Modal {
     this.submitting = true; this.submitError = ""; this.updateFooter(); this.updateRecommendation();
     try {
       const template = { ...this.selected() };
-      const request = this.options.service.createRequest(template, this.selectedSourcePaths());
+      const request = this.options.service.createRequest(template, this.selectedSourcePaths(), this.drawingStyle);
       const turnOptions = { ...this.options.turnOptions() };
       if (this.selectedTemplateId === "custom" && this.saveCustom) {
         const previous = this.plugin.settings.generationTemplates;

@@ -18,6 +18,7 @@ export interface TaskDraft {
   noteMentions?: NoteMentionSelection[];
   annotations?: SelectionAnnotation[];
   annotationFragments?: AutoQuestionFragment[];
+  drawingRequested?: boolean;
   selectedSkill?: EchoInkResource | null;
   selectedProviderSettingsId?: string;
   selectedModel?: string;
@@ -50,7 +51,7 @@ export function normalizeTaskWorkspace(value: unknown): TaskWorkspace {
 export function prefillNewTask(workspace: TaskWorkspace, agentId: string, draft: TaskDraft): { workspace: TaskWorkspace; accepted: boolean } {
   if (!normalizeAgentId(agentId)) throw new Error("agent_id_invalid");
   const previous = Object.hasOwn(workspace.newTaskDrafts, agentId) ? workspace.newTaskDrafts[agentId] : undefined;
-  const accepted = !previous || (!previous.text.trim() && previous.attachments.length === 0 && !previous.noteMentions?.length && !previous.annotations?.length && !previous.selectedSkill);
+  const accepted = !previous || (!previous.text.trim() && previous.attachments.length === 0 && !previous.noteMentions?.length && !previous.annotations?.length && !previous.drawingRequested && !previous.selectedSkill);
   return {
     accepted,
     workspace: { ...workspace, page: { kind: "list", agentId }, newTaskDrafts: accepted ? { ...workspace.newTaskDrafts, [agentId]: normalizeDrafts({ [agentId]: draft })[agentId] } : workspace.newTaskDrafts }
@@ -80,6 +81,7 @@ function normalizeDrafts(value: unknown): Record<string, TaskDraft> {
           ? [{ vaultRelativePath: mention.vaultRelativePath, fileName: mention.fileName }] : [];
       }),
       annotations: normalizeAnnotations(draft.annotations),
+      ...(draft.drawingRequested === true ? { drawingRequested: true } : {}),
       selectedSkill: normalizeDraftSkill(draft.selectedSkill),
       ...(typeof draft.selectedProviderSettingsId === "string" ? { selectedProviderSettingsId: draft.selectedProviderSettingsId } : {}),
       ...(typeof draft.selectedModel === "string" ? { selectedModel: draft.selectedModel } : {}),
@@ -136,6 +138,7 @@ export function consumeAcceptedTaskDraft(workspace: TaskWorkspace, key: string, 
     || draft.prefillSource !== item.prefillSource
     || draft.englishDiarySourcePath !== item.englishDiarySourcePath
     || !selectionAnnotationsMatch(draft.annotations ?? [], item.selectionAnnotations ?? [])
+    || Boolean(draft.drawingRequested) !== Boolean(item.turnOptions?.drawingRequested)
     || (draft.selectedSkill?.id ?? null) !== (item.skill?.id ?? null)
     || (draft.noteMentions?.length ?? 0) !== (item.noteMentions?.length ?? 0)
     || (draft.noteMentions ?? []).some((mention, index) => mention.vaultRelativePath !== item.noteMentions?.[index].vaultRelativePath)

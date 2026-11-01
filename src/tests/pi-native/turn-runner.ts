@@ -3727,7 +3727,7 @@ export async function runWorkbenchComposerTests(): Promise<void> {
   assert.equal(canInsertQueuedTurn(plain), true);
   for (const extra of [{ attachments: [{ type: "image" }] }, { preparedDocuments: [{}] }, { noteMentions: [{}] },
     { selectionAnnotations: [{}] }, { skill: {} }, { generationRequest: {} }, { pdfTaskRequest: {} },
-    { maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] } }, { prefillSource: "{}" }]) {
+    { maintenanceScope: { mode: "batch", sourcePaths: ["raw/a.md"] } }, { prefillSource: "{}" }, { turnOptions: { ...plain.turnOptions, drawingRequested: true } }]) {
     assert.equal(canInsertQueuedTurn({ ...plain, ...extra } as QueuedTurnItem), false);
   }
   queue.pauseSessionQueue(plain.sessionId); queue.enqueue(plain);

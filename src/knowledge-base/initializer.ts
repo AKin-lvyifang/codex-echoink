@@ -63,6 +63,7 @@ export function knowledgeInitializationSourceDefaultRole(
 }
 
 export function isKnowledgeInitializationMarkdownPath(sourcePath: string): boolean {
+  if (/\.excalidraw\.md$/iu.test(sourcePath)) return false;
   const extension = normalizedExtension(sourcePath);
   return extension === ".md" || extension === ".markdown";
 }
