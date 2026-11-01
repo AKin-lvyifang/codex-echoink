@@ -12,7 +12,7 @@ export interface JournalStats {
 /** Files count as entries, including empty templates; streaks count local dates. */
 export function journalStats(records: readonly HomeVaultFileRecord[], folder: string, format: string, now = new Date()): JournalStats {
   const entries: JournalEntry[] = records.flatMap(record => {
-    const date = journalDateFromPath(record.path, folder, format);
+    const date = record.journalDate ?? journalDateFromPath(record.path, folder, format);
     return date ? [{ ...record, date }] : [];
   }).sort((left, right) => right.date.localeCompare(left.date) || left.path.localeCompare(right.path));
   const counts = new Map<string, number>();

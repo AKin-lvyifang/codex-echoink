@@ -1,3 +1,5 @@
+import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
+import { openFolderPicker } from "./knowledge-settings-pages";
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import type { AgentModuleId } from "../../agents/types";
@@ -145,7 +147,7 @@ export class IPhoneSettingsPages {
     const { ctx } = this, base = settingsGroup(ctx, body, "基础模块"), pro = settingsGroup(ctx, body, "PRO 模块"), settings = ctx.host.settings();
     const entries: { id: AgentModuleId; name: string; icon: string; pro?: boolean; route?: MobileSettingsRoute; value?: string }[] = [
       { id: "knowledge-base", name: "知识库", icon: "library", route: "knowledge" },
-      { id: "journal", name: "日记", icon: "book-open", value: settings.journalDirectory },
+      { id: "journal", name: "日记", icon: "book-open", value: ctx.host.services.journalFormats?.settings.folder ?? settings.journalDirectory },
       { id: "review", name: "复盘", icon: "history", route: "review" },
       { id: "todos", name: "待办", icon: "list-todo", route: "todos-settings" },
       { id: "finance", name: "财务", icon: "wallet", pro: true, route: "finance-settings" },
@@ -163,7 +165,20 @@ export class IPhoneSettingsPages {
         const current = entry.pro ? getProPluginAccess(ctx.host.accountService ?? unavailableCapabilityAccess, enabled()) : undefined;
         if (current && !current.canToggle) throw new Error(current.reason ?? "需要 PRO");
         if (entry.id === "journal") {
-          const view = new IPhoneModulePage(ctx, "iphone-settings-journal", "日记设置"); settingsRow(ctx, view.group(), "日记位置", { value: ctx.host.settings().journalDirectory, literalValue: true, action: async () => { ctx.host.services.modules.journal.openSettings(); } }); await view.push();
+          const service = ctx.host.services.journalFormats;
+          const view = new IPhoneModulePage(ctx, "iphone-settings-journal", ctx.host.settings().settingsLanguage === "en" ? "Journal settings" : "日记设置");
+          const cleanup = mountJournalFormatSettings(view.group(), service, { mobile: true, language: ctx.host.settings().settingsLanguage, openFolderPicker: () => {
+            void openFolderPicker(ctx, { directories: service.app.vault.getAllLoadedFiles().filter(file => "children" in file && file.path && !file.path.split("/").some(part => part.startsWith("."))).map(file => file.path) }, { selected: [service.settings.folder], allowNew: true, allowRoot: true }, async paths => {
+              if (paths.length) { await service.save("folder", paths[0]); await service.preview(); }
+            }).catch(error => ctx.error(error));
+          }, openOrganization: () => {
+            const organize = new IPhoneModulePage(ctx, "iphone-journal-organize", ctx.host.settings().settingsLanguage === "en" ? "Organize old journals" : "整理老日记");
+            const dispose = mountJournalOrganization(organize.body, service, ctx.host.settings().settingsLanguage, () => { void ctx.shell.back(); });
+            const original = organize.page.dispose; organize.page.dispose = () => { dispose(); original?.(); };
+            void organize.push();
+          } });
+          const original = view.page.dispose; view.page.dispose = () => { cleanup(); original?.(); };
+          await view.push();
         } else if (entry.id === "review") await this.review();
         else if (entry.route) await this.legacy(entry.route);
       }).catch(ctx.error); });

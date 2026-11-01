@@ -636,7 +636,7 @@ export class EchoInkHomeView extends ItemView {
     const prefix = dateKey(new Date()).slice(0, 7);
     const journalSettings = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
     const journals = records.filter((r) => {
-      const parsed = journalDateFromPath(r.path, journalSettings.folder, journalSettings.format);
+      const parsed = journalDateFromPath(r.path, journalSettings.folder, journalSettings.format, journalSettings.formatHistory);
       return parsed?.startsWith(prefix);
     }).length;
     this.el(".journal .bento-meta").setText(this.t(`这个月，留下了 ${journals} 篇日记`, `${journals} journal pages this month`));

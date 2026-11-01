@@ -366,7 +366,7 @@ export class MobileRuntime {
     const requested: MobilePermission = draft?.selectedMode === "plan" ? "read-only" : draft?.selectedPermission === "danger-full-access" ? "full-access" : draft?.selectedPermission ?? this.store.permission;
     const permission: MobilePermission = requested === "read-only" || this.store.permission === "read-only" ? "read-only"
       : requested === "workspace-write" || this.store.permission === "workspace-write" ? "workspace-write" : "full-access";
-    const policy = new MobileCapabilityPolicy({ store: this.store, settings: this.settings, agentId: session.agentId, permission, proAccess: this.proAccess });
+    const policy = new MobileCapabilityPolicy({ app: this.app, store: this.store, settings: this.settings, agentId: session.agentId, permission, proAccess: this.proAccess });
     policy.assertTool("task_update");
     const skill = draft?.selectedSkill;
     const skillId = policy.snapshot().expertId ? undefined : skill === null ? undefined : skill ? (typeof skill.metadata?.resourceId === "string" ? skill.metadata.resourceId : skill.id) : session.skillId;
@@ -383,7 +383,7 @@ export class MobileRuntime {
   }
   private launch(id: string, input: TurnInput, policy?: MobileCapabilityPolicy, fromQueue = false, candidate?: MobileSession, newTaskDraft?: ActiveTask["newTaskDraft"], resume?: MobileResumeSnapshot): void {
     if (this.disposed || this.suspended || this.runs.has(id)) return;
-    let scopedPolicy = policy ?? new MobileCapabilityPolicy({ store: this.store, settings: this.settings,
+    let scopedPolicy = policy ?? new MobileCapabilityPolicy({ app: this.app, store: this.store, settings: this.settings,
       agentId: input.turn.agentSnapshot.agentId, permission: input.turn.permission, proAccess: this.proAccess });
     const signature = scopedPolicy.signature();
     const cached = this.searches.get(id);

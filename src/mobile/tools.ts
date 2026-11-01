@@ -40,7 +40,7 @@ function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Err
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
 /** Product runtime must pass its durable run. Legacy standalone fixtures have no journal/resume guarantee. */
 export function mobileTools(app: App, store: MobileStore, selectedNote: () => string, bindings: () => KnowledgeFolderBindings | null | undefined = () => null, sharedBodySearch?: KnowledgeBodySearchPort, sessionId = store.session.id, suppliedPolicy?: MobileCapabilityPolicy, execution?: MobileToolExecutionContext, memory?: MobileMemoryService, finance?: LifestyleFinanceService): AgentTool[] {
-  const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId);
+  const policy = suppliedPolicy ?? defaultMobileCapabilityPolicy(store, bindings, sessionId, app);
   const shared = sharedBodySearch && isScopedMobileBodySearch(sharedBodySearch, policy);
   const bodySearch = shared ? sharedBodySearch : createScopedMobileBodySearch(app, bindings, policy);
   const tools: AgentTool[] = [

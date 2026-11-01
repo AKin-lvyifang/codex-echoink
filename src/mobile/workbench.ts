@@ -5,7 +5,7 @@ import { classifyKnowledgePath } from "../knowledge-base/folder-bindings";
 import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core";
 import { KnowledgeLinkHealthService, validWorkbenchBindingRoots } from "../knowledge-base/link-health";
 import { hasProPluginAccess } from "../membership/access";
-import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "../home/native-journal";
+import { existingNativeJournalPath, nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "../home/native-journal";
 import { calculateWorkbenchSignals, nextWorkbenchRefreshAt, type WorkbenchFacts, type WorkbenchSourceFile } from "../home/workbench-signals";
 import { localWorkbenchDate, parseMobileWorkbenchSource, validWorkbenchDate, workbenchWeekKey } from "../home/workbench-source";
 import type { WorkbenchSnapshot, WorkbenchSignal } from "../home/workbench-types";
@@ -205,7 +205,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   }
   private async journal(date: Date, records: WorkbenchRecords | null, versions: Record<string, string>): Promise<WorkbenchJournalDay> {
     const settings = this.settings(), bindings = settings.knowledgeBase.folderBindings;
-    const path = nativeJournalPathForDate(this.app, date, settings.journalDirectory, bindings);
+    const path = existingNativeJournalPath(this.app, date, settings.journalDirectory, bindings) ?? nativeJournalPathForDate(this.app, date, settings.journalDirectory, bindings);
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!file) { versions[path] = "missing"; return { state: "empty", path, text: "" }; }
     if (!(file instanceof TFile)) throw new Error("日记路径被目录占用。");

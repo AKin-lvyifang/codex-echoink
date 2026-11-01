@@ -1,3 +1,5 @@
+import { parseJournalDate } from "../home/journal-format";
+import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import type { App } from "obsidian";
 import { checkAgentSkill, checkAgentTarget, checkAgentTool, checkAgentCapability, resolveAgentRunSnapshot,
   type AgentCapabilityContext, type AgentCapabilityDecision, type AgentCapabilityToolAdapters } from "../agents/capability-core";
@@ -65,6 +67,7 @@ function currentResources(settings: MobileSettings): EchoInkResource[] {
   return [...builtins, ...saved.filter(item => item.kind !== "skill" || !BUILTIN_SKILLS.some(skill => skill.id === item.id || skill.id === item.metadata?.resourceId))];
 }
 export interface MobileCapabilityPolicyOptions {
+  readonly app?: App;
   readonly store: MobileStore;
   readonly settings: () => MobileSettings;
   readonly agentId: string;
@@ -79,6 +82,7 @@ export class MobileCapabilityPolicy {
   constructor(private readonly options: MobileCapabilityPolicyOptions) {
     this.permission = options.permission ?? options.store.permission;
   }
+  private native() { return this.options.app ? readNativeJournalSettings(this.options.app, this.options.settings().journalDirectory, this.options.settings().knowledgeBase.folderBindings) : undefined; }
   private inputs(): AgentCapabilityContext {
     const s = this.options.settings();
     return { settings: {
@@ -93,15 +97,15 @@ export class MobileCapabilityPolicy {
     moduleEnabled: { knowledge: mobileModuleEnabled(s, "knowledge-base"), journal: mobileModuleEnabled(s, "journal"),
       todos: mobileModuleEnabled(s, "todos"), review: s.review.enabled && mobileModuleEnabled(s, "review") },
     modulePaths: {
-      journal: [s.journalDirectory].filter(Boolean),
+      journal: [this.native()?.folder ?? s.journalDirectory].filter(Boolean),
       todos: [s.mobileUi.todoSourcePath || "EchoInk/待办.md"],
       finance: [FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT, s.lifestyle.finance.analysisDirectory].filter((path): path is string => !!path),
       "english-diary": [s.englishDiary.englishDirectory, s.englishDiary.expressionDirectory, ...(s.englishDiary.legacyEnglishDirectories ?? []),
         ...(s.englishDiary.legacyExpressionDirectories ?? []), "outputs/.english-diary", ".echoink/english-diary"],
       review: [s.review.outputDir]
     },
-    isRootJournalPath: path => !!s.knowledgeBase.folderBindings?.roles.journal.native
-      && !s.knowledgeBase.folderBindings.roles.journal.readPaths.length && /^\d{4}-\d{2}-\d{2}\.(?:md|markdown)$/u.test(path),
+    isRootJournalPath: path => this.options.app ? nativeRootJournalPaths(this.options.app, [path]).length > 0 : !!s.knowledgeBase.folderBindings?.roles.journal.native
+      && !s.knowledgeBase.folderBindings.roles.journal.readPaths.length && Boolean(parseJournalDate(path, "", "YYYY-MM-DD")),
     relativeTarget: relativePath, resolvePath: value => relativePath(value) ?? "", toolAdapters };
   }
   snapshot(): AgentRunSnapshot { this.assertTool("task_update"); return resolveAgentRunSnapshot(this.options.settings(), this.options.agentId); }
@@ -149,13 +153,13 @@ export class MobileCapabilityPolicy {
     requireMobileAgentCapability(checkAgentTool(context, name, args, resolvedTarget));
   }
   canReadPath(path: string): boolean {
-    if (!relativePath(path) || knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings) === null) return false;
+    if (!relativePath(path) || knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings, [], this.native()) === null) return false;
     return checkAgentTarget(this.inputs(), path, "read").allowed;
   }
   assertReadPath(path: string): void {
     const context = this.inputs();
     requireMobileAgentCapability(checkAgentTarget(context, path, "read"));
-    if (knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings) === null) requireMobileAgentCapability(denied(path, "invalid_target"));
+    if (knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings, [], this.native()) === null) requireMobileAgentCapability(denied(path, "invalid_target"));
   }
   /** No credentials or prose: only effective authority and current path/resource ownership. */
   signature(): string {
@@ -163,16 +167,16 @@ export class MobileCapabilityPolicy {
     const { agentRegistry, ...modules } = input.settings;
     const agent = agentRegistry.agents.find(item => item.id === input.agentId);
     return sha256Hex(JSON.stringify([modules, agent ? { id: agent.id, capabilityIds: agent.capabilityIds, disabledCapabilityIds: agent.disabledCapabilityIds } : null,
-      input.access, input.modulePaths, input.moduleEnabled, this.options.settings().resources.mcpConnections,
+      this.native(), input.access, input.modulePaths, input.moduleEnabled, this.options.settings().resources.mcpConnections,
       input.agentId, input.resources.map(resource => [resource.id, resource.kind, resource.enabled, resource.metadata?.resourceId]),
       PRO_CAPABILITIES.map(capability => pro?.checkCapability(capability) === true)]));
   }
 }
 
 /** Compatibility callers have only sol's default grants and no paid entitlement. */
-export function defaultMobileCapabilityPolicy(store: MobileStore, bindings: () => KnowledgeFolderBindings | null | undefined, sessionId: string): MobileCapabilityPolicy {
+export function defaultMobileCapabilityPolicy(store: MobileStore, bindings: () => KnowledgeFolderBindings | null | undefined, sessionId: string, app?: App): MobileCapabilityPolicy {
   const defaults = loadMobileSettings({});
-  return new MobileCapabilityPolicy({ store, agentId: store.getSession(sessionId)?.agentId ?? GENERAL_ASSISTANT_ID,
+  return new MobileCapabilityPolicy({ app, store, agentId: store.getSession(sessionId)?.agentId ?? GENERAL_ASSISTANT_ID,
     settings: () => ({ ...defaults, knowledgeBase: { ...defaults.knowledgeBase, folderBindings: bindings() ?? null } }) });
 }
 
@@ -200,7 +204,7 @@ export function createScopedMobileBodySearch(app: App, bindings: () => Knowledge
       getLastOpenFiles: () => (app.workspace?.getLastOpenFiles?.() ?? []).filter(path => policy.canReadPath(path))
     }
   } as unknown as App;
-  const body = new VaultBodySearch(scopedApp, bindings, { onJournalSearch });
+  const body = new VaultBodySearch(scopedApp, bindings, { onJournalSearch, journalSettings: () => readNativeJournalSettings(app, undefined, bindings()) });
   let signature = policy.signature();
   let disposed = false;
   const current = () => {

@@ -18,6 +18,9 @@ export type KnowledgeFolderPickerOptions = {
   /** Capture destinations may only select an already bound source. */
   allowCreate?: boolean;
   label: string;
+  /** Optional single-value choice, e.g. a native journal stored at the Vault root. */
+  emptyLabel?: string;
+  language?: string;
   disabled?: boolean;
   app?: Pick<App, "keymap" | "scope">;
   onChange(values: KnowledgeFolderChoice[]): void;
@@ -38,6 +41,7 @@ let pickerSequence = 0;
 
 /** One Origin-styled searchable control; new-folder drafts never leave this island. */
 export function createKnowledgeFolderPicker(parent: HTMLElement, options: KnowledgeFolderPickerOptions): KnowledgeFolderPicker {
+  const t = (zh: string, en: string) => options.language === "en" ? en : zh;
   const ownerDocument = parent.ownerDocument;
   const ownerWindow = ownerDocument.defaultView!;
   const element = parent.createDiv({ cls: "echoink-folder-picker" });
@@ -155,7 +159,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   const choose = (path: string | null) => {
     if (disabled || disposed) return;
     if (path !== null && !folders().includes(path)) {
-      error = "文件夹不存在";
+      error = t("文件夹不存在", "Folder does not exist");
       setOpen(false, true);
       return;
     }
@@ -184,7 +188,8 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   const validateDraft = (path: string) => {
     const issues = initializationFolderIssues([{ key: "draft", title: options.label, values: [{ path, create: true }] }], folders());
     if (options.multiple && entries.some(entry => entry.path.toLocaleLowerCase() === path.toLocaleLowerCase())) return `${path} 文件夹重名，请修改`;
-    return issues.get("draft")?.join("；") ?? "";
+    const issue = issues.get("draft")?.join("；") ?? "";
+    return issue && options.language === "en" ? "Enter a valid Vault-relative folder path" : issue;
   };
   const finishCreate = (id: number, path: string) => {
     if (disposed || disabled || draft?.id !== id) return;
@@ -235,7 +240,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
           </button>
         </span>)}
         <div className={`echoink-folder-picker-controls${currentDraft ? " is-editing" : ""}`}>
-          {currentDraft ? <Input key="draft" ref={node => { draftInput = node; }} className="echoink-origin-control echoink-folder-picker-draft" value={currentDraft.path} data-folder-draft={currentDraft.id} aria-label={options.label} aria-invalid={Boolean(message)} aria-describedby={message ? errorId : undefined} disabled={disabled} placeholder="新文件夹名称"
+          {currentDraft ? <Input key="draft" ref={node => { draftInput = node; }} className="echoink-origin-control echoink-folder-picker-draft" value={currentDraft.path} data-folder-draft={currentDraft.id} aria-label={options.label} aria-invalid={Boolean(message)} aria-describedby={message ? errorId : undefined} disabled={disabled} placeholder={t("新文件夹名称", "New folder path")}
             onInput={event => { if (draft?.id === currentDraft.id) { draft.path = event.currentTarget.value; if (draftError) draftError = validateDraft(draft.path.trim()); render(); } }}
             onBlur={event => finishCreate(currentDraft.id, event.currentTarget.value)}
             onKeyDown={event => {
@@ -249,8 +254,8 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
               onKeyDown={event => {
                 if (["ArrowDown", "ArrowUp"].includes(event.key) && !isImeKeyEvent(event.nativeEvent)) { event.preventDefault(); setOpen(true); }
               }}>
-              <span data-slot="select-value" className="echoink-folder-picker-trigger-value"><span className="echoink-folder-picker-trigger-text">{options.multiple ? "添加" : single?.path ?? (options.required ? "选择文件夹" : "不设置")}</span>{single?.create && <span className="echoink-folder-picker-new">新建</span>}</span>
-              <span aria-hidden="true"><ChevronDownIcon width={16} height={16} /></span>
+              <span data-slot="select-value" className="echoink-folder-picker-trigger-value"><span className="echoink-folder-picker-trigger-text">{options.multiple ? t("添加", "Add") : single?.path ?? (options.required ? t("选择文件夹", "Choose a folder") : options.emptyLabel ?? t("不设置", "Not set"))}</span>{single?.create && <span className="echoink-folder-picker-new">{t("新建", "New")}</span>}</span>
+              <ChevronDownIcon className="shrink-0 in-aria-invalid:text-destructive/80 text-muted-foreground/80" aria-hidden="true" width={16} height={16} />
             </Popover.Trigger>
             <Popover.Portal container={ownerDocument.body}>
               <Popover.Content ref={node => { content = node; }} data-slot="select-content" className={`echoink-origin-control echoink-folder-picker-popover echoink-theme-overlay${overlayClass}`} style={popupTheme} align="end" sideOffset={4} collisionPadding={12}
@@ -258,17 +263,17 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
                 onCloseAutoFocus={event => { event.preventDefault(); focusTrigger(); }}
                 onEscapeKeyDown={event => { if (isImeKeyEvent(event)) { event.preventDefault(); return; } event.preventDefault(); event.stopPropagation(); setOpen(false, true); }}
                 onKeyDown={navigate}>
-                <div className="echoink-folder-picker-search"><MagnifyingGlassIcon aria-hidden="true" /><Input ref={node => { search = node; }} type="search" className="echoink-origin-control" value={query} aria-label={`搜索${options.label}`} placeholder="搜索文件夹" aria-controls={listId} autoComplete="off" onInput={event => { query = event.currentTarget.value; render(); }} /></div>
+                <div className="echoink-folder-picker-search"><MagnifyingGlassIcon aria-hidden="true" /><Input ref={node => { search = node; }} type="search" className="echoink-origin-control" value={query} aria-label={t(`搜索${options.label}`, `Search ${options.label}`)} placeholder={t("搜索文件夹", "Search folders")} aria-controls={listId} autoComplete="off" onInput={event => { query = event.currentTarget.value; render(); }} /></div>
                 <div id={listId} role="listbox" aria-label={options.label} aria-multiselectable={options.multiple || undefined} className="echoink-folder-picker-options">
                   {!options.multiple && !options.required && <div role="option" aria-selected={!single} tabIndex={-1} data-slot="select-item" data-folder-option="" className={`echoink-origin-control echoink-folder-picker-option${!single ? " is-selected" : ""}`} onClick={() => choose(null)} onKeyDown={event => selectOnKey(event, null)}>
-                    <span className="echoink-folder-picker-check">{!single && <CheckIcon aria-hidden="true" />}</span><span>不设置</span>
+                    <span className="echoink-folder-picker-check">{!single && <CheckIcon aria-hidden="true" />}</span><span>{options.emptyLabel ?? t("不设置", "Not set")}</span>
                   </div>}
                   {visible.map(({ path }) => <div key={path} role="option" aria-selected={!options.multiple && single?.path === path} tabIndex={-1} data-slot="select-item" data-folder-option="" className={`echoink-origin-control echoink-folder-picker-option${!options.multiple && single?.path === path ? " is-selected" : ""}`} onClick={() => choose(path)} onKeyDown={event => selectOnKey(event, path)}>
                     <span className="echoink-folder-picker-check">{!options.multiple && single?.path === path && <CheckIcon aria-hidden="true" />}</span><span>{path}</span>
                   </div>)}
-                  {!visible.length && <div className="echoink-folder-picker-empty" role="status">没有匹配的文件夹</div>}
+                  {!visible.length && <div className="echoink-folder-picker-empty" role="status">{t("没有匹配的文件夹", "No matching folders")}</div>}
                 </div>
-                {options.allowCreate !== false && <button type="button" data-slot="select-item" className="echoink-origin-control echoink-folder-picker-option echoink-folder-picker-create" data-folder-option="" onClick={startCreate}><span className="echoink-folder-picker-check"><PlusIcon aria-hidden="true" /></span><span>新建文件夹…</span></button>}
+                {options.allowCreate !== false && <button type="button" data-slot="select-item" className="echoink-origin-control echoink-folder-picker-option echoink-folder-picker-create" data-folder-option="" onClick={startCreate}><span className="echoink-folder-picker-check"><PlusIcon aria-hidden="true" /></span><span>{t("新建文件夹…", "New folder…")}</span></button>}
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>}

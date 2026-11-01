@@ -95,6 +95,7 @@ function calendarDate(value?: string): string | undefined {
 
 function journalDate(document: BodySearchDocument): string | undefined {
   if (document.kind !== "journal") return undefined;
+  if (document.journalDate !== undefined) return calendarDate(document.journalDate ?? undefined);
   const basename = document.vaultRelativePath.replace(/\\/gu, "/").split("/").at(-1) ?? "";
   return calendarDate(basename.match(/^(\d{4}-\d{2}-\d{2})(?:\.md|[ _].*\.md)$/iu)?.[1]);
 }

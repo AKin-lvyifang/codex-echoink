@@ -96,7 +96,7 @@ export class MobileEnglishDiaryService implements MobileEnglishDiaryPort {
     this.active();
     if (this.services.settings.mobileUi.moduleEnabled?.journal === false) return [];
     const { settings, records } = await this.data.buildJournalRecords(); this.active();
-    return records.map(record => ({ path: record.path, title: record.title, date: journalDateFromPath(record.path, settings.folder, settings.format)! }));
+    return records.map(record => ({ path: record.path, title: record.title, date: journalDateFromPath(record.path, settings.folder, settings.format, settings.formatHistory)! }));
   }
   listSources: MobileEnglishDiaryPort["listSources"] = () => this.sources();
   private async readSource(path: string): Promise<DiarySource> {

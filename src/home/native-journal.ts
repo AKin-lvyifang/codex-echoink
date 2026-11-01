@@ -4,7 +4,8 @@ import { TFolder, TFile, type App } from "obsidian";
 import { normalizeJournalDirectory, normalizedJournalDirectoryOrNull } from "./journal-directory";
 import { journalMoment } from "./journal-moment";
 
-export const DEFAULT_JOURNAL_DATE_FORMAT = "YYYY-MM/YYYY-MM-DD";
+import { DEFAULT_JOURNAL_DATE_FORMAT, NATIVE_JOURNAL_DATE_FORMAT, journalFormatError, journalPathForFormat, parseJournalDate, preferredJournalPath } from "./journal-format";
+export { DEFAULT_JOURNAL_DATE_FORMAT } from "./journal-format";
 export const DEFAULT_TEMPLATES_DIRECTORY = "templates";
 export const DEFAULT_QUICK_JOURNAL_TEMPLATE_PATH = "templates/此刻速记.md";
 export const QUICK_JOURNAL_TEMPLATE = [
@@ -59,8 +60,19 @@ function corePlugin(app: App, id: string): NativeCorePlugin | undefined {
   return plugins?.getPluginById?.(id) ?? plugins?.plugins?.[id];
 }
 
+const savedNativeOptions = new WeakMap<App, Map<string, Record<string, unknown>>>();
+export async function loadNativeJournalSettings(app: App): Promise<void> {
+  const values = new Map<string, Record<string, unknown>>();
+  for (const id of ["daily-notes", "templates"]) {
+    const record = corePlugin(app, id), storage = record?.instance?.plugin ?? record;
+    const data = await storage?.loadData?.();
+    values.set(id, data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {});
+  }
+  savedNativeOptions.set(app, values);
+}
 function optionsOf(app: App, id: string): Record<string, unknown> {
-  return corePlugin(app, id)?.instance?.options ?? {};
+  const record = corePlugin(app, id), saved = savedNativeOptions.get(app)?.get(id) ?? {};
+  return record?.enabled === false ? saved : { ...saved, ...record?.instance?.options };
 }
 
 function nonempty(value: unknown): string | undefined {
@@ -129,11 +141,13 @@ export function readNativeJournalSettings(app: App, legacyDirectory?: string, bi
   const mappedTemplates = mapped("templates");
   const available = folder === "" ? nativeFolder !== undefined : app.vault.getAbstractFileByPath(folder) instanceof TFolder;
   const templatesFolder = nativeTemplates ?? (bindings ? mapped("templates") ?? "" : actualJournalPath(DEFAULT_TEMPLATES_DIRECTORY, roots));
-  const template = bindings ? nonempty(daily.template) ?? "" : actualJournalPath(nonempty(daily.template) ?? `${templatesFolder}/此刻速记.md`, roots);
+  const selectedTemplate = nonempty(daily.template);
+  const template = selectedTemplate ? bindings ? selectedTemplate : actualJournalPath(selectedTemplate, roots) : "";
   return Object.freeze({
     available, templatesAvailable: nativeTemplates !== undefined || !bindings || Boolean(mappedTemplates && app.vault.getAbstractFileByPath(mappedTemplates) instanceof TFolder),
     folder,
-    format: nonempty(daily.format) ?? DEFAULT_JOURNAL_DATE_FORMAT,
+    format: nonempty(daily.format) ?? NATIVE_JOURNAL_DATE_FORMAT,
+    formatHistory: Array.isArray(daily.echoInkJournalFormats) ? daily.echoInkJournalFormats.filter((v): v is string => typeof v === "string") : [],
     template: !template ? "" : /\.md$/iu.test(template) ? template : `${template}.md`,
     templatesFolder,
     templateDateFormat: nonempty(templates.dateFormat) ?? "YYYY-MM-DD",
@@ -144,21 +158,16 @@ export function readNativeJournalSettings(app: App, legacyDirectory?: string, bi
 export function nativeJournalPathForDate(app: App, date: Date, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null): string {
   const settings = readNativeJournalSettings(app, legacyDirectory, bindings);
   // Resolving a candidate path is read-only. Creation checks the actual folder.
-  return relativePath(`${settings.folder ? `${settings.folder}/` : ""}${journalMoment(date).format(settings.format)}.md`);
+  return journalPathForFormat(date, settings.folder, settings.format);
 }
 
 /** An empty native folder is the Vault root; protect matching notes, not the whole Vault. */
 export function nativeRootJournalPaths(app: App, paths: readonly string[]): string[] {
   const daily = optionsOf(app, "daily-notes");
   if (typeof daily.folder !== "string" || daily.folder.trim() !== "") return [];
-  // Obsidian's own fallback differs from EchoInk's recommended month layout.
-  const format = nonempty(daily.format) ?? "YYYY-MM-DD";
-  return paths.filter(relative => {
-    if (!relative.endsWith(".md")) return false;
-    const title = relative.slice(0, -3);
-    const date = journalMoment(title, format, true);
-    return date.isValid() && date.format(format) === title;
-  });
+  const format = nonempty(daily.format) ?? NATIVE_JOURNAL_DATE_FORMAT;
+  const history = Array.isArray(daily.echoInkJournalFormats) ? daily.echoInkJournalFormats.filter((v): v is string => typeof v === "string") : [];
+  return paths.filter(path => parseJournalDate(path, "", format, history));
 }
 
 /** Native template tokens also serve direct creation and Agent saves. */
@@ -191,7 +200,7 @@ export async function readNativeJournalContext(
   if (source === null && settings.template && settings.template !== `${settings.templatesFolder}/此刻速记.md`) {
     throw new Error("Obsidian 配置的日记模板不存在，请在原生日记设置中修正模板。");
   }
-  const templateSource = source ?? QUICK_JOURNAL_TEMPLATE;
+  const templateSource = source ?? (settings.template ? QUICK_JOURNAL_TEMPLATE : "");
   const title = targetPath.slice(targetPath.lastIndexOf("/") + 1, -3);
   const templateContent = renderNativeJournalTemplate(templateSource, now, title, settings);
   if (!target) prepareNativeJournalTemplate(app, targetPath, templateContent);
@@ -207,6 +216,7 @@ export async function readNativeJournalContext(
 }
 
 async function ensureFolder(app: App, folder: string): Promise<void> {
+  if (!folder) return;
   let current = "";
   for (const part of relativePath(folder).split("/")) {
     current = current ? `${current}/${part}` : part;
@@ -222,25 +232,30 @@ async function updateCoreOptions(
   const record = corePlugin(app, id);
   const instance = record?.instance;
   const storage = instance?.plugin ?? record;
-  if (!instance || !storage?.loadData || !storage.saveData) {
+  if (!storage?.loadData || !storage.saveData) {
     throw new Error(`Obsidian 原生插件 ${id} 设置不可用。`);
   }
   const data = await storage.loadData();
   const saved = data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
-  const next = { ...saved, ...instance.options };
+  const next = { ...saved, ...(record?.enabled === false ? {} : instance?.options) };
   let changed = false;
   for (const [key, value] of Object.entries(patch)) {
-    if (onlyMissing && nonempty(next[key])) continue;
+    if (onlyMissing && Object.hasOwn(next, key)) continue;
     if (next[key] !== value) { next[key] = value; changed = true; }
   }
   if (!changed) return;
   await storage.saveData(next);
-  instance.options = next;
-  await instance.onExternalSettingsChange?.();
+  savedNativeOptions.get(app)?.set(id, next);
+  if (instance) { instance.options = next; await instance.onExternalSettingsChange?.(); }
+  const detail = app.vault as unknown as { trigger?(event: string): void };
+  detail.trigger?.("echoink-journal-settings");
 }
 
 /** Called only by the user's initialize/restore operation, never at startup. */
 export async function initializeNativeJournal(app: App, legacyDirectory?: string): Promise<void> {
+  await loadNativeJournalSettings(app);
+  const existing = optionsOf(app, "daily-notes");
+  const hadConfiguration = Object.keys(savedNativeOptions.get(app)?.get("daily-notes") ?? {}).length > 0 || Boolean(nonempty(existing.folder) || nonempty(existing.format));
   const plugins = corePlugins(app);
   if (!plugins?.saveConfig) throw new Error("Obsidian 原生日记与模板插件不可用。");
   let enabled = false;
@@ -250,23 +265,59 @@ export async function initializeNativeJournal(app: App, legacyDirectory?: string
     if (!record.enabled) { await record.enable(true); enabled = true; }
   }
   if (enabled) await plugins.saveConfig();
-  const before = readNativeJournalSettings(app, legacyDirectory);
+  const resolved = readNativeJournalSettings(app, legacyDirectory);
+  const templateConfigured = Object.keys(savedNativeOptions.get(app)?.get("templates") ?? {}).length > 0;
+  const roots = (app.vault.getRoot?.()?.children ?? app.vault.getAllLoadedFiles?.() ?? []).map(file => file.path.split("/")[0]);
+  const before = { ...resolved,
+    folder: hadConfiguration ? resolved.folder : actualJournalPath(normalizeJournalDirectory(legacyDirectory), roots),
+    templatesFolder: templateConfigured ? resolved.templatesFolder : actualJournalPath(DEFAULT_TEMPLATES_DIRECTORY, roots) };
   await ensureFolder(app, before.folder);
   await ensureFolder(app, before.templatesFolder);
-  const quickTemplatePath = `${before.templatesFolder}/此刻速记.md`;
+  const quickTemplatePath = `${before.templatesFolder ? `${before.templatesFolder}/` : ""}此刻速记.md`;
   const template = app.vault.getAbstractFileByPath(quickTemplatePath);
   if (template && !(template instanceof TFile)) throw new Error("此刻速记模板路径已被文件夹占用。");
   if (!template) await app.vault.create(quickTemplatePath, QUICK_JOURNAL_TEMPLATE);
-  await updateCoreOptions(app, "templates", { folder: before.templatesFolder, dateFormat: "YYYY-MM-DD", timeFormat: "HH:mm" }, true);
+  await updateCoreOptions(app, "templates", { folder: before.templatesFolder, dateFormat: "YYYY-MM-DD", timeFormat: "HH:mm" }, templateConfigured);
   await updateCoreOptions(app, "daily-notes", {
     folder: before.folder,
-    format: DEFAULT_JOURNAL_DATE_FORMAT,
+    format: hadConfiguration ? before.format : DEFAULT_JOURNAL_DATE_FORMAT,
     template: quickTemplatePath
-  }, true);
+  }, hadConfiguration);
   await ensureFolder(app, nativeJournalPathForDate(app, new Date(), legacyDirectory).split("/").slice(0, -1).join("/"));
 }
 
 export async function saveNativeJournalFolder(app: App, folder: string): Promise<void> {
   if (folder.trim()) await ensureFolder(app, folder);
   await updateCoreOptions(app, "daily-notes", { folder: folder.trim() === "" ? "" : relativePath(folder) }, false);
+}
+
+/** One native setting, shared by EchoInk and Daily notes. History is read-only compatibility metadata. */
+export async function saveNativeJournalFormat(app: App, value: string): Promise<void> {
+  const error = journalFormatError(value);
+  if (error) throw new Error(`journal_format_${error}`);
+  const before = readNativeJournalSettings(app);
+  assertJournalTargetAvailable(app, nativeJournalTargetForFormat(before.folder, value.trim()));
+  await updateCoreOptions(app, "daily-notes", { format: value.trim(), echoInkJournalFormats: [...new Set([...before.formatHistory, before.format, value.trim()])] }, false);
+}
+function nativeJournalTargetForFormat(folder: string, format: string): string { return journalPathForFormat(new Date(), folder, format); }
+export function assertJournalTargetAvailable(app: App, path: string): void {
+  const parts = path.split("/");
+  for (let i = 1; i < parts.length; i++) if (app.vault.getAbstractFileByPath(parts.slice(0, i).join("/")) instanceof TFile) throw new Error("journal_parent_occupied");
+  if (app.vault.getAbstractFileByPath(path) instanceof TFolder) throw new Error("journal_target_occupied");
+}
+export async function saveNativeJournalTemplate(app: App, path: string): Promise<void> {
+  if (path === "__quick") {
+    const settings = readNativeJournalSettings(app);
+    const folder = settings.templatesAvailable ? settings.templatesFolder : DEFAULT_TEMPLATES_DIRECTORY;
+    await ensureFolder(app, folder);
+    path = `${folder ? `${folder}/` : ""}此刻速记.md`;
+    const existing = app.vault.getAbstractFileByPath(path);
+    if (existing && !(existing instanceof TFile)) throw new Error("journal_template_missing");
+    if (!existing) await app.vault.create(path, QUICK_JOURNAL_TEMPLATE);
+  } else if (path && !(app.vault.getAbstractFileByPath(relativePath(path)) instanceof TFile)) throw new Error("journal_template_missing");
+  await updateCoreOptions(app, "daily-notes", { template: path }, false);
+}
+export function existingNativeJournalPath(app: App, date: Date, legacyDirectory?: string, bindings?: KnowledgeFolderBindings | null): string | null {
+  const settings = readNativeJournalSettings(app, legacyDirectory, bindings);
+  return preferredJournalPath(app.vault.getMarkdownFiles().map(file => file.path), date, settings.folder, settings.format, settings.formatHistory);
 }

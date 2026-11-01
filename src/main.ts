@@ -1,3 +1,5 @@
+import { JournalFormatService } from "./home/journal-format-service";
+import { loadNativeJournalSettings } from "./home/native-journal";
 import { DesktopExpertController } from "./plugin/expert-controller";
 import { isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
 import type { AgentRegistry } from "./agents/types";
@@ -321,6 +323,21 @@ export default class CodexForObsidianPlugin extends Plugin {
   private onboardingWorkspaceCoachmark: EchoInkOnboardingCoachmarkHandle | null = null;
   private onboardingDesktopWaitCleanup: (() => void) | null = null;
   private appearance: EchoInkAppearance | null = null;
+  private journalFormatService?: JournalFormatService;
+  getJournalFormatService(): JournalFormatService {
+    if (!this.journalFormatService) {
+      this.journalFormatService = new JournalFormatService(this.app, {
+        directory: path.relative(this.getVaultPath(), pluginDataDir(this.getVaultPath(), this.getPluginDataDirName())).replace(/\\/gu, "/"),
+        settings: () => this.settings,
+        model: () => { const active = getActiveApiProviderModel(this.settings); return active && apiProviderHasUsableCredential(active.provider, this.settings.openAICodexCredential) ? active.model.displayName || active.model.id : null; },
+        generate: (system, user, signal) => this.generateDiaryOrganizerText(system, user, signal),
+        changed: () => this.notifyHomeSurfacesChanged(),
+        configured: () => { for (const tab of this.settingsNavigationTargets()) if (tab.containerEl.isConnected) tab.display(); }
+      });
+      this.register(() => this.journalFormatService?.dispose());
+    }
+    return this.journalFormatService;
+  }
   async onload(): Promise<void> {
     runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: this.getVaultPath(), homePath: reportHome() }));
     this.registerEvent(this.app.workspace.on("quit", tasks => {
@@ -331,6 +348,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
     this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
+    await loadNativeJournalSettings(this.app);
     registerKnowledgePrivateRoot(this.getVaultPath(), path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "pi-agent-product-v1", "knowledge"));
     this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
     this.appearance.refresh();
@@ -566,7 +584,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!normalizeEnglishDiarySourcePath(sourcePath)) throw new Error("英文日记原稿位置无效。");
     const native = readNativeJournalSettings(this.app, this.settings.journalDirectory, this.settings.knowledgeBase.folderBindings);
     const file = this.app.vault.getAbstractFileByPath(sourcePath);
-    if (!native.available || !(file instanceof TFile) || !journalDateFromPath(sourcePath, native.folder, native.format)) throw new Error("原稿已移动或不在当前日记范围，请从英文日记页重新选择。");
+    if (!native.available || !(file instanceof TFile) || !journalDateFromPath(sourcePath, native.folder, native.format, native.formatHistory)) throw new Error("原稿已移动或不在当前日记范围，请从英文日记页重新选择。");
   }
   async prepareEnglishDiaryNavigationToday(): Promise<{ path: string; hasContent: boolean; hasResult: boolean }> {
     const now = new Date();

@@ -49,7 +49,7 @@ export class DiaryOrganizerService {
       listDiaries: async () => {
         const { settings, records } = await this.data.buildJournalRecords();
         return records.flatMap(record => {
-          const date = journalDateFromPath(record.path, settings.folder, settings.format);
+          const date = journalDateFromPath(record.path, settings.folder, settings.format, settings.formatHistory);
           const source = app.vault.getAbstractFileByPath(record.path);
           return date && source instanceof TFile ? [{ path: record.path, date, mtime: source.stat.mtime }] : [];
         });

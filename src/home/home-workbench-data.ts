@@ -1,3 +1,4 @@
+import { preferredJournalPath } from "./journal-format";
 import { classifyKnowledgePath, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { App, TFolder, TFile, normalizePath } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
@@ -87,8 +88,8 @@ export class HomeWorkbenchDataService {
     const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
     const readable = settings.available && (!settings.folder || this.app.vault.getAbstractFileByPath(settings.folder) instanceof TFolder);
     const records = readable ? this.app.vault.getMarkdownFiles()
-      .filter(file => this.includeNotePath(file.path) && journalDateFromPath(file.path, settings.folder, settings.format))
-      .map(file => this.recordForFile(file, settings.folder, settings.format)) : [];
+      .filter(file => this.includeNotePath(file.path) && journalDateFromPath(file.path, settings.folder, settings.format, settings.formatHistory))
+      .map(file => this.recordForFile(file, settings.folder, settings.format, settings.formatHistory)) : [];
     return { settings, records };
   }
 
@@ -98,11 +99,10 @@ export class HomeWorkbenchDataService {
 
   existingJournalForDate(date: Date): TFile | null {
     if (!readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings()).available) return null;
-    const preferred = this.app.vault.getAbstractFileByPath(this.journalPathForDate(date));
-    if (preferred instanceof TFile) return preferred;
     const settings = readNativeJournalSettings(this.app, this.journalDirectoryProvider(), this.bindings());
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-    return this.app.vault.getMarkdownFiles().find((file) => journalDateFromPath(file.path, settings.folder, settings.format) === key) ?? null;
+    const path = preferredJournalPath(this.app.vault.getMarkdownFiles().map(file => file.path), date, settings.folder, settings.format, settings.formatHistory);
+    const file = path ? this.app.vault.getAbstractFileByPath(path) : null;
+    return file instanceof TFile ? file : null;
   }
 
   async ensureJournalDirectory(language: SettingsLanguage = "zh-CN"): Promise<string> {
@@ -117,7 +117,7 @@ export class HomeWorkbenchDataService {
     const journalDirectory = journalSettings.folder;
     const files = this.app.vault.getMarkdownFiles();
     const records = files.filter((file) => this.includeNotePath(file.path)).map((file) =>
-      this.recordForFile(file, journalDirectory, journalSettings.format)
+      this.recordForFile(file, journalDirectory, journalSettings.format, journalSettings.formatHistory)
     );
     const byDate = new Map<string, HomeActivityDay>();
     for (const event of this.activityService?.snapshot().events ?? []) {
@@ -232,8 +232,9 @@ export class HomeWorkbenchDataService {
     return { status: "saved", path: targetPath, file };
   }
 
-  private recordForFile(file: TFile, journalDirectory: string, journalFormat: string): HomeVaultFileRecord {
-    const cache = journalDateFromPath(file.path, journalDirectory, journalFormat)
+  private recordForFile(file: TFile, journalDirectory: string, journalFormat: string, history: readonly string[] = []): HomeVaultFileRecord {
+    const journalDate = journalDateFromPath(file.path, journalDirectory, journalFormat, history);
+    const cache = journalDate
       ? this.app.metadataCache.getFileCache(file)
       : null;
     const imageFile = (cache?.embeds ?? [])
@@ -242,6 +243,7 @@ export class HomeWorkbenchDataService {
       .find((candidate): candidate is TFile => candidate instanceof TFile);
     return {
       path: file.path,
+      ...(journalDate ? { journalDate } : {}),
       title: file.basename,
       folder: file.parent?.path || "根目录",
       mtime: file.stat.mtime,

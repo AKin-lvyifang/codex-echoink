@@ -860,8 +860,8 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
   const date = new Date(2026, 8, 4, 10, 0);
   const created = await service.createOrOpenJournal(defaultJournalTemplateChoice(), date);
   assert.equal(created.created, true);
-  assert.equal(created.file.path, "Notes/Daily/2026-09/2026-09-04.md");
-  assert.match(contents.get(created.file.path) ?? "", /2026-09-04/u);
+  assert.equal(created.file.path, "Notes/Daily/2026-09-04.md");
+  assert.equal(contents.get(created.file.path), "", "An unselected native template stays blank");
   const reopened = await service.createOrOpenJournal(defaultJournalTemplateChoice(), date);
   assert.equal(reopened.created, false);
   assert.equal(reopened.file, created.file);
@@ -873,10 +873,10 @@ async function assertCustomJournalDirectoryBehavior(): Promise<void> {
 
   const fallback = new HomeWorkbenchDataService(app, () => "../outside");
   assert.equal(fallback.getJournalDirectory(), KNOWLEDGE_ROOT_NAMES.journal);
-  assert.equal(fallback.journalPathForDate(date), `${KNOWLEDGE_ROOT_NAMES.journal}/2026-09/2026-09-04.md`);
+  assert.equal(fallback.journalPathForDate(date), `${KNOWLEDGE_ROOT_NAMES.journal}/2026-09-04.md`);
   folders.add("journal");
   assert.equal(fallback.getJournalDirectory(), "journal");
-  assert.equal(fallback.journalPathForDate(date), "journal/2026-09/2026-09-04.md");
+  assert.equal(fallback.journalPathForDate(date), "journal/2026-09-04.md");
 }
 
 function assertImageExtraction(): void {

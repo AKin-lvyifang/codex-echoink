@@ -14,7 +14,7 @@ import { latestMaintenanceSourceStates } from "../knowledge-base/maintenance-rec
 import type { DomainReceipt } from "../harness/pi-native/domain-receipt-store";
 import type { KnowledgeActivitySource } from "../knowledge-base/maintenance-activity";
 import { parseTodoMarkdown } from "./todo-markdown";
-import { nativeJournalPathForDate, readNativeJournalSettings, takePreparedNativeJournalTemplate } from "./native-journal";
+import { existingNativeJournalPath, nativeJournalPathForDate, readNativeJournalSettings, takePreparedNativeJournalTemplate } from "./native-journal";
 import { journalContentLines, readWorkbenchJournalDay, recordWorkbenchJournalTemplate, type WorkbenchJournalDay } from "./workbench-journal";
 import { calculateWorkbenchSignals, nextWorkbenchRefreshAt, type WorkbenchFacts, type WorkbenchSourceFile } from "./workbench-signals";
 import { getWorkbenchRecordStore, localWorkbenchDate, validWorkbenchDate, workbenchFingerprint, workbenchWeekKey, type WorkbenchRecordStore, type WorkbenchRecords } from "./workbench-records";
@@ -287,7 +287,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       const dates = [0, 1, 2].map(offset => { const date = new Date(now); date.setDate(date.getDate() - offset); return date; });
       for (const date of dates) {
         const day = await attempt<WorkbenchJournalDay>("日记配置读取失败", { state: "unknown", path: "", text: "", reason: "日期配置无法读取" }, async () => {
-          const targetPath = nativeJournalPathForDate(this.plugin.app, date, this.plugin.settings.journalDirectory, bindings);
+          const targetPath = existingNativeJournalPath(this.plugin.app, date, this.plugin.settings.journalDirectory, bindings) ?? nativeJournalPathForDate(this.plugin.app, date, this.plugin.settings.journalDirectory, bindings);
           return readWorkbenchJournalDay(this.plugin.app, date, { legacyDirectory: this.plugin.settings.journalDirectory, bindings, baseline: records?.journals[targetPath] });
         });
         facts.journals = [...facts.journals, day];

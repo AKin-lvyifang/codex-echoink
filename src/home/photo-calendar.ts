@@ -19,7 +19,7 @@ export function renderPhotoCalendar(options: PhotoCalendarOptions): { recordDays
   for (let index = 0; index < 7; index++) weekdays.createSpan({ text: new Intl.DateTimeFormat(language, { weekday: "narrow" }).format(new Date(2024, 0, index + 1)) });
   const dates = new Set<string>(), photos = new Map<string, string>();
   for (const record of options.records) {
-    const date = journalDateFromPath(record.path, options.folder, options.format);
+    const date = record.journalDate ?? journalDateFromPath(record.path, options.folder, options.format);
     if (!date) continue;
     dates.add(date);
     if (record.firstImageUrl && !photos.has(date)) photos.set(date, record.firstImageUrl);

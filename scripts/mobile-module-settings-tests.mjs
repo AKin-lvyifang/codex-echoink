@@ -12,7 +12,7 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-module-s
 for (const file of Object.keys(build.metafile.inputs)) assert.ok(!["src/main.ts", "src/mobile/services.ts", "src/lifestyle/service.ts", "src/membership/account-service.ts", "src/settings/settings.ts"].includes(file), `unexpected runtime import: ${file}`);
 const module = { exports: {} };
 class FixtureFolder { constructor(path) { this.path = path; this.name = path.split("/").pop(); this.children = []; } }
-vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, structuredClone, TextEncoder, TextDecoder,
+vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, self: { setTimeout, clearTimeout }, crypto: webcrypto, structuredClone, TextEncoder, TextDecoder,
   AbortController, URL, setTimeout, clearTimeout, console, require(name) {
     assert.equal(name, "obsidian"); return { TFile: FixtureTFile, TFolder: FixtureFolder, moment, parseYaml, Notice: class {} };
   } });
@@ -148,7 +148,8 @@ async function workbenchFixture() {
   const date = localWorkbenchDate(now.getTime());
   const seed = { "EchoInk/待办.md": `- [ ] 今日任务\n  - 截止日期: ${date}\n`, "raw/a.md": "a", "raw/b.md": "b", "raw/c.md": "c",
     "plugin/workbench-records.json": JSON.stringify({ version: 1, inbox: {}, tasks: {}, journals: {}, reviews: {} }) };
-  const vault = createHost(seed), f = settingHost({ review: { enabled: true }, lifestyle: { finance: { enabled: true } } }); f.host.accountService = pro;
+  const vault = createHost(seed); vault.app.internalPlugins = { plugins: { "daily-notes": { instance: { options: { folder: "", format: "YYYY-MM-DD" } } } } };
+  const f = settingHost({ review: { enabled: true }, lifestyle: { finance: { enabled: true } } }); f.host.accountService = pro;
   const store = new MobileStore(vault.adapter, "plugin/mobile", "module-workbench"); await store.load();
   await store.updateSession(store.session.id, task => { task.taskStatus = "completed"; task.messages = [{ role: "user", content: "已保存记录", timestamp: 1 }]; });
   const noSubscription = () => () => {}, todo = { subscribe: noSubscription, async readOnlySnapshot() {
@@ -166,7 +167,7 @@ await test("workbench opt-outs remove modules/signals and today's todos while re
   const f = await workbenchFixture();
   try {
     const initial = await f.workbench.load(f.now), sessions = plain(f.store.state.sessions);
-    for (const id of basic) assert.ok(initial.modules.includes(id));
+    for (const id of basic) assert.ok(initial.modules.includes(id), JSON.stringify({ id, modules: initial.modules, issues: initial.issues }));
     for (const id of [1, 7, 9, 10]) assert.ok(initial.signals.some(signal => signal.id === id), `missing enabled signal ${id}`);
     assert.equal(initial.todayTodos.length, 1);
     for (const id of basic) await setMobileModuleEnabled(f.host, id, false);

@@ -1,5 +1,5 @@
 import { TFile, type App } from "obsidian";
-import { nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
+import { existingNativeJournalPath, nativeJournalPathForDate, readNativeJournalContext, readNativeJournalSettings } from "./native-journal";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { workbenchFingerprint, workbenchStoreForApp, type JournalTemplateBaseline } from "./workbench-records";
 
@@ -59,7 +59,7 @@ export async function readWorkbenchJournalDay(
   try {
     const settings = readNativeJournalSettings(app, options.legacyDirectory, options.bindings);
     if (!settings.available) return { state: "unknown", path: "", text: "", reason: "日记位置尚未就绪" };
-    targetPath = nativeJournalPathForDate(app, date, options.legacyDirectory, options.bindings);
+    targetPath = existingNativeJournalPath(app, date, options.legacyDirectory, options.bindings) ?? nativeJournalPathForDate(app, date, options.legacyDirectory, options.bindings);
     const file = app.vault.getAbstractFileByPath(targetPath);
     if (!file) return { state: "empty", path: targetPath, text: "" };
     if (!(file instanceof TFile)) return { state: "unknown", path: targetPath, text: "", reason: "日记路径被目录占用" };

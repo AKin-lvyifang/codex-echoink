@@ -279,6 +279,7 @@ await esbuild.build({
     setup(build) {
       build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$|jsdom$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));
       build.onResolve({ filter: /(?:^|\/)origin-controls$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-controls-shim.ts") }));
+      build.onResolve({ filter: /(?:^|\/)knowledge-folder-picker$/ }, args => args.importer.endsWith("settings-tab.ts") ? { path: path.join(rootDir, "src/tests/origin-controls-shim.ts") } : undefined);
       build.onResolve({ filter: /(?:^|\/)origin-setting$/ }, () => ({ path: path.join(rootDir, "src/tests/origin-setting-shim.ts") }));
       build.onResolve({ filter: /^obsidian$/ }, () => ({
         path: obsidianShimPath

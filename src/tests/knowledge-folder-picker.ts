@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom";
 import { parse } from "postcss";
 import { createKnowledgeFolderPicker, type KnowledgeFolderChoice, type KnowledgeFolderPickerOptions } from "../settings/knowledge-folder-picker";
 import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
+import { createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
 import { initializationFolderIssues } from "../knowledge-base/initialization-choices";
 
 function installWindow(value: unknown): void {
@@ -70,6 +71,13 @@ export async function runKnowledgeFolderPickerTests(value: unknown, pickerCss: s
     assert.equal(host.querySelectorAll('[data-slot="select-trigger"]').length, 1);
     assert.equal(host.querySelectorAll("input").length, 0, "confirmed new defaults remain selects");
     assert.equal(host.querySelectorAll("button").length, 1, "single selections have no X action");
+    const baseline = win.document.createElement("div"); win.document.body.append(baseline);
+    const origin = createOriginSelect(baseline, {}, [{ value: "one", label: "One" }], "one", fixture.app).element;
+    const folderArrow = trigger().querySelector(":scope > svg"), originArrow = origin.querySelector(":scope > svg");
+    assert.ok(folderArrow, "folder picker uses Origin's direct-child arrow styling"); assert.ok(originArrow);
+    for (const attribute of ["width", "height", "class"]) assert.equal(folderArrow.getAttribute(attribute), originArrow.getAttribute(attribute));
+    assert.equal(folderArrow.innerHTML, originArrow.innerHTML, "folder picker and Origin select render the same icon");
+    disposeOriginControls(baseline); baseline.remove();
     assert(trigger().textContent?.includes("默认/待新建"));
     assert.equal(host.querySelector(".echoink-folder-picker-new")?.textContent, "新建");
     await tick(); assert.equal(changes.length, 0);
