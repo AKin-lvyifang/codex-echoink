@@ -62,7 +62,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   bindings.migrationIssues = bindings.migrationIssues.filter(issue => KNOWLEDGE_ROOT_ROLES.some(role => !roleScope.includes(role) && issue.startsWith(`${role}：`)));
   for (const role of roleScope) {
     const binding = bindings.roles[role];
-    binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory));
+    delete binding.autoOrganizePaths;
     if (binding.readPaths.length === 1) binding.writePath = binding.readPaths[0];
   }
   const mode = input.mode ?? "existing";

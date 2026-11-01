@@ -1,6 +1,7 @@
+import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import type { MobileKnowledgeFoldersPort, MobileKnowledgeFolderPreview, MobileKnowledgeFolderApplyResult } from "./knowledge-folders-contracts";
 import type { MobileServices } from "./services";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOrganizationSettings, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
   normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
 import { rebaseKnowledgePath, KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
@@ -62,6 +63,11 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       const binding = normalized.roles[role], before = previous?.roles[role];
       if (!binding.enabled || binding.native || digest(binding) === digest(before)) continue;
       for (const path of binding.readPaths) if (await kind(this.services.app.vault.adapter, path) !== "folder") issues.push(`原位置已失效：${path}`);
+    }
+    const previousOrganization = knowledgeOrganizationSettings(previous);
+    for (const selected of knowledgeOrganizationSettings(normalized).paths) {
+      if (previousOrganization.paths.includes(selected)) continue;
+      if (!knowledgeOrganizationSelectable(normalized, selected) || await kind(this.services.app.vault.adapter, selected) !== "folder") issues.push(`整理范围位置失效：${selected}`);
     }
     for (const source of KNOWLEDGE_COLLECTION_KINDS) {
       const selected = normalized.collectionTargets?.[source], old = previous ? knowledgeCollectionTargets(previous)[source] : null;
@@ -224,8 +230,8 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       if (applied.bindings) applied.bindings = normalizeKnowledgeFolderBindings(applied.bindings);
       if (original.before.bindings) original.before.bindings = normalizeKnowledgeFolderBindings(original.before.bindings);
       if (Object.hasOwn(applied, "bindings")) {
-        const config = structuredClone(before.bindings ?? emptyKnowledgeFolderBindings());
-        for (const role of KNOWLEDGE_ROOT_ROLES) if (digest(before.bindings?.roles[role]) === digest(applied.bindings?.roles[role])) {
+        const config = normalizeKnowledgeFolderBindings(before.bindings) ?? emptyKnowledgeFolderBindings();
+        for (const role of KNOWLEDGE_ROOT_ROLES) if (digest(config.roles[role]) === digest(applied.bindings?.roles[role])) {
           const prior = original.before.bindings?.roles[role] ?? emptyKnowledgeFolderBindings().roles[role];
           const current = config.roles[role];
           const retained = current.readPaths.filter(root => prepared.baseline.inventory.files.some(file => within(file.path, root)
@@ -240,6 +246,9 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
           }
         }
         if (before.bindings && applied.bindings) {
+          if (digest(knowledgeOrganizationSettings(before.bindings)) === digest(knowledgeOrganizationSettings(applied.bindings))) {
+            config.organization = knowledgeOrganizationSettings(original.before.bindings);
+          }
           const currentTargets = knowledgeCollectionTargets(before.bindings), appliedTargets = knowledgeCollectionTargets(applied.bindings);
           const originalTargets = knowledgeCollectionTargets(original.before.bindings ?? emptyKnowledgeFolderBindings());
           config.collectionTargets = { ...currentTargets };

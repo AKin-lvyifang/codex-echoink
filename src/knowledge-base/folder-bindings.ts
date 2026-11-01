@@ -12,21 +12,29 @@ export interface KnowledgeFolderBinding {
   searchEnabled?: boolean;
   readPaths: string[];
   writePath: string | null;
-  /** Only these relative child directories were explicitly approved for creation. */
+  /** Legacy child metadata, retained for module output setup and capture migration only. */
   allowedSubdirectories: string[];
   /** Roots to which the legacy relative approvals belong. Missing means legacy readPaths. */
   allowedSubdirectoryRoots?: string[];
-  /** Ongoing organization consent belongs to each exact bound root, never the role. */
+  /** Legacy input/history only; never grants Agent classification permission. */
   autoOrganizePaths?: string[];
   compatibilityReadScopes?: boolean;
   native?: boolean;
+}
+export interface KnowledgeOrganizationSettings {
+  enabled: boolean;
+  scope: "all" | "selected";
+  /** Vault-relative paths; each selected folder includes all descendants. */
+  paths: string[];
 }
 export interface KnowledgeFolderBindings {
   schemaVersion: 1;
   revision: number;
   /** An explicitly saved directory setup; separate from knowledge extraction. */
   configured?: boolean;
-  /** Desktop consent to create new child folders in approved wiki/projects roots only. */
+  /** Unified classification consent. Absence migrates every legacy choice to enabled/all. */
+  organization?: KnowledgeOrganizationSettings;
+  /** Legacy input only; never used for classification authorization. */
   allowAgentSubfolders?: boolean;
   /** Each capture entry owns a literal destination. Missing fields are migrated once. */
   collectionTargets?: KnowledgeCollectionTargets;
@@ -46,8 +54,8 @@ export function normalizeKnowledgeDirectory(value: string): string {
   return normalized;
 }
 export function emptyKnowledgeFolderBindings(): KnowledgeFolderBindings {
-  return { schemaVersion: 1, revision: 1, allowAgentSubfolders: true, roles: Object.fromEntries(KNOWLEDGE_ROOT_ROLES.map((role) => [role,
-    { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [], autoOrganizePaths: [] }])) as unknown as KnowledgeFolderBindings["roles"], migrationIssues: [] };
+  return { schemaVersion: 1, revision: 1, organization: { enabled: true, scope: "all", paths: [] }, roles: Object.fromEntries(KNOWLEDGE_ROOT_ROLES.map((role) => [role,
+    { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] }])) as unknown as KnowledgeFolderBindings["roles"], migrationIssues: [] };
 }
 export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolderBindings | null {
   if (!value || typeof value !== "object" || (value as KnowledgeFolderBindings).schemaVersion !== 1) return null;
@@ -55,7 +63,7 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
   const result = emptyKnowledgeFolderBindings();
   result.revision = Number.isSafeInteger(input.revision) && input.revision > 0 ? input.revision : 1;
   if (input.configured === true) result.configured = true;
-  if (typeof input.allowAgentSubfolders === "boolean") result.allowAgentSubfolders = input.allowAgentSubfolders;
+  result.organization = knowledgeOrganizationSettings(input);
   if (Array.isArray(input.inboxRecallExclusions)) result.inboxRecallExclusions = [...new Set(input.inboxRecallExclusions.flatMap(value => {
     try { return typeof value === "string" ? [normalizeKnowledgeDirectory(value)] : []; } catch { return []; }
   }))];
@@ -70,13 +78,28 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
     result.roles[role] = { enabled: saved.enabled === true, searchEnabled: saved.searchEnabled !== false, readPaths,
       writePath: paths([saved.writePath])[0] ?? null,
       allowedSubdirectories: paths(saved.allowedSubdirectories), allowedSubdirectoryRoots: paths(Array.isArray(saved.allowedSubdirectoryRoots) ? saved.allowedSubdirectoryRoots : saved.readPaths).filter(directory => readPaths.includes(directory)),
-      autoOrganizePaths: paths(saved.autoOrganizePaths).filter(directory => readPaths.includes(directory)),
       compatibilityReadScopes: saved.compatibilityReadScopes === true, native: (role === "journal" || role === "templates") && saved.native === true };
   }
   if (input.collectionTargets || result.roles.raw.readPaths.length) {
     result.collectionTargets = knowledgeCollectionTargets({ ...result, collectionTargets: input.collectionTargets });
   }
+  // Collection migration still needs legacy child destinations. Materialize before retiring grants.
+  for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
+    result.roles[role].allowedSubdirectories = [];
+    delete result.roles[role].allowedSubdirectoryRoots;
+    delete result.roles[role].autoOrganizePaths;
+  }
   return result;
+}
+
+/** New defaults intentionally replace all legacy grants and opt-outs on first upgrade. */
+export function knowledgeOrganizationSettings(config: KnowledgeFolderBindings | null | undefined): KnowledgeOrganizationSettings {
+  const saved = config?.organization;
+  return { enabled: typeof saved?.enabled === "boolean" ? saved.enabled : true,
+    scope: saved?.scope === "selected" ? "selected" : "all",
+    paths: [...new Set((Array.isArray(saved?.paths) ? saved.paths : []).flatMap(value => {
+      try { return typeof value === "string" ? [normalizeKnowledgeDirectory(value)] : []; } catch { return []; }
+    }))] };
 }
 
 /** Materialize the legacy effective destinations; later source edits never retarget them. */
@@ -212,7 +235,6 @@ export function preferExistingBilingualKnowledgeDefaults(config: KnowledgeFolder
       || anotherPurpose
       || binding.writePath !== role || binding.readPaths.some(directory => directory !== role && directory !== chinese)
       || binding.autoOrganizePaths?.length || binding.allowedSubdirectories.length
-      || (role === "wiki" || role === "projects") && config.allowAgentSubfolders === true
       || next.migrationIssues.some(issue => issue.startsWith(`${role}：`))) continue;
     binding.readPaths = [...new Set([...binding.readPaths, chinese])];
     binding.writePath = chinese;
@@ -237,6 +259,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
   if (next.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
     if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind], from, to);
   }
+  if (next.organization) next.organization.paths = [...new Set(next.organization.paths.map(item => rebaseKnowledgePath(item, from, to)))];
   if (next.inboxRecallExclusions) next.inboxRecallExclusions = [...new Set(next.inboxRecallExclusions.map(item => rebaseKnowledgePath(item, from, to)))];
   if (knowledgeFolderBindingsSignature(next) !== knowledgeFolderBindingsSignature(config)) next.revision += 1;
   return next;
@@ -244,7 +267,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
 
 /** Compare effective drafts without revision numbers, order, or absent legacy defaults. */
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
-  return JSON.stringify({ allowAgentSubfolders: config?.allowAgentSubfolders === true,
+  return JSON.stringify({ organization: { ...knowledgeOrganizationSettings(config), paths: knowledgeOrganizationSettings(config).paths.sort() },
     collectionTargets: config ? knowledgeCollectionTargets(config) : null,
     inboxRecallExclusions: [...(config?.inboxRecallExclusions ?? [])].sort(),
     roles: KNOWLEDGE_ROOT_ROLES.map(role => {
@@ -276,9 +299,10 @@ export function projectedKnowledgeFolderRoles(config: KnowledgeFolderBindings, r
 }
 
 export function knowledgeFolderOrganizationPrompt(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {
-  const allowed = roleScope.flatMap(role => {
+  const policy = knowledgeOrganizationSettings(config);
+  const roots = roleScope.filter(role => ["raw", "wiki", "projects", "inbox"].includes(role)).flatMap(role => {
     const binding = config.roles[role];
-    return binding.enabled ? (binding.autoOrganizePaths ?? []).filter(directory => binding.readPaths.includes(directory)) : [];
+    return binding.enabled ? binding.readPaths : [];
   });
-  return `允许 Agent 自动整理的实际目录：${JSON.stringify(allowed)}。只可在同一个已授权绑定目录内创建分类文件夹和移动文件；不能跨绑定或跨用途搬迁，不增加删除或正文修改授权，仍遵守会话写权限及逐次确认。其他绑定沿用已有目录或该路径原先显式批准的子目录，不任意创建分类或移动。知识维护候选仍只写已选知识成果或项目位置。`;
+  return `Agent 分类整理：${policy.enabled ? "开启" : "关闭"}；已绑定根文件夹：${JSON.stringify(roots)}；范围：${policy.scope === "all" ? "全部已绑定根文件夹" : JSON.stringify(policy.paths)}。选定文件夹包含其子文件夹，实际操作仍核对路径归属。只可在同一个原始绑定根内新建分类子文件夹和移动文件；不能跨根或跨用途搬迁，不增加删除或正文修改授权，整理前仍逐次展示方案并确认。关闭时禁止分类建目录和移动；知识维护仍可写入已有知识成果位置。`;
 }

@@ -65,7 +65,6 @@ const fullSuiteRuns = [
   "await runVaultBodySearchCacheTests();",
   "await runVaultBodySearchTests();",
   "await runKnowledgeFolderPlanTests();",
-  "await runKnowledgeFolderSettingsTests();",
   "await runKnowledgeFolderOrganizationTests();",
   "await runKnowledgeFolderBindingsTests();",
   "await runKnowledgeAssociativeReadingTests();",
@@ -314,7 +313,7 @@ await esbuild.build({
   logLevel: "silent"
 });
 
-const result = spawnSync(process.execPath, [outputFile], {
+const result = spawnSync(process.execPath, [...(process.argv.includes("--folder-settings") ? ["--import", fileURLToPath(new URL("./desktop-dom-test-preload.mjs", import.meta.url))] : []), outputFile], {
   cwd: rootDir,
   env: {
     ...process.env,
@@ -323,4 +322,9 @@ const result = spawnSync(process.execPath, [outputFile], {
   stdio: "inherit"
 });
 
+if (result.status === 0 && process.argv.length === 2) {
+  // UI portals need a DOM before imports; keep other suites in their existing host.
+  const ui = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--folder-settings"], { cwd: rootDir, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
+  process.exit(ui.status ?? 1);
+}
 process.exit(result.status ?? 1);

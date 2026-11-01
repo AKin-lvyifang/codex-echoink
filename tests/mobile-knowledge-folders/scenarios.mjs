@@ -177,3 +177,22 @@ export async function runFolderScenarios(api, root) {
   passed += await runInitializationRegressions(api, fixture, build);
   console.log(`PASS ${passed} mobile knowledge folder service groups on registered real-disk fixtures; initialization preview writes=0; no user deletion; name-model usage is measured separately`);
 }
+
+/** Exercise the production restore merge without model/network or disk fixtures. */
+export function runOrganizationConfigurationScenarios(api) {
+  const bindings = api.emptyKnowledgeFolderBindings();
+  Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["research-notes"], writePath: "research-notes" });
+  bindings.organization = { enabled: true, scope: "selected", paths: ["research-notes/topic"] };
+  const before = { bindings, journal: "journal", review: "outputs", english: "english", expressions: "expressions" };
+  const intended = api.MobileKnowledgeFoldersService.prototype.intendedConfiguration;
+  const named = intended.call({}, { preview: { request: { kind: "names" }, moves: [{ from: "research-notes", to: "研究资料" }] } }, before);
+  assert.deepEqual(JSON.parse(JSON.stringify(named.bindings.organization.paths)), ["研究资料/topic"]);
+  const prepared = { preview: { request: { kind: "restore" }, moves: [] }, original: { before, after: named }, baseline: { inventory: { files: [] } } };
+  const restored = intended.call({}, prepared, named);
+  assert.deepEqual(JSON.parse(JSON.stringify(restored.bindings.organization)), JSON.parse(JSON.stringify(bindings.organization)));
+  assert.equal(api.knowledgeMayCreateCategoryDirectory(restored.bindings, "research-notes/topic/new"), true);
+  const edited = structuredClone(named); edited.bindings.organization = { enabled: false, scope: "selected", paths: ["研究资料/other"] };
+  const preserved = intended.call({}, prepared, edited);
+  assert.deepEqual(JSON.parse(JSON.stringify(preserved.bindings.organization)), JSON.parse(JSON.stringify(edited.bindings.organization)), "later user choice wins over restore");
+  console.log("PASS mobile organization rename/restore and later-choice preservation");
+}

@@ -18,7 +18,7 @@ import { TFolder, TFile } from "obsidian";
 
 async function runCaptureSourceBindingTests(): Promise<void> {
   for (const allowAttachments of [false, true]) {
-    const temporaryRoot = await mkdtemp(path.join(tmpdir(), "echoink-capture-bindings-"));
+    const temporaryRoot = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-capture-bindings-")));
     const vault = path.join(temporaryRoot, "vault");
     const rawDirectory = "资料/来源";
     const assetsDirectory = "资源/附件";
@@ -68,12 +68,19 @@ async function runCaptureSourceBindingTests(): Promise<void> {
 }
 
 export async function runKnowledgeFolderBindingsTests(): Promise<void> {
-  assert.equal(emptyKnowledgeFolderBindings().allowAgentSubfolders, true, "new installations allow subfolders by default");
-  const unsetChoice = emptyKnowledgeFolderBindings(); delete unsetChoice.allowAgentSubfolders;
-  assert.equal(normalizeKnowledgeFolderBindings(unsetChoice)!.allowAgentSubfolders, true, "legacy unset choices inherit the default");
-  const optedOut = { ...unsetChoice, allowAgentSubfolders: false };
-  const savedOptOut = normalizeSettingsData({ knowledgeBase: { folderBindings: optedOut } }).settings;
-  assert.equal(normalizeSettingsData(JSON.parse(JSON.stringify(savedOptOut))).settings.knowledgeBase.folderBindings?.allowAgentSubfolders, false, "an explicit opt-out survives settings save and reload");
+  assert.deepEqual(emptyKnowledgeFolderBindings().organization, { enabled: true, scope: "all", paths: [] });
+  const legacyChoice = emptyKnowledgeFolderBindings(); delete legacyChoice.organization;
+  legacyChoice.allowAgentSubfolders = false;
+  legacyChoice.roles.raw.autoOrganizePaths = ["old"];
+  legacyChoice.roles.wiki.allowedSubdirectories = ["old-child"];
+  const migrated = normalizeKnowledgeFolderBindings(legacyChoice)!;
+  assert.deepEqual(migrated.organization, { enabled: true, scope: "all", paths: [] }, "every legacy user gets the new default, including opt-outs");
+  assert.equal(migrated.allowAgentSubfolders, undefined);
+  assert.equal(migrated.roles.raw.autoOrganizePaths, undefined);
+  assert.deepEqual(migrated.roles.wiki.allowedSubdirectories, []);
+  migrated.organization = { enabled: false, scope: "selected", paths: ["保留/选择"] };
+  const savedOptOut = normalizeSettingsData({ knowledgeBase: { folderBindings: migrated } }).settings;
+  assert.deepEqual(normalizeSettingsData(JSON.parse(JSON.stringify(savedOptOut))).settings.knowledgeBase.folderBindings?.organization, migrated.organization, "new choices survive save/reload without remigration");
   const single = emptyKnowledgeFolderBindings();
   Object.assign(single.roles.raw, { enabled: true, readPaths: "legacy-source", writePath: "legacy-source" });
   assert.deepEqual(normalizeKnowledgeFolderBindings(single)!.roles.raw.readPaths, ["legacy-source"], "legacy single source upgrades to an array");

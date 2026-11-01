@@ -62,7 +62,7 @@ function prepareDOM() {
 export async function runKnowledgeFolderSettingsTests(): Promise<void> {
   const dom = prepareDOM();
   const host = dom.win.document.body.createDiv({ cls: "echoink-settings-demo" });
-  const folders = ["阅读/资料", "知识/卡片", "项目研究", "工作兼容", "归档兼容"].map(path => Object.assign(new TFolder(), { path }));
+  const folders = ["阅读/资料", "阅读/资料/待读", "知识/卡片", "项目研究", "工作兼容", "归档兼容"].map(path => Object.assign(new TFolder(), { path }));
   const settings = structuredClone(DEFAULT_SETTINGS);
   let saved = bound();
   for (const [role, directory] of [["work", "工作兼容"], ["archive", "归档兼容"]] as const) Object.assign(saved.roles[role], { enabled: true, readPaths: [directory], writePath: directory, autoOrganizePaths: [directory] });
@@ -95,7 +95,7 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
   };
   const plugin = {
     settings,
-    app: { vault: { getAllFolders: () => folders, getAllLoadedFiles: () => folders, getAbstractFileByPath: (path: string) => folders.find(folder => folder.path === path) ?? null, on: () => ({}), offref() {} } },
+    app: { scope: {}, keymap: { pushScope() {}, popScope() {} }, vault: { getAllFolders: () => folders, getAllLoadedFiles: () => folders, getAbstractFileByPath: (path: string) => folders.find(folder => folder.path === path) ?? null, on: () => ({}), offref() {} } },
     getKnowledgeSurfaceService: () => manager
   } as unknown as CodexForObsidianPlugin;
   let section: DesktopKnowledgeSettings;
@@ -123,15 +123,70 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     assert.equal(saved.collectionTargets.web, "已移除来源");
     saved.collectionTargets.web = "阅读/资料";
     section.open("sources");
+    assert(!host.querySelector('[aria-label="允许 Agent 自动整理"]'), "bound folders no longer have independent organization grants");
+    section.open("permissions");
     const original = JSON.stringify(saved);
-    const organization = host.querySelector<HTMLInputElement>('input[aria-label="允许 Agent 自动整理"]')!;
+    const organization = host.querySelector<HTMLInputElement>('[aria-label="允许 Agent 分类整理"]')!;
     assert(organization);
-    saveFails = true; organization.checked = true; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
-    assert.equal(organization.checked, false, "failed immediate save restores the accepted checkbox state");
+    assert.equal(organization.checked, true, "organization is enabled by default");
+    assert(!host.querySelector('[aria-label="允许 Agent 新建子文件夹"]'));
+    assert(host.textContent?.includes("Agent 可以在允许的文件夹里新建子文件夹，把文件归类挪进去；不删除文件，也不挪出原来的根文件夹；整理前会先给你看方案。"));
+    const range = host.querySelector<HTMLSelectElement>('[aria-label="分类整理范围"]')!;
+    assert.equal(range.value, "all");
+    assert.deepEqual([...range.options].map(option => option.textContent), ["全部文件夹", "选定的文件夹"]);
+    saveFails = true; organization.checked = false; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(organization.checked, true, "failed immediate save restores the accepted checkbox state");
     assert.equal(JSON.stringify(saved), original);
-    saveFails = false; organization.checked = true; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
-    assert.deepEqual(saved.roles.raw.autoOrganizePaths, ["阅读/资料"]);
+    saveFails = false; organization.checked = false; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.deepEqual(saved.organization, { enabled: false, scope: "all", paths: [] });
+    assert.equal(saved.roles.raw.autoOrganizePaths, undefined);
     assert.equal(saveCalls, 2);
+    assert.equal(range.disabled, true, "disabled organization cannot edit the range");
+    range.value = "selected"; range.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(saved.organization?.scope, "all");
+    organization.checked = true; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    saveFails = true;
+    range.value = "selected"; range.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(saved.organization?.scope, "all");
+    assert.equal(range.value, "all", "failed scope saves restore the accepted selection");
+    saveFails = false;
+    range.value = "selected"; range.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(saved.organization?.scope, "selected");
+    assert(host.textContent?.includes("请至少选择一个文件夹"));
+    const pickerTrigger = () => host.querySelector<HTMLButtonElement>('[role="combobox"][aria-label="分类整理文件夹"]')!;
+    const chooseOrganizationFolder = async (path: string) => {
+      pickerTrigger().click(); await flush();
+      const popup = dom.win.document.querySelector(".echoink-folder-picker-popover")!;
+      const options = [...popup.querySelectorAll<HTMLElement>('[role="option"]')];
+      assert.deepEqual(options.map(option => option.textContent), ["阅读/资料", "阅读/资料/待读", "知识/卡片"].filter(value => !saved.organization?.paths.includes(value)), "only enabled, bound Knowledge folders and their children can be chosen");
+      assert(!popup.textContent?.includes("新建文件夹"));
+      options.find(option => option.textContent === path)!.click(); await flush();
+    };
+    await chooseOrganizationFolder("阅读/资料/待读");
+    await chooseOrganizationFolder("知识/卡片");
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读", "知识/卡片"]);
+    assert.equal(host.querySelectorAll(".echoink-folder-picker-tag").length, 2);
+    assert(!host.textContent?.includes("请至少选择一个文件夹"));
+    range.value = "all"; range.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(host.querySelector('[aria-label="分类整理文件夹"]'), null);
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读", "知识/卡片"], "all-folder mode preserves the selected-folder range");
+    range.value = "selected"; range.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(host.querySelectorAll(".echoink-folder-picker-tag").length, 2);
+    organization.checked = false; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    assert.equal(pickerTrigger().disabled, true);
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读", "知识/卡片"], "turning off organization preserves its selected range");
+    organization.checked = true; organization.dispatchEvent(new dom.win.Event("change", { bubbles: true })); await flush();
+    saveFails = true; button("移除知识/卡片").click(); await flush();
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读", "知识/卡片"]);
+    assert.equal(host.querySelectorAll(".echoink-folder-picker-tag").length, 2, "failed range saves restore the accepted selections");
+    assert(host.textContent?.includes("fixture save failed"));
+    saveFails = false; button("移除知识/卡片").click(); await flush();
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读"]);
+    saved.organization!.paths.push("项目研究", "已移除文件夹");
+    section.open("permissions");
+    assert(host.textContent?.includes("文件夹不存在或已不在允许范围内"));
+    assert.deepEqual([...host.querySelectorAll(".echoink-folder-picker-tag-path")].map(tag => tag.textContent), ["阅读/资料/待读", "项目研究", "已移除文件夹"], "invalid saved selections remain visible rather than falling back to other folders");
+    assert.deepEqual(saved.organization?.paths, ["阅读/资料/待读", "项目研究", "已移除文件夹"]);
     const beforeInitialization = JSON.stringify(saved);
     section.open("initialize"); button("使用现有文件夹").click(); await flush();
     assert.equal(host.querySelectorAll('.echoink-knowledge-init-fields .echoink-folder-picker').length, 9, "initialization uses searchable folder choices for the four purposes and five module locations");

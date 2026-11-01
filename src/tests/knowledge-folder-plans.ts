@@ -37,12 +37,12 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   const nestedWiki = await previewKnowledgeDirectoryPlan({ baseRevision: normalized.revision, bindings: normalized, baseline: normalized,
     createPaths: [], sourcePaths: [], wikiChanged: true, kind: async () => "folder" });
   assert.deepEqual(nestedWiki.issues, [], "a single nested knowledge folder is selectable during initialization");
-  assert.deepEqual(normalized.roles.raw.autoOrganizePaths, [], "legacy settings do not grant ongoing organization");
+  assert.deepEqual(normalized.organization, { enabled: true, scope: "all", paths: [] }, "legacy settings adopt unified default");
   legacy.roles.raw.autoOrganizePaths = ["资料/原文", "旧位置"];
-  assert.deepEqual(normalizeKnowledgeFolderBindings(legacy)!.roles.raw.autoOrganizePaths, ["资料/原文"]);
+  assert.equal(normalizeKnowledgeFolderBindings(legacy)!.roles.raw.autoOrganizePaths, undefined);
   const rebased = rebaseKnowledgeFolderBindings(normalized, "资料", "个人资料");
-  normalized.roles.raw.autoOrganizePaths = ["资料/原文"];
-  assert.deepEqual(rebaseKnowledgeFolderBindings(normalized, "资料", "个人资料").roles.raw.autoOrganizePaths, ["个人资料/原文"]);
+  normalized.organization = { enabled: true, scope: "selected", paths: ["资料/原文"] };
+  assert.deepEqual(rebaseKnowledgeFolderBindings(normalized, "资料", "个人资料").organization?.paths, ["个人资料/原文"]);
   assert.equal(rebased.roles.raw.readPaths[0], "个人资料/原文");
   const disabled = structuredClone(normalized);
   disabled.roles.raw.enabled = false;
@@ -51,12 +51,12 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   assert(knowledgeMaintenanceFolderIssues(emptyKnowledgeFolderBindings(), null, true).length === 2);
   assert.equal(knowledgeFolderBindingsSignature(buildBindings()), knowledgeFolderBindingsSignature(normalizeKnowledgeFolderBindings(buildBindings())), "legacy absent defaults and normalized settings compare consistently");
   const promptPlugin = Object.create(CodexForObsidianPlugin.prototype) as CodexForObsidianPlugin;
-  const promptBindings = buildBindings(); promptBindings.roles.wiki.autoOrganizePaths = ["资料/知识"];
+  const promptBindings = buildBindings();
   Object.assign(promptPlugin, { settings: { knowledgeBase: { folderBindings: promptBindings } } });
   const prompt = await promptPlugin.prepareWikiFolderNamesForMaintenance({ initialization: false, assertActive() {} });
-  assert.match(prompt, /允许 Agent 自动整理的实际目录：\["资料\/知识"\]/u);
+  assert.match(prompt, /Agent 分类整理：开启/u);
   assert(!prompt.includes("不创建分类树"), "the production maintenance command does not contradict saved consent");
-  assert(echoInkKnowledgeMaintenanceProtocolPrompt(promptBindings).includes('允许 Agent 自动整理的实际目录：["资料/知识"]'));
+  assert(echoInkKnowledgeMaintenanceProtocolPrompt(promptBindings).includes("全部已绑定根文件夹"));
   for (const [role, directory] of [["work", "旧工作"], ["archive", "旧存档"], ["projects", "项目/研究"]] as const) {
     Object.assign(promptBindings.roles[role], { enabled: true, readPaths: [directory], writePath: directory, autoOrganizePaths: [directory] });
   }
@@ -102,7 +102,7 @@ export async function runKnowledgeFolderPlanTests(): Promise<void> {
   assert.deepEqual(pure.issues, []);
   assert.deepEqual(pure.moves, [], "building folders never relocates selected or unselected materials");
   assert.deepEqual(pure.create, ["资料/原文", "资料/知识"], "saved category permissions do not implicitly create folders");
-  assert.deepEqual(pure.bindings.roles.wiki.allowedSubdirectories, ["默认分类"], "creation approval does not erase saved organization permissions");
+  assert.deepEqual(pure.bindings.roles.wiki.allowedSubdirectories, ["默认分类"], "preview preserves legacy metadata without implicitly creating folders");
   assert.deepEqual(pure.sources, ["课程/材料.md"], "selected source folders are consumed in place; unselected old sources are omitted");
   const category = await previewKnowledgeDirectoryPlan({ baseRevision: 1, baseline: selected, bindings: selected, createPaths: ["资料/知识/默认分类"], sourcePaths: [], mode: "build",
     kind: async relative => relative === "资料/知识/默认分类" ? "missing" : "folder" });
@@ -193,13 +193,13 @@ async function assertPlanApplication(root: string) {
     assert.equal(await fs.readFile(path.join(root, "课程/b.md"), "utf8"), "# B\n[[课程/a.md]]\n", "source links and locations stay unchanged");
     assert.equal(await fs.readFile(path.join(root, "课程/a.png"), "utf8"), "image bytes");
     for (const [relative, content] of [["private-state/runtime.json", "PRIVATE"], ["custom-config/plugins/example/state.json", "CONFIG"], ["产物/英文日记.md", "DIARY"], ["既有项目/result.md", "PROJECT"], ["EchoInk/待办.md", "TODO"], ["financial/transactions/row.md", "FINANCE"]]) assert.equal(await fs.readFile(path.join(root, relative), "utf8"), content);
-    assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, []);
+    assert.equal(plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, undefined);
     const existing = structuredClone(plugin.settings.knowledgeBase.folderBindings);
-    existing.roles.raw.autoOrganizePaths = [existing.roles.raw.writePath!];
+    existing.organization = { enabled: true, scope: "selected", paths: [existing.roles.raw.writePath!] };
     const edit = await service.previewDirectoryPlan(existing, []);
     assert.deepEqual(edit.moves, [], "rebinding or permissions never trigger implicit relocation");
     await service.applyDirectoryPlan(edit);
-    assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, ["资料/原文"]);
+    assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.organization?.paths, ["资料/原文"]);
     assert((await service.getOriginalDirectoryStatus())!.files > 0, "the original layout snapshot is retained for restoring setup folders and bindings");
     await service.restoreOriginalDirectories();
     assert.equal(await fs.readFile(path.join(root, "课程/a.md"), "utf8"), "# A\n");
@@ -308,14 +308,14 @@ async function assertRestoreKeepsNewContent(root: string) {
     await fixture.write("后来收件箱/keep.md", "INBOX");
     const edited = structuredClone(fixture.plugin.settings.knowledgeBase.folderBindings);
     Object.assign(edited.roles.inbox, { enabled: true, readPaths: ["后来收件箱"], writePath: "后来收件箱" });
-    edited.roles.raw.autoOrganizePaths = ["资料/原文"];
+    edited.organization = { enabled: true, scope: "selected", paths: ["资料/原文"] };
     await fixture.service.applyDirectoryPlan(await fixture.service.previewDirectoryPlan(edited, []));
     await fixture.service.restoreOriginalDirectories();
     const restored = fixture.plugin.settings.knowledgeBase.folderBindings;
     assert.equal(await fs.readFile(path.join(root, "旧来源/source.md"), "utf8"), "ORIGINAL");
     assert.equal(await fs.readFile(path.join(root, "资料/原文/new.md"), "utf8"), "NEW");
     assert.deepEqual(restored.roles.raw.readPaths, ["旧来源", "资料/原文"], "new files retain their current source binding alongside the restored original");
-    assert.deepEqual(restored.roles.raw.autoOrganizePaths, ["资料/原文"], "consent stays attached to its actual retained path");
+    assert.deepEqual(restored.organization, { enabled: true, scope: "selected", paths: ["资料/原文"] }, "later scope choice survives restore");
     assert.equal(restored.roles.inbox.writePath, "后来收件箱", "later independent binding changes are preserved");
     assert.equal(restored.roles.wiki.enabled, false);
   } finally { fixture.release(); }

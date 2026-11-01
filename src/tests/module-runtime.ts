@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import type { App } from "obsidian";
+import { TFile, type App } from "obsidian";
 import { setRequestUrlForTests } from "./obsidian-shim";
 import { emptyKnowledgeFolderBindings, knowledgeCollectionKinds, knowledgeCollectionLabel, knowledgeCollectionTargets, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
@@ -285,7 +285,7 @@ async function chatRecall(root: string): Promise<void> {
     await fs.mkdir(path.dirname(path.join(root, relative)), { recursive: true });
     await fs.writeFile(path.join(root, relative), content);
   }
-  const file = (relative: string) => ({ path: relative, basename: path.basename(relative, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(relative)?.length ?? 0 } });
+  const file = (relative: string) => Object.assign(new TFile(relative), { basename: path.basename(relative, ".md"), extension: "md", stat: { mtime: 1, ctime: 1, size: bodies.get(relative)?.length ?? 0 } });
   const app = { vault: {
     getMarkdownFiles: () => [...bodies.keys()].map(file),
     getAbstractFileByPath: (relative: string) => bodies.has(relative) ? file(relative) : null,
@@ -558,19 +558,20 @@ async function directoryExecution(root: string, stateRoot: string): Promise<void
   const authorization = createPiVaultProductionAuthorizationPort({ approvals, adapter, currentRunIdentity: () => identity, currentWorkspaceAccess: () => access, userId: "synthetic-user", deviceId: "synthetic-device", confirmation: { confirm: async () => { confirmations++; return allowed; } } });
   const authorize = (toolId: PiVaultToolId, args: Record<string, unknown>) => authorization.authorize({ toolId, arguments: args, toolCallId: `p12-${++sequence}`, policy: PI_VAULT_TOOL_POLICIES[toolId], toolVersion: PI_VAULT_TOOL_VERSION, policyVersion: PI_VAULT_TOOL_POLICY_VERSION, signal: undefined });
   const createArgs = { relativePath: "知识/新分类/笔记.md", content: "正式写入" };
+  bindings.organization = { enabled: false, scope: "all", paths: [] };
   try {
     await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
-    bindings.allowAgentSubfolders = false;
+    bindings.organization!.enabled = false;
     await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
-    bindings.allowAgentSubfolders = true;
+    bindings.organization!.enabled = true;
     assert(knowledgeMayCreateCategoryDirectory(bindings, "知识/新分类"));
     assert(knowledgeMayCreateCategoryDirectory(bindings, "项目/新分类"));
-    assert(!knowledgeMayCreateCategoryDirectory(bindings, "资料/新分类"));
-    assert(!knowledgeMayCreateCategoryDirectory(bindings, "收件箱/新分类"));
+    assert(knowledgeMayCreateCategoryDirectory(bindings, "资料/新分类"));
+    assert(knowledgeMayCreateCategoryDirectory(bindings, "收件箱/新分类"));
     assert(!knowledgeMayCreateCategoryDirectory(bindings, "未绑定/新分类"));
-    assert(!knowledgeMayOrganizeMove(bindings, "知识/原文.md", "知识/新分类/原文.md"));
+    assert(knowledgeMayOrganizeMove(bindings, "知识/原文.md", "知识/新分类/原文.md"));
     await fs.writeFile(path.join(root, "知识/原文.md"), "原文");
-    await assert.rejects(() => authorize("note_move", { sourcePath: "知识/原文.md", targetPath: "知识/新分类/原文.md", expectedVersion: "unused" }), /tool_policy_blocked/u);
+    assert(!knowledgeMayOrganizeMove(bindings, "资料/原文.md", "知识/新分类/原文.md"));
     access = { ...access, permission: "read-only" };
     await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
     await assert.rejects(() => authorize("note_delete", { relativePath: "知识/原文.md", expectedVersion: "unused" }), /tool_policy_blocked/u);
@@ -593,15 +594,15 @@ async function directoryExecution(root: string, stateRoot: string): Promise<void
     assert.equal((await receipts.readReceipt(ticket.operationIdentity))?.status, "completed", "write has a persisted P4 receipt");
     // Final adapter guard also rejects implicit creation if consent is revoked after authorization.
     const target = { vaultId: adapter.vaultId, vaultRootPath: root, relativePath: "项目/撤销/笔记.md", absolutePath: path.join(root, "项目/撤销/笔记.md") };
-    bindings.allowAgentSubfolders = false;
+    bindings.organization!.enabled = false;
     const denied = await domain.noteCreate({ vaultId: adapter.vaultId, operationIdentity: "revoked-parent", relativePath: target.relativePath, content: "拒绝" });
     assert.notEqual(denied.status, "completed");
     await assert.rejects(() => fs.stat(path.dirname(target.absolutePath)), { code: "ENOENT" });
     bindings.roles.wiki.allowedSubdirectories = ["旧分类/叶子"];
-    assert(knowledgeMayCreateCategoryDirectory(bindings, "知识/旧分类"));
-    assert(knowledgeMayCreateCategoryDirectory(bindings, "知识/旧分类/叶子"));
+    assert(!knowledgeMayCreateCategoryDirectory(bindings, "知识/旧分类"));
+    assert(!knowledgeMayCreateCategoryDirectory(bindings, "知识/旧分类/叶子"));
     bindings.roles.raw.autoOrganizePaths = ["资料"];
-    assert(knowledgeMayCreateCategoryDirectory(bindings, "资料/旧整理"));
-    assert(knowledgeMayOrganizeMove(bindings, "资料/原文.md", "资料/旧整理/原文.md"));
+    assert(!knowledgeMayCreateCategoryDirectory(bindings, "资料/旧整理"));
+    assert(!knowledgeMayOrganizeMove(bindings, "资料/原文.md", "资料/旧整理/原文.md"));
   } finally { release(); }
 }

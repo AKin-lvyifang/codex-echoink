@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint } from "../knowledge-base/raw-digest";
 import { FileApprovalTicketStore } from "../harness/pi-native/tool-authorization";
@@ -29,13 +29,14 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
   const fixture = await nativeJournalFixture(vault);
   const config = emptyKnowledgeFolderBindings();
   // These cases exercise a user's explicit opt-out, independent of the install default.
-  config.allowAgentSubfolders = false;
+  config.organization = { enabled: false, scope: "all", paths: [] };
   Object.assign(config.roles.raw, { enabled: true, readPaths: ["来源甲", "来源乙"], writePath: "来源甲" });
   Object.assign(config.roles.wiki, { enabled: true, readPaths: ["成果", "来源甲/知识"], writePath: "成果", compatibilityReadScopes: true });
+  Object.assign(config.roles.inbox, { enabled: true, readPaths: ["收件箱"], writePath: "收件箱" });
   Object.assign(config.roles.projects, { enabled: true, readPaths: ["项目"], writePath: "项目" });
   const release = registerKnowledgeFolderBindings(vault, () => config);
   try {
-    for (const directory of ["来源甲/已有", "来源乙", "来源甲/知识", "成果/已有", "项目", "普通目录"]) await mkdir(path.join(vault, directory), { recursive: true });
+    for (const directory of ["来源甲/已有", "来源乙", "来源甲/知识", "成果/已有", "项目", "收件箱", "普通目录"]) await mkdir(path.join(vault, directory), { recursive: true });
     await fixture.write(SOURCE, BODY);
     const adapter = new ObsidianVaultDomainAdapter(fixture.app, VAULT_ID, vault);
     const domain = new VaultDomainService(adapter, { allowMissingParentDirectories: true });
@@ -85,8 +86,7 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     assert.equal(confirmations, confirmationsBeforeDenied, "folder policy denies before asking for write confirmation");
     assert.equal(await exists("成果/未批准"), false);
 
-    config.roles.raw.autoOrganizePaths = ["来源甲", "来源乙"];
-    config.roles.wiki.autoOrganizePaths = ["成果", "来源甲/知识"];
+    config.organization = { enabled: true, scope: "all", paths: [] };
     assert.equal((await call("note_create", save("成果/新分类/子类/保存.md"))).isError, false, "consented production create builds a category");
     assert.equal((await call("note_move", move(SOURCE, "来源甲/新分类/归类.md"))).isError, false, "production move may create its consented category");
     assert.equal(await readFile(path.join(vault, "来源甲/新分类/归类.md"), "utf8"), BODY);
@@ -122,32 +122,34 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     assert.equal(await exists("成果/原成果.md"), true);
     approved = true;
 
-    onConfirm = () => { config.roles.wiki.autoOrganizePaths = []; };
+    onConfirm = () => { config.organization!.enabled = false; };
     assert.equal((await call("note_create", save("成果/确认时关闭/保存.md"))).isError, true, "execution rechecks consent after approval");
     assert.equal(await exists("成果/确认时关闭"), false);
     onConfirm = undefined;
+    // Legacy grants cannot bypass the new off switch.
+    config.allowAgentSubfolders = true;
     config.roles.wiki.allowedSubdirectories = ["旧批准/最深"];
-    assert.equal((await call("note_create", save("成果/旧批准/最深/保存.md"))).isError, false);
-    assert.deepEqual(await call("note_create", save("成果/旧批准/最深/未批准/保存.md")), blocked, "a legacy leaf is not a free organization root");
-    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/旧批准/最深/移动.md")), blocked, "legacy creation consent does not authorize moving existing notes");
-    config.roles.wiki.allowedSubdirectories.push("保留的旧批准");
-    config.roles.wiki.allowedSubdirectoryRoots = normalizeKnowledgeFolderBindings(config)!.roles.wiki.allowedSubdirectoryRoots;
-    config.roles.wiki.readPaths.push("换绑成果");
-    await mkdir(path.join(vault, "换绑成果"));
-    assert.deepEqual(await call("note_create", save("换绑成果/旧批准/最深/拒绝.md")), blocked, "rebinding does not transfer the old category whitelist to a new actual root");
-    assert.equal(await exists("换绑成果/旧批准"), false);
-    assert.equal((await call("note_create", save("成果/保留的旧批准/保存.md"))).isError, false, "an unchanged original root retains its exact legacy category approval");
-    config.roles.wiki.autoOrganizePaths = ["换绑成果"];
-    assert.equal((await call("note_create", save("换绑成果/旧批准/最深/独立授权.md"))).isError, false, "a new explicit organization consent remains independent of the frozen legacy roots");
-    config.roles.wiki.autoOrganizePaths = [];
-    config.roles.wiki.readPaths.pop();
-    config.roles.wiki.readPaths.push("尚不存在的绑定");
-    config.roles.wiki.autoOrganizePaths = ["尚不存在的绑定"];
-    assert.deepEqual(await call("note_create", save("尚不存在的绑定/保存.md")), blocked, "ongoing consent cannot create the binding root itself");
-    config.roles.wiki.readPaths.pop();
-    config.roles.wiki.autoOrganizePaths = [];
-    assert.equal(knowledgeMayCreateCategoryDirectory(config, "成果/任意分类"), false);
+    config.roles.wiki.autoOrganizePaths = ["成果"];
+    assert.deepEqual(await call("note_create", save("成果/旧批准/最深/拒绝.md")), blocked);
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/已有/关闭.md")), blocked);
+    await mkdir(path.join(vault, "成果/选定"));
+    config.organization = { enabled: true, scope: "selected", paths: ["成果/选定", "来源甲/新分类"] };
+    assert.equal((await call("note_create", save("成果/选定/子/继承.md"))).isError, false);
+    assert.deepEqual(await call("note_create", save("成果/选定-other/拒绝.md")), blocked, "similar prefixes are outside selection");
+    assert.deepEqual(await call("note_create", save("成果/其他/拒绝.md")), blocked);
+    await fixture.write("成果/选定/原文.md", BODY);
+    assert.equal((await call("note_move", move("成果/选定/原文.md", "成果/选定/子/移动.md"))).isError, false);
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/选定/外部来源.md")), blocked, "source also needs selected-scope consent");
+    assert.deepEqual(await call("note_move", move("成果/选定/子/移动.md", "成果/已有/越界.md")), blocked);
+    config.organization.paths.push("普通目录", "尚不存在的绑定");
+    assert.equal(knowledgeMayCreateCategoryDirectory(config, "普通目录/新分类"), false, "stored out-of-binding selections never grant access");
+    assert.equal(knowledgeMayCreateCategoryDirectory(config, "尚不存在的绑定/新分类"), false);
+    config.organization = { enabled: true, scope: "all", paths: [] };
+    for (const root of ["来源甲", "来源乙", "成果", "项目", "收件箱"]) assert.equal(knowledgeMayCreateCategoryDirectory(config, `${root}/分类/叶子`), true);
+    for (const root of ["普通目录", "未绑定"]) assert.equal(knowledgeMayCreateCategoryDirectory(config, `${root}/分类`), false);
+    assert.equal(knowledgeMayCreateCategoryDirectory(config, "成果"), false, "permission cannot create the binding root itself");
     assert.equal(knowledgeMayOrganizeMove(config, "来源甲/新分类/归类.md", "来源乙/归类.md"), false);
+    config.organization = { enabled: false, scope: "all", paths: [] };
 
     await assertMaintenanceCategoryPolicy({ root, vault, fixture, config, domain });
     console.log("Knowledge folder organization production policy: PASS");
@@ -164,7 +166,7 @@ async function assertMaintenanceCategoryPolicy(input: {
   const { root, vault, fixture, config, domain } = input;
   await fixture.write(SOURCE, BODY);
   config.roles.wiki.allowedSubdirectories = [];
-  config.roles.wiki.autoOrganizePaths = [];
+  config.organization = { enabled: false, scope: "all", paths: [] };
   const port = new ProductionPiKnowledgeMaintenanceToolPort({ vaultRootPath: vault, privateKnowledgeRootPath: path.join(root, "maintenance-state"), vaultId: VAULT_ID, userId: "fixture", deviceId: "fixture", domainService: domain, dateKey: () => "2026-10-15" });
   await port.initialize();
   let sequence = 0;
@@ -180,14 +182,14 @@ async function assertMaintenanceCategoryPolicy(input: {
   const existing = await maintain("成果/已有/维护保存.md");
   assert.equal(existing.status, "completed", existing.message);
   assert.deepEqual(existing.processedSourcePaths, [SOURCE], "closed organization still extracts and saves knowledge to an existing category");
-  config.roles.wiki.autoOrganizePaths = ["成果"];
+  config.organization = { enabled: true, scope: "all", paths: [] };
   const allowed = await maintain("成果/维护新分类/子类/新授权保存.md");
   assert.equal(allowed.status, "completed", allowed.message);
   assert.equal(canonicalRawMarkdownForDigest(await readFile(path.join(vault, SOURCE), "utf8")), canonicalRawMarkdownForDigest(BODY));
-  config.roles.wiki.autoOrganizePaths = [];
+  config.organization = { enabled: false, scope: "all", paths: [] };
   config.roles.wiki.allowedSubdirectories = ["旧维护/子类"];
   const legacy = await maintain("成果/旧维护/子类/旧批准保存.md");
-  assert.equal(legacy.status, "completed", legacy.message);
+  assert.equal(legacy.status, "failed", "legacy child permissions cannot bypass the unified disabled switch");
   const tooDeep = await maintain("成果/旧维护/子类/未批准/拒绝.md");
   assert.equal(tooDeep.status, "failed", tooDeep.message);
   const closedExisting = await maintain("成果/维护新分类/子类/关闭后保存.md");
@@ -196,7 +198,7 @@ async function assertMaintenanceCategoryPolicy(input: {
   assert.equal(otherBinding.status, "failed", otherBinding.message);
   const projectsClosed = await maintain("项目/新分类/拒绝.md");
   assert.equal(projectsClosed.status, "failed", projectsClosed.message);
-  config.roles.projects.autoOrganizePaths = ["项目"];
+  config.organization = { enabled: true, scope: "all", paths: [] };
   const projectsOpen = await maintain("项目/新分类/允许.md");
   assert.equal(projectsOpen.status, "failed", "staged maintenance is Wiki-only even when ordinary Projects folder organization is allowed");
 }
