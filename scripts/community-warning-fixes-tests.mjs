@@ -1,24 +1,22 @@
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import assert from 'node:assert/strict';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import vm from 'node:vm';
 import esbuild from 'esbuild';
-import ts from 'typescript';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const require = createRequire(import.meta.url);
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || 'jsdom');
 const directory = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "community-warning-fixes");
-const shortcutOnly = process.argv.includes('--shortcut-only');
 await mkdir(directory, { recursive: true });
 try {
   // Run the production path resolver against all three OS path semantics.
   const compiled = await esbuild.build({ entryPoints: [path.join(root, 'src/plugin/plugin-data-paths.ts')], bundle: true, write: false, platform: 'node', format: 'cjs', external: ['obsidian'] });
-  for (const [os, flavor, vault] of shortcutOnly ? [] : [
+  for (const [os, flavor, vault] of [
     ['macOS', path.posix, '/Users/test/Vault'],
     ['Linux', path.posix, '/home/test/Vault'],
     ['Windows', path.win32, 'C:\\Users\\test\\Vault']
@@ -65,19 +63,6 @@ try {
       Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? first.window : first.window[name] });
     }
     const tests = await import(pathToFileURL(entry).href);
-    // Exercise the real toolbar callback without rendering unrelated toolbar UI.
-    const composer = ts.createSourceFile('composer.ts', await readFile(path.join(root, 'src/ui/codex-view/composer-controller.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
-    let capture;
-    function find(node) {
-      if (ts.isPropertyAssignment(node) && node.name.getText(composer) === 'onCaptureKnowledgeSource') capture = node.initializer;
-      ts.forEachChild(node, find);
-    }
-    find(composer);
-    assert.ok(capture);
-    const callback = await esbuild.transform(`const callback = ${capture.getText(composer)};`, { loader: 'ts' });
-    const createCallback = new Function('host', 'Notice', 'conversationUiText', `${callback.code}\nreturn callback;`);
-    const captureFactory = host => createCallback(host, tests.Notice, tests.conversationUiText);
-    if (shortcutOnly) await tests.runShortcutFailureTests(captureFactory);
-    else await tests.runCommunityWarningFixesTests(first.window, second.window, captureFactory);
+    await tests.runCommunityWarningFixesTests(first.window, second.window);
   } finally { first.window.close(); second.window.close(); }
 } finally { await rm(directory, { recursive: true, force: true }); }

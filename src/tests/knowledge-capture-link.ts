@@ -33,7 +33,7 @@ async function assertComposerCaptureFeedback(): Promise<void> {
       running: false, inputEl: input, attachments,
       app: { workspace: { openLinkText: async (path: string) => { opened.push(path); } } },
       plugin: { settings: { settingsLanguage: "zh-CN" }, getKnowledgeSurfaceService: () => service },
-      runKnowledgeBaseShortcut: () => { assert.fail("collection must never enter the chat shortcut"); },
+      ensureSession: () => { assert.fail("collection must never create or mutate a chat session"); },
       renderToolbar() {}, renderAttachments() {}, onInputChanged: () => { changed++; }
     };
     return { host, opened, changed: () => changed, assertUnchanged: () => { assert.deepEqual(messages, original); assert.equal(host.running, false); } };
