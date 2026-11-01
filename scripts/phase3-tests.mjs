@@ -16,6 +16,7 @@ const maintenanceRuntimeOnly = process.argv.includes("--maintenance-runtime");
 const maintenanceOnly = process.argv.includes("--production-maintenance");
 const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
+const onboardingOnly = process.argv.includes("--onboarding");
 
 const fullSuiteImports = [
   'import { runOnboardingSetupPlanTests } from "./src/tests/onboarding-setup-plan";',
@@ -262,6 +263,9 @@ await esbuild.build({
     ] : maintenanceOnly ? [
       'import { runPhase3KnowledgeMaintenanceServiceTests } from "./src/tests/pi-native/phase3-maintenance-service";',
       'await runPhase3KnowledgeMaintenanceServiceTests();'
+    ] : onboardingOnly ? [
+      'import { runOnboardingSetupPlanTests } from "./src/tests/onboarding-setup-plan";',
+      "await runOnboardingSetupPlanTests();"
     ] : nativeJournalOnly ? [
       'import { runNativeJournalTests } from "./src/tests/native-journal";',
       "await runNativeJournalTests();"

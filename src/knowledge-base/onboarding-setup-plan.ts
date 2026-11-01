@@ -184,9 +184,10 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
   for (const directory of create) {
     try { normalizeKnowledgeDirectory(directory); } catch { issues.push(`${directory}：目录无效，请先调整已有设置。`); }
   }
+  const guidePath = `${output}/${input.language === "zh" ? "开始使用 EchoInk" : "Getting started with EchoInk"}.md`;
+  bindings.onboardingGuidePath = guidePath;
   const directoryPlan = await input.preview(bindings, [...create], { mode: "build", moduleDirectories: modules });
   directoryPlan.issues.push(...issues);
-  const guidePath = `${output}/${input.language === "zh" ? "开始使用 EchoInk" : "Getting started with EchoInk"}.md`;
   const fileExists = input.files.some(file => fold(file.path) === fold(guidePath));
   const folderExists = input.folders.some(directory => fold(directory) === fold(guidePath));
   if (folderExists) directoryPlan.issues.push(`${guidePath}：指南路径已被文件夹占用。`);

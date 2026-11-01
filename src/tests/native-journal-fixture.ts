@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { mkdir, readFile, writeFile, rename, rmdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rmdir, unlink } from "node:fs/promises";
 import * as path from "node:path";
 import { TFile, TFolder, type App } from "obsidian";
 import { DEFAULT_SETTINGS } from "../settings/settings";
@@ -89,7 +89,7 @@ export async function nativeJournalFixture(root: string) {
       getMarkdownFiles: () => list().filter((file) => file.extension === "md"),
       getFileByPath: file,
       getAbstractFileByPath: (name: string) => file(name) ?? loaded().find((item) => item.path === name) ?? null,
-      delete: (folder: TFolder) => rmdir(path.join(root, folder.path)),
+      delete: (entry: TFolder | TFile) => entry instanceof TFile ? unlink(path.join(root, entry.path)) : rmdir(path.join(root, entry.path)),
       createFolder: async (name: string) => await mkdir(path.join(root, name)),
       async create(name: string, content: string) { await writeFile(path.join(root, name), content, { flag: "wx" }); return file(name)!; },
       async createBinary(name: string, content: ArrayBuffer) { await writeFile(path.join(root, name), Buffer.from(content), { flag: "wx" }); return file(name)!; },
@@ -101,8 +101,11 @@ export async function nativeJournalFixture(root: string) {
         await writeFile(path.join(root, value.path), next); return next;
       }
     },
-    workspace: { onLayoutReady() {}, getLeaf: () => ({ async openFile() {} }) },
-    fileManager: { async renameFile(value: TFile | TFolder, target: string) { await rename(path.join(root, value.path), path.join(root, target)); files.clear(); } },
+    workspace: { onLayoutReady() {}, getActiveFile: () => null, getLastOpenFiles: () => [], getLeaf: () => ({ async openFile() {} }) },
+    fileManager: {
+      async renameFile(value: TFile | TFolder, target: string) { await rename(path.join(root, value.path), path.join(root, target)); files.clear(); },
+      async trashFile(value: TFile) { await unlink(path.join(root, value.path)); files.delete(value.path); }
+    },
     metadataCache: { resolvedLinks: {}, unresolvedLinks: {}, getFileCache: () => null, getFirstLinkpathDest: () => null }
   };
   const plugin: any = {

@@ -6,6 +6,7 @@ import { providerServiceCategories } from "../settings/provider-service-categori
 import { renderProviderBrandIcon } from "../settings/provider-brand-icons";
 import type { OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 import type { KnowledgeDirectoryApplyResult } from "../knowledge-base/folder-plan";
+import type { OnboardingGuideResult } from "../knowledge-base/onboarding-guide";
 
 export interface PaperGuideModelResult { available: boolean; message: string }
 export type PaperGuideProgress = (step: "folders" | "bindings", completed: number, total: number) => void;
@@ -15,6 +16,8 @@ export interface PaperGuideModalOptions {
   apply(plan: OnboardingSetupPlan, progress: PaperGuideProgress): Promise<KnowledgeDirectoryApplyResult>;
   model(): string | null;
   connect(provider: ApiProviderId, key: string): Promise<PaperGuideModelResult>;
+  writeGuide(plan: OnboardingSetupPlan, created: readonly string[]): Promise<OnboardingGuideResult>;
+  openGuide(path: string): Promise<void>;
   onManual(): Promise<void>;
   onTry(): Promise<boolean>;
   onDismiss(): Promise<void>;
@@ -32,9 +35,11 @@ export class PaperGuideModal extends Modal {
   private closed = false;
   private error = "";
   private modelError = "";
+  private guideError = "";
+  private guide: OnboardingGuideResult | null = null;
   private key = "";
   private provider: ApiProviderId = "deepseek";
-  private progress: { step: "folders" | "bindings" | "model"; completed: number; total: number } | null = null;
+  private progress: { step: "folders" | "bindings" | "model" | "guide"; completed: number; total: number } | null = null;
   private body!: HTMLElement;
   private footer!: HTMLElement;
 
@@ -146,6 +151,7 @@ export class PaperGuideModal extends Modal {
         this.row(outputs, "folder-output", this.label(`回答 → ${plan.outputLocations.answer}`, `Answers → ${plan.outputLocations.answer}`));
         this.row(outputs, "folder-output", this.label(`生成内容 → ${plan.outputLocations.generation}`, `Generated content → ${plan.outputLocations.generation}`));
       }
+      this.row(outputs, "file-text", plan.guide.path, plan.guide.action === "preserve" ? this.label("保留现有文件", "Keep existing") : undefined);
       if (plan.skipped.length) {
         const details = this.body.createEl("details", { cls: "echoink-setup-skipped" });
         details.createEl("summary", { text: this.label(`已跳过 ${plan.skipped.length} 个文件夹`, `${plan.skipped.length} folders skipped`) });
@@ -182,11 +188,11 @@ export class PaperGuideModal extends Modal {
 
   private renderProgress(): void {
     const rows = this.group();
-    const steps = ["folders", "bindings", ...(this.key.trim() ? ["model"] : [])];
+    const steps = ["folders", "bindings", ...(this.key.trim() ? ["model"] : []), "guide"];
     const current = steps.indexOf(this.progress?.step ?? "folders");
     for (const [index, step] of steps.entries()) {
       const done = index < current || (index === current && this.progress && this.progress.completed === this.progress.total);
-      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : this.label("测试模型连接", "Test model connection");
+      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : step === "model" ? this.label("测试模型连接", "Test model connection") : this.label("准备新手指南", "Prepare getting-started guide");
       const row = this.row(rows, done ? "circle-check" : index === current ? "loader-circle" : "circle", text,
         index === current && this.progress ? `${this.progress.completed} / ${this.progress.total}` : undefined);
       if (!done && index === current) row.addClass("is-running");
@@ -202,8 +208,26 @@ export class PaperGuideModal extends Modal {
         this.progress = { step: "model", completed: 0, total: 1 }; this.render();
         await this.testModel();
       }
+      this.progress = { step: "guide", completed: 0, total: 1 }; this.render();
+      await this.finishGuide();
       this.view = "done";
     } catch (error) { this.error = this.errorText(error); this.view = this.result ? "done" : "confirm"; }
+    finally { this.busy = false; this.render(); }
+  }
+
+  private async finishGuide(): Promise<void> {
+    if (!this.plan || !this.result) return;
+    this.guideError = "";
+    try {
+      this.guide = await this.options.writeGuide(this.plan, this.result.created);
+      await this.options.openGuide(this.guide.path);
+    } catch (error) { this.guideError = this.errorText(error); }
+  }
+
+  private async retryGuide(): Promise<void> {
+    if (this.busy) return;
+    this.busy = true; this.setBusyState();
+    try { await this.finishGuide(); }
     finally { this.busy = false; this.render(); }
   }
 
@@ -229,7 +253,14 @@ export class PaperGuideModal extends Modal {
     if (model) this.row(rows, "circle-check", model, this.label("已配置", "Configured"));
     else this.row(rows, "key-round", this.label("还差模型，连上才能提问", "Connect a model to ask questions"));
     if (this.modelError) this.body.createDiv({ cls: "echoink-setup-error", text: this.modelError, attr: { role: "alert" } });
+    if (this.guide) this.row(rows, "file-text", this.guide.path, this.guide.action === "preserved" ? this.label("已保留现有文件", "Existing file kept") : undefined);
+    if (this.guideError) this.body.createDiv({ cls: "echoink-setup-error", text: this.label(`指南未完成：${this.guideError}`, `Guide not ready: ${this.guideError}`), attr: { role: "alert" } });
     this.action(this.label("关闭", "Close"), () => this.navigate());
+    if (this.guideError) {
+      const retry = createOriginButton(this.footer, { text: this.label("重试指南", "Retry guide"), cls: "button" });
+      applyAmicroButton(retry, { variant: "secondary", motion: "none" });
+      retry.onclick = () => { void this.retryGuide(); };
+    }
     this.action(model ? this.label("问一句试试", "Try a question") : this.label("连接模型", "Connect a model"),
       () => model ? this.navigate(async () => { if (!await this.options.onTry()) throw new Error(this.label("未能打开总助，问题没有预填，请从工作台重试。", "Couldn't open the assistant. No question was inserted; try again from Home.")); })
         : (() => { this.view = "connect"; this.error = ""; this.render(); })(), true);

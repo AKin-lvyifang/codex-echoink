@@ -50,6 +50,8 @@ export interface KnowledgeFolderBindings {
   excalidrawDirectory?: string | null;
   /** Former Inbox roots withdrawn from ordinary-chat recall consent. */
   inboxRecallExclusions?: string[];
+  /** Exact generated/preserved setup guide, excluded from discovered search candidates. */
+  onboardingGuidePath?: string;
   roles: Record<KnowledgeRootRole, KnowledgeFolderBinding>;
   migrationIssues: string[];
 }
@@ -74,6 +76,9 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
   result.revision = Number.isSafeInteger(input.revision) && input.revision > 0 ? input.revision : 1;
   if (input.configured === true) result.configured = true;
   if (Object.hasOwn(input, "excalidrawDirectory")) result.excalidrawDirectory = typeof input.excalidrawDirectory === "string" ? input.excalidrawDirectory : null;
+  if (typeof input.onboardingGuidePath === "string") {
+    try { result.onboardingGuidePath = normalizeKnowledgeDirectory(input.onboardingGuidePath); } catch { /* Invalid guide paths grant no exclusion. */ }
+  }
   result.organization = knowledgeOrganizationSettings(input);
   if (Array.isArray(input.inboxRecallExclusions)) result.inboxRecallExclusions = [...new Set(input.inboxRecallExclusions.flatMap(value => {
     try { return typeof value === "string" ? [normalizeKnowledgeDirectory(value)] : []; } catch { return []; }
@@ -334,6 +339,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
   if (next.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
     if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind], from, to);
   }
+  if (next.onboardingGuidePath) next.onboardingGuidePath = rebaseKnowledgePath(next.onboardingGuidePath, from, to);
   if (next.excalidrawDirectory) next.excalidrawDirectory = rebaseKnowledgePath(next.excalidrawDirectory, from, to);
   if (next.organization) next.organization.paths = [...new Set(next.organization.paths.map(item => rebaseKnowledgePath(item, from, to)))];
   if (next.inboxRecallExclusions) next.inboxRecallExclusions = [...new Set(next.inboxRecallExclusions.map(item => rebaseKnowledgePath(item, from, to)))];
@@ -343,7 +349,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
 
 /** Compare effective drafts without revision numbers, order, or absent legacy defaults. */
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
-  return JSON.stringify({ organization: { ...knowledgeOrganizationSettings(config), paths: knowledgeOrganizationSettings(config).paths.sort() },
+  return JSON.stringify({ onboardingGuidePath: config?.onboardingGuidePath ?? null, organization: { ...knowledgeOrganizationSettings(config), paths: knowledgeOrganizationSettings(config).paths.sort() },
     collectionTargets: config ? knowledgeCollectionTargets(config) : null,
     answerDirectoryPending: knowledgeOutputLocation(config, "answer").createIfMissing,
     generationDirectoryPending: knowledgeOutputLocation(config, "generation").createIfMissing,

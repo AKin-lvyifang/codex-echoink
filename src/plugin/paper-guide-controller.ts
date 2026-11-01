@@ -44,6 +44,16 @@ export class PaperGuideController {
         },
         model: () => this.modelName(),
         connect: (provider, key) => this.connect(provider, key),
+        writeGuide: async (plan, created) => {
+          const service = this.plugin.getKnowledgeSurfaceService();
+          if (!service) throw new Error("目录服务尚未就绪，请稍后重试。");
+          return await service.writeOnboardingSetupGuide(plan, created);
+        },
+        openGuide: async path => {
+          const service = this.plugin.getKnowledgeSurfaceService();
+          if (!service) throw new Error("目录服务尚未就绪，请稍后重试。");
+          await service.openOnboardingSetupGuide(path);
+        },
         onManual: () => this.plugin.openEchoInkKnowledgeInitializationSettings(),
         onTry: async () => {
           return await this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, this.plugin.settings.settingsLanguage === "en"

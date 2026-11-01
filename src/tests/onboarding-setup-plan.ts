@@ -10,6 +10,9 @@ import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-serv
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { loadNativeJournalSettings } from "../home/native-journal";
 import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
+import { VaultBodySearch } from "../knowledge-base/vault-body-search";
+import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
+import { normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 
 function memoryInput(paths: string[] = [], extra: Partial<OnboardingSetupInput> = {}): OnboardingSetupInput {
   const files: KnowledgeDirectoryFile[] = paths.filter(value => !value.endsWith("/")).map(path => ({ path, size: 17, mtime: 23 }));
@@ -131,9 +134,76 @@ export async function runOnboardingSetupPlanTests(): Promise<void> {
     await assertConfirmationAndUndo(path.join(root, "confirmation"));
     await assertBindingOnlyUndo(path.join(root, "binding-only"));
     await assertOnboardingRollback(path.join(root, "rollback"));
+    for (const state of ["created", "preserved", "modified", "failed", "english"] as const) await assertGuideLifecycle(path.join(root, `guide-${state}`), state);
   }
   finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Onboarding setup plans: empty/existing/bindings/reuse/collisions/protected/conflicts/50k/integration PASS");
+}
+
+async function assertGuideLifecycle(root: string, state: "created" | "preserved" | "modified" | "failed" | "english") {
+  const fixture = await nativeJournalFixture(root);
+  const { plugin, app } = fixture;
+  plugin.settings.defaultPermission = "workspace-write";
+  const before = emptyKnowledgeFolderBindings(); plugin.settings.knowledgeBase.folderBindings = before;
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  registerKnowledgePrivateRoot(root, path.join(root, ".private"));
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  try {
+    await fixture.write("原有资料/记录.md", "# 原有资料\nR3_GUIDE_TOKEN 源笔记");
+    // A same-name file forces the actual output folder to differ from the default.
+    if (state !== "preserved") await fixture.write(state === "english" ? "outputs" : "产出", "occupied");
+    const language = state === "english" ? "en" : "zh";
+    if (state === "preserved") await fixture.write("产出/开始使用 EchoInk.md", "USER_GUIDE R3_GUIDE_TOKEN");
+    const plan = await service.previewOnboardingSetupPlan(language);
+    assert(plan.guide.path.startsWith(state === "preserved" ? "产出/" : language === "en" ? "outputs 2/" : "产出 2/"), `${state}: ${plan.guide.path}`);
+    const applied = await service.applyOnboardingSetupPlan(plan);
+    const signature = knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings);
+    const create = app.vault.create.bind(app.vault);
+    if (state === "failed") {
+      app.vault.create = async () => { throw new Error("fixture guide write denied"); };
+      await assert.rejects(service.writeOnboardingSetupGuide(plan, applied.created), /fixture guide write denied/u);
+      assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), signature);
+      for (const directory of applied.created) assert((await fs.stat(path.join(root, directory))).isDirectory(), "guide failure never rolls back directories");
+      app.vault.create = create;
+    }
+    const result = await service.writeOnboardingSetupGuide(plan, applied.created);
+    assert.equal(result.action, state === "preserved" ? "preserved" : "created");
+    const content = await fs.readFile(path.join(root, result.path), "utf8");
+    if (state === "preserved") assert.equal(content, "USER_GUIDE R3_GUIDE_TOKEN");
+    else {
+      assert(content.startsWith(language === "en" ? "# Getting started with EchoInk" : "# 开始使用 EchoInk"));
+      assert(!/\{\w+\}/u.test(content)); assert(content.includes(plan.outputLocations.answer));
+      assert(content.includes("原有资料")); assert(content.includes(String(plan.noteCount)));
+    }
+    let opened = "";
+    app.workspace.getLeaf = (() => ({ async openFile(file: { path: string }) { opened = file.path; } })) as never;
+    await service.openOnboardingSetupGuide(result.path); assert.equal(opened, result.path);
+    const saved = normalizeKnowledgeFolderBindings(plugin.settings.knowledgeBase.folderBindings)!;
+    assert.equal(saved.onboardingGuidePath, result.path, "the exact exclusion survives settings normalization");
+    assert.equal(rebaseKnowledgeFolderBindings(saved, plan.outputLocations.answer, "新产出").onboardingGuidePath, `新产出/${path.basename(result.path)}`);
+    assert(!knowledgeRecallCandidateAllowed(saved, result.path));
+    const sibling = `${plan.outputLocations.answer}/其他笔记.md`;
+    await fixture.write(sibling, "R3_GUIDE_TOKEN 普通产出笔记");
+    assert(knowledgeRecallCandidateAllowed(saved, sibling), "the output folder remains searchable");
+    const port = new VaultBodySearch(app, () => plugin.settings.knowledgeBase.folderBindings);
+    const hits = await port.search({ query: "R3_GUIDE_TOKEN", limit: 20 });
+    assert(!hits.hits.some(hit => hit.vaultRelativePath === result.path));
+    assert(hits.hits.some(hit => hit.vaultRelativePath === sibling));
+    assert(!(await port.search({ mode: "recent", limit: 20 })).hits.some(hit => hit.vaultRelativePath === result.path));
+    await fixture.write("原有资料/新笔记.md", "R3_FRESH_NOTE_TOKEN 新增记录");
+    assert((await port.search({ query: "R3_FRESH_NOTE_TOKEN", limit: 20 })).hits.some(hit => hit.vaultRelativePath === "原有资料/新笔记.md"), "new notes are searchable without rebuilding or manual invalidation");
+    port.dispose();
+    await fs.unlink(path.join(root, sibling));
+    if (state === "modified") await fs.appendFile(path.join(root, result.path), "\nUSER_EDIT");
+    await service.restoreOriginalDirectories();
+    assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(before));
+    const remains = await fs.stat(path.join(root, result.path)).then(() => true, () => false);
+    assert.equal(remains, state === "preserved" || state === "modified");
+    if (!remains) assert.equal(await fs.stat(path.join(root, plan.outputLocations.answer)).then(() => true, () => false), false);
+    assert.equal(await fs.readFile(path.join(root, "原有资料/记录.md"), "utf8"), "# 原有资料\nR3_GUIDE_TOKEN 源笔记");
+    assert.equal(fixture.providerCalls(), 0, "guide generation is entirely local");
+  } finally { release(); }
 }
 
 async function assertConfirmationAndUndo(root: string) {

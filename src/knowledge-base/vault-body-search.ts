@@ -164,7 +164,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     const generation = this.generation;
     const bindingSignature = JSON.stringify([this.bindings(), this.journal()]);
     const excludedRoots = [...(this.excludedRoots() ?? [])];
-    const files = this.app.vault.getMarkdownFiles();
+    const files = this.app.vault.getMarkdownFiles().filter(file => file.path !== this.bindings()?.onboardingGuidePath);
     const canonicalPaths = new Map<string, string>();
     const failedSourcePaths = new Set<string>();
     if (this.options.resolveSourcePath) {

@@ -5,7 +5,7 @@ import { getDesktopPath } from "../platform/desktop-paths";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { knowledgeErrorDetail } from "./initialization-error";
 
-const { randomUUID } = getDesktopCrypto();
+const { randomUUID, createHash } = getDesktopCrypto();
 
 const fs = getDesktopFsPromises();
 const path = getDesktopPath();
@@ -22,6 +22,7 @@ export interface DirectoryModuleSettings {
 }
 interface DirectoryHistory {
   exactBindingRestore?: boolean;
+  guide?: { path: string; hash: string };
   bindings?: KnowledgeFolderBindings;
   appliedBindings?: KnowledgeFolderBindings;
   moduleSettings?: DirectoryModuleSettings;
@@ -45,6 +46,7 @@ export interface DirectoryHistoryHost {
   mkdir(relativePath: string): Promise<void>;
   rename(from: string, to: string, restoring?: boolean): Promise<void>;
   removeEmptyFolder(relativePath: string): Promise<void>;
+  removeGeneratedFile?(relativePath: string): Promise<void>;
   restoreFolderLinks?(from: string, to: string): Promise<void>;
   restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
   currentBindings?(): KnowledgeFolderBindings | null | undefined;
@@ -104,6 +106,7 @@ export class InitializationDirectoryHistory {
       if (value.version !== 1 || !Array.isArray(value.files) || !Array.isArray(value.folders) || !Array.isArray(value.createdFolders)) throw new Error("初始化目录索引损坏，未执行位置操作");
       for (const item of value.files) { this.absolute(item.original); this.absolute(item.current); if (typeof item.identity !== "string") throw new Error("目录索引身份无效"); }
       for (const folder of [...value.folders, ...value.createdFolders]) this.absolute(folder);
+      if (value.guide) { this.absolute(value.guide.path); if (!/^[a-f0-9]{64}$/u.test(value.guide.hash)) throw new Error("指南恢复记录无效"); }
       if (value.folderRenames !== undefined && !Array.isArray(value.folderRenames)) throw new Error("初始化目录改名索引损坏");
       for (const folder of value.folderRenames ?? []) { this.absolute(folder.original); this.absolute(folder.current); }
       if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); if (value.pending.folderOriginal) this.absolute(value.pending.folderOriginal); }
@@ -142,11 +145,32 @@ export class InitializationDirectoryHistory {
 
   async clearOnboardingSetup(): Promise<void> { await fs.rm(this.onboardingPath, { force: true }); }
 
+  async recordOnboardingGuide(relativePath: string, hash: string): Promise<void> {
+    const record = await this.read(this.onboardingPath);
+    if (!record?.exactBindingRestore) throw new Error("缺少开局设置恢复记录，未写入指南。");
+    this.absolute(relativePath);
+    record.guide = { path: relativePath, hash };
+    await this.save(record, this.onboardingPath);
+  }
+
+  async ownsOnboardingGuide(relativePath: string, hash: string): Promise<boolean> {
+    const record = await this.read(this.onboardingPath);
+    return record?.guide?.path === relativePath && record.guide.hash === hash;
+  }
+
   private async restoreOnboardingSetup(record: DirectoryHistory): Promise<DirectoryRestoreResult> {
     if (!record.exactBindingRestore || !record.appliedBindings || record.files.length || record.pending) throw new Error("开局设置恢复记录无效，未执行恢复。 ");
     if (record.moduleSettings && record.appliedModuleSettings) await this.host.restoreModuleSettings?.(record.moduleSettings, record.appliedModuleSettings);
     await this.host.restorePlanBindings?.(record.bindings, record.appliedBindings, true);
     const result: DirectoryRestoreResult = { restored: 0, skipped: [] };
+    if (record.guide) {
+      const identity = await this.identity(record.guide.path);
+      if (identity) {
+        const hash = createHash("sha256").update(await fs.readFile(this.absolute(record.guide.path))).digest("hex");
+        if (hash === record.guide.hash && this.host.removeGeneratedFile) await this.host.removeGeneratedFile(record.guide.path);
+        else result.skipped.push({ path: record.guide.path, reason: "指南已修改，保留原位" });
+      }
+    }
     for (const folder of [...record.createdFolders].sort((a, b) => b.split("/").length - a.split("/").length)) {
       if (this.host.currentModuleDirectories?.().some(directory => directory === folder || directory.startsWith(`${folder}/`))) continue;
       const current = this.host.currentBindings?.();

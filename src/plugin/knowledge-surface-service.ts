@@ -1,4 +1,5 @@
 import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
+import { renderOnboardingGuide, type OnboardingGuideResult } from "../knowledge-base/onboarding-guide";
 import { generateOnboardingSetupPlan, onboardingSetupConfirmationSignature, yieldOnboardingScan, type OnboardingProtectedPath, type OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
@@ -157,6 +158,10 @@ export class EchoInkKnowledgeSurfaceService {
         const restored = structuredClone(current);
         const originalConfig = normalizeKnowledgeFolderBindings(original) ?? emptyKnowledgeFolderBindings();
         applied = normalizeKnowledgeFolderBindings(applied) ?? applied;
+        if (current.onboardingGuidePath === applied.onboardingGuidePath) {
+          if (originalConfig.onboardingGuidePath) restored.onboardingGuidePath = originalConfig.onboardingGuidePath;
+          else delete restored.onboardingGuidePath;
+        }
         if (JSON.stringify(knowledgeOrganizationSettings(current)) === JSON.stringify(knowledgeOrganizationSettings(applied))) restored.organization = knowledgeOrganizationSettings(originalConfig);
         const currentTargets = knowledgeCollectionTargets(current), appliedTargets = knowledgeCollectionTargets(applied), originalTargets = knowledgeCollectionTargets(originalConfig);
         restored.collectionTargets = { ...currentTargets };
@@ -211,7 +216,8 @@ export class EchoInkKnowledgeSurfaceService {
         return [settings.journalDirectory, native?.["daily-notes"]?.instance?.options?.folder, settings.review.outputDir,
           settings.englishDiary.englishDirectory, settings.englishDiary.expressionDirectory, settings.pdfReading.originalDirectory].filter((directory): directory is string => !!directory);
       },
-      removeEmptyFolder: (relative) => this.removeEmptyCreatedFolder(relative)
+      removeEmptyFolder: (relative) => this.removeEmptyCreatedFolder(relative),
+      removeGeneratedFile: async relative => { await plugin.app.fileManager.trashFile(requireVaultFile(plugin, relative)); }
     });
     const createFolder = host.createFolder.bind(host);
     host.createFolder = async (relative) => {
@@ -805,6 +811,29 @@ export class EchoInkKnowledgeSurfaceService {
       this.plugin.refreshKnowledgeBaseSurfaces();
       return structuredClone(next);
     }, true);
+  }
+
+  async writeOnboardingSetupGuide(plan: OnboardingSetupPlan, created: readonly string[]): Promise<OnboardingGuideResult> {
+    return await this.withStructureMutation(async () => {
+      const relative = normalizeKnowledgeDirectory(plan.guide.path);
+      if (this.plugin.settings.knowledgeBase.folderBindings?.onboardingGuidePath !== relative) throw new Error("目录绑定已变化，请重新核对指南位置。");
+      const host = createKnowledgeInitializationHost(this.plugin);
+      const kind = await host.pathKind(relative);
+      if (kind === "folder") throw new Error(`指南位置已被文件夹占用：${relative}`);
+      if (kind !== "missing") {
+        const current = await host.readText(relative);
+        const owned = current !== null && await this.directoryHistory.ownsOnboardingGuide(relative, createHash("sha256").update(current).digest("hex"));
+        return { path: relative, action: owned ? "created" : "preserved" };
+      }
+      const content = renderOnboardingGuide(plan, created);
+      await this.directoryHistory.recordOnboardingGuide(relative, createHash("sha256").update(content).digest("hex"));
+      await host.createText(relative, content);
+      return { path: relative, action: "created" };
+    });
+  }
+
+  async openOnboardingSetupGuide(relative: string): Promise<void> {
+    await createKnowledgeInitializationHost(this.plugin).openGuide(relative);
   }
 
   /** Refresh only this confirmation path. Other callers keep exact snapshot checks. */
