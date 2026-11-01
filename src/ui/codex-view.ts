@@ -907,7 +907,7 @@ export class CodexView extends ItemView {
     const draft: StoredSession = { id: "generation-draft", title: "", agentId: owner.id, cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
     new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromPath(path), service, turnOptions: () => this.currentTurnOptions(draft),
       onSubmit: async (request, options) => {
-        const reason = service.disabledReason(options); if (reason) throw new Error(reason);
+        const reason = service.disabledReason({ ...options, outputKind: request.outputKind }); if (reason) throw new Error(reason);
         this.saveTaskComposerDraft();
         const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
         const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: `用「${request.template.name}」生成`, agentId: owner.id,

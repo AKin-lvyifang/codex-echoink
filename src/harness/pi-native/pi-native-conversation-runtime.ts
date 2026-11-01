@@ -1752,7 +1752,7 @@ export class PiNativeConversationRuntime {
         execution.generation.assessment = await this.options.generation.prepare(execution.generation.request, this.generationIdentity(active, execution));
         const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
         execution.generation.inputBudget = inputBudget;
-        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, generationModelPrompt(execution.generation.request, request.text));
+        assertGenerationInputBudget(execution.generation.request, execution.generation.assessment.sources, inputBudget, generationModelPrompt(execution.generation.request, request.text), undefined, execution.generation.assessment.drawingSchema);
         await this.setGenerationStage(active, execution, "writing");
       } else if (englishDiarySourcePath) {
         active.knowledgeTurnContext = null;
@@ -3524,6 +3524,74 @@ export class PiNativeConversationRuntime {
         const canvasValidationErrors: string[] = [];
         // Repair only pure output validation. Nothing from permission, Provider,
         // cancellation or the write layer can re-enter this loop.
+        // Independent drawing repair: exactly one retry, no Canvas fallback.
+        const drawingValidationErrors: string[] = [];
+        while (generation.request.outputKind === "excalidraw" && terminalState === "completed" && modelText !== null) {
+          try {
+            prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
+            break;
+          } catch (error) {
+            if (!(error instanceof GenerationOutputValidationError)) throw error;
+            drawingValidationErrors.push(error.message);
+            if (generation.attempt?.kind === "repair") break;
+            const attempt: GenerationAttempt = { kind: "repair", failedOutput: modelText, validationError: error.message };
+            try {
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const retryText = generationModelPrompt(generation.request);
+              assertGenerationInputBudget(generation.request, assessment.sources, generation.inputBudget!, retryText, attempt, assessment.drawingSchema);
+              generation.attempt = attempt;
+              await this.setGenerationStage(active, execution, "writing");
+              assertPiSubmissionActive(execution.knowledgeAbort.signal);
+              const attemptBaseline = new Set(active.sessionManager.getEntries().map(entry => entry.id));
+              execution.agentSettledSeen = false;
+              promptError = null;
+              modelAttempts++;
+              try {
+                const retryStart = { readyAt: undefined as number | undefined, settled: false, error: undefined as unknown };
+                const retryPromise = active.session.prompt(retryText, { source: "interactive", preflightResult: accepted => {
+                  assertPiSubmissionActive(execution.knowledgeAbort.signal);
+                  if (accepted) retryStart.readyAt = Date.now();
+                } });
+                void retryPromise.then(() => { retryStart.settled = true; }, error => { retryStart.error = error; retryStart.settled = true; });
+                try {
+                  const userEntry = await waitForNewUserEntry(active.sessionManager, attemptBaseline, USER_ENTRY_WAIT_TIMEOUT_MS, retryStart);
+                  this.appendGenerationEntry(active, GENERATION_ATTEMPT_ENTRY, { productRunId: execution.productRunId, requestId: generation.request.id, userEntryId: userEntry.id });
+                  await retryPromise;
+                } catch (error) {
+                  if (active.session.isStreaming) await active.session.abort();
+                  await retryPromise.catch(() => undefined);
+                  throw error;
+                }
+              } catch (error) { promptError = error; }
+              await active.session.waitForIdle().catch(error => { promptError ??= error; });
+              await active.eventLane;
+              await active.queuePersistenceLane;
+              const eventError = execution.eventError as unknown;
+              if (eventError !== null) {
+                throw eventError instanceof Error
+                  ? eventError
+                  : new Error("Pi runtime event handling failed", {
+                    cause: eventError
+                  });
+              }
+              if (!execution.agentSettledSeen) promptError ??= new Error("Pi AgentSession stopped without native agent_settled");
+              entries = active.sessionManager.getEntries();
+              runEntries = entries.filter(entry => !execution.baselineEntryIds.has(entry.id));
+              const attemptEntries = entries.filter(entry => !attemptBaseline.has(entry.id));
+              terminalState = classifyTerminalState(attemptEntries, execution.abortRequested, promptError);
+              generatedAssistant = lastAssistantEntry(attemptEntries);
+              modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
+            } catch (error) {
+              continuationError = error;
+              promptError = error;
+              terminalState = execution.abortRequested || execution.knowledgeAbort.signal.aborted ? "cancelled" : "failed";
+              modelText = null;
+              break;
+            }
+          }
+        }
         while (generation.request.outputKind === "canvas" && terminalState === "completed" && modelText !== null) {
           try {
             prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
@@ -3596,6 +3664,7 @@ export class PiNativeConversationRuntime {
         const result = await port.finish(generation.request, assessment, modelText,
           this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage), generation.attempt);
         result.modelAttempts = modelAttempts;
+        if (generation.request.outputKind === "excalidraw") result.drawingValidationErrors = drawingValidationErrors;
         if (generation.request.outputKind === "canvas") {
           result.canvasFallback = canvasFallback;
           result.canvasValidationErrors = canvasValidationErrors;

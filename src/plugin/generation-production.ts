@@ -10,6 +10,8 @@ import type { VaultDomainService } from "../harness/pi-native/vault-domain-servi
 import { PI_VAULT_TOOL_POLICIES, PI_VAULT_TOOL_VERSION, PI_VAULT_TOOL_POLICY_VERSION, type PiVaultToolWriteExecutionPort } from "../harness/pi-native/pi-vault-tool-contracts";
 import type { PiVaultToolAuthorizationPort } from "../harness/pi-native/pi-vault-tool-security-extension";
 import { isWriteToolAuthorizationContext } from "../harness/pi-native/tool-authorization";
+import { assertDrawingBinding, finishDrawing } from "./drawing-production";
+import { getExcalidrawService } from "../excalidraw/service";
 export interface GenerationProductionOptions {
   app: App;
   vaultRoot: string;
@@ -20,8 +22,10 @@ export interface GenerationProductionOptions {
   authorization(identity: GenerationExecutionIdentity): PiVaultToolAuthorizationPort;
   writeExecution: PiVaultToolWriteExecutionPort;
   domain: VaultDomainService;
+  confirmDrawing?(preview: Readonly<{ domain: "excalidraw"; path: string; style: string; boxCount: number; arrowCount: number; elements: unknown }>, identity: GenerationExecutionIdentity, requestId: string): Promise<boolean>;
 }
 function assertBinding(options: GenerationProductionOptions, request: GenerationRequest): void {
+  if (request.outputKind === "excalidraw") { assertDrawingBinding(options, request); return; }
   const location = knowledgeConversationLocation(options.bindings());
   try { if (normalizeKnowledgeDirectory(location.directory) !== location.directory) throw new Error("invalid"); }
   catch { throw new ConversationContentLocationError(); }
@@ -38,6 +42,7 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
       for (const source of request.sourcePaths) await options.assertRead(source, identity);
       const assessment = await readGenerationSources(options.vaultRoot, request.sourcePaths, [`${request.outputRoot}/报告`, `${request.outputRoot}/导图`], identity.signal);
       if (assessment.error) throw new Error(assessment.error);
+      if (request.outputKind === "excalidraw") assessment.drawingSchema = await getExcalidrawService(options.app).schema();
       return assessment;
     },
     async assertContinuation(request, identity) {
@@ -49,6 +54,7 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
       identity.signal.throwIfAborted();
     },
     async finish(request, assessment, modelText, identity, onStage, attempt) {
+      if (request.outputKind === "excalidraw") return finishDrawing(options, request, assessment, modelText, identity, onStage);
       const result: GenerationResult = { requestId: request.id, outputKind: request.outputKind, writeState: "not_written", readFailures: assessment.readFailures, sourcePaths: assessment.sources.map(source => source.path) };
       try {
         if (!modelText || identity.signal.aborted) { result.error = identity.signal.aborted ? "已取消，尚未写入文件。" : "生成未完成，尚未写入文件。"; return result; }

@@ -6,6 +6,7 @@ import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, Platform, type App } from "obsidian";
 import { normalizeGenerationTemplates } from "../../settings/generation-templates";
+import { getExcalidrawService } from "../../excalidraw/service";
 import type CodexForObsidianPlugin from "../../main";
 import { enabledSkillResources } from "../../resources/registry";
 import type { EchoInkResource } from "../../resources/types";
@@ -1070,6 +1071,7 @@ export function renderKnowledgeCommandMatches(
       selectedSkill: host.selectedSkill,
       proAccess: host.plugin.accountService,
       generationTemplates: Platform.isDesktopApp ? normalizeGenerationTemplates(host.plugin.settings.generationTemplates) : [],
+      generationTemplateReasons: Platform.isDesktopApp ? { drawing: getExcalidrawService(host.plugin.app).disabledReason() } : {},
       generationEntryReason: Platform.isDesktopApp ? host.generationEntryReason() : null
     },
     {

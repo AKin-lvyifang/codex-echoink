@@ -1,8 +1,9 @@
-import { Notice, setIcon, TFile, type App } from "obsidian";
+import { Notice, TFile, type App } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import { conversationUiText } from "../ui/codex-view/ui-i18n";
 import { generationRequestSummary } from "./request";
 import type { GenerationRequest, GenerationResult } from "./types";
+import { setGenerationIcon } from "./icons";
 
 async function openGenerationFile(app: App, relativePath: string, language: SettingsLanguage): Promise<boolean> {
   const file = app.vault.getAbstractFileByPath(relativePath);
@@ -42,10 +43,12 @@ export function renderGenerationResultCard(container: HTMLElement, options: {
   root.dataset.generationRequestId = result.requestId;
   root.dataset.writeState = result.writeState;
   const icon = root.createSpan({ cls: "codex-generation-result-icon", attr: { "aria-hidden": "true" } });
-  setIcon(icon, result.outputKind === "canvas" ? "layout-dashboard" : "file-text");
+  setGenerationIcon(icon, result.outputKind);
   const copy = root.createDiv({ cls: "codex-generation-result-copy" });
   copy.createDiv({ cls: "codex-generation-result-name", text: result.path.split("/").at(-1) ?? result.path });
-  const counts = result.outputKind === "canvas" && result.branchCount !== undefined
+  const counts = result.outputKind === "excalidraw" && result.boxCount !== undefined
+    ? conversationUiText(language, `${result.boxCount} 个框 · ${result.arrowCount ?? 0} 条连线`, `${result.boxCount} boxes · ${result.arrowCount ?? 0} arrows`)
+    : result.outputKind === "canvas" && result.branchCount !== undefined
     ? conversationUiText(language, `${result.branchCount} 个分支`, `${result.branchCount} branches`)
     : result.characterCount !== undefined ? conversationUiText(language, `${result.characterCount.toLocaleString()} 字`, `${result.characterCount.toLocaleString()} characters`) : "";
   copy.createDiv({ cls: "codex-generation-result-path", text: `${result.path}${counts ? ` · ${counts}` : ""}` });

@@ -15,6 +15,7 @@ import { applyDeleteButton } from "./amicro-buttons";
 import { createKnowledgeFolderPicker, type KnowledgeFolderChoice, type KnowledgeFolderPicker } from "./knowledge-folder-picker";
 import { initializationFolderTree, renderInitializationFolderTree } from "./knowledge-initialization-tree";
 import { initializationFolderIssues, type InitializationFolderField } from "../knowledge-base/initialization-choices";
+import { knowledgeExcalidrawLocation } from "../knowledge-base/folder-bindings";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
@@ -174,6 +175,23 @@ export class DesktopKnowledgeSettings {
       const missing = directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
       if (missing || key !== "text" && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
     }
+    const row = new OriginSetting(targets).setName("Excalidraw 手绘图");
+    row.settingEl.dataset.collectionKind = "excalidraw";
+    let directory = "", pending = false, error = "";
+    try { const location = knowledgeExcalidrawLocation(bindings); directory = location.directory; pending = location.createIfMissing && !this.plugin.app.vault.getAbstractFileByPath(directory); }
+    catch { error = "请先选择保存位置"; }
+    const picker = createKnowledgeFolderPicker(row.controlEl, { label: "Excalidraw 手绘图保存位置",
+      folders: () => this.plugin.app.vault.getAllFolders(false).map(folder => folder.path),
+      values: directory ? [{ path: directory, create: pending }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
+      onChange: values => {
+        const next = this.bindings(); next.excalidrawDirectory = values[0]?.path ?? null;
+        picker.setDisabled(true);
+        void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
+      }
+    });
+    picker.element.querySelector<HTMLElement>('[role="combobox"]')?.setAttribute("data-echoink-focus-key", "knowledge:collections:excalidraw");
+    this.folderPickers.push(picker);
+    if (error || directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) picker.setError(error || "文件夹不存在，请重新选择");
   }
   private renderPermissions(page: HTMLElement): void {
     const bindings = this.bindings();

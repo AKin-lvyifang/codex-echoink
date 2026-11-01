@@ -655,6 +655,8 @@ export async function createPiProductionRuntimeBundle(
       },
       generation: createGenerationRuntimePort({
         app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
+        confirmDrawing: (preview, identity, requestId) => approvalBroker.waitForDecision({ requestId: `drawing-${requestId}`, conversationId: identity.conversationId, piSessionId: identity.piSessionId,
+          productRunId: identity.productRunId, toolCallId: `generation-${requestId}`, target: canonicalJsonStringify({ relativePath: preview.path }), preview: canonicalJsonStringify(preview), signal: identity.signal }),
         directoryReady: async directory => (await import("./conversation-content-settings")).rememberConversationContentDirectory(plugin, directory),
         domain: vaultDomainService, writeExecution,
         assertRead: async (relativePath, identity) => {
@@ -1338,7 +1340,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         const generation = input.currentGenerationContext?.();
         if (generation) {
           transientTurnContext = null; transientResourceContextSignature = null;
-          const systemPrompt = [generationSystemPrompt(generation.request, generation.attempt), agentContext].filter(Boolean).join("\n\n");
+          const systemPrompt = [generationSystemPrompt(generation.request, generation.attempt, generation.assessment.drawingSchema), agentContext].filter(Boolean).join("\n\n");
           const message = generationContextMessage(generation.request, generation.assessment.sources, generation.attempt);
           input.contextLedger?.captureBeforeAgentStart({ ...event, systemPrompt });
           input.contextLedger?.captureTransientContextMessages([]);

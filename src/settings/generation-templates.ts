@@ -17,7 +17,9 @@ export function defaultGenerationTemplates(): GenerationTemplate[] {
     { id: "blog", name: "博文", description: "把观点串成一篇好读的文章", outputKind: "markdown", builtin: true,
       instructions: "写成一篇 1200 字左右的文章：开头一个问题，中间按观点展开，结尾回到问题。每段引用一处原文，并标出来源笔记。\n\n只用所选资料；资料里没有的，写“资料未提及”。" },
     { id: "mind", name: "思维导图", description: "按资料内容组织导图、流程、时间线或对比", outputKind: "canvas", builtin: true,
-      instructions: "根据资料的实际关系选择结构：概念层级用导图，步骤用流程，历史事件用时间线，差异用对比，相关内容可分组。\n流程中的步骤节点按先后串联，判断或实际分支才分叉；历史事件按时间连接主干和事件点；对比对象并排、对应维度对齐，连线表达真实关系。不要把各类资料统一排成“中心→分支→详情”的三列树，也不要硬凑固定分支或要点数。\n自行安排 Canvas 节点、坐标、尺寸、颜色和连线，让阅读顺序清楚，节点不重叠，文字留足空间。\n来源使用本轮成功读取笔记的精确路径；网址只能来自资料正文。\n\n只用所选资料；资料里没有的，写“资料未提及”。" }
+      instructions: "根据资料的实际关系选择结构：概念层级用导图，步骤用流程，历史事件用时间线，差异用对比，相关内容可分组。\n流程中的步骤节点按先后串联，判断或实际分支才分叉；历史事件按时间连接主干和事件点；对比对象并排、对应维度对齐，连线表达真实关系。不要把各类资料统一排成“中心→分支→详情”的三列树，也不要硬凑固定分支或要点数。\n自行安排 Canvas 节点、坐标、尺寸、颜色和连线，让阅读顺序清楚，节点不重叠，文字留足空间。\n来源使用本轮成功读取笔记的精确路径；网址只能来自资料正文。\n\n只用所选资料；资料里没有的，写“资料未提及”。" },
+    { id: "drawing", name: "手绘图", description: "用手绘框、文字和箭头讲清资料中的关系", outputKind: "excalidraw", builtin: true,
+      instructions: "按资料中的真实关系组织手绘图：步骤按先后串联，对比并排，概念可分组。框中文字简短清晰，留足文字和来源的空间；连线表达真实关系，不硬凑分支。只用所选资料；资料未提及的内容不得编造。" }
   ];
 }
 
@@ -26,7 +28,7 @@ function readTemplate(value: unknown): GenerationTemplate | null {
   const item = value as Record<string, unknown>;
   if (typeof item.id !== "string" || !item.id.trim() || item.id !== item.id.trim() || typeof item.name !== "string" || !item.name.trim()
     || typeof item.description !== "string" || typeof item.instructions !== "string" || !item.instructions.trim()
-    || (item.outputKind !== "markdown" && item.outputKind !== "canvas")) return null;
+    || (item.outputKind !== "markdown" && item.outputKind !== "canvas" && !(item.id === "drawing" && item.outputKind === "excalidraw"))) return null;
   // Preserve editable text so a later load cannot erase evidence of a user edit.
   // IDs are immutable identifiers; reject malformed whitespace rather than aliasing a built-in ID.
   return { id: item.id, name: item.name, description: item.description, instructions: item.instructions, outputKind: item.outputKind };
@@ -44,7 +46,7 @@ export function normalizeGenerationTemplates(value: unknown): GenerationTemplate
       && LEGACY_MIND_TEMPLATES.some(template => Object.entries(template).every(([key, expected]) => (value as Record<string, unknown>)[key] === expected));
     return legacy ? defaults.find(template => template.id === "mind")! : item;
   }).filter((item): item is GenerationTemplate => Boolean(item)) : [];
-  const templates = defaults.map(item => ({ ...(saved.find(candidate => candidate.id === item.id) ?? item), builtin: true }));
+  const templates = defaults.map(item => ({ ...(saved.find(candidate => candidate.id === item.id) ?? item), ...(item.id === "drawing" ? { outputKind: "excalidraw" as const } : {}), builtin: true }));
   const ids = new Set(templates.map(item => item.id));
   const names = new Set(templates.map(item => generationTemplateNameKey(item.name)));
   for (const item of saved) {

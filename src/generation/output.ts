@@ -1,6 +1,7 @@
 import type { GenerationAttempt, GenerationPreparedOutput, GenerationRequest, GenerationSource } from "./types";
 import { parseGenerationModelJson } from "./request";
 import { parseGenerationCanvas, parseGenerationMapHierarchy, serializeGenerationCanvas } from "./canvas";
+import { parseDrawingOutput } from "../excalidraw/elements";
 
 /** Only this synchronous, side-effect-free failure is eligible for model repair. */
 export class GenerationOutputValidationError extends Error {}
@@ -9,6 +10,10 @@ export function prepareGenerationOutput(request: GenerationRequest, sources: rea
   attempt: GenerationAttempt = { kind: "initial" }): GenerationPreparedOutput {
   try {
     const value = parseGenerationModelJson(modelText);
+    if (request.outputKind === "excalidraw") {
+      const output = parseDrawingOutput(value, sources.map(source => source.path));
+      return { title: output.title, content: JSON.stringify(output) };
+    }
     if (request.outputKind === "canvas") {
       if (attempt.kind === "fallback") {
         const hierarchy = parseGenerationMapHierarchy(value, sources.map(source => source.path));

@@ -140,7 +140,10 @@ export function generationApprovalPresentation(target?: string, preview?: string
     if (typeof value?.relativePath === "string") readableTarget = value.relativePath;
   } catch { /* An already readable path remains literal. */ }
   try {
-    const value = JSON.parse(preview ?? "") as { content?: unknown; change?: { diff?: unknown; truncated?: unknown } };
+    const value = JSON.parse(preview ?? "") as { domain?: unknown; path?: unknown; style?: unknown; boxCount?: unknown; arrowCount?: unknown; content?: unknown; change?: { diff?: unknown; truncated?: unknown } };
+    if (value.domain === "excalidraw" && typeof value.path === "string" && typeof value.style === "string" && typeof value.boxCount === "number" && typeof value.arrowCount === "number") {
+      return { target: value.path, preview: `${value.style}\n${value.boxCount} 个框 · ${value.arrowCount} 条连线` };
+    }
     if (typeof value?.change?.diff === "string") readablePreview = value.change.diff + (value.change.truncated === true ? "\n差异预览已截短。" : "");
     else if (typeof value?.content === "string") readablePreview = value.content;
   } catch { /* An already readable preview remains literal. */ }
