@@ -63,6 +63,7 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/生成模板|generation.*template/iu.test(term)) return { tab, focus: "knowledge:generation-templates" };
     if (/待办分类|todo.*categor/iu.test(term)) return { tab, focus: "todo:categories" };
     if (/资料来源|raw.*source|sources?/iu.test(term)) return { tab, focus: "knowledge:sources" };
+    if (/对话栏内容|conversation.*content/iu.test(term)) return { tab, focus: "knowledge:collections:text" };
     if (/收藏保存位置|collection.*location/iu.test(term)) return { tab, focus: "knowledge:collections" };
     if (/Agent 权限与维护|agent.*permissions?/iu.test(term)) return { tab, focus: "knowledge:permissions" };
     if (/目录管理|directory.*management/iu.test(term)) return { tab, focus: "knowledge:management" };

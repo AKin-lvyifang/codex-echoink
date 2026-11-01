@@ -319,6 +319,7 @@ export interface PiProductionPluginHost {
   requireAvailableEchoInkSkill(skillId: string): Promise<Readonly<EchoInkResource>>;
   getVaultPath(): string;
   getPluginDataDirName(): string;
+  saveSettings(force?: boolean): Promise<void>;
   persistPiNativeSettings(): Promise<void>;
   buildRuntimeEchoInkResourceCatalog(): Promise<EchoInkResource[]>;
   readPersistedEchoInkResourceSnapshot(): Promise<
@@ -654,6 +655,7 @@ export async function createPiProductionRuntimeBundle(
       },
       generation: createGenerationRuntimePort({
         app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
+        directoryReady: async directory => (await import("./conversation-content-settings")).rememberConversationContentDirectory(plugin, directory),
         domain: vaultDomainService, writeExecution,
         assertRead: async (relativePath, identity) => {
           const context = await currentAgentCapabilityContext(plugin, catalog, identity.conversationId, identity.access);

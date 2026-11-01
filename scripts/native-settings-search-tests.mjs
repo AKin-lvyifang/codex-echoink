@@ -15,7 +15,7 @@ try {
   await esbuild.build({
     entryPoints: ["src/tests/settings-search-dom.ts"], absWorkingDir: root,
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: entry, sourcemap: "inline",
-    banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root, "package.json"))});` },
+    banner: { js: `import {createRequire as createSettingsSearchFixtureRequire} from "node:module"; const require = createSettingsSearchFixtureRequire(${JSON.stringify(path.join(root, "package.json"))});` },
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     plugins: [{ name: "external-package-location", setup(build) {
       build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));

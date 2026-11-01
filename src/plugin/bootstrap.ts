@@ -138,10 +138,13 @@ export function registerGenerationFileMenu(plugin: CodexForObsidianPlugin): void
   if (!Platform.isDesktopApp) return;
   plugin.registerEvent(plugin.app.workspace.on("file-menu", (menu, file) => {
     if (!(file instanceof TFolder) && (!(file instanceof TFile) || file.extension.toLocaleLowerCase() !== "md")) return;
-    const outputs = plugin.settings.knowledgeBase.folderBindings?.roles.outputs.readPaths ?? [];
+    const service = getGenerationService(plugin);
+    let outputs: string[];
+    try { outputs = [service.outputDirectory("markdown"), service.outputDirectory("canvas")]; }
+    catch { outputs = []; }
     if (outputs.some(root => file.path === root || file.path.startsWith(`${root}/`)) || file.path.split("/").some(part => part.startsWith("."))) return;
     // Empty folders deliberately keep the entry so the modal can offer Add note.
-    if (file instanceof TFile && !getGenerationService(plugin).sourcesFromPath(file.path).length) return;
+    if (file instanceof TFile && !service.sourcesFromPath(file.path).length) return;
     menu.addItem(item => item.setTitle("用 EchoInk 生成…").setIcon("sparkles").onClick(() => {
       void (async () => { try {
         await plugin.activateView(); const view = plugin.getCodexView();

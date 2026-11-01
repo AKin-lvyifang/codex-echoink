@@ -13,7 +13,8 @@ export function freezeGenerationRequest(value: GenerationRequest): GenerationReq
   const directory = `${root}/${value.outputKind === "canvas" ? "导图" : "报告"}`;
   if (value.outputDirectory !== directory) throw new Error("生成目录无效，请重新打开生成弹窗。");
   const sources = [...new Set(value.sourcePaths.map(normalizeGenerationPath))];
-  if (!sources.length || sources.length > 20 || sources.some(source => !/\.md$/iu.test(source) || source === root || source.startsWith(`${root}/`))) throw new Error("生成资料范围无效，请重新选择。");
+  const generatedDirectories = [`${root}/报告`, `${root}/导图`];
+  if (!sources.length || sources.length > 20 || sources.some(source => !/\.md$/iu.test(source) || generatedDirectories.some(output => source === output || source.startsWith(`${output}/`)))) throw new Error("生成资料范围无效，请重新选择。");
   return structuredClone({ ...value, template: { ...value.template }, sourcePaths: sources, outputRoot: root, outputDirectory: directory });
 }
 export function createGenerationRequest(template: GenerationTemplate, sourcePaths: readonly string[], outputRoot: string): GenerationRequest {

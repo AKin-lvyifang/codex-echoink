@@ -194,5 +194,12 @@ export function runOrganizationConfigurationScenarios(api) {
   const edited = structuredClone(named); edited.bindings.organization = { enabled: false, scope: "selected", paths: ["研究资料/other"] };
   const preserved = intended.call({}, prepared, edited);
   assert.deepEqual(JSON.parse(JSON.stringify(preserved.bindings.organization)), JSON.parse(JSON.stringify(edited.bindings.organization)), "later user choice wins over restore");
+  const pending = api.emptyKnowledgeFolderBindings();
+  pending.collectionTargets = { web: null, wechat: null, text: "收藏/对话" }; pending.conversationDirectoryPending = true;
+  const oldApplied = structuredClone(pending); oldApplied.collectionTargets.text = "old-output"; oldApplied.conversationDirectoryPending = false;
+  const pendingBefore = { ...before, bindings: pending }, pendingApplied = { ...before, bindings: oldApplied };
+  const pendingRestore = intended.call({}, { preview: { request: { kind: "restore" }, moves: [] }, original: { before: pendingBefore, after: pendingApplied }, baseline: { inventory: { files: [] } } }, pendingApplied);
+  assert.equal(pendingRestore.bindings.collectionTargets.text, "收藏/对话");
+  assert.equal(pendingRestore.bindings.conversationDirectoryPending, true, "restoring an uninitialized default keeps its first-save creation state");
   console.log("PASS mobile organization rename/restore and later-choice preservation");
 }

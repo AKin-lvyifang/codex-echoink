@@ -8,6 +8,7 @@ import { createOriginButton, createOriginCheck, createOriginInput, createOriginR
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { buildVaultNoteMentionCatalog } from "../ui/codex-view/note-mentions";
 import { mountGenerationNotePicker } from "./note-picker";
+import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 
 export type GenerationModalService = Pick<GenerationService, "availableNotes" | "assessSources" | "disabledReason" | "createRequest" | "outputDirectory" | "recommend">;
 export interface GenerationModalOptions {
@@ -223,8 +224,15 @@ export class GenerationModal extends Modal {
     this.reasonEl.setText(this.submitError || reason); this.generateButton.disabled = this.submitting || Boolean(reason);
     this.cancelButton.disabled = this.submitting; setAmicroButtonPending(this.generateButton, this.submitting);
     this.generateButton.setText(this.submitting ? "提交中…" : "生成");
+    disposeOriginControls(this.destinationEl);
     try { this.destinationEl.setText(this.options.service.outputDirectory(this.selected().outputKind)); }
-    catch { this.destinationEl.setText("请先绑定输出目录"); }
+    catch (error) {
+      this.destinationEl.setText("保存位置不存在");
+      if (error instanceof ConversationContentLocationError) {
+        const settings = createOriginButton(this.destinationEl, { cls: "text-button", text: "去设置" });
+        settings.onclick = () => { this.close(); void this.plugin.openEchoInkConversationContentSettings(); };
+      }
+    }
   }
 
   private updateRecommendation(): void {

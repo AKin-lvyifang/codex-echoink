@@ -886,6 +886,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.settings.resourceManagementTab = "plugins";
     await this.getViewService().openEchoInkSettings("resources", `${id === "pdf-reading" ? "pdf-reading" : id}:settings`);
   }
+  async openEchoInkConversationContentSettings(): Promise<void> {
+    await this.getViewService().openEchoInkSettings("knowledgeBase", "knowledge:collections:text");
+  }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
   }

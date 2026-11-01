@@ -9,7 +9,7 @@ import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole }
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeConversationLocation, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -154,6 +154,7 @@ export class EchoInkKnowledgeSurfaceService {
         if (JSON.stringify(knowledgeOrganizationSettings(current)) === JSON.stringify(knowledgeOrganizationSettings(applied))) restored.organization = knowledgeOrganizationSettings(originalConfig);
         const currentTargets = knowledgeCollectionTargets(current), appliedTargets = knowledgeCollectionTargets(applied), originalTargets = knowledgeCollectionTargets(originalConfig);
         restored.collectionTargets = { ...currentTargets };
+        if (currentTargets.text === appliedTargets.text && knowledgeConversationLocation(current).createIfMissing === knowledgeConversationLocation(applied).createIfMissing) restored.conversationDirectoryPending = knowledgeConversationLocation(originalConfig).createIfMissing;
         for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
           if (kind === "fileText" && originalTargets[kind] === undefined) delete restored.collectionTargets.fileText;
           else restored.collectionTargets[kind] = originalTargets[kind] ?? null;
@@ -694,6 +695,7 @@ export class EchoInkKnowledgeSurfaceService {
         checkPaths.add(directory);
       }
       for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
+        if (kind === "text" && knowledgeConversationLocation(next).createIfMissing) continue;
         const target = next.collectionTargets?.[kind];
         const oldTarget = previous ? knowledgeCollectionTargets(previous)[kind] : null;
         if (target && target !== oldTarget) {

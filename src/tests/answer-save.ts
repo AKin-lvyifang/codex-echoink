@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import { TFile, TFolder } from "obsidian";
 import { parse } from "yaml";
-import { emptyKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { DEFAULT_CONVERSATION_CONTENT_DIRECTORY, emptyKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { saveAnswerAsNote, type AnswerSaveInput, type AnswerSaveVault } from "../ui/codex-view/answer-save";
 
 function bindingsAt(directory = "成果/输出"): KnowledgeFolderBindings {
@@ -37,14 +37,16 @@ async function diskVault(root: string) {
   };
   const seedFolder = async (relative: string) => {
     await fs.mkdir(hostPath(relative), { recursive: true });
-    const folder = new TFolder();
-    folder.path = relative;
-    folder.name = path.basename(relative);
-    entries.set(relative, folder);
-    return folder;
+    const segments = relative.split("/");
+    for (let length = 1; length <= segments.length; length++) {
+      const directory = segments.slice(0, length).join("/");
+      const folder = Object.assign(new TFolder(), { path: directory, name: segments[length - 1] });
+      entries.set(directory, folder);
+    }
+    return entries.get(relative) as TFolder;
   };
   const seedFile = async (relative: string, text: string) => {
-    await fs.mkdir(path.dirname(hostPath(relative)), { recursive: true });
+    if (path.posix.dirname(relative) !== ".") await seedFolder(path.posix.dirname(relative));
     await fs.writeFile(hostPath(relative), text, { flag: "wx" });
     const file = Object.assign(new TFile(), { path: relative });
     entries.set(relative, file);
@@ -90,29 +92,73 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { networkCalls++; throw new Error("manual save must not call a Provider"); };
   try {
-    await test("unbound and disabled outputs perform zero writes", async ({ vault, writes }) => {
-      const disabled = bindingsAt(); disabled.roles.outputs.enabled = false;
-      const noWritePath = bindingsAt(); noWritePath.roles.outputs.writePath = null;
-      const withdrawn = bindingsAt(); withdrawn.roles.outputs.readPaths = ["其他输出"];
-      for (const folderBindings of [undefined, null, emptyKnowledgeFolderBindings(), disabled, noWritePath, withdrawn]) {
-        await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings })), /设置 › 知识库/u);
+    await test("unbound saves create the default folder recursively and report the ready directory", async ({ vault, writes }) => {
+      const ready: string[] = [];
+      for (const folderBindings of [undefined, null, emptyKnowledgeFolderBindings()]) {
+        const saved = await saveAnswerAsNote(vault, answerInput({ folderBindings, onDirectoryReady: async directory => { ready.push(directory); } }));
+        assert.equal(path.posix.dirname(saved), DEFAULT_CONVERSATION_CONTENT_DIRECTORY);
       }
-      assert.deepEqual(writes, { folders: 0, files: 0 });
+      assert.deepEqual(ready, Array(3).fill(DEFAULT_CONVERSATION_CONTENT_DIRECTORY));
+      assert.deepEqual(writes, { folders: 2, files: 3 });
+      assert(vault.getAbstractFileByPath("收藏") instanceof TFolder);
+      assert(vault.getAbstractFileByPath(DEFAULT_CONVERSATION_CONTENT_DIRECTORY) instanceof TFolder);
     });
 
-    await test("unsafe or stale bindings never rebuild a root", async ({ vault, writes, seedFile }) => {
-      for (const directory of ["../外部", "/绝对路径", "C:\\外部", "成果/../外部", "./成果", "成果//输出", ".obsidian", "成果\\输出", " 成果/输出"]) {
-        await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: bindingsAt(directory) })), /设置 › 知识库/u);
+    await test("only a pending default selection can recursively create its missing location", async ({ vault, writes }) => {
+      const folderBindings = emptyKnowledgeFolderBindings();
+      folderBindings.collectionTargets = { web: null, wechat: null, text: DEFAULT_CONVERSATION_CONTENT_DIRECTORY };
+      folderBindings.conversationDirectoryPending = true;
+      const saved = await Promise.all([
+        saveAnswerAsNote(vault, answerInput({ folderBindings, answerMarkdown: "第一条" })),
+        saveAnswerAsNote(vault, answerInput({ folderBindings, answerMarkdown: "第二条" }))
+      ]);
+      assert.deepEqual(saved, [`${DEFAULT_CONVERSATION_CONTENT_DIRECTORY}/如何做好知识整理.md`, `${DEFAULT_CONVERSATION_CONTENT_DIRECTORY}/如何做好知识整理 2.md`]);
+      assert.deepEqual(writes, { folders: 2, files: 2 });
+    });
+
+    await test("the text collection location wins over legacy output and receives notes directly", async ({ vault, writes, seedFolder }) => {
+      await seedFolder("收藏/文字"); await seedFolder("成果/输出");
+      const folderBindings = bindingsAt(); folderBindings.collectionTargets = { web: null, wechat: null, text: "收藏/文字" };
+      const ready: string[] = [];
+      const saved = await saveAnswerAsNote(vault, answerInput({ folderBindings, onDirectoryReady: async directory => { ready.push(directory); } }));
+      assert.equal(saved, "收藏/文字/如何做好知识整理.md");
+      assert.deepEqual(ready, [], "Explicit locations do not need default-location persistence");
+      assert.equal(vault.getAbstractFileByPath("收藏/文字/摘录"), null);
+      assert.deepEqual(writes, { folders: 0, files: 1 });
+    });
+
+    await test("legacy output is used directly before the default", async ({ vault, writes, seedFolder }) => {
+      await seedFolder("成果/输出");
+      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/如何做好知识整理.md");
+      assert.deepEqual(writes, { folders: 0, files: 1 });
+      assert.equal(vault.getAbstractFileByPath(DEFAULT_CONVERSATION_CONTENT_DIRECTORY), null);
+    });
+
+    await test("legacy implicit text collection remains in its actual source folder", async ({ vault, writes, seedFolder }) => {
+      await seedFolder("原有收藏"); await seedFolder("成果/输出");
+      const folderBindings = bindingsAt(); Object.assign(folderBindings.roles.raw, { enabled: true, readPaths: ["原有收藏"], writePath: "原有收藏" });
+      assert.equal(await saveAnswerAsNote(vault, answerInput({ folderBindings })), "原有收藏/如何做好知识整理.md");
+      assert.deepEqual(writes, { folders: 0, files: 1 });
+    });
+
+    await test("unsafe or stale explicit locations never rebuild or fall back", async ({ vault, writes, seedFile, seedFolder }) => {
+      const message = /对话栏内容的保存位置不存在，去设置/u;
+      await seedFolder("成果/输出");
+      for (const directory of ["../外部", "/绝对路径", "C:\\外部", "成果/../外部", "./成果", "成果//输出", ".obsidian", "成果\\输出", " 成果/输出", "已删除", DEFAULT_CONVERSATION_CONTENT_DIRECTORY]) {
+        const folderBindings = bindingsAt(); folderBindings.collectionTargets = { web: null, wechat: null, text: directory };
+        await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings })), message);
       }
-      await assert.rejects(saveAnswerAsNote(vault, answerInput()), /输出目录已失效/u);
-      await seedFile("成果/输出", "a file is not a bound folder");
-      await assert.rejects(saveAnswerAsNote(vault, answerInput()), /输出目录已失效/u);
+      await seedFile("收藏文件", "a file is not a bound folder");
+      const occupied = bindingsAt(); occupied.collectionTargets = { web: null, wechat: null, text: "收藏文件" };
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: occupied })), message);
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: bindingsAt("旧输出已删除") })), message);
       assert.deepEqual(writes, { folders: 0, files: 0 });
     });
 
     await test("read-only conversation saves unchanged Markdown and valid properties without a model", async ({ vault, writes, seedFolder, read }) => {
       await seedFolder("成果/输出");
       const plugin = { settings: { defaultPermission: "read-only", knowledgeBase: { folderBindings: bindingsAt() } } };
+      plugin.settings.knowledgeBase.folderBindings.organization!.enabled = false;
       const question = '提问："标题"\n---\n类型: 不应注入';
       const answerMarkdown = "\n# 原始回答\r\n\n- **保留**\n![[图片.png]]\n```yaml\n类型: 正文\n```\n";
       const input = answerInput({ folderBindings: plugin.settings.knowledgeBase.folderBindings, question, answerMarkdown,
@@ -125,13 +171,14 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
         来源: ["[[资料/原文]]", "[[资料/第二篇]]"], 保存时间: expectedLocalTime(input.savedAt!) });
       assert.equal(content.slice(frontmatterEnd + 5), `\n${answerMarkdown}\n\n## 来源\n- [[资料/原文]]\n- [[资料/第二篇]]\n`);
       assert.equal(plugin.settings.defaultPermission, "read-only");
-      assert.deepEqual(writes, { folders: 1, files: 1 });
+      assert.equal(path.posix.dirname(saved), "成果/输出");
+      assert.deepEqual(writes, { folders: 0, files: 1 });
       assert.equal(networkCalls, 0);
     });
 
     await test("same-name files and folders are retained and numbered", async ({ vault, seedFolder, seedFile, read }) => {
-      await seedFolder("成果/输出"); await seedFolder("成果/输出/摘录");
-      const base = "成果/输出/摘录/如何做好知识整理";
+      await seedFolder("成果/输出");
+      const base = "成果/输出/如何做好知识整理";
       await seedFile(`${base}.md`, "USER CONTENT"); await seedFolder(`${base} 2.md`);
       assert.equal(await saveAnswerAsNote(vault, answerInput()), `${base} 3.md`);
       assert.equal(await read(`${base}.md`), "USER CONTENT");
@@ -141,7 +188,7 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       await seedFolder("成果/输出");
       const saved = await Promise.all([saveAnswerAsNote(vault, answerInput({ answerMarkdown: "第一条" })),
         saveAnswerAsNote(vault, answerInput({ answerMarkdown: "第二条" }))]);
-      assert.deepEqual(saved, ["成果/输出/摘录/如何做好知识整理.md", "成果/输出/摘录/如何做好知识整理 2.md"]);
+      assert.deepEqual(saved, ["成果/输出/如何做好知识整理.md", "成果/输出/如何做好知识整理 2.md"]);
       assert.match(await read(saved[0]), /\n第一条\n/u); assert.match(await read(saved[1]), /\n第二条\n/u);
     });
 
@@ -152,15 +199,14 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
         await seedFile(relative, "EXTERNAL USER CONTENT");
         throw new Error("File already exists");
       };
-      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/摘录/如何做好知识整理 2.md");
-      assert.equal(await read("成果/输出/摘录/如何做好知识整理.md"), "EXTERNAL USER CONTENT");
+      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/如何做好知识整理 2.md");
+      assert.equal(await read("成果/输出/如何做好知识整理.md"), "EXTERNAL USER CONTENT");
     });
 
-    await test("a concurrent child folder creation is accepted", async ({ vault, hooks, seedFolder, writes }) => {
-      await seedFolder("成果/输出");
+    await test("concurrent default folder creation is accepted", async ({ vault, hooks, seedFolder, writes }) => {
       hooks.beforeFolder = async relative => { await seedFolder(relative); throw new Error("Folder already exists"); };
-      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/摘录/如何做好知识整理.md");
-      assert.deepEqual(writes, { folders: 1, files: 1 });
+      assert.equal(await saveAnswerAsNote(vault, answerInput({ folderBindings: null })), `${DEFAULT_CONVERSATION_CONTENT_DIRECTORY}/如何做好知识整理.md`);
+      assert.deepEqual(writes, { folders: 2, files: 1 });
     });
 
     await test("punctuation, Unicode truncation, and reserved names yield safe filenames", async ({ vault, seedFolder }) => {
@@ -169,7 +215,7 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
         ["../../说：\"好\"？*<>|\\", "说好.md"], ["？！---", "对话摘录.md"], ["CON", "摘录 CON.md"],
         ["一二三四五六七八九十一二三四五六七八九十一二三四末尾", "一二三四五六七八九十一二三四五六七八九十一二三四.md"],
         ["🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂尾", "🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂.md"]
-      ]) assert.equal(await saveAnswerAsNote(vault, answerInput({ question })), `成果/输出/摘录/${filename}`);
+      ]) assert.equal(await saveAnswerAsNote(vault, answerInput({ question })), `成果/输出/${filename}`);
     });
 
     await test("literal percent source links resolve to their real files rather than encoded or decoded decoys", async ({ vault, seedFolder, seedFile, read }) => {
@@ -254,24 +300,27 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       assert.match(content, /\n来源: \[\]\n/u); assert(content.endsWith("\n\n## 来源\n"));
     });
 
-    await test("invalid source paths and dates fail before writes", async ({ vault, writes, seedFolder }) => {
-      await seedFolder("成果/输出");
-      await assert.rejects(saveAnswerAsNote(vault, answerInput({ sourcePaths: ["../外部.md"] })), /来源笔记路径无效/u);
-      await assert.rejects(saveAnswerAsNote(vault, answerInput({ savedAt: new Date("invalid") })), /Invalid time value/u);
+    await test("invalid source paths and dates fail before default folder creation", async ({ vault, writes }) => {
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null, sourcePaths: ["../外部.md"] })), /来源笔记路径无效/u);
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null, savedAt: new Date("invalid") })), /Invalid time value/u);
       assert.deepEqual(writes, { folders: 0, files: 0 });
     });
 
-    await test("a file occupying the child directory is retained", async ({ vault, writes, seedFolder, seedFile, read }) => {
-      await seedFolder("成果/输出"); await seedFile("成果/输出/摘录", "KEEP");
-      await assert.rejects(saveAnswerAsNote(vault, answerInput()), /摘录路径已被文件占用/u);
-      assert.equal(await read("成果/输出/摘录"), "KEEP"); assert.deepEqual(writes, { folders: 0, files: 0 });
+    await test("a file occupying the default parent is retained", async ({ vault, writes, seedFile, read }) => {
+      await seedFile("收藏", "KEEP");
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null })), /对话栏内容的保存位置不存在，去设置/u);
+      assert.equal(await read("收藏"), "KEEP"); assert.deepEqual(writes, { folders: 0, files: 0 });
     });
 
-    await test("folder failure propagates without file writes", async ({ vault, hooks, writes, seedFolder }) => {
-      await seedFolder("成果/输出");
+    await test("default folder failure propagates without file writes", async ({ vault, hooks, writes }) => {
       hooks.beforeFolder = async () => { throw new Error("disk is read-only"); };
-      await assert.rejects(saveAnswerAsNote(vault, answerInput()), /disk is read-only/u);
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null })), /disk is read-only/u);
       assert.deepEqual(writes, { folders: 1, files: 0 });
+    });
+
+    await test("a ready callback failure prevents note writes", async ({ vault, writes }) => {
+      await assert.rejects(saveAnswerAsNote(vault, answerInput({ folderBindings: null, onDirectoryReady: async () => { throw new Error("settings save failed"); } })), /settings save failed/u);
+      assert.deepEqual(writes, { folders: 2, files: 0 });
     });
 
     await test("an error after a file becomes visible is not mistaken for a name collision", async ({ vault, hooks, writes, seedFolder, seedFile, read }) => {
@@ -279,8 +328,8 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       hooks.beforeCreate = async relative => { await seedFile(relative, "VISIBLE CONTENT"); throw new Error("disk full after create"); };
       await assert.rejects(saveAnswerAsNote(vault, answerInput()), /disk full after create/u);
       assert.equal(writes.files, 1);
-      assert.equal(await read("成果/输出/摘录/如何做好知识整理.md"), "VISIBLE CONTENT");
-      assert.equal(vault.getAbstractFileByPath("成果/输出/摘录/如何做好知识整理 2.md"), null);
+      assert.equal(await read("成果/输出/如何做好知识整理.md"), "VISIBLE CONTENT");
+      assert.equal(vault.getAbstractFileByPath("成果/输出/如何做好知识整理 2.md"), null);
     });
 
     await test("write failure is not retried and does not poison later manual saves", async ({ vault, hooks, writes, seedFolder }) => {
@@ -289,7 +338,7 @@ export async function runAnswerSaveTests(root: string): Promise<void> {
       await assert.rejects(saveAnswerAsNote(vault, answerInput()), /disk full/u);
       assert.equal(writes.files, 1);
       hooks.beforeCreate = undefined;
-      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/摘录/如何做好知识整理.md");
+      assert.equal(await saveAnswerAsNote(vault, answerInput()), "成果/输出/如何做好知识整理.md");
       assert.equal(writes.files, 2);
     });
     assert.equal(networkCalls, 0, "saving never requests a model or other network service");

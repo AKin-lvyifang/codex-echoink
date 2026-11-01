@@ -1,6 +1,6 @@
 import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeConversationLocation, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
@@ -72,7 +72,7 @@ export class DesktopKnowledgeSettings {
     }
     this.invalidatePlan();
   }
-  private bindings(): KnowledgeFolderBindings { return normalizeKnowledgeFolderBindings(this.plugin.settings.knowledgeBase.folderBindings) ?? emptyKnowledgeFolderBindings(); }
+  private bindings(): KnowledgeFolderBindings { return normalizeKnowledgeFolderBindings(this.plugin.settings.knowledgeBase.folderBindings) ?? normalizeKnowledgeFolderBindings(emptyKnowledgeFolderBindings())!; }
   private service() { const service = this.plugin.getKnowledgeSurfaceService(); if (!service) throw new Error("目录服务尚未就绪，请稍后重试"); return service; }
   private change(page: Page): void { this.page = page; this.error = ""; this.navigation.redraw(); }
   private restoreReturnFocus(parent: HTMLElement): void {
@@ -154,20 +154,25 @@ export class DesktopKnowledgeSettings {
     const saved = knowledgeCollectionTargets(bindings);
     for (const key of knowledgeCollectionKinds(bindings)) {
       const title = knowledgeCollectionLabel(key, bindings);
+      const conversation = key === "text" ? knowledgeConversationLocation(bindings) : null;
+      const directory = conversation?.directory ?? saved[key];
+      const pending = conversation?.createIfMissing === true;
       const row = new OriginSetting(targets).setName(title);
       row.settingEl.dataset.collectionKind = key;
       const picker = createKnowledgeFolderPicker(row.controlEl, { label: `${title}保存位置`,
-        folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => roots.some(root => pathInKnowledgeDirectory(path, root))); },
-        values: saved[key] ? [{ path: saved[key], create: false }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
+        folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => key === "text" || roots.some(root => pathInKnowledgeDirectory(path, root))); },
+        values: directory ? [{ path: directory, create: pending }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
         onChange: values => {
           const next = this.bindings(); next.collectionTargets = knowledgeCollectionTargets(next); next.collectionTargets[key] = values[0]?.path ?? null;
+          if (key === "text") next.conversationDirectoryPending = false;
           picker.setDisabled(true);
           void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
         }
       });
+      picker.element.querySelector<HTMLElement>('[role="combobox"]')?.setAttribute("data-echoink-focus-key", `knowledge:collections:${key}`);
       this.folderPickers.push(picker);
-      const missing = saved[key] && !(this.plugin.app.vault.getAbstractFileByPath(saved[key]) instanceof TFolder);
-      if (!knowledgeCollectionDirectory(bindings, key) || missing) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
+      const missing = directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
+      if (missing || key !== "text" && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
     }
   }
   private renderPermissions(page: HTMLElement): void {

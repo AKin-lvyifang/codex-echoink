@@ -1,3 +1,5 @@
+import { ensureConversationContentDirectory } from "./conversation-content";
+import { rememberConversationContentDirectory } from "../plugin/conversation-content-settings";
 import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
@@ -171,6 +173,18 @@ export class KnowledgeBaseCaptureService {
 
   private async collectionDirectory(vaultPath: string, kind: KnowledgeCollectionKind): Promise<string> {
     const config = getKnowledgeFolderBindings(vaultPath);
+    if (kind === "text") {
+      const root = await fsp.realpath(vaultPath);
+      const directory = await ensureConversationContentDirectory({
+        kind: async relative => {
+          const stat = await fsp.lstat(path.join(root, relative)).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
+          return !stat ? "missing" : stat.isDirectory() && !stat.isSymbolicLink() ? "folder" : "file";
+        },
+        createFolder: async relative => { await fsp.mkdir(path.join(root, relative)); },
+        ready: async relative => { if (typeof this.plugin.saveSettings === "function") await rememberConversationContentDirectory(this.plugin, relative); }
+      }, config);
+      return path.join(root, directory);
+    }
     if (!config) {
       const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", images: "attachments", text: "articles/手动收集", fileText: "articles/文件收藏" })[kind]);
       await fsp.mkdir(legacy, { recursive: true });
