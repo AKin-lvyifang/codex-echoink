@@ -497,14 +497,16 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
-  async openPaperGuideAfterOnboarding(): Promise<void> {
+  async openPaperGuideAfterOnboarding(manual = false): Promise<void> {
+    if (!Platform.isDesktopApp) return;
     if (!this.paperGuide) {
       this.paperGuide = new PaperGuideController(this, () =>
         this.app.workspace.getActiveViewOfType(EchoInkWorkbenchView)?.contentEl
           ?? this.app.workspace.getActiveViewOfType(EchoInkHomeView)?.contentEl ?? null);
       this.register(() => { this.paperGuide?.dispose(); this.paperGuide = null; });
     }
-    await this.paperGuide.showAfterOnboarding();
+    if (manual) await this.paperGuide.showManually();
+    else await this.paperGuide.showAfterOnboarding();
   }
   async openEchoInkAccountSettings(target?: "login" | "benefits"): Promise<void> {
     await this.getViewService().openEchoInkSettings("account", target ? `account:${target}` : undefined);
@@ -912,6 +914,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
+  }
+  async openEchoInkKnowledgeInitializationSettings(): Promise<void> {
+    await this.getViewService().openEchoInkSettings("knowledgeBase", "knowledge:onboarding");
   }
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> { return this.getViewService().openWorkspaceResourceSettings(tab); }
   async openReviewHtmlPreview(relativePath: string): Promise<void> { return this.getViewService().openReviewHtmlPreview(relativePath); }

@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { emptyKnowledgeFolderBindings, knowledgeCollectionDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionDirectory, knowledgeFolderBindingsSignature, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryFile } from "../knowledge-base/folder-plan";
 import { generateOnboardingSetupPlan, yieldOnboardingScan, type OnboardingSetupInput } from "../knowledge-base/onboarding-setup-plan";
 import { registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { nativeJournalFixture } from "./native-journal-fixture";
 import { loadNativeJournalSettings } from "../home/native-journal";
+import { InitializationDirectoryHistory } from "../knowledge-base/initialization-directory-history";
 
 function memoryInput(paths: string[] = [], extra: Partial<OnboardingSetupInput> = {}): OnboardingSetupInput {
   const files: KnowledgeDirectoryFile[] = paths.filter(value => !value.endsWith("/")).map(path => ({ path, size: 17, mtime: 23 }));
@@ -127,9 +128,85 @@ export async function runOnboardingSetupPlanTests(): Promise<void> {
   try {
     await assertServiceIntegration(path.join(root, "existing"));
     await assertEmptyServiceIntegration(path.join(root, "empty"));
+    await assertConfirmationAndUndo(path.join(root, "confirmation"));
+    await assertBindingOnlyUndo(path.join(root, "binding-only"));
+    await assertOnboardingRollback(path.join(root, "rollback"));
   }
   finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Onboarding setup plans: empty/existing/bindings/reuse/collisions/protected/conflicts/50k/integration PASS");
+}
+
+async function assertConfirmationAndUndo(root: string) {
+  const fixture = await nativeJournalFixture(root);
+  const { plugin, app } = fixture;
+  plugin.settings.defaultPermission = "workspace-write";
+  const original = bound({ raw: ["旧来源"], wiki: ["旧成果"] });
+  plugin.settings.knowledgeBase.folderBindings = structuredClone(original);
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  const privateRoot = path.join(root, ".private"); registerKnowledgePrivateRoot(root, privateRoot);
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  try {
+    await fixture.write("旧来源/旧笔记.md", "OLD"); await fixture.write("旧成果/成果.md", "WIKI"); await fixture.write("课程/文章.md", "SOURCE");
+    const history = new InitializationDirectoryHistory({ vaultRoot: root, privateRoot, currentBindings: () => original,
+      mkdir: async directory => { await fs.mkdir(path.join(root, directory), { recursive: true }); },
+      rename: async (from, to) => { await fs.rename(path.join(root, from), path.join(root, to)); },
+      removeEmptyFolder: async directory => { await fs.rmdir(path.join(root, directory)); } });
+    await history.capture("older-layout");
+    const olderIndex = await fs.readFile(path.join(privateRoot, "knowledge/initialization/original-directory-index.json"), "utf8");
+    const before = structuredClone(original); before.roles.raw.searchEnabled = false;
+    plugin.settings.knowledgeBase.folderBindings = before;
+    const cachedFiles = app.vault.getFiles.bind(app.vault);
+    app.vault.getFiles = () => cachedFiles().map(file => { file.stat = { ...file.stat, mtime: Math.floor(file.stat.mtime) - 123 }; return file; });
+    const shown = await service.previewOnboardingSetupPlan("zh");
+    assert.deepEqual(shown.directoryPlan.issues, []);
+    await assert.rejects(service.applyDirectoryPlan(shown.directoryPlan), /目录或文件已改变/u, "other entry points retain their strict snapshot check");
+    const events: string[] = [];
+    const result = await service.applyOnboardingSetupPlan(shown, (step, done, total) => events.push(`${step}:${done}/${total}`));
+    assert(result.created.length > 0); assert(events.includes("bindings:1/1"));
+    assert.deepEqual(result.moved, []);
+    await fixture.write("项目/保留.md", "KEEP");
+    const restored = await service.restoreOriginalDirectories();
+    assert(restored.skipped.some(item => item.path === "项目"));
+    for (const role of ["raw", "wiki", "projects", "inbox", "outputs", "journal"] as const) {
+      assert.deepEqual(plugin.settings.knowledgeBase.folderBindings.roles[role].readPaths, before.roles[role].readPaths);
+      assert.equal(plugin.settings.knowledgeBase.folderBindings.roles[role].enabled, before.roles[role].enabled);
+    }
+    assert.equal(plugin.settings.knowledgeBase.folderBindings.roles.raw.searchEnabled, false);
+    assert.equal(await fs.readFile(path.join(root, "课程/文章.md"), "utf8"), "SOURCE");
+    assert.equal(await fs.readFile(path.join(root, "项目/保留.md"), "utf8"), "KEEP");
+    assert.equal(await fs.stat(path.join(root, "产出")).then(() => true, () => false), false);
+    const older = JSON.parse(await fs.readFile(path.join(privateRoot, "knowledge/initialization/original-directory-index.json"), "utf8"));
+    assert.deepEqual(older.bindings, original, "the original layout journal is retained separately");
+    assert.equal(await fs.readFile(path.join(privateRoot, "knowledge/initialization/original-directory-index.json"), "utf8"), olderIndex, "onboarding does not mutate the older layout journal");
+    const next = await service.previewOnboardingSetupPlan("zh");
+    await fixture.write("后来新增/新笔记.md", "NEW");
+    await assert.rejects(service.applyOnboardingSetupPlan(next), /重新扫描并核对/u, "visible changes require a fresh confirmation");
+  } finally { release(); }
+}
+
+async function assertBindingOnlyUndo(root: string) {
+  const fixture = await nativeJournalFixture(root);
+  const { plugin } = fixture;
+  plugin.settings.defaultPermission = "workspace-write";
+  plugin.settings.journalDirectory = "日记";
+  const original = emptyKnowledgeFolderBindings(); plugin.settings.knowledgeBase.folderBindings = original;
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  registerKnowledgePrivateRoot(root, path.join(root, ".private"));
+  for (const folder of ["资料来源", "知识成果", "项目", "收件箱", "产出", "日记"]) await fs.mkdir(path.join(root, folder));
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  try {
+    const plan = await service.previewOnboardingSetupPlan();
+    assert.deepEqual(plan.directoryPlan.create, []);
+    await service.applyOnboardingSetupPlan(plan);
+    assert(await service.getOriginalDirectoryStatus(), "binding-only setup has its own restore record");
+    await service.restoreOriginalDirectories();
+    assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(original));
+    assert.equal(plugin.settings.knowledgeBase.folderBindings.configured, false);
+    assert.equal(await service.getOriginalDirectoryStatus(), null);
+    for (const folder of ["资料来源", "知识成果", "项目", "收件箱", "产出", "日记"]) assert((await fs.stat(path.join(root, folder))).isDirectory(), "reused directories are never deleted");
+  } finally { release(); }
 }
 
 async function assertEmptyServiceIntegration(root: string) {
@@ -215,5 +292,28 @@ async function assertServiceIntegration(root: string) {
     assert.equal(saved.collectionTargets?.answer, "定制回答/正文");
     assert.equal(saved.collectionTargets?.generation, "产出");
     assert.equal(fixture.providerCalls(), 0);
+  } finally { release(); }
+}
+
+async function assertOnboardingRollback(root: string) {
+  const fixture = await nativeJournalFixture(root);
+  const { plugin } = fixture;
+  plugin.settings.defaultPermission = "workspace-write";
+  const before = emptyKnowledgeFolderBindings(); plugin.settings.knowledgeBase.folderBindings = before;
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  registerKnowledgePrivateRoot(root, path.join(root, ".private"));
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  let failed = false;
+  plugin.saveSettings = async () => { if (!failed && plugin.settings.knowledgeBase.folderBindings?.configured) { failed = true; throw new Error("fixture binding save failed"); } };
+  try {
+    const plan = await service.previewOnboardingSetupPlan();
+    await assert.rejects(service.applyOnboardingSetupPlan(plan), /fixture binding save failed/u);
+    assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(before));
+    for (const folder of plan.directoryPlan.create) assert.equal(await fs.stat(path.join(root, folder)).then(() => true, () => false), false);
+    assert.equal(await service.getOriginalDirectoryStatus(), null, "a rolled-back attempt leaves no stale onboarding undo record");
+    plugin.saveSettings = async () => {};
+    const retry = await service.applyOnboardingSetupPlan(await service.previewOnboardingSetupPlan());
+    assert.equal(retry.configured, true);
   } finally { release(); }
 }

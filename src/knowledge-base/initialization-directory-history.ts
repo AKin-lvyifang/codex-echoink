@@ -21,6 +21,7 @@ export interface DirectoryModuleSettings {
   pdfOriginal?: { directory?: string };
 }
 interface DirectoryHistory {
+  exactBindingRestore?: boolean;
   bindings?: KnowledgeFolderBindings;
   appliedBindings?: KnowledgeFolderBindings;
   moduleSettings?: DirectoryModuleSettings;
@@ -47,7 +48,7 @@ export interface DirectoryHistoryHost {
   restoreFolderLinks?(from: string, to: string): Promise<void>;
   restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
   currentBindings?(): KnowledgeFolderBindings | null | undefined;
-  restorePlanBindings?(original: KnowledgeFolderBindings | undefined, applied: KnowledgeFolderBindings): Promise<void>;
+  restorePlanBindings?(original: KnowledgeFolderBindings | undefined, applied: KnowledgeFolderBindings, exact?: boolean): Promise<void>;
   restoreModuleSettings?(original: DirectoryModuleSettings, applied: DirectoryModuleSettings): Promise<void>;
   currentModuleDirectories?(): readonly string[];
 }
@@ -77,6 +78,7 @@ export function validateDirectoryModuleSettings(modules: DirectoryModuleSettings
 export class InitializationDirectoryHistory {
   constructor(private readonly host: DirectoryHistoryHost) {}
   private get indexPath(): string { return path.join(this.host.privateRoot, "knowledge/initialization/original-directory-index.json"); }
+  private get onboardingPath(): string { return path.join(this.host.privateRoot, "knowledge/initialization/onboarding-setup.json"); }
 
   private absolute(relative: string): string {
     if (!relative || relative.includes("\\") || relative.split("/").some((part) => !part || part === "." || part === ".." || part.startsWith("."))) throw new Error("目录索引包含无效路径");
@@ -96,9 +98,9 @@ export class InitializationDirectoryHistory {
     return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
   }
 
-  private async read(): Promise<DirectoryHistory | null> {
+  private async read(indexPath = this.indexPath): Promise<DirectoryHistory | null> {
     try {
-      const value = JSON.parse(await fs.readFile(this.indexPath, "utf8")) as DirectoryHistory;
+      const value = JSON.parse(await fs.readFile(indexPath, "utf8")) as DirectoryHistory;
       if (value.version !== 1 || !Array.isArray(value.files) || !Array.isArray(value.folders) || !Array.isArray(value.createdFolders)) throw new Error("初始化目录索引损坏，未执行位置操作");
       for (const item of value.files) { this.absolute(item.original); this.absolute(item.current); if (typeof item.identity !== "string") throw new Error("目录索引身份无效"); }
       for (const folder of [...value.folders, ...value.createdFolders]) this.absolute(folder);
@@ -113,19 +115,50 @@ export class InitializationDirectoryHistory {
     }
   }
 
-  private async save(value: DirectoryHistory): Promise<void> {
-    await fs.mkdir(path.dirname(this.indexPath), { recursive: true });
-    const temporary = `${this.indexPath}.${randomUUID()}.tmp`;
+  private async save(value: DirectoryHistory, indexPath = this.indexPath): Promise<void> {
+    await fs.mkdir(path.dirname(indexPath), { recursive: true });
+    const temporary = `${indexPath}.${randomUUID()}.tmp`;
     try {
       const file = await fs.open(temporary, "wx", 0o600);
       try { await file.writeFile(`${JSON.stringify(value)}\n`); await file.sync(); } finally { await file.close(); }
-      await fs.rename(temporary, this.indexPath);
+      await fs.rename(temporary, indexPath);
     } finally { await fs.rm(temporary, { force: true }); }
   }
 
-  async status(): Promise<{ createdAt: number; files: number } | null> {
-    const record = await this.read();
-    return record ? { createdAt: record.createdAt, files: record.files.length } : null;
+  async status(): Promise<{ createdAt: number; files: number; onboarding?: boolean; createdFolders?: number } | null> {
+    const record = await this.read(this.onboardingPath) ?? await this.read();
+    return record ? { createdAt: record.createdAt, files: record.files.length, ...(record.exactBindingRestore ? { onboarding: true, createdFolders: record.createdFolders.length } : {}) } : null;
+  }
+
+  /** Separate from the first-layout journal: even binding-only setup can be undone. */
+  async captureOnboardingSetup(applied: KnowledgeFolderBindings, createdFolders: readonly string[], originalModules?: DirectoryModuleSettings, appliedModules?: DirectoryModuleSettings): Promise<void> {
+    if (await this.read(this.onboardingPath)) throw new Error("已有开局设置恢复记录，请先在目录管理中恢复。 ");
+    createdFolders.forEach(folder => this.absolute(folder));
+    await this.save({ version: 1, createdAt: Date.now(), jobId: `onboarding-${Date.now()}`, exactBindingRestore: true,
+      bindings: this.host.currentBindings?.() ? structuredClone(this.host.currentBindings()!) : undefined,
+      appliedBindings: structuredClone(applied), moduleSettings: originalModules, appliedModuleSettings: appliedModules,
+      createdFolders: [...createdFolders], folders: [], files: [], pending: null }, this.onboardingPath);
+  }
+
+  async clearOnboardingSetup(): Promise<void> { await fs.rm(this.onboardingPath, { force: true }); }
+
+  private async restoreOnboardingSetup(record: DirectoryHistory): Promise<DirectoryRestoreResult> {
+    if (!record.exactBindingRestore || !record.appliedBindings || record.files.length || record.pending) throw new Error("开局设置恢复记录无效，未执行恢复。 ");
+    if (record.moduleSettings && record.appliedModuleSettings) await this.host.restoreModuleSettings?.(record.moduleSettings, record.appliedModuleSettings);
+    await this.host.restorePlanBindings?.(record.bindings, record.appliedBindings, true);
+    const result: DirectoryRestoreResult = { restored: 0, skipped: [] };
+    for (const folder of [...record.createdFolders].sort((a, b) => b.split("/").length - a.split("/").length)) {
+      if (this.host.currentModuleDirectories?.().some(directory => directory === folder || directory.startsWith(`${folder}/`))) continue;
+      const current = this.host.currentBindings?.();
+      if (current && Object.values(current.roles).some(binding => binding.readPaths.some(directory => directory === folder || directory.startsWith(`${folder}/`)))) continue;
+      const info = await fs.lstat(this.absolute(folder)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
+      if (!info) continue;
+      if (!info.isDirectory() || info.isSymbolicLink()) { result.skipped.push({ path: folder, reason: "路径已变化，保留原位" }); continue; }
+      if ((await fs.readdir(this.absolute(folder))).length) { result.skipped.push({ path: folder, reason: "目录非空，笔记保留原位" }); continue; }
+      await this.host.removeEmptyFolder(folder); result.restored++;
+    }
+    await this.clearOnboardingSetup();
+    return result;
   }
 
   async capture(jobId: string): Promise<readonly string[]> {
@@ -256,6 +289,8 @@ export class InitializationDirectoryHistory {
   }
 
   async restore(onProgress: (message: string) => void = () => undefined): Promise<DirectoryRestoreResult> {
+    const onboarding = await this.read(this.onboardingPath);
+    if (onboarding) return await this.restoreOnboardingSetup(onboarding);
     const record = await this.read();
     if (!record) throw new Error("暂无初始化前目录记录");
     await this.recoverPending(record);

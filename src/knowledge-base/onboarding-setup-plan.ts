@@ -9,7 +9,8 @@ const NAMES = {
 type SetupRole = keyof typeof NAMES.zh;
 export interface OnboardingProtectedPath { path: string; reason: string }
 export interface OnboardingSetupPlan {
-  /** Pass this unchanged to the existing directory executor after confirmation. */
+  language?: "zh" | "en";
+  /** Metadata preview; apply via applyOnboardingSetupPlan to refresh the disk snapshot. */
   directoryPlan: KnowledgeDirectoryPlan;
   sources: { path: string; noteCount: number; existingBinding: boolean }[];
   skipped: { path: string; reason: string; noteCount: number }[];
@@ -37,6 +38,16 @@ const fold = (value: string) => value.toLowerCase();
 /** Yield to the host between batches, rather than monopolizing its UI thread. */
 export const yieldOnboardingScan = () => new Promise<void>(resolve => window.setTimeout(resolve, 0));
 
+/** Compare decisions shown to the user; cached filesystem timestamps are not decisions. */
+export function onboardingSetupConfirmationSignature(plan: OnboardingSetupPlan): string {
+  const directory = plan.directoryPlan;
+  return JSON.stringify({ bindings: directory.bindings, baseRevision: directory.baseRevision, baseSignature: directory.baseSignature,
+    baseSettingsSignature: directory.baseSettingsSignature, create: directory.create, reuse: directory.reuse,
+    modules: directory.moduleDirectories, modes: directory.moduleDirectoryModes, moves: directory.moves,
+    sources: plan.sources, skipped: plan.skipped, rootNotes: plan.rootNotes, noteCount: plan.noteCount,
+    outputLocations: plan.outputLocations, guide: plan.guide });
+}
+
 /** Read-only: choose purposes first, then bind eligible top-level sources in place. */
 export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): Promise<OnboardingSetupPlan> {
   const bindings = structuredClone(input.baseline ?? emptyKnowledgeFolderBindings());
@@ -48,8 +59,8 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
   const issues: string[] = [];
   const modulePaths = (["journal", "review", "english", "expressions", "pdfOriginal"] as const)
     .map(key => input.moduleDirectories?.[key]).filter((directory): directory is string => !!directory);
-  for (const [role, binding] of Object.entries(bindings.roles)) {
-    for (const path of binding.readPaths) protectedPaths.push({ path, reason: `已有${role}用途` });
+  for (const binding of Object.values(bindings.roles)) {
+    for (const path of binding.readPaths) protectedPaths.push({ path, reason: "已有目录用途" });
   }
   for (const directory of [input.journalDirectory, ...modulePaths]) {
     if (directory) protectedPaths.push({ path: directory, reason: "已有模块位置" });
@@ -195,6 +206,7 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
     if (++batch % 512 === 0) await yieldOnboardingScan();
   }
   return {
+    language: input.language,
     directoryPlan,
     sources: sourcePaths.map(path => ({ path, noteCount: counts.get(path) ?? 0, existingBinding: originalSources.has(path) })),
     skipped, rootNotes: { count: rootCount, description: input.language === "zh" ? "留在原位（对话能搜到，/ask 默认不含）" : "Stay in place (searchable in chat, excluded from /ask by default)" },

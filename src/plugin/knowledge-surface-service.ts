@@ -1,5 +1,5 @@
 import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
-import { generateOnboardingSetupPlan, yieldOnboardingScan, type OnboardingProtectedPath, type OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
+import { generateOnboardingSetupPlan, onboardingSetupConfirmationSignature, yieldOnboardingScan, type OnboardingProtectedPath, type OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
@@ -147,9 +147,13 @@ export class EchoInkKnowledgeSurfaceService {
         this.plugin.settings.knowledgeBase.folderBindings = restored;
         await this.plugin.saveSettings(true);
       },
-      restorePlanBindings: async (original, applied) => {
+      restorePlanBindings: async (original, applied, exact) => {
         const current = this.plugin.settings.knowledgeBase.folderBindings;
         if (!current) return;
+        if (exact && !original && knowledgeFolderBindingsSignature(current) === knowledgeFolderBindingsSignature(applied)) {
+          this.plugin.settings.knowledgeBase.folderBindings = null;
+          await this.plugin.saveSettings(true); return;
+        }
         const restored = structuredClone(current);
         const originalConfig = normalizeKnowledgeFolderBindings(original) ?? emptyKnowledgeFolderBindings();
         applied = normalizeKnowledgeFolderBindings(applied) ?? applied;
@@ -169,6 +173,7 @@ export class EchoInkKnowledgeSurfaceService {
           const binding = structuredClone(originalConfig.roles[role]);
           const retained: string[] = [];
           for (const directory of applied.roles[role].readPaths) {
+            if (exact) continue;
             if (binding.readPaths.includes(directory)) continue;
             // Adapter deletion can resolve before the Vault cache receives its
             // event. Only content still on disk keeps a newly created binding.
@@ -801,7 +806,21 @@ export class EchoInkKnowledgeSurfaceService {
     }, true);
   }
 
-  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false): Promise<KnowledgeDirectoryApplyResult> {
+  /** Refresh only this confirmation path. Other callers keep exact snapshot checks. */
+  async applyOnboardingSetupPlan(shown: OnboardingSetupPlan, onProgress?: (step: "folders" | "bindings", completed: number, total: number) => void): Promise<KnowledgeDirectoryApplyResult> {
+    const fresh = await this.previewOnboardingSetupPlan(shown.language);
+    if (fresh.directoryPlan.issues.length) throw new Error(fresh.directoryPlan.issues.join("；"));
+    if (onboardingSetupConfirmationSignature(shown) !== onboardingSetupConfirmationSignature(fresh)) throw new Error("仓库或设置已变化，请重新扫描并核对清单。");
+    const selections = { ...fresh.directoryPlan.moduleDirectories };
+    for (const key of ["english", "expressions"] as const) if (fresh.directoryPlan.moduleDirectoryModes?.[key] === "role") delete selections[key];
+    const full = await this.previewDirectoryPlan(fresh.directoryPlan.bindings, fresh.directoryPlan.create, { mode: "build", moduleDirectories: selections });
+    if (full.issues.length || full.moves.length || JSON.stringify(full.create) !== JSON.stringify(fresh.directoryPlan.create)
+      || JSON.stringify(full.reuse) !== JSON.stringify(fresh.directoryPlan.reuse)
+      || knowledgeFolderBindingsSignature(full.bindings) !== knowledgeFolderBindingsSignature(fresh.directoryPlan.bindings)) throw new Error("目录或设置已变化，请重新扫描并核对清单。");
+    return await this.applyDirectoryPlan(full, false, { onboarding: true, onProgress });
+  }
+
+  async applyDirectoryPlan(plan: KnowledgeDirectoryPlan, optimize = false, options: { onboarding?: boolean; onProgress?: (step: "folders" | "bindings", completed: number, total: number) => void } = {}): Promise<KnowledgeDirectoryApplyResult> {
     if (this.folderOperationBusy || ((plan.create.length > 0 || plan.moves.length > 0 || optimize) && !this.directoryWritable)) throw new Error("当前只读或已有目录操作，请稍后重试。");
     if (plan.issues.length) throw new Error(plan.issues.join("；"));
     this.directoryPlanBusy = true;
@@ -827,14 +846,21 @@ export class EchoInkKnowledgeSurfaceService {
       const moduleSettings = Object.keys(choices).length ? this.directoryModuleSettings(choices) : null;
       const intendedModules = moduleSettings ? this.intendedDirectoryModuleSettings(choices) : null;
       let nativeJournalChanged = false;
+      let onboardingCaptured = false;
       try {
-        if (plan.create.length || plan.moves.length || moduleSettings) await this.directoryHistory.capture(`folder-plan-${Date.now()}`);
-        if (moduleSettings && intendedModules) await this.directoryHistory.recordModuleSettings(moduleSettings, intendedModules);
+        if (options.onboarding) {
+          await this.directoryHistory.captureOnboardingSetup({ ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 }, plan.create, moduleSettings ?? undefined, intendedModules ?? undefined);
+          onboardingCaptured = true;
+        }
+        options.onProgress?.("folders", 0, plan.create.length);
+        if (!options.onboarding && (plan.create.length || plan.moves.length || moduleSettings)) await this.directoryHistory.capture(`folder-plan-${Date.now()}`);
+        if (!options.onboarding && moduleSettings && intendedModules) await this.directoryHistory.recordModuleSettings(moduleSettings, intendedModules);
         for (const directory of plan.create) {
           if (this.plugin.app.vault.getAbstractFileByPath(directory) || await knowledgeInitializationPathExists(this.plugin.getVaultPath(), directory, false)) throw new Error(`路径已存在：${directory}`);
-          await this.directoryHistory.createdFolder(directory);
+          if (!options.onboarding) await this.directoryHistory.createdFolder(directory);
           await this.plugin.app.vault.createFolder(directory);
           result.created.push(directory);
+          options.onProgress?.("folders", result.created.length, plan.create.length);
         }
         // Validate the entire inventory once, before renameFile updates links (and
         // mtimes) in other pending files. Each move still verifies the actual path
@@ -844,6 +870,7 @@ export class EchoInkKnowledgeSurfaceService {
           await this.renameTracked(move.from, move.to);
           result.moved.push(move);
         }
+        options.onProgress?.("bindings", 0, 1);
         this.plugin.settings.knowledgeBase.folderBindings = { ...structuredClone(plan.bindings), configured: true, revision: plan.baseRevision + 1 };
         this.plugin.settings.knowledgeBase.initialized = true;
         const modules = choices;
@@ -865,9 +892,10 @@ export class EchoInkKnowledgeSurfaceService {
         }
         if (modules?.pdfOriginal !== undefined) this.plugin.settings.pdfReading.originalDirectory = modules.pdfOriginal;
         if (this.plugin.settings.englishDiary.enabled) this.plugin.englishDiary?.refreshStoragePaths();
-        if (moduleSettings && modules) await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(modules));
-        if (plan.create.length || plan.moves.length || moduleSettings) await this.directoryHistory.appliedBindings(this.plugin.settings.knowledgeBase.folderBindings);
+        if (!options.onboarding && moduleSettings && modules) await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(modules));
+        if (!options.onboarding && (plan.create.length || plan.moves.length || moduleSettings)) await this.directoryHistory.appliedBindings(this.plugin.settings.knowledgeBase.folderBindings);
         await this.plugin.saveSettings(true);
+        options.onProgress?.("bindings", 1, 1);
       } catch (failure) {
         this.plugin.settings.knowledgeBase.folderBindings = previous;
         this.plugin.settings.knowledgeBase.initialized = previousInitialized;
@@ -892,11 +920,12 @@ export class EchoInkKnowledgeSurfaceService {
           try { await this.removeEmptyCreatedFolder(directory); }
           catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
         }
-        if (moduleSettings && plan.moduleDirectories) {
+        if (!options.onboarding && moduleSettings && plan.moduleDirectories) {
           try { await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(choices)); }
           catch (error) { recovery.push(`模块目录恢复记录：${knowledgeErrorDetail(error)}`); }
         }
         try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${knowledgeErrorDetail(error)}`); }
+        if (onboardingCaptured && !recovery.length) await this.directoryHistory.clearOnboardingSetup();
         throw new Error(`目录方案未应用：${knowledgeErrorDetail(failure)}。${recovery.length ? `仍需恢复 ${recovery.length} 项：${recovery.join("；")}。可在目录管理复原仓库。` : `已恢复本次搬迁的 ${moved.length} 个文件，原配置保留；请重新预览。`}`);
       }
       if (optimize && plan.sources.length) {

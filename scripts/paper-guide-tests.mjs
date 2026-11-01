@@ -1,17 +1,14 @@
 import { mkdtemp, realpath, readFile, rm } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 import ts from "typescript";
+import { disposableTestRoot } from "./disposable-test-root.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-if (!process.env.ECHOINK_PAPER_GUIDE_TEST_ROOT?.trim()) throw new Error("Set ECHOINK_PAPER_GUIDE_TEST_ROOT to an existing disposable task directory");
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
-const requested = path.resolve(process.env.ECHOINK_PAPER_GUIDE_TEST_ROOT);
-if (!requested.startsWith(allowed + path.sep)) throw new Error("Paper Guide fixtures must stay in disposable test Vaults");
-const fixtureRoot = await realpath(requested);
-if (!fixtureRoot.startsWith(allowed + path.sep)) throw new Error("Paper Guide fixture symlink leaves disposable test Vaults");
+if (!process.env.ECHOINK_PAPER_GUIDE_TEST_ROOT?.trim() && !process.env.ECHOINK_TEST_ROOT?.trim()) throw new Error("Set an explicit disposable ECHOINK_TEST_ROOT or ECHOINK_PAPER_GUIDE_TEST_ROOT");
+const fixtureRoot = await realpath(disposableTestRoot("", ["ECHOINK_PAPER_GUIDE_TEST_ROOT"]));
+disposableTestRoot(fixtureRoot);
 const source = await readFile(path.join(root, "src/settings/settings-tab.ts"), "utf8");
 const ast = ts.createSourceFile("settings-tab.ts", source, ts.ScriptTarget.Latest, true);
 const declaration = ast.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexSettingTab");
