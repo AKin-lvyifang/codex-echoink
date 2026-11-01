@@ -3,10 +3,11 @@ import * as fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { App } from "obsidian";
+import { captureComposerKnowledgeSource } from "../ui/codex-view/composer-controller";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
-import { openTestModals, setRequestUrlForTests } from "./obsidian-shim";
+import { openTestModals, openTestNoticeMessages, setRequestUrlForTests } from "./obsidian-shim";
 import { confirmCaptureLinkForTest, waitForCaptureLinkModal } from "./knowledge-capture-link-helpers";
 
 function checked(modal: { contentEl: HTMLElement }, kind: string): boolean {
@@ -22,7 +23,52 @@ async function until(predicate: () => boolean): Promise<void> {
   assert.fail("Expected capture state did not arrive");
 }
 
+async function assertComposerCaptureFeedback(): Promise<void> {
+  const input = document.createElement("textarea");
+  input.value = "  这是一段纯文字，保留原样  ";
+  const messages = [{ role: "user", text: "原问题" }, { role: "assistant", text: "原回答" }];
+  const original = structuredClone(messages);
+  let shortcutCalls = 0;
+  const host = {
+    running: false, inputEl: input, attachments: [],
+    plugin: { settings: { settingsLanguage: "zh-CN" }, getKnowledgeSurfaceService: () => { throw new Error("unsupported text must not reach capture"); } },
+    runKnowledgeBaseShortcut: async (label: string) => { shortcutCalls++; messages.push({ role: "user", text: label }); },
+    renderToolbar: () => { throw new Error("a rejected input must not change toolbar/run state"); }
+  };
+  const noticeCount = openTestNoticeMessages.length;
+  captureComposerKnowledgeSource(host as never);
+  await Promise.resolve();
+  assert.deepEqual(openTestNoticeMessages.slice(noticeCount), ["收藏只支持网页和公众号链接"]);
+  assert.equal(shortcutCalls, 0, "reject before the shortcut writes any user or system message");
+  assert.deepEqual(messages, original);
+  assert.equal(input.value, "  这是一段纯文字，保留原样  ");
+  assert.equal(host.running, false);
+
+  for (const [draft, attachments, route] of [
+    ["", [], "link"],
+    ["https://example.com", [], "input"],
+    ["附件旁文", [{ name: "notes.txt", path: "/synthetic/notes.txt", type: "file" }], "input"]
+  ] as const) {
+    let calls = 0; const routes: string[] = [];
+    const service = {
+      captureLink: async () => { routes.push("link"); return ["网页/已收藏.md"]; },
+      captureTextInput: async (text: string, files: unknown[]) => { routes.push("input"); assert.equal(text, draft); assert.equal(files.length, attachments.length); return ["资料/已收藏.md"]; }
+    };
+    input.value = draft;
+    const supported = { ...host, attachments, plugin: { ...host.plugin, getKnowledgeSurfaceService: () => service },
+      runKnowledgeBaseShortcut: async (_label: string, runner: () => Promise<string>) => { calls++; await runner(); } };
+    captureComposerKnowledgeSource(supported as never);
+    captureComposerKnowledgeSource(supported as never);
+    await until(() => routes.length === 1);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(calls, 1, "supported captures still prevent repeated dispatch");
+    assert.deepEqual(routes, [route]);
+    assert.equal(input.value, draft);
+  }
+}
+
 export async function runKnowledgeCaptureLinkTests(): Promise<void> {
+  await assertComposerCaptureFeedback();
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "echoink-capture-links-")));
   const bindings = emptyKnowledgeFolderBindings();
   Object.assign(bindings.roles.raw, { enabled: true, readPaths: ["网页", "公众号", "文档", "图片"], writePath: "网页" });
@@ -113,7 +159,7 @@ export async function runKnowledgeCaptureLinkTests(): Promise<void> {
     const idea = await capture.captureChatInput("inbox", "保留记录想法", []);
     assert.equal(path.posix.dirname(idea[0]), "想法");
     assert.match(await fs.readFile(path.join(root, idea[0]), "utf8"), /保留记录想法/u);
-    console.log("PASS link capture: rejection, defaults, confirmation, selected routing, retained retry, busy guard, original attachments and inbox");
+    console.log("PASS link capture: composer rejection without chat writes, retained draft, supported routing, defaults, confirmation, selected routing, retained retry, busy guard, original attachments and inbox");
   } finally {
     restore(); release();
     for (const modal of [...openTestModals]) modal.close();

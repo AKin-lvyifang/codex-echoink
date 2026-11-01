@@ -1,3 +1,4 @@
+import { extractFirstUrl } from "../../knowledge-base/web-capture";
 import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
 import { showConversationContentLocationNotice } from "../conversation-content-notice";
 import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
@@ -151,6 +152,48 @@ export interface CodexComposerHost {
   openGenerationModal(templateId?: string): void;
 }
 
+/** Validate unsupported input before the shortcut can append any chat messages. */
+export function captureComposerKnowledgeSource(host: CodexComposerHost): void {
+  if (host.running || pendingKnowledgeCaptures.has(host)) return;
+  const text = host.inputEl.value.trim();
+  const attachments = host.attachments.map(attachment => ({ ...attachment }));
+  if (text && !attachments.length && !extractFirstUrl(text)) {
+    new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "收藏只支持网页和公众号链接", "Collection only supports web and WeChat links"));
+    return;
+  }
+  pendingKnowledgeCaptures.add(host);
+  void host.runKnowledgeBaseShortcut(
+    conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
+    async () => {
+      const capture = host.plugin.getKnowledgeSurfaceService();
+      if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
+      const paths = text || attachments.length
+        ? await capture.captureTextInput(text, attachments) : await capture.captureLink();
+      const result = paths.length
+        ? conversationUiText(
+          host.plugin.settings.settingsLanguage,
+          `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
+          `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
+        )
+        : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
+      return result;
+    }
+  ).catch((error: unknown) => {
+    host.running = false;
+    host.renderToolbar();
+    if (error instanceof ConversationContentLocationError) {
+      showConversationContentLocationNotice(host.inputEl.ownerDocument, host.plugin.settings.settingsLanguage, () => host.plugin.openEchoInkConversationContentSettings());
+      return;
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    new Notice(conversationUiText(
+      host.plugin.settings.settingsLanguage,
+      `收藏失败：${detail}`,
+      `Save failed: ${detail}`
+    ));
+  }).finally(() => pendingKnowledgeCaptures.delete(host));
+}
+
 export function renderToolbar(host: CodexComposerHost): void {
   if (!host.toolbarEl) return;
   ensureComposerReasoningPreference(host);
@@ -192,42 +235,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       onOpenAddMenu: (event) => openAddMenu(host, event),
       onMentionNote: () => openNoteMentionPicker(host),
       onEnhancePrompt: () => host.enhancePrompt(),
-      onCaptureKnowledgeSource: () => {
-        if (host.running || pendingKnowledgeCaptures.has(host)) return;
-        pendingKnowledgeCaptures.add(host);
-        const text = host.inputEl.value.trim();
-        const attachments = host.attachments.map(attachment => ({ ...attachment }));
-        void host.runKnowledgeBaseShortcut(
-          conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
-          async () => {
-            const capture = host.plugin.getKnowledgeSurfaceService();
-            if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
-            const paths = text || attachments.length
-              ? await capture.captureTextInput(text, attachments) : await capture.captureLink();
-            const result = paths.length
-              ? conversationUiText(
-                host.plugin.settings.settingsLanguage,
-                `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
-                `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
-              )
-              : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
-            return result;
-          }
-        ).catch((error: unknown) => {
-          host.running = false;
-          host.renderToolbar();
-          if (error instanceof ConversationContentLocationError) {
-            showConversationContentLocationNotice(host.inputEl.ownerDocument, host.plugin.settings.settingsLanguage, () => host.plugin.openEchoInkConversationContentSettings());
-            return;
-          }
-          const detail = error instanceof Error ? error.message : String(error);
-          new Notice(conversationUiText(
-            host.plugin.settings.settingsLanguage,
-            `收藏失败：${detail}`,
-            `Save failed: ${detail}`
-          ));
-        }).finally(() => pendingKnowledgeCaptures.delete(host));
-      },
+      onCaptureKnowledgeSource: () => captureComposerKnowledgeSource(host),
       onPermissionChange: (value) => {
         host.selectedPermission = value;
         persistComposerDefaults(host);

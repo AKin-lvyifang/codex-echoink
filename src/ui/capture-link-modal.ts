@@ -29,9 +29,10 @@ export class CaptureLinkModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.addClass("echoink-theme-boundary", "echoink-confirm-origin");
+    this.modalEl.addClass("echoink-theme-boundary", "echoink-confirm-origin", "echoink-capture-link-modal");
     this.contentEl.createEl("h2", { text: "收藏" });
     const field = new Setting(this.contentEl).setName("链接");
+    field.settingEl.addClass("echoink-capture-link-field");
     this.input = createOriginInput(field.controlEl, { value: this.initialValue, attr: { placeholder: "粘贴网页或公众号链接", "aria-label": "链接", "data-capture-link-input": "" } });
     this.input.addEventListener("input", () => {
       const url = extractFirstUrl(this.input.value);
@@ -52,6 +53,7 @@ export class CaptureLinkModal extends Modal {
     applyAmicroButton(this.submit, { variant: "primary" });
     this.submit.onclick = () => { void this.save(); };
     this.input.focus();
+    this.input.setSelectionRange(0, 0);
   }
 
   close(): void {
