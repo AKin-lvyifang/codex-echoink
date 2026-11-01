@@ -8,6 +8,7 @@ import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
 import { SUPPORTED_RAW_EXTENSIONS } from "./discovery";
+import { collectionFileKind } from "./collection-file-types";
 import { formatDateForFile, pad } from "./utils";
 import {
   extractArticleMarkdown,
@@ -22,7 +23,6 @@ const { constants: fsConstants } = getDesktopFs();
 const fsp = getDesktopFsPromises();
 const path = getDesktopPath();
 
-const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = SUPPORTED_RAW_EXTENSIONS;
 
 export class KnowledgeBaseCaptureService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
@@ -124,7 +124,7 @@ export class KnowledgeBaseCaptureService {
     }
     const vaultPath = this.plugin.getVaultPath();
     const source = path.join(vaultPath, file.path);
-    const targetDir = await this.collectionDirectory(vaultPath, "files");
+    const targetDir = await this.collectionDirectory(vaultPath, collectionFileKind(file.path) === "images" ? "images" : "files");
     const target = await this.copyCapturedFile(source, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
     new Notice(`已收集到 ${normalizePath(path.relative(vaultPath, target))}`);
   }
@@ -172,7 +172,7 @@ export class KnowledgeBaseCaptureService {
   private async collectionDirectory(vaultPath: string, kind: KnowledgeCollectionKind): Promise<string> {
     const config = getKnowledgeFolderBindings(vaultPath);
     if (!config) {
-      const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", text: "articles/手动收集", fileText: "articles/文件收藏" })[kind]);
+      const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", images: "attachments", text: "articles/手动收集", fileText: "articles/文件收藏" })[kind]);
       await fsp.mkdir(legacy, { recursive: true });
       return legacy;
     }
@@ -231,11 +231,12 @@ export class KnowledgeBaseCaptureService {
   private async copyFilesToRaw(files: StoredAttachment[]): Promise<string[]> {
     const vaultPath = this.plugin.getVaultPath();
     const copied: string[] = [];
+    const unsupported = files.find(file => !collectionFileKind(file.path));
+    if (unsupported) throw new Error(`不支持收藏“${unsupported.name}”。请选择 PDF、Word DOCX、Markdown、TXT 或 PNG、JPG/JPEG、GIF、WebP 图片。`);
     for (const file of files) {
       const ext = path.extname(file.path).toLowerCase();
-      if (!KNOWLEDGE_FILE_CAPTURE_EXTENSIONS.has(ext)) continue;
       const bindings = getKnowledgeFolderBindings(vaultPath);
-      const kind = [".md", ".markdown", ".txt"].includes(ext) && bindings && Object.hasOwn(knowledgeCollectionTargets(bindings), "fileText") ? "fileText" : "files";
+      const kind = collectionFileKind(file.path) === "images" ? "images" : [".md", ".markdown", ".txt"].includes(ext) && bindings && Object.hasOwn(knowledgeCollectionTargets(bindings), "fileText") ? "fileText" : "files";
       const targetDir = await this.collectionDirectory(vaultPath, kind);
       const target = await this.copyCapturedFile(file.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
       copied.push(normalizePath(path.relative(vaultPath, target)));

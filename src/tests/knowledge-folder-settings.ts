@@ -113,7 +113,8 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     section.open("sources");
     assert(!host.textContent?.includes("资料默认保存到") && !host.querySelector(".echoink-knowledge-save-location"), "sources page only controls reading folders");
     section.open("collections");
-    assert.equal(host.querySelectorAll('[role="combobox"]').length, 4, "every capture entry has one searchable destination control");
+    assert.equal(host.querySelectorAll('[role="combobox"]').length, 5, "every capture entry has one searchable destination control");
+    assert.deepEqual([...host.querySelectorAll("[data-collection-kind] .setting-item-name")].map(row => row.textContent), ["网页链接", "公众号文章", "拖入或附加的文档（PDF、Word DOCX、Markdown、TXT）", "拖入或附加的图片（PNG、JPG/JPEG、GIF、WebP）", "对话栏点收藏的文字"]);
     assert(host.textContent?.includes("不影响你自己新建的笔记"));
     assert(!host.textContent?.includes("跟随默认"));
     saved.collectionTargets = { web: "已移除来源", wechat: "阅读/资料", files: "阅读/资料", text: "阅读/资料" };

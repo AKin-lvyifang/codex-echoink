@@ -1,5 +1,5 @@
 import type { MobileKnowledgeFolderApplyResult, MobileKnowledgeFolderPreview, MobileKnowledgeFolderRequest, MobileKnowledgeFoldersSnapshot } from "../../mobile/knowledge-folders-contracts";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import { KNOWLEDGE_ROOT_NAMES } from "../../knowledge-base/root-paths-core";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -75,7 +75,7 @@ async function openCollections(ctx: IPadSettingsContext, initial: MobileKnowledg
     view.body.append(el(ctx.document, "p", "", t(ctx, "EchoInk 收藏或导入的资料存到这里；不影响你自己新建的笔记，修改不会移动已有文件。", "EchoInk saves collected or imported materials here. Your own new notes and existing files are unaffected.")));
     const group = view.group(""), bindings = config(snapshot), targets = knowledgeCollectionTargets(bindings);
     for (const key of knowledgeCollectionKinds(bindings)) {
-      const label = t(ctx, KNOWLEDGE_COLLECTION_LABELS[key], ({ web: "Web pages", wechat: "WeChat articles", files: "Imported files", text: "Collected text", fileText: "Imported Markdown / text" })[key]);
+      const label = knowledgeCollectionLabel(key, bindings, ctx.host.settings().settingsLanguage === "en" ? "en" : "zh");
       const choices: [string, string][] = snapshot.directories.filter(path => bindings.roles.raw.readPaths.some(root => pathInKnowledgeDirectory(path, root))).map(path => [path, path]);
       const selected = targets[key] ?? "";
       if (!choices.some(([path]) => path === selected)) choices.unshift([selected, selected || t(ctx, "请选择文件夹", "Choose a folder")]);
