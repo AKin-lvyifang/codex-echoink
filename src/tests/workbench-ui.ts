@@ -21,6 +21,9 @@ import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user
 import type { VaultMemoryNotice } from "../storage/vault-identity";
 import { openTestNotices, openTestNoticeMessages } from "./obsidian-shim";
 import { WorkbenchSetupRequired } from "../home/workbench-action-feedback";
+import { PaperGuideModal, type PaperGuideModalOptions } from "../ui/paper-guide-modal";
+import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import type { OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 
 const tick = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 const entry = (id: string, state: TaskEntry["taskStatus"], at = Date.now()): TaskEntry => ({ conversationId: id, piSessionId: `session-${id}`, vaultId: "fixture", title: `任务 ${id}`, status: "active", defaultMemoryMode: "normal", createdAt: at, updatedAt: at, agentId: "sol", taskStatus: state, taskStartedAt: at, taskCompletedAt: at, taskInterruptedAt: at });
@@ -79,7 +82,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
       workspace: { containerEl: document.body, on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
-    settings: { expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    settings: { ...structuredClone(DEFAULT_SETTINGS), expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
     async saveSettings() { savedSettings.push(structuredClone(host.settings)); },
     notifyHomeSurfacesChanged() {},
     async openWorkbenchSetup(target: string) { calls.push(["setup", target]); },
@@ -111,6 +114,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async openTaskDetail(id: string) { calls.push(["detail", id]); },
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
+    async openPaperGuideAfterOnboarding(manual: boolean) { calls.push(["setup-guide", manual]); },
     async startWorkbenchSignalTask(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["dispatch", ...args]); await dispatchGate; return "new-task"; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
@@ -152,7 +156,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(content.querySelector(".wb-starters"));
     assert.match(content.querySelector(".wb-starter-card.is-current h3")!.textContent!, /知识库/);
     content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
-    assert.deepEqual(calls.at(-1), ["setup", "knowledge"], "the first card opens knowledge setup");
+    assert.deepEqual(calls.at(-1), ["setup-guide", true], "the first card opens knowledge setup");
     content.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button")[1].click(); await tick();
     content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["setup", "agent"], "the moved avatar card retains its agent action");
@@ -160,7 +164,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector('[data-wb="starters"]')?.nextElementSibling, reminder);
     assert.equal(reminder.querySelector('.wb-grow')?.textContent, "还没设置知识库");
     assert.equal(reminder.querySelector('[data-wb-focus="knowledge-reminder-settings"]')?.textContent?.trim(), "去初始化");
-    await click("knowledge-reminder-settings"); assert.deepEqual(calls.at(-1), ["setup", "knowledge"]);
+    await click("knowledge-reminder-settings"); assert.deepEqual(calls.at(-1), ["setup-guide", true]);
     host.settings.sessions.push({ id: "empty-onboarding", messages: [] }); projectionText.set("empty-onboarding", "");
     tasks = [entry("empty-onboarding", "interrupted")]; await view.refresh();
     assert.ok(content.querySelector(".wb-starters"), "empty shells and task metadata cannot dismiss onboarding");
@@ -173,8 +177,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector(".wb-starters"), null, "deleting the old conversation cannot restore onboarding");
     assert.equal(reminder.hidden, false, "knowledge setup reminder is independent of conversation onboarding");
     await click("knowledge-reminder-dismiss");
-    assert.equal(host.settings.knowledgeBase.initialized, true);
-    assert.equal((savedSettings.at(-1) as typeof host.settings).knowledgeBase.initialized, true);
+    assert.notEqual(host.settings.knowledgeBase.initialized, true);
+    assert.ok(host.settings.setup.knowledgeReminderDismissedAt);
+    assert.ok((savedSettings.at(-1) as typeof host.settings).setup.knowledgeReminderDismissedAt);
     assert.equal(reminder.hidden, true); await view.refresh(); assert.equal(reminder.hidden, true);
     for (const [phase, group] of [["scanning", "running"], ["judging", "running"], ["writing", "running"], ["queued", "running"], ["awaiting-confirmation", "waiting"], ["partial", "interrupted"], ["failed", "interrupted"], ["interrupted", "interrupted"], ["completed", null], ["cancelled", null]] as const) {
       const linking: KnowledgeLinkingTask = { schemaVersion: 1, id: "system-linking", mode: "manual", phase, judgment: "aliases", bindingSignature: "test", createdAt: 1, updatedAt: 2, processed: 9, total: 20, proposals: [], patches: [], results: [] };
@@ -538,6 +543,37 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0); assert.equal(activityListeners.size, 0);
   }
   await runDesktopModuleSettingsTests();
+  await runGuidedSetupModelDependencyTest();
+}
+async function runGuidedSetupModelDependencyTest(): Promise<void> {
+  const bindings = emptyKnowledgeFolderBindings();
+  for (const [role, path] of [["raw", "资料"], ["wiki", "知识成果"], ["inbox", "收件箱"], ["outputs", "产出"], ["journal", "日记"]] as const) {
+    Object.assign(bindings.roles[role], { enabled: true, readPaths: [path], writePath: path });
+  }
+  const plan = { directoryPlan: { bindings, issues: [], create: [], reuse: [], moves: [] }, sources: [{ path: "资料", noteCount: 1 }],
+    folders: ["资料"], sourceCandidates: [{ path: "资料", noteCount: 1 }], skipped: [], rootNotes: { count: 0, description: "" }, noteCount: 1,
+    outputLocations: { answer: "产出", generation: "产出" }, guide: { path: "产出/开始使用 EchoInk.md", action: "create" } } as OnboardingSetupPlan;
+  for (const connected of [false, true]) {
+    const unexpectedWrite = async (): Promise<never> => { throw new Error("Reviewing choices must not execute setup"); };
+    const options: PaperGuideModalOptions = { language: "zh-CN", preview: async choices => ({ ...plan, choices }), model: () => connected ? "Fixture model" : null,
+      apply: unexpectedWrite, connect: unexpectedWrite, writeGuide: unexpectedWrite, openGuide: unexpectedWrite, refine: unexpectedWrite,
+      onManual: unexpectedWrite, onTry: unexpectedWrite, onDismiss: async () => {}, onClosed() {} };
+    const dialog = new PaperGuideModal({ scope: {}, keymap: { pushScope() {}, popScope() {} } } as unknown as import("obsidian").App, options);
+    dialog.open();
+    try {
+      dialog.modalEl.querySelector<HTMLButtonElement>('[data-setup-choice="guided"]')!.click(); await tick();
+      for (let step = 0; step < 2; step++) {
+        Array.from(dialog.modalEl.querySelectorAll<HTMLButtonElement>(".echoink-setup-footer button")).find(button => button.textContent?.startsWith("下一步"))!.click(); await tick();
+      }
+      const refine = dialog.modalEl.querySelector<HTMLButtonElement>('[role="checkbox"][aria-label="马上提炼最近 20 篇"]')!;
+      assert.equal(refine.disabled, !connected, "finishing a render must preserve the missing-model dependency");
+      assert.equal(refine.getAttribute("aria-checked"), "false", "distillation starts off even with a model");
+      refine.click(); await tick();
+      assert.equal(refine.getAttribute("aria-checked"), String(connected), "only an available model permits opting in");
+      assert.match(dialog.modalEl.textContent ?? "", /模型额度/);
+    } finally { dialog.dispose(); }
+  }
+  console.log("PASS guided setup: model dependency survives busy-state rendering; distillation defaults off and requires explicit opt-in");
 }
 function signal(index: number): WorkbenchSignal {
   const moduleId: AgentModuleId = "todos";

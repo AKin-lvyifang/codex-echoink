@@ -499,14 +499,16 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async activateHomeAndSidebar(): Promise<void> { return this.getViewService().activateHomeAndSidebar(); }
-  async openPaperGuideAfterOnboarding(): Promise<void> {
+  async openPaperGuideAfterOnboarding(manual = false): Promise<void> {
+    if (!Platform.isDesktopApp) return;
     if (!this.paperGuide) {
       this.paperGuide = new PaperGuideController(this, () =>
         this.app.workspace.getActiveViewOfType(EchoInkWorkbenchView)?.contentEl
           ?? this.app.workspace.getActiveViewOfType(EchoInkHomeView)?.contentEl ?? null);
       this.register(() => { this.paperGuide?.dispose(); this.paperGuide = null; });
     }
-    await this.paperGuide.showAfterOnboarding();
+    if (manual) await this.paperGuide.showManually();
+    else await this.paperGuide.showAfterOnboarding();
   }
   async openEchoInkAccountSettings(target?: "login" | "benefits"): Promise<void> {
     await this.getViewService().openEchoInkSettings("account", target ? `account:${target}` : undefined);
@@ -914,6 +916,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async openEchoInkKnowledgeSettings(): Promise<void> {
     await this.getViewService().openEchoInkSettings("knowledgeBase");
+  }
+  async openEchoInkKnowledgeInitializationSettings(): Promise<void> {
+    await this.getViewService().openEchoInkSettings("knowledgeBase", "knowledge:onboarding");
   }
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> { return this.getViewService().openWorkspaceResourceSettings(tab); }
   async openReviewHtmlPreview(relativePath: string): Promise<void> { return this.getViewService().openReviewHtmlPreview(relativePath); }
@@ -1556,6 +1561,19 @@ export default class CodexForObsidianPlugin extends Plugin {
     const view = this.getCodexView();
     if (!view || !await view.waitForTaskUiReady()) throw new Error(this.settings.settingsLanguage === "en" ? "The conversation panel is not ready. Please try again." : "对话栏尚未就绪，请重试。");
     return view.startWorkbenchSignalTask(agentId, signal);
+  }
+  async startOnboardingRefinement(sourcePaths: readonly string[]): Promise<string> {
+    if (!sourcePaths.length || sourcePaths.length > 20) throw new Error("没有可提炼的资料，或名单超过 20 篇。");
+    const unique = [...new Set(sourcePaths)];
+    const revision = this.settings.knowledgeBase.folderBindings?.revision ?? 0;
+    const key = newId("onboarding-refinement");
+    const prompt = `/maintain 请只提炼本次开局设置冻结的 ${unique.length} 篇资料，名单不能扩大：\n${unique.join("\n")}`;
+    await this.activateView();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) throw new Error("对话栏尚未就绪，请重试。");
+    return await view.startWorkbenchSignalTask(GENERAL_ASSISTANT_ID, { id: 7, key, moduleId: "knowledge-base", icon: "library", description: `提炼最近 ${unique.length} 篇资料`, prompt,
+      source: { version: 1, signalId: 7, businessKey: key, moduleId: "knowledge-base", objects: unique, prompt, capturedAt: Date.now() } },
+      { mode: "batch", sourcePaths: unique, folderBindingsRevision: revision });
   }
   async deleteAgent(agentId: string): Promise<void> {
     if (isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘。 ");

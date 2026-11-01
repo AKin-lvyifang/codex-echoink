@@ -33,6 +33,7 @@ const suites = [
   "test:vault-memory-ui",
   "test:react-dom-resources",
   "test:provider-settings",
+  "test:paper-guide",
   "test:conversation-ui",
   "test:answer-markdown",
   "test:personal-memory",

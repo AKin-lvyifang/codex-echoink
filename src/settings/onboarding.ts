@@ -195,12 +195,12 @@ const ONBOARDING_COPY = {
       "Connect a model"
     ],
     "description": [
-      "添加你使用的模型服务，保存后就能开始对话。",
-      "Add your model provider and save it to start chatting."
+      "现在不用填，走完可以一键搞定。",
+      "No need to fill this in now. Finish the tour and set it up in one step."
     ],
     "tip": [
-      "你可以添加多个服务，之后随时切换。",
-      "You can add more providers and switch between them later."
+      "",
+      ""
     ],
     "action": [
       "下一步",
@@ -215,8 +215,8 @@ const ONBOARDING_COPY = {
       "Give your notes a home"
     ],
     "description": [
-      "先选文件夹，再核对将新建和移动的内容。确认前不会动文件。",
-      "Choose folders, then review what will be created or moved. Nothing changes before you confirm."
+      "现在不用填，走完可以一键搞定。",
+      "No need to fill this in now. Finish the tour and set it up in one step."
     ],
     "tip": [
       "",

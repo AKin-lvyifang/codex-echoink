@@ -221,7 +221,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
   const selectOnKey = (event: ReactKeyboardEvent<HTMLElement>, path: string | null) => {
     if ((event.key === "Enter" || event.key === " ") && !isImeKeyEvent(event.nativeEvent)) { event.preventDefault(); choose(path); }
   };
-  const overlayClass = parent.closest(".echoink-settings-demo,.echoink-settings-modal") && !ownerDocument.body.classList.contains("is-mobile") ? " echoink-settings-overlay" : "";
+  const overlayClass = parent.closest(".echoink-paper-guide-modal") ? " echoink-paper-guide-select-overlay" : parent.closest(".echoink-settings-demo,.echoink-settings-modal") && !ownerDocument.body.classList.contains("is-mobile") ? " echoink-settings-overlay" : "";
   const render = () => {
     if (disposed) return;
     const selected = new Set(entries.map(entry => entry.path));

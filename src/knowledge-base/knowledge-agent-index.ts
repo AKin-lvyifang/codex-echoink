@@ -306,6 +306,7 @@ export class KnowledgeAgentIndex {
       ? decodeCursor(request.cursor, cursorGeneration, queryHash, mode)
       : 0;
     const candidates = Object.values(index.entries)
+      .filter(entry => entry.vaultRelativePath !== getKnowledgeFolderBindings(this.vaultPath)?.onboardingGuidePath)
       .filter((entry) => !this.bodySearch || this.bodySearch.allowsPath(entry.vaultRelativePath))
       .filter((entry) => kinds.includes(entry.kind))
       .filter((entry) => !excludedPaths.includes(entry.vaultRelativePath))
@@ -809,7 +810,7 @@ async function walkKnowledgeRoot(
           `Knowledge root contains an unsupported file: ${relativePath}`
         );
       }
-      if (!shouldIndexPath(relativePath, kind)) continue;
+      if (relativePath === getKnowledgeFolderBindings(vaultRoot)?.onboardingGuidePath || !shouldIndexPath(relativePath, kind)) continue;
       files.push({ absolutePath, vaultRelativePath: relativePath, stat });
     }
   };

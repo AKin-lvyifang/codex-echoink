@@ -8,7 +8,10 @@ export type KnowledgeDirectoryMode = "existing" | "build";
 export interface KnowledgeDirectoryFile { path: string; size: number; mtime: number; symbolicLink?: boolean }
 export interface KnowledgeDirectoryMove { from: string; to: string; size: number; mtime: number }
 export interface KnowledgeModuleDirectories { journal?: string; review?: string; english?: string; expressions?: string; pdfOriginal?: string }
-export interface KnowledgeDirectoryPlanOptions { mode?: KnowledgeDirectoryMode; wikiChanged?: boolean; moduleDirectories?: KnowledgeModuleDirectories }
+export interface KnowledgeDirectoryPlanOptions { mode?: KnowledgeDirectoryMode; wikiChanged?: boolean; moduleDirectories?: KnowledgeModuleDirectories;
+  /** Read-only onboarding preview uses the host's cached file metadata. Apply still rechecks disk. */
+  metadataOnly?: boolean;
+}
 export interface KnowledgeDirectoryApplyResult {
   configured: true;
   created: string[];
@@ -51,6 +54,7 @@ export async function previewKnowledgeDirectoryPlan(input: {
   moduleDirectories?: KnowledgeModuleDirectories;
   /** Consumption scope only; all shared roles remain in the saved bindings. */
   roleScope?: readonly KnowledgeRootRole[];
+  yieldToHost?: () => Promise<void>;
 }): Promise<KnowledgeDirectoryPlan> {
   const roleScope = input.roleScope ?? KNOWLEDGE_ROOT_ROLES;
   const bindings = structuredClone(input.bindings);
@@ -130,10 +134,22 @@ export async function previewKnowledgeDirectoryPlan(input: {
       }
     }
   }
+  // Answer/generation targets are literal destinations and need not be role roots.
+  for (const directory of new Set([bindings.collectionTargets.answer, bindings.collectionTargets.generation])) {
+    if (!directory || !approved.has(directory)) continue;
+    try {
+      assertKnowledgeModulePath(directory, "产出位置");
+      const kind = await input.kind(directory);
+      if (kind === "folder") reuse.add(directory);
+      else if (kind === "missing" && approved.has(directory)) await addParents(directory);
+      else if (approved.has(directory)) issues.push(`${directory}：产出位置不是目录`);
+    } catch (error) { issues.push((error as Error).message); }
+  }
   const moves: KnowledgeDirectoryMove[] = [];
   const excluded: KnowledgeDirectoryPlan["excluded"] = [];
   const files: KnowledgeDirectoryFile[] = [...(input.files ?? input.sourcePaths.map(relative => ({ path: relative, size: 0, mtime: 0 })))].sort((a, b) => a.path.localeCompare(b.path));
   if (mode === "build") {
+    let processed = 0;
     for (const file of files) {
       const segments = file.path.split("/");
       let reason = "";
@@ -144,9 +160,15 @@ export async function previewKnowledgeDirectoryPlan(input: {
       // Setup binds the selected sources in place. Organization is a separate,
       // explicitly authorized operation, never implied by choosing build mode.
       excluded.push({ path: file.path, reason: reason || "未选择的资料保持原位" });
+      if (++processed % 512 === 0) await input.yieldToHost?.();
     }
   }
-  const sources = input.sourcePaths.filter(relative => classifyKnowledgePath(bindings, relative) === "raw");
+  const sources: string[] = [];
+  for (let index = 0; index < input.sourcePaths.length; index++) {
+    const relative = input.sourcePaths[index];
+    if (classifyKnowledgePath(bindings, relative) === "raw") sources.push(relative);
+    if (index % 512 === 511) await input.yieldToHost?.();
+  }
   const changes = roleScope.filter(role => knowledgeFolderBindingsSignature({ ...bindings, roles: { ...bindings.roles, [role]: input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] } } }) !== knowledgeFolderBindingsSignature(bindings))
     .map(role => ({ role, before: structuredClone(input.baseline?.roles[role] ?? { enabled: false, readPaths: [], writePath: null, allowedSubdirectories: [] }), after: structuredClone(bindings.roles[role]) }));
   return { baseRevision: input.baseRevision, baseSignature: knowledgeFolderBindingsSignature(input.baseline), baseSettingsSignature: input.baseSettingsSignature, wikiChanged: input.wikiChanged,

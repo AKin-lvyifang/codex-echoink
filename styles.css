@@ -22989,7 +22989,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 }
 
 .echoink-paper-guide-icon {
-  color: var(--paper-guide-accent);
+  color: var(--paper-guide-secondary);
 }
 
 .echoink-paper-guide-icon svg {
@@ -23202,6 +23202,236 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
   .echoink-paper-guide-modal button.echoink-paper-guide-choice {
     transition: none;
   }
+}
+
+/* Setup keeps the accepted native paper shell and expands only its task body. */
+.modal.echoink-paper-guide-modal.is-setup-detail {
+  width: 600px;
+}
+
+.echoink-paper-guide-modal.is-setup-detail .modal-title {
+  margin: 0 22px 18px 0;
+  text-align: left;
+}
+
+.echoink-setup-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  margin: -5px;
+}
+
+.echoink-setup-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 16px;
+}
+
+.echoink-paper-guide-modal:not(.is-setup-detail) .echoink-setup-footer {
+  justify-content: center;
+}
+
+.echoink-setup-footer .mod-cta {
+  margin-inline-start: auto;
+}
+
+.echoink-setup-group h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: var(--paper-guide-ink);
+}
+
+.echoink-setup-rows {
+  border: 1px solid var(--paper-guide-line);
+  border-radius: 10px;
+}
+
+.echoink-setup-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 13px 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.echoink-setup-row + .echoink-setup-row {
+  border-top: 1px solid var(--paper-guide-line);
+}
+
+.echoink-setup-icon,
+.echoink-setup-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.echoink-setup-icon,
+.echoink-setup-count,
+.echoink-setup-safety,
+.echoink-setup-skipped {
+  color: var(--paper-guide-secondary);
+}
+
+.echoink-setup-copy,
+.echoink-setup-skipped-row {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.echoink-setup-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.echoink-setup-model-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 18px;
+}
+
+.echoink-setup-model-fields .echoink-setup-provider,
+.echoink-setup-model-fields .echoink-setup-key {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.echoink-setup-key-link,
+.echoink-setup-safety,
+.echoink-setup-skipped {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  line-height: 1.55;
+}
+
+.echoink-setup-safety {
+  margin: 0;
+}
+
+.echoink-setup-rows > .echoink-setup-safety {
+  padding: 0 18px 13px;
+}
+
+.echoink-setup-skipped summary {
+  cursor: pointer;
+  padding-block: 6px;
+}
+
+.echoink-setup-skipped-row {
+  padding-block: 5px;
+}
+
+.echoink-setup-error {
+  color: var(--text-error);
+  font-size: calc(var(--font-text-size, 16px) * .8125);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.echoink-setup-row.is-running .echoink-setup-icon svg {
+  animation: echoink-setup-spin 1s linear infinite;
+}
+
+@keyframes echoink-setup-spin {
+  to { transform: rotate(360deg); }
+}
+
+.echoink-paper-guide-modal .modal-close-button svg {
+  transition: transform 160ms ease;
+}
+
+.echoink-paper-guide-modal .modal-close-button:hover svg {
+  transform: rotate(90deg);
+}
+
+@media (max-width: 520px) {
+  .echoink-setup-model-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echoink-setup-row.is-running .echoink-setup-icon svg {
+    animation: none;
+  }
+
+  .echoink-paper-guide-modal .modal-close-button svg {
+    transition: none;
+  }
+}
+
+/* This short-task modal shares the desktop control scale without the settings shell. */
+.modal.echoink-paper-guide-modal .echoink-setup-footer .echoink-origin-control[data-slot="button"],
+.modal.echoink-paper-guide-modal .echoink-setup-model-fields .echoink-origin-control,
+.echoink-paper-guide-select-overlay .echoink-origin-control {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.modal.echoink-paper-guide-modal .echoink-setup-footer .text-button.is-tertiary {
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  gap: 5px;
+}
+
+.modal.echoink-paper-guide-modal .echoink-setup-footer .button svg {
+  width: 12px;
+  height: 12px;
+}
+
+.echoink-setup-steps {
+  display: flex;
+  gap: 6px;
+}
+.echoink-setup-steps span {
+  flex: 1;
+  height: 3px;
+  background: var(--paper-guide-line);
+  border-radius: 6px;
+}
+.echoink-setup-steps .is-active { background: var(--paper-guide-ink); }
+.echoink-setup-check-row,
+.echoink-setup-location-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 13px 18px;
+  min-height: 52px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.echoink-setup-check-row + .echoink-setup-check-row,
+.echoink-setup-location-row + .echoink-setup-location-row { border-top: 1px solid var(--paper-guide-line); }
+.echoink-setup-location-row { grid-template-columns: minmax(90px, 1fr) minmax(150px, 1fr); }
+.echoink-setup-location-row .echoink-folder-picker { min-width: 0; }
+@media (max-width: 520px) {
+  .echoink-setup-location-row { grid-template-columns: minmax(0, 1fr); }
+}
+.modal.echoink-paper-guide-modal .echoink-setup-location-row .echoink-origin-control,
+.echoink-paper-guide-select-overlay.echoink-origin-control {
+  font-size: calc(var(--font-text-size, 16px) * .75);
+}
+.echoink-origin-control.echoink-paper-guide-select-overlay.echoink-folder-picker-popover[data-slot=select-content] {
+  z-index: calc(var(--layer-modal, 50) + 1);
 }
 .echoink-pdf-settings-heading { display:flex; align-items:center; gap:12px; }
 .echoink-pdf-settings-form { display:flex; flex-direction:column; gap:18px; margin-top:24px; max-width:600px; }

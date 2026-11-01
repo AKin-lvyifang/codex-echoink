@@ -6,7 +6,7 @@ import { applyAmicroButton } from "../settings/amicro-buttons";
 import { WORKBENCH_ART, avatarWheelArt, inlineWorkbenchArt } from "./workbench-artwork";
 
 const cards = [
-  ["把这个仓库设成知识库", "Make this vault your knowledge base", "去设置", "Settings", "knowledge"],
+  ["把这个仓库设成知识库", "Make this vault your knowledge base", "开始设置", "Start setup", "knowledge"],
   ["给你的助手换个头像、起个名字", "Give your assistant a name and avatar", "去设置", "Settings", "avatar"],
   ["换一套外观看看", "Try a different appearance", "去看看", "Take a look", "appearance"],
   ["帮我开始写今天的日记", "Help me start today's journal", "开始写", "Start writing", "diary"],

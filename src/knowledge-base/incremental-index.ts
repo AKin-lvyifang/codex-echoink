@@ -301,7 +301,7 @@ async function walkIndexRoot(
           await walk(absolutePath);
           continue;
         }
-        if (!stat.isFile() || !shouldIndexFile(root, relativePath) || knowledgePathRole(vaultPath, relativePath) !== root) continue;
+        if (!stat.isFile() || relativePath === getKnowledgeFolderBindings(vaultPath)?.onboardingGuidePath || !shouldIndexFile(root, relativePath) || knowledgePathRole(vaultPath, relativePath) !== root) continue;
         files.push({ absolutePath, relativePath, stat });
       }
     };

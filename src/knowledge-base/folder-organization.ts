@@ -10,6 +10,7 @@ export interface KnowledgeOrganizationBinding {
 /** Recall withdrawal affects discovered candidates, never an explicit file read. */
 export function knowledgeRecallCandidateAllowed(config: KnowledgeFolderBindings | null | undefined, relativePath: string): boolean {
   if (!config) return true;
+  if (relativePath === config.onboardingGuidePath) return false;
   const within = (root: string) => relativePath === root || relativePath.startsWith(`${root}/`);
   const inbox = config.roles.inbox;
   const active = inbox.enabled && inbox.searchEnabled !== false && !config.migrationIssues.some(issue => issue.startsWith("inbox："));

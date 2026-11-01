@@ -35,10 +35,10 @@ export function renderKnowledgeFolderActions(
   let recordError = "";
   let recordLoading = true;
   const restoreSummary = () => recordLoading ? (zh ? "正在读取复原记录…" : "Reading restore record…") : recordError || (record
-    ? (zh ? `${new Date(record.createdAt).toLocaleString()} · ${record.files} 个文件` : `${new Date(record.createdAt).toLocaleString()} · ${record.files} files`)
+    ? record.onboarding ? (zh ? `开局设置 · ${record.createdFolders ?? 0} 个新建目录` : `Setup · ${record.createdFolders ?? 0} new folders`) : (zh ? `${new Date(record.createdAt).toLocaleString()} · ${record.files} 个文件` : `${new Date(record.createdAt).toLocaleString()} · ${record.files} files`)
     : (zh ? "暂无可复原记录" : "No restore record available"));
   const restoreOptions = () => ({
-    title: zh ? "复原仓库" : "Restore vault",
+    title: record?.onboarding ? (zh ? "恢复开局设置" : "Undo setup") : (zh ? "复原仓库" : "Restore vault"),
     description: state.running === "restore" ? (zh ? "正在复原目录…" : "Restoring folders…") : state.error?.operation === "restore" ? state.error.message : recordLoading || recordError ? restoreSummary() : undefined,
     value: state.running === "restore" || state.error?.operation === "restore" || recordLoading || recordError ? undefined : restoreSummary(),
     onActivate: () => openRestore()
@@ -135,10 +135,11 @@ export function renderKnowledgeFolderActions(
   };
   const openRestore = () => {
     if (state.running || service.folderOperationBusy || recordLoading) return;
+    const onboarding = record?.onboarding === true;
     const modal = new Modal(service.app);
     modal.onOpen = () => {
       modal.modalEl.addClass("echoink-settings-modal", "echoink-theme-boundary");
-      modal.setTitle(zh ? "复原仓库" : "Restore vault");
+      modal.setTitle(onboarding ? (zh ? "恢复开局设置" : "Undo setup") : (zh ? "复原仓库" : "Restore vault"));
       const body = modal.contentEl;
       body.addClass("echoink-knowledge-folder-editor");
       body.createDiv({ cls: "setting-item-description echoink-knowledge-folder-record", text: restoreSummary() });
@@ -148,12 +149,13 @@ export function renderKnowledgeFolderActions(
         const confirm = createOriginButton(actions, { text: zh ? "复原目录" : "Restore folders" });
         confirm.disabled = !service.directoryWritable;
         confirm.onclick = () => showSettingsInlineConfirmation(body, confirm, {
-          message: zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。确认后开始移动文件。" : "Restore the pre-initialization folder structure, keeping current content and new files. Confirmation starts moving files.",
+          message: onboarding ? (zh ? "恢复这次开局设置前的绑定，删除本次新建的空文件夹。笔记保留原位。" : "Restore the bindings from before setup and remove its empty new folders. Notes stay in place.") : (zh ? "恢复初始化前的目录结构，保留最新内容和新增文件。确认后开始移动文件。" : "Restore the pre-initialization folder structure, keeping current content and new files. Confirmation starts moving files."),
           confirmLabel: zh ? "确认复原" : "Confirm restore", cancelLabel: zh ? "取消" : "Cancel",
           onConfirm: async () => {
             await run("restore", async () => {
               const result = await service.restoreOriginalDirectories();
               modal.close();
+              if (onboarding) return zh ? `已恢复开局设置前的绑定，删除 ${result.restored} 个空文件夹${result.skipped.length ? `，保留 ${result.skipped.length} 个非空或已变化的位置` : ""}。` : `Restored pre-setup bindings and removed ${result.restored} empty folders; ${result.skipped.length} locations preserved.`;
               return zh
                 ? `已恢复 ${result.restored} 个文件${result.skipped.length ? `，${result.skipped.length} 项需处理` : ""}。`
                 : `Restored ${result.restored} file${result.restored === 1 ? "" : "s"}${result.skipped.length ? `; ${result.skipped.length} item${result.skipped.length === 1 ? " needs" : "s need"} attention` : ""}.`;
