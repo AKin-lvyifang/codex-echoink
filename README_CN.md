@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.8：日记自动变待办和账单" src="assets/releases/echoink-agent-2.8.8-release.png">
+    <img width="1024" alt="EchoInk 2.8.9：开局一键设置" src="assets/releases/echoink-agent-2.8.9-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">官方网站</a> ·
   <a href="https://echoink.cn/install">下载与安装</a> ·
-  <a href="#288-更新">2.8.8 更新</a> ·
+  <a href="#289-更新">2.8.9 更新</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
   <a href="README.md">English</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8"><img src="https://img.shields.io/badge/version-2.8.8-0EA5E9?style=flat-square" alt="版本 2.8.8"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9"><img src="https://img.shields.io/badge/version-2.8.9-0EA5E9?style=flat-square" alt="版本 2.8.9"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
@@ -26,17 +26,15 @@
 
 EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理知识、保留可查看和修正的长期记忆，也记录自己的日常。笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
 
-## 2.8.8 更新
+## 2.8.9 更新
 
-电脑端开启日记自动整理后，EchoInk 会从日记中提取待办和账单。不确定的条目留在工作台等你核对，保留原文来源，已写入的条目可以撤销。待办整理免费，账单整理需要有效 PRO；手机和平板可查看结果，不运行后台整理。
+电脑端新增开局全自动、半自动和手动设置：先核对目录与资料来源，再确认执行，已有笔记留在原位，完成后自动打开新手指南。模型 API Key 需自己准备，也可留空稍后再连；目录设置和生成指南不调用模型，测试连接及主动开启的资料提炼会使用自己的模型额度。
 
-新增电脑端 EchoInk MCP 服务（PRO），让同一台电脑上的兼容 Agent 读取你授权的知识和个人记忆。官方 PRO Skill 按需联网获取新版，知识复盘保留完整本地基础版，自己修改过的 Skill 也会保留。
+电脑端可以在对话或笔记生成入口创建可编辑的 Excalidraw 手绘图，需要启用 Excalidraw 2.29 或更新版本，不要求 PRO。日记支持自定义日期和目录格式，以及预览、整理和撤销旧日记路径。电脑端新增专家聘请（PRO）；工作台可选城市天气，收藏与 AI 产出位置分开，派发与提醒、普通笔记读取和部分模型输出上限报错也已修正。
 
-本版还修复了日记入口、后台任务停止后的进度显示和部分 Ollama 对话 HTTP 400，设置里可以修正个人记忆；没有配套主题时，插件外观跟随 Obsidian。
+**请将各设备统一升级到 2.8.9。** 开局设置、模型额度与日记整理的具体说明见 [CHANGELOG](CHANGELOG.md)。**移动端仍为 Beta，本版未完成手机真机验收**，支持范围见下文。财务、英文日记、PDF 精读、专家聘请和 EchoInk MCP 服务需要有效 PRO；**PRO 不包含模型调用额度**，活动与价格以[官网](https://echoink.cn/plans)为准。
 
-**使用多台设备时，请全部升级到 2.8.8：旧版无法识别日记整理新增的账目来源格式。** 开启方法、数据发送范围与升级步骤见 [CHANGELOG](CHANGELOG.md)。财务、英文日记、PDF 精读和 EchoInk MCP 服务需要有效 PRO，**PRO 不包含模型调用额度**，订阅说明以[官网](https://echoink.cn/plans)为准。
-
-极简外观免费，荧光笔记和黄白宣言需要有效 PRO。配套主题请从[官网主题页](https://echoink.cn/theme)另行下载。
+外观中的 Minimal 免费，Highlighter 和 Manifesto 需有效 PRO。配套主题需从 [echoink.cn/theme](https://echoink.cn/theme) 单独安装。
 
 ## 下载与说明
 

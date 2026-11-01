@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.8 — turn journals into tasks and bills" src="assets/releases/echoink-agent-2.8.8-release.png">
+    <img width="1024" alt="EchoInk 2.8.9 — one-click setup to get started" src="assets/releases/echoink-agent-2.8.9-release.png">
   </a>
 </p>
 
@@ -11,14 +11,14 @@
 <p align="center">
   <a href="https://echoink.cn">Official website</a> ·
   <a href="https://echoink.cn/install">Download &amp; installation</a> ·
-  <a href="#whats-new-in-288">What's new</a> ·
+  <a href="#whats-new-in-289">What's new</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
   <a href="README_CN.md">中文</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8"><img src="https://img.shields.io/badge/version-2.8.8-0EA5E9?style=flat-square" alt="Version 2.8.8"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9"><img src="https://img.shields.io/badge/version-2.8.9-0EA5E9?style=flat-square" alt="Version 2.8.9"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
@@ -26,17 +26,15 @@
 
 EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your notes, organize knowledge, keep visible and editable long-term memory, and record everyday life. Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
 
-## What's new in 2.8.8
+## What's new in 2.8.9
 
-On desktop, EchoInk can turn journals into tasks and bills after you enable automatic organization. Uncertain items wait on the workbench for review, with source links and undo for written items. Task extraction is free; bill extraction requires active PRO. Phones and tablets display results without running background extraction.
+Desktop now offers automatic, guided, and manual setup. Review directories and source folders before confirming; existing notes stay in place, and a starter guide opens when setup finishes. Bring your own model API key or leave it blank and connect later. Directory setup and guide generation do not call a model; connection tests and optional source extraction use your provider credits.
 
-The new desktop EchoInk MCP server (PRO) lets compatible agents on the same computer read authorized knowledge and personal memory. Official PRO Skills download updates on demand, while knowledge review keeps its complete local basic version and your edited Skills are preserved.
+Create editable Excalidraw drawings from desktop conversations or note generation with Excalidraw 2.29 or later enabled; PRO is not required. Customize journal date and folder patterns, preview moves for older journals, and undo path changes. Desktop adds expert hiring (PRO). Choose city weather on the workbench, set separate capture and AI-output destinations, and benefit from fixes to dispatch, reminders, ordinary-note access, and some model output-limit errors.
 
-This version also restores journal navigation and stopped-task progress, adds personal-memory correction in settings, follows the host appearance when the companion theme is absent, and fixes HTTP 400 errors caused by unsupported thinking parameters in some Ollama conversations.
+**Upgrade every device to 2.8.9.** See the [CHANGELOG](CHANGELOG.md) for setup, model usage, and journal organization details. **Mobile remains in Beta; this version has not completed phone hardware acceptance.** Supported features are listed below. Finance, English Diary, PDF reading, expert hiring, and the EchoInk MCP server require active PRO. **PRO does not include model credits.** See the [website](https://echoink.cn/plans) for current offers and prices.
 
-**Upgrade every device to 2.8.8:** older versions cannot recognize the new journal-derived bill-source format. See the [CHANGELOG](CHANGELOG.md) for setup, privacy boundaries, and upgrade instructions. **PRO does not include model credits.** Finance, English Diary, PDF reading, and the EchoInk MCP server require active PRO; see the [website](https://echoink.cn/plans) for current plans.
-
-Minimal appearance is free; Highlighter and Manifesto require active PRO. The companion theme is available separately from [echoink.cn/theme](https://echoink.cn/theme).
+Minimal appearance is free; Highlighter and Manifesto require active PRO. Install the companion theme separately from [echoink.cn/theme](https://echoink.cn/theme).
 
 ## Download and documentation
 

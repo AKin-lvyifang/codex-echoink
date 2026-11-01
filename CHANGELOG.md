@@ -1,5 +1,65 @@
 # Changelog
 
+## 2.8.9 - 2026-11-01
+<!-- release-type: feat -->
+### 2.8.9 · 开局一键设置
+
+![EchoInk 2.8.9：开局一键设置](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.9/assets/releases/echoink-agent-2.8.9-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **开局可以一键设置。** 电脑端新增全自动、半自动和手动三条路线。全自动先列出目录、资料来源与保存位置，确认后再设置；半自动让你先调整选择。已有笔记留在原位，完成后会生成一份说明本次设置的新手指南。模型 API Key 仍需自己准备，也可以留空跳过，稍后再连接。
+- **对话里可以生成 Excalidraw 手绘图。** 在电脑端「+」菜单选择 Excalidraw，或直接在对话中说明要画图；也可从笔记生成入口选择手绘图。支持白底和黑板，确认后保存为可继续编辑的图。需要安装并启用 Excalidraw 2.29 或更新版本，以及支持工具调用的模型；此功能不要求 PRO，调用模型仍使用你自己的额度。
+- **日记可以沿用自己的命名格式。** 选择预设或自定义年月日与目录格式，先看预计路径。旧日记可以预览整理计划，确认后移动，保留整理记录并支持撤销；同日多篇、位置冲突或文件已变动时会跳过并说明。需要 AI 辨认日期的内容由你主动选择发送，才会消耗模型额度。
+- **电脑端可以聘请专家 Agent（PRO）。** 浏览专家介绍，聘请后从头像继续对话，解聘后也能保留原对话。专家可在自己的工作区创建文件并预览 HTML；聘请和使用需要有效 PRO 及本机授权，模型费用另计。
+- **工作台可以显示所选城市的天气。** 在设置中自行搜索并选择城市，展示近期天气估计，不读取设备定位。天气来自 MET Norway，经 echoink.cn 提供；天气与城市来源说明可在设置中查看。
+- **收藏与 AI 产出的位置分开设置。** 链接收藏、图片、保存的回答和生成内容各用对应位置。收藏结果只提示，不再往对话里加一条消息，也不会打断正在运行的会话。
+- **工作台派发与提醒恢复正常。** 从工作台交给 Agent 的任务能正确开始，失败时有可操作的入口；派发后提醒收起，任务归属在重启后保留。知识关联的后台进度集中在工作台。
+- **普通笔记读取和模型输出限制更顺手。** 没有设置知识库目录时，对话仍可按权限搜索、读取普通笔记；知识库问答继续按其设置范围工作。部分未识别模型的输出上限报错会自动适配后重试，Canvas 遇到截断也会尝试精简重试，仍可能受模型和服务商限制。
+- **会员页写清早鸟买断信息。** 价格与活动截止时间跟随服务端商品信息显示；PRO 不包含模型额度，实际活动以官网为准。
+
+#### 如何使用
+
+在电脑端工作台的入门卡片或设置提醒中打开开局引导，选择「全自动」或「半自动」，核对清单后再确认。填写 Key 时会调用一次模型测试连接；留空不会连接模型。目录设置和生成新手指南本身不调用模型。半自动里的资料提炼默认关闭，主动开启后会将所选资料发送给模型并消耗额度。完成后先看自动打开的指南；需要恢复目录设置时，进入「设置 → 知识库 → 目录管理 → 恢复」。资料提炼产生的内容不随目录恢复撤销。
+
+旧日记整理先查看移动计划，再确认执行。AI 辨认日期是可选步骤；整理与撤销均保留发生冲突或后来改动的文件，不强行覆盖。手绘图仅支持电脑端，手机和平板不提供该入口。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前完整备份 Vault、插件设置和数据，多设备请统一升级到 2.8.9。通过 Obsidian 社区插件检查更新，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) 下载 **main.js、manifest.json、styles.css**，只替换 `.obsidian/plugins/codex-echoink/` 中这三个文件，保留原有设置和数据，再重新启用插件。**移动端仍为 Beta，本版未完成手机真机验收**；支持范围见 [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.9/README_CN.md)。模型与搜索服务的费用由相应服务商另行收取。
+
+### English
+
+**2.8.9 · One-click setup to get started**
+
+Type: New
+
+#### What's new
+
+- **Set up your vault with a guided start.** Desktop now offers automatic, guided, and manual routes. Automatic setup shows directories, source folders, and save locations before you confirm; guided setup lets you adjust the choices first. Existing notes stay where they are, and a starter guide explains the completed setup. You still supply your own model API key, or leave it blank and connect later.
+- **Create editable Excalidraw drawings in conversations.** Choose Excalidraw from the desktop **+** menu, ask for a drawing in conversation, or select the drawing format when generating from notes. Choose a white or blackboard style and confirm before saving. Requires Excalidraw 2.29 or later, enabled, and a model supporting tool calls. PRO is not required; model calls use your own provider credits.
+- **Keep your preferred journal naming format.** Choose a preset or customize date and folder patterns, with a path preview. Preview and confirm moves for older journals, with saved move records and undo. Multiple journals for the same date, path conflicts, and changed files are skipped with an explanation. Optional AI date identification sends only the content you choose and consumes model credits.
+- **Hire expert agents on desktop (PRO).** Browse introductions, hire an expert, and continue from its avatar. Conversations remain after dismissal. Experts can create files in their workspace and preview HTML. Hiring and use require active PRO and device authorization; model usage is billed separately.
+- **Show weather for your chosen city.** Search for and select a city in settings to display a near-term weather estimate without reading device location. Weather comes from MET Norway through echoink.cn, with weather and city-source information available in settings.
+- **Set separate locations for captures and AI outputs.** Link captures, images, saved answers, and generated content use their respective destinations. Capture feedback no longer adds a conversation message or interrupts a running session.
+- **Restored workbench dispatch and reminders.** Tasks handed to an agent start correctly and provide an action when they fail. Reminders hide after dispatch, and task ownership survives a restart. Background knowledge-linking progress appears on the workbench.
+- **Easier ordinary-note access and model output handling.** Conversations can search and read ordinary notes within their permissions before Knowledge folders are configured; Knowledge Q&A retains its configured scope. Some output-limit errors from unrecognized models adapt and retry automatically. Truncated Canvas generation can retry with a smaller result; model and provider limits still apply.
+- **Clearer early-bird lifetime information.** Membership screens display prices and offer end dates from the server's product information. PRO does not include model credits; see the website for the current offer.
+
+#### How to use
+
+On desktop, open setup from the workbench starter card or setup reminder, choose the automatic or guided route, and review the plan before confirming. Entering a key makes one model call to test the connection; leaving it blank skips the connection. Directory setup and starter-guide generation do not call a model. Source extraction in guided setup is off by default; enabling it sends the selected sources to your model and consumes credits. Read the guide that opens when setup finishes. To restore directory settings, open **Settings → Knowledge → Directory management → Restore**. Restoring directories does not undo content produced by extraction.
+
+For older journals, review the move plan before confirming. AI date identification is optional. Both organization and undo preserve conflicting or subsequently changed files rather than overwriting them. Excalidraw drawing is desktop-only; the entry is unavailable on phones and tablets.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your complete vault, plugin settings, and data before upgrading, and upgrade every device to 2.8.9. Check for updates in Obsidian's community plugins, or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9). Replace only those three files in `.obsidian/plugins/codex-echoink/`, keep existing settings and data, and re-enable the plugin. **Mobile remains in Beta; this version has not completed phone hardware acceptance.** See the [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.9/README.md) for supported features. Model and search providers bill their services separately.
+
 ## 2.8.8 - 2026-10-29
 <!-- release-type: feat -->
 ### 2.8.8 · 日记自动变待办和账单
