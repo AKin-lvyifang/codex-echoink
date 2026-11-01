@@ -29,7 +29,7 @@ try {
     } }],
     outfile: outputFile, logLevel: "silent"
   });
-  const result = spawnSync(process.execPath, [outputFile], { cwd: rootDir, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
+  const result = spawnSync(process.execPath, ["--import", fileURLToPath(new URL("./desktop-dom-test-preload.mjs", import.meta.url)), outputFile], { cwd: rootDir, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
   if (result.error) throw result.error;
   status = result.status ?? 1;
 } finally {

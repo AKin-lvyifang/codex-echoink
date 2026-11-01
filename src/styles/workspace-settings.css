@@ -1588,6 +1588,22 @@ body:not(.is-mobile) .echoink-settings-demo :is(input:not([type=checkbox]):not([
 .echoink-settings-demo .echoink-folder-plan-path { padding-block: 6px; font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.85; overflow-wrap: anywhere; }
 .echoink-settings-demo .echoink-folder-moves { max-height: min(360px, 45vh); overflow-y: auto; }
 .echoink-settings-demo .echoink-folder-picker { max-height: 60vh; overflow-y: auto; }
+
+/* Organization scope shares the settings field column and the existing folder picker. */
+.echoink-knowledge-module-page .echoink-knowledge-organization-controls { display: flex; flex: 0 1 230px; flex-direction: column; gap: 8px; width: 230px; min-width: 0; max-width: 100%; }
+.echoink-knowledge-module-page .echoink-knowledge-organization-controls > [data-slot=select-trigger] { width: 100%; max-width: 100%; }
+.echoink-knowledge-module-page .echoink-knowledge-organization-controls > .echoink-folder-picker { flex: 0 1 auto; width: 100%; max-height: none; margin: 0; overflow: visible; }
+.echoink-knowledge-module-page .echoink-knowledge-source { grid-template-columns: minmax(0, 1fr) 30px; }
+.echoink-knowledge-module-page .echoink-knowledge-source > .echoink-knowledge-source-unbind { grid-column: 2; grid-row: 1; }
+@container settings (max-width: 760px) {
+  .echoink-knowledge-module-page .echoink-knowledge-organization-controls { flex-basis: 200px; width: 200px; }
+}
+@container settings (max-width: 600px) {
+  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-module-page .setting-item.echoink-knowledge-organization-range { flex-direction: column; align-items: stretch; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-organization-range > .setting-item-info { flex: 0 1 auto; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-organization-range > .setting-item-control { width: 100%; max-width: 100%; }
+  .echoink-knowledge-module-page .echoink-knowledge-organization-controls { flex-basis: 100%; width: 100%; }
+}
 .echoink-settings-demo .echoink-folder-status { color: var(--secondary); font-size: calc(var(--font-text-size, 16px) * .6875); line-height: 1.85; }
 .echoink-settings-demo .echoink-folder-issues { display: grid; gap: 7px; }
 .echoink-settings-demo .echoink-knowledge-folder-panel .echoink-knowledge-init-actions { margin-top: 17px; }

@@ -10,7 +10,7 @@ import { webcrypto } from "node:crypto";
 import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
 import { mobileBuildOptions } from "./mobile-build.mjs";
-import { runFolderScenarios } from "../tests/mobile-knowledge-folders/scenarios.mjs";
+import { runFolderScenarios, runOrganizationConfigurationScenarios } from "../tests/mobile-knowledge-folders/scenarios.mjs";
 
 let project = fileURLToPath(new URL("../", import.meta.url));
 const registered = disposableTestRoot(path.join(homedir(), "EchoInk-TestVaults/90-任务临时/移动端改版-M12-20261019"));
@@ -57,7 +57,8 @@ await runKnowledgeFolderPlanTests(); await runKnowledgeFolderBindingsTests(); aw
     vm.runInContext(built.outputFiles[0].text, context);
     assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
     console.log(`PASS browser graph: ${Object.keys(built.metafile.inputs).length} inputs; no Node initializer/root-paths/history; only obsidian external`);
-    await runFolderScenarios(module.exports, root);
+    runOrganizationConfigurationScenarios(module.exports);
+    if (!process.argv.includes("--organization-settings")) await runFolderScenarios(module.exports, root);
     dom.window.close();
   }
 } finally { await fs.rm(root, { recursive: true }); }

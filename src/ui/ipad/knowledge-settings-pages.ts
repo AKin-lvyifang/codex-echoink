@@ -1,5 +1,8 @@
+import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
+import { shellIconButton } from "../mobile/shell-controls";
+import { knowledgeOrganizationSelectable } from "../../knowledge-base/folder-organization";
 import type { MobileKnowledgeFolderApplyResult, MobileKnowledgeFolderPreview, MobileKnowledgeFolderRequest, MobileKnowledgeFoldersSnapshot } from "../../mobile/knowledge-folders-contracts";
-import { emptyKnowledgeFolderBindings, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeOrganizationSettings, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import { KNOWLEDGE_ROOT_NAMES } from "../../knowledge-base/root-paths-core";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -63,6 +66,7 @@ export function createIPadKnowledgeSettingsPage(ctx: IPadSettingsContext): Mobil
   const reload = async () => { const ticket = ++revision; try { const snapshot = await port.read(); if (!view.alive || ticket !== revision) return; view.body.replaceChildren(); view.error.show();
     const purposes = view.group(t(ctx, "用途", "Purposes")); for (const [role, zh, en] of ROLES) view.row(purposes, t(ctx, zh, en), status(ctx, snapshot, role), () => openPurpose(ctx, snapshot, role, reload));
     view.row(purposes, t(ctx, "收藏保存位置", "Collection locations"), "", () => openCollections(ctx, snapshot, reload));
+    const permissions = view.group(""); view.row(permissions, t(ctx, "Agent 权限与维护", "Agent permissions and maintenance"), "", () => openOrganization(ctx, snapshot, reload), "shield-check");
     const management = view.group(t(ctx, "目录管理", "Folder management")); view.row(management, t(ctx, "重新初始化", "Set up folders again"), "", () => openInitialization(ctx, snapshot, reload)); view.row(management, t(ctx, "文件夹名称优化", "Improve folder names"), "", () => openNames(ctx, snapshot, reload)); view.row(management, t(ctx, "复原仓库", "Restore changes"), "", () => openRestoreRecords(ctx, snapshot, reload));
   } catch (error) { if (view.alive && ticket === revision) { view.body.replaceChildren(); view.error.show(error); view.button(view.body, t(ctx, "重新读取", "Reload"), reload); } } };
   view.body.append(el(ctx.document, "div", "pd-knowledge-empty", t(ctx, "正在读取…", "Loading…"))); void reload(); return view.page;
@@ -98,20 +102,36 @@ async function openPurpose(ctx: IPadSettingsContext, initial: MobileKnowledgeFol
     if (enabled && !binding.readPaths.length) { toggle.checked = false; await choose(); return; } const next = config(snapshot); next.roles[role].enabled = enabled; if (!await commit(next)) toggle.checked = binding.enabled;
   }, true); toggle.disabled = !snapshot.writable;
     const location = view.group(t(ctx, "位置", "Folders")); view.row(location, t(ctx, "选择已有目录", "Choose existing folders"), status(ctx, snapshot, role), snapshot.writable ? choose : undefined, "folder");
-    if (role === "wiki" || role === "projects") { const permissions = view.group(t(ctx, "子目录许可", "Subfolder permissions")); const permission = view.check(permissions, t(ctx, "允许 Agent 在知识成果和项目中新建子文件夹", "Allow Agent to create subfolders in Knowledge and Projects"), snapshot.bindings?.allowAgentSubfolders === true, async enabled => { const next = config(snapshot); next.allowAgentSubfolders = enabled; if (!await commit(next)) permission.checked = snapshot.bindings?.allowAgentSubfolders === true; }); permission.disabled = !snapshot.writable; }
-    if (binding.allowedSubdirectories.length || binding.autoOrganizePaths?.length) { const consent = view.group(t(ctx, "已有子目录许可", "Existing subfolder permissions"));
-      for (const path of binding.allowedSubdirectories) { const control = view.check(consent, path, true, async () => { const next = config(snapshot); next.roles[role].allowedSubdirectories = next.roles[role].allowedSubdirectories.filter(item => item !== path); if (!await commit(next)) control.checked = true; }); control.disabled = !snapshot.writable; }
-      for (const path of binding.autoOrganizePaths ?? []) { const control = view.check(consent, t(ctx, `${path} 内的子目录`, `Subfolders in ${path}`), true, async () => { const next = config(snapshot); next.roles[role].autoOrganizePaths = next.roles[role].autoOrganizePaths?.filter(item => item !== path); if (!await commit(next)) control.checked = true; }); control.disabled = !snapshot.writable; }
-    }
   }; render(); await view.push();
 }
 
-interface PickerOptions { selected: string[]; multiple?: boolean; topLevel?: boolean; allowNew?: boolean; allowRoot?: boolean; defaultPath?: string | null }
+async function openOrganization(ctx: IPadSettingsContext, initial: MobileKnowledgeFoldersSnapshot, saved: () => Promise<void>): Promise<void> {
+  const view = new FolderPage(ctx, "ipad-knowledge-organization", t(ctx, "Agent 权限与维护", "Agent permissions and maintenance")); let snapshot = initial, help: NativeTooltipHandle | undefined;
+  const commit = async (next: KnowledgeFolderBindings): Promise<boolean> => view.run(async () => { snapshot = await ctx.host.services.knowledgeFolders.saveBindings(next, snapshot.token); await saved(); render(); });
+  const render = () => {
+    if (!view.alive) return; help?.dispose(); view.body.replaceChildren();
+    const bindings = config(snapshot), organization = knowledgeOrganizationSettings(bindings), group = view.group("");
+    const permission = view.check(group, t(ctx, "允许 Agent 分类整理", "Allow Agent to organize files"), organization.enabled, async enabled => { const next = config(snapshot); next.organization = { ...knowledgeOrganizationSettings(next), enabled }; if (!await commit(next)) permission.checked = organization.enabled; }); permission.disabled = !snapshot.writable;
+    const info = shellIconButton(ctx.document, t(ctx, "分类整理说明", "About file organization"), "circle-alert", () => {}); info.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); }); permission.before(info);
+    help = attachNativeTooltip(info, t(ctx, "Agent 可以在允许的文件夹里新建子文件夹，把文件归类挪进去；不删除文件，也不挪出原来的根文件夹；整理前会先给你看方案。", "Agent can create subfolders in allowed folders and move files into them. It will not delete files or move them outside their original root folder, and will show you a plan before organizing."), { touch: "notice" });
+    if (organization.enabled) {
+      const scope = view.select(group, t(ctx, "范围", "Scope"), [["all", t(ctx, "全部文件夹", "All folders")], ["selected", t(ctx, "选定的文件夹", "Selected folders")]], organization.scope, async value => { const next = config(snapshot); next.organization = { ...knowledgeOrganizationSettings(next), scope: value === "selected" ? "selected" : "all" }; if (!await commit(next)) scope.value = organization.scope; }); scope.disabled = !snapshot.writable;
+      if (organization.scope === "selected") {
+        view.row(group, t(ctx, "选择文件夹", "Choose folders"), organization.paths.length ? t(ctx, `${organization.paths.length} 个`, `${organization.paths.length} folders`) : t(ctx, "尚未选择", "None selected"), snapshot.writable ? () => openFolderPicker(ctx, snapshot, { selected: organization.paths, multiple: true, selectable: path => knowledgeOrganizationSelectable(bindings, path) }, async paths => { const next = config(snapshot); next.organization = { ...knowledgeOrganizationSettings(next), paths }; snapshot = await ctx.host.services.knowledgeFolders.saveBindings(next, snapshot.token); await saved(); render(); }) : undefined, "folder");
+      }
+    }
+    const invalid = organization.paths.filter(path => !snapshot.directories.includes(path) || !knowledgeOrganizationSelectable(bindings, path));
+    if (invalid.length) { const warning = el(ctx.document, "div", "pd-settings-error", t(ctx, `位置失效：${invalid.join("、")}`, `Unavailable: ${invalid.join(", ")}`)); warning.setAttribute("role", "alert"); group.append(warning); }
+  };
+  view.cleanup(() => help?.dispose()); render(); await view.push();
+}
+
+interface PickerOptions { selected: string[]; multiple?: boolean; topLevel?: boolean; allowNew?: boolean; allowRoot?: boolean; defaultPath?: string | null; selectable?: (path: string) => boolean }
 async function openFolderPicker(ctx: IPadSettingsContext, snapshot: MobileKnowledgeFoldersSnapshot, options: PickerOptions, save: (paths: string[], defaultPath?: string) => Promise<void>): Promise<void> {
   const view = new FolderPage(ctx, "ipad-knowledge-folders-picker", t(ctx, "选择目录", "Choose folders")); let selected = [...options.selected], changed = false, query = "", newPath = "", defaultPath = options.defaultPath ?? (selected.length === 1 ? selected[0] : "");
   const search = settingsField(ctx, view.body, t(ctx, "搜索目录", "Search folders"), "", value => { query = value; draw(); }, "search"), list = el(ctx.document, "div", "pd-knowledge-folder-list"); search.parentElement!.after(list);
-  const draw = () => { list.replaceChildren(); const paths = [...new Set([...(options.allowRoot ? [""] : []), ...snapshot.directories, ...selected])].filter(path => (path !== "" || options.allowRoot === true) && (path || t(ctx, "库根目录", "Vault root")).toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (!options.topLevel || !path.includes("/") || options.selected.includes(path)));
-    for (const path of paths) { const row = view.check(list, path || t(ctx, "库根目录", "Vault root"), selected.includes(path), value => { changed = true; selected = options.multiple ? value ? [...selected, path] : selected.filter(item => item !== path) : value ? [path] : []; draw(); }); row.type = options.multiple ? "checkbox" : "radio"; row.name = "knowledge-folder"; row.setAttribute("data-path", path); if (options.topLevel && path.includes("/")) row.disabled = true; }
+  const draw = () => { list.replaceChildren(); const paths = [...new Set([...(options.allowRoot ? [""] : []), ...snapshot.directories, ...selected, ...(options.selectable ? options.selected : [])])].filter(path => (path !== "" || options.allowRoot === true) && (path || t(ctx, "库根目录", "Vault root")).toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (!options.topLevel || !path.includes("/") || options.selected.includes(path)) && (!options.selectable || options.selectable(path) || options.selected.includes(path)));
+    for (const path of paths) { const unavailable = !!options.selectable && (!snapshot.directories.includes(path) || !options.selectable(path)); const label = unavailable ? t(ctx, `${path} · 位置失效`, `${path} · Unavailable`) : path || t(ctx, "库根目录", "Vault root"); const row = view.check(list, label, selected.includes(path), value => { if (value && unavailable) return; changed = true; selected = options.multiple ? value ? [...selected, path] : selected.filter(item => item !== path) : value ? [path] : []; draw(); }); row.type = options.multiple ? "checkbox" : "radio"; row.name = "knowledge-folder"; row.setAttribute("data-path", path); if (options.topLevel && path.includes("/") || unavailable && !selected.includes(path)) row.disabled = true; }
     if (!selected.includes(defaultPath)) defaultPath = selected[0] ?? "";
 
     if (!paths.length) list.append(el(ctx.document, "div", "pd-knowledge-empty", t(ctx, "没有可选目录", "No folders available")));

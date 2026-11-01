@@ -185,7 +185,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
   ): Promise<void> {
     await this.assertMissingTargetStable(target);
     try {
-      await this.createMissingParentDirectories(target, true);
+      await this.createMissingParentDirectories(target);
       await this.app.vault.create(target.relativePath, content);
     } catch (error) {
       throw mapMutationError(error, "already_exists", "Vault create failed");
@@ -277,7 +277,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
       );
     }
     try {
-      await this.createMissingParentDirectories(target, false);
+      await this.createMissingParentDirectories(target);
       await this.app.fileManager.renameFile(file, target.relativePath);
     } catch (error) {
       throw mapMutationError(error, "io_error", "Vault move failed");
@@ -353,8 +353,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
   }
 
   private async createMissingParentDirectories(
-    target: Readonly<ResolvedVaultTarget>,
-    allowAgentSubfolders: boolean
+    target: Readonly<ResolvedVaultTarget>
   ): Promise<void> {
     const parentSegments = target.relativePath.split("/").slice(0, -1);
     let relativeParent = "";
@@ -380,7 +379,7 @@ export class ObsidianVaultDomainAdapter implements VaultDomainAdapter {
         continue;
       }
       const config = getKnowledgeFolderBindings(this.vaultRootPath);
-      if (config && !knowledgeMayCreateCategoryDirectory(config, relativeParent, { allowAgentSubfolders })) {
+      if (config && !knowledgeMayCreateCategoryDirectory(config, relativeParent)) {
         throw adapterError("unsafe_target", "Vault parent directory creation is not allowed");
       }
       try {

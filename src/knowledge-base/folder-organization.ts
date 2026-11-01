@@ -1,5 +1,5 @@
-import { normalizeKnowledgeDirectory, pathInKnowledgeDirectory, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
-import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, type KnowledgeRootRole } from "./root-paths-core";
+import { normalizeKnowledgeDirectory, pathInKnowledgeDirectory, knowledgeOrganizationSettings, type KnowledgeFolderBinding, type KnowledgeFolderBindings } from "./folder-bindings";
+import { KNOWLEDGE_ROOT_ROLES, type KnowledgeRootRole } from "./root-paths-core";
 
 export interface KnowledgeOrganizationBinding {
   readonly role: KnowledgeRootRole;
@@ -35,25 +35,29 @@ export function knowledgeOrganizationBinding(
   if (!matches.length || matches.filter(match => match.root.length === matches[0].root.length).length !== 1) return null;
   const owner = matches[0];
   // Retired or invalid owners keep their boundary; they cannot inherit an ancestor's grant.
-  return DESKTOP_KNOWLEDGE_ROOT_ROLES.includes(owner.role) && !config.migrationIssues.some(issue => issue.startsWith(`${owner.role}：`)) ? owner : null;
+  return ["raw", "wiki", "projects", "inbox"].includes(owner.role) && !config.migrationIssues.some(issue => issue.startsWith(`${owner.role}：`)) ? owner : null;
 }
 
-/** Legacy approvals cover exactly their declared children and required ancestors. */
-export function knowledgeMayCreateCategoryDirectory(config: KnowledgeFolderBindings, directory: string, options: Readonly<{ allowAgentSubfolders?: boolean }> = {}): boolean {
+/** Only live, unambiguous bindings of the four Knowledge purposes are selectable. */
+export function knowledgeOrganizationSelectable(config: KnowledgeFolderBindings, directory: string): boolean {
+  try { return knowledgeOrganizationBinding(config, directory) !== null; } catch { return false; }
+}
+function selectedScopeAllows(config: KnowledgeFolderBindings, target: string): boolean {
+  const policy = knowledgeOrganizationSettings(config);
+  return policy.enabled && (policy.scope === "all" || policy.paths.some(selected => knowledgeOrganizationSelectable(config, selected) && pathInKnowledgeDirectory(target, selected)));
+}
+
+/** Creating a category never creates the binding root itself or expands selected scope. */
+export function knowledgeMayCreateCategoryDirectory(config: KnowledgeFolderBindings, directory: string): boolean {
   const target = normalizeKnowledgeDirectory(directory);
   const owner = knowledgeOrganizationBinding(config, target);
-  if (!owner || target === owner.root) return false;
-  if (options.allowAgentSubfolders !== false && config.allowAgentSubfolders === true && (owner.role === "wiki" || owner.role === "projects")) return true;
-  if (owner.binding.autoOrganizePaths?.includes(owner.root)) return true;
-  if (!(owner.binding.allowedSubdirectoryRoots ?? owner.binding.readPaths).includes(owner.root)) return false;
-  const child = target.slice(owner.root.length + 1);
-  return owner.binding.allowedSubdirectories.some(allowed => allowed === child || allowed.startsWith(`${child}/`));
+  return !!owner && target !== owner.root && selectedScopeAllows(config, target);
 }
 
-/** Consent never crosses an actual root, even between two roots of one role. */
+/** Both endpoints must be permitted, within the same actual root, including nested owners. */
 export function knowledgeMayOrganizeMove(config: KnowledgeFolderBindings, sourcePath: string, targetPath: string): boolean {
   const source = knowledgeOrganizationBinding(config, sourcePath);
   const target = knowledgeOrganizationBinding(config, targetPath);
   return !!source && !!target && source.role === target.role && source.root === target.root
-    && source.binding.autoOrganizePaths?.includes(source.root) === true;
+    && selectedScopeAllows(config, sourcePath) && selectedScopeAllows(config, targetPath);
 }

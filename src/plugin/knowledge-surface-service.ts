@@ -1,3 +1,4 @@
+import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 import { validateDirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
@@ -8,7 +9,7 @@ import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole }
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
 import { rebasePrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { previewKnowledgeDirectoryPlan, knowledgeDirectoryPlanSignature, type KnowledgeDirectoryPlan, type KnowledgeDirectoryPlanOptions, type KnowledgeDirectoryApplyResult, type KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOrganizationSettings, knowledgeFolderBindingsSignature, knowledgeFolderIssues, knowledgeInboxRecallExclusions, knowledgeWikiFolderSelectionIssues, normalizeKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { readPrivateMaintenanceRecords, privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
@@ -133,6 +134,7 @@ export class EchoInkKnowledgeSurfaceService {
           if (bindings.roles[role].allowedSubdirectoryRoots) restored.roles[role].allowedSubdirectoryRoots = [...new Set(bindings.roles[role].allowedSubdirectoryRoots.flatMap(directory => eligible(directory) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
           if (keepCurrent && restored.roles[role].readPaths.length > 1) restored.roles[role].compatibilityReadScopes = true;
         }
+        if (restored.organization) restored.organization.paths = [...new Set(restored.organization.paths.flatMap(directory => directory === from || directory.startsWith(`${from}/`) ? keepCurrent ? [rebaseKnowledgePath(directory, from, to), directory] : [rebaseKnowledgePath(directory, from, to)] : [directory]))];
         if (restored.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
           const target = restored.collectionTargets[kind];
           if (target && (target === from || target.startsWith(`${from}/`)) && originalBindings?.roles.raw.readPaths.includes(rebaseKnowledgePath(target, from, to))) {
@@ -149,7 +151,7 @@ export class EchoInkKnowledgeSurfaceService {
         const restored = structuredClone(current);
         const originalConfig = normalizeKnowledgeFolderBindings(original) ?? emptyKnowledgeFolderBindings();
         applied = normalizeKnowledgeFolderBindings(applied) ?? applied;
-        if (current.allowAgentSubfolders === applied.allowAgentSubfolders) restored.allowAgentSubfolders = originalConfig.allowAgentSubfolders;
+        if (JSON.stringify(knowledgeOrganizationSettings(current)) === JSON.stringify(knowledgeOrganizationSettings(applied))) restored.organization = knowledgeOrganizationSettings(originalConfig);
         const currentTargets = knowledgeCollectionTargets(current), appliedTargets = knowledgeCollectionTargets(applied), originalTargets = knowledgeCollectionTargets(originalConfig);
         restored.collectionTargets = { ...currentTargets };
         for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
@@ -658,7 +660,8 @@ export class EchoInkKnowledgeSurfaceService {
   /** Immediate binding edits are configuration only, including in read-only mode. */
   async saveDirectoryBindings(bindings: KnowledgeFolderBindings, options: { wikiChanged?: boolean } = {}): Promise<KnowledgeFolderBindings> {
     if (this.folderOperationBusy) throw new Error("已有目录操作进行中，请稍后重试。");
-    const next = structuredClone(bindings);
+    const next = normalizeKnowledgeFolderBindings(bindings);
+    if (!next) throw new Error("目录绑定无效。");
     return await this.withStructureMutation(async () => {
       const previous = this.plugin.settings.knowledgeBase.folderBindings;
       next.collectionTargets = !bindings.collectionTargets && previous?.roles.raw.readPaths.length ? knowledgeCollectionTargets(previous) : knowledgeCollectionTargets(next);
@@ -677,15 +680,18 @@ export class EchoInkKnowledgeSurfaceService {
         if (!binding.enabled || (binding.native && ["journal", "templates"].includes(role))) continue;
         const before = previous?.roles[role];
         const newlyEnabled = !before?.enabled || (binding.searchEnabled !== false && before.searchEnabled === false);
-        const newChildApproval = binding.allowedSubdirectories.some(child => !before?.allowedSubdirectories.includes(child));
-        const newAgentApproval = next.allowAgentSubfolders === true && previous?.allowAgentSubfolders !== true && ["wiki", "projects"].includes(role);
         for (const directory of binding.readPaths) {
-          if (!before?.readPaths.includes(directory) || newlyEnabled || newAgentApproval
-            || (binding.autoOrganizePaths?.includes(directory) && !before?.autoOrganizePaths?.includes(directory))
-            || (newChildApproval && (binding.allowedSubdirectoryRoots ?? binding.readPaths).includes(directory))
+          if (!before?.readPaths.includes(directory) || newlyEnabled
             || (binding.allowedSubdirectoryRoots?.includes(directory) && !before?.allowedSubdirectoryRoots?.includes(directory))
             || (binding.writePath === directory && binding.writePath !== before?.writePath)) checkPaths.add(directory);
         }
+      }
+      const priorOrganization = knowledgeOrganizationSettings(previous);
+      const organization = knowledgeOrganizationSettings(next);
+      for (const directory of organization.paths) {
+        if (priorOrganization.paths.includes(directory)) continue;
+        if (!knowledgeOrganizationSelectable(next, directory)) throw new Error(`${directory}：只能选择已绑定的资料来源、知识成果、项目或收件箱及其子文件夹。`);
+        checkPaths.add(directory);
       }
       for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
         const target = next.collectionTargets?.[kind];

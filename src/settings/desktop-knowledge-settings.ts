@@ -1,12 +1,13 @@
 import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { readNativeJournalSettings } from "../home/native-journal";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { OriginSetting } from "./origin-setting";
-import { createOriginButton, createOriginInput, createOriginCheck, disposeOriginControls } from "./origin-controls";
+import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
@@ -172,7 +173,7 @@ export class DesktopKnowledgeSettings {
   private renderPermissions(page: HTMLElement): void {
     const bindings = this.bindings();
     const permissions = createSettingsGroup(createSettingsSection(page, { surface: "flat" }));
-    this.checkbox(permissions, "允许 Agent 新建子文件夹", bindings.allowAgentSubfolders === true, "只允许在获准的知识成果和项目中按主题创建子文件夹；只新建，不删除、不移动已有文件或文件夹。", async value => { const next = this.bindings(); next.allowAgentSubfolders = value; await this.save(next); });
+    this.renderOrganizationPermission(permissions, bindings);
     this.checkbox(permissions, "自动补链", this.plugin.settings.knowledgeBase.autoLinkEnabled !== false, "新知识写入后，给本批笔记和相关老笔记补全双链。关闭后不再发起自动补链，已开始的写入会完成；仍可手动补全。", async value => {
       const previous = this.plugin.settings.knowledgeBase.autoLinkEnabled; this.plugin.settings.knowledgeBase.autoLinkEnabled = value;
       try { await this.plugin.saveSettings(true); } catch (error) { this.plugin.settings.knowledgeBase.autoLinkEnabled = previous; throw error; }
@@ -189,6 +190,74 @@ export class DesktopKnowledgeSettings {
     this.linkingCleanup = renderKnowledgeLinkingSection(permissions, this.plugin, this.linkingTaskId, this.locateLinking);
     this.locateLinking = false;
     this.linkingTaskId = undefined;
+  }
+  private renderOrganizationPermission(parent: HTMLElement, bindings: KnowledgeFolderBindings): void {
+    let accepted = knowledgeOrganizationSettings(bindings);
+    let saving = false;
+    let picker: KnowledgeFolderPicker | null = null;
+    const checkRow = this.checkbox(parent, "允许 Agent 分类整理", accepted.enabled, "Agent 可以在允许的文件夹里新建子文件夹，把文件归类挪进去；不删除文件，也不挪出原来的根文件夹；整理前会先给你看方案。", async enabled => {
+      await persist({ ...accepted, enabled });
+    });
+    const check = checkRow.controlEl.querySelector<HTMLInputElement | HTMLButtonElement>('input, [role="checkbox"]')!;
+    const rangeRow = new OriginSetting(parent).setName("范围");
+    rangeRow.settingEl.addClass("echoink-knowledge-organization-range");
+    const controls = rangeRow.controlEl.createDiv({ cls: "echoink-knowledge-organization-controls" });
+    const scope = createOriginSelect(controls, { attr: { "aria-label": "分类整理范围" } }, [
+      { value: "all", label: "全部文件夹" }, { value: "selected", label: "选定的文件夹" }
+    ], accepted.scope, this.plugin.app).element;
+    const selectionError = () => {
+      const current = this.bindings();
+      const invalid = accepted.paths.filter(path => !(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder) || !knowledgeOrganizationSelectable(current, path));
+      return invalid.length ? `文件夹不存在或已不在允许范围内，请移除后重新选择：${invalid.join("、")}` : accepted.paths.length ? "" : "请至少选择一个文件夹";
+    };
+    const syncDisabled = () => {
+      check.disabled = saving;
+      scope.disabled = saving || !accepted.enabled;
+      picker?.setDisabled(saving || !accepted.enabled);
+    };
+    const persist = async (organization: typeof accepted) => {
+      if (saving) throw new Error("正在保存，请稍后重试");
+      saving = true; syncDisabled();
+      try {
+        const next = this.bindings(); next.organization = organization;
+        await this.save(next);
+        accepted = knowledgeOrganizationSettings(this.bindings());
+      } finally { saving = false; syncDisabled(); }
+    };
+    const renderSelection = () => {
+      if (picker) {
+        const previous = picker;
+        this.folderPickers = this.folderPickers.filter(item => item !== previous);
+        previous.dispose(); picker = null;
+      }
+      if (accepted.scope !== "selected") return;
+      picker = createKnowledgeFolderPicker(controls, {
+        label: "分类整理文件夹", multiple: true, allowCreate: false, disabled: !accepted.enabled, app: this.plugin.app,
+        folders: () => {
+          const current = this.bindings();
+          return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => knowledgeOrganizationSelectable(current, path));
+        },
+        values: accepted.paths.map(path => ({ path, create: false })),
+        onChange: values => {
+          const active = picker!;
+          void persist({ ...accepted, paths: values.map(value => value.path) }).then(() => active.setError(selectionError())).catch(error => {
+            active.setValues(accepted.paths.map(path => ({ path, create: false })));
+            active.setError(error instanceof Error ? error.message : String(error));
+          });
+        }
+      });
+      this.folderPickers.push(picker);
+      picker.setError(selectionError());
+    };
+    scope.onchange = () => {
+      if (scope.disabled) return;
+      const nextScope = scope.value === "selected" ? "selected" : "all";
+      void persist({ ...accepted, scope: nextScope }).then(renderSelection).catch(error => {
+        scope.value = accepted.scope;
+        new Notice(error instanceof Error ? error.message : String(error));
+      });
+    };
+    renderSelection(); syncDisabled();
   }
   private renderManagement(page: HTMLElement): void {
     const bindings = this.bindings();
@@ -225,15 +294,10 @@ export class DesktopKnowledgeSettings {
     this.renderSearchPermission(search.createDiv({ cls: "echoink-knowledge-source-list" }), role);
   }
   private renderDirectoryEntry(list: HTMLElement, page: HTMLElement, role: Role, path: string): void {
-    const binding = this.bindings().roles[role];
     const row = list.createDiv({ cls: "echoink-knowledge-source" });
     const pathLabel = row.createDiv({ cls: "echoink-knowledge-source-path" });
     setIcon(pathLabel.createSpan({ cls: "echoink-knowledge-source-icon", attr: { "aria-hidden": "true" } }), "folder");
     pathLabel.createSpan({ text: path });
-    const permission = this.checkbox(row, "允许 Agent 自动整理", binding.autoOrganizePaths?.includes(path) ?? false, "仅对这个已绑定目录生效，执行时仍核对权限并确认写入。", async enabled => {
-      const next = this.bindings(), item = next.roles[role]; item.autoOrganizePaths = (item.autoOrganizePaths ?? []).filter(value => value !== path); if (enabled) item.autoOrganizePaths.push(path); await this.save(next);
-    });
-    permission.settingEl.addClass("echoink-knowledge-source-permission");
     const unbind = createOriginButton(row, { cls: "is-icon echoink-knowledge-source-unbind", attr: { "aria-label": `解绑 ${path}` } });
     applyDeleteButton(unbind, { iconOnly: true }); unbind.onclick = () => this.confirmUnbind(page, unbind, role, path);
     if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "文件夹不存在" });
@@ -246,7 +310,6 @@ export class DesktopKnowledgeSettings {
       const next = this.bindings(), binding = next.roles[role];
       binding.readPaths = role === "raw" ? [...new Set([...binding.readPaths, path])] : [path];
       binding.writePath = role === "raw" && binding.writePath ? binding.writePath : path; binding.enabled = true; binding.searchEnabled = true;
-      binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(value => binding.readPaths.includes(value));
       await this.save(next, role === "wiki"); this.change(role === "raw" ? "sources" : null);
     } }; this.change("picker");
   }
@@ -270,7 +333,6 @@ export class DesktopKnowledgeSettings {
     showSettingsInlineConfirmation(page, trigger, { deleteAction: true, message: "解绑只解除用途绑定，不会删除目录或笔记。", confirmLabel: "确认解绑", cancelLabel: "取消", onConfirm: async () => {
       const next = this.bindings(), binding = next.roles[role]; binding.readPaths = path ? binding.readPaths.filter(item => item !== path) : [];
       binding.enabled = binding.readPaths.length > 0; binding.writePath = binding.readPaths.includes(binding.writePath ?? "") ? binding.writePath : binding.readPaths[0] ?? null;
-      binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => binding.readPaths.includes(item));
       try { await this.save(next);
         if (role === "raw") {
           const affected = knowledgeCollectionKinds(next).filter(kind => !knowledgeCollectionDirectory(next, kind));
@@ -307,7 +369,6 @@ export class DesktopKnowledgeSettings {
           if (typeof folder !== "string") continue;
           const binding = this.draft.roles[role]; binding.native = true; binding.enabled = true;
           binding.readPaths = folder ? [folder] : []; binding.writePath = folder || null;
-          binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => binding.readPaths.includes(path));
         }
         if (mode === "build") for (const role of ["raw", "wiki", "projects", "inbox"] as const) { const binding = this.draft.roles[role]; binding.enabled = true; binding.readPaths = [role]; binding.writePath = role; if (role === "wiki") this.wikiChanged = true; }
         this.change("initialize");
@@ -357,7 +418,6 @@ export class DesktopKnowledgeSettings {
         const binding = bindings.roles[role];
         binding.readPaths = paths; binding.enabled = paths.length > 0;
         binding.writePath = binding.writePath && paths.includes(binding.writePath) ? binding.writePath : paths[0] ?? null;
-        binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => paths.includes(path));
         if (role === "wiki" && paths.join("\n") !== this.bindings().roles.wiki.readPaths.join("\n")) this.wikiChanged = true;
       });
     }

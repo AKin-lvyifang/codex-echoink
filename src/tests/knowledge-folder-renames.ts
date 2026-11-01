@@ -6,6 +6,7 @@ import { KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
 function settingsFixture() {
   const folderBindings = emptyKnowledgeFolderBindings();
   folderBindings.revision = 9;
+  folderBindings.organization = { enabled: true, scope: "selected", paths: ["库/原始资料/甲", "库-old/保留"] };
   folderBindings.configured = true;
   folderBindings.collectionTargets = { web: "库/原始资料/甲", wechat: "库/原始资料/乙", files: "库/原始资料/甲", images: "库/原始资料/乙", text: "库/原始资料/乙" };
   folderBindings.inboxRecallExclusions = ["库/旧收件箱", "库-old/旧收件箱"];
@@ -67,6 +68,7 @@ export function runKnowledgeFolderRenameTests(): void {
     assert.deepEqual(after.allowedSubdirectories, before.allowedSubdirectories, "child approvals are relative names, not Vault paths");
     assert.equal(after.enabled, false, "folder identity changes also update disabled bindings");
   }
+  assert.deepEqual(parent.knowledgeBase.folderBindings.organization?.paths, ["笔记/知识/原始资料/甲", "库-old/保留"]);
   assert.deepEqual(parent.knowledgeBase.folderBindings.inboxRecallExclusions, ["笔记/知识/旧收件箱", "库-old/旧收件箱"]);
   assert.equal(parent.knowledgeBase.folderBindings.revision, 10, "one folder event advances the binding revision once");
   assert.equal(parent.journalDirectory, "笔记/知识/日记");
