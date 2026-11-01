@@ -76,21 +76,20 @@ export async function runEnglishDiaryProviderTests(installDom: () => void): Prom
 
     const defaults = normalizeSettingsData({}).settings;
     new EnglishDiaryController({ ...plugin, settings: defaults } as never);
-    const root = roots.includes("outputs") ? "outputs" : "输出（outputs）";
-    assert.equal(defaults.englishDiary.englishDirectory, `${root}/英文日记`, "default English directories still follow the output root");
-    assert.equal(defaults.englishDiary.expressionDirectory, `${root}/英文日记/表达库`);
+    assert.equal(defaults.englishDiary.englishDirectory, DEFAULT_ENGLISH_DIRECTORY, "default English directories remain owned by module settings");
+    assert.equal(defaults.englishDiary.expressionDirectory, DEFAULT_EXPRESSION_DIRECTORY);
     assert.equal(defaults.englishDiary.englishDirectoryMode, "role");
     assert.equal(defaults.englishDiary.expressionDirectoryMode, "role");
   }
-  console.log("PASS English Diary storage: custom directories preserved, default directories migrated, reopen idempotent");
+  console.log("PASS English Diary storage: custom and default module directories preserved, legacy reads retained, reopen idempotent");
   const rebuiltSettings = normalizeSettingsData({}).settings;
   new EnglishDiaryController({
     settings: rebuiltSettings, manifest: { id: "echoink-test" },
     app: { vault: { configDir: ".test-config", getRoot: () => ({ children: [Object.assign(new TFolder(), { name: "输出（outputs）", path: "输出（outputs）" })] }) } }
   } as never);
-  assert.equal(rebuiltSettings.englishDiary.englishDirectory, "输出（outputs）/英文日记");
-  assert.equal(rebuiltSettings.englishDiary.expressionDirectory, "输出（outputs）/英文日记/表达库");
-  for (const directory of [LEGACY_ENGLISH_DIRECTORY, DEFAULT_ENGLISH_DIRECTORY])
+  assert.equal(rebuiltSettings.englishDiary.englishDirectory, DEFAULT_ENGLISH_DIRECTORY);
+  assert.equal(rebuiltSettings.englishDiary.expressionDirectory, DEFAULT_EXPRESSION_DIRECTORY);
+  for (const directory of [LEGACY_ENGLISH_DIRECTORY, "输出（outputs）/英文日记"])
     assert.ok(rebuiltSettings.englishDiary.legacyEnglishDirectories?.includes(directory), "rebuilt settings retain known English migration sources without old configuration");
   for (const directory of [LEGACY_EXPRESSION_DIRECTORY, LEGACY_HIDDEN_EXPRESSION_DIRECTORY, HIDDEN_EXPRESSION_DIRECTORY])
     assert.ok(rebuiltSettings.englishDiary.legacyExpressionDirectories?.includes(directory), "rebuilt settings retain known expression migration sources without old configuration");
@@ -533,11 +532,13 @@ async function assertNativeDiaryPairAndSelection(): Promise<void> {
 }
 
 async function assertDiaryNestedDirectoryGuard(): Promise<void> {
-  const settings = normalizeSettingsData({ englishDiary: { enabled: true, englishDirectoryMode: "role", expressionDirectoryMode: "role" } }).settings;
+  const settings = normalizeSettingsData({ englishDiary: { enabled: true, englishDirectoryMode: "role", expressionDirectoryMode: "role",
+    englishDirectory: "我的英文日记", expressionDirectory: "我的表达库" } }).settings;
   const bindings = emptyKnowledgeFolderBindings();
   settings.knowledgeBase.folderBindings = bindings;
-  Object.assign(bindings.roles.outputs, { enabled: true, readPaths: ["My outputs"], writePath: "My outputs", allowedSubdirectories: ["英文日记", "英文日记/表达库"] });
-  const folders = new Map(["My outputs"].map((path) => [path, Object.assign(new TFolder(), { path })]));
+  bindings.collectionTargets = { answer: "回答成果", generation: "生成成果" };
+  Object.assign(bindings.roles.outputs, { enabled: false, readPaths: ["My outputs"], writePath: "My outputs", allowedSubdirectories: [] });
+  const folders = new Map<string, TFolder | TFile>();
   const plugin: any = { settings, manifest: { id: "test" }, getVaultPath: () => "/__english_diary_fixture__", app: { vault: {
     configDir: ".obsidian", getRoot: () => ({ children: [] }), getAbstractFileByPath: (path: string) => folders.get(path) ?? null
   } } };
@@ -545,46 +546,33 @@ async function assertDiaryNestedDirectoryGuard(): Promise<void> {
     englishDirectory: "My outputs/.english-diary/diaries", expressionDirectory: "My outputs/表达库"
   } }).settings;
   assert.equal(inferred.englishDiary.englishDirectoryMode, "role", "an old bound hidden default remains recognizable");
-  assert.equal(inferred.englishDiary.englishDirectory, "My outputs/.english-diary/diaries", "normalization preserves the real hidden source for migration");
-  assert.equal(inferred.englishDiary.expressionDirectoryMode, "role", "an old bound flat default remains recognizable");
-  const custom = normalizeSettingsData({ knowledgeBase: { folderBindings: bindings }, englishDiary: {
-    englishDirectoryMode: "custom", englishDirectory: "My outputs/英文日记", expressionDirectoryMode: "custom", expressionDirectory: "My outputs/表达库"
-  } }).settings;
-  assert.equal(custom.englishDiary.expressionDirectoryMode, "custom", "an explicit custom choice always wins");
+  assert.equal(inferred.englishDiary.englishDirectory, "My outputs/.english-diary/diaries", "normalization preserves the actual historical path");
+  assert.equal(inferred.englishDiary.expressionDirectoryMode, "role");
   const controller = new EnglishDiaryController(plugin);
   const guard = (controller.api.repository as any).files.beforeWrite as (path: string, exists: boolean) => void;
-  assert.equal(settings.englishDiary.expressionDirectory, "My outputs/英文日记/表达库");
-  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("My outputs/表达库"));
-  assert.ok(settings.englishDiary.legacyEnglishDirectories?.includes("My outputs/.english-diary/diaries"));
-  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("My outputs/.english-diary/expressions"));
   const canMigrate = (controller.api.repository as any).options.canMigrate as () => boolean;
-  assert.equal(canMigrate(), true, "both approved target directories permit migration");
-  assert.doesNotThrow(() => guard("My outputs/英文日记/表达库/word.md", false));
-  bindings.roles.outputs.allowedSubdirectories = ["英文日记", "表达库"];
-  assert.equal(canMigrate(), false, "old sibling approvals defer migration to the unapproved nested directory");
-  assert.deepEqual(bindings.roles.outputs.allowedSubdirectories, ["英文日记", "表达库"], "reading migration permission does not expand approvals");
-  folders.set("My outputs/英文日记/表达库", Object.assign(new TFolder(), { path: "My outputs/英文日记/表达库" }));
-  assert.equal(canMigrate(), true, "an existing target folder needs no new creation approval");
-  folders.delete("My outputs/英文日记/表达库");
-  assert.throws(() => guard("My outputs/英文日记/表达库/word.md", false), /英文日记\/表达库/u, "the outer diary approval cannot hide the deeper required approval");
-  bindings.roles.outputs.enabled = false;
-  assert.equal(canMigrate(), false, "a disabled output defers migration even if old files are present");
-  assert.throws(() => guard("My outputs/英文日记/new.md", false), /可用的输出位置/u);
-  assert.doesNotThrow(() => guard("My outputs/英文日记/old.md", true), "existing assets remain editable");
-  bindings.roles.outputs.enabled = true;
-  bindings.roles.outputs.allowedSubdirectories = ["英文日记", "英文日记/表达库"];
-  assert.equal(canMigrate(), true, "the same repository sees a later explicit nested-directory approval");
-  bindings.roles.outputs.allowedSubdirectoryRoots = ["Another output"];
-  assert.equal(canMigrate(), false, "approval belongs to the exact output root");
-  bindings.roles.outputs.allowedSubdirectoryRoots = ["My outputs"];
+  assert.equal(settings.englishDiary.englishDirectory, "我的英文日记");
+  assert.equal(settings.englishDiary.expressionDirectory, "我的表达库");
+  assert.ok(settings.englishDiary.legacyEnglishDirectories?.includes("My outputs/.english-diary/diaries"));
+  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("My outputs/表达库"));
+  assert.equal(canMigrate(), true, "module-owned default directories do not require an output binding or child approval");
+  assert.doesNotThrow(() => guard("我的英文日记/new.md", false));
+  assert.doesNotThrow(() => guard("我的表达库/word.md", false));
+  folders.set("我的表达库", new TFile("我的表达库"));
+  assert.equal(canMigrate(), false, "a file cannot be used as the module directory");
+  assert.throws(() => guard("我的表达库/word.md", false), /保存位置被文件占用/u);
+  assert.doesNotThrow(() => guard("我的表达库/old.md", true), "existing assets remain editable");
+  folders.set("我的表达库", Object.assign(new TFolder(), { path: "我的表达库" }));
   assert.equal(canMigrate(), true);
   bindings.roles.outputs.writePath = "New outputs";
   bindings.roles.outputs.readPaths = ["New outputs"];
   controller.refreshStoragePaths();
-  assert.equal(settings.englishDiary.expressionDirectory, "New outputs/英文日记/表达库");
-  assert.equal(canMigrate(), false, "a missing replacement output root cannot be created by migration");
-  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("My outputs/英文日记/表达库"), "role changes retain real old paths");
-  console.log("PASS English Diary nested output approvals and disabled-output protection");
+  assert.equal(settings.englishDiary.englishDirectory, "我的英文日记");
+  assert.equal(settings.englishDiary.expressionDirectory, "我的表达库");
+  assert.equal(canMigrate(), true, "rebinding old output has no effect on module write eligibility");
+  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("My outputs/表达库"), "old read locations survive rebind");
+  assert.ok(settings.englishDiary.legacyExpressionDirectories?.includes("New outputs/表达库"), "known legacy output paths remain read-only sources");
+  console.log("PASS English Diary module-owned directories, disabled-output independence and file-occupancy protection");
 }
 
 

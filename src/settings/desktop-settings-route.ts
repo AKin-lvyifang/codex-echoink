@@ -63,8 +63,9 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/生成模板|generation.*template/iu.test(term)) return { tab, focus: "knowledge:generation-templates" };
     if (/待办分类|todo.*categor/iu.test(term)) return { tab, focus: "todo:categories" };
     if (/资料来源|raw.*source|sources?/iu.test(term)) return { tab, focus: "knowledge:sources" };
-    if (/对话栏内容|conversation.*content/iu.test(term)) return { tab, focus: "knowledge:collections:text" };
-    if (/收藏保存位置|collection.*location/iu.test(term)) return { tab, focus: "knowledge:collections" };
+    if (/存为笔记|saved.*answer/iu.test(term)) return { tab, focus: "knowledge:collections:answer" };
+    if (/从资料生成|generated.*material/iu.test(term)) return { tab, focus: "knowledge:collections:generation" };
+    if (/Agent 产出物保存到|agent.*output.*location/iu.test(term)) return { tab, focus: "knowledge:collections" };
     if (/Agent 权限与维护|agent.*permissions?/iu.test(term)) return { tab, focus: "knowledge:permissions" };
     if (/目录管理|directory.*management/iu.test(term)) return { tab, focus: "knowledge:management" };
     if (/初始化|initializ|复原仓库|restore/iu.test(term)) return { tab, focus: /复原|restore/iu.test(term) ? "knowledge:restore" : "knowledge:onboarding" };

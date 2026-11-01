@@ -230,7 +230,7 @@ export class GenerationModal extends Modal {
       this.destinationEl.setText("保存位置不存在");
       if (error instanceof ConversationContentLocationError) {
         const settings = createOriginButton(this.destinationEl, { cls: "text-button", text: "去设置" });
-        settings.onclick = () => { this.close(); void this.plugin.openEchoInkConversationContentSettings(); };
+        settings.onclick = () => { this.close(); void this.plugin.openEchoInkOutputLocationSettings("generation"); };
       }
     }
   }

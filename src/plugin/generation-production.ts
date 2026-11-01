@@ -1,5 +1,5 @@
 import { TFolder, type App } from "obsidian";
-import { knowledgeConversationLocation, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { knowledgeOutputLocation, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { ConversationContentLocationError, ensureConversationContentDirectory } from "../knowledge-base/conversation-content";
 import type { GenerationRuntimePort, GenerationExecutionIdentity } from "../generation/runtime";
 import type { GenerationRequest, GenerationResult } from "../generation/types";
@@ -22,12 +22,12 @@ export interface GenerationProductionOptions {
   domain: VaultDomainService;
 }
 function assertBinding(options: GenerationProductionOptions, request: GenerationRequest): void {
-  const location = knowledgeConversationLocation(options.bindings());
+  const location = knowledgeOutputLocation(options.bindings(), "generation");
   try { if (normalizeKnowledgeDirectory(location.directory) !== location.directory) throw new Error("invalid"); }
-  catch { throw new ConversationContentLocationError(); }
-  if (location.directory !== request.outputRoot) throw new Error("对话栏内容的保存位置已换绑，请重新打开生成弹窗。");
+  catch { throw new ConversationContentLocationError("generation"); }
+  if (location.directory !== request.outputRoot) throw new Error("从资料生成的保存位置已换绑，请重新打开生成弹窗。");
   const directory = options.app.vault.getAbstractFileByPath(request.outputRoot);
-  if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError();
+  if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError("generation");
 }
 export function createGenerationRuntimePort(options: GenerationProductionOptions): GenerationRuntimePort {
   return {
@@ -70,12 +70,12 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
             await options.app.vault.createFolder(directory);
           },
           ready: options.directoryReady
-        }, options.bindings());
+        }, options.bindings(), "generation");
         identity.signal.throwIfAborted(); assertBinding(options, request);
         await assertGenerationPathSafe(options.vaultRoot, request.outputRoot);
         const directory = options.app.vault.getAbstractFileByPath(request.outputDirectory);
         if (directory && !(directory instanceof TFolder)) throw new Error("生成目录被文件占用，尚未写入文件。");
-        // The explicit Generate action authorizes only this fixed conversation-content child.
+        // The explicit Generate action authorizes only this fixed generation child.
         if (!directory) {
           try { await options.app.vault.createFolder(request.outputDirectory); }
           catch (error) { if (!(options.app.vault.getAbstractFileByPath(request.outputDirectory) instanceof TFolder)) throw error; }

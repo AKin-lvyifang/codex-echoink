@@ -288,7 +288,7 @@ try {
       assert.equal(f.host.querySelector(".echoink-settings-section-header"), null, "no internal purpose-directory title repeats the module hierarchy");
       assert.equal(f.host.querySelector('[role="checkbox"], [role="combobox"]'), null, "permissions and collection controls live on their detail pages");
       assert.equal(f.host.querySelector('[data-echoink-focus-key="knowledge:preferences"]'), null);
-      for (const [target, title] of [["collections", "收藏保存位置"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
+      for (const [target, title] of [["collections", "Agent 产出物保存到"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
         f.button(title).click();
         assert.equal(f.host.querySelector("h2")?.textContent, title);
         assert(f.view.navigationKey().startsWith(target));
@@ -309,26 +309,37 @@ try {
     try {
       const before = await inventory(f.root), pdf = f.plugin.settings.pdfReading.originalDirectory;
       const raw = runtime.normalizeKnowledgeFolderBindings(f.plugin.settings.knowledgeBase.folderBindings).roles.raw;
-      f.button("收藏保存位置").click();
-      assert.equal(f.host.querySelectorAll('[role="combobox"]').length, 2);
+      f.button("Agent 产出物保存到").click();
+      assert.equal(f.host.querySelectorAll('[role="combobox"]').length, 6);
+      assert.deepEqual([...f.host.querySelectorAll("[data-collection-kind] .setting-item-name")].map(row => row.textContent), ["网页", "公众号文章", "拖入或附加的文档（PDF、Word DOCX、Markdown、TXT）", "拖入或附加的图片（PNG、JPG/JPEG、GIF、WebP）", "存为笔记的回答", "从资料生成"]);
+      const chooseFolder = async (kind: "web" | "wechat", directory: string) => {
+        const trigger = f.host.querySelector<HTMLButtonElement>(`[data-echoink-focus-key="knowledge:collections:${kind}"]`)!;
+        assert(trigger);
+        trigger.click(); await settle();
+        const popup = document.querySelector(".echoink-folder-picker-popover")!;
+        assert(popup);
+        const option = [...popup.querySelectorAll<HTMLElement>('[role="option"]')].find(item => item.textContent === directory);
+        assert(option, `collection folder ${directory}`);
+        option.click();
+        return trigger;
+      };
       const save = f.plugin.saveSettings;
       let releaseSave!: () => void;
       const pending = new Promise<void>(resolve => { releaseSave = resolve; });
       f.plugin.saveSettings = async (...args: any[]) => { await pending; await save(...args); };
-      const web = f.field("网页收藏保存到");
-      web.value = "资料甲"; web.dispatchEvent(new win.Event("change", { bubbles: true }));
+      const web = await chooseFolder("web", "资料甲");
       assert(web.disabled); assert(f.view.submitting);
       f.button("返回模块").click(); assert(f.view.navigationKey().startsWith("collections"), "pending writes keep their page");
       releaseSave(); await settle(); f.plugin.saveSettings = save;
       assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.web, "资料甲");
       assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.wechat, "资料乙");
-      const wechat = f.field("公众号文章收藏保存到");
-      wechat.value = "资料甲"; wechat.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
-      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets, { web: "资料甲", wechat: "资料甲" });
+      await chooseFolder("wechat", "资料甲"); await settle();
+      assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets, { web: "资料甲", wechat: "资料甲", files: "资料乙", images: "资料乙", answer: "收藏/回答", generation: "收藏/生成" });
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.answerDirectoryPending, true);
+      assert.equal(f.plugin.settings.knowledgeBase.folderBindings.generationDirectoryPending, true);
       f.failSave(true);
-      const failed = f.field("公众号文章收藏保存到");
-      failed.value = "资料乙"; failed.dispatchEvent(new win.Event("change", { bubbles: true })); await settle();
-      assert.equal(f.field("公众号文章收藏保存到").value, "资料甲");
+      await chooseFolder("wechat", "资料乙"); await settle();
+      assert(f.host.querySelector('[data-collection-kind="wechat"] .echoink-folder-picker-values')?.textContent?.includes("资料甲"));
       assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.wechat, "资料甲");
       assert(f.host.textContent?.includes("绑定未保存"));
       assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.raw, raw);

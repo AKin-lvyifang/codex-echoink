@@ -81,7 +81,7 @@ const financeCatalogResult = spawnSync(process.execPath, ["scripts/finance-catal
 });
 if (financeCatalogResult.status !== 0) process.exit(financeCatalogResult.status ?? 1);
 
-for (const file of ["scripts/diary-organizer-tests.mjs", "scripts/diary-todo-tests.mjs", "scripts/knowledge-folder-renames-tests.mjs", "scripts/knowledge-folder-picker-tests.mjs", "scripts/collection-location-tests.mjs"]) {
+for (const file of ["scripts/diary-organizer-tests.mjs", "scripts/diary-todo-tests.mjs", "scripts/knowledge-folder-renames-tests.mjs", "scripts/knowledge-folder-picker-tests.mjs", "scripts/collection-location-tests.mjs", "scripts/output-location-tests.mjs", "scripts/output-settings-race-tests.mjs", "src/tests/knowledge-capture-link-tests.mjs"]) {
   const result = spawnSync(process.execPath, [file], { stdio: "inherit", env: process.env });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }

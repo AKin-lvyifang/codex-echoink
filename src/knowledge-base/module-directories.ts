@@ -33,7 +33,7 @@ export function prepareKnowledgeModuleDirectories(settings: KnowledgeModuleSetti
       if (!settings.englishDiary.enabled && choice === undefined) continue;
       const role = choice === undefined && settings.englishDiary.enabled && paths[roleKey];
       modes[key] = role ? "role" : "custom";
-      if (choice === "" || role && (!bindings?.roles.outputs.enabled || !bindings.roles.outputs.writePath || !bindings.roles.outputs.readPaths.includes(bindings.roles.outputs.writePath))) {
+      if (choice === "") {
         // Optional locations can be skipped without changing the module's saved settings.
         modes[key] = "custom";
         directories[key] = ""; continue;

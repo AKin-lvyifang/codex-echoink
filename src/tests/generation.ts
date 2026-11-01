@@ -14,9 +14,10 @@ import type { GenerationAttempt, GenerationTemplate } from "../generation/types"
 import type { GenerationExecutionIdentity } from "../generation/runtime";
 import type { GenerationProductionOptions } from "../plugin/generation-production";
 import type { VaultOperationResult } from "../harness/pi-native/vault-domain-service";
-import { emptyKnowledgeFolderBindings, DEFAULT_CONVERSATION_CONTENT_DIRECTORY } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeOutputLocation, DEFAULT_GENERATION_CONTENT_DIRECTORY } from "../knowledge-base/folder-bindings";
 import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 import { GenerationService } from "../generation/service";
+import { runOutputStoragePathsTests } from "./output-storage-paths";
 
 const template: GenerationTemplate = { id: "brief", name: "简报", description: "重点", instructions: "基于资料生成简报", outputKind: "markdown", builtin: true };
 export async function runGenerationTests(testRoot: string): Promise<void> {
@@ -81,6 +82,7 @@ export async function runGenerationTests(testRoot: string): Promise<void> {
     await assertContextIsolation(request, assessment);
     await assertWriteOutcomes(root, request);
     await assertConversationLocations(root);
+    await runOutputStoragePathsTests(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 function assertLocalReportTime(request: ReturnType<typeof createGenerationRequest>): void {
@@ -153,7 +155,7 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
 async function assertWriteOutcomes(root: string, baseRequest: ReturnType<typeof createGenerationRequest>): Promise<void> {
   const request = createGenerationRequest(baseRequest.template, baseRequest.sourcePaths, "资料");
   const files = new Map<string, unknown>([["输出", new TFolder()], ["资料", new TFolder()]]); let written = 0, mode: "success" | "failed_verified" | "uncertain" = "success";
-  const bindings = emptyKnowledgeFolderBindings(); bindings.collectionTargets = { text: "资料" }; bindings.roles.outputs = { ...bindings.roles.outputs, enabled: true, writePath: "输出", readPaths: ["输出"] };
+  const bindings = emptyKnowledgeFolderBindings(); bindings.collectionTargets = { generation: "资料", answer: "输出", text: "原有文字" }; bindings.roles.outputs = { ...bindings.roles.outputs, enabled: true, writePath: "输出", readPaths: ["输出"] };
   const controller = new AbortController(); let abortAfterWrite = false;
   const identity: GenerationExecutionIdentity = { conversationId: "c", piSessionId: "s", productRunId: "r", vaultId: "v", access: { permission: "workspace-write", mode: "agent", memoryMode: "no_memory" }, signal: controller.signal };
   const options: GenerationProductionOptions = {
@@ -172,7 +174,7 @@ async function assertWriteOutcomes(root: string, baseRequest: ReturnType<typeof 
   mode = "uncertain"; result = await port.finish(request, assessment, model, identity, async () => undefined); assert.equal(result.writeState, "unconfirmed"); assert.match(result.error!, /先核对/u);
   mode = "success"; abortAfterWrite = true; result = await port.finish(request, assessment, model, identity, async () => undefined); assert.equal(result.writeState, "verified", "post-write cancellation retains verified output");
   const beforeCancelCount = written; result = await port.finish(request, assessment, model, identity, async () => undefined); assert.equal(result.writeState, "not_written"); assert.equal(written, beforeCancelCount);
-  const changed = createGenerationRuntimePort({ ...options, bindings: () => ({ ...bindings, collectionTargets: { text: "别处" } }) });
+  const changed = createGenerationRuntimePort({ ...options, bindings: () => ({ ...bindings, collectionTargets: { generation: "别处", answer: "资料" } }) });
   await assert.rejects(changed.prepare(request, { ...identity, signal: new AbortController().signal }), /保存位置已换绑/u);
   const invalidMap = await port.finish({ ...request, outputKind: "canvas", outputDirectory: "资料/导图", template: { ...request.template, outputKind: "canvas" } }, assessment, '{"title":"invalid","branches":[]}', { ...identity, signal: new AbortController().signal }, async () => undefined);
   assert.equal(invalidMap.writeState, "not_written"); assert.equal(written, beforeCancelCount);
@@ -181,7 +183,7 @@ async function assertWriteOutcomes(root: string, baseRequest: ReturnType<typeof 
 
 async function assertConversationLocations(root: string): Promise<void> {
   let bindings = emptyKnowledgeFolderBindings();
-  bindings.collectionTargets = { text: "资料" };
+  bindings.collectionTargets = { generation: "资料", answer: "输出", text: "原有文字" };
   const files = new Map<string, unknown>([["资料", new TFolder()], ["输出", new TFolder()]]);
   const notes = ["资料/原文.md", "资料/报告/旧报告.md", "资料/导图/旧来源.md", "输出/旧复盘.md"];
   const created: string[] = []; let writes = 0, ready = 0, denyWrite = false;
@@ -198,13 +200,14 @@ async function assertConversationLocations(root: string): Promise<void> {
   assert.deepEqual(service.sourcesFromSession({ messages: notes.map(vaultRelativePath => ({ role: "user", noteMentions: [{ vaultRelativePath }] })) } as never), ["资料/原文.md", "输出/旧复盘.md"]);
 
   bindings = emptyKnowledgeFolderBindings();
-  assert.equal(service.outputRoot(), DEFAULT_CONVERSATION_CONTENT_DIRECTORY);
+  bindings.collectionTargets = { answer: "输出", text: "资料" };
+  assert.equal(service.outputRoot(), DEFAULT_GENERATION_CONTENT_DIRECTORY);
   assert.equal(service.disabledReason({ permission: "workspace-write", mode: "agent" }), null, "an uncreated first-save directory does not block generation");
   const identity: GenerationExecutionIdentity = { conversationId: "c", piSessionId: "s", productRunId: "r", vaultId: "v", access: { permission: "workspace-write", mode: "agent", memoryMode: "no_memory" }, signal: new AbortController().signal };
   const request = service.createRequest(template, ["资料/原文.md"]);
   const options: GenerationProductionOptions = {
     app: app as never, vaultRoot: root, bindings: () => bindings,
-    directoryReady: async directory => { ready++; bindings = { ...bindings, collectionTargets: { text: directory }, conversationDirectoryPending: false }; },
+    directoryReady: async directory => { ready++; bindings = { ...bindings, collectionTargets: { ...bindings.collectionTargets, generation: directory }, generationDirectoryPending: false }; },
     assertRead: async () => undefined, assertWrite: async () => { if (denyWrite) throw new Error("测试写入权限拒绝"); },
     authorization: () => ({ authorize: async () => ({ authorizationKind: "approval_ticket", effectType: "user_write", operationIdentity: "op" }) as never }),
     domain: { noteCreate: async (input: any) => { await input.beforeSideEffect(); writes++; return { status: "completed", readbackVerified: true, sideEffectStarted: true } as VaultOperationResult; } } as never,
@@ -221,23 +224,26 @@ async function assertConversationLocations(root: string): Promise<void> {
   assert.deepEqual(created, [], "write capability is checked before first-save directory creation");
   denyWrite = false;
   const first = await port.finish(request, assessment, model, identity, async () => undefined);
-  assert.equal(first.writeState, "verified"); assert.equal(first.path, `${DEFAULT_CONVERSATION_CONTENT_DIRECTORY}/报告/首次生成 · 简报.md`);
-  assert.deepEqual(created, ["收藏", DEFAULT_CONVERSATION_CONTENT_DIRECTORY, `${DEFAULT_CONVERSATION_CONTENT_DIRECTORY}/报告`]);
+  assert.equal(first.writeState, "verified"); assert.equal(first.path, `${DEFAULT_GENERATION_CONTENT_DIRECTORY}/报告/首次生成 · 简报.md`);
+  assert.deepEqual(created, ["收藏", DEFAULT_GENERATION_CONTENT_DIRECTORY, `${DEFAULT_GENERATION_CONTENT_DIRECTORY}/报告`]);
   assert.equal(ready, 1); assert.equal(writes, 1);
-  assert.equal(service.outputRoot(), DEFAULT_CONVERSATION_CONTENT_DIRECTORY);
+  assert.deepEqual(knowledgeOutputLocation(bindings, "answer"), { directory: "输出", createIfMissing: false }, "generation persistence never retargets answers");
+  assert.equal(service.outputRoot(), DEFAULT_GENERATION_CONTENT_DIRECTORY);
 
-  bindings = { ...bindings, collectionTargets: { text: "不存在" } };
+  bindings = { ...bindings, collectionTargets: { generation: DEFAULT_GENERATION_CONTENT_DIRECTORY, answer: "缺失回答" } };
+  assert.equal(service.outputRoot(), DEFAULT_GENERATION_CONTENT_DIRECTORY, "a missing answer location does not block generation");
+  bindings = { ...bindings, collectionTargets: { generation: "不存在", answer: "资料" } };
   assert.throws(() => service.outputRoot(), ConversationContentLocationError);
   await assert.rejects(port.prepare(createGenerationRequest(template, ["资料/原文.md"], "不存在"), identity), ConversationContentLocationError);
   assert.equal(writes, 1, "a deleted explicit target is never recreated or written");
-  files.set("占用.md", {}); bindings = { ...bindings, collectionTargets: { text: "占用.md" } };
+  files.set("占用.md", {}); bindings = { ...bindings, collectionTargets: { generation: "占用.md", answer: "资料" } };
   assert.throws(() => service.outputRoot(), ConversationContentLocationError);
 
   await symlink(path.join(root, "资料"), path.join(root, "链接目录")); files.set("链接目录", new TFolder());
-  bindings = { ...bindings, collectionTargets: { text: "链接目录" } };
+  bindings = { ...bindings, collectionTargets: { generation: "链接目录", answer: "资料" } };
   const linkedRequest = createGenerationRequest(template, ["资料/原文.md"], "链接目录");
   const linkedAssessment = await port.prepare(linkedRequest, identity);
   assert.equal((await port.finish(linkedRequest, linkedAssessment, model, identity, async () => undefined)).writeState, "not_written");
-  assert.equal(writes, 1, "conversation-content roots retain the symlink guard");
-  console.log("PASS generation: shared conversation location, source-root overlap, pending first save, capability denial, missing explicit targets and symlink rejection");
+  assert.equal(writes, 1, "generation roots retain the symlink guard");
+  console.log("PASS generation: independent generation location, source-root overlap, pending first save, capability denial, missing explicit targets and symlink rejection");
 }

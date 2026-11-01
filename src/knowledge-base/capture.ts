@@ -1,5 +1,3 @@
-import { ensureConversationContentDirectory } from "./conversation-content";
-import { rememberConversationContentDirectory } from "../plugin/conversation-content-settings";
 import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
@@ -9,6 +7,7 @@ import { knowledgeCollectionDirectory, KNOWLEDGE_COLLECTION_LABELS, knowledgeCol
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
+import type { CaptureLinkKind } from "../ui/capture-link-modal";
 import { SUPPORTED_RAW_EXTENSIONS } from "./discovery";
 import { collectionFileKind } from "./collection-file-types";
 import { formatDateForFile, pad } from "./utils";
@@ -16,9 +15,7 @@ import {
   extractArticleMarkdown,
   extractFirstUrl,
   isHtmlVerificationBlocked,
-  isWeChatUrl,
-  sanitizeWebCaptureFileName,
-  stripCollectPrefix
+  sanitizeWebCaptureFileName
 } from "./web-capture";
 
 const { constants: fsConstants } = getDesktopFs();
@@ -30,41 +27,29 @@ export class KnowledgeBaseCaptureService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
 
   async captureText(target: "inbox" | "raw-articles"): Promise<void> {
+    if (target === "raw-articles") {
+      const paths = await this.captureLink();
+      if (paths.length) new Notice(`已写入 ${paths.join("，")}`);
+      return;
+    }
     const { textInputModal } = await import("../ui/modals");
-    const value = await textInputModal(this.plugin.app, target === "inbox" ? "记录知识库想法" : "收集链接到 raw", "输入内容或链接");
+    const value = await textInputModal(this.plugin.app, "记录知识库想法", "输入内容或链接");
     if (!value?.trim()) return;
-    const paths = target === "raw-articles"
-      ? await this.captureRawArticleInput(value.trim())
-      : [await this.writeCollectedText(target, value.trim())];
+    const paths = [await this.writeCollectedText(value.trim())];
     new Notice(`已写入 ${paths.join("，")}`);
   }
 
   async captureWeChatArticle(): Promise<string[]> {
-    const { textInputModal } = await import("../ui/modals");
-    const value = await textInputModal(this.plugin.app, "公众号收集", "粘贴 mp.weixin.qq.com 链接");
-    if (!value?.trim()) return [];
-    const url = extractFirstUrl(value);
-    if (!url || !isWeChatUrl(url)) throw new Error("请输入微信公众号文章链接");
-    return this.captureWeChatUrl(url);
+    return this.captureLink();
   }
 
   async captureWebPage(): Promise<string[]> {
-    const { textInputModal } = await import("../ui/modals");
-    const value = await textInputModal(this.plugin.app, "网页收藏", "粘贴公开网页链接");
-    if (!value?.trim()) return [];
-    const url = extractFirstUrl(value);
-    if (!url) throw new Error("请输入网页链接");
-    return this.captureWebUrl(url);
+    return this.captureLink();
   }
 
-  async captureLink(): Promise<string[]> {
-    const { textInputModal } = await import("../ui/modals");
-    const value = await textInputModal(this.plugin.app, "收藏", "粘贴公众号或网页链接");
-    if (!value?.trim()) return [];
-    const url = extractFirstUrl(value);
-    if (!url) throw new Error("请输入公众号或网页链接");
-    if (isWeChatUrl(url)) return this.captureWeChatUrl(url);
-    return this.captureWebUrl(url, value);
+  async captureLink(initialValue = ""): Promise<string[]> {
+    const { captureLinkModal } = await import("../ui/capture-link-modal");
+    return captureLinkModal(this.plugin.app, initialValue, ({ input, kind }) => this.captureRawArticleInput(input, kind));
   }
 
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
@@ -72,27 +57,10 @@ export class KnowledgeBaseCaptureService {
   }
 
   async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments", text: string, attachments: StoredAttachment[]): Promise<string[]> {
-    const paths: string[] = [];
-    const copiedAttachments = await this.copyAttachmentsToRaw(attachments);
-    paths.push(...copiedAttachments);
+    if (attachments.length) return this.copyAttachmentsToRaw(attachments);
     const trimmed = text.trim();
-    if (target === "raw-articles" && trimmed && !copiedAttachments.length) {
-      paths.push(...await this.captureRawArticleInput(trimmed));
-      return paths;
-    }
-    if (trimmed) {
-      const textTarget = target === "inbox" && !copiedAttachments.length ? "inbox" : "raw-articles";
-      const body = copiedAttachments.length
-        ? [
-          trimmed,
-          "",
-          "## 附件",
-          ...copiedAttachments.map((item) => `- [[${item}]]`)
-        ].join("\n").trim()
-        : trimmed;
-      if (body) paths.push(await this.writeCollectedText(textTarget, body));
-    }
-    return paths;
+    if (target === "inbox") return trimmed ? [await this.writeCollectedText(trimmed)] : [];
+    return trimmed ? this.captureRawArticleInput(trimmed) : this.captureLink();
   }
 
   private async copyCapturedFile(source: string, directory: string, fileName: string): Promise<string> {
@@ -131,24 +99,24 @@ export class KnowledgeBaseCaptureService {
     new Notice(`已收集到 ${normalizePath(path.relative(vaultPath, target))}`);
   }
 
-  private async captureRawArticleInput(value: string): Promise<string[]> {
+  private async captureRawArticleInput(value: string, kind?: CaptureLinkKind): Promise<string[]> {
     const url = extractFirstUrl(value);
-    if (!url) return [await this.writeCollectedText("raw-articles", stripCollectPrefix(value))];
-    if (isWeChatUrl(url)) return this.captureWeChatUrl(url);
-    return this.captureWebUrl(url, value);
+    if (!url) throw new Error("收藏只支持网页和公众号链接");
+    if (!kind) return this.captureLink(value);
+    return kind === "wechat" ? this.captureWeChatUrl(url) : this.captureWebUrl(url, value);
   }
 
-  private async writeCollectedText(target: "inbox" | "raw-articles", value: string): Promise<string> {
+  private async writeCollectedText(value: string): Promise<string> {
     const vaultPath = this.plugin.getVaultPath();
     const now = new Date();
     const stamp = formatDateTimeForFile(now);
-    const dir = target === "inbox" ? path.join(vaultPath, getKnowledgeFolderBindings(vaultPath) ? resolveKnowledgeRoleTarget(vaultPath, "inbox") : resolveKnowledgePath(vaultPath, "inbox")) : await this.collectionDirectory(vaultPath, "text");
+    const dir = path.join(vaultPath, getKnowledgeFolderBindings(vaultPath) ? resolveKnowledgeRoleTarget(vaultPath, "inbox") : resolveKnowledgePath(vaultPath, "inbox"));
     await fsp.mkdir(dir, { recursive: true });
-    const fileName = target === "inbox" ? `${stamp} 知识库想法.md` : `${stamp} 手动收集.md`;
+    const fileName = `${stamp} 知识库想法.md`;
     const body = [
       "---",
       `created: ${now.toISOString()}`,
-      `source: ${target}`,
+      "source: inbox",
       "---",
       "",
       value.trim(),
@@ -171,32 +139,20 @@ export class KnowledgeBaseCaptureService {
     return [await this.captureHtmlLikePage(url, dest, "web", originalInput, "web")];
   }
 
-  private async collectionDirectory(vaultPath: string, kind: KnowledgeCollectionKind): Promise<string> {
+  private async collectionDirectory(vaultPath: string, kind: Exclude<KnowledgeCollectionKind, "answer" | "generation">): Promise<string> {
     const config = getKnowledgeFolderBindings(vaultPath);
-    if (kind === "text") {
-      const root = await fsp.realpath(vaultPath);
-      const directory = await ensureConversationContentDirectory({
-        kind: async relative => {
-          const stat = await fsp.lstat(path.join(root, relative)).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
-          return !stat ? "missing" : stat.isDirectory() && !stat.isSymbolicLink() ? "folder" : "file";
-        },
-        createFolder: async relative => { await fsp.mkdir(path.join(root, relative)); },
-        ready: async relative => { if (typeof this.plugin.saveSettings === "function") await rememberConversationContentDirectory(this.plugin, relative); }
-      }, config);
-      return path.join(root, directory);
-    }
     if (!config) {
-      const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", images: "attachments", text: "articles/手动收集", fileText: "articles/文件收藏" })[kind]);
+      const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", images: "attachments", fileText: "articles/文件收藏" })[kind]);
       await fsp.mkdir(legacy, { recursive: true });
       return legacy;
     }
     const relative = knowledgeCollectionDirectory(config, kind);
-    if (!relative) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}收藏位置尚未选择或已失效，请到知识库 → 收藏保存位置重新选择。`);
+    if (!relative) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}收藏位置尚未选择或已失效，请到知识库 → Agent 产出物保存到重新选择。`);
     let current = await fsp.realpath(vaultPath);
     for (const segment of relative.split("/")) {
       current = path.join(current, segment);
       const stat = await fsp.lstat(current).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
-      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}的原收藏目录已失效，请到知识库 → 收藏保存位置重新选择。`);
+      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}的原收藏目录已失效，请到知识库 → Agent 产出物保存到重新选择。`);
     }
     return current;
   }

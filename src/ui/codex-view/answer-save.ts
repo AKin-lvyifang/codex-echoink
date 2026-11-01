@@ -88,7 +88,7 @@ async function createAnswerNote(vault: AnswerSaveVault, input: AnswerSaveInput):
     },
     async createFolder(relative) { await vault.createFolder(relative); },
     ready: input.onDirectoryReady
-  }, input.folderBindings);
+  }, input.folderBindings, "answer");
   for (let suffix = 1; ; suffix += 1) {
     const path = `${directory}/${name}${suffix === 1 ? "" : ` ${suffix}`}.md`;
     if (vault.getAbstractFileByPath(path)) continue;

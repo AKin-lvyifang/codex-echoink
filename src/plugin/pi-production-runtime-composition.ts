@@ -655,7 +655,7 @@ export async function createPiProductionRuntimeBundle(
       },
       generation: createGenerationRuntimePort({
         app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
-        directoryReady: async directory => (await import("./conversation-content-settings")).rememberConversationContentDirectory(plugin, directory),
+        directoryReady: async directory => (await import("./conversation-content-settings")).rememberConversationContentDirectory(plugin, directory, "generation"),
         domain: vaultDomainService, writeExecution,
         assertRead: async (relativePath, identity) => {
           const context = await currentAgentCapabilityContext(plugin, catalog, identity.conversationId, identity.access);

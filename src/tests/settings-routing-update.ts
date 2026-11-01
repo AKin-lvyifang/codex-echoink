@@ -19,7 +19,7 @@ for (const [legacy, options, expected] of [
   ["resources", { resourceTab: "mcp", resourceId: "service-1" }, { tab: "capabilities", capabilityTab: "mcp", resourceId: "service-1" }],
   ["resources", { resourceTab: "skills" }, { tab: "capabilities", capabilityTab: "skills" }],
   ["knowledgeBase", { focus: "knowledge:preferences:editor" }, { tab: "modules", section: "knowledgeBase", focus: "knowledge:preferences:editor" }],
-  ["knowledgeBase", { focus: "knowledge:collections:text" }, { tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:text" }],
+  ["knowledgeBase", { focus: "knowledge:collections:answer" }, { tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:answer" }],
   ["todos", {}, { tab: "modules", section: "todos" }],
   ["review", {}, { tab: "modules", section: "review" }],
   ["review", { focus: "review-archives" }, { tab: "agent", focus: "review-archives" }],
@@ -35,13 +35,13 @@ assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "capabilities" }, "plugins
 assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "capabilities", capabilityTab: "mcp" }, "plugins", "tools"), { tab: "capabilities", capabilityTab: "mcp" });
 assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "modules" }, "plugins", "skills"), { tab: "modules" });
 console.log("PASS capability routes normalize explicit, remembered and initial selections before rendering");
-for (const [query, focus] of [["生成模板", "knowledge:generation-templates"], ["Generation templates", "knowledge:generation-templates"], ["对话栏内容", "knowledge:collections:text"], ["Conversation content", "knowledge:collections:text"],
-  ["收藏保存位置", "knowledge:collections"], ["Agent 权限与维护", "knowledge:permissions"], ["目录管理", "knowledge:management"], ["PDF 精读", "pdf-reading:settings"]]) {
+for (const [query, focus] of [["生成模板", "knowledge:generation-templates"], ["Generation templates", "knowledge:generation-templates"], ["存为笔记的回答", "knowledge:collections:answer"], ["Saved answers", "knowledge:collections:answer"],
+  ["从资料生成", "knowledge:collections:generation"], ["Generated materials", "knowledge:collections:generation"], ["Agent 产出物保存到", "knowledge:collections"], ["Agent 权限与维护", "knowledge:permissions"], ["目录管理", "knowledge:management"], ["PDF 精读", "pdf-reading:settings"]]) {
   assert.deepEqual(resolveDesktopSettingsSearchRoute("modules", query), { tab: "modules", focus });
 }
 console.log("PASS module search targets the template list, knowledge details and PDF form");
 const moduleDefinition = desktopSettingsCategoryDefinitions("zh-CN", () => () => {})[0].items.find(item => item.name === "模块")!;
-for (const alias of ["生成模板", "Generation templates", "收藏保存位置", "对话栏内容", "Conversation content", "Agent 权限与维护", "目录管理"]) assert.ok(moduleDefinition.aliases?.includes(alias), `native search indexes ${alias}`);
+for (const alias of ["生成模板", "Generation templates", "Agent 产出物保存到", "存为笔记的回答", "Saved answers", "Agent 权限与维护", "目录管理"]) assert.ok(moduleDefinition.aliases?.includes(alias), `native search indexes ${alias}`);
 
 
 for (const [a, b, expected] of [["v2.10.0", "2.9.0", 1], ["2.7.0", "v2.7.0", 0], ["2.7.0-beta.2", "2.7.0-beta.10", -1], ["2.7.0", "2.7.0-rc.1", 1], ["2.7.0-alpha", "2.7.0-beta", -1], ["2.6.9", "2.7.0", -1]] as const) {

@@ -181,6 +181,7 @@ export interface MessageListRenderInput {
   }>>;
   onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onAnswerDirectoryReady?: (directory: string) => Promise<void>;
+  onOpenOutputLocationSettings?: (kind: "answer" | "generation") => void | Promise<void>;
   onOpenConversationContentSettings?: () => void | Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
@@ -1925,7 +1926,8 @@ export class CodexMessageListRenderer {
         const reason = error instanceof Error ? error.message : String(error);
         this.answerSaveStates.set(key, { status: "failed", error: reason });
         if (error instanceof ConversationContentLocationError) {
-          showConversationContentLocationNotice(env.messagesEl.ownerDocument, env.settingsLanguage, () => env.onOpenConversationContentSettings?.());
+          showConversationContentLocationNotice(env.messagesEl.ownerDocument, env.settingsLanguage,
+            () => env.onOpenOutputLocationSettings ? env.onOpenOutputLocationSettings(error.kind) : env.onOpenConversationContentSettings?.(), error.kind);
         } else new Notice(conversationUiText(env.settingsLanguage, `存为笔记失败：${reason}`, `Could not save note: ${reason}`));
       }
       refresh();

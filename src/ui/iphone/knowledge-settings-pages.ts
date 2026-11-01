@@ -2,7 +2,7 @@ import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip
 import { shellIconButton } from "../mobile/shell-controls";
 import { knowledgeOrganizationSelectable } from "../../knowledge-base/folder-organization";
 import type { MobileKnowledgeFolderApplyResult, MobileKnowledgeFolderPreview, MobileKnowledgeFolderRequest, MobileKnowledgeFoldersSnapshot } from "../../mobile/knowledge-folders-contracts";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, knowledgeOrganizationSettings, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeConversationLocation, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, knowledgeOrganizationSettings, knowledgeCollectionLabel, knowledgeCollectionDescription, knowledgeCollectionKinds, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOutputLocation, pathInKnowledgeDirectory, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 import { KNOWLEDGE_ROOT_NAMES } from "../../knowledge-base/root-paths-core";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -65,7 +65,7 @@ export async function openIPhoneKnowledgeSettings(ctx: IPhonePageContext): Promi
   let revision = 0;
   const reload = async () => { const ticket = ++revision; try { const snapshot = await port.read(); if (!view.alive || ticket !== revision) return; view.body.replaceChildren(); view.error.show();
     const purposes = view.group(t(ctx, "用途", "Purposes")); for (const [role, zh, en] of ROLES) view.row(purposes, t(ctx, zh, en), status(ctx, snapshot, role), () => openPurpose(ctx, snapshot, role, reload));
-    view.row(purposes, t(ctx, "收藏保存位置", "Collection locations"), "", () => openCollections(ctx, snapshot, reload));
+    view.row(purposes, t(ctx, "Agent 产出物保存到", "Agent output locations"), "", () => openCollections(ctx, snapshot, reload));
     const permissions = view.group(""); view.row(permissions, t(ctx, "Agent 权限与维护", "Agent permissions and maintenance"), "", () => openOrganization(ctx, snapshot, reload), "shield-check");
     const management = view.group(t(ctx, "目录管理", "Folder management")); view.row(management, t(ctx, "重新初始化", "Set up folders again"), "", () => openInitialization(ctx, snapshot, reload)); view.row(management, t(ctx, "文件夹名称优化", "Improve folder names"), "", () => openNames(ctx, snapshot, reload)); view.row(management, t(ctx, "复原仓库", "Restore changes"), "", () => openRestoreRecords(ctx, snapshot, reload));
   } catch (error) { if (view.alive && ticket === revision) { view.body.replaceChildren(); view.error.show(error); view.button(view.body, t(ctx, "重新读取", "Reload"), reload); } } };
@@ -73,21 +73,23 @@ export async function openIPhoneKnowledgeSettings(ctx: IPhonePageContext): Promi
 }
 
 async function openCollections(ctx: IPhonePageContext, initial: MobileKnowledgeFoldersSnapshot, saved: () => Promise<void>): Promise<void> {
-  const view = new FolderPage(ctx, "iphone-knowledge-collections", t(ctx, "收藏保存位置", "Collection locations")); let snapshot = initial;
+  const view = new FolderPage(ctx, "iphone-knowledge-collections", t(ctx, "Agent 产出物保存到", "Agent output locations")); let snapshot = initial;
   const render = () => {
     if (!view.alive) return; view.body.replaceChildren();
-    view.body.append(el(ctx.document, "p", "", t(ctx, "EchoInk 收藏或导入的资料存到这里；不影响你自己新建的笔记，修改不会移动已有文件。", "EchoInk saves collected or imported materials here. Your own new notes and existing files are unaffected.")));
+    view.body.append(el(ctx.document, "p", "", t(ctx, "Agent 和收藏写出的文件存到这里；不影响你自己新建的笔记，修改不会移动已有文件。", "Agent outputs and collections are saved here. Your own new notes and existing files are unaffected.")));
     const group = view.group(""), bindings = config(snapshot), targets = knowledgeCollectionTargets(bindings);
     for (const key of knowledgeCollectionKinds(bindings)) {
       const label = knowledgeCollectionLabel(key, bindings, ctx.host.settings().settingsLanguage === "en" ? "en" : "zh");
-      const conversation = key === "text" ? knowledgeConversationLocation(bindings) : null;
+      const output = key === "answer" || key === "generation";
+      const conversation = output ? knowledgeOutputLocation(bindings, key) : null;
       const selected = conversation?.directory ?? targets[key] ?? "", pending = conversation?.createIfMissing === true;
-      const choices: [string, string][] = snapshot.directories.filter(path => path && (key === "text" || bindings.roles.raw.readPaths.some(root => pathInKnowledgeDirectory(path, root)))).map(path => [path, path]);
+      const choices: [string, string][] = snapshot.directories.filter(path => path && (output || bindings.roles.raw.readPaths.some(root => pathInKnowledgeDirectory(path, root)))).map(path => [path, path]);
       if (!choices.some(([path]) => path === selected)) choices.unshift([selected, selected || t(ctx, "请选择文件夹", "Choose a folder")]);
       if (pending) choices.find(([path]) => path === selected)![1] = t(ctx, `${selected} · 新建`, `${selected} · New`);
-      const input = view.select(group, label, choices, selected, async value => { await view.run(async () => { const next = config(snapshot); next.collectionTargets = knowledgeCollectionTargets(next); next.collectionTargets[key] = value; if (key === "text") next.conversationDirectoryPending = false; snapshot = await ctx.host.services.knowledgeFolders.saveBindings(next, snapshot.token); await saved(); render(); }); });
+      const input = view.select(group, label, choices, selected, async value => { await view.run(async () => { const next = config(snapshot); next.collectionTargets = knowledgeCollectionTargets(next); next.collectionTargets[key] = value; if (key === "answer") next.answerDirectoryPending = false; if (key === "generation") next.generationDirectoryPending = false; snapshot = await ctx.host.services.knowledgeFolders.saveBindings(next, snapshot.token); await saved(); render(); }); });
+      input.parentElement?.querySelector("span")?.insertAdjacentElement("afterend", el(ctx.document, "span", "ip-settings-description", knowledgeCollectionDescription(key, bindings, ctx.host.settings().settingsLanguage === "en" ? "en" : "zh")));
       input.disabled = !snapshot.writable;
-      const missing = !pending && !snapshot.directories.includes(selected), invalid = key !== "text" && !knowledgeCollectionDirectory(bindings, key);
+      const missing = !pending && !snapshot.directories.includes(selected), invalid = !output && !knowledgeCollectionDirectory(bindings, key);
       if (missing || invalid) {
         for (const option of Array.from(input.options)) if (option.value === selected) option.disabled = true;
         const error = el(ctx.document, "div", "ip-settings-error", t(ctx, missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹", missing ? "Folder does not exist. Choose again." : "Choose a source folder again")); error.setAttribute("role", "alert"); input.parentElement?.append(error);
