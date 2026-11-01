@@ -7,7 +7,7 @@ import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
 import { membershipPlanAction, registrationGiftLabel } from "./account-membership-model";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
-import { getMembershipPlanPricing, resolveMembershipCurrency } from "./account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing } from "./account-membership-pricing";
 import { MobileViewport } from "../ui/mobile/viewport";
 import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
@@ -33,7 +33,7 @@ function button(parent: HTMLElement, text: string, cls: string, action?: () => v
 }
 type ProfileDraft = { name: string; avatar?: File | null; imageUrl: string | null; ownedUrl: string | null };
 const plans = [
-  { id: "early", zh: "限量早鸟买断", en: "Early lifetime", months: 0, zhTerm: "一次购买", enTerm: "one payment" },
+  { id: "early", zh: "早鸟终生买断", en: "Early lifetime", months: 0, zhTerm: "一次购买", enTerm: "one payment" },
   { id: "month", zh: "月卡", en: "Monthly", months: 1, zhTerm: "/ 月", enTerm: "/ month" },
   { id: "quarter", zh: "季卡", en: "Quarterly", months: 3, zhTerm: "/ 季", enTerm: "/ quarter" },
   { id: "year", zh: "年卡", en: "Annual", months: 12, zhTerm: "/ 年", enTerm: "/ year" }
@@ -45,7 +45,7 @@ const subscriptionLabels: Record<string, [string, string]> = {
 };
 const stateLabels: Record<MembershipState, [string, string]> = {
   unavailable: ["未开通 PRO", "Free plan"], anonymous: ["未登录", "Signed out"], free: ["未开通 PRO", "Free plan"],
-  active: ["有效", "Active"], lifetime: ["2.x 买断权益", "2.x lifetime"], "offline-valid": ["离线可用", "Valid offline"],
+  active: ["有效", "Active"], lifetime: ["终生买断权益", "Lifetime access"], "offline-valid": ["离线可用", "Valid offline"],
   "verification-required": ["需要联网验证", "Verification needed"], expired: ["已到期", "Expired"], revoked: ["已撤销", "Revoked"],
   scheduled: ["尚未生效", "Starts later"],
   "device-limit": ["设备名额已满", "Device limit reached"], "device-required": ["本机待激活", "Activate this device"]
@@ -451,7 +451,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     revoked: t("授权已撤销，请联系支持核实；已有资料保留。", "Authorization was revoked. Contact support; saved content is retained."),
     expired: t("订阅已到期，已有资料仍可查看。", "Subscription expired. Saved content remains accessible.")
   };
-  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? desktop ? t("当前 2.x PRO 插件长期可用，模型调用费另计。", "Lifetime access to the current 2.x PRO plugins. Model costs are separate.") : t("财务、英文日记、PDF 精读与 @Agent 正文管家 2.x 不限时使用。", "Finance, English Diary, PDF reading and @Agent in notes 2.x lifetime access.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO，AI 需配置自己的模型服务。", "Finance, English Diary, PDF reading and @Agent in notes require PRO. Bring your own model provider.")));
+  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? t("一次买断，覆盖以后所有版本的 PRO，模型调用费另计。", "One payment for lifetime PRO access, including all future versions. Model costs are separate.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO，AI 需配置自己的模型服务。", "Finance, English Diary, PDF reading and @Agent in notes require PRO. Bring your own model provider.")));
   const verificationNote = [vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · ");
   if (verificationNote && !compactAuthorization) el(memberCopy, "div", "verification-note", verificationNote);
   const memberActions = el(summary, "div", "membership-actions");
@@ -567,60 +567,55 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     el(intro, "p", "", t("详细功能见下方 PRO 版本功能权益介绍。", "Explore PRO features in the benefits section below."));
   }
   const planGrid = el(details, "div", "plan-grid");
-  let timeZone: string | undefined;
-  try { timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* Unknown zones use the international price list. */ }
-  const currency = resolveMembershipCurrency(timeZone);
-  const pricingRows = getMembershipPlanPricing(currency, vm.products);
+  const pricingRows = getMembershipPlanPricing("CNY", vm.products);
   for (const pricing of pricingRows) {
-    const currency = pricing.currency, currencySymbol = currency === "CNY" ? "¥" : "US$";
+    const currency = "CNY", currencySymbol = "¥";
     const money = (amountMinor: number, savings = false) => (amountMinor / 100).toLocaleString(zh ? "zh-CN" : "en-US", {
-      minimumFractionDigits: currency === "USD" || savings && amountMinor % 100 !== 0 ? 2 : 0,
+      minimumFractionDigits: savings && amountMinor % 100 !== 0 ? 2 : 0,
       maximumFractionDigits: 2
     });
     const plan = plans.find(item => item.id === pricing.id)!;
     const card = el(planGrid, "article", `plan${plan.id === "early" ? " is-early" : ""}`);
     card.dataset.planId = plan.id;
     el(card, "strong", "plan-title", zh ? plan.zh : plan.en);
-    const badge = desktop ? plan.id === "early" ? t("限量早鸟", "Early bird") : pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1
+    const badge = desktop ? pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1 && pricing.savingsPercent != null && pricing.savingsPercent > 0
       ? t(`约 ${(pricing.amountMinor / pricing.comparisonAmountMinor! * 10).toFixed(1).replace(/\.0$/, "")} 折`, `Save ${pricing.savingsPercent}%`)
       : plan.id === "early" ? t("早鸟专享", "Early bird") : t("灵活体验", "Flexible access");
     if (badge) el(card, "span", "plan-offer", badge);
     const price = el(card, "div", "price");
     const amount = el(price, "span", "price-amount");
-    el(amount, "span", currency === "USD" ? "price-currency" : "", currencySymbol);
+    el(amount, "span", "", currencySymbol);
     el(amount, "span", "", money(pricing.amountMinor));
-    el(price, "small", "price-term", desktop ? pricing.days === null ? t("一次购买", "one payment") : t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
+    if (!desktop || plan.id !== "early") el(price, "small", "price-term", desktop ? t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
     el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
-      ? currency === "USD"
-        ? t(`约 ${pricing.dailyAmountMinor.toFixed(1).replace(/\.0$/, "")} 美分 / 天`, `≈ ${pricing.dailyAmountMinor.toFixed(1).replace(/\.0$/, "")}¢ / day`)
-        : t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
-      : t("2.x 不限时使用", "Lifetime access to 2.x"));
-    const comparison = el(card, "p", "plan-comparison");
-    if (pricing.savingsAmountMinor != null && (!desktop || pricing.savingsAmountMinor > 0)) {
-      el(comparison, "span", "", plan.id === "early"
-        ? t("比年卡少付", "vs. an annual pass")
-        : t(`比连续买 ${plan.months} 个月月卡`, `vs. ${plan.months} monthly passes`));
+      ? t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
+      : t("一次买断，终生可用", "One payment, lifetime access"));
+    const offerEndDate = plan.id === "early" ? formatEarlyOfferEndDate(vm.earlyOffer?.endsAt) : null;
+    if (offerEndDate) el(card, "p", "plan-comparison plan-end-date", t(offerEndDate.zh, offerEndDate.en));
+    if (pricing.savingsAmountMinor != null && pricing.savingsAmountMinor > 0) {
+      const comparison = el(card, "p", "plan-comparison");
+      el(comparison, "span", "", t(`比连续买 ${plan.months} 个月月卡`, `vs. ${plan.months} monthly passes`));
       const saving = el(comparison, "strong", "plan-saving");
-      el(saving, "span", "plan-saving-amount", `${plan.id === "early" && zh ? "" : t("省 ", "Save ")}${currencySymbol}${money(pricing.savingsAmountMinor, true)}`);
+      el(saving, "span", "plan-saving-amount", `${t("省 ", "Save ")}${currencySymbol}${money(pricing.savingsAmountMinor, true)}`);
       el(saving, "span", "plan-saving-percent", `-${pricing.savingsPercent}%`);
-    } else {
-      comparison.textContent = t("按月购买，轻松开始", "Start with one month");
+    } else if (plan.id === "month") {
+      el(card, "p", "plan-comparison", t("按月购买，轻松开始", "Start with one month"));
     }
     const current = valid && currentPlanId === plan.id;
-    const { purchasable, zh: zhLabel, en: enLabel } = membershipPlanAction(vm, pricing.id, currency, current, !!actions.selectPlan);
+    const planAction = () => membershipPlanAction(options.read?.() ?? vm, pricing.id, currency, current, !!actions.selectPlan);
+    const { purchasable, zh: zhLabel, en: enLabel } = planAction();
     const label = t(zhLabel, enLabel);
     const purchase = button(card, label, current ? "secondary is-current" : "secondary", purchasable ? () => {
-      if (purchase.disabled) return;
+      if (purchase.disabled || !planAction().purchasable) return;
       purchase.disabled = true;
-      void actions.selectPlan!({ planId: pricing.id, currency: "CNY" }).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !purchasable; });
+      void actions.selectPlan!({ planId: pricing.id, currency: "CNY" }).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !planAction().purchasable; });
     } : undefined);
     purchase.disabled = !purchasable;
     if (current) purchase.setAttribute("aria-current", "true");
   }
-  if (!desktop) el(details, "p", "plan-note", t("日均价格按月卡 30 天、季卡 90 天、年卡 365 天估算。", "Daily estimates use 30, 90 and 365 days for monthly, quarterly and annual passes."));
   if (desktop) {
     const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
-    el(scope, "p", "", t("包含购买时的 2.x 版本 PRO 插件，长期可用；不包含 3.x、以后的新插件和模型调用额度。需要定期联网更新授权，不等于永久离线。", "Includes the purchased 2.x PRO plugins. It excludes 3.x, future plugins and model credits. Periodic online verification is required; it is not permanent offline access."));
+    el(scope, "p", "", t("一次买断，覆盖以后所有版本的 PRO；不含模型调用额度，需要定期联网更新授权。", "One payment for lifetime PRO access, including all future versions. Model credits are not included. Periodic online verification is required."));
     const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits";
     benefits.dataset.echoinkFocusKey = "account:benefits"; benefits.tabIndex = -1;
     heading(benefits, t("权益对比", "Benefits"));

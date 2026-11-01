@@ -434,9 +434,15 @@ await test("shared knowledge bindings: disabled UI, multiple sources/default, st
   ui.mount();ui.showPage("knowledge");
   assert.match(container.textContent,/资料来源|未启用/u);
   const rawRow=[...container.querySelectorAll("button")].find(button=>button.textContent.includes("资料来源"));rawRow.click();await settle();
-  assert.equal(container.querySelectorAll('.em-sheet select option[value="Sources A"]').length,2);
+  const directoryOptions = container.querySelector('.em-sheet select[aria-label="选择已有目录"]');
+  assert.ok(directoryOptions.querySelector('option[value="Sources A"]'));
+  assert.ok(directoryOptions.querySelector('option[value="Sources B"]'));
+  const boundPaths = () => [...container.querySelectorAll('.em-sheet .em-row-label')].map(node => node.textContent).filter(text => text.startsWith("Sources "));
+  assert.deepEqual(boundPaths(), ["Sources A", "Sources B"]);
   const save=[...container.querySelectorAll("button")].find(button=>button.textContent.trim()==="保存");save.click();await settle();
-  assert.match(container.textContent,/fixture save failure/);assert.equal(container.querySelector('.em-sheet select[aria-label="新资料默认保存位置"]').value,"Sources B");
+  assert.match(container.textContent,/fixture save failure/);
+  assert.deepEqual(boundPaths(), ["Sources A", "Sources B"], "failed save keeps both bound source rows open");
+  assert.equal(config.knowledgeBase.folderBindings.roles.raw.writePath,"Sources B", "failed save retains the existing write location");
   ui.destroy();container.remove();await services.dispose();
 });
 await test("mobile identity migrates once: canonical defaults, every preset/custom and malformed source refusal", async () => {

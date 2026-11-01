@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: LicenseRef-EchoInk-Pro
 // Scope and preserved rights: ../../LICENSE
 /** Account display and action contracts; service owns authentication and entitlements. */
+import type { MembershipEarlyOffer } from "../membership/types";
+import { isValidMembershipProduct } from "./account-membership-pricing";
 import type { MembershipCurrency, MembershipPlanId, MembershipProductPricing } from "./account-membership-pricing";
 export type MembershipState = "unavailable" | "anonymous" | "free" | "active" | "lifetime" | "offline-valid" | "verification-required" | "expired" | "revoked" | "device-limit" | "device-required" | "scheduled";
 export type AccountAvatar = "initial" | { readonly url: string };
@@ -61,6 +63,7 @@ export interface AccountMembershipViewModel {
   readonly storageNotice?: string | null;
   readonly verificationError?: string | null;
   readonly salesOpen?: boolean;
+  readonly earlyOffer?: MembershipEarlyOffer | null;
   readonly products?: readonly MembershipProductPricing[];
   readonly activityGifts?: readonly AccountActivityGift[];
   readonly betaOffer?: { readonly status: string; readonly visible?: boolean } | null;
@@ -102,16 +105,14 @@ export function createUnavailableAccountAdapter(provider: AccountMembershipViewM
 }
 
 /** All three account surfaces share the server's offer and ownership decision. */
-export function membershipPlanAction(vm: AccountMembershipViewModel, planId: MembershipPlanId, currency: MembershipCurrency, current: boolean, canSelect: boolean): { purchasable: boolean; zh: string; en: string } {
+export function membershipPlanAction(vm: AccountMembershipViewModel, planId: MembershipPlanId, _currency: MembershipCurrency, current: boolean, canSelect: boolean): { purchasable: boolean; zh: string; en: string } {
   const product = vm.products?.find(item => item.id === planId);
-  if (planId === "early") {
-    if (product?.availability === "owned") return { purchasable: false, zh: "已拥有", en: "Owned" };
-    if (product?.availability === "paused" || product?.availability === "sold_out") return { purchasable: false, zh: "售罄", en: "Sold out" };
-    if (vm.salesOpen && product?.available === true && product.availability === "available" && Number.isSafeInteger(product.prices.CNY) && product.prices.CNY > 0) return { purchasable: canSelect, zh: "立即购买", en: "Buy now" };
+  if (planId === "early" && product?.availability === "owned") return { purchasable: false, zh: "已拥有", en: "Owned" };
+  if (planId === "early" && (product?.availability === "paused" || product?.availability === "sold_out")) return { purchasable: false, zh: "售罄", en: "Sold out" };
+  if (!vm.salesOpen || !product || !isValidMembershipProduct(product) || product.available !== true || product.availability !== "available") {
     return { purchasable: false, zh: "购买待开放", en: "Purchasing unavailable" };
   }
-  if (!vm.salesOpen) return { purchasable: false, zh: "购买待开放", en: "Purchasing unavailable" };
-  return { purchasable: canSelect, zh: currency === "USD" ? "查看人民币套餐" : current ? "续费" : "立即订阅", en: currency === "USD" ? "View CNY plans" : current ? "Renew" : "Subscribe now" };
+  return { purchasable: canSelect, zh: planId === "early" ? "立即购买" : current ? "续费" : "立即订阅", en: planId === "early" ? "Buy now" : current ? "Renew" : "Subscribe now" };
 }
 export function registrationGiftLabel(vm: AccountMembershipViewModel): readonly [string, string] | null {
   if (vm.betaOffer?.visible === false || vm.betaOffer?.status === "stopped") return null;

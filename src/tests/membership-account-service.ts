@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { AccountService, MembershipApiError, type MembershipTransport } from "../membership/account-service";
 import { deviceIdentity, encode, keyHash } from "../membership/crypto";
-import { PRO_CAPABILITIES, type LeaseClaims, type LocalAccountState, type MembershipStorage } from "../membership/types";
+import { PRO_CAPABILITIES, type LeaseClaims, type LocalAccountState, type MembershipStorage, type MembershipProduct, type MembershipEarlyOffer } from "../membership/types";
 import { getProPluginAccess } from "../membership/access";
 import type { AccountStatistics } from "../settings/account-membership-model";
 
@@ -18,6 +18,9 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     let salesOpen = false; const opened: string[] = [];
     let wall = start, state = options.active ? "active" : "free", offline = false, limit = false, invalidLease = false;
     let identityError: Error | null = null;
+    let productsError: Error | null = null, rightsError: Error | null = null;
+    let catalog: MembershipProduct[] | null = null;
+    let earlyOffer: MembershipEarlyOffer | null | undefined;
     let saved: LocalAccountState = options.anonymous ? {} : { token: "A", account: account() };
     const activeDevices = new Set(options.bound ? ["A"] : []);
     const calls: string[] = [];
@@ -31,15 +34,28 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     }
     let waitRights: (() => Promise<void>) | null = null;
     let waitLease: (() => Promise<void>) | null = null;
+    let waitProducts: (() => Promise<void>) | null = null;
     const transport: MembershipTransport = async (path, _method, body: any, token) => {
       calls.push(path);
       if (offline) throw new Error("OFFLINE");
       if (path === "/api/auth/logout") return {};
       if (path === "/api/auth/login" || path === "/api/auth/password") return { token: body.email.startsWith("B") ? "B" : "A" };
       if (path === "/api/account") return account(token);
-      if (path === "/api/products") return { products: earlyAvailable ? [{ id: "early", prices: { CNY: 1990, USD: 999 }, days: null, available: true, availability: "available", currencies: ["CNY"] }] : [], salesOpen, betaOffer: { status: offerStatus, visible: offerStatus !== "stopped" } };
+      if (path === "/api/products") {
+        const response = { products: catalog ?? [
+          ...(earlyAvailable ? [{ id: "early", prices: { CNY: 2990, USD: 999 }, days: null, available: true, availability: "available", currencies: ["CNY"] }] : []),
+          { id: "month", prices: { CNY: 900, USD: 299 }, days: 30, available: true, availability: "available", currencies: ["CNY"] },
+          { id: "quarter", prices: { CNY: 1900, USD: 699 }, days: 90, available: true, availability: "available", currencies: ["CNY"] },
+          { id: "year", prices: { CNY: 4900, USD: 1999 }, days: 365, available: true, availability: "available", currencies: ["CNY"] },
+        ], salesOpen, earlyOffer, betaOffer: { status: offerStatus, visible: offerStatus !== "stopped" } };
+        const error = productsError;
+        if (waitProducts) await waitProducts();
+        if (error) throw error;
+        return response;
+      }
       if (path === "/api/membership") {
         if (waitRights) await waitRights();
+        if (rightsError) throw rightsError;
         const devices = activeDevices.has(token!) ? [{ id: `device-${token}`, name: "test", platform: "fixture", verified: wall }] : [];
         while (limit && devices.length < 3) devices.push({ id: `other-${devices.length}`, name: "other", platform: "fixture", verified: wall });
         return { state, serverTime: wall, expiresAt: state === "active" ? expiresAt : null, deviceLimit: 3, devices, capabilities: [...PRO_CAPABILITIES] };
@@ -62,7 +78,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     };
     const service = new AccountService(storage, transport, "https://fixture.invalid", url => opened.push(url), "https://fixture.invalid", () => "configured", () => wall);
     await service.initialize();
-    return { service, storage, calls, opened, sales(value: boolean) { salesOpen = value; }, early(value: boolean) { earlyAvailable = value; }, beta(value: string) { offerStatus = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; } };
+    return { service, storage, calls, opened, sales(value: boolean) { salesOpen = value; }, early(value: boolean) { earlyAvailable = value; }, beta(value: string) { offerStatus = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; }, catalog(value: MembershipProduct[]) { catalog = value; }, offer(value: MembershipEarlyOffer | null | undefined) { earlyOffer = value; }, failProducts(error: Error | null) { productsError = error; }, failRights(error: Error | null) { rightsError = error; }, waitProducts(value: (() => Promise<void>) | null) { waitProducts = value; } };
   }
   const shop = await fixture({ anonymous: true });
   try {
@@ -91,6 +107,127 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     assert.deepEqual([...orders.searchParams.keys()].sort(), ["entry", "tab"]);
     assert.equal(shop.calls.length, beforeOrders, "orders can open before sales and login without contacting a payment API");
   } finally { shop.service.dispose(); }
+
+  const offer: MembershipEarlyOffer = { enabled: true, limit: 100, sold: 12, remaining: 88, major: null, endsAt: "2026-12-31" };
+  const catalog = await fixture({ anonymous: true });
+  try {
+    catalog.sales(true); catalog.early(true); catalog.offer(offer);
+    await catalog.service.refresh(true);
+    assert.deepEqual(catalog.service.read().earlyOffer, offer, "the server's full early offer reaches every account view");
+    const products = catalog.service.read().products!;
+    for (const product of products) {
+      catalog.catalog([product]);
+      await catalog.service.refresh(true);
+      await catalog.service.actions.selectPlan!({ planId: product.id, currency: "USD" });
+      assert.equal(new URL(catalog.opened.at(-1)!).searchParams.get("currency"), product.id === "early" ? null : "CNY", "subscription entries force CNY; early checkout has its existing currency-free URL");
+      const invalidRows: MembershipProduct[] = [
+        ...[0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1].map(CNY => ({ ...product, prices: { ...product.prices, CNY } })),
+        { ...product, prices: { USD: 999 } as MembershipProduct["prices"] },
+        { ...product, available: false }, { ...product, available: undefined },
+        { ...product, availability: "paused" }, { ...product, availability: "sold_out" },
+        { ...product, availability: "owned" }, { ...product, availability: undefined },
+        { ...product, currencies: ["USD"] }, { ...product, currencies: [] },
+      ];
+      for (const invalid of invalidRows) {
+        catalog.catalog([invalid]); await catalog.service.refresh(true);
+        const openedBefore = catalog.opened.length;
+        await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), /购买待开放/);
+        assert.equal(catalog.opened.length, openedBefore, `${product.id} cannot open with an invalid price or unavailable product`);
+      }
+      catalog.catalog([{ ...product, currencies: undefined }]); await catalog.service.refresh(true);
+      await catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" });
+      catalog.catalog([]); await catalog.service.refresh(true);
+      await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), /购买待开放/);
+    }
+    catalog.catalog([...products]); catalog.offer({ ...offer, endsAt: "2000-01-01" }); await catalog.service.refresh(true);
+    await catalog.service.actions.selectPlan!({ planId: "early", currency: "CNY" });
+    assert.equal(catalog.service.read().earlyOffer?.endsAt, "2000-01-01", "an elapsed display date never closes sales");
+    catalog.failProducts(new Error("CATALOG_OFFLINE")); await catalog.service.refresh(true);
+    assert.deepEqual(catalog.service.read().products, []);
+    assert.equal(catalog.service.read().salesOpen, false);
+    assert.equal(catalog.service.read().earlyOffer, null);
+    assert.equal(catalog.service.read().verificationError, "CATALOG_OFFLINE");
+    assert.equal(catalog.service.read().membership.state, "anonymous");
+    await assert.rejects(catalog.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), /购买待开放/);
+    catalog.failProducts(null); catalog.offer({ ...offer, endsAt: "2027-01-31" }); await catalog.service.refresh(true);
+    assert.equal(catalog.service.read().earlyOffer?.endsAt, "2027-01-31", "retry uses the current server date");
+    assert.equal(catalog.service.read().verificationError, null);
+    catalog.offer(undefined); await catalog.service.refresh(true);
+    assert.equal(catalog.service.read().earlyOffer, null, "an older server without earlyOffer clears the previous date");
+  } finally { catalog.service.dispose(); }
+
+  const catalogFailure = await fixture({ active: true, bound: true });
+  try {
+    catalogFailure.sales(true); catalogFailure.early(true); catalogFailure.offer(offer);
+    await catalogFailure.service.refresh(true);
+    const before = await catalogFailure.storage.read();
+    const leaseRequests = catalogFailure.calls.filter(path => path === "/api/devices/lease").length;
+    catalogFailure.failProducts(new Error("CATALOG_OFFLINE")); catalogFailure.wall(start + 100);
+    let finishRights!: () => void;
+    const rightsPending = new Promise<void>(resolve => { finishRights = resolve; });
+    catalogFailure.waitRights(() => rightsPending);
+    let stopWaiting!: () => void;
+    const cleared = new Promise<void>(resolve => {
+      stopWaiting = catalogFailure.service.subscribe(() => {
+        if (catalogFailure.service.read().products?.length === 0 && catalogFailure.service.read().salesOpen === false) resolve();
+      });
+    });
+    const verifying = catalogFailure.service.actions.verify!();
+    await cleared;
+    assert.equal(catalogFailure.service.read().earlyOffer, null, "a failed catalogue is cleared before a pending rights refresh finishes");
+    await assert.rejects(catalogFailure.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), /购买待开放/);
+    finishRights(); stopWaiting(); catalogFailure.waitRights(null); await verifying;
+    const refreshed = await catalogFailure.storage.read();
+    assert.equal(refreshed.rights?.serverTime, start + 100, "a failed catalogue still refreshes account rights");
+    assert.equal(catalogFailure.calls.filter(path => path === "/api/devices/lease").length, leaseRequests + 1, "a failed catalogue still renews the signed device lease");
+    assert.equal(catalogFailure.service.read().membership.state, "active");
+    assert.equal(catalogFailure.service.checkCapability("finance.export"), true);
+    assert.deepEqual(catalogFailure.service.read().products, []);
+    assert.equal(catalogFailure.service.read().salesOpen, false);
+    assert.equal(catalogFailure.service.read().earlyOffer, null);
+    assert.ok(refreshed.lease && before.lease);
+    const beforeOffline = await catalogFailure.storage.read();
+    catalogFailure.offline(true); await assert.rejects(catalogFailure.service.actions.verify!(), /OFFLINE/);
+    const afterOffline = await catalogFailure.storage.read();
+    assert.deepEqual(afterOffline, beforeOffline, "catalogue and network failure never rewrite the cached rights or signed lease");
+    assert.equal(catalogFailure.service.checkCapability("finance.export"), true);
+    assert.equal(catalogFailure.service.read().membership.state, "offline-valid");
+  } finally { catalogFailure.service.dispose(); }
+
+  const expiredSession = await fixture({ active: true, bound: true });
+  try {
+    expiredSession.sales(true); expiredSession.early(true); expiredSession.offer(offer); await expiredSession.service.refresh(true);
+    expiredSession.failRights(new MembershipApiError("AUTH_REQUIRED"));
+    await assert.rejects(expiredSession.service.actions.verify!(), /重新登录/);
+    assert.deepEqual(await expiredSession.storage.read(), {}, "session rejection persists the cleared account");
+    assert.equal(expiredSession.service.read().membership.state, "anonymous");
+    assert.deepEqual(expiredSession.service.read().products, []);
+    assert.equal(expiredSession.service.read().earlyOffer, null);
+    assert.equal(expiredSession.service.read().salesOpen, false);
+    assert.equal(expiredSession.service.checkCapability("finance.export"), false);
+  } finally { expiredSession.service.dispose(); }
+
+  for (const fail of [false, true]) {
+    const lateProducts = await fixture({ anonymous: true });
+    try {
+      lateProducts.sales(true); lateProducts.early(true); lateProducts.offer(offer); await lateProducts.service.refresh(true);
+      let entered!: () => void, finish!: () => void;
+      const requested = new Promise<void>(resolve => { entered = resolve; });
+      const held = new Promise<void>(resolve => { finish = resolve; });
+      lateProducts.waitProducts(() => { entered(); return held; });
+      if (fail) lateProducts.failProducts(new Error("STALE_CATALOG_FAILURE"));
+      const stale = lateProducts.service.refresh(true);
+      await requested;
+      await lateProducts.service.actions.signOut!();
+      assert.equal(lateProducts.service.read().earlyOffer, null);
+      assert.deepEqual(lateProducts.service.read().products, []);
+      finish(); await stale;
+      assert.equal(lateProducts.service.read().salesOpen, false, "a late anonymous catalogue cannot reopen purchases after sign-out");
+      assert.equal(lateProducts.service.read().earlyOffer, null);
+      assert.deepEqual(lateProducts.service.read().products, []);
+      assert.equal(lateProducts.service.read().verificationError, null, "a stale catalogue failure cannot change the new session error");
+    } finally { lateProducts.service.dispose(); }
+  }
   const localUsage = await fixture({ anonymous: true });
   const usageListeners = new Set<() => void>();
   const replacementListeners = new Set<() => void>();
@@ -274,5 +411,5 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     assert.deepEqual(lateLease.bindings(), ["A"], "recovering B cannot register it automatically");
     assert.ok(!lateLease.calls.includes("/api/devices/activate"));
   } finally { lateLease.service.dispose(); }
-  console.log("PASS membership signed account service: local usage without login, usage updates/cleanup, activation, offline restart/expiry, device recovery across login and fresh sessions, unbound/full/removed devices, identity failures and late account/lease responses");
+  console.log("PASS membership signed account service: four-plan CNY purchase validation, server offer refresh/failure cleanup, rights/lease renewal during catalogue failure, invalid sessions and late catalogue responses, local usage, activation, offline restart/expiry, device recovery, identity failures and late account/lease responses");
 }

@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import esbuild from "esbuild";
+import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const require = createRequire(import.meta.url);
@@ -22,7 +23,7 @@ try {
   await esbuild.build({
     entryPoints: ["src/tests/account-membership.ts"], absWorkingDir: root,
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: entry, sourcemap: "inline",
-    banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root, 'package.json'))});` },
+    banner: desktopNodeTestBanner,
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     plugins: [{ name: "package-location", setup(build) {
       build.onResolve({ filter: /^(@earendil-works\/pi-(agent-core|ai|coding-agent)(\/|$)|yaml$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true }));

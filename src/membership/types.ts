@@ -38,6 +38,15 @@ export interface MembershipSigningKey {
   publicKey: JsonWebKey;
 }
 export type MembershipProduct = MembershipProductPricing;
+export interface MembershipEarlyOffer {
+  readonly enabled: boolean;
+  readonly limit: number | null;
+  readonly sold: number;
+  readonly remaining: number | null;
+  readonly major: number | null;
+  /** Beijing calendar date (YYYY-MM-DD), for display only; never closes sales. */
+  readonly endsAt?: string | null;
+}
 /** The cached snapshot can retain only a state after a server-side revocation. */
 export interface MembershipRights {
   state: string;
@@ -76,7 +85,7 @@ export interface MembershipApiResponses {
   "/api/auth/password": { token: string };
   "/api/account": MembershipAccount;
   "/api/membership": MembershipRights & { serverTime: number };
-  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean; betaOffer?: MembershipRights["betaOffer"] };
+  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean; earlyOffer?: MembershipEarlyOffer | null; betaOffer?: MembershipRights["betaOffer"] };
   "/api/devices/challenge": { challengeId: string; nonce: string };
   "/api/devices/activate": DeviceLeaseResponse;
   "/api/devices/lease": DeviceLeaseResponse;
