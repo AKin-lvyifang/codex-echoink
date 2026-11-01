@@ -131,6 +131,7 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
   await (canvasExtension as { factory: (api: unknown) => unknown }).factory({ on: (name: string, handler: (...args: any[]) => any) => canvasHandlers.set(name, handler) });
   const repairBefore = await canvasHandlers.get("before_agent_start")!({ systemPrompt: "OLD_PRIVATE_PROFILE", prompt: "生成" });
   assert.match(repairBefore.systemPrompt, /JSON Canvas/u);
+  assert.match(repairBefore.systemPrompt, /精简.*从头输出完整 JSON.*不续写/u);
   assert.equal(repairBefore.systemPrompt.includes("OLD_PRIVATE_PROFILE"), false);
   const repairUser = { role: "user", content: "修复请求", timestamp: 3 };
   const repairContext = await canvasHandlers.get("context")!({ messages: [user, { role: "assistant", content: "OLD_ASSISTANT_OUTPUT" }, repairUser] });
@@ -141,6 +142,7 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
   attempt = { kind: "fallback" };
   const fallbackBefore = await canvasHandlers.get("before_agent_start")!({ systemPrompt: "OLD_PRIVATE_PROFILE", prompt: "生成" });
   assert.match(fallbackBefore.systemPrompt, /branches/u);
+  assert.match(fallbackBefore.systemPrompt, /精简.*从头输出完整 JSON.*不续写/u);
   const fallbackContext = await canvasHandlers.get("context")!({ messages: [user, repairUser] });
   assert.equal(JSON.stringify(fallbackContext).includes("FAILED_THIS_TURN_ONLY"), false);
   console.log("PASS generation: actual Provider context excludes old chat, memory and profile; small-model budget rejects without truncation");

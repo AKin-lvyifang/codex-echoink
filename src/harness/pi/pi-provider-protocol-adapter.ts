@@ -63,6 +63,7 @@ import {
 import {
   streamWithPiAutoOutputLimit,
   PI_OUTPUT_LIMIT_REJECTED,
+  PI_AUTO_OUTPUT_REQUEST_REJECTED,
   type PiAutoOutputLimitPolicy,
   type PiAutoOutputLimitRequestState
 } from "./auto-output-limit";
@@ -528,7 +529,7 @@ function runtimeProviderFailureCode(
   assistantMessage?: AssistantMessage,
   contextWindow?: number
 ): string {
-  if (message === PI_OUTPUT_LIMIT_REJECTED) return PI_OUTPUT_LIMIT_REJECTED;
+  if (message === PI_OUTPUT_LIMIT_REJECTED || message === PI_AUTO_OUTPUT_REQUEST_REJECTED) return message;
   for (const code of [
     PI_ANTHROPIC_DOCUMENT_REQUEST_TOO_LARGE,
     PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED
@@ -561,7 +562,7 @@ function thrownProviderFailureCode(
   message: string,
   partial?: AssistantMessage
 ): string {
-  if (message === PI_OUTPUT_LIMIT_REJECTED) return PI_OUTPUT_LIMIT_REJECTED;
+  if (message === PI_OUTPUT_LIMIT_REJECTED || message === PI_AUTO_OUTPUT_REQUEST_REJECTED) return message;
   for (const code of [
     PI_ANTHROPIC_DOCUMENT_REQUEST_TOO_LARGE,
     PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED

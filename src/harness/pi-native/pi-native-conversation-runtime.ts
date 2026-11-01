@@ -3529,16 +3529,19 @@ export class PiNativeConversationRuntime {
         let modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
         let modelAttempts = 1, canvasFallback = false, continuationError: unknown;
         const canvasValidationErrors: string[] = [];
+        let canvasFailure: string | undefined;
         // Drawing format errors and output truncation share exactly one repair.
         // Permission, network, cancellation and write failures cannot re-enter it.
         const drawingValidationErrors: string[] = [];
         let drawingFailure: string | undefined;
-        const drawingOutputLimited = () => generatedAssistant?.message.stopReason === "length"
-          || safeProviderFailureCode(generatedAssistant?.message.errorMessage) === "provider_output_limit_reached"
-          || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached";
+        const generationOutputLimited = () => terminalState !== "cancelled"
+          && (!promptError || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached")
+          && (generatedAssistant?.message.stopReason === "length"
+            || safeProviderFailureCode(generatedAssistant?.message.errorMessage) === "provider_output_limit_reached"
+            || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached");
         while (generation.request.outputKind === "excalidraw" && !execution.abortRequested && !execution.knowledgeAbort.signal.aborted) {
           try {
-            if (drawingOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简到最多 8 个短框，重新输出完整 JSON，不续写残缺内容。");
+            if (generationOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简到最多 8 个短框，重新输出完整 JSON，不续写残缺内容。");
             if (terminalState !== "completed" || modelText === null) break;
             prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
             break;
@@ -3546,7 +3549,7 @@ export class PiNativeConversationRuntime {
             if (!(error instanceof GenerationOutputValidationError)) throw error;
             drawingValidationErrors.push(error.message);
             if (generation.attempt?.kind === "repair") {
-              drawingFailure = drawingOutputLimited()
+              drawingFailure = generationOutputLimited()
                 ? "已精简重试一次，模型输出仍被截断，尚未创建手绘图。请减少本次资料，或选择输出额度更大的模型后重试。"
                 : `手绘图精简重试后仍未通过检查，尚未创建文件：${error.message}`;
               break;
@@ -3609,17 +3612,25 @@ export class PiNativeConversationRuntime {
             }
           }
         }
-        while (generation.request.outputKind === "canvas" && terminalState === "completed" && modelText !== null) {
+        while (generation.request.outputKind === "canvas" && !execution.abortRequested && !execution.knowledgeAbort.signal.aborted) {
           try {
+            if (generationOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简关键要点并缩短文字，重新从头输出完整 JSON，不续写残缺内容。");
+            if (terminalState !== "completed" || modelText === null) break;
             prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
             break;
           } catch (error) {
             if (!(error instanceof GenerationOutputValidationError)) throw error;
             canvasValidationErrors.push(error.message);
-            if (generation.attempt?.kind === "fallback") break;
+            if (generation.attempt?.kind === "fallback") {
+              if (generationOutputLimited()) {
+                canvasFailure = "已精简重试并尝试旧层级兜底，模型输出仍被截断，尚未创建 Canvas 文件。请减少本次资料，或在模型设置中调高单次输出上限、调低思考后重试。";
+                modelText = null;
+              }
+              break;
+            }
             const attempt: GenerationAttempt = generation.attempt?.kind === "repair"
               ? { kind: "fallback" }
-              : { kind: "repair", failedOutput: modelText, validationError: error.message };
+              : { kind: "repair", failedOutput: modelText ?? (generatedAssistant ? publicMessageText(generatedAssistant.message) : ""), validationError: error.message };
             try {
               assertPiSubmissionActive(execution.knowledgeAbort.signal);
               await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
@@ -3692,6 +3703,11 @@ export class PiNativeConversationRuntime {
         if (generation.request.outputKind === "canvas") {
           result.canvasFallback = canvasFallback;
           result.canvasValidationErrors = canvasValidationErrors;
+          if (canvasFailure && result.writeState === "not_written") {
+            result.error = canvasFailure;
+            terminalState = "failed";
+            promptError = new Error(canvasFailure, { cause: promptError });
+          }
         }
         if (continuationError && result.writeState === "not_written" && terminalState !== "cancelled") {
           result.error = continuationError instanceof Error ? continuationError.message : "生成未完成，尚未写入文件。";
@@ -4378,7 +4394,7 @@ export class PiNativeConversationRuntime {
           this.now()
         );
         const text = publicMessageText(event.message);
-        if (!execution.outputContinuation && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && isAssistantMessage(event.message)
+        if (!execution.outputContinuation && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && execution.generation?.request.outputKind !== "canvas" && isAssistantMessage(event.message)
           && (event.message.stopReason === "length" || event.message.errorMessage === "provider_output_limit_reached")) {
           execution.outputContinuation = {
             messageKey: key, firstFingerprint: messageFingerprint(event.message), text,

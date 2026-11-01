@@ -38,9 +38,10 @@ const AUTO_OUTPUT_TOKENS = 262_144;
 const FALLBACK_OUTPUT_TOKENS = 8_192;
 const CONTEXT_MARGIN = 4_096;
 export const PI_OUTPUT_LIMIT_REJECTED = "provider_output_limit_rejected";
+export const PI_AUTO_OUTPUT_REQUEST_REJECTED = "provider_auto_output_request_rejected";
 
 type LearnedLimits = { maxOutputTokens?: number; contextWindow?: number };
-type RetryLimit = { maxTokens: number; remember: LearnedLimits };
+type RetryLimit = { maxTokens: number; remember: LearnedLimits; explicit: boolean };
 
 /** Only the request copy changes; Session/model admission budgets stay intact. */
 export function streamWithPiAutoOutputLimit<T extends StreamOptions>(input: {
@@ -119,13 +120,19 @@ export function streamWithPiAutoOutputLimit<T extends StreamOptions>(input: {
         return;
       }
       if (retry) {
+        const rejection = outputLimitRetry(failure, status);
+        const secrets = input.options.apiKey ? [input.options.apiKey] : [];
+        const detail = sanitizeProviderFailureDetail(status,
+          (failure as AssistantProviderFailure).echoInkProviderFailure ?? failure.errorMessage, secrets);
+        // Structured bodies without an error.message must never become prose.
+        const plainMessage = failure.errorMessage && !/[{}[\]]/u.test(failure.errorMessage)
+          ? failure.errorMessage : undefined;
         // Deliberately contains no Pi retry/overflow/continuation trigger.
         output.push({ type: "error", reason: "error", error: {
           ...failure,
-          errorMessage: PI_OUTPUT_LIMIT_REJECTED,
-          echoInkProviderFailure: sanitizeProviderFailureDetail(status,
-            (failure as AssistantProviderFailure).echoInkProviderFailure ?? failure.errorMessage,
-            input.options.apiKey ? [input.options.apiKey] : [])
+          errorMessage: rejection?.explicit ? PI_OUTPUT_LIMIT_REJECTED : PI_AUTO_OUTPUT_REQUEST_REJECTED,
+          echoInkProviderFailure: detail?.message || !plainMessage ? detail
+            : sanitizeProviderFailureDetail(status, { ...detail, message: plainMessage }, secrets)
         } as AssistantProviderFailure });
         return;
       }
@@ -179,17 +186,18 @@ function outputLimitRetry(error: AssistantMessage, status: number | null): Retry
   const total = totalContextLimit(text);
   if (!total && /(?:input|prompt)[_ ](?:tokens?|length)[^.\n]{0,80}(?:exceeds?|too (?:long|large))/iu.test(text)) return null;
   const explicitCap = explicitOutputCap(text);
-  if (explicitCap) return { maxTokens: explicitCap, remember: { maxOutputTokens: explicitCap } };
+  if (explicitCap) return { maxTokens: explicitCap, remember: { maxOutputTokens: explicitCap }, explicit: true };
   if (total) {
     if (total.input >= total.window || total.window - total.input <= CONTEXT_MARGIN) return null;
     return {
       maxTokens: total.window - total.input - CONTEXT_MARGIN,
-      remember: { contextWindow: total.window }
+      remember: { contextWindow: total.window },
+      explicit: true
     };
   }
   // Leave genuine/ambiguous input overflow to the existing compaction path.
   if (/context[_ ](?:length|window|limit)|context.{0,30}(?:maximum|exceed|limit)|input.{0,40}(?:too long|too large|exceed)|prompt.{0,40}(?:too long|too large|exceed)|request_too_large|too many (?:input )?tokens/iu.test(text)) return null;
-  return { maxTokens: FALLBACK_OUTPUT_TOKENS, remember: { maxOutputTokens: FALLBACK_OUTPUT_TOKENS } };
+  return { maxTokens: FALLBACK_OUTPUT_TOKENS, remember: { maxOutputTokens: FALLBACK_OUTPUT_TOKENS }, explicit: false };
 }
 
 function explicitOutputCap(text: string): number | undefined {

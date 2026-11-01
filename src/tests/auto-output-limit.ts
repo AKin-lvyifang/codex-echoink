@@ -6,8 +6,8 @@ import {
   type Model, type ProviderStreams, type SimpleStreamOptions
 } from "@earendil-works/pi-ai";
 import { PiProviderProtocolDispatcher, PiProviderProtocolTransport } from "../harness/pi/pi-provider-protocol-adapter";
-import { type PiAutoOutputLimitPolicy, type PiAutoOutputLimitRequestState } from "../harness/pi/auto-output-limit";
-import { providerFailureText, safeProviderFailureCode, type AssistantProviderFailure } from "../harness/pi/provider-failure";
+import { PI_AUTO_OUTPUT_REQUEST_REJECTED, PI_OUTPUT_LIMIT_REJECTED, type PiAutoOutputLimitPolicy, type PiAutoOutputLimitRequestState } from "../harness/pi/auto-output-limit";
+import { assistantProviderFailureText, providerFailureText, safeProviderFailureCode, type AssistantProviderFailure } from "../harness/pi/provider-failure";
 import { estimatePiContextTokens } from "../harness/pi-native/pi-context-budget";
 import { PI_ANTHROPIC_PDF_DOCUMENT_ADAPTER } from "../harness/pi-native/pi-document-context";
 import { createQwenTokenPlanOpenAICompletionsAdapter } from "../plugin/qwen-token-plan-provider-adapter";
@@ -71,6 +71,21 @@ function dispatcher(f: ReturnType<typeof fixture>, p: ReturnType<typeof policy>)
 function send(d: PiProviderProtocolDispatcher, options: SimpleStreamOptions = {}, state?: PiAutoOutputLimitRequestState) {
   return d.streamSimple({ model: model(), context, apiKey: key, options, autoOutputLimitState: state });
 }
+async function sendTransport(d: PiProviderProtocolDispatcher) {
+  const transport = new PiProviderProtocolTransport({ authorityId: "fixture", storeSetId: "fixture", resolveAuthToken: () => key, dispatcher: d });
+  return collect(await transport.stream({ runId: "r", turnId: "t", conversationId: "c", correlationId: "x", model: model(), context,
+    provider: { providerId: "openai", apiProtocol: "openai-completions", authMode: "api-key", baseUrl: model().baseUrl, modelRef: model().id },
+    options: { temperature: 0, cacheRetention: "none", maxRetries: 0, timeoutMs: 5000 } }));
+}
+function assertTerminalRejection(result: AssistantMessage, code: string): void {
+  assert.equal(result.errorMessage, code);
+  assert.equal(safeProviderFailureCode(result.errorMessage), code);
+  assert.equal(isRetryableAssistantError(result), false);
+  assert.equal(isContextOverflow(result, 64000), false);
+  // The runtime only continues a length stop or provider_output_limit_reached.
+  assert.equal(result.stopReason, "error");
+  assert.notEqual(result.errorMessage, "provider_output_limit_reached");
+}
 const explicitErrors = [
   ["400 {\"error\":{\"message\":\"max_tokens must be in the range [1, 8192]\"}}", 8192],
   ["422 {\"error\":{\"message\":\"Range of max_tokens should be [1, 32768]\"}}", 32768],
@@ -126,6 +141,22 @@ async function sdkRequests(): Promise<void> {
       // Responses SDK has its own pre-existing minimum (16); 32 stays explicit.
       assert.equal(bodies[0]![field], 32);
     }
+    const rejectedBodies: Record<string, any>[] = [], rejectedPolicy = policy();
+    globalThis.fetch = async (_url, init) => {
+      rejectedBodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ error: { code: "model_not_found", message: `The model fixture-model does not exist; ${key}` } }),
+        { status: 400, headers: { "content-type": "application/json" } });
+    };
+    const rejected = await sendTransport(new PiProviderProtocolDispatcher({}, rejectedPolicy.value));
+    assert.deepEqual(rejectedBodies.map(body => body.max_completion_tokens), [262144, 8192]);
+    assertTerminalRejection(rejected.result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
+    const text = assistantProviderFailureText(rejected.result as AssistantProviderFailure);
+    assert.match(text, /^服务商拒绝了这次请求\nHTTP 400/u);
+    assert.match(text, /The model fixture-model does not exist/u);
+    assert.doesNotMatch(text, /上限|sk-fixture-output-limits-never-real/u);
+    assert.doesNotMatch(JSON.stringify(rejected), new RegExp(key));
+    assert.deepEqual(rejectedPolicy.writes, [], "model-not-found must not write autoLimits");
+    assert.ok(rejected.events.every(event => event.type !== "done" || event.reason !== "length"));
   } finally { globalThis.fetch = previous; }
 }
 
@@ -155,7 +186,7 @@ function sdkSuccess(api: Api): Response {
 
 export async function runAutoOutputLimitTests(): Promise<void> {
   await sdkRequests();
-  console.log("PASS auto output: actual SDK stream/streamSimple wire fields for all three protocols, Anthropic thinking, explicit preflight cap");
+  console.log("PASS auto output: actual SDK stream/streamSimple wire fields, Anthropic thinking, explicit preflight cap; model-not-found 400 stays terminal and neutral after production Transport");
   for (const [error, cap] of explicitErrors) {
     const f = fixture([{ error }, {}]), p = policy();
     const result = await collect(send(dispatcher(f, p)));
@@ -252,24 +283,63 @@ export async function runAutoOutputLimitTests(): Promise<void> {
     assert.deepEqual(p.writes, [{ contextWindow: window }]);
   }
 
-  const failure = fixture([{ error: "400 invalid_request_error" }, { error: "400 context_length_exceeded" }]), fp = policy();
-  const d = dispatcher(failure, fp);
-  const transport = new PiProviderProtocolTransport({ authorityId: "fixture", storeSetId: "fixture", resolveAuthToken: () => key, dispatcher: d });
-  const result = await (await transport.stream({ runId: "r", turnId: "t", conversationId: "c", correlationId: "x", model: model(), context,
-    provider: { providerId: "openai", apiProtocol: "openai-completions", authMode: "api-key", baseUrl: model().baseUrl, modelRef: model().id },
-    options: { temperature: 0, cacheRetention: "none", maxRetries: 0, timeoutMs: 5000 } })).result();
-  assert.equal(result.errorMessage, "provider_output_limit_rejected");
-  assert.equal(safeProviderFailureCode(result.errorMessage), result.errorMessage);
-  assert.equal(providerFailureText(result.errorMessage), "服务商拒绝了输出上限，请到模型设置手动填写。");
-  assert.equal(isRetryableAssistantError(result), false);
-  assert.equal(isContextOverflow(result, 64000), false);
-  assert.equal(fp.writes.length, 0);
-  assert.equal(failure.calls.length, 2);
+  for (const second of [
+    "400 invalid_request_error", "400 context_length_exceeded", "400 The model fixture-model does not exist",
+    "422 image dimensions are invalid", "400 tool arguments are invalid", "503 service unavailable"
+  ]) {
+    const failure = fixture([{ error: explicitErrors[0][0] }, { error: second }]), fp = policy();
+    const { result, events } = await sendTransport(dispatcher(failure, fp));
+    assertTerminalRejection(result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
+    const text = assistantProviderFailureText(result as AssistantProviderFailure);
+    assert.match(text, /^服务商拒绝了这次请求\nHTTP (?:400|422|503)/u);
+    assert.ok(text.includes(second));
+    assert.doesNotMatch(text, /上限/u);
+    assert.deepEqual(failure.calls.map(call => call.options.maxTokens), [262144, 8192]);
+    assert.equal(fp.writes.length, 0);
+    assert.ok(events.every(event => event.type !== "done" || event.reason !== "length"));
+  }
+  for (const [second] of explicitErrors) {
+    const failure = fixture([{ error: "400 invalid_request_error" }, { error: second }]), fp = policy();
+    const { result } = await sendTransport(dispatcher(failure, fp));
+    assertTerminalRejection(result, PI_OUTPUT_LIMIT_REJECTED);
+    assert.equal(providerFailureText(result.errorMessage), "服务商拒绝了输出上限，请到模型设置手动填写。");
+    assert.equal(fp.writes.length, 0);
+    assert.equal(failure.calls.length, 2);
+  }
+  const privateRequest = { error: { code: "invalid_request_error", request: {
+    prompt: "PRIVATE_REQUEST_CANARY", api_key: key
+  } } };
+  const privateFailure = fixture([{ status: 400, error: "400 invalid_request_error" }, {
+    status: 400, error: `400 ${JSON.stringify(privateRequest)}`
+  }]), privatePolicy = policy();
+  const privateResult = await sendTransport(dispatcher(privateFailure, privatePolicy));
+  assertTerminalRejection(privateResult.result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
+  const privateText = assistantProviderFailureText(privateResult.result as AssistantProviderFailure);
+  assert.equal(privateText, "服务商拒绝了这次请求\nHTTP 400 · invalid_request_error");
+  assert.doesNotMatch(JSON.stringify(privateResult), /PRIVATE_REQUEST_CANARY|"request"|"prompt"|"api_key"|sk-fixture-output-limits-never-real/u);
+  assert.deepEqual(privateFailure.calls.map(call => call.options.maxTokens), [262144, 8192]);
+  assert.equal(privatePolicy.writes.length, 0);
+  const partialFailure = fixture([{ error: "400 invalid_request_error" }, {
+    error: "400 tool arguments are invalid", content: [{ type: "text", text: "partial answer" }]
+  }]), partialPolicy = policy();
+  const partialResult = await sendTransport(dispatcher(partialFailure, partialPolicy));
+  assertTerminalRejection(partialResult.result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
+  assert.deepEqual(partialResult.result.content, [{ type: "text", text: "partial answer" }]);
+  assert.equal(partialFailure.calls.length, 2);
+  assert.equal(partialPolicy.writes.length, 0);
 
   const controller = new AbortController();
   const cancel = fixture([{ error: "400 invalid_request_error", onAttempt: () => controller.abort() }]), cp = policy();
   const cancelled = await collect(send(dispatcher(cancel, cp), { signal: controller.signal }));
   assert.equal(cancelled.result.stopReason, "aborted"); assert.equal(cancel.calls.length, 1);
+  const retryController = new AbortController(), retryCancelPolicy = policy();
+  const retryCancel = fixture([{ error: "400 invalid_request_error" }, {
+    error: "400 invalid_request_error", onAttempt: () => retryController.abort()
+  }]);
+  const retryCancelled = await collect(send(dispatcher(retryCancel, retryCancelPolicy), { signal: retryController.signal }));
+  assert.equal(retryCancelled.result.stopReason, "aborted");
+  assert.equal(retryCancel.calls.length, 2);
+  assert.equal(retryCancelPolicy.writes.length, 0);
   const timed = fixture([{ error: "400 invalid_request_error", onAttempt: () => new Promise(r => setTimeout(r, 20)) }, {}]);
   await collect(send(dispatcher(timed, policy()), { timeoutMs: 5 }));
   assert.equal(timed.calls.length, 1, "no retry after the total deadline");
