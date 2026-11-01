@@ -102,7 +102,7 @@ export async function runWorkbenchCheckinTests(): Promise<void> {
 
   for (const [error, expected, authenticated] of [["", "签到成功 · 第 4 天", true], ["NETWORK", "没联网，签不了", true], ["AUTH_REQUIRED", "登录后才能签到", false], ["RATE_LIMITED", "签得太快了，稍后再试", true], ["CHECKIN_DATE_OUT_OF_RANGE", "设备时间不对，签不了", true]] as const) {
     const f = fixture(authenticated); await f.service.initialize();
-    const parent = document.body.createDiv(); const stage = new WorkbenchWeatherStage(parent, f.plugin as never, () => {}); stage.update("still", "一切安静");
+    const parent = document.body.createDiv(); const stage = new WorkbenchWeatherStage(parent, f.plugin as never, () => {}); stage.setActive(true); stage.update("working", "1 件在跑");
     await workbenchCheckin(f.plugin as never).refresh(); f.server.error = error; f.server.status = error === "RATE_LIMITED" ? 429 : 400;
     const button = parent.querySelector<HTMLButtonElement>(".wb-weather-stage")!;
     const pointer = (type: string, y: number) => { const event = new Event(type); Object.assign(event, { button: 0, pointerId: 1, clientY: y }); button.dispatchEvent(event); };
@@ -125,7 +125,7 @@ export async function runWorkbenchCheckinTests(): Promise<void> {
     stage.dispose(); parent.remove(); f.service.dispose();
   }
   const already = fixture(); await already.service.initialize(); already.server.already = true;
-  const parent = document.body.createDiv(), stage = new WorkbenchWeatherStage(parent, already.plugin as never, () => {}); stage.update("still", "一切安静"); await workbenchCheckin(already.plugin as never).refresh();
+  const parent = document.body.createDiv(), stage = new WorkbenchWeatherStage(parent, already.plugin as never, () => {}); stage.update("idle", "一切安静"); await workbenchCheckin(already.plugin as never).refresh();
   parent.querySelector(".wb-weather-stage")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" })); await until(() => workbenchCheckin(already.plugin as never).snapshot().checkedIn);
   assert.equal(parent.querySelector(".wb-checkin-message")?.textContent, "", "already-checked-in never celebrates"); assert.equal(parent.querySelector('[data-layer="tag-text"]')?.textContent, "3 天");
   stage.dispose(); parent.remove(); already.service.dispose();

@@ -212,7 +212,7 @@
 .echoink-workbench .wb-weather-details { display: flex; flex-direction: column; align-items: flex-start; }
 .echoink-workbench .wb-header { position: relative; }
 .echoink-workbench .wb-weather-copy { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--wb-secondary); font: inherit; text-align: left; white-space: nowrap; cursor: pointer; box-shadow: none; }
-.echoink-workbench .wb-header.is-weather-condensed .wb-weather-copy { display: none; }
+.echoink-workbench .wb-header.is-weather-condensed .wb-weather-copy, .echoink-workbench .wb-header.is-weather-condensed .wb-weather-count-button { display: none; }
 .echoink-workbench .wb-header.is-weather-condensed .wb-weather-details { width: 0; }
 .echoink-workbench .wb-header.is-weather-condensed .wb-sky { position: static; gap: 0; }
 .echoink-workbench .wb-header.is-weather-condensed.has-weather-feedback.has-weather-feedback { padding-bottom: 54px; }
@@ -262,7 +262,7 @@
 .echoink-workbench .wb-completed-sub .wb-secondary { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .echoink-workbench .wb-completed-body .wb-row-title { font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 @container wb-page (max-width: 819px) {
-  .echoink-workbench .wb-weather-copy { display: none; }
+  .echoink-workbench .wb-weather-copy, .echoink-workbench .wb-weather-count-button { display: none; }
   .echoink-workbench .wb-weather-details { width: 0; }
   .echoink-workbench .wb-sky { position: static; gap: 0; }
   .echoink-workbench .wb-header.has-weather-feedback.has-weather-feedback { padding-bottom: 54px; }
@@ -314,3 +314,9 @@
   .diary-organizer-review-copy .diary-organizer-reason { flex-shrink: 1; }
   .diary-organizer-editor { margin-inline-start: 0; }
 }
+.echoink-workbench .wb-weather-copy { max-width: 170px; min-width: 0; padding-bottom: 3px; }
+.echoink-workbench .wb-weather-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.echoink-workbench button.wb-weather-count-button { display: block; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 8px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--wb-secondary); height: auto; box-shadow: none; text-align: left; }
+.echoink-workbench button.wb-weather-count-button:is(:hover,:focus-visible) { background: var(--wb-hover); outline: none; box-shadow: none; }
+.echoink-workbench button.wb-weather-count-button:disabled { opacity: 1; cursor: default; }
+@container wb-page (max-width: 819px) { .echoink-workbench button.wb-weather-count-button { display: none; } }

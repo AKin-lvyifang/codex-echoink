@@ -1,5 +1,6 @@
 import { normalizeEchoInkMcpServerSettings, type EchoInkMcpServerSettings } from "../mcp-server/settings";
 import { normalizeWorkbenchCheckin, type WorkbenchCheckinData } from "../home/workbench-checkin";
+import { normalizeWeatherCity, type WeatherCity } from "../home/weather-types";
 import { defaultGenerationTemplates, normalizeGenerationTemplates } from "./generation-templates";
 import type { GenerationTemplate } from "../generation/types";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -539,6 +540,7 @@ export interface EchoInkTodoItem {
 
 export interface CodexForObsidianSettings {
   mcpServer: EchoInkMcpServerSettings;
+  weatherCity: WeatherCity | null;
   workbenchCheckin: WorkbenchCheckinData;
   workbenchOnboardingDismissed?: boolean;
   generationTemplates: GenerationTemplate[];
@@ -597,6 +599,7 @@ export interface CodexForObsidianSettings {
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
+  weatherCity: null,
   workbenchCheckin: { signedDates: [], agentDates: [] },
   workbenchOnboardingDismissed: false,
   generationTemplates: defaultGenerationTemplates(),
@@ -781,6 +784,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...currentData,
     workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
     workbenchOnboardingDismissed: data.workbenchOnboardingDismissed === true,
+    weatherCity: normalizeWeatherCity(data.weatherCity),
     // Plan is a conversation/draft choice, never a default for future tasks.
     defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,

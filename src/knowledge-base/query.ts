@@ -1263,6 +1263,7 @@ function isUnrefinedKnowledgePath(relativePath: string): boolean {
 }
 
 function isKnowledgeMarkdownPath(relativePath: string): boolean {
+  if (/\.excalidraw\.md$/iu.test(relativePath)) return false;
   return KNOWLEDGE_MARKDOWN_EXTENSIONS.has(
     path.posix.extname(relativePath).toLowerCase()
   );

@@ -59,6 +59,7 @@ export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, Messag
   turnStartedAt: number;
   readonly inputEl: HTMLTextAreaElement;
   readonly attachments: StoredAttachment[];
+  readonly drawingRequested?: boolean;
   readonly selectedSkill: EchoInkResource | null;
   selectedProviderSettingsId: string;
   selectedModel: string;

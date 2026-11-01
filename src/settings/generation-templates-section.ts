@@ -1,4 +1,5 @@
-import { Notice, setIcon } from "obsidian";
+import { Notice, Platform, setIcon } from "obsidian";
+import { setGenerationIcon } from "../generation/icons";
 import type { GenerationOutputKind, GenerationTemplate } from "../generation/types";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "./amicro-buttons";
 import { createOriginButton, createOriginInput, createOriginRadioGroup } from "./origin-controls";
@@ -44,12 +45,12 @@ export class GenerationTemplatesSection {
     setIcon(add, "plus"); add.onclick = () => this.options.openEditor(null);
     const body = createSettingsGroup(createSettingsSection(page, { surface: "flat" }));
     body.addClass("echoink-generation-template-list");
-    for (const template of this.templates()) {
+    for (const template of this.templates().filter(template => Platform.isDesktopApp || template.outputKind !== "excalidraw")) {
       const row = createSettingsNavigationRow(body, { title: template.name, description: template.description || undefined,
         focusKey: `knowledge:generation-template:${template.id}`, onActivate: () => this.options.openEditor(template.id) });
       row.addClass("echoink-generation-template-row");
       const icon = row.createSpan({ cls: "echoink-generation-template-icon", attr: { "aria-hidden": "true" } });
-      setIcon(icon, template.outputKind === "canvas" ? "layout-dashboard" : "file-text"); row.prepend(icon);
+      setGenerationIcon(icon, template.outputKind); row.prepend(icon);
       if (generationTemplateIsEdited(template)) row.querySelector(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-generation-template-edited", text: this.text("已修改", "Edited") });
     }
   }
@@ -66,14 +67,17 @@ export class GenerationTemplatesSection {
     description.input.placeholder = this.text("一句话，显示在模板卡片上", "One sentence shown on the template card");
     const output = form.createDiv({ cls: "echoink-generation-template-field" });
     output.createDiv({ cls: "echoink-generation-template-label", text: this.text("输出", "Output") });
-    const segments = createOriginRadioGroup(output, draft.outputKind, this.text("输出类型", "Output type"), value => {
-      draft.outputKind = value as GenerationOutputKind; segments.element.dataset.outputKind = value;
-    });
-    segments.element.addClass("echoink-generation-output-segments"); segments.element.dataset.outputKind = draft.outputKind;
-    for (const [value, label] of [["markdown", "Markdown"], ["canvas", "Canvas 导图"]]) {
-      const item = segments.element.createDiv({ cls: "echoink-generation-output-segment" });
-      item.createSpan({ text: label, attr: { "aria-hidden": "true" } });
-      segments.addItem(item, value, false).setAttr("aria-label", label);
+    if (draft.id === "drawing") output.createDiv({ text: this.text("Excalidraw 手绘图", "Excalidraw drawing") });
+    else {
+      const segments = createOriginRadioGroup(output, draft.outputKind, this.text("输出类型", "Output type"), value => {
+        draft.outputKind = value as GenerationOutputKind; segments.element.dataset.outputKind = value;
+      });
+      segments.element.addClass("echoink-generation-output-segments"); segments.element.dataset.outputKind = draft.outputKind;
+      for (const [value, label] of [["markdown", "Markdown"], ["canvas", "Canvas 导图"]]) {
+        const item = segments.element.createDiv({ cls: "echoink-generation-output-segment" });
+        item.createSpan({ text: label, attr: { "aria-hidden": "true" } });
+        segments.addItem(item, value, false).setAttr("aria-label", label);
+      }
     }
     const instructions = form.createDiv({ cls: "echoink-generation-template-field" });
     instructions.createEl("label", { cls: "echoink-generation-template-label", text: this.text("写作要求", "Writing instructions"), attr: { for: `generation-${draft.id}-instructions` } });

@@ -78,7 +78,7 @@ interface ParsedFrontmatter {
 }
 
 export function isRawMarkdownPath(relativePath: string): boolean {
-  return /\.(?:md|markdown)$/i.test(relativePath);
+  return /\.(?:md|markdown)$/i.test(relativePath) && !/\.excalidraw\.md$/iu.test(relativePath);
 }
 
 /** The formal maintenance tool accepts Markdown sources, not their attachments or generated indexes. */
