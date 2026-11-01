@@ -42,10 +42,12 @@ import { createHash } from "node:crypto";
 import { createApiProviderConfig, createApiProviderModelConfig, activateApiProviderModel, DEFAULT_SETTINGS } from "../settings/settings";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
+import { runOrdinaryNoteReadCapabilityTests } from "./ordinary-note-read-capabilities";
 
 export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   runDesktopDirectoryCapabilityTests();
   assert.ok(root && path.basename(root).startsWith("capabilities-run-"));
+  await runOrdinaryNoteReadCapabilityTests(path.join(root, "ordinary-note-read"));
   await productionSkillSelectionTests(path.join(root, "production-skill-selection"));
   await unrestrictedAgentCompatibility(path.join(root, "unrestricted-agent"));
   const fixture = await nativeJournalFixture(root);

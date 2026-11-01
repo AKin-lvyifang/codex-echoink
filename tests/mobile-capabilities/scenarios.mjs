@@ -8,7 +8,7 @@ export async function runMobileCapabilityScenarios(api) {
   const source = { "raw/来源.md": "# 来源\n共同检索词 公开资料", "journal/2026-10-19.md": "# 日记\n共同检索词 私人日记",
     "finance/transactions/账目.md": "# 财务\n共同检索词 私人账目", "outputs/英文日记/今日.md": "# 英文\n共同检索词 英文模块内容", "普通/笔记.md": "# 普通\n共同检索词 普通笔记" };
   const memory = { kind: "view", title: "偏好", content: "用户明确喜欢先说结论", recallWhen: "表达偏好", basis: "explicit" };
-  async function setup({ grants = ["knowledge"], agentId = "writer", permission = "workspace-write", pro = false } = {}) {
+  async function setup({ grants = ["knowledge"], agentId = "writer", permission = "workspace-write", pro = false, withApp = false } = {}) {
     const host = createHost(source), store = new MobileStore(host.adapter, "plugin/mobile", "capability-fixture");
     await store.load();
     const bindings = emptyKnowledgeFolderBindings();
@@ -20,7 +20,7 @@ export async function runMobileCapabilityScenarios(api) {
     await store.patchSession(store.session.id, { agentId });
     const paid = { active: pro };
     const access = { checkCapability: () => paid.active, requireCapability() { if (!paid.active) throw new Error("no pro"); }, subscribe: () => () => {} };
-    const policy = new MobileCapabilityPolicy({ store, settings: () => settings, agentId, permission, proAccess: () => access });
+    const policy = new MobileCapabilityPolicy({ app: withApp ? host.app : undefined, store, settings: () => settings, agentId, permission, proAccess: () => access });
     const search = createScopedMobileBodySearch(host.app, () => settings.knowledgeBase.folderBindings, policy);
     const tools = () => mobileTools(host.app, store, () => "raw/来源.md", () => settings.knowledgeBase.folderBindings, search, store.session.id, policy);
     const calls = { read: [], metadata: [], folders: [], create: [] };
@@ -35,6 +35,69 @@ export async function runMobileCapabilityScenarios(api) {
   function tool(f, name) { const found = f.tools().find(item => item.name === name); assert.ok(found, `expected published ${name}`); return found; }
   let passed = 0;
   async function test(name, run) { await run(); passed++; console.log(`OK ${name}`); }
+
+  await test("empty bindings allow ordinary tools and both mobile path checks while preserving switches and filtering", async () => {
+    const f = await setup({ agentId: "sol", withApp: true });
+    f.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+    f.settings.journalDirectory = "Daily";
+    f.app.internalPlugins = { plugins: { "daily-notes": { enabled: true, instance: { options: { folder: "Daily", format: "YYYY-MM-DD" } } } } };
+    for (const path of ["普通/笔记.md", "Daily/今日.md", "输出/草稿.md", "模板/旅行.md"]) {
+      const file = f.app.vault.getAbstractFileByPath(path);
+      if (file) await f.app.vault.modify(file, "普通读取 空目录配置");
+      else await f.app.vault.create(path, "普通读取 空目录配置");
+      assert.equal(f.policy.canReadPath(path), true, path);
+      assert.doesNotThrow(() => f.policy.assertReadPath(path));
+      const result = await tool(f, "note_read").execute("empty-read", { path }, signal());
+      assert.match(JSON.stringify(result), /普通读取/u);
+    }
+    const found = await f.search.search({ query: "普通读取" });
+    assert.ok(found.hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"), "the scoped body index also admits the unconfigured native Daily scope");
+    assert.equal(f.settings.knowledgeBase.folderBindings.roles.journal.enabled, false, "ordinary-read filtering must never persist an enabled role");
+    const journal = f.settings.knowledgeBase.folderBindings.roles.journal;
+    journal.readPaths = ["Daily"];
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/module_disabled:journal/u));
+    assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
+    journal.readPaths = [];
+    journal.writePath = "Daily";
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/module_disabled:journal/u));
+    journal.writePath = null;
+    journal.searchEnabled = false;
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/invalid_target/u));
+    assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
+    journal.searchEnabled = true;
+    assert.throws(() => f.policy.assertTool("note_create", { path: "输出/生成.md" }), code(/module_disabled:knowledge/u));
+    f.grant.disabledCapabilityIds.push("journal");
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/agent_disabled:journal/u));
+    assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
+    f.grant.disabledCapabilityIds = [];
+    f.settings.mobileUi.moduleEnabled = { "knowledge-base": false };
+    assert.equal(f.policy.canReadPath("普通/笔记.md"), false);
+    assert.throws(() => f.policy.assertReadPath("普通/笔记.md"), code(/module_disabled:knowledge/u));
+    await assert.rejects(tool(f, "note_read").execute("module-off", { path: "普通/笔记.md" }, signal()), code(/module_disabled:knowledge/u));
+    f.settings.mobileUi.moduleEnabled = { journal: false };
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    f.settings.mobileUi.moduleEnabled = {};
+    Object.assign(f.settings.knowledgeBase.folderBindings.roles.templates, { enabled: true, readPaths: ["模板"], writePath: "模板" });
+    assert.equal(f.policy.canReadPath("模板/旅行.md"), false, "existing template search filtering remains authoritative");
+    assert.throws(() => f.policy.assertReadPath("模板/旅行.md"), code(/invalid_target/u));
+    f.search.dispose();
+
+    const restricted = await setup({ withApp: true });
+    restricted.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+    assert.ok(restricted.tools().some(item => item.name === "vault_search"));
+    const reader = tool(restricted, "note_read");
+    assert.equal(restricted.policy.canReadPath("普通/笔记.md"), true);
+    assert.doesNotThrow(() => restricted.policy.assertReadPath("普通/笔记.md"));
+    await reader.execute("knowledge-only", { path: "普通/笔记.md" }, signal());
+    restricted.grant.capabilityIds = [];
+    assert.equal(restricted.policy.canReadPath("普通/笔记.md"), false);
+    await assert.rejects(reader.execute("revoked", { path: "普通/笔记.md" }, signal()), code(/agent_disabled:knowledge/u));
+    restricted.search.dispose();
+  });
 
   await test("mobile v2 Memory switch remains authoritative over preserved desktop fields", async () => {
     const f = await setup();

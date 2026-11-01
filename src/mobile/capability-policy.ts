@@ -32,6 +32,12 @@ function relativePath(value: string): string | null {
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
+/** Native Daily paths are still ordinary notes when the journal role has never bound a scope. */
+function ordinaryReadBindings(bindings: KnowledgeFolderBindings | null | undefined): KnowledgeFolderBindings | null | undefined {
+  const journal = bindings?.roles.journal;
+  if (!bindings || !journal || journal.enabled || journal.readPaths.length || journal.writePath) return bindings;
+  return { ...bindings, roles: { ...bindings.roles, journal: { ...journal, enabled: true } } };
+}
 function denied(capabilityId: string, reason: AgentCapabilityDecision["reason"]): AgentCapabilityDecision {
   return { allowed: false, capabilityId, reason };
 }
@@ -153,13 +159,13 @@ export class MobileCapabilityPolicy {
     requireMobileAgentCapability(checkAgentTool(context, name, args, resolvedTarget));
   }
   canReadPath(path: string): boolean {
-    if (!relativePath(path) || knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings, [], this.native()) === null) return false;
-    return checkAgentTarget(this.inputs(), path, "read").allowed;
+    if (!relativePath(path) || knowledgeSearchPathKind(path, ordinaryReadBindings(this.options.settings().knowledgeBase.folderBindings), [], this.native()) === null) return false;
+    return checkAgentTarget(this.inputs(), path, "read", false, { ordinaryRead: true }).allowed;
   }
   assertReadPath(path: string): void {
     const context = this.inputs();
-    requireMobileAgentCapability(checkAgentTarget(context, path, "read"));
-    if (knowledgeSearchPathKind(path, this.options.settings().knowledgeBase.folderBindings, [], this.native()) === null) requireMobileAgentCapability(denied(path, "invalid_target"));
+    requireMobileAgentCapability(checkAgentTarget(context, path, "read", false, { ordinaryRead: true }));
+    if (knowledgeSearchPathKind(path, ordinaryReadBindings(this.options.settings().knowledgeBase.folderBindings), [], this.native()) === null) requireMobileAgentCapability(denied(path, "invalid_target"));
   }
   /** No credentials or prose: only effective authority and current path/resource ownership. */
   signature(): string {
@@ -204,7 +210,7 @@ export function createScopedMobileBodySearch(app: App, bindings: () => Knowledge
       getLastOpenFiles: () => (app.workspace?.getLastOpenFiles?.() ?? []).filter(path => policy.canReadPath(path))
     }
   } as unknown as App;
-  const body = new VaultBodySearch(scopedApp, bindings, { onJournalSearch, journalSettings: () => readNativeJournalSettings(app, undefined, bindings()) });
+  const body = new VaultBodySearch(scopedApp, () => ordinaryReadBindings(bindings()), { onJournalSearch, journalSettings: () => readNativeJournalSettings(app, undefined, bindings()) });
   let signature = policy.signature();
   let disposed = false;
   const current = () => {
