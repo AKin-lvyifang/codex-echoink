@@ -5,9 +5,10 @@ import { extractFirstUrl, isWeChatUrl } from "../knowledge-base/web-capture";
 
 export type CaptureLinkKind = "web" | "wechat";
 export interface CaptureLinkInput { input: string; url: string; kind: CaptureLinkKind }
+export interface CaptureLinkFeedback { pending?(value: boolean): void; failure?(message: string): void }
 
-export function captureLinkModal(app: App, initialValue: string, capture: (input: CaptureLinkInput) => Promise<string[]>): Promise<string[]> {
-  return new Promise(resolve => new CaptureLinkModal(app, initialValue, capture, resolve).open());
+export function captureLinkModal(app: App, initialValue: string, capture: (input: CaptureLinkInput) => Promise<string[]>, feedback: CaptureLinkFeedback = {}): Promise<string[]> {
+  return new Promise(resolve => new CaptureLinkModal(app, initialValue, capture, resolve, feedback).open());
 }
 
 /** Keep the task open until capture succeeds, so a failed source can be retried. */
@@ -22,7 +23,7 @@ export class CaptureLinkModal extends Modal {
   private submit!: HTMLButtonElement;
   private cancel!: HTMLButtonElement;
 
-  constructor(app: App, private readonly initialValue: string, private readonly capture: (input: CaptureLinkInput) => Promise<string[]>, private readonly done: (paths: string[]) => void) {
+  constructor(app: App, private readonly initialValue: string, private readonly capture: (input: CaptureLinkInput) => Promise<string[]>, private readonly done: (paths: string[]) => void, private readonly feedback: CaptureLinkFeedback = {}) {
     super(app);
     this.url = extractFirstUrl(initialValue);
     this.kind = this.url && isWeChatUrl(this.url) ? "wechat" : "web";
@@ -90,8 +91,8 @@ export class CaptureLinkModal extends Modal {
     this.setBusy(true);
     try {
       const paths = await this.capture({ input, url, kind: this.kind });
+      this.setBusy(false);
       this.finish(paths);
-      this.busy = false;
       super.close();
     } catch (error) {
       this.showError(error instanceof Error ? error.message : String(error));
@@ -103,6 +104,7 @@ export class CaptureLinkModal extends Modal {
   private showError(message: string): void {
     this.status.setText(message);
     this.status.hidden = false;
+    this.feedback.failure?.(message);
   }
 
   private setBusy(value: boolean): void {
@@ -113,6 +115,7 @@ export class CaptureLinkModal extends Modal {
     this.submit.disabled = value;
     this.submit.setText(value ? "正在收藏…" : "收藏");
     setAmicroButtonPending(this.submit, value);
+    this.feedback.pending?.(value);
   }
 
   private finish(paths: string[]): void {

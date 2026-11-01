@@ -71,6 +71,7 @@ export interface ComposerToolbarState {
   language?: SettingsLanguage;
   session: StoredSession;
   knowledgeTaskRunning: boolean;
+  knowledgeCapturePending?: boolean;
   selectedSkill: EchoInkResource | null;
   selectedPermission: PermissionMode;
   selectedMode: UiMode;
@@ -438,6 +439,8 @@ export function renderComposerToolbar(
 
   const refs: ComposerToolbarRefs = { addButtonEl: addButton };
   const captureButton = createComposerIconButton(left, "bookmark-plus", conversationUiText(language, "收藏到知识库", "Save to Knowledge"));
+  captureButton.disabled = Boolean(state.knowledgeCapturePending);
+  captureButton.setAttribute("aria-busy", String(Boolean(state.knowledgeCapturePending)));
   captureButton.onclick = callbacks.onCaptureKnowledgeSource;
 
   addComposerSelect<PermissionMode>(

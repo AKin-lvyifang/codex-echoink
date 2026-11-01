@@ -1,6 +1,6 @@
 import { extractFirstUrl } from "../../knowledge-base/web-capture";
-import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
-import { showConversationContentLocationNotice } from "../conversation-content-notice";
+import type { CaptureLinkFeedback } from "../capture-link-modal";
+import { showKnowledgeCaptureSuccessNotice } from "../knowledge-capture-notice";
 import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
@@ -152,46 +152,66 @@ export interface CodexComposerHost {
   openGenerationModal(templateId?: string): void;
 }
 
-/** Validate unsupported input before the shortcut can append any chat messages. */
-export function captureComposerKnowledgeSource(host: CodexComposerHost): void {
+/** Collection writes files, independently of conversation messages and runs. */
+export async function captureComposerKnowledgeSource(host: CodexComposerHost): Promise<void> {
   if (host.running || pendingKnowledgeCaptures.has(host)) return;
-  const text = host.inputEl.value.trim();
-  const attachments = host.attachments.map(attachment => ({ ...attachment }));
+  const input = host.inputEl;
+  const draft = input.value;
+  const submittedAttachments = [...host.attachments];
+  const attachments = submittedAttachments.map(attachment => ({ ...attachment }));
+  const text = draft.trim();
+  const language = host.plugin.settings.settingsLanguage;
   if (text && !attachments.length && !extractFirstUrl(text)) {
-    new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "收藏只支持网页和公众号链接", "Collection only supports web and WeChat links"));
+    new Notice(conversationUiText(language, "收藏只支持网页和公众号链接", "Collection only supports web and WeChat links"));
     return;
   }
+  let notice: Notice | undefined;
+  let progress = false;
+  const failure = (message: string) => {
+    notice?.hide();
+    notice = new Notice(message);
+    progress = false;
+  };
+  const feedback: CaptureLinkFeedback = {
+    pending: value => {
+      if (value) {
+        notice?.hide();
+        notice = new Notice(conversationUiText(language, "正在收藏…", "Collecting…"), 0);
+        progress = true;
+      } else if (progress) {
+        notice?.hide(); notice = undefined; progress = false;
+      }
+    },
+    failure
+  };
   pendingKnowledgeCaptures.add(host);
-  void host.runKnowledgeBaseShortcut(
-    conversationUiText(host.plugin.settings.settingsLanguage, "收藏", "Save"),
-    async () => {
-      const capture = host.plugin.getKnowledgeSurfaceService();
-      if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
-      const paths = text || attachments.length
-        ? await capture.captureTextInput(text, attachments) : await capture.captureLink();
-      const result = paths.length
-        ? conversationUiText(
-          host.plugin.settings.settingsLanguage,
-          `已收藏：\n${paths.map((item) => `- ${item}`).join("\n")}`,
-          `Saved:\n${paths.map((item) => `- ${item}`).join("\n")}`
-        )
-        : conversationUiText(host.plugin.settings.settingsLanguage, "未收藏内容。", "Nothing was saved.");
-      return result;
+  host.renderToolbar();
+  try {
+    const capture = host.plugin.getKnowledgeSurfaceService();
+    if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
+    if (attachments.length) feedback.pending?.(true);
+    const paths = text || attachments.length
+      ? await capture.captureTextInput(text, attachments, feedback) : await capture.captureLink(feedback);
+    notice?.hide(); notice = undefined;
+    if (!paths.length) return;
+    // Do not erase a draft edited or restored while the file operation ran.
+    if (host.inputEl === input) {
+      if (input.value === draft) {
+        input.value = "";
+        clearComposerNoteMentions(input);
+        clearSelectionDraft(input);
+      }
+      host.attachments = host.attachments.filter(attachment => !submittedAttachments.includes(attachment));
+      host.onInputChanged();
+      host.renderAttachments();
     }
-  ).catch((error: unknown) => {
-    host.running = false;
+    notice = showKnowledgeCaptureSuccessNotice(input.ownerDocument, host.app, paths, language);
+  } catch (error) {
+    failure(error instanceof Error ? error.message : String(error));
+  } finally {
+    pendingKnowledgeCaptures.delete(host);
     host.renderToolbar();
-    if (error instanceof ConversationContentLocationError) {
-      showConversationContentLocationNotice(host.inputEl.ownerDocument, host.plugin.settings.settingsLanguage, () => host.plugin.openEchoInkConversationContentSettings());
-      return;
-    }
-    const detail = error instanceof Error ? error.message : String(error);
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `收藏失败：${detail}`,
-      `Save failed: ${detail}`
-    ));
-  }).finally(() => pendingKnowledgeCaptures.delete(host));
+  }
 }
 
 export function renderToolbar(host: CodexComposerHost): void {
@@ -216,6 +236,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       selectedPermission: host.selectedPermission,
       selectedMode: host.selectedMode,
       running: host.running,
+      knowledgeCapturePending: pendingKnowledgeCaptures.has(host),
       promptEnhancerRunning: host.promptEnhancerRunning,
       viewRunKind: host.activeRunKind,
       activeRunSessionId: host.activeRunSessionId,
@@ -235,7 +256,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       onOpenAddMenu: (event) => openAddMenu(host, event),
       onMentionNote: () => openNoteMentionPicker(host),
       onEnhancePrompt: () => host.enhancePrompt(),
-      onCaptureKnowledgeSource: () => captureComposerKnowledgeSource(host),
+      onCaptureKnowledgeSource: () => { void captureComposerKnowledgeSource(host); },
       onPermissionChange: (value) => {
         host.selectedPermission = value;
         persistComposerDefaults(host);
