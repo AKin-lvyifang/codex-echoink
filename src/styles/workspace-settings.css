@@ -2580,3 +2580,11 @@ body:not(.is-mobile) .echoink-workbench .wb-modules > .wb-button > .echoink-plug
 .echoink-settings-aligned .echoink-mcp-server-settings textarea.echoink-mcp-server-setup { display: block; width: calc(100% - 36px); margin: 12px 18px; resize: vertical; font-family: var(--font-monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
 .echoink-mcp-server-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 18px 16px; }
 .echoink-mcp-server-settings [hidden] { display: none; }
+/* Desktop weather selection stays inside the existing General settings group. */
+.echoink-settings-demo .echoink-weather-city-control { display: flex; gap: 8px; align-items: center; min-width: 0; max-width: 320px; }
+.echoink-settings-demo .echoink-weather-city-control input { min-width: 0; width: 100%; }
+.echoink-settings-demo .echoink-weather-city-control > button { flex-shrink: 0; }
+.echoink-settings-demo .echoink-weather-cities { display: flex; flex-direction: column; }
+.echoink-settings-demo button.echoink-weather-city-option { width: 100%; justify-content: flex-start; text-align: left; white-space: normal; padding: 8px 18px; }
+.echoink-settings-demo .echoink-weather-city-status:not(:empty) { padding: 8px 18px; font-size: 12px; color: var(--text-muted); }
+.echoink-settings-demo .echoink-weather-sources { padding: 12px 18px 0; font-size: 12px; line-height: 1.8; color: var(--text-muted); }

@@ -34,6 +34,7 @@ import { renderAppearancePicker } from "./appearance-picker";
 import { renderObsidianCliStatus } from "./obsidian-cli-status";
 import { DESKTOP_SETTINGS_TAB_ICONS, SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { OriginSetting } from "./origin-setting";
+import { renderWeatherCitySettings } from "./weather-city-settings";
 import { mergeKnowledgeMaintenanceHistory, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "./knowledge-maintenance-history";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls, type OriginCheckElement, type OriginSelectElement } from "./origin-controls";
 import { mountSettingsEditor, type SettingsEditorHandle } from "./inline-editor";
@@ -309,6 +310,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private quickChatExpanded: boolean | null = null;
   private readonly desktopModuleExpanded = new Set<DesktopModuleId>();
   private desktopModuleCleanup: (() => void) | null = null;
+  private weatherCityCleanup: (() => void) | null = null;
   private desktopKnowledge: DesktopKnowledgeSettings | null = null;
   private desktopAgents: DesktopAgentSettings | null = null;
   private pendingDesktopAgentEditor: string | null = null;
@@ -582,6 +584,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
     this.desktopMemory?.suspend(); this.desktopAccount?.suspend();
     this.desktopAgents?.suspend(); this.desktopProfile?.suspend(); this.desktopCorrection?.controller.suspend();
@@ -683,6 +686,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderSettingsContent(): void {
     const correctionScrollSnapshot = this.desktopCorrection ? captureSettingsScrollSnapshot(this.containerEl) : null;
     if (this.desktopCorrection) this.captureSettingsFocusIntent();
+    this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.captureModuleInputs();
     this.pdfSettingsPanel?.dispose();
     this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
@@ -917,7 +921,7 @@ export class CodexSettingTab extends PluginSettingTab {
           "button, input, select, textarea, a[href], [tabindex]"
         )).find((element) => this.settingsFocusKey(element) === sharedKey);
         if (!focusable?.isConnected) return;
-        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits" || sharedKey === "explicit:general:appearance") focusable.scrollIntoView({ block: "center" });
+        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits" || sharedKey === "explicit:general:appearance" || sharedKey === "explicit:general:weather") focusable.scrollIntoView({ block: "center" });
         focusable.focus({ preventScroll: true });
         if (this.containerEl.ownerDocument.activeElement !== focusable) return;
         settingsContainerFocusIntents.delete(this.containerEl);
@@ -931,7 +935,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!focusable) return;
     const focusTarget = () => {
       if (!focusable.isConnected || focusable.closest("[hidden], [inert]")) return;
-      if (key === "explicit:account:login" || key === "explicit:account:benefits" || key === "explicit:general:appearance") focusable.scrollIntoView({ block: "center" });
+      if (key === "explicit:account:login" || key === "explicit:account:benefits" || key === "explicit:general:appearance" || key === "explicit:general:weather") focusable.scrollIntoView({ block: "center" });
       focusable.focus({ preventScroll: true });
     };
     focusTarget();
@@ -1195,6 +1199,7 @@ export class CodexSettingTab extends PluginSettingTab {
         : "Choose a color theme. Light and dark modes follow Obsidian."));
     renderAppearancePicker(appearanceRow.controlEl, this.plugin, zh);
     renderCompanionThemeRecommendation(appearanceSection, zh, this.app.vault.configDir);
+    if (Platform.isDesktopApp) this.weatherCityCleanup = renderWeatherCitySettings(page, this.plugin);
     const interfaceSection = createSettingsSection(page, {
       title: zh ? "界面与启动" : "Interface and startup",
       surface: "group"
