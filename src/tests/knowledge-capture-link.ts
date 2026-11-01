@@ -83,6 +83,13 @@ async function assertComposerCaptureFeedback(): Promise<void> {
   assert.deepEqual(attached.host.attachments, []); assert.equal(attached.changed(), 1); attached.assertUnchanged();
   assert.match((openTestNotices.at(-1)!.message as unknown as DocumentFragment).textContent!, /^已收藏到 文档/u);
 
+  const active = makeHost("https://example.com/while-running", [], { captureTextInput: async () => ["网页/独立收藏.md"] });
+  active.host.running = true;
+  await captureComposerKnowledgeSource(active.host as never);
+  assert.equal(active.host.inputEl.value, "", "collection is available while the existing conversation runs");
+  assert.equal(active.host.running, true, "collection never stops or resets an existing run");
+  assert.deepEqual(messages, original);
+
   const edited = makeHost("https://example.com/original", [attachment], { captureTextInput: async () => new Promise<string[]>(resolve => { resolveCapture = resolve; }) });
   const busy = captureComposerKnowledgeSource(edited.host as never);
   edited.host.inputEl.value = "收藏期间新写的草稿";

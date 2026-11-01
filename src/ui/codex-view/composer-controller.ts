@@ -154,7 +154,7 @@ export interface CodexComposerHost {
 
 /** Collection writes files, independently of conversation messages and runs. */
 export async function captureComposerKnowledgeSource(host: CodexComposerHost): Promise<void> {
-  if (host.running || pendingKnowledgeCaptures.has(host)) return;
+  if (pendingKnowledgeCaptures.has(host)) return;
   const input = host.inputEl;
   const draft = input.value;
   const submittedAttachments = [...host.attachments];
