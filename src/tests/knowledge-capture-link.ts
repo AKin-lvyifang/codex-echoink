@@ -7,7 +7,7 @@ import { captureComposerKnowledgeSource } from "../ui/codex-view/composer-contro
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
-import { openTestModals, openTestNoticeMessages, setRequestUrlForTests } from "./obsidian-shim";
+import { openTestModals, openTestNoticeMessages, openTestNotices, setRequestUrlForTests } from "./obsidian-shim";
 import { confirmCaptureLinkForTest, waitForCaptureLinkModal } from "./knowledge-capture-link-helpers";
 
 function checked(modal: { contentEl: HTMLElement }, kind: string): boolean {
@@ -24,47 +24,71 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 async function assertComposerCaptureFeedback(): Promise<void> {
-  const input = document.createElement("textarea");
-  input.value = "  这是一段纯文字，保留原样  ";
   const messages = [{ role: "user", text: "原问题" }, { role: "assistant", text: "原回答" }];
   const original = structuredClone(messages);
-  let shortcutCalls = 0;
-  const host = {
-    running: false, inputEl: input, attachments: [],
-    plugin: { settings: { settingsLanguage: "zh-CN" }, getKnowledgeSurfaceService: () => { throw new Error("unsupported text must not reach capture"); } },
-    runKnowledgeBaseShortcut: async (label: string) => { shortcutCalls++; messages.push({ role: "user", text: label }); },
-    renderToolbar: () => { throw new Error("a rejected input must not change toolbar/run state"); }
-  };
-  const noticeCount = openTestNoticeMessages.length;
-  captureComposerKnowledgeSource(host as never);
-  await Promise.resolve();
-  assert.deepEqual(openTestNoticeMessages.slice(noticeCount), ["收藏只支持网页和公众号链接"]);
-  assert.equal(shortcutCalls, 0, "reject before the shortcut writes any user or system message");
-  assert.deepEqual(messages, original);
-  assert.equal(input.value, "  这是一段纯文字，保留原样  ");
-  assert.equal(host.running, false);
-
-  for (const [draft, attachments, route] of [
-    ["", [], "link"],
-    ["https://example.com", [], "input"],
-    ["附件旁文", [{ name: "notes.txt", path: "/synthetic/notes.txt", type: "file" }], "input"]
-  ] as const) {
-    let calls = 0; const routes: string[] = [];
-    const service = {
-      captureLink: async () => { routes.push("link"); return ["网页/已收藏.md"]; },
-      captureTextInput: async (text: string, files: unknown[]) => { routes.push("input"); assert.equal(text, draft); assert.equal(files.length, attachments.length); return ["资料/已收藏.md"]; }
+  const makeHost = (draft: string, attachments: any[], service: any) => {
+    const input = document.createElement("textarea"); input.value = draft;
+    const opened: string[] = []; let changed = 0;
+    const host = {
+      running: false, inputEl: input, attachments,
+      app: { workspace: { openLinkText: async (path: string) => { opened.push(path); } } },
+      plugin: { settings: { settingsLanguage: "zh-CN" }, getKnowledgeSurfaceService: () => service },
+      runKnowledgeBaseShortcut: () => { assert.fail("collection must never enter the chat shortcut"); },
+      renderToolbar() {}, renderAttachments() {}, onInputChanged: () => { changed++; }
     };
-    input.value = draft;
-    const supported = { ...host, attachments, plugin: { ...host.plugin, getKnowledgeSurfaceService: () => service },
-      runKnowledgeBaseShortcut: async (_label: string, runner: () => Promise<string>) => { calls++; await runner(); } };
-    captureComposerKnowledgeSource(supported as never);
-    captureComposerKnowledgeSource(supported as never);
-    await until(() => routes.length === 1);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(calls, 1, "supported captures still prevent repeated dispatch");
-    assert.deepEqual(routes, [route]);
-    assert.equal(input.value, draft);
+    return { host, opened, changed: () => changed, assertUnchanged: () => { assert.deepEqual(messages, original); assert.equal(host.running, false); } };
+  };
+  const pure = makeHost("  只有文字，原样保留  ", [], null), beforePure = openTestNoticeMessages.length;
+  await captureComposerKnowledgeSource(pure.host as never);
+  assert.deepEqual(openTestNoticeMessages.slice(beforePure), ["收藏只支持网页和公众号链接"]);
+  assert.equal(pure.host.inputEl.value, "  只有文字，原样保留  "); pure.assertUnchanged();
+
+  let resolveCapture!: (paths: string[]) => void, calls = 0;
+  const saved = makeHost("https://example.com", [], { captureTextInput: async (_text: string, _files: unknown[], feedback: any) => {
+    calls++; feedback.pending(true); return new Promise<string[]>(resolve => { resolveCapture = resolve; });
+  } });
+  const operation = captureComposerKnowledgeSource(saved.host as never);
+  await captureComposerKnowledgeSource(saved.host as never);
+  assert.equal(calls, 1); saved.assertUnchanged();
+  const pending = openTestNotices.at(-1)!;
+  assert.equal(pending.message, "正在收藏…"); assert.equal(pending.timeout, 0);
+  assert.equal(saved.host.inputEl.value, "https://example.com");
+  resolveCapture(["网页/正文.md"]); await operation;
+  assert(pending.hidden); assert.equal(saved.host.inputEl.value, ""); assert.equal(saved.changed(), 1); saved.assertUnchanged();
+  const success = openTestNotices.at(-1)!; assert.match((success.message as unknown as DocumentFragment).textContent!, /^已收藏到 网页/u);
+  (success.message as unknown as DocumentFragment).querySelector<HTMLButtonElement>("[data-echoink-open-capture]")!.click();
+  await Promise.resolve(); assert.deepEqual(saved.opened, ["网页/正文.md"]);
+
+  for (const draft of ["", "https://example.com/cancel"]) {
+    const cancelled = makeHost(draft, [], { captureLink: async () => [], captureTextInput: async () => [] });
+    const notices = openTestNoticeMessages.length;
+    await captureComposerKnowledgeSource(cancelled.host as never);
+    assert.equal(openTestNoticeMessages.length, notices, "cancel has no result or progress notification");
+    assert.equal(cancelled.host.inputEl.value, draft); assert.equal(cancelled.changed(), 0); cancelled.assertUnchanged();
   }
+  for (const attachments of [[], [{ type: "file", name: "原文.txt", path: "/synthetic/原文.txt" }]]) {
+    const failed = makeHost("https://example.com/failure", attachments, { captureTextInput: async (_text: string, _files: unknown[], feedback: any) => {
+      feedback.pending(true); throw new Error("服务器暂时不可用");
+    } });
+    const start = openTestNotices.length;
+    await captureComposerKnowledgeSource(failed.host as never);
+    assert.deepEqual(openTestNotices.slice(start).filter(notice => !notice.hidden).map(notice => notice.message), ["服务器暂时不可用"]);
+    assert.equal(failed.host.inputEl.value, "https://example.com/failure"); assert.equal(failed.host.attachments, attachments); assert.equal(failed.changed(), 0); failed.assertUnchanged();
+  }
+  const attachment = { type: "file", name: "文档.txt", path: "/synthetic/文档.txt" };
+  const attached = makeHost("", [attachment], { captureTextInput: async (text: string, files: any[]) => {
+    assert.equal(text, ""); assert.deepEqual(files, [attachment]); return ["文档/文档.txt"];
+  } });
+  await captureComposerKnowledgeSource(attached.host as never);
+  assert.deepEqual(attached.host.attachments, []); assert.equal(attached.changed(), 1); attached.assertUnchanged();
+  assert.match((openTestNotices.at(-1)!.message as unknown as DocumentFragment).textContent!, /^已收藏到 文档/u);
+
+  const edited = makeHost("https://example.com/original", [attachment], { captureTextInput: async () => new Promise<string[]>(resolve => { resolveCapture = resolve; }) });
+  const busy = captureComposerKnowledgeSource(edited.host as never);
+  edited.host.inputEl.value = "收藏期间新写的草稿";
+  const extra = { type: "file", name: "新增.txt", path: "/synthetic/新增.txt" }; edited.host.attachments.push(extra);
+  resolveCapture(["文档/文档.txt"]); await busy;
+  assert.equal(edited.host.inputEl.value, "收藏期间新写的草稿"); assert.deepEqual(edited.host.attachments, [extra]); edited.assertUnchanged();
 }
 
 export async function runKnowledgeCaptureLinkTests(): Promise<void> {
@@ -126,13 +150,15 @@ export async function runKnowledgeCaptureLinkTests(): Promise<void> {
     }
 
     failWeChat = true;
-    const retry = capture.captureChatInput("raw-articles", "https://mp.weixin.qq.com/s/retry", []);
+    const pendingStates: boolean[] = [], failures: string[] = [];
+    const retry = capture.captureChatInput("raw-articles", "https://mp.weixin.qq.com/s/retry", [], { pending: value => pendingStates.push(value), failure: message => failures.push(message) });
     modal = await waitForCaptureLinkModal();
     const submit = modal.contentEl.querySelector<HTMLButtonElement>("[data-capture-link-submit]")!;
     const retryInput = modal.contentEl.querySelector<HTMLInputElement>("[data-capture-link-input]")!;
     submit.click();
     await until(() => !modal.contentEl.querySelector<HTMLElement>("[data-capture-link-error]")!.hidden);
     assert.match(modal.contentEl.textContent!, /公众号抓取失败/u);
+    assert.deepEqual(pendingStates, [true, false]); assert.match(failures[0], /公众号抓取失败/u);
     assert.equal(retryInput.value, "https://mp.weixin.qq.com/s/retry");
     assert(openTestModals.includes(modal)); assert.equal(submit.disabled, false);
     gate = new Promise(resolve => { releaseFetch = resolve; });
@@ -146,6 +172,7 @@ export async function runKnowledgeCaptureLinkTests(): Promise<void> {
     const retried = await retry;
     assert.equal(requests.length, count, "busy capture cannot be submitted twice");
     assert.equal(path.posix.dirname(retried[0]), "网页");
+    assert.deepEqual(pendingStates, [true, false, true, false]);
     gate = undefined;
 
     const beforeAttachments = requests.length;

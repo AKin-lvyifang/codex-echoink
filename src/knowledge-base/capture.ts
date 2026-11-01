@@ -7,7 +7,7 @@ import { knowledgeCollectionDirectory, KNOWLEDGE_COLLECTION_LABELS, knowledgeCol
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { StoredAttachment } from "../settings/settings";
-import type { CaptureLinkKind } from "../ui/capture-link-modal";
+import type { CaptureLinkKind, CaptureLinkFeedback } from "../ui/capture-link-modal";
 import { SUPPORTED_RAW_EXTENSIONS } from "./discovery";
 import { collectionFileKind } from "./collection-file-types";
 import { formatDateForFile, pad } from "./utils";
@@ -47,20 +47,20 @@ export class KnowledgeBaseCaptureService {
     return this.captureLink();
   }
 
-  async captureLink(initialValue = ""): Promise<string[]> {
+  async captureLink(initialValue = "", feedback?: CaptureLinkFeedback): Promise<string[]> {
     const { captureLinkModal } = await import("../ui/capture-link-modal");
-    return captureLinkModal(this.plugin.app, initialValue, ({ input, kind }) => this.captureRawArticleInput(input, kind));
+    return captureLinkModal(this.plugin.app, initialValue, ({ input, kind }) => this.captureRawArticleInput(input, kind), feedback);
   }
 
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
     return this.copyFilesToRaw(files);
   }
 
-  async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments", text: string, attachments: StoredAttachment[]): Promise<string[]> {
+  async captureChatInput(target: "inbox" | "raw-articles" | "raw-attachments", text: string, attachments: StoredAttachment[], feedback?: CaptureLinkFeedback): Promise<string[]> {
     if (attachments.length) return this.copyAttachmentsToRaw(attachments);
     const trimmed = text.trim();
     if (target === "inbox") return trimmed ? [await this.writeCollectedText(trimmed)] : [];
-    return trimmed ? this.captureRawArticleInput(trimmed) : this.captureLink();
+    return trimmed ? this.captureRawArticleInput(trimmed, undefined, feedback) : this.captureLink("", feedback);
   }
 
   private async copyCapturedFile(source: string, directory: string, fileName: string): Promise<string> {
@@ -99,10 +99,10 @@ export class KnowledgeBaseCaptureService {
     new Notice(`已收集到 ${normalizePath(path.relative(vaultPath, target))}`);
   }
 
-  private async captureRawArticleInput(value: string, kind?: CaptureLinkKind): Promise<string[]> {
+  private async captureRawArticleInput(value: string, kind?: CaptureLinkKind, feedback?: CaptureLinkFeedback): Promise<string[]> {
     const url = extractFirstUrl(value);
     if (!url) throw new Error("收藏只支持网页和公众号链接");
-    if (!kind) return this.captureLink(value);
+    if (!kind) return this.captureLink(value, feedback);
     return kind === "wechat" ? this.captureWeChatUrl(url) : this.captureWebUrl(url, value);
   }
 

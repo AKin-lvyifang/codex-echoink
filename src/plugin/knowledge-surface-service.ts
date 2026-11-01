@@ -1,3 +1,4 @@
+import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
@@ -989,12 +990,12 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.initializer.cancel();
   }
 
-  async captureLink(): Promise<string[]> {
-    return await this.captureService.captureLink();
+  async captureLink(feedback?: CaptureLinkFeedback): Promise<string[]> {
+    return await this.captureService.captureLink("", feedback);
   }
 
-  async captureTextInput(text: string, attachments: StoredAttachment[] = []): Promise<string[]> {
-    return await this.captureService.captureChatInput("raw-articles", text, attachments);
+  async captureTextInput(text: string, attachments: StoredAttachment[] = [], feedback?: CaptureLinkFeedback): Promise<string[]> {
+    return await this.captureService.captureChatInput("raw-articles", text, attachments, feedback);
   }
 
   async captureExternalFiles(files: StoredAttachment[]): Promise<string[]> {
