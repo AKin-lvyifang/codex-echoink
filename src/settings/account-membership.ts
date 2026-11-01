@@ -7,7 +7,7 @@ import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
 import { membershipPlanAction, registrationGiftLabel } from "./account-membership-model";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
-import { getEarlyOfferCountdown, getMembershipPlanPricing } from "./account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing } from "./account-membership-pricing";
 import { MobileViewport } from "../ui/mobile/viewport";
 import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
@@ -590,8 +590,8 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
       ? t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
       : t("一次买断，终生可用", "One payment, lifetime access"));
-    const countdown = plan.id === "early" ? getEarlyOfferCountdown(vm.earlyOffer?.endsAt) : null;
-    if (countdown) el(card, "p", "plan-comparison plan-countdown", t(countdown.zh, countdown.en));
+    const offerEndDate = plan.id === "early" ? formatEarlyOfferEndDate(vm.earlyOffer?.endsAt) : null;
+    if (offerEndDate) el(card, "p", "plan-comparison plan-end-date", t(offerEndDate.zh, offerEndDate.en));
     if (pricing.savingsAmountMinor != null && pricing.savingsAmountMinor > 0) {
       const comparison = el(card, "p", "plan-comparison");
       el(comparison, "span", "", t(`比连续买 ${plan.months} 个月月卡`, `vs. ${plan.months} monthly passes`));

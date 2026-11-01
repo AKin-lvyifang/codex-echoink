@@ -1,5 +1,5 @@
 import * as assert from "node:assert/strict";
-import { getEarlyOfferCountdown, getMembershipPlanPricing, type MembershipProductPricing } from "../settings/account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipProductPricing } from "../settings/account-membership-pricing";
 import { createUnavailableAccountAdapter, membershipPlanAction } from "../settings/account-membership-model";
 
 export const pricingProducts: readonly MembershipProductPricing[] = [
@@ -32,12 +32,10 @@ export function runAccountMembershipPricingTests(): void {
       assert.equal(membershipPlanAction(candidate, product.id, "CNY", false, true).purchasable, false);
     }
   }
-  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-11-01T16:00:00Z"))?.en, "59 days left");
-  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-30T15:59:59Z"))?.en, "1 day left");
-  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-30T16:00:00Z"))?.en, "Ends today");
-  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-31T15:59:59Z"))?.en, "Ends today");
-  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-31T16:00:00Z")), null);
-  for (const value of [null, undefined, "", "2026-02-30", "2026-2-03", "2026-13-01", "2026-12-31T00:00:00Z", "invalid"]) assert.equal(getEarlyOfferCountdown(value), null);
-  assert.equal(getEarlyOfferCountdown("2028-02-29", Date.parse("2028-02-28T16:00:00Z"))?.en, "Ends today");
-  console.log("PASS membership pricing: server-only CNY, fail-closed purchases, subscription savings and Beijing countdown boundaries");
+  assert.deepEqual(formatEarlyOfferEndDate("2026-12-31", Date.parse("2026-11-01T16:00:00Z")), { zh: "活动截止 2026年12月31日", en: "Offer ends Dec 31, 2026" });
+  assert.equal(formatEarlyOfferEndDate("2026-12-31", Date.parse("2026-12-31T15:59:59Z"))?.en, "Offer ends Dec 31, 2026", "the server date remains visible through the last Beijing day");
+  assert.equal(formatEarlyOfferEndDate("2026-12-31", Date.parse("2026-12-31T16:00:00Z")), null);
+  for (const value of [null, undefined, "", "2026-02-30", "2026-2-03", "2026-13-01", "2026-12-31T00:00:00Z", "invalid"]) assert.equal(formatEarlyOfferEndDate(value), null);
+  assert.equal(formatEarlyOfferEndDate("2028-02-29", Date.parse("2028-02-28T16:00:00Z"))?.en, "Offer ends Feb 29, 2028", "valid leap dates come from the server");
+  console.log("PASS membership pricing: server-only CNY, fail-closed purchases, subscription savings and Beijing offer end dates");
 }

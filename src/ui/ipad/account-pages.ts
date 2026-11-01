@@ -1,7 +1,7 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
-import { getEarlyOfferCountdown, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { ipadIcon } from "./workbench-elements";
@@ -195,8 +195,8 @@ function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountM
     card.append(name, price);
     if (plan.id === "early") {
       card.append(el(ctx.document, "div", "pd-account-plan-detail", t(ctx, "一次买断，终生可用")));
-      const countdown = getEarlyOfferCountdown(vm.earlyOffer?.endsAt);
-      if (countdown) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? countdown.en : countdown.zh));
+      const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
+      if (offerEndDate) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? offerEndDate.en : offerEndDate.zh));
     } else {
       card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? `${plan.days} days` : `${plan.days} 天`));
       if (plan.dailyAmountMinor !== null) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? `About ${symbol}${money(plan.dailyAmountMinor, true)} / day` : `每天约 ${symbol}${money(plan.dailyAmountMinor, true)}`));

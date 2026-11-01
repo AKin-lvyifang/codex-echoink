@@ -77,13 +77,13 @@ try {
   assert.equal(planButton("early").textContent.trim(), "立即购买"); assert.equal(planButton("early").disabled, false);
   assert.match(body().querySelector('[data-plan-id="early"]').textContent, /¥23[.,]7/);
   const earlyCard = () => body().querySelector('[data-plan-id="early"]');
-  assert.match(earlyCard().textContent, /一次买断，终生可用/); assert.match(earlyCard().textContent, /还剩 60 天/);
-  assert.equal([...body().querySelectorAll(".ip-account-plan-detail")].filter(node => /还剩|今天结束/.test(node.textContent)).length, 1, "only early has a single countdown");
-  model.earlyOffer = { ...model.earlyOffer, endsAt: "2026-11-03" }; emit(); await tick(); assert.match(earlyCard().textContent, /还剩 2 天/);
-  model.earlyOffer.endsAt = "2026-11-01"; emit(); await tick(); assert.match(earlyCard().textContent, /今天结束/);
-  language = "en"; emit(); await tick(); assert.match(earlyCard().textContent, /Ends today/); assert.match(earlyCard().textContent, /One payment, lifetime access/);
-  model.earlyOffer.endsAt = "2026-12-31"; emit(); await tick(); assert.match(earlyCard().textContent, /60 days left/);
-  for (const endsAt of ["2026-10-31", "invalid", null]) { model.earlyOffer.endsAt = endsAt; emit(); await tick(); assert.doesNotMatch(earlyCard().textContent, /days? left|Ends today/); assert.equal(planButton("early").disabled, false, "countdown never changes availability"); }
+  assert.match(earlyCard().textContent, /一次买断，终生可用/); assert.match(earlyCard().textContent, /活动截止 2026年12月31日/);
+  assert.equal([...body().querySelectorAll(".ip-account-plan-detail")].filter(node => /活动截止/.test(node.textContent)).length, 1, "only early shows an offer end date");
+  model.earlyOffer = { ...model.earlyOffer, endsAt: "2026-11-03" }; emit(); await tick(); assert.match(earlyCard().textContent, /活动截止 2026年11月3日/);
+  model.earlyOffer.endsAt = "2026-11-01"; emit(); await tick(); assert.match(earlyCard().textContent, /活动截止 2026年11月1日/);
+  language = "en"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Nov 1, 2026/); assert.match(earlyCard().textContent, /One payment, lifetime access/);
+  model.earlyOffer.endsAt = "2026-12-31"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Dec 31, 2026/);
+  for (const endsAt of ["2026-10-31", "invalid", null]) { model.earlyOffer.endsAt = endsAt; emit(); await tick(); assert.doesNotMatch(earlyCard().textContent, /Offer ends/); assert.equal(planButton("early").disabled, false, "the display date never changes availability"); }
   language = "zh-CN"; model.earlyOffer.endsAt = "2026-12-31"; emit(); await tick();
   planButton("early").click(); await tick(); assert.equal(calls.purchase, 2);
   for (const availability of ["owned", "paused", "sold_out"]) {

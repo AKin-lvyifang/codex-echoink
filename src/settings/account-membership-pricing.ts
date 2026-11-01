@@ -54,14 +54,14 @@ export function isValidMembershipProduct(product: MembershipProductPricing): boo
     && (product.id === "early" ? product.days === null : Number.isSafeInteger(product.days) && product.days! > 0);
 }
 
-/** Beijing calendar days only. The offer date never changes purchase availability. */
-export function getEarlyOfferCountdown(endsAt?: string | null, now = Date.now()): { zh: string; en: string } | null {
+/** Display the server's offer date while it is current in Beijing; never closes sales. */
+export function formatEarlyOfferEndDate(endsAt?: string | null, now = Date.now()): { zh: string; en: string } | null {
   if (!endsAt || !/^\d{4}-\d{2}-\d{2}$/.test(endsAt) || !Number.isFinite(now)) return null;
   const end = Date.parse(`${endsAt}T00:00:00Z`);
   if (!Number.isFinite(end) || new Date(end).toISOString().slice(0, 10) !== endsAt) return null;
   const today = Math.floor((now + 8 * 60 * 60 * 1000) / 86400000);
-  const days = end / 86400000 - today;
-  if (days < 0) return null;
-  return days === 0 ? { zh: "今天结束", en: "Ends today" }
-    : { zh: `还剩 ${days} 天`, en: `${days} ${days === 1 ? "day" : "days"} left` };
+  if (end / 86400000 < today) return null;
+  const [year, month, day] = endsAt.split("-").map(Number);
+  const monthName = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1];
+  return { zh: `活动截止 ${year}年${month}月${day}日`, en: `Offer ends ${monthName} ${day}, ${year}` };
 }

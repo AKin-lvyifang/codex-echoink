@@ -1,6 +1,6 @@
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
-import { getEarlyOfferCountdown, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
+import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
 import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
@@ -217,8 +217,8 @@ export class IPhoneAccountPages {
       if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "ip-account-savings", this.text(`省 ${plan.savingsPercent}%`, `Save ${plan.savingsPercent}%`))); card.append(price);
       if (plan.id === "early") {
         card.append(settingsMessage(ctx, el(ctx.document, "div", "ip-account-plan-detail"), "一次买断，终生可用"));
-        const countdown = getEarlyOfferCountdown(vm.earlyOffer?.endsAt);
-        if (countdown) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(countdown.zh, countdown.en)));
+        const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
+        if (offerEndDate) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(offerEndDate.zh, offerEndDate.en)));
       } else {
         card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(`${plan.days} 天`, `${plan.days} days`)));
         if (plan.dailyAmountMinor !== null) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(`每天约 ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)}`, `About ${symbol}${(plan.dailyAmountMinor / 100).toFixed(2)} / day`)));
