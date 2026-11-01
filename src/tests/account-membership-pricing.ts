@@ -1,41 +1,43 @@
 import * as assert from "node:assert/strict";
-import { getMembershipPlanPricing, resolveMembershipCurrency } from "../settings/account-membership-pricing";
+import { getEarlyOfferCountdown, getMembershipPlanPricing, type MembershipProductPricing } from "../settings/account-membership-pricing";
+import { createUnavailableAccountAdapter, membershipPlanAction } from "../settings/account-membership-model";
+
+export const pricingProducts: readonly MembershipProductPricing[] = [
+  { id: "early", prices: { CNY: 2990, USD: 999 }, days: null },
+  { id: "month", prices: { CNY: 900, USD: 299 }, days: 30 },
+  { id: "quarter", prices: { CNY: 1900, USD: 699 }, days: 90 },
+  { id: "year", prices: { CNY: 4900, USD: 1999 }, days: 365 }
+].map(product => ({ ...product, available: true, availability: "available", currencies: ["CNY"] })) as MembershipProductPricing[];
 
 export function runAccountMembershipPricingTests(): void {
-  for (const timeZone of ["Asia/Shanghai", "Asia/Urumqi", "Asia/Chongqing", "Asia/Chungking", "Asia/Harbin", "PRC"]) {
-    assert.equal(resolveMembershipCurrency(timeZone), "CNY", timeZone);
-  }
-  for (const timeZone of ["Asia/Singapore", "Asia/Taipei", "Asia/Hong_Kong", "Asia/Macau", "Asia/Tokyo", "America/New_York", "Europe/London", "Etc/GMT-8", "UTC", "Asia/Beijing", "", null, undefined]) {
-    assert.equal(resolveMembershipCurrency(timeZone), "USD", String(timeZone));
-  }
-
-  const cny = getMembershipPlanPricing("CNY");
-  const usd = getMembershipPlanPricing("USD");
-  assert.deepEqual(cny.map(plan => [plan.id, plan.amountMinor]), [["early", 1990], ["month", 900], ["quarter", 1900], ["year", 4900]]);
-  assert.deepEqual(usd.map(plan => [plan.id, plan.amountMinor]), [["early", 999], ["month", 299], ["quarter", 699], ["year", 1999]]);
-  assert.deepEqual(cny.map(plan => [plan.comparisonAmountMinor, plan.savingsAmountMinor, plan.savingsPercent]), [
-    [4900, 2910, 59], [null, null, null], [2700, 800, 30], [10800, 5900, 55]
-  ]);
-  assert.deepEqual(usd.map(plan => [plan.comparisonAmountMinor, plan.savingsAmountMinor, plan.savingsPercent]), [
-    [1999, 1000, 50], [null, null, null], [897, 198, 22], [3588, 1589, 44]
-  ]);
-
-  for (const plans of [cny, usd]) {
-    assert.deepEqual(plans.map(plan => plan.days), [null, 30, 90, 365]);
-    assert.equal(plans[0].dailyAmountMinor, null, "lifetime has no invented daily cost");
-    for (const plan of plans) {
-      assert.ok(Number.isInteger(plan.amountMinor));
-      if (plan.comparisonAmountMinor != null) {
-        assert.ok(Number.isInteger(plan.savingsAmountMinor));
-        assert.equal(plan.amountMinor + plan.savingsAmountMinor!, plan.comparisonAmountMinor);
-      }
+  assert.deepEqual(getMembershipPlanPricing("CNY"), []);
+  assert.deepEqual(getMembershipPlanPricing("USD", null), []);
+  assert.deepEqual(getMembershipPlanPricing("CNY", []), []);
+  const plans = getMembershipPlanPricing("USD", pricingProducts);
+  assert.deepEqual(plans.map(plan => [plan.id, plan.currency, plan.amountMinor]), [["early", "CNY", 2990], ["month", "CNY", 900], ["quarter", "CNY", 1900], ["year", "CNY", 4900]]);
+  assert.deepEqual(plans.map(plan => [plan.comparisonAmountMinor, plan.savingsAmountMinor, plan.savingsPercent]), [[null, null, null], [null, null, null], [2700, 800, 30], [10800, 5900, 55]]);
+  const base = createUnavailableAccountAdapter().read();
+  for (const product of pricingProducts) {
+    const vm = { ...base, salesOpen: true, products: [product] };
+    assert.equal(membershipPlanAction(vm, product.id, "CNY", false, true).purchasable, true);
+    for (const amount of [0, -1, NaN, Infinity, 1.5]) {
+      const products = [{ ...product, prices: { ...product.prices, CNY: amount } }];
+      assert.deepEqual(getMembershipPlanPricing("USD", products), []);
+      assert.equal(membershipPlanAction({ ...vm, products }, product.id, "CNY", false, true).purchasable, false);
+    }
+    for (const availability of ["owned", "paused", "sold_out", "unavailable"] as const) {
+      assert.equal(membershipPlanAction({ ...vm, products: [{ ...product, availability }] }, product.id, "CNY", false, true).purchasable, false);
+    }
+    for (const candidate of [{ ...vm, products: [] }, { ...vm, salesOpen: false }, { ...vm, products: [{ ...product, available: false }] }, { ...vm, products: [{ ...product, currencies: ["USD" as const] }] }]) {
+      assert.equal(membershipPlanAction(candidate, product.id, "CNY", false, true).purchasable, false);
     }
   }
-  assert.equal(cny[1].dailyAmountMinor, 30);
-  assert.equal((cny[2].dailyAmountMinor! / 100).toFixed(2), "0.21");
-  assert.equal((cny[3].dailyAmountMinor! / 100).toFixed(2), "0.13");
-  assert.equal(usd[1].dailyAmountMinor!.toFixed(1), "10.0");
-  assert.equal(usd[2].dailyAmountMinor!.toFixed(1), "7.8");
-  assert.equal(usd[3].dailyAmountMinor!.toFixed(1), "5.5", "retain sub-cent precision until display formatting");
-  console.log("PASS membership pricing: time-zone defaults, separate price lists, integer savings and daily display precision");
+  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-11-01T16:00:00Z"))?.en, "59 days left");
+  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-30T15:59:59Z"))?.en, "1 day left");
+  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-30T16:00:00Z"))?.en, "Ends today");
+  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-31T15:59:59Z"))?.en, "Ends today");
+  assert.equal(getEarlyOfferCountdown("2026-12-31", Date.parse("2026-12-31T16:00:00Z")), null);
+  for (const value of [null, undefined, "", "2026-02-30", "2026-2-03", "2026-13-01", "2026-12-31T00:00:00Z", "invalid"]) assert.equal(getEarlyOfferCountdown(value), null);
+  assert.equal(getEarlyOfferCountdown("2028-02-29", Date.parse("2028-02-28T16:00:00Z"))?.en, "Ends today");
+  console.log("PASS membership pricing: server-only CNY, fail-closed purchases, subscription savings and Beijing countdown boundaries");
 }

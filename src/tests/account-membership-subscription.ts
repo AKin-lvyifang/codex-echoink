@@ -9,6 +9,7 @@ import { getProPluginAccess } from "../membership/access";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import type { CapabilityAccess } from "../membership/types";
 import { createUnavailableAccountAdapter, type AccountActions, type AccountMembershipViewModel, type MembershipState } from "../settings/account-membership-model";
+import { pricingProducts } from "./account-membership-pricing";
 
 export async function runAccountMembershipSubscriptionTests(win: Window & typeof globalThis): Promise<void> {
   installObsidianDom(win);
@@ -27,7 +28,7 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
   const base = createUnavailableAccountAdapter().read();
   const identity = { name: "订阅测试", email: "subscription@example.invalid", joinedAt: null, avatar: "initial" as const, passwordSet: false };
   const model = (state: MembershipState, signedIn = true): AccountMembershipViewModel => ({
-    ...base, identity: signedIn ? identity : null, provider: "configured", serviceAvailable: true,
+    ...base, products: pricingProducts, identity: signedIn ? identity : null, provider: "configured", serviceAvailable: true,
     membership: { ...base.membership, state, planId: ["active", "device-required", "device-limit"].includes(state) ? "beta" : null }
   });
   const find = (label: string, root = parent) => [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === label);
@@ -47,9 +48,8 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
     assert.ok([...parent.querySelectorAll<HTMLButtonElement>(".plan button")].every(button => button.textContent === "购买待开放" && button.disabled));
     mount({ ...model("active"), salesOpen: true, membership: { ...model("active").membership, planId: "quarter" } }, entryActions);
     const planButton = (id: string) => parent.querySelector<HTMLButtonElement>(`[data-plan-id="${id}"] button`)!;
-    const international = !!parent.querySelector(".price-currency");
-    assert.equal(planButton("month").textContent, international ? "查看人民币套餐" : "立即订阅"); assert.equal(planButton("quarter").textContent, international ? "查看人民币套餐" : "续费");
-    assert.equal(planButton("early").disabled, true);
+    assert.equal(planButton("month").textContent, "立即订阅"); assert.equal(planButton("quarter").textContent, "续费");
+    assert.equal(planButton("early").disabled, false);
     planButton("month").click(); await settle(); assert.deepEqual(selections, ["month"]);
     const early = { id: "early" as const, prices: { CNY: 2370, USD: 999 }, days: null, available: true, availability: "available" as const, currencies: ["CNY" as const] };
     mount({ ...model("free"), salesOpen: true, products: [early] }, entryActions);
