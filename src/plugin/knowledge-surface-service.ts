@@ -1381,7 +1381,10 @@ export function createKnowledgeInitializationHost(
     },
     async openGuide(relativePath: string): Promise<void> {
       const file = requireVaultFile(plugin, relativePath);
-      await plugin.app.workspace.getLeaf("tab").openFile(file);
+      const workspace = plugin.app.workspace;
+      const existing = workspace.getLeavesOfType("markdown").find(leaf => leaf.view.getState().file === file.path);
+      if (existing) await workspace.revealLeaf(existing);
+      else await workspace.getLeaf("tab").openFile(file);
     },
     async markInitialized(job: Readonly<KnowledgeInitializationJob>): Promise<void> {
       plugin.settings.knowledgeBase.initialization = {

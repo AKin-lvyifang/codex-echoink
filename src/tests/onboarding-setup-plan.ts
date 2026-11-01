@@ -224,13 +224,26 @@ async function assertGuideLifecycle(root: string, state: "created" | "preserved"
     const content = await fs.readFile(path.join(root, result.path), "utf8");
     if (userGuide) assert.equal(content, "USER_GUIDE R3_GUIDE_TOKEN");
     else {
-      assert(content.startsWith(language === "en" ? "# Getting started with EchoInk" : "# 开始使用 EchoInk"));
+      assert(content.startsWith(language === "en" ? "## What was set up" : "## 这次帮你做了什么"));
+      assert(!/^#\s/mu.test(content), "Obsidian supplies the file title; the guide body must not duplicate it");
       assert(!/\{\w+\}/u.test(content)); assert(content.includes(plan.outputLocations.answer));
       assert(content.includes("原有资料")); assert(content.includes(String(plan.noteCount)));
     }
-    let opened = "";
-    app.workspace.getLeaf = (() => ({ async openFile(file: { path: string }) { opened = file.path; } })) as never;
+    let opened = "", createdTabs = 0, openCalls = 0;
+    let revealed: unknown;
+    const tabs = [{ view: { getState: () => ({ file: "其他笔记.md" }) } }];
+    app.workspace.getLeavesOfType = (() => tabs) as never;
+    app.workspace.getLeaf = (() => {
+      createdTabs++;
+      const tab = { view: { getState: () => ({ file: opened }) }, async openFile(file: { path: string }) { opened = file.path; openCalls++; tabs.push(tab); } };
+      return tab;
+    }) as never;
+    app.workspace.revealLeaf = (async leaf => { revealed = leaf; });
     await service.openOnboardingSetupGuide(result.path); assert.equal(opened, result.path);
+    await service.openOnboardingSetupGuide(result.path);
+    await service.openOnboardingSetupGuide(result.path);
+    assert.equal(createdTabs, 1, "automatic open, View guide and retry reuse the same guide tab");
+    assert.equal(openCalls, 1); assert.equal(revealed, tabs[1], "an existing guide tab is activated rather than reopened");
     if (state === "moved" || state === "moved-preserved") {
       const moved = "原有资料/改名后的指南.md";
       await app.fileManager.renameFile(app.vault.getFileByPath(result.path)!, moved);

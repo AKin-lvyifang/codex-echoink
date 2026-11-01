@@ -1,5 +1,3 @@
-# Getting started with EchoInk
-
 ## What was set up
 - New folders: {created}
 - Sources: {sources}. Everything stays in place.
