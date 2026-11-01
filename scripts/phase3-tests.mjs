@@ -18,6 +18,7 @@ const wikiTodoOnly = process.argv.includes("--wiki-todo");
 const nativeJournalOnly = process.argv.includes("--native-journal");
 
 const fullSuiteImports = [
+  'import { runOnboardingSetupPlanTests } from "./src/tests/onboarding-setup-plan";',
   'import { runKnowledgeLinkNeighborhoodTests, runKnowledgeAnchorNavigationTests, runKnowledgeBodySearchTests, runKnowledgeBodySearchCacheTests, runKnowledgeBodySearchSchedulingTests, runKnowledgeBodySearchInvalidationTests, runKnowledgeBodySearchConcurrencyTests, runKnowledgeBodySearchTopicTests, runKnowledgeBodySearchBoilerplateTests, runKnowledgeBodySearchMetadataTests, runKnowledgeBodySearchReferenceTests, runKnowledgeBodySearchReferenceBoundaryTests, runKnowledgeBodySearchOutlineTests, runKnowledgeBodySearchOutlineEligibilityTests } from "./src/tests/knowledge-body-search";',
   'import { runVaultBodySearchLinkCueTests, runVaultBodySearchSourceRevisionTests, runVaultBodySearchExplicitAnchorTests, runVaultBodySearchAnchorTests, runVaultBodySearchTests, runVaultBodySearchCacheTests, runVaultBodySearchConcurrencyTests, runVaultBodySearchMetadataTests, runVaultBodySearchReferenceTests, runVaultBodySearchOutlineTests } from "./src/tests/vault-body-search";',
   'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
@@ -34,6 +35,7 @@ const fullSuiteImports = [
   'import { runNativeJournalTests } from "./src/tests/native-journal";'
 ];
 const fullSuiteRuns = [
+  "await runOnboardingSetupPlanTests();",
   "await runPiKnowledgeLinkCueBudgetTests();",
   "await runKnowledgeLinkNeighborhoodTests();",
   "await runVaultBodySearchLinkCueTests();",
@@ -226,6 +228,9 @@ await esbuild.build({
     ] : process.argv.includes("--folder-organization") ? [
       'import { runKnowledgeFolderOrganizationTests } from "./src/tests/knowledge-folder-organization";',
       'await runKnowledgeFolderOrganizationTests();'
+    ] : process.argv.includes("--onboarding-setup") ? [
+      'import { runOnboardingSetupPlanTests } from "./src/tests/onboarding-setup-plan";',
+      'await runOnboardingSetupPlanTests();'
     ] : process.argv.includes("--folder-plans") ? [
       'import { runKnowledgeFolderPlanTests } from "./src/tests/knowledge-folder-plans";',
       'await runKnowledgeFolderPlanTests();'

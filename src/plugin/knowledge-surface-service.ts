@@ -1,4 +1,5 @@
 import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
+import { generateOnboardingSetupPlan, yieldOnboardingScan, type OnboardingProtectedPath, type OnboardingSetupPlan } from "../knowledge-base/onboarding-setup-plan";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories, type KnowledgeEnglishDirectoryModes } from "../knowledge-base/module-directories";
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
@@ -56,7 +57,7 @@ import {
 } from "../knowledge-base/initializer";
 import { optimizeWikiFolderNames, type WikiFolderNameResult } from "../knowledge-base/wiki-folder-names";
 import { pluginDataDir } from "./plugin-data-paths";
-import { initializeNativeJournal, nativeRootJournalPaths, rebaseNativeJournalPaths, saveNativeJournalFolder } from "../home/native-journal";
+import { initializeNativeJournal, nativeRootJournalPaths, readNativeJournalSettings, rebaseNativeJournalPaths, saveNativeJournalFolder } from "../home/native-journal";
 
 export interface KnowledgeFolderNamePreview {
   revision: number;
@@ -559,6 +560,74 @@ export class EchoInkKnowledgeSurfaceService {
     return await this.withStructureMutation(() => this.initializer.restoreStructure(onProgress));
   }
 
+  /** No settings writes, note reads, model calls or link-setting changes. */
+  async previewOnboardingSetupPlan(language: "zh" | "en" = this.plugin.settings.settingsLanguage === "en" ? "en" : "zh"): Promise<OnboardingSetupPlan> {
+    const vault = this.plugin.app.vault, settings = this.plugin.settings, root = this.plugin.getVaultPath();
+    const baseline = structuredClone(settings.knowledgeBase.folderBindings);
+    const settingsSignature = await this.directorySettingsSignature();
+    const files = (vault.getFiles?.() ?? vault.getMarkdownFiles()).map(file => ({ path: file.path, size: file.stat.size, mtime: file.stat.mtime }));
+    const folders: string[] = [], protectedPaths: OnboardingProtectedPath[] = [];
+    const protect = (directory: string | null | undefined, reason: string) => {
+      if (directory && directory !== "." && directory !== "/") protectedPaths.push({ path: directory.replace(/\\/gu, "/").replace(/\/$/u, ""), reason });
+    };
+    // Directory entries reveal hidden/nested protected locations that Obsidian omits
+    // from its file cache. Do not descend into hidden folders or symbolic links.
+    const pending = [""];
+    while (pending.length) {
+      const parent = pending.pop()!;
+      for (const entry of await fsp.readdir(path.join(root, parent), { withFileTypes: true })) {
+        const relative = parent ? `${parent}/${entry.name}` : entry.name;
+        if (entry.isSymbolicLink()) { protect(relative, "符号链接保持原位"); continue; }
+        if (!entry.isDirectory()) continue;
+        folders.push(relative);
+        if (entry.name.startsWith(".") || entry.name.toLowerCase() === "node_modules") protect(relative, "隐藏目录或依赖目录");
+        else pending.push(relative);
+      }
+    }
+    protect(vault.configDir, "Obsidian 配置");
+    const privateRoot = knowledgePrivateRoot(root);
+    if (privateRoot) { const relative = path.relative(root, privateRoot).replace(/\\/gu, "/"); if (relative && !relative.startsWith("../") && !path.isAbsolute(relative)) protect(relative, "私有状态"); }
+    protect("EchoInk/待办.md", "待办文件"); protect("EchoInk/待办-settings-backup.json", "待办配置");
+    protect(settings.journalDirectory, "日记"); protect(settings.review.outputDir, "复盘");
+    protect(settings.lifestyle?.finance.analysisDirectory, "财务"); protect(this.plugin.lifestyle?.finance.ledger.paths().root, "财务");
+    protect(settings.pdfReading.originalDirectory, "原 PDF");
+    const roots = folders.filter(directory => !directory.includes("/"));
+    const english = resolveEnglishStoragePaths(settings.englishDiary, baseline, roots);
+    for (const directory of [english.englishDirectory, english.expressionDirectory, ...english.legacyEnglishDirectories, ...english.legacyExpressionDirectories]) protect(directory, "英文日记或表达库（含历史位置）");
+    type NativeDirectorySettings = { enabled?: boolean; loadData?(): Promise<unknown>; instance?: { options?: { folder?: string }; plugin?: NativeDirectorySettings } };
+    const native = (this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, NativeDirectorySettings> } }).internalPlugins?.plugins;
+    const nativeSettings = readNativeJournalSettings(this.plugin.app, settings.journalDirectory, baseline);
+    const daily = native?.["daily-notes"];
+    const dailyData = await (daily?.instance?.plugin ?? daily)?.loadData?.();
+    const savedFolder = dailyData && typeof dailyData === "object" ? (dailyData as { folder?: unknown }).folder : undefined;
+    const savedJournal = typeof savedFolder === "string" ? savedFolder : undefined;
+    // A disabled native plugin's persisted choice wins; a suggested fallback is
+    // never evidence that the user chose that location.
+    const nativeJournal = daily?.enabled === false ? savedJournal : daily?.instance?.options?.folder ?? savedJournal;
+    protect(nativeJournal, "Obsidian 日记"); protect(native?.templates?.instance?.options?.folder, "Obsidian 模板");
+    protect(nativeSettings.templatesFolder, "Obsidian 模板");
+    nativeRootJournalPaths(this.plugin.app, files.map(file => file.path)).forEach(directory => protect(directory, "根目录日记"));
+    const attachment = (vault as unknown as { getConfig(key: string): unknown }).getConfig?.("attachmentFolderPath");
+    if (typeof attachment === "string") {
+      if (attachment.startsWith("./")) {
+        const suffix = attachment.slice(2).replace(/\/$/u, "");
+        for (const directory of folders) if (directory === suffix || directory.endsWith(`/${suffix}`)) protect(directory, "Obsidian 附件");
+      } else protect(attachment, "Obsidian 附件");
+    }
+    for (const directory of folders) if (isFinanceRootName(directory.split("/")[0]) || isLegacyFinancePath(directory)) protect(directory, "财务");
+    // A finance base identifies a reserved directory without reading its body.
+    for (const file of files) if (file.path.endsWith("/ledger.base")) protect(file.path.slice(0, -"/ledger.base".length), "账本目录");
+    const modules = prepareKnowledgeModuleDirectories(settings, baseline, roots).directories;
+    const journalDirectory = settings.journalDirectory !== "journal" ? settings.journalDirectory
+      : nativeJournal !== undefined ? nativeJournal : folders.includes("journal") ? "journal" : undefined;
+    const result = await generateOnboardingSetupPlan({ language, baseline, folders, files, protectedPaths, journalDirectory, moduleDirectories: modules,
+      preview: (bindings, createPaths, options) => this.previewDirectoryPlan(bindings, createPaths, { ...options, metadataOnly: true }) });
+    if (settingsSignature !== await this.directorySettingsSignature() || knowledgeFolderBindingsSignature(baseline) !== knowledgeFolderBindingsSignature(settings.knowledgeBase.folderBindings)) {
+      result.directoryPlan.issues.push("文件或设置已变化，请重新核对。");
+    }
+    return result;
+  }
+
   async previewDirectoryPlan(bindings: KnowledgeFolderBindings, createPaths: readonly string[], options: KnowledgeDirectoryPlanOptions = {}): Promise<KnowledgeDirectoryPlan> {
     const vault = this.plugin.app.vault;
     const vaultRoot = this.plugin.getVaultPath();
@@ -567,7 +636,7 @@ export class EchoInkKnowledgeSurfaceService {
     const selection = prepareKnowledgeModuleDirectories(this.plugin.settings, bindings, rootNames, options.moduleDirectories);
     options = { ...options, moduleDirectories: selection.directories };
     const baseSettingsSignature = await this.directorySettingsSignature();
-    const observedFiles = await Promise.all((vault.getFiles?.() ?? vault.getMarkdownFiles()).map(async file => {
+    const observedFiles = options.metadataOnly ? (vault.getFiles?.() ?? vault.getMarkdownFiles()).map(file => ({ path: file.path, size: file.stat.size, mtime: file.stat.mtime, symbolicLink: false })) : await Promise.all((vault.getFiles?.() ?? vault.getMarkdownFiles()).map(async file => {
       const stat = await fsp.lstat(path.join(vaultRoot, file.path)).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
       if (!stat) return null; // A removed file can briefly remain in the host cache.
       return { path: file.path, size: stat.size, mtime: stat.mtimeMs,
@@ -607,12 +676,12 @@ export class EchoInkKnowledgeSurfaceService {
     for (const file of files) {
       const root = file.path.split("/")[0];
       if (isFinanceRootName(root) || isLegacyFinancePath(file.path)) protect(isLegacyFinancePath(file.path) ? "EchoInk/财务" : root);
-      if (file.path.endsWith("/ledger.base") && vault.getFileByPath && vault.cachedRead) {
+      if (!options.metadataOnly && file.path.endsWith("/ledger.base") && vault.getFileByPath && vault.cachedRead) {
         const base = vault.getFileByPath(file.path);
         if (base && isEchoInkFinanceBase(await vault.cachedRead(base))) protect(file.path.slice(0, -"/ledger.base".length));
       }
     }
-    const plan = await previewKnowledgeDirectoryPlan({ roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES, baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths],
+    const plan = await previewKnowledgeDirectoryPlan({ roleScope: DESKTOP_KNOWLEDGE_ROOT_ROLES, baseRevision: baseline?.revision ?? 0, baseline, baseSettingsSignature, wikiChanged: options.wikiChanged, moduleDirectories: options.moduleDirectories, mode: options.mode, bindings, createPaths, files, protectedPaths: [...protectedPaths], yieldToHost: options.metadataOnly ? yieldOnboardingScan : undefined,
       kind: async (relative) => {
         if (await knowledgeInitializationPathHasSymbolicLink(vaultRoot, relative, true)) return "other";
         const file = vault.getAbstractFileByPath(relative);
