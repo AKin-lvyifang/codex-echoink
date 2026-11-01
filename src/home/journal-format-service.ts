@@ -28,6 +28,10 @@ export class JournalFormatService {
   constructor(readonly app: App, private readonly host: JournalFormatHost) {}
   get settings() { const settings = this.host.settings(); return readNativeJournalSettings(this.app, settings.journalDirectory, settings.knowledgeBase?.folderBindings); }
   get model() { return this.host.model(); }
+  get currentRecord() {
+    const record = this.record, settings = this.settings;
+    return record && (record.status === "interrupted" || record.folder === settings.folder && record.format === settings.format && record.signature === this.signature()) ? record : null;
+  }
   get linkUpdatesEnabled() { return (this.app.vault as unknown as { getConfig?(key: string): unknown }).getConfig?.("alwaysUpdateLinks") === true; }
   private get recordPath() { return `${this.host.directory}/journal-format-moves.v1.json`; }
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -93,7 +97,15 @@ export class JournalFormatService {
   }
   async preview(): Promise<JournalPlan> {
     this.idle(); await this.initialize(); await loadNativeJournalSettings(this.app);
+    this.idle();
     this.identified = []; this.plan = buildJournalPlan(this.inventory()); this.error = ""; this.changed(); return this.plan;
+  }
+  private async refreshAfterOperation() {
+    this.busy = null; this.controller = undefined;
+    const error = this.error;
+    try { await this.preview(); }
+    catch (failure) { this.error = failure instanceof Error ? failure.message : String(failure); }
+    this.error ||= error; this.changed();
   }
   async identify(): Promise<void> {
     this.idle(); const plan = this.plan;
@@ -195,7 +207,7 @@ export class JournalFormatService {
       }
       this.record.status = "done"; await this.persist();
     } catch (error) { this.record.status = "interrupted"; this.error = error instanceof Error ? error.message : String(error); throw error; }
-    finally { this.busy = null; this.controller = undefined; this.changed(); }
+    finally { await this.refreshAfterOperation(); }
   }
   async undo(): Promise<void> {
     this.idle(); await this.initialize(); const record = this.record;
@@ -225,7 +237,7 @@ export class JournalFormatService {
       record.status = record.entries.every(entry => entry.state === "restored" || entry.state === "skipped") ? "undone" : "interrupted";
       await this.persist();
     } catch (error) { this.error = error instanceof Error ? error.message : String(error); throw error; }
-    finally { this.busy = null; this.controller = undefined; this.changed(); }
+    finally { await this.refreshAfterOperation(); }
   }
   dispose() { this.controller?.abort(); this.listeners.clear(); }
 }

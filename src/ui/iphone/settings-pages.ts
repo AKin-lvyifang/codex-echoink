@@ -1,4 +1,5 @@
 import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
+import { openFolderPicker } from "./knowledge-settings-pages";
 import license from "../../../LICENSE";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md";
 import type { AgentModuleId } from "../../agents/types";
@@ -166,7 +167,11 @@ export class IPhoneSettingsPages {
         if (entry.id === "journal") {
           const service = ctx.host.services.journalFormats;
           const view = new IPhoneModulePage(ctx, "iphone-settings-journal", ctx.host.settings().settingsLanguage === "en" ? "Journal settings" : "日记设置");
-          const cleanup = mountJournalFormatSettings(view.group(), service, { mobile: true, language: ctx.host.settings().settingsLanguage, openOrganization: () => {
+          const cleanup = mountJournalFormatSettings(view.group(), service, { mobile: true, language: ctx.host.settings().settingsLanguage, openFolderPicker: () => {
+            void openFolderPicker(ctx, { directories: service.app.vault.getAllLoadedFiles().filter(file => "children" in file && file.path && !file.path.split("/").some(part => part.startsWith("."))).map(file => file.path) }, { selected: [service.settings.folder], allowNew: true, allowRoot: true }, async paths => {
+              if (paths.length) { await service.save("folder", paths[0]); await service.preview(); }
+            }).catch(error => ctx.error(error));
+          }, openOrganization: () => {
             const organize = new IPhoneModulePage(ctx, "iphone-journal-organize", ctx.host.settings().settingsLanguage === "en" ? "Organize old journals" : "整理老日记");
             const dispose = mountJournalOrganization(organize.body, service, ctx.host.settings().settingsLanguage, () => { void ctx.shell.back(); });
             const original = organize.page.dispose; organize.page.dispose = () => { dispose(); original?.(); };

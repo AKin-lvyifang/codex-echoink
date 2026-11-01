@@ -4303,8 +4303,11 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
   assert.ok(select, "journal settings expose the native folder select");
   assert.equal(select.value, "journal");
   assert.equal(saved.length, 0, "viewing the shared settings never writes native options");
-  select.value = "__root";
-  select.fireEvent("change");
+  select.value = "../outside"; select.fireEvent("change"); await settleMicrotasks(); await settleMicrotasks();
+  assert.equal(saved.length, 0, "invalid relative paths never write native settings"); assert.equal(folders.has("outside"), false);
+  const currentInput = () => tab.containerEl.querySelector<ProviderModalTestElement>('[aria-label="日记文件夹"]')!;
+  currentInput().value = "";
+  currentInput().fireEvent("change");
   await settleMicrotasks(); await settleMicrotasks();
   assert.equal(daily.instance.options.folder, "", "root folder selection is explicit");
   assert.equal(saved.length, 1);
@@ -4315,8 +4318,20 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
   assert.equal(daily.instance.options.format, "YYYY-MM-DD");
   assert.ok(tab.containerEl.querySelector('[aria-label="默认模板"]'));
 
+  const beforeFocus = saved.length; currentInput().fireEvent("focus"); currentInput().fireEvent("blur"); await settleMicrotasks();
+  assert.equal(saved.length, beforeFocus, "focusing Vault root does not rewrite its native settings"); assert.equal(daily.instance.options.folder, "");
+  delete daily.instance.options.folder;
+  plugin.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  Object.assign(plugin.settings.knowledgeBase.folderBindings.roles.journal, { enabled: true, readPaths: ["Bound"], writePath: "Bound" });
+  folders.add("Bound"); tab.display(); await settleMicrotasks(); await settleMicrotasks();
+  assert.equal(currentInput().value, "Bound", "journal folder follows the same knowledge-binding fallback as the journal page");
+  plugin.settings.knowledgeBase.folderBindings.roles.journal.enabled = false; plugin.settings.journalDirectory = "Unconfigured";
+  tab.display(); await settleMicrotasks(); await settleMicrotasks(); currentInput().fireEvent("focus"); currentInput().fireEvent("blur");
+  assert.equal(folders.has("Unconfigured"), false, "opening and leaving the default folder never creates it");
+  assert.ok(tab.containerEl.textContent.includes("文件夹不存在"), "a missing configured folder remains visible");
+
   tab.hide();
-  console.log("PASS settings: journal folder normalizes, persists, and reloads");
+  console.log("PASS settings: journal folder rejects traversal, persists root, follows bindings, reports missing folders and never creates untouched defaults");
 }
 
 function assertPiReasoningCapabilityContract(): void {

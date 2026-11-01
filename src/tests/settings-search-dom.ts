@@ -161,6 +161,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     getEchoInkKnowledgeBaseDashboard: async () => null
   };
   Object.assign(plugin.app.vault, { getMarkdownFiles: () => [], getFiles: () => [], adapter: { exists: async () => false }, getAllLoadedFiles: () => [...journalFolders].map(folderFile), getAllFolders: () => [...journalFolders].map(folderFile), getAbstractFileByPath: (path: string) => journalFolders.has(path) ? folderFile(path) : null, createFolder: async (path: string) => { journalFolders.add(path); return folderFile(path); }, on: () => ({}), offref: () => undefined });
+  Object.assign(plugin.app, { keymap: { pushScope() {}, popScope() {} } });
   const tab = new CodexSettingTab(plugin as never);
   // Independent settings windows have their own document and container.
   (tab as any).containerEl = win.document.createElement("div");
@@ -443,8 +444,8 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     assert.equal(f.saved.length, 2, "real Origin toggle persists through existing callback");
     const journal = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`[aria-label="${language === "en" ? "Journal folder" : "日记文件夹"}"]`)!;
     assert.ok(journal);
-    journal.value = "Notes/Daily";
-    journal.dispatchEvent(new primary.Event("change"));
+    journal.click(); await scheduler.flush();
+    [...primary.document.querySelectorAll<HTMLElement>('.echoink-folder-picker-option[role="option"]')].find(node => node.textContent === "Notes/Daily")!.click();
     await scheduler.flush();
     assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/Daily");
     assert.equal(f.nativeSaves.length, 1, "journal still saves through native Daily notes");
@@ -465,6 +466,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     const organization = primary.document.body.createDiv();
     const aiService = {
       busy: "ai", identified: [], model: "Test model", linkUpdatesEnabled: true,
+      settings: { folder: "Daily" },
       plan: { folder: "Daily", moves: [], keep: [], unknown: [{ path: "Daily/Untitled.md" }] },
       subscribe: () => () => {}, initialize: async () => {}
     } as unknown as JournalFormatService;
@@ -483,6 +485,24 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
       assert.ok(detachedPage.querySelector(`.${actionClass}`), "detached mobile pages use their platform button");
       dispose(); disposeOriginControls(detachedPage);
     }
+    const freshRoot = primary.document.body.createDiv(), listeners = new Set<() => void>(); let previews = 0;
+    const oldRecord = { status: "done", entries: [{ from: "Daily/2026-01-01.md", to: "Daily/2026-01/2026-01-01.md", state: "moved" }], keep: [] };
+    const refreshService = {
+      busy: null, currentRecord: oldRecord, settings: { folder: "Daily" }, identified: [{ from: "Daily/Unknown.md", to: "Daily/2026-01/2026-01-06.md", evidence: "2026-01-06 explicitly recorded in the source" }],
+      model: "Test model", linkUpdatesEnabled: true, plan: { folder: "Daily", moves: [], unknown: [], keep: [] },
+      subscribe: (listener: () => void) => { listeners.add(listener); return () => listeners.delete(listener); }, initialize: async () => {},
+      preview: async () => { previews++; refreshService.plan.moves = [2, 3, 4, 5].map(day => ({ from: `Daily/2026-01-0${day}.md`, to: `Daily/2026-01/2026-01-0${day}.md` })) as never; listeners.forEach(listener => listener()); }
+    } as unknown as JournalFormatService;
+    let releaseFresh = mountJournalOrganization(freshRoot, refreshService, language); await scheduler.flush();
+    assert.equal(previews, 1, "entering organization refreshes even an existing plan");
+    assert.match(freshRoot.querySelector('.journal-organization-footer button')!.textContent!, /4/u, "new moves take priority over the old done result");
+    assert.ok(freshRoot.querySelector('button.journal-organization-more'), "view all is a text action occupying the last list row");
+    const target = freshRoot.querySelector('.journal-organization-evidence')!.parentElement!;
+    assert.equal(target.querySelector('.journal-format-path')!.textContent, "2026-01/2026-01-06.md");
+    assert.ok(target.querySelector('.journal-organization-evidence'), "AI evidence has its own text element");
+    releaseFresh(); disposeOriginControls(freshRoot); freshRoot.replaceChildren();
+    releaseFresh = mountJournalOrganization(freshRoot, refreshService, language); await scheduler.flush(); assert.equal(previews, 2, "re-entering never revives a cached plan");
+    releaseFresh(); disposeOriginControls(freshRoot); freshRoot.remove();
 
     assert.equal(f.saved.length, 2);
 
@@ -839,8 +859,8 @@ async function checkDesktopSettings(
     const currentLanguage = f.plugin.settings.settingsLanguage;
     const journal = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`[aria-label="${currentLanguage === "en" ? "Journal folder" : "日记文件夹"}"]`)!;
     assert.ok(journal, "old journal focus reaches its real relocated field");
-    journal.value = "Notes/DesktopDaily";
-    journal.dispatchEvent(new primary.Event("change"));
+    journal.click(); await scheduler.flush();
+    [...primary.document.querySelectorAll<HTMLElement>('.echoink-folder-picker-option[role="option"]')].find(node => node.textContent === "Notes/DesktopDaily")!.click();
     await scheduler.flush();
     assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/DesktopDaily");
     assert.equal(f.nativeSaves.length, 1);

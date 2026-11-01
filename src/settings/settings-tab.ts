@@ -1,4 +1,5 @@
 import { mountJournalFormatSettings, mountJournalOrganization } from "../home/journal-format-view";
+import { createKnowledgeFolderPicker } from "./knowledge-folder-picker";
 import { renderMcpServerSettings } from "./mcp-server-settings";
 import { isOfficialRemoteSkill, remoteSkillLocked, skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../membership/skill-delivery";
@@ -1360,6 +1361,15 @@ export class CodexSettingTab extends PluginSettingTab {
     this.journalSettingsCleanup?.();
     this.journalSettingsCleanup = mountJournalFormatSettings(journalGroup, service, {
       language: this.plugin.settings.settingsLanguage,
+      mountFolderPicker: (parent, value, disabled, change) => {
+        const picker = createKnowledgeFolderPicker(parent, {
+          folders: () => this.app.vault.getAllLoadedFiles().filter(file => file instanceof TFolder && file.path && !file.path.split("/").some(part => part.startsWith("."))).map(file => file.path),
+          values: value ? [{ path: value, create: false }] : [], multiple: false, disabled,
+          label: zh ? "日记文件夹" : "Journal folder", emptyLabel: zh ? "库根目录" : "Vault root", language: this.plugin.settings.settingsLanguage, app: this.app,
+          onChange: values => change(values[0]?.path ?? "")
+        });
+        return () => picker.dispose();
+      },
       openOrganization: () => this.openSettingsDetail("journal-organize"), templateCount: count,
       openTemplates: () => this.openSettingsDetail("journal-templates")
     });

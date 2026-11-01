@@ -22,12 +22,14 @@ function action(parent: HTMLElement, text: string, run: () => void, primary = fa
 }
 export interface JournalSettingsViewOptions {
   language: string; mobile?: boolean; openOrganization(): void; templateCount?: number; openTemplates?(): void;
+  mountFolderPicker?(parent: HTMLElement, value: string, disabled: boolean, change: (path: string) => void): () => void;
+  openFolderPicker?(): void;
 }
 /** One business form, rendered using the platform's existing Origin adapters. */
 export function mountJournalFormatSettings(parent: HTMLElement, service: JournalFormatService, options: JournalSettingsViewOptions): () => void {
   const root = el(parent, "div", `journal-format-settings${options.mobile ? " is-mobile" : ""}`), c = journalFormatCopy(options.language);
   let custom = !JOURNAL_FORMAT_PRESETS.includes(service.settings.format as typeof JOURNAL_FORMAT_PRESETS[number]);
-  let draft = service.settings.format, error = "", disposed = false, previewTimer: number | undefined;
+  let draft = service.settings.format, error = "", disposed = false, previewTimer: number | undefined, disposeFolder: (() => void) | undefined;
   const report = (failure: unknown) => { error = c.error(failure instanceof Error ? failure.message : String(failure)); render(); };
   const save = async (kind: "folder" | "format" | "template", value: string) => { try { await service.save(kind, value); await service.preview(); } catch (failure) { report(failure); } };
   const row = (name: string) => {
@@ -35,16 +37,25 @@ export function mountJournalFormatSettings(parent: HTMLElement, service: Journal
     return el(row, "div", "setting-item-control");
   };
   const select = (parent: HTMLElement, name: string, choices: { value: string; label: string }[], value: string, change: (value: string) => void) => {
-    const field = createOriginSelect(parent, { attr: { "aria-label": name } }, choices, value, service.app).element;
+    const wrap = options.mobile ? el(parent, "div", "journal-format-select-wrap") : parent;
+    const field = createOriginSelect(wrap, { attr: { "aria-label": name } }, choices, value, service.app).element;
+    if (options.mobile) icon(wrap, "chevron-down").classList.add("journal-format-select-arrow");
+    field.classList.add("journal-format-choice");
     field.value = value; field.disabled = Boolean(service.busy);
     field.onchange = () => change(field.value); return field;
   };
   const render = () => {
     if (disposed) return;
+    disposeFolder?.(); disposeFolder = undefined;
     root.replaceChildren(); const settings = service.settings, plan = service.plan;
     let updatePeek = () => {};
-    const folders = service.app.vault.getAllLoadedFiles().filter(file => "children" in file && file.path && !file.path.split("/").some(part => part.startsWith("."))).map(file => file.path);
-    select(row(c.folder), c.folder, [...new Set([settings.folder, "", ...folders])].map(path => ({ value: path || "__root", label: path || c.root })), settings.folder || "__root", value => { void save("folder", value === "__root" ? "" : value); });
+    const folderControl = row(c.folder);
+    if (options.mountFolderPicker) disposeFolder = options.mountFolderPicker(folderControl, settings.folder, Boolean(service.busy), path => { void save("folder", path); });
+    else {
+      const button = createOriginButton(folderControl, { text: settings.folder || c.root, cls: "journal-format-folder-button", attr: { "aria-label": c.folder, "aria-haspopup": "dialog" } });
+      button.append(icon(button, "chevron-down")); button.disabled = Boolean(service.busy); button.onclick = () => options.openFolderPicker?.();
+    }
+    if (settings.folder && !settings.available) el(folderControl, "div", "settings-error", c.t("文件夹不存在", "Folder does not exist")).setAttribute("role", "alert");
     const controls = row(c.format), line = el(controls, "div", "journal-format-controls");
     select(line, c.format, [...JOURNAL_FORMAT_PRESETS.map((value, index) => ({ value, label: journalPathForFormat(new Date(), "", value).slice(0, -3).replace(/\//gu, " / ") + (index === 0 ? c.t("（默认）", " (default)") : "") })), { value: "__custom", label: c.custom }], custom ? "__custom" : settings.format, value => {
       error = ""; if (value === "__custom") { custom = true; draft = settings.format; render(); root.querySelector<HTMLInputElement>("input")?.focus(); }
@@ -91,11 +102,12 @@ export function mountJournalFormatSettings(parent: HTMLElement, service: Journal
     };
     for (const entry of recent.reverse()) treePath(entry.path);
     if (todayTarget) treePath(todayTarget, true);
-    const record = service.record && (service.record.status === "interrupted" || service.record.folder === settings.folder && service.record.format === settings.format) ? service.record : null, moved = record?.entries.filter(entry => entry.state === "moved" || entry.state === "restoring").length ?? 0;
+    const record = service.currentRecord, moved = record?.entries.filter(entry => entry.state === "moved" || entry.state === "restoring").length ?? 0;
+    const newPlan = record?.status !== "interrupted" && Boolean(plan?.moves.length);
     const off = plan ? plan.moves.length + plan.unknown.length + plan.keep.length : 0;
     if (moved || off || record?.status === "interrupted") {
-      const bar = el(peek, "div", "journal-format-bar"); icon(bar, moved ? "check" : "folder-sync"); el(bar, "span", "", record?.status === "interrupted" ? c.interrupted : moved ? c.moved(moved) : c.off(off));
-      action(bar, moved || record?.status === "interrupted" ? c.view : c.organize, () => options.openOrganization());
+      const bar = el(peek, "div", "journal-format-bar"); icon(bar, moved && !newPlan ? "check" : "folder-sync"); el(bar, "span", "", record?.status === "interrupted" ? c.interrupted : moved && !newPlan ? c.moved(moved) : c.off(off));
+      action(bar, moved && !newPlan || record?.status === "interrupted" ? c.view : c.organize, () => options.openOrganization());
     }
     };
     updatePeek();
@@ -107,26 +119,31 @@ export function mountJournalFormatSettings(parent: HTMLElement, service: Journal
     if (error || service.error) el(root, "div", "settings-error", error || c.error(service.error)).setAttribute("role", "alert");
   };
   const release = service.subscribe(() => { if (root.isConnected !== false) render(); }); render();
-  void service.initialize().then(async () => { if (!service.busy && !service.plan) await service.preview(); else render(); }).catch(report);
-  return () => { disposed = true; if (previewTimer !== undefined) root.ownerDocument.defaultView?.clearTimeout(previewTimer); release(); };
+  void service.initialize().then(async () => { if (!service.busy) await service.preview(); else render(); }).catch(report);
+  return () => { disposed = true; disposeFolder?.(); if (previewTimer !== undefined) root.ownerDocument.defaultView?.clearTimeout(previewTimer); release(); };
 }
 
 export function mountJournalOrganization(parent: HTMLElement, service: JournalFormatService, language: string, onFinish?: () => void): () => void {
   const root = el(parent, "div", "journal-organization"), c = journalFormatCopy(language);
   root.classList.toggle("is-mobile", Boolean(parent.closest(".echoink-iphone,.echoink-ipad,.echoink-mobile,.ip-module-page,.pd-module-page")));
-  let all = false, page = 1, keepPage = 1, aiPage = 1, error = "", disposed = false, showUndoResult = false;
+  let all = false, page = 1, keepPage = 1, aiPage = 1, error = "", disposed = false, showCurrentResult = false;
   const run = (operation: () => Promise<unknown>) => { error = ""; void operation().catch(failure => { error = c.error(failure instanceof Error ? failure.message : String(failure)); render(); }); };
   const section = (title: string, count: number) => { const section = el(root, "section", "journal-organization-section"), heading = el(section, "div", "journal-organization-heading"); el(heading, "h2", "", title); el(heading, "span", "journal-organization-count", String(count)); return { section, heading, list: el(section, "div", "journal-organization-list") }; };
-  const moveRow = (parent: HTMLElement, from: string, to: string, why = false) => { const row = el(parent, "div", "journal-organization-move"); el(row, "span", "journal-format-path", relative(from)); icon(row, "arrow-right"); el(row, "span", why ? "journal-organization-reason" : "journal-format-path", to); };
-  const relative = (path: string) => service.plan?.folder && path.startsWith(`${service.plan.folder}/`) ? path.slice(service.plan.folder.length + 1) : path;
+  const moveRow = (parent: HTMLElement, from: string, to: string, why = false, evidence?: string) => {
+    const row = el(parent, "div", "journal-organization-move"); el(row, "span", "journal-format-path", relative(from)); icon(row, "arrow-right");
+    const target = el(row, "div", "journal-organization-target"); el(target, "span", why ? "journal-organization-reason" : "journal-format-path", to);
+    if (evidence) el(target, "span", "journal-organization-evidence", `· ${evidence}`);
+  };
+  const relative = (path: string) => service.settings.folder && path.startsWith(`${service.settings.folder}/`) ? path.slice(service.settings.folder.length + 1) : path;
   const render = () => {
-    if (disposed) return; root.replaceChildren(); const plan = service.plan, record = service.record && (service.record.status === "interrupted" || service.record.folder === service.settings.folder && service.record.format === service.settings.format) && (service.record.status !== "undone" || showUndoResult) ? service.record : null;
+    if (disposed) return; root.replaceChildren(); const plan = service.plan, current = service.currentRecord;
+    const record = current && (current.status === "interrupted" || showCurrentResult || current.status !== "undone" && !plan?.moves.length) ? current : null;
     if (!plan && !record) { el(root, "div", "", c.loading); return; }
     const completed = record && record.status !== "running", locked = Boolean(service.busy) || Boolean(completed), regular = completed && record ? record.entries.filter(move => !move.ai && move.state !== "skipped") : plan?.moves.filter(move => !move.ai) ?? [];
     if (regular.length) {
       const group = section(c.move, regular.length), visible = all ? regular.slice((page - 1) * 20, page * 20) : regular.slice(0, 3);
       for (const move of visible) moveRow(group.list, move.from, relative(move.to));
-      if (regular.length > 3 && !all) action(el(group.list, "div", "journal-organization-more"), c.all(regular.length), () => { all = true; render(); });
+      if (regular.length > 3 && !all) action(group.list, c.all(regular.length), () => { all = true; render(); }).classList.add("journal-organization-more");
       if (all) createOriginPagination(group.section, page, Math.ceil(regular.length / 20), value => { page = value; render(); });
     }
     const unknown = completed ? [] : plan?.unknown ?? [];
@@ -142,7 +159,7 @@ export function mountJournalOrganization(parent: HTMLElement, service: JournalFo
       }
       for (const file of unknown.slice((aiPage - 1) * 20, aiPage * 20)) moveRow(group.list, file.path, service.busy === "ai" ? `${c.identifying}…` : c.waiting, true);
       if (unknown.length > 20) createOriginPagination(group.section, aiPage, Math.ceil(unknown.length / 20), value => { aiPage = value; render(); });
-      for (const item of identified) moveRow(group.list, item.from, item.to ? `${relative(String(item.to))}${item.evidence ? ` · ${item.evidence}` : ""}` : c.reason("unknown"), !item.to);
+      for (const item of identified) moveRow(group.list, item.from, item.to ? relative(String(item.to)) : c.reason("unknown"), !item.to, item.to ? item.evidence : undefined);
     }
     const retained = record ? [...record.keep, ...record.entries.filter(entry => entry.reason && entry.state !== "skipped").map(entry => ({ from: entry.to, reason: entry.reason! }))] : plan?.keep ?? [];
     const keep = retained.filter(entry => !identified.some(item => item.from === entry.from && !item.to));
@@ -154,17 +171,17 @@ export function mountJournalOrganization(parent: HTMLElement, service: JournalFo
       const restored = record.entries.filter(entry => entry.state === "restored").length, moved = record.entries.filter(entry => entry.state === "moved").length;
       icon(foot, record.status === "undone" ? "undo-2" : "check");
       el(foot, "span", "", record.status === "undone" ? c.undone(restored) : restored || record.entries.some(entry => entry.reason) ? c.partialUndo(restored, moved) : c.complete(moved, record.keep.length));
-      if (record.status !== "undone" && (moved || record.entries.some(entry => entry.state === "prepared" || entry.state === "restoring"))) action(foot, c.undo, () => { showUndoResult = true; run(() => service.undo()); }, false, "undo-2");
+      if (record.status !== "undone" && (moved || record.entries.some(entry => entry.state === "prepared" || entry.state === "restoring"))) action(foot, c.undo, () => { showCurrentResult = true; run(() => service.undo()); }, false, "undo-2");
       if (record.status === "undone" && onFinish) action(foot, c.finish, onFinish);
       if (record.status === "interrupted") el(root, "div", "settings-error", c.interrupted);
     } else {
       const total = plan?.moves.length ?? 0;
       el(foot, "span", "", total && !service.linkUpdatesEnabled ? c.error("journal_links_disabled") : !total ? unknown.length ? c.aiOnly : c.empty : unknown.length ? c.beforeAi : "");
-      const button = action(foot, c.run(total), () => run(() => service.execute()), true); button.disabled = Boolean(service.busy) || !total || !service.linkUpdatesEnabled;
+      const button = action(foot, c.run(total), () => { showCurrentResult = true; run(() => service.execute()); }, true); button.disabled = Boolean(service.busy) || !total || !service.linkUpdatesEnabled;
     }
     if (error || service.error) el(root, "div", "settings-error", error || c.error(service.error)).setAttribute("role", "alert");
   };
   const release = service.subscribe(() => { if (root.isConnected !== false) render(); }); render();
-  void service.initialize().then(async () => { if (!service.plan) await service.preview(); else render(); }).catch(failure => { error = c.error(String(failure)); render(); });
+  void service.initialize().then(async () => { if (!service.busy) await service.preview(); else render(); }).catch(failure => { error = c.error(String(failure)); render(); });
   return () => { disposed = true; release(); };
 }

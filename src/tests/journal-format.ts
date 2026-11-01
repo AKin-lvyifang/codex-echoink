@@ -71,6 +71,18 @@ export async function runJournalFormatTests() {
   const moved = fixture(); moved.add("Daily/2026-10-31.md", "user content"); const service = moved.service(); await service.preview(); await service.execute();
   assert.ok(moved.files.has("Daily/2026-10/2026-10-31.md")); assert.equal(service.record?.entries[0].state, "moved");
   const cold = moved.service(); await cold.initialize(); await cold.undo(); assert.equal(cold.record?.status, "undone"); assert.equal(moved.bytes.get("Daily/2026-10-31.md"), "user content");
+  assert.equal(cold.plan?.moves.length, 1, "undo refreshes the current inventory");
+  const repeated = fixture(); repeated.add("Daily/2026-10-01.md"); repeated.add("Daily/2026-10-02.md"); repeated.add("Daily/20261002.md");
+  const repeating = repeated.service(); await repeating.preview(); await repeating.execute();
+  assert.equal(repeating.plan?.moves.length, 0, "completion refreshes the current inventory"); assert.equal(repeating.record?.keep.length, 2);
+  repeated.files.delete("Daily/20261002.md"); repeated.bytes.delete("Daily/20261002.md");
+  await repeating.preview(); assert.equal(repeating.plan?.moves.length, 1, "resolving a duplicate produces a new plan");
+  await repeating.execute(); assert.equal(repeating.record?.entries.length, 1, "the new operation replaces the previous undo record");
+  assert.equal(repeating.record?.entries[0].from, "Daily/2026-10-02.md"); await repeating.undo();
+  assert.ok(repeated.files.has("Daily/2026-10/2026-10-01.md"), "undo restores only the latest operation"); assert.ok(repeated.files.has("Daily/2026-10-02.md"));
+  await repeating.preview(); await repeating.execute();
+  await repeating.save("format", "YYYY-MM-DD"); await repeating.save("format", "YYYY-MM/YYYY-MM-DD"); repeated.add("Daily/2026-10-03.md"); await repeating.preview();
+  assert.equal(repeating.currentRecord, null, "a result from an earlier settings signature is not revived after switching back"); assert.equal(repeating.plan?.moves.length, 1);
   const edited = fixture(); edited.add("Daily/2026-10-30.md"); const editing = edited.service(); await editing.preview(); await editing.execute(); edited.bytes.set("Daily/2026-10/2026-10-30.md", "new user text"); await editing.undo();
   assert.equal(editing.record?.entries[0].reason, "edited"); assert.equal(edited.bytes.get("Daily/2026-10/2026-10-30.md"), "new user text");
   const interrupted = fixture(); interrupted.add("Daily/2026-10-29.md", "saved"); const running = interrupted.service(); await running.preview(); interrupted.fail(); await assert.rejects(() => running.execute());

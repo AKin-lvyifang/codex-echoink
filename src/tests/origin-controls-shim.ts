@@ -1,6 +1,13 @@
 /** Node business fixtures use a minimal DOM. Real Origin/Radix behavior is covered
  * by origin-controls-dom in the browser; this shim is never bundled in the plugin. */
 type Options = { cls?: string; text?: string; attr?: Record<string, unknown>; value?: string };
+/** Minimal Node-only event adapter; searchable picker behavior uses real DOM tests. */
+export function createKnowledgeFolderPicker(parent: any, options: any) {
+  const element = parent.createDiv();
+  const input = element.createEl("input", { attr: { "aria-label": options.label } }); input.value = options.values[0]?.path ?? "";
+  input.onchange = () => options.onChange(input.value ? [{ path: input.value, create: true }] : []);
+  return { element, dispose: () => element.remove(), setDisabled: (value: boolean) => { input.disabled = value; }, setError: () => {}, setValues: (values: any[]) => { input.value = values[0]?.path ?? ""; } };
+}
 export function createOriginInput(parent: any, options: Options = {}) { return parent.createEl("input", options); }
 export function createOriginButton(parent: any, options: Options = {}) { return parent.createEl("button", options); }
 export function createOriginPagination(parent: any, _page: number, pages: number, onChange: (page: number) => void) {

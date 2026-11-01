@@ -127,7 +127,7 @@ async function openOrganization(ctx: IPadSettingsContext, initial: MobileKnowled
 }
 
 interface PickerOptions { selected: string[]; multiple?: boolean; topLevel?: boolean; allowNew?: boolean; allowRoot?: boolean; defaultPath?: string | null; selectable?: (path: string) => boolean }
-async function openFolderPicker(ctx: IPadSettingsContext, snapshot: MobileKnowledgeFoldersSnapshot, options: PickerOptions, save: (paths: string[], defaultPath?: string) => Promise<void>): Promise<void> {
+export async function openFolderPicker(ctx: IPadSettingsContext, snapshot: Pick<MobileKnowledgeFoldersSnapshot, "directories">, options: PickerOptions, save: (paths: string[], defaultPath?: string) => Promise<void>): Promise<void> {
   const view = new FolderPage(ctx, "ipad-knowledge-folders-picker", t(ctx, "选择目录", "Choose folders")); let selected = [...options.selected], changed = false, query = "", newPath = "", defaultPath = options.defaultPath ?? (selected.length === 1 ? selected[0] : "");
   const search = settingsField(ctx, view.body, t(ctx, "搜索目录", "Search folders"), "", value => { query = value; draw(); }, "search"), list = el(ctx.document, "div", "pd-knowledge-folder-list"); search.parentElement!.after(list);
   const draw = () => { list.replaceChildren(); const paths = [...new Set([...(options.allowRoot ? [""] : []), ...snapshot.directories, ...selected, ...(options.selectable ? options.selected : [])])].filter(path => (path !== "" || options.allowRoot === true) && (path || t(ctx, "库根目录", "Vault root")).toLocaleLowerCase().includes(query.toLocaleLowerCase()) && (!options.topLevel || !path.includes("/") || options.selected.includes(path)) && (!options.selectable || options.selectable(path) || options.selected.includes(path)));
