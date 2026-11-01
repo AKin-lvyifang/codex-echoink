@@ -140,7 +140,8 @@ async function assertProtocolRequestLimitProjection(): Promise<void> {
   const capture = async (
     apiProtocol: PiProviderRuntimeConfig["apiProtocol"],
     configuredMaxTokens?: number,
-    requestedMaxTokens?: number
+    requestedMaxTokens?: number,
+    automaticOutputLimit = false
   ): Promise<ControlledPiStreamInput["options"]> => {
     const config: PiProviderRuntimeConfig = {
       ...providerConfig(),
@@ -165,6 +166,7 @@ async function assertProtocolRequestLimitProjection(): Promise<void> {
         }
       },
       model,
+      automaticOutputLimit,
       ...(configuredMaxTokens === undefined
         ? {}
         : { maxTokens: configuredMaxTokens }),
@@ -210,6 +212,12 @@ async function assertProtocolRequestLimitProjection(): Promise<void> {
     1_024
   );
   assert.equal(anthropicLower.maxTokens, 1_024);
+  for (const protocol of ["openai-completions", "openai-responses", "anthropic-messages"] as const) {
+    const automatic = await capture(protocol, 8_192, undefined, true);
+    assert.equal(automatic.maxTokens, undefined, "automatic protocol default must reach the Dispatcher without an explicit cap");
+    const explicit = await capture(protocol, 8_192, 32, true);
+    assert.equal(explicit.maxTokens, 32, "actual caller caps remain explicit for automatic models");
+  }
 }
 
 function assertCurrentModelImageCapabilityIsCanonical(): void {

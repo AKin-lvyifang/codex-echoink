@@ -111,6 +111,7 @@ const PROVIDER_FAILURE_CODES = new Set([
   "provider_network_interrupted",
   "provider_oauth_relogin_required",
   "provider_output_limit_reached",
+  "provider_output_limit_rejected",
   "provider_partial_interrupted_context",
   "provider_partial_interrupted_deadline",
   "provider_partial_interrupted_network",
@@ -188,6 +189,8 @@ export function providerFailureText(value: unknown): string | null {
   const code = safeProviderFailureCode(value);
   if (!code) return null;
   switch (code) {
+    case "provider_output_limit_rejected":
+      return "服务商拒绝了输出上限，请到模型设置手动填写。";
     case "provider_output_limit_reached":
       return "达到输出上限，回答未完整生成。";
     case "provider_content_filtered":

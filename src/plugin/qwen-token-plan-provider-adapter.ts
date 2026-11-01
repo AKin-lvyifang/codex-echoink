@@ -26,7 +26,9 @@ import type {
 import {
   preventProviderRetryAfterPartial,
   isProviderQuotaExhausted,
-  safeProviderFailureCode
+  safeProviderFailureCode,
+  sanitizeProviderFailureDetail,
+  type ProviderFailureDetail
 } from "../harness/pi/provider-failure";
 import {
   apiProviderRequestUrl,
@@ -123,7 +125,7 @@ export async function requestQwenTokenPlanProvider(
   }
   const timeoutMs = boundedInteger(
     input.timeoutMs,
-    1_000,
+    1,
     120_000,
     DEFAULT_QWEN_TOKEN_PLAN_TIMEOUT_MS
   );
@@ -230,6 +232,7 @@ async function executeQwenTokenPlanCompletion(input: {
   let decoder: ProviderSseStreamDecoder | null = null;
   let responseObserved = false;
   let streamedChunk = false;
+  let failureDetail: ProviderFailureDetail | undefined;
   const streamStartedAt = Date.now();
   try {
     if (
@@ -301,6 +304,10 @@ async function executeQwenTokenPlanCompletion(input: {
     }
     const responseStatus = status ?? response.status;
     if (responseStatus < 200 || responseStatus >= 300) {
+      if (responseStatus === 400 || responseStatus === 422) {
+        failureDetail = sanitizeProviderFailureDetail(responseStatus, response.body,
+          input.options.apiKey ? [input.options.apiKey] : []);
+      }
       throw new Error(qwenTokenPlanHttpFailureCode(
         responseStatus,
         response.body
@@ -316,13 +323,13 @@ async function executeQwenTokenPlanCompletion(input: {
     input.output.push({
       type: "error",
       reason: input.options.signal?.aborted ? "aborted" : "error",
-      error: qwenTokenPlanFailureMessage(
+      error: Object.assign(qwenTokenPlanFailureMessage(
         input.model,
         input.options.signal?.aborted,
         status,
         error,
         decoder?.partial
-      )
+      ), failureDetail ? { echoInkProviderFailure: failureDetail } : {})
     });
   }
 }
@@ -365,7 +372,7 @@ function qwenTokenPlanControlledInput(
       maxRetries: 0,
       timeoutMs: boundedInteger(
         options.timeoutMs,
-        1_000,
+        1,
         120_000,
         DEFAULT_QWEN_TOKEN_PLAN_TIMEOUT_MS
       )

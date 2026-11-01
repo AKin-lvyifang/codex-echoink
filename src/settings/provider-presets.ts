@@ -196,6 +196,7 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       modelDiscovery: "supported",
       models: [
         model("deepseek-v4-flash", 1_000_000, 384_000, true, false, true, "DeepSeek-V4 Flash"),
+        model("deepseek-flash", 1_048_576, 393_216, true, true, true, "DeepSeek-V4.1-Flash"),
         model("deepseek-v4-pro", 1_000_000, 384_000, true, false, true, "DeepSeek-V4 Pro")
       ]
     }),

@@ -59,6 +59,8 @@ export interface PiNativeControlledProviderOptions {
   /** Recheck private response authorization before egress and final acceptance. */
   assertResponseAllowed?(): void;
   maxTokens?: number;
+  /** A protocol-required default is not an explicit caller output cap. */
+  automaticOutputLimit?: boolean;
   temperature?: number;
   timeoutMs?: number;
   supportsToolCalling?: boolean;
@@ -329,9 +331,9 @@ function controlledProviderStream(
             : {}),
           ...requestMaxTokens(
             streamOptions?.maxTokens,
-            options.maxTokens,
+            options.automaticOutputLimit ? undefined : options.maxTokens,
             registeredModel.maxTokens,
-            registeredModel.api === "anthropic-messages"
+            registeredModel.api === "anthropic-messages" && !options.automaticOutputLimit
           ),
           temperature: boundedNumber(
             streamOptions?.temperature ?? options.temperature,

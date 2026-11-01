@@ -451,6 +451,8 @@ export interface ApiProviderModelConfig {
   maxOutputTokens: number;
   /** User-entered limits only. Missing fields inherit effective metadata. */
   limitsOverride?: ApiProviderModelLimitsOverride;
+  /** Limits accepted by this endpoint, separate from user-owned overrides. */
+  autoLimits?: { maxOutputTokens?: number; contextWindow?: number };
   metadataSource: ApiProviderModelMetadataSource;
   discovery?: DiscoveredProviderModel;
   capabilityOverrides?: Partial<Pick<ApiProviderModelConfig, "input" | "toolCalling" | "reasoning">>;
@@ -1036,6 +1038,46 @@ export function createApiProviderConfig(
   };
 }
 
+/** Whether output capacity is still an EchoInk guess, irrespective of capability provenance. */
+export function apiProviderModelUsesAutoOutputLimit(
+  providerId: ApiProviderId,
+  model: Pick<ApiProviderModelConfig, "id" | "discovery" | "limitsOverride">,
+  runtimeProviderId = getApiProviderPreset(providerId).runtimeProviderId
+): boolean {
+  return !getApiProviderModelPreset(providerId, model.id)
+    && !resolveEchoInkPiCatalogModel(runtimeProviderId, model.id)
+    && model.discovery?.modelMaxTokens === undefined
+    && model.limitsOverride?.maxOutputTokens === undefined;
+}
+
+export function normalizeApiProviderAutoLimits(value: unknown): ApiProviderModelConfig["autoLimits"] {
+  const record = settingsRecord(value);
+  if (!record) return undefined;
+  const limits: NonNullable<ApiProviderModelConfig["autoLimits"]> = {};
+  for (const [key, min, max] of [["maxOutputTokens", 1, 1_000_000], ["contextWindow", 1_024, 2_000_000]] as const) {
+    const number = record[key];
+    if (Number.isSafeInteger(number) && Number(number) >= min && Number(number) <= max) limits[key] = Number(number);
+  }
+  return Object.keys(limits).length ? limits : undefined;
+}
+
+export function apiProviderModelAutomaticOutputTarget(model: Pick<ApiProviderModelConfig, "autoLimits">): number {
+  return model.autoLimits?.maxOutputTokens ?? 262_144;
+}
+
+function applyStoredApiProviderAutoLimits(model: ApiProviderModelConfig, providerId: ApiProviderId, runtimeProviderId: string, value: unknown): void {
+  const limits = normalizeApiProviderAutoLimits(value);
+  if (!limits) return;
+  model.autoLimits = limits;
+  if (limits.contextWindow !== undefined && apiProviderModelUsesAutoOutputLimit(providerId, model, runtimeProviderId)) {
+    // Larger advertised windows never enlarge the existing input budget.
+    model.contextWindow = Math.min(model.contextWindow, limits.contextWindow);
+    // A genuinely tiny learned window must still satisfy the unchanged validators.
+    model.maxOutputTokens = Math.min(model.maxOutputTokens, model.contextWindow - 1);
+    model.modelMaxTokens = Math.min(model.modelMaxTokens, model.contextWindow);
+  }
+}
+
 export function createApiProviderModelConfig(
   providerId: ApiProviderId,
   modelId: string,
@@ -1138,6 +1180,7 @@ export function createDiscoveredApiProviderModelConfig(
   model.reasoningEnabled = model.reasoning && model.reasoningEnabled;
   if (previous?.reasoningEffort) model.reasoningEffort = previous.reasoningEffort;
   if (previous?.limitsOverride) applyApiProviderModelLimitsOverride(model, providerId, runtimeProviderId, previous.limitsOverride);
+  applyStoredApiProviderAutoLimits(model, providerId, runtimeProviderId, previous?.autoLimits);
   return model;
 }
 
@@ -1154,7 +1197,8 @@ export function applyApiProviderModelLimitsOverride(
     runtimeProviderId,
     model.discovery
   );
-  const preserveExplicitOverrides = Boolean(model.discovery) || model.capabilityOverrides !== undefined;
+  const preserveExplicitOverrides = Boolean(model.discovery) || model.capabilityOverrides !== undefined
+    || apiProviderModelUsesAutoOutputLimit(providerId, { ...model, limitsOverride: undefined }, runtimeProviderId);
   if (!preserveExplicitOverrides && limitsOverride.contextWindow === baseline.contextWindow) delete limitsOverride.contextWindow;
   if (!preserveExplicitOverrides && limitsOverride.modelMaxTokens === baseline.modelMaxTokens) delete limitsOverride.modelMaxTokens;
   const contextWindow = limitsOverride.contextWindow
@@ -1183,6 +1227,7 @@ export function applyApiProviderModelLimitsOverride(
   } else {
     delete model.limitsOverride;
   }
+  applyStoredApiProviderAutoLimits(model, providerId, runtimeProviderId, model.autoLimits);
 }
 
 export function applyApiProviderModelPreset(
@@ -1538,6 +1583,11 @@ export function isValidApiProviderModelConfig(
     )
     || !["preset", "catalog", "unknown", "manual", "discovery"].includes(String(model.metadataSource))
     || !isValidApiProviderModelLimitsOverride(model.limitsOverride)
+    || (model.autoLimits !== undefined && (
+      !settingsRecord(model.autoLimits)
+      || Object.keys(model.autoLimits as Record<string, unknown>).some(key => key !== "maxOutputTokens" && key !== "contextWindow")
+      || Object.entries(model.autoLimits as Record<string, unknown>).some(([key, value]) => normalizeApiProviderAutoLimits(model.autoLimits)?.[key as "contextWindow" | "maxOutputTokens"] !== value)
+    ))
   ) return false;
   const contextWindow = model.contextWindow;
   const modelMaxTokens = model.modelMaxTokens;
@@ -2869,6 +2919,7 @@ function normalizeStoredApiProviderModel(
     if (catalogModel) normalized.reasoning = catalogModel.reasoning;
     else if (presetModel) normalized.reasoning = presetModel.reasoning;
   }
+  applyStoredApiProviderAutoLimits(normalized, providerId, runtimeProviderId, record.autoLimits);
   return withStoredReasoningPreference(
     normalized,
     record.reasoningEnabled,

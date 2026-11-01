@@ -211,6 +211,7 @@ import type {
 } from "../harness/pi/production-pi-model-resolver";
 import {
   apiProviderModelSupportsImage,
+  apiProviderModelUsesAutoOutputLimit,
   getActiveApiProviderModel,
   getApiProviderModel,
   selectActiveConversationSession,
@@ -231,7 +232,8 @@ import {
 } from "../settings/provider-presets";
 import { PiLocalDataService } from "./pi-local-data-service";
 import {
-  createConfiguredPiProviderProtocolDispatcher
+  createConfiguredPiProviderProtocolDispatcher,
+  createConfiguredPiAutoOutputLimitPolicy
 } from "./configured-pi-provider-dispatcher";
 import {
   ObsidianVaultDomainAdapter,
@@ -2135,7 +2137,7 @@ async function createProductionAgentSession(input: {
       runtimeProviderId: configured.providerId,
       apiProtocol: configured.apiProtocol,
       baseUrl: configured.baseUrl
-    })
+    }, {}, createConfiguredPiAutoOutputLimitPolicy(input.plugin, configured.provider, configured.modelRef))
   });
   const modelRuntime = await ModelRuntime.create({
     credentials: new InMemoryCredentialStore(),
@@ -2581,6 +2583,8 @@ async function createProductionAgentSession(input: {
     controlledStream,
     model,
     maxTokens: configured.requestMaxOutputTokens,
+    automaticOutputLimit: apiProviderModelUsesAutoOutputLimit(productProviderId,
+      configured.provider.models.find(candidate => candidate.id === configured.modelRef)!, configured.providerId),
     supportsToolCalling: configured.toolCalling,
     currentExecutionContext: () => input.input.currentExecutionContext(),
     ...(isExpertAgent(input.plugin.settings.agentRegistry.agents.find(agent => agent.id === input.input.catalog.agentId))
