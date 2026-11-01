@@ -1,10 +1,12 @@
+import { COLLECTION_DOCUMENT_TYPES, COLLECTION_IMAGE_TYPES, collectionFileKind } from "../knowledge-base/collection-file-types";
+import { piDocumentKindForAttachment, PI_DOCUMENT_ACCEPT } from "../ui/codex-view/pi-document-input";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { App } from "obsidian";
 import { setRequestUrlForTests } from "./obsidian-shim";
-import { emptyKnowledgeFolderBindings, knowledgeCollectionKinds, knowledgeCollectionTargets, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, knowledgeCollectionKinds, knowledgeCollectionLabel, knowledgeCollectionTargets, normalizeKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import { registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
@@ -441,7 +443,7 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     assert.equal((await fs.readdir(path.join(root, "旧资料"))).length, 0);
     delete bindings.collectionTargets;
     bindings = normalizeKnowledgeFolderBindings(bindings)!;
-    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料", text: "旧资料" });
+    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料", images: "旧资料", text: "旧资料" });
     assert((await collect("https://example.invalid/legacy"))[0].startsWith("旧资料/"));
     bindings.roles.raw.writePath = "网页资料";
     assert((await collect("https://mp.weixin.qq.com/s/after-migration"))[0].startsWith("旧资料/"), "materialized destinations no longer follow the old default");
@@ -488,12 +490,41 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     assert.equal(imageAndText.length, 2);
     assert(imageAndText[0].startsWith("网页资料/") && imageAndText[1].startsWith("公众号资料/"));
     assert((await fs.readFile(path.join(root, imageAndText[1]), "utf8")).includes(imageAndText[0]), "the user's note and attachment reference survive collection");
+    bindings = normalizeKnowledgeFolderBindings(bindings)!;
+    assert.equal(bindings.collectionTargets!.images, "网页资料", "old image destination materializes from the previously shared import target");
+    bindings.collectionTargets!.images = "旧资料";
+    bindings.collectionTargets!.files = "网页资料";
+    for (const [types, directory] of [[COLLECTION_DOCUMENT_TYPES, "网页资料"], [COLLECTION_IMAGE_TYPES, "旧资料"]] as const) {
+      for (const type of types) for (const extension of type.extensions) {
+        const input = path.join(root, `format-${extension.slice(1)}${extension}`);
+        const bytes = Buffer.from(`original bytes ${extension}`); await fs.writeFile(input, bytes);
+        const result = (await capture.captureExternalFiles([{ type: collectionFileKind(input) === "images" ? "image" : "file", name: path.basename(input), path: input }]))[0];
+        assert.equal(path.posix.dirname(result), directory, `${extension} uses its own entry's folder`);
+        assert.deepEqual(await fs.readFile(path.join(root, result)), bytes, "collection preserves the original bytes and does not run extraction");
+      }
+    }
+    assert.equal(knowledgeCollectionLabel("files", bindings), "拖入或附加的文档（PDF、Word DOCX、Markdown、TXT）");
+    assert.equal(knowledgeCollectionLabel("images", bindings), "拖入或附加的图片（PNG、JPG/JPEG、GIF、WebP）");
+    assert(PI_DOCUMENT_ACCEPT.includes(".txt"));
+    assert.equal(piDocumentKindForAttachment({ name: "notes.txt", path: "notes.txt" }), "markdown", "TXT can reach Save through the chat attachment entry");
+    const beforeUnsupported = await fs.readdir(path.join(root, "网页资料"));
+    await assert.rejects(() => capture.captureExternalFiles([{ type: "file", name: "unsupported.doc", path: path.join(root, "unsupported.doc") }]), /不支持收藏/u);
+    assert.deepEqual(await fs.readdir(path.join(root, "网页资料")), beforeUnsupported, "unsupported attachments fail visibly before copying anything");
+    const migratedAgain = normalizeKnowledgeFolderBindings(bindings)!;
+    migratedAgain.collectionTargets!.files = "公众号资料";
+    assert.equal(migratedAgain.collectionTargets!.images, "旧资料", "editing documents does not retarget images after migration");
+    migratedAgain.roles.raw.readPaths = ["网页资料", "公众号资料"];
+    bindings = migratedAgain;
+    await assert.rejects(() => capture.captureExternalFiles([{ type: "image", name: "input.png", path: image }]), /重新选择/u);
+    assert.equal(bindings.collectionTargets!.images, "旧资料", "unbinding the image source retains its literal value");
     const legacy = emptyKnowledgeFolderBindings();
     Object.assign(legacy.roles.raw, { enabled: true, readPaths: ["旧资料"], writePath: "旧资料", allowedSubdirectories: ["attachments", "articles/文件收藏", "articles/手动收集"] });
     bindings = normalizeKnowledgeFolderBindings(legacy)!;
     assert.deepEqual(bindings.roles.raw.readPaths, ["旧资料"], "migration keeps the original source scopes");
-    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料/attachments", text: "旧资料/articles/手动收集", fileText: "旧资料/articles/文件收藏" });
+    assert.deepEqual(bindings.collectionTargets, { web: "旧资料", wechat: "旧资料", files: "旧资料/attachments", images: "旧资料/attachments", text: "旧资料/articles/手动收集", fileText: "旧资料/articles/文件收藏" });
     for (const target of Object.values(bindings.collectionTargets!)) await fs.mkdir(path.join(root, target!), { recursive: true });
+    assert.equal(knowledgeCollectionLabel("files", bindings), "拖入或附加的文档（PDF、Word DOCX）");
+    assert.equal(knowledgeCollectionLabel("fileText", bindings), "拖入或附加的文档（Markdown、TXT）");
     const legacyText = (await imported())[0]; assert(legacyText.startsWith("旧资料/articles/文件收藏/"));
     assert((await capture.captureExternalFiles([{ type: "image", name: "input.png", path: image }]))[0].startsWith("旧资料/attachments/"));
     assert((await collect("legacy manual text"))[0].startsWith("旧资料/articles/手动收集/"));

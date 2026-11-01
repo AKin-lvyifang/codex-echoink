@@ -7,7 +7,7 @@ function settingsFixture() {
   const folderBindings = emptyKnowledgeFolderBindings();
   folderBindings.revision = 9;
   folderBindings.configured = true;
-  folderBindings.collectionTargets = { web: "库/原始资料/甲", wechat: "库/原始资料/乙", files: "库/原始资料/甲", text: "库/原始资料/乙" };
+  folderBindings.collectionTargets = { web: "库/原始资料/甲", wechat: "库/原始资料/乙", files: "库/原始资料/甲", images: "库/原始资料/乙", text: "库/原始资料/乙" };
   folderBindings.inboxRecallExclusions = ["库/旧收件箱", "库-old/旧收件箱"];
   folderBindings.migrationIssues = ["库/这是说明，不是路径字段"];
   for (const role of KNOWLEDGE_ROOT_ROLES) Object.assign(folderBindings.roles[role], {
@@ -53,7 +53,7 @@ export function runKnowledgeFolderRenameTests(): void {
   assert.equal(moved.knowledgeBase.folderBindings.roles.raw.writePath, "资料/新来源/乙");
   assert.deepEqual(moved.knowledgeBase.folderBindings.roles.raw.allowedSubdirectoryRoots, ["资料/新来源/乙"]);
   assert.deepEqual(moved.knowledgeBase.folderBindings.roles.raw.autoOrganizePaths, ["资料/新来源/甲"]);
-  assert.deepEqual(moved.knowledgeBase.folderBindings.collectionTargets, { web: "资料/新来源/甲", wechat: "资料/新来源/乙", files: "资料/新来源/甲", text: "资料/新来源/乙" });
+  assert.deepEqual(moved.knowledgeBase.folderBindings.collectionTargets, { web: "资料/新来源/甲", wechat: "资料/新来源/乙", files: "资料/新来源/甲", images: "资料/新来源/乙", text: "资料/新来源/乙" });
   assert.equal(moved.pdfReading.originalDirectory, "资料/新来源", "an exact directory match follows the full destination path");
   assert.equal(moved.mobileUi.knowledgePaths.raw, "资料/新来源");
   assert.equal(moved.knowledgeBase.folderBindings.revision, 10);

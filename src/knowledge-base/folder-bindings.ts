@@ -1,9 +1,10 @@
+import { COLLECTION_DOCUMENT_TYPES, COLLECTION_IMAGE_TYPES } from "./collection-file-types";
 import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKnowledgePath, type KnowledgeRootRole } from "./root-paths-core";
 
-export const KNOWLEDGE_COLLECTION_KINDS = ["web", "wechat", "files", "text", "fileText"] as const;
+export const KNOWLEDGE_COLLECTION_KINDS = ["web", "wechat", "files", "images", "text", "fileText"] as const;
 export type KnowledgeCollectionKind = typeof KNOWLEDGE_COLLECTION_KINDS[number];
-export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页", wechat: "公众号文章", files: "导入的文件", text: "手动收集文字", fileText: "导入的 Markdown / 文本" };
-export type KnowledgeCollectionTargets = { web: string | null; wechat: string | null; files?: string | null; text?: string | null; fileText?: string | null };
+export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页链接", wechat: "公众号文章", files: "拖入或附加的文档", images: "拖入或附加的图片", text: "对话栏点收藏的文字", fileText: "拖入或附加的文档" };
+export type KnowledgeCollectionTargets = { web: string | null; wechat: string | null; files?: string | null; images?: string | null; text?: string | null; fileText?: string | null };
 
 export interface KnowledgeFolderBinding {
   enabled: boolean;
@@ -79,7 +80,7 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
 }
 
 /** Materialize the legacy effective destinations; later source edits never retarget them. */
-export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Required<Pick<KnowledgeCollectionTargets, "web" | "wechat" | "files" | "text">> & Pick<KnowledgeCollectionTargets, "fileText"> {
+export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Required<Pick<KnowledgeCollectionTargets, "web" | "wechat" | "files" | "images" | "text">> & Pick<KnowledgeCollectionTargets, "fileText"> {
   const raw = config.roles.raw;
   const legacy = raw.writePath ?? (raw.readPaths.length === 1 ? raw.readPaths[0] : null);
   const saved = config.collectionTargets && typeof config.collectionTargets === "object" ? config.collectionTargets : undefined;
@@ -94,12 +95,22 @@ export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Req
     files: target(saved && "files" in saved ? saved.files : legacyFiles),
     text: target(saved && "text" in saved ? saved.text : child("articles/手动收集"))
   };
-  return { ...result, ...(saved && Object.hasOwn(saved, "fileText") ? { fileText: target(saved.fileText) }
+  return { ...result, images: target(saved && "images" in saved ? saved.images : result.files), ...(saved && Object.hasOwn(saved, "fileText") ? { fileText: target(saved.fileText) }
     : (!saved || !Object.hasOwn(saved, "files")) && legacyTextFiles !== legacyFiles ? { fileText: target(legacyTextFiles) } : {}) };
 }
 export function knowledgeCollectionKinds(config: KnowledgeFolderBindings): KnowledgeCollectionKind[] {
   const targets = knowledgeCollectionTargets(config);
   return KNOWLEDGE_COLLECTION_KINDS.filter(kind => kind !== "fileText" || Object.hasOwn(targets, kind));
+}
+
+export function knowledgeCollectionLabel(kind: KnowledgeCollectionKind, config?: KnowledgeFolderBindings, language: "zh" | "en" = "zh"): string {
+  const textOnly = kind === "fileText";
+  const separateText = config && Object.hasOwn(knowledgeCollectionTargets(config), "fileText");
+  const types: readonly { readonly label: string; readonly extensions: readonly string[] }[] = kind === "images" ? COLLECTION_IMAGE_TYPES : kind === "files" || textOnly
+    ? COLLECTION_DOCUMENT_TYPES.filter(type => textOnly ? type.label === "Markdown" || type.label === "TXT" : !separateText || type.label !== "Markdown" && type.label !== "TXT") : [];
+  const title = language === "zh" ? KNOWLEDGE_COLLECTION_LABELS[kind] : ({ web: "Web links", wechat: "WeChat articles", files: "Dragged or attached documents", images: "Dragged or attached images", text: "Text saved from chat", fileText: "Dragged or attached documents" })[kind];
+  const formats = types.map(type => type.label).join(language === "zh" ? "、" : ", ");
+  return `${title}${formats ? language === "zh" ? `（${formats}）` : ` (${formats})` : ""}`;
 }
 
 /** An explicit missing/invalid choice must never fall back to another source. */

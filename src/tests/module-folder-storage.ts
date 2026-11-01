@@ -44,7 +44,7 @@ function assertBindingCompatibility() {
   bindings.inboxRecallExclusions = ["旧收件箱/资料"];
   const normalized = normalizeKnowledgeFolderBindings(bindings)!;
   assert.equal(normalized.allowAgentSubfolders, true);
-  assert.deepEqual(normalized.collectionTargets, { ...bindings.collectionTargets, files: "来源乙", text: "来源乙" });
+  assert.deepEqual(normalized.collectionTargets, { ...bindings.collectionTargets, files: "来源乙", images: "来源乙", text: "来源乙" });
   normalized.roles.raw.writePath = "来源甲";
   assert.equal(knowledgeCollectionDirectory(normalized, "files"), "来源乙", "imports retain their migrated destination");
   assert.equal(knowledgeCollectionDirectory(normalized, "text"), "来源乙", "manual text retains its migrated destination");

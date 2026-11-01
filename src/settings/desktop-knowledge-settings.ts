@@ -1,6 +1,6 @@
 import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { readNativeJournalSettings } from "../home/native-journal";
@@ -152,8 +152,9 @@ export class DesktopKnowledgeSettings {
     targets.addClass("echoink-knowledge-collection-fields");
     const saved = knowledgeCollectionTargets(bindings);
     for (const key of knowledgeCollectionKinds(bindings)) {
-      const title = key === "files" && Object.hasOwn(saved, "fileText") ? "导入的 PDF / Word / 图片" : KNOWLEDGE_COLLECTION_LABELS[key];
+      const title = knowledgeCollectionLabel(key, bindings);
       const row = new OriginSetting(targets).setName(title);
+      row.settingEl.dataset.collectionKind = key;
       const picker = createKnowledgeFolderPicker(row.controlEl, { label: `${title}保存位置`,
         folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => roots.some(root => pathInKnowledgeDirectory(path, root))); },
         values: saved[key] ? [{ path: saved[key], create: false }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,

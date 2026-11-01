@@ -26,12 +26,14 @@ export const PI_DOCUMENT_ACCEPT = [
   ".docx",
   ".md",
   ".markdown",
+  ".txt",
   ".html",
   ".htm",
   "application/pdf",
   "application/msword",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/markdown",
+  "text/plain",
   "text/html"
 ].join(",");
 
@@ -78,7 +80,7 @@ export function piDocumentKindForAttachment(
   const extension = fileExtension(attachment.name) || fileExtension(attachment.path);
   if (extension === "pdf") return "pdf";
   if (extension === "doc" || extension === "docx") return "word";
-  if (extension === "md" || extension === "markdown") return "markdown";
+  if (extension === "md" || extension === "markdown" || extension === "txt") return "markdown";
   if (extension === "html" || extension === "htm") return "html";
   return null;
 }
