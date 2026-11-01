@@ -1,4 +1,5 @@
 import type { SettingsLanguage } from "../settings/settings";
+import { parseJournalDate, journalPathForFormat } from "./journal-format";
 import { journalMoment } from "./journal-moment";
 import { DEFAULT_JOURNAL_DATE_FORMAT, QUICK_JOURNAL_TEMPLATE, renderNativeJournalTemplate } from "./native-journal";
 import { homeContributionMonthLabel, homeCopy } from "./home-i18n";
@@ -17,6 +18,7 @@ export interface HomeVaultFileRecord {
   folder: string;
   mtime: number;
   ctime?: number;
+  journalDate?: string;
   firstImagePath?: string;
   firstImageUrl?: string;
 }
@@ -299,8 +301,8 @@ export function buildHomeJournalDays(
   const activityByDate = new Map(activity.map((day) => [day.date, day.count]));
   const journalByDate = new Map<string, HomeVaultFileRecord>();
   for (const record of records) {
-    const date = journalDateFromPath(record.path, journalDirectory, journalFormat);
-    if (date) journalByDate.set(date, record);
+    const date = record.journalDate ?? journalDateFromPath(record.path, journalDirectory, journalFormat);
+    if (date && (!journalByDate.has(date) || record.path === journalPathForFormat(date, journalDirectory, journalFormat))) journalByDate.set(date, record);
   }
   const year = visibleMonth.getFullYear();
   const month = visibleMonth.getMonth();
@@ -323,19 +325,10 @@ export function buildHomeJournalDays(
 export function journalDateFromPath(
   path: string,
   journalDirectory = DEFAULT_JOURNAL_DIRECTORY,
-  journalFormat = DEFAULT_JOURNAL_DATE_FORMAT
+  journalFormat = DEFAULT_JOURNAL_DATE_FORMAT,
+  history: readonly string[] = []
 ): string | null {
-  const normalizedPath = path.replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
-  const directory = journalDirectory === "" ? "" : normalizeJournalDirectory(journalDirectory);
-  const prefix = directory ? `${directory}/` : "";
-  if (!normalizedPath.toLocaleLowerCase().startsWith(prefix.toLocaleLowerCase())) return null;
-  if (!normalizedPath.endsWith(".md")) return null;
-  const name = normalizedPath.slice(prefix.length, -3);
-  for (const format of [journalFormat, DEFAULT_JOURNAL_DATE_FORMAT, "YYYY-MM-DD"]) {
-    const parsed = journalMoment(name, format, true);
-    if (parsed.isValid() && parsed.format(format) === name) return parsed.format("YYYY-MM-DD");
-  }
-  return null;
+  return parseJournalDate(path, journalDirectory, journalFormat, history);
 }
 
 export function journalPathForDate(

@@ -1,8 +1,10 @@
+import { JournalFormatService } from "../home/journal-format-service";
+import { mountJournalOrganization } from "../home/journal-format-view";
 import { installObsidianDom } from "./obsidian-dom";
 import { renderTavilySettings } from "../settings/tavily-settings";
 import { type WebSearchSettings, type searchWeb } from "../tools/web-search";
 import * as assert from "node:assert/strict";
-import { App, Platform, Setting } from "obsidian";
+import { App, Platform, Setting, TFolder } from "obsidian";
 import { openTestModals } from "./obsidian-shim";
 import { CodexSettingTab } from "../settings/settings-tab";
 import { DEFAULT_SETTINGS, createApiProviderConfig, activateApiProvider, type SettingsLanguage, type SettingsTab } from "../settings/settings";
@@ -98,13 +100,17 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   const registrations: (() => void)[] = [];
   const daily = { folder: "journal", format: "YYYY-MM/YYYY-MM-DD" };
   const nativeSaves: unknown[] = [];
+  const journalFolders = new Set(["journal", "Notes", "Notes/Daily", "Notes/DesktopDaily"]);
+  const folderFile = (path: string) => Object.assign(new TFolder(), { path, name: path.split("/").at(-1), children: [] });
   const registryListeners = new Set<() => void>();
   let profile: UserProfileControlSnapshot = { revision: 0, items: [] };
   const profileSaves: UserProfileControlSnapshot[] = [];
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.settingsLanguage = language;
   settings.settingsTab = "providers";
+  let journalService: JournalFormatService | undefined;
   const plugin = {
+    getJournalFormatService: () => journalService ??= new JournalFormatService(plugin.app, { directory: ".obsidian/plugins/journal-test", settings: () => settings, model: () => null, generate: async () => { throw new Error("No model calls"); }, changed: () => {} }),
     app: Object.assign(new App(), {
       internalPlugins: { plugins: { "daily-notes": { instance: { options: daily }, loadData: async () => daily,
         saveData: async (value: unknown) => { nativeSaves.push(value); } } } }
@@ -154,7 +160,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     getEchoInkKnowledgeBaseStructure: async () => ({ state: "uninitialized", roots: [] }),
     getEchoInkKnowledgeBaseDashboard: async () => null
   };
-  Object.assign(plugin.app.vault, { getMarkdownFiles: () => [], getAllFolders: () => [], getAbstractFileByPath: () => null, on: () => ({}), offref: () => undefined });
+  Object.assign(plugin.app.vault, { getMarkdownFiles: () => [], getFiles: () => [], adapter: { exists: async () => false }, getAllLoadedFiles: () => [...journalFolders].map(folderFile), getAllFolders: () => [...journalFolders].map(folderFile), getAbstractFileByPath: (path: string) => journalFolders.has(path) ? folderFile(path) : null, createFolder: async (path: string) => { journalFolders.add(path); return folderFile(path); }, on: () => ({}), offref: () => undefined });
   const tab = new CodexSettingTab(plugin as never);
   // Independent settings windows have their own document and container.
   (tab as any).containerEl = win.document.createElement("div");
@@ -435,13 +441,49 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
     assert.equal(f.plugin.settings.autoOpen, !beforeStartup);
     assert.equal((f.saved.at(-1) as typeof f.plugin.settings).autoOpen, !beforeStartup);
     assert.equal(f.saved.length, 2, "real Origin toggle persists through existing callback");
-    const journal = f.tab.containerEl.querySelector<HTMLInputElement>(`input[aria-label="${language === "en" ? "Journal folder" : "日记保存文件夹"}"]`)!;
+    const journal = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`[aria-label="${language === "en" ? "Journal folder" : "日记文件夹"}"]`)!;
     assert.ok(journal);
     journal.value = "Notes/Daily";
-    journal.dispatchEvent(new primary.Event("blur"));
+    journal.dispatchEvent(new primary.Event("change"));
     await scheduler.flush();
     assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/Daily");
     assert.equal(f.nativeSaves.length, 1, "journal still saves through native Daily notes");
+    const nativeFormatBefore = f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.format;
+    const formatControl = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`[aria-label="${language === "en" ? "File name format" : "文件名格式"}"]`)!;
+    formatControl.value = "__custom"; formatControl.dispatchEvent(new primary.Event("change")); await scheduler.flush();
+    const customDraft = f.tab.containerEl.querySelector<HTMLInputElement>('input[data-journal-format="custom"]')!;
+    customDraft.value = "YYYY-MM"; customDraft.dispatchEvent(new primary.Event("input")); await scheduler.flush();
+    assert.match(f.tab.containerEl.querySelector(".journal-format-error")!.textContent ?? "", /YYYY/u);
+    assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.format, nativeFormatBefore, "invalid drafts do not rewrite native settings");
+    customDraft.value = "[记录]YYYY年MM月DD日"; customDraft.dispatchEvent(new primary.Event("input")); await scheduler.flush();
+    for (let tick = 0; tick < 20 && !f.tab.containerEl.querySelector(".journal-format-peek")!.textContent?.includes("记录"); tick++) await new Promise(resolve => primary.setTimeout(resolve, 20));
+    assert.ok(f.tab.containerEl.querySelector(".journal-format-peek")!.textContent?.includes("记录"), "valid drafts update the location preview before committing");
+    assert.equal(customDraft, f.tab.containerEl.querySelector('input[data-journal-format="custom"]'), "typing preserves the input and selection owner");
+    assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.format, nativeFormatBefore, "previewing a draft is read-only");
+    customDraft.value = nativeFormatBefore; customDraft.dispatchEvent(new primary.Event("input")); await scheduler.flush();
+
+    const organization = primary.document.body.createDiv();
+    const aiService = {
+      busy: "ai", identified: [], model: "Test model", linkUpdatesEnabled: true,
+      plan: { folder: "Daily", moves: [], keep: [], unknown: [{ path: "Daily/Untitled.md" }] },
+      subscribe: () => () => {}, initialize: async () => {}
+    } as unknown as JournalFormatService;
+    const releaseOrganization = mountJournalOrganization(organization, aiService, language);
+    await scheduler.flush();
+    const aiButton = organization.querySelector<HTMLButtonElement>(".journal-organization-heading button")!;
+    assert.ok(aiButton, "AI request keeps its action visible while running");
+    assert.equal(aiButton.disabled, true, "in-flight AI cannot be submitted again");
+    assert.match(aiButton.textContent!, language === "en" ? /Identifying/u : /判断中/u);
+    assert.ok(organization.textContent?.includes("Test model"), "quota disclosure remains visible during AI work");
+    releaseOrganization(); disposeOriginControls(organization); organization.remove();
+    for (const [containerClass, actionClass] of [["ip-module-page", "ip-button"], ["pd-module-page", "pd-settings-action"]]) {
+      const detachedPage = primary.document.createElement("div"); detachedPage.className = containerClass;
+      const dispose = mountJournalOrganization(detachedPage, aiService, language);
+      assert.ok(detachedPage.querySelector(".journal-organization.is-mobile"), "mobile layout is selected before the shell attaches its page");
+      assert.ok(detachedPage.querySelector(`.${actionClass}`), "detached mobile pages use their platform button");
+      dispose(); disposeOriginControls(detachedPage);
+    }
+
     assert.equal(f.saved.length, 2);
 
     let updates = 0;
@@ -519,7 +561,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   assert.equal(legacy.tab.containerEl.querySelectorAll("button[data-settings-tab]").length, categories.length);
   legacy.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.click();
   await scheduler.flush();
-  assert.ok(legacy.tab.containerEl.querySelector('input[aria-label="Journal folder"]'));
+  assert.ok(legacy.tab.containerEl.querySelector('[aria-label="Journal folder"]'));
   legacy.tab.hide();
   legacy.tab.containerEl.remove();
   console.log("PASS native settings: mobile eight categories, separate document and legacy display fallback");
@@ -712,7 +754,7 @@ async function checkDesktopSettings(
       assert.equal(f.plugin.settings[property], !previous);
     }
     assert.equal(f.saved.length, 2, "both startup switches persist through original callbacks");
-    assert.equal(f.tab.containerEl.querySelector('input[aria-label="Journal folder"]'), null, "journal moved out of desktop General");
+    assert.equal(f.tab.containerEl.querySelector('[aria-label="Journal folder"]'), null, "journal moved out of desktop General");
     let updates = 0;
     (f.tab as any).update = () => { updates++; mount.cleanup(); mount = mountDefinitions(f.tab); };
     const languageControl = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`button[aria-label="${settingsCopy(language).general.settingsLanguage}"]`)!;
@@ -795,10 +837,10 @@ async function checkDesktopSettings(
     f.tab.openDesktopRoute(resolveDesktopSettingsRoute("general", { focus: "general:journal" }));
     await scheduler.flush();
     const currentLanguage = f.plugin.settings.settingsLanguage;
-    const journal = f.tab.containerEl.querySelector<HTMLInputElement>(`input[aria-label="${currentLanguage === "en" ? "Journal folder" : "日记保存文件夹"}"]`)!;
+    const journal = f.tab.containerEl.querySelector<HTMLButtonElement & { value: string }>(`[aria-label="${currentLanguage === "en" ? "Journal folder" : "日记文件夹"}"]`)!;
     assert.ok(journal, "old journal focus reaches its real relocated field");
     journal.value = "Notes/DesktopDaily";
-    journal.dispatchEvent(new primary.Event("blur"));
+    journal.dispatchEvent(new primary.Event("change"));
     await scheduler.flush();
     assert.equal(f.plugin.app.internalPlugins.plugins["daily-notes"].instance.options.folder, "Notes/DesktopDaily");
     assert.equal(f.nativeSaves.length, 1);

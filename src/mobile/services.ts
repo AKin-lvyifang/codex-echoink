@@ -1,3 +1,5 @@
+import { JournalFormatService } from "../home/journal-format-service";
+import { loadNativeJournalSettings } from "../home/native-journal";
 import type { MobileEnglishDiaryPort } from "./english-diary-contracts";
 import { MobileEnglishDiaryService } from "./english-diary-service";
 import type { MobileKnowledgePagePort } from "./knowledge-page-contracts";
@@ -176,7 +178,7 @@ export class MobileServices implements HomeHost {
   get capabilities(): MobileCapabilitiesService {
     return this.capabilitiesService ??= new MobileCapabilitiesService({ adapter: this.app.vault.adapter, settings: () => this.settings,
       saveSettings: () => this.host.saveSettings(), agents: this.profileProtocol, request: this.host.capabilityRequest, skillContent: this.skillContent,
-      policy: agentId => new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings, agentId, proAccess: () => this.host.accountService }) });
+      policy: agentId => new MobileCapabilityPolicy({ app: this.app, store: this.host.store, settings: () => this.settings, agentId, proAccess: () => this.host.accountService }) });
   }
   agentIdentity = defaultAgentIdentityState();
   private readonly identityListeners = new Set<() => void>();
@@ -222,6 +224,15 @@ export class MobileServices implements HomeHost {
     this.knowledgePage = new MobileKnowledgePageService(this);
     this.englishPage = new MobileEnglishDiaryService(this, this.host.capabilityRequest ?? requestUrl);
   }
+  private journalFormatService?: JournalFormatService;
+  get journalFormats(): JournalFormatService {
+    return this.journalFormatService ??= new JournalFormatService(this.app, {
+      directory: this.preferenceRoot, settings: () => this.settings,
+      model: () => { const active = selectedModel(this.settings); return active && (active.provider.apiKey || active.provider.authMode === "oauth") ? active.model.displayName || active.model.id : null; },
+      generate: (system, user, signal) => this.generateLifestyleText(system, user, 1200, signal),
+      changed: () => { this.settingsChanged(); this.notifyHomeSurfacesChanged(); }
+    });
+  }
   get settings() { return this.host.settings; }
   registerEvent(event: EventRef) { this.host.registerEvent(event); }
   async saveSettings() { await this.host.saveSettings(); this.settingsChanged(); }
@@ -241,6 +252,7 @@ export class MobileServices implements HomeHost {
     }
   }
   async initialize() {
+    await loadNativeJournalSettings(this.app);
     if (!this.host.store.unavailableReason) await this.initializeTaskData(async () => {
       await this.memory.initialize();
       await this.memory.archiveCompleted();
@@ -254,7 +266,7 @@ export class MobileServices implements HomeHost {
     this.registerEvent(this.app.vault.on("rename", (file, old) => this.homeActivity.rename(old, file.path)));
     this.registerEvent(this.app.vault.on("delete", file => this.homeActivity.delete(file.path)));
   }
-  async dispose() { (this.englishPage as MobileEnglishDiaryService).dispose(); (this.knowledgePage as MobileKnowledgePageService).dispose(); (this.modules as MobileModuleService).dispose(); this.todos.dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
+  async dispose() { this.journalFormatService?.dispose(); (this.englishPage as MobileEnglishDiaryService).dispose(); (this.knowledgePage as MobileKnowledgePageService).dispose(); (this.modules as MobileModuleService).dispose(); this.todos.dispose(); this.lifestyle?.dispose(); await this.memoryService?.suspend(); await this.homeActivity.dispose(); }
   lifestyle!: MobileLifestyleService;
   get accountService() { return this.host.accountService; }
   async initializeFinance() { this.lifestyle = new MobileLifestyleService(this, this.preferenceRoot); await this.lifestyle.initialize(); }
@@ -408,7 +420,7 @@ export class MobileServices implements HomeHost {
     if (!session && !turn) throw new Error("会话不存在，未读取运行上下文。");
     const agentId = turn?.agentSnapshot.agentId ?? session!.agentId;
     const expert = isExpertAgent(this.settings.agentRegistry.agents.find(agent => agent.id === agentId));
-    const policy = new MobileCapabilityPolicy({ store: this.host.store, settings: () => this.settings,
+    const policy = new MobileCapabilityPolicy({ app: this.app, store: this.host.store, settings: () => this.settings,
       agentId, permission: turn?.permission, proAccess: () => this.host.accountService });
     policy.assertTool("task_update");
     let memoryAllowed = this.host.store.state.memoryEnabled;

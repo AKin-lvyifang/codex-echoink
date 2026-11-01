@@ -1,3 +1,4 @@
+import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Notice } from "obsidian";
 import { documentEchoInkColorTheme, readCompanionTheme, effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
@@ -17,7 +18,7 @@ import { createAgentSettingsPage } from "./agent-settings-pages";
 import { createCapabilityPage } from "./capability-pages";
 import { createModelPage } from "./model-pages";
 import { createFinanceSettingsPage } from "./finance-forms";
-import { moduleView, moduleSettingsGroup, moduleNavigationRow } from "./module-elements";
+import { moduleView, moduleSettingsGroup } from "./module-elements";
 import { createTodoSettings } from "./todo-pages";
 import { createIPadKnowledgeSettingsPage } from "./knowledge-settings-pages";
 import { createEnglishDiarySettingsPage } from "./english-diary-pages";
@@ -180,7 +181,7 @@ export class IPadSettings {
       const key = JSON.stringify([settings.settingsLanguage, settings.journalDirectory, settings.englishDiary, qualified, definitions.map(([id]) => mobileModuleEnabled(settings, id))]); if (key === signature) return; signature = key; content.replaceChildren();
       const basic = settingsGroup(ctx, content, t(ctx, "基础模块")), pro = settingsGroup(ctx, content, t(ctx, "PRO 模块"));
       for (const [id, label, icon, route, paid] of definitions) {
-        const directory = id === "journal" ? settings.journalDirectory : id === "english-diary" ? settings.englishDiary.englishDirectory : "";
+        const directory = id === "journal" ? this.host.services.journalFormats?.settings.folder ?? settings.journalDirectory : id === "english-diary" ? settings.englishDiary.englishDirectory : "";
         const policy = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(settings, id)) : undefined;
         const row = settingsRow(ctx, paid ? pro : basic, t(ctx, label)); row.classList.add("pd-settings-module-row");
         const copy = row.querySelector<HTMLElement>(".pd-settings-copy")!, title = el(ctx.document, "button", "pd-settings-module-title"); title.type = "button";
@@ -190,8 +191,14 @@ export class IPadSettings {
           const current = paid ? getProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess, mobileModuleEnabled(this.host.settings(), id)) : undefined;
           if (current && !current.canToggle) throw new Error(current.reason ?? t(ctx, "需要 PRO"));
           if (route === "journal") {
-            const moduleCtx = this.moduleContext(), v = moduleView(moduleCtx, "ipad-journal-settings", t(ctx, "日记设置")); v.content.classList.add("is-settings");
-            moduleNavigationRow(moduleCtx, moduleSettingsGroup(moduleCtx, v.body), t(ctx, "日记位置"), this.host.settings().journalDirectory, () => this.host.services.modules.journal.openSettings()); await ctx.push(v.finish());
+            const moduleCtx = this.moduleContext(), v = moduleView(moduleCtx, "ipad-journal-settings", this.host.settings().settingsLanguage === "en" ? "Journal settings" : "日记设置"); v.content.classList.add("is-settings");
+            const service = this.host.services.journalFormats;
+            const cleanup = mountJournalFormatSettings(moduleSettingsGroup(moduleCtx, v.body), service, { mobile: true, language: this.host.settings().settingsLanguage, openOrganization: () => {
+              const organize = moduleView(moduleCtx, "ipad-journal-organize", this.host.settings().settingsLanguage === "en" ? "Organize old journals" : "整理老日记");
+              const dispose = mountJournalOrganization(organize.body, service, this.host.settings().settingsLanguage, () => { void ctx.back(); });
+              const page = organize.finish(), original = page.dispose; page.dispose = () => { dispose(); original?.(); }; void ctx.push(page);
+            } });
+            const page = v.finish(), original = page.dispose; page.dispose = () => { cleanup(); original?.(); }; await ctx.push(page);
           } else await ctx.push(route === "knowledge" ? createIPadKnowledgeSettingsPage(ctx) : route === "english-diary-settings" ? createEnglishDiarySettingsPage(ctx, () => ctx.refresh()) : route === "todos-settings" ? createTodoSettings(this.moduleContext()) : route === "finance-settings" ? createFinanceSettingsPage(this.moduleContext()) : this.review());
         }).catch(error => ctx.error(error)); });
         if (!paid || qualified) {

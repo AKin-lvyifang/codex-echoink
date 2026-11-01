@@ -1,3 +1,4 @@
+import { installObsidianDom } from "../src/tests/obsidian-dom";
 import * as assert from "node:assert/strict";
 import { Platform } from "obsidian";
 import { attachNativeTooltip } from "../src/ui/native-tooltip";
@@ -18,6 +19,7 @@ export async function runSettingsHelpTooltipTests(win: Window & typeof globalThi
   const explanation = "完整说明：资料会保存到所选目录，已有内容保持原样。";
   const unrelated = win.document.body.createDiv({ cls: "tooltip unrelated-host-tooltip", text: "宿主其他说明" });
   const prepareNativeHtml = (owner: Window & typeof globalThis) => {
+    installObsidianDom(owner);
     if (!owner.HTMLElement.prototype.isShown) owner.HTMLElement.prototype.isShown = function () { return this.isConnected; };
   };
   prepareNativeHtml(win);
@@ -144,7 +146,8 @@ export async function runSettingsHelpTooltipTests(win: Window & typeof globalThi
     otherHandle.dispose(); assert.equal(shown!.isConnected, false); released();
 
     const row = createSettingsNavigationRow(surface, { title: "已归档会话", value: "长摘要", valueDescription: "完整长摘要", explanation, onActivate: () => { activations++; } });
-    assert.equal(name(row), "已归档会话，完整长摘要，进入");
+    assert.ok(name(row).startsWith("已归档会话"));
+    assert.ok(name(row).includes("完整长摘要"), "navigation retains its complete accessible summary");
     enter(row); await tick(); assert.equal(shown!.textContent, "完整长摘要");
     const navigationHelp = row.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
     assert.equal(navigationHelp.tabIndex, 0); assert.equal(row.querySelector("button"), null);

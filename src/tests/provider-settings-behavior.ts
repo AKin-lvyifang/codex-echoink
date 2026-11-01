@@ -1,3 +1,4 @@
+import { JournalFormatService } from "../home/journal-format-service";
 import { runCustomModelToolCallingTests } from "./custom-model-tool-calling";
 import { installMockObsidianDom } from "./obsidian-dom";
 import { runCustomToolCallingRuntimeTests } from "./pi-native/pi-native-conversation-runtime";
@@ -4298,41 +4299,22 @@ async function assertJournalDirectorySettingsUi(): Promise<void> {
     .personalMemoryState = structuredClone(fixtureState);
   tab.display();
 
-  const input = tab.containerEl.querySelector<ProviderModalTestElement>(
-    'input[aria-label="日记保存文件夹"]'
-  );
-  assert.ok(input, "general settings expose the journal folder input");
-  assert.equal(input.value, "journal");
-
-  input.value = " Notes\\Daily// ";
-  input.fireEvent("blur");
-  await settleMicrotasks();
-  assert.equal(daily.instance.options.folder, "Notes/Daily");
-  assert.equal(input.value, "Notes/Daily");
+  const select = tab.containerEl.querySelector<ProviderModalTestElement>('[aria-label="日记文件夹"]');
+  assert.ok(select, "journal settings expose the native folder select");
+  assert.equal(select.value, "journal");
+  assert.equal(saved.length, 0, "viewing the shared settings never writes native options");
+  select.value = "__root";
+  select.fireEvent("change");
+  await settleMicrotasks(); await settleMicrotasks();
+  assert.equal(daily.instance.options.folder, "", "root folder selection is explicit");
   assert.equal(saved.length, 1);
-  assert.equal(saved[0].folder, "Notes/Daily");
+  const format = tab.containerEl.querySelector<ProviderModalTestElement>('[aria-label="文件名格式"]');
+  assert.ok(format, "date format uses the same native setting");
+  format.value = "YYYY-MM-DD"; format.fireEvent("change");
+  await settleMicrotasks(); await settleMicrotasks();
+  assert.equal(daily.instance.options.format, "YYYY-MM-DD");
+  assert.ok(tab.containerEl.querySelector('[aria-label="默认模板"]'));
 
-  input.value = "../outside";
-  input.fireEvent("blur");
-  await settleMicrotasks();
-  assert.equal(daily.instance.options.folder, "journal");
-  assert.equal(input.value, "journal");
-  assert.equal(saved.length, 2);
-  delete daily.instance.options.folder;
-  plugin.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
-  Object.assign(plugin.settings.knowledgeBase.folderBindings.roles.journal, { enabled: true, readPaths: ["Bound"], writePath: "Bound" });
-  folders.add("Bound"); tab.display();
-  assert.equal(tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!.value, "Bound", "settings use the same binding fallback as the journal page");
-  plugin.settings.knowledgeBase.folderBindings.roles.journal.enabled = false;
-  plugin.settings.journalDirectory = "Unconfigured"; tab.display();
-  const untouched = tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!;
-  untouched.fireEvent("blur"); await settleMicrotasks();
-  assert.equal(folders.has("Unconfigured"), false, "opening and leaving settings never creates the suggested default folder");
-  daily.instance.options.folder = ""; tab.display();
-  const rootInput = tab.containerEl.querySelector<ProviderModalTestElement>('input[aria-label="日记保存文件夹"]')!;
-  assert.equal(rootInput.value, ""); rootInput.fireEvent("blur"); await settleMicrotasks();
-  assert.equal(daily.instance.options.folder, "", "focusing a native root folder never rewrites it to the default journal directory");
-  assert.equal(saved.length, 2);
   tab.hide();
   console.log("PASS settings: journal folder normalizes, persists, and reloads");
 }
@@ -11577,6 +11559,17 @@ function dataAttributeKey(name: string): string {
 }
 
 function withSettingsTabDefaults<T extends object>(plugin: T) {
+  let journalService: JournalFormatService | undefined;
+  const candidate = plugin as { app?: App; settings?: typeof DEFAULT_SETTINGS };
+  if (candidate.app) {
+    const vault = candidate.app.vault;
+    const memory = new Map<string, string>();
+    vault.adapter ??= { exists: async () => false, read: async (path: string) => memory.get(path) ?? "" } as never;
+    vault.getMarkdownFiles ??= () => [];
+    vault.getFiles ??= () => [];
+    vault.getAllLoadedFiles ??= () => [];
+  }
+
   const todoReminderService = {
     status: () => ({
       enabled: (plugin as { settings?: typeof DEFAULT_SETTINGS }).settings?.todoReminders?.enabled ?? false,
@@ -11589,6 +11582,8 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     testNotification: async () => ({ ok: false, error: "unavailable" as const })
   };
   return {
+    getJournalFormatService: () => journalService ??= new JournalFormatService(candidate.app!, { directory: ".obsidian/plugins/journal-test", settings: () => candidate.settings!, model: () => null,
+      generate: async () => { throw new Error("No model calls in settings tests"); }, changed: () => {} }),
     register: () => undefined,
     getKnowledgeSurfaceService: () => null,
     consumeKnowledgeLinkingFocus: () => false,

@@ -1,3 +1,5 @@
+import { readNativeJournalSettings } from "../home/native-journal";
+import { parseJournalDate } from "../home/journal-format";
 import { TFile, type App } from "obsidian";
 import { sha256Hex } from "../utils/sha256";
 import { KNOWLEDGE_ROOT_ROLES, knowledgeRootRole } from "./root-paths-core";
@@ -18,7 +20,7 @@ export interface KnowledgeBodySearchPort {
   read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>): Promise<KnowledgeAgentReadResult>;
 }
 
-export function knowledgeSearchPathKind(relativePath: string, bindings?: KnowledgeFolderBindings | null, excludedRoots: readonly string[] = []): KnowledgeSearchKind | null {
+export function knowledgeSearchPathKind(relativePath: string, bindings?: KnowledgeFolderBindings | null, excludedRoots: readonly string[] = [], journal?: { folder: string; format: string; formatHistory: readonly string[] }): KnowledgeSearchKind | null {
   const parts = relativePath.split("/");
   if (!relativePath || relativePath.startsWith("/") || /[\\:]/u.test(relativePath) || Array.from(relativePath).some(character => character.charCodeAt(0) <= 31)
     || parts.some(part => !part || part.startsWith(".")) || !/\.(?:md|markdown)$/iu.test(relativePath)
@@ -33,8 +35,10 @@ export function knowledgeSearchPathKind(relativePath: string, bindings?: Knowled
       && bindings.roles[match.role].enabled && bindings.roles[match.role].searchEnabled !== false);
     if (shared) role = shared.role;
   }
-  if (!role && bindings && parts.length === 1) {
-    if (bindings.roles.journal.native && !bindings.roles.journal.readPaths.length && /^\d{4}-\d{2}-\d{2}\.(?:md|markdown)$/u.test(relativePath)) role = "journal";
+  if (!role && journal?.folder && relativePath.startsWith(`${journal.folder}/`)) role = "journal";
+  if (!role && journal?.folder === "" && parseJournalDate(relativePath, "", journal.format, journal.formatHistory)) role = "journal";
+  if (!role && bindings && (parts.length === 1 || journal?.folder === "")) {
+    if (bindings.roles.journal.native && !bindings.roles.journal.readPaths.length && (journal ? parseJournalDate(relativePath, "", journal.format, journal.formatHistory) : /^\d{4}-\d{2}-\d{2}\.(?:md|markdown)$/u.test(relativePath))) role = "journal";
     else if (bindings.roles.templates.native && !bindings.roles.templates.readPaths.length) role = "templates";
   }
   if (role === "templates" || role === "assets") return null;
@@ -70,7 +74,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   private readonly activeReads = new Set<{ path: string; invalidated: boolean }>();
   private readonly memory = new BodySearchMemoryIndex();
   constructor(private readonly app: App, private readonly bindings: () => KnowledgeFolderBindings | null | undefined,
-    private readonly options: Readonly<{ excludedRoots?: () => readonly string[]; resolveSourcePath?: (path: string) => Promise<string>; onJournalSearch?: () => void | Promise<void> }> = {}) {}
+    private readonly options: Readonly<{ excludedRoots?: () => readonly string[]; resolveSourcePath?: (path: string) => Promise<string>; onJournalSearch?: () => void | Promise<void>; journalSettings?: () => ReturnType<typeof readNativeJournalSettings> }> = {}) {}
   invalidate(path?: string): void {
     if (this.disposed) return;
     const normalized = path?.replace(/\\/gu, "/").replace(/\/+$/u, "");
@@ -95,8 +99,15 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     const config = this.app.vault.configDir;
     return [...(this.options.excludedRoots?.() ?? []), ...(config ? [`${config}/plugins`] : [])];
   }
-  allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.excludedRoots()) !== null; }
-  scopeKey(): string { return JSON.stringify([this.bindings(), this.excludedRoots() ?? []]); }
+  private journalDate(path: string) {
+    const settings = this.journal();
+    const folders = [...new Set([settings.folder, ...(this.bindings()?.roles.journal.readPaths ?? []), ...(!this.bindings() && knowledgeRootRole(path) === "journal" ? [path.split("/")[0]] : [])])];
+    for (const folder of folders) { const date = parseJournalDate(path, folder, settings.format, settings.formatHistory); if (date) return date; }
+    return null;
+  }
+  private journal() { return this.options.journalSettings?.() ?? readNativeJournalSettings(this.app, undefined, this.bindings()); }
+  allowsPath(path: string): boolean { return knowledgeSearchPathKind(path, this.bindings(), this.excludedRoots(), this.journal()) !== null; }
+  scopeKey(): string { return JSON.stringify([this.bindings(), this.excludedRoots() ?? [], this.journal()]); }
   private containsPath(directory: string, path: string): boolean { return !directory || directory === path || path.startsWith(`${directory}/`); }
   private relevantEvent(path: string): boolean {
     if (this.allowsPath(path)) return true;
@@ -109,7 +120,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
   }
   private allowed(filePath: string): KnowledgeSearchKind {
     this.assertOpen();
-    const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.excludedRoots());
+    const kind = knowledgeSearchPathKind(filePath, this.bindings(), this.excludedRoots(), this.journal());
     if (!kind) throw Object.assign(new Error("Knowledge path is outside the search scope"), { code: "invalid_path" });
     return kind;
   }
@@ -151,7 +162,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     const scope = this.ensureScope();
     if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
     const generation = this.generation;
-    const bindingSignature = JSON.stringify(this.bindings());
+    const bindingSignature = JSON.stringify([this.bindings(), this.journal()]);
     const excludedRoots = [...(this.excludedRoots() ?? [])];
     const files = this.app.vault.getMarkdownFiles();
     const canonicalPaths = new Map<string, string>();
@@ -175,7 +186,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       }
     }
     const documents: BodySearchDocument[] = files.flatMap(file => {
-      const kind = knowledgeSearchPathKind(file.path, this.bindings(), excludedRoots);
+      const kind = knowledgeSearchPathKind(file.path, this.bindings(), excludedRoots, this.journal());
       if (!kind || this.options.resolveSourcePath && !canonicalPaths.has(file.path)) return [];
       let cache: ReturnType<App["metadataCache"]["getFileCache"]> = null;
       try { cache = this.app.metadataCache?.getFileCache(file) ?? null; } catch { /* Missing metadata must not hide readable Markdown. */ }
@@ -187,6 +198,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
         revisionKey: JSON.stringify([file.stat.mtime, file.stat.size, file.basename, kind, aliases, tags, headings,
           ...(canonicalPaths.has(file.path) ? [canonicalPaths.get(file.path)] : [])]),
         aliases, tags, headings,
+        journalDate: kind === "journal" ? this.journalDate(file.path) : undefined,
         read: () => this.read({ vaultRelativePath: file.path }) }];
     });
     const sourceFailures = failedSourcePaths.size;

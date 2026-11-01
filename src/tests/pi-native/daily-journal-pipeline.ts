@@ -155,6 +155,7 @@ export async function runDailyJournalPipelineTests(): Promise<void> {
     const explicit = await runtime.submit({ conversationId: activeConversationId, text: "继续聊聊", submittedAt: Date.now(), runtimeProviderId: "offline-journal", modelId: "journal-model", reasoning: "none", permission: "read-only", skillId: "daily-journal", skillPath, skillName: "daily-journal" });
     assert.equal((await explicit.result).terminalState, "completed");
     assert.equal(nativeContextCalls, 0, "explicit daily-journal also has no opening file probes");
+    fixture.records["daily-notes"].enabled = true; // Simulate the user changing a loaded native plugin.
     fixture.records["daily-notes"].instance.options = { folder: "current-notes", format: "YYYY-MM/YYYY-MM-DD", template: "templates/current.md" };
     await fixture.write("templates/current.md", '# {{date:YYYY-MM-DD}}\nCURRENT_TEMPLATE');
     callbacks.push(() => fauxAssistantMessage(fauxToolCall("obsidian_context", {}, { id: "save-context" }), { stopReason: "toolUse" }));

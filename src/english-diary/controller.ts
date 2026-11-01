@@ -57,7 +57,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
       const file = plugin.app.vault.getAbstractFileByPath(path);
       const property = file instanceof TFile ? plugin.app.metadataCache.getFileCache(file)?.frontmatter?.date as unknown : undefined;
       const propertyDate = typeof property === "string" && /^\d{4}-\d{2}-\d{2}$/.test(property) ? property : null;
-      return { ...source, date: journalDateFromPath(path, native.folder, native.format) ?? propertyDate ?? source.title };
+      return { ...source, date: journalDateFromPath(path, native.folder, native.format, native.formatHistory) ?? propertyDate ?? source.title };
     }, plugin.accountService ?? unavailableCapabilityAccess);
   }
   private assertStorageDirectory(directory: string): void {

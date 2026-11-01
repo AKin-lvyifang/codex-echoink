@@ -44,6 +44,8 @@ export type KnowledgeAnchorLocation = Readonly<{
 )>;
 
 export interface BodySearchDocument {
+  /** Host-resolved calendar date; null means a known journal with an unknown date. */
+  readonly journalDate?: string | null;
   /** Host-observed body/metadata/event version; omitted documents are never reused. */
   readonly revisionKey?: string;
   readonly vaultRelativePath: string;

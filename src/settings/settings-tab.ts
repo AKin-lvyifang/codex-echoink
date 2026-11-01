@@ -1,3 +1,4 @@
+import { mountJournalFormatSettings, mountJournalOrganization } from "../home/journal-format-view";
 import { renderMcpServerSettings } from "./mcp-server-settings";
 import { isOfficialRemoteSkill, remoteSkillLocked, skillDeliveryStateText } from "../resources/remote-skill-presentation";
 import { safeSkillCompareUrl } from "../membership/skill-delivery";
@@ -58,14 +59,13 @@ import {
 import type {
   BuiltinSkillRuntimeSnapshot
 } from "../harness/resources/skill-runtime";
-import { normalizeJournalDirectory } from "../home/journal-directory";
 import { LifestyleSettingsPanel } from "../lifestyle/settings-panel";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { LifestyleKind } from "../lifestyle/settings";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { formatAcceleratorForDisplay, normalizeAccelerator, recordAcceleratorFromEvent } from "../core/quick-hotkey";
 import type { QuickChatRegistrationResult } from "../plugin/quick-chat-window";
-import { readNativeJournalSettings, saveNativeJournalFolder } from "../home/native-journal";
+import { readNativeJournalSettings } from "../home/native-journal";
 import {
   mountEchoInkOnboardingCoachmark,
   type EchoInkOnboardingCoachmarkHandle
@@ -513,6 +513,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   hide(): void {
+    this.journalSettingsCleanup?.(); this.journalOrganizationCleanup?.();
     if (this.settingsViewUnloaded) { this.disposeSettingsView(); super.hide(); return; }
     if (this.hasDesktopCloseDraft()) {
       this.preserveDesktopCloseDraft = true;
@@ -1345,6 +1346,8 @@ export class CodexSettingTab extends PluginSettingTab {
     this.renderAboutSection(page);
   }
 
+  private journalSettingsCleanup?: () => void;
+  private journalOrganizationCleanup?: () => void;
   private renderJournalSettings(page: HTMLElement, embedded = false): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const journalSection = createSettingsSection(page, {
@@ -1352,48 +1355,18 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: embedded ? "flat" : "group"
     });
     const journalGroup = createSettingsGroup(journalSection);
-    const journalSetting = applySettingsRow(new OriginSetting(journalGroup)
-      .setName(zh ? "日记保存文件夹" : "Journal folder")
-      .setDesc(zh
-        ? embedded ? "与 Obsidian 原生日记共用文件夹、日期格式和模板。" : "与 Obsidian 原生日记共用文件夹。日期格式和模板可在原生日记设置中调整；默认按月存放，每天一篇。"
-        : embedded ? "Shares the Obsidian Daily notes folder, date format, and template." : "Shared with Obsidian Daily notes. Set the date format and template there; the default is one note per day in monthly folders.")
-      .addOriginText((text) => {
-        const label = zh ? "日记保存文件夹" : "Journal folder";
-        text.setPlaceholder("Journal").setValue(readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder);
-        text.inputEl.setAttr("aria-label", label);
-        let edited = false;
-        text.inputEl.addEventListener("input", () => { edited = true; });
-        const saveDirectory = async (): Promise<void> => {
-          const current = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings);
-          const previous = current.folder;
-          const normalized = text.getValue().trim() === "" ? "" : normalizeJournalDirectory(text.getValue());
-          const explicit = edited; edited = false;
-          text.setValue(normalized);
-          if (normalized === previous && (current.available || !explicit)) return;
-          try {
-            await saveNativeJournalFolder(this.app, normalized);
-          } catch {
-            text.setValue(previous);
-            new Notice(zh ? "日记保存文件夹未保存，请重试" : "Journal folder was not saved. Try again.");
-          }
-        };
-        text.inputEl.addEventListener("blur", () => void saveDirectory());
-        text.inputEl.addEventListener("keydown", (event) => {
-          if (event.key !== "Enter") return;
-          event.preventDefault();
-          edited = true;
-          text.inputEl.blur();
-        });
-      }));
-
-    const journalFolder = readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder;
-    if (journalFolder && !(this.app.vault.getAbstractFileByPath(journalFolder) instanceof TFolder)) journalSetting.infoEl.createDiv({ cls: "settings-error", text: zh ? "文件夹不存在" : "Folder does not exist" });
+    const service = this.plugin.getJournalFormatService();
+    const count = BUILT_IN_JOURNAL_TEMPLATES.length + this.journalTemplateService().listCustomTemplates().length;
+    this.journalSettingsCleanup?.();
+    this.journalSettingsCleanup = mountJournalFormatSettings(journalGroup, service, {
+      language: this.plugin.settings.settingsLanguage,
+      openOrganization: () => this.openSettingsDetail("journal-organize"), templateCount: count,
+      openTemplates: () => this.openSettingsDetail("journal-templates")
+    });
 
     if (Platform.isDesktopApp) {
       const automatic = new OriginSetting(journalGroup)
         .setName(zh ? "从日记自动整理待办和账单" : "Organize to-dos and finances from journals")
-        .setDesc(zh ? "日记内容会发给你当前配置的模型服务，并消耗它的额度。停笔满 1 小时后整理；收支需要 PRO。"
-          : "Journal content is sent to your configured model service and uses its quota. Runs after one hour without changes; finances require PRO.")
         .addOriginToggle(toggle => toggle.setValue(this.plugin.settings.diaryOrganizerEnabled).onChange(async value => {
           toggle.setDisabled(true);
           try {
@@ -1404,6 +1377,9 @@ export class CodexSettingTab extends PluginSettingTab {
             new Notice(error instanceof Error ? error.message : String(error));
           } finally { toggle.setDisabled(false); }
         }));
+      const help = createOriginButton(automatic.nameEl.createSpan({ cls: "echoink-settings-help" }), { cls: "is-icon", attr: { "aria-label": zh ? "日记自动整理说明" : "Automatic journal organization information" } });
+      attachSettingsHelpTooltip(help, zh ? "日记内容会发给你当前配置的模型服务，并消耗它的额度。停笔满 1 小时后整理；收支需要 PRO。"
+        : "Journal content is sent to your configured model service and uses its quota. Runs after one hour without changes; finances require PRO.");
       automatic.settingEl.dataset.diaryOrganizer = "setting";
     }
 
@@ -1514,6 +1490,12 @@ export class CodexSettingTab extends PluginSettingTab {
       } else container.appendChild(this.desktopSelection.host);
       return;
     }
+    if (this.settingsDetail === "journal-organize") {
+      const page = createSettingsPage(container, { title: zh ? "整理老日记" : "Organize old journals", detail: true, backLabel: zh ? "日记" : "Journal", onBack: () => { this.desktopModuleExpanded.add("journal"); void this.closeSettingsDetail(); } });
+      this.journalOrganizationCleanup?.();
+      this.journalOrganizationCleanup = mountJournalOrganization(page, this.plugin.getJournalFormatService(), this.plugin.settings.settingsLanguage, () => { this.desktopModuleExpanded.add("journal"); void this.closeSettingsDetail(); });
+      return;
+    }
     if (this.settingsDetail === "journal-templates") {
       if (!this.desktopTemplate) {
         const host = createSettingsPage(container, { title: zh ? "日记模板" : "Journal templates", detail: true, backLabel: zh ? "返回模块" : "Back to modules", onBack: () => { void this.closeSettingsDetail(); } });
@@ -1558,8 +1540,7 @@ export class CodexSettingTab extends PluginSettingTab {
         if (module === "knowledge") { const summary = knowledge.renderSummary(parent); this.ensureGenerationTemplates().renderNavigation(summary); }
         else if (module === "journal") {
           this.renderJournalSettings(parent, true);
-          const count = BUILT_IN_JOURNAL_TEMPLATES.length + this.journalTemplateService().listCustomTemplates().length;
-          createSettingsNavigationRow(parent, { title: zh ? "日记模板" : "Journal templates", value: zh ? `${count} 个` : String(count), focusKey: "journal:templates", onActivate: () => this.openSettingsDetail("journal-templates") });
+
         } else if (module === "review") this.renderReviewSettings(parent, true);
         else if (module === "todo") this.renderDesktopTodoSummary(parent);
         else if (module === "selection") createSettingsNavigationRow(parent, { title: zh ? "提问选项" : "Question actions", value: String(this.plugin.settings.selectionAsk.actions.length), focusKey: "selection-ask:settings", onActivate: () => this.openSettingsDetail("selection-ask") });
@@ -5725,6 +5706,7 @@ type VisibleSettingsTab = SettingsTab | DesktopSettingsTab;
 type SettingsActionContext = "knowledge" | "review" | "resources" | "providers";
 
 type SettingsDetail =
+  | "journal-organize"
   | "generation-templates"
   | "generation-template"
   | "journal-templates"
