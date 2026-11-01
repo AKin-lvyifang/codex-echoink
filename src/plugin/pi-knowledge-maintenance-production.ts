@@ -1022,7 +1022,7 @@ export async function privateMaintenanceSourceScope(vaultRoot: string, options: 
       const relative = `${root}/${entry.name}`;
       if (entry.name.startsWith(".") || entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await walk(relative);
-      else if (entry.isFile() && isKnowledgeMaintenanceSourcePath(relative) && ["raw", "inbox"].includes(knowledgePathRole(vaultRoot, relative) ?? "")) candidates.add(relative);
+      else if (entry.isFile() && relative !== bindings?.onboardingGuidePath && isKnowledgeMaintenanceSourcePath(relative) && ["raw", "inbox"].includes(knowledgePathRole(vaultRoot, relative) ?? "")) candidates.add(relative);
     }
   };
   for (const root of new Set(roots)) await walk(root);

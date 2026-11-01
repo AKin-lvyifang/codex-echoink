@@ -39,6 +39,7 @@ export class PaperGuideModal extends Modal {
   private guide: OnboardingGuideResult | null = null;
   private key = "";
   private provider: ApiProviderId = "deepseek";
+  private modelRequested = false;
   private progress: { step: "folders" | "bindings" | "model" | "guide"; completed: number; total: number } | null = null;
   private body!: HTMLElement;
   private footer!: HTMLElement;
@@ -68,8 +69,9 @@ export class PaperGuideModal extends Modal {
     disposeOriginControls(this.contentEl); this.contentEl.empty();
     this.modalEl.toggleClass("is-setup-detail", this.view !== "choose");
     this.modalEl.setAttribute("data-setup-view", this.view);
-    this.setTitle(this.label(this.view === "choose" ? "你想怎么开始？" : this.view === "confirm" ? "确认后我会做这些" : this.view === "running" ? "正在设置…" : this.view === "connect" ? "连接模型" : "目录已设置完成",
-      this.view === "choose" ? "How would you like to start?" : this.view === "confirm" ? "Review your setup" : this.view === "running" ? "Setting up…" : this.view === "connect" ? "Connect a model" : "Directories are ready"));
+    const failed = Boolean(this.modelError || this.guideError);
+    this.setTitle(this.label(this.view === "choose" ? "你想怎么开始？" : this.view === "confirm" ? "确认后我会做这些" : this.view === "running" ? "正在设置…" : this.view === "connect" ? "连接模型" : failed ? "目录已设置完成" : "设置好了",
+      this.view === "choose" ? "How would you like to start?" : this.view === "confirm" ? "Review your setup" : this.view === "running" ? "Setting up…" : this.view === "connect" ? "Connect a model" : failed ? "Directories are ready" : "All set"));
     if (this.view === "choose") {
       const mascot = this.titleEl.createSpan({ cls: "echoink-paper-guide-mascot", attr: { "aria-hidden": "true" } });
       for (const part of ["eyes", "mouth", "feet"]) mascot.createSpan({ cls: `echoink-paper-guide-${part}` });
@@ -162,7 +164,7 @@ export class PaperGuideModal extends Modal {
       if (plan.directoryPlan.issues.length) this.body.createDiv({ cls: "echoink-setup-error", text: plan.directoryPlan.issues.join("；"), attr: { role: "alert" } });
     }
     this.action(this.label("返回", "Back"), () => { this.error = ""; this.view = "choose"; this.render(); });
-    this.action(this.label("重新扫描", "Scan again"), () => this.scan());
+    if ((!plan && !this.busy) || plan?.directoryPlan.issues.length) this.action(this.label("重新扫描", "Scan again"), () => this.scan());
     this.action(this.label("确认，开始", "Confirm and start"), () => this.run(), true, !plan || !!plan.directoryPlan.issues.length);
   }
 
@@ -188,11 +190,11 @@ export class PaperGuideModal extends Modal {
 
   private renderProgress(): void {
     const rows = this.group();
-    const steps = ["folders", "bindings", ...(this.key.trim() ? ["model"] : []), "guide"];
+    const steps = ["folders", "bindings", ...(this.modelRequested ? ["model"] : []), "guide"];
     const current = steps.indexOf(this.progress?.step ?? "folders");
     for (const [index, step] of steps.entries()) {
       const done = index < current || (index === current && this.progress && this.progress.completed === this.progress.total);
-      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : step === "model" ? this.label("测试模型连接", "Test model connection") : this.label("准备新手指南", "Prepare getting-started guide");
+      const text = step === "folders" ? this.label("新建文件夹", "Create folders") : step === "bindings" ? this.label("绑定资料", "Bind sources") : step === "model" ? this.label("测试模型连接", "Test model connection") : this.label("写清单和新手指南", "Write setup summary and guide");
       const row = this.row(rows, done ? "circle-check" : index === current ? "loader-circle" : "circle", text,
         index === current && this.progress ? `${this.progress.completed} / ${this.progress.total}` : undefined);
       if (!done && index === current) row.addClass("is-running");
@@ -201,6 +203,7 @@ export class PaperGuideModal extends Modal {
 
   private async run(): Promise<void> {
     if (this.busy || !this.plan || this.plan.directoryPlan.issues.length) return;
+    this.modelRequested = !!this.key.trim();
     this.busy = true; this.error = ""; this.view = "running"; this.progress = null; this.render();
     try {
       this.result = await this.options.apply(this.plan, (step, completed, total) => { this.progress = { step, completed, total }; this.render(); });
@@ -211,7 +214,10 @@ export class PaperGuideModal extends Modal {
       this.progress = { step: "guide", completed: 0, total: 1 }; this.render();
       await this.finishGuide();
       this.view = "done";
-    } catch (error) { this.error = this.errorText(error); this.view = this.result ? "done" : "confirm"; }
+    } catch (error) {
+      this.error = this.errorText(error); this.view = this.result ? "done" : "confirm";
+      if (!this.result && this.plan) { this.plan.directoryPlan.issues.push(this.error); this.error = ""; }
+    }
     finally { this.busy = false; this.render(); }
   }
 
@@ -251,11 +257,12 @@ export class PaperGuideModal extends Modal {
     if (this.plan) this.row(rows, "search-check", this.label("已纳入知识库，以后改动自动反映到搜索", "Included in Knowledge; future changes update search automatically"), this.label(`${this.plan.noteCount} 篇`, `${this.plan.noteCount} notes`));
     const model = this.options.model();
     if (model) this.row(rows, "circle-check", model, this.label("已配置", "Configured"));
-    else this.row(rows, "key-round", this.label("还差模型，连上才能提问", "Connect a model to ask questions"));
+    else this.row(rows, "key-round", this.label("模型未连接", "Model not connected"));
     if (this.modelError) this.body.createDiv({ cls: "echoink-setup-error", text: this.modelError, attr: { role: "alert" } });
     if (this.guide) this.row(rows, "file-text", this.guide.path, this.guide.action === "preserved" ? this.label("已保留现有文件", "Existing file kept") : undefined);
     if (this.guideError) this.body.createDiv({ cls: "echoink-setup-error", text: this.label(`指南未完成：${this.guideError}`, `Guide not ready: ${this.guideError}`), attr: { role: "alert" } });
-    this.action(this.label("关闭", "Close"), () => this.navigate());
+    if (this.guide) this.action(this.label("看指南", "View guide"), () => this.navigate(() => this.options.openGuide(this.guide!.path)));
+    else this.action(this.label("关闭", "Close"), () => this.navigate());
     if (this.guideError) {
       const retry = createOriginButton(this.footer, { text: this.label("重试指南", "Retry guide"), cls: "button" });
       applyAmicroButton(retry, { variant: "secondary", motion: "none" });

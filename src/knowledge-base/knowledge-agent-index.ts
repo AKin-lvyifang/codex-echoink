@@ -810,7 +810,7 @@ async function walkKnowledgeRoot(
           `Knowledge root contains an unsupported file: ${relativePath}`
         );
       }
-      if (!shouldIndexPath(relativePath, kind)) continue;
+      if (relativePath === getKnowledgeFolderBindings(vaultRoot)?.onboardingGuidePath || !shouldIndexPath(relativePath, kind)) continue;
       files.push({ absolutePath, vaultRelativePath: relativePath, stat });
     }
   };

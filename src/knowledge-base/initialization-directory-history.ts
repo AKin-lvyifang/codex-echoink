@@ -12,6 +12,7 @@ const path = getDesktopPath();
 
 interface Position { original: string; current: string; identity: string }
 interface FolderPosition { original: string; current: string }
+export interface OnboardingEnglishHistory { english?: string[]; expressions?: string[] }
 export interface DirectoryModuleSettings {
   journal?: string;
   nativeJournal?: { folder?: string };
@@ -23,6 +24,7 @@ export interface DirectoryModuleSettings {
 interface DirectoryHistory {
   exactBindingRestore?: boolean;
   guide?: { path: string; hash: string };
+  englishHistory?: OnboardingEnglishHistory;
   bindings?: KnowledgeFolderBindings;
   appliedBindings?: KnowledgeFolderBindings;
   moduleSettings?: DirectoryModuleSettings;
@@ -47,6 +49,8 @@ export interface DirectoryHistoryHost {
   rename(from: string, to: string, restoring?: boolean): Promise<void>;
   removeEmptyFolder(relativePath: string): Promise<void>;
   removeGeneratedFile?(relativePath: string): Promise<void>;
+  englishHistory?(): OnboardingEnglishHistory;
+  restoreEnglishHistory?(original: OnboardingEnglishHistory, outputRoots: readonly string[]): Promise<void>;
   restoreFolderLinks?(from: string, to: string): Promise<void>;
   restoreBindings?(from: string, to: string, keepCurrent: boolean, originalBindings?: KnowledgeFolderBindings): Promise<void>;
   currentBindings?(): KnowledgeFolderBindings | null | undefined;
@@ -107,6 +111,7 @@ export class InitializationDirectoryHistory {
       for (const item of value.files) { this.absolute(item.original); this.absolute(item.current); if (typeof item.identity !== "string") throw new Error("目录索引身份无效"); }
       for (const folder of [...value.folders, ...value.createdFolders]) this.absolute(folder);
       if (value.guide) { this.absolute(value.guide.path); if (!/^[a-f0-9]{64}$/u.test(value.guide.hash)) throw new Error("指南恢复记录无效"); }
+      if (value.englishHistory) validateDirectoryModuleSettings({ english: { directory: "", legacyDirectories: value.englishHistory.english }, expressions: { directory: "", legacyDirectories: value.englishHistory.expressions } });
       if (value.folderRenames !== undefined && !Array.isArray(value.folderRenames)) throw new Error("初始化目录改名索引损坏");
       for (const folder of value.folderRenames ?? []) { this.absolute(folder.original); this.absolute(folder.current); }
       if (value.pending) { this.absolute(value.pending.from); this.absolute(value.pending.to); if (value.pending.folderOriginal) this.absolute(value.pending.folderOriginal); }
@@ -140,7 +145,7 @@ export class InitializationDirectoryHistory {
     await this.save({ version: 1, createdAt: Date.now(), jobId: `onboarding-${Date.now()}`, exactBindingRestore: true,
       bindings: this.host.currentBindings?.() ? structuredClone(this.host.currentBindings()!) : undefined,
       appliedBindings: structuredClone(applied), moduleSettings: originalModules, appliedModuleSettings: appliedModules,
-      createdFolders: [...createdFolders], folders: [], files: [], pending: null }, this.onboardingPath);
+      englishHistory: this.host.englishHistory?.(), createdFolders: [...createdFolders], folders: [], files: [], pending: null }, this.onboardingPath);
   }
 
   async clearOnboardingSetup(): Promise<void> { await fs.rm(this.onboardingPath, { force: true }); }
@@ -156,6 +161,17 @@ export class InitializationDirectoryHistory {
   async ownsOnboardingGuide(relativePath: string, hash: string): Promise<boolean> {
     const record = await this.read(this.onboardingPath);
     return record?.guide?.path === relativePath && record.guide.hash === hash;
+  }
+
+  async rebaseOnboardingGuide(from: string, to: string): Promise<void> {
+    const record = await this.read(this.onboardingPath);
+    if (!record) return;
+    const moved = (value: string) => value === from || value.startsWith(`${from}/`);
+    let changed = false;
+    if (record.guide && moved(record.guide.path)) { record.guide.path = to + record.guide.path.slice(from.length); changed = true; }
+    const excluded = record.appliedBindings?.onboardingGuidePath;
+    if (excluded && moved(excluded)) { record.appliedBindings!.onboardingGuidePath = to + excluded.slice(from.length); changed = true; }
+    if (changed) await this.save(record, this.onboardingPath);
   }
 
   private async restoreOnboardingSetup(record: DirectoryHistory): Promise<DirectoryRestoreResult> {
@@ -181,6 +197,8 @@ export class InitializationDirectoryHistory {
       if ((await fs.readdir(this.absolute(folder))).length) { result.skipped.push({ path: folder, reason: "目录非空，笔记保留原位" }); continue; }
       await this.host.removeEmptyFolder(folder); result.restored++;
     }
+    if (record.englishHistory) await this.host.restoreEnglishHistory?.(record.englishHistory,
+      record.appliedBindings.roles.outputs.readPaths.filter(root => !record.bindings?.roles.outputs.readPaths.includes(root)));
     await this.clearOnboardingSetup();
     return result;
   }

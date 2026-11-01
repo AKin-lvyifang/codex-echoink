@@ -102,6 +102,7 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
     if (binding.readPaths.length) { selected.push(...binding.readPaths); continue; }
     bind(role, choose(role));
   }
+  const guidePath = `${bindings.roles.outputs.writePath ?? bindings.roles.outputs.readPaths[0]}/${input.language === "zh" ? "开始使用 EchoInk" : "Getting started with EchoInk"}.md`;
   const modules: KnowledgeModuleDirectories = {};
   if (bindings.roles.journal.readPaths.length || bindings.roles.journal.native) {
     selected.push(...bindings.roles.journal.readPaths);
@@ -134,7 +135,7 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
   let rootCount = 0;
   batch = 0;
   for (const file of input.files) {
-    if (/\.(?:md|markdown)$/iu.test(file.path) && !file.symbolicLink) {
+    if (/\.(?:md|markdown)$/iu.test(file.path) && !file.symbolicLink && file.path !== guidePath && file.path !== input.baseline?.onboardingGuidePath) {
       notes.push(file.path);
       const parts = file.path.split("/");
       if (parts.length === 1) rootCount++;
@@ -184,7 +185,6 @@ export async function generateOnboardingSetupPlan(input: OnboardingSetupInput): 
   for (const directory of create) {
     try { normalizeKnowledgeDirectory(directory); } catch { issues.push(`${directory}：目录无效，请先调整已有设置。`); }
   }
-  const guidePath = `${output}/${input.language === "zh" ? "开始使用 EchoInk" : "Getting started with EchoInk"}.md`;
   bindings.onboardingGuidePath = guidePath;
   const directoryPlan = await input.preview(bindings, [...create], { mode: "build", moduleDirectories: modules });
   directoryPlan.issues.push(...issues);

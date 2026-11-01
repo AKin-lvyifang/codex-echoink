@@ -13,6 +13,9 @@ import { InitializationDirectoryHistory } from "../knowledge-base/initialization
 import { VaultBodySearch } from "../knowledge-base/vault-body-search";
 import { knowledgeRecallCandidateAllowed } from "../knowledge-base/folder-organization";
 import { normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
+import { privateMaintenanceSourceScope } from "../plugin/pi-knowledge-maintenance-production";
+import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
 
 function memoryInput(paths: string[] = [], extra: Partial<OnboardingSetupInput> = {}): OnboardingSetupInput {
   const files: KnowledgeDirectoryFile[] = paths.filter(value => !value.endsWith("/")).map(path => ({ path, size: 17, mtime: 23 }));
@@ -134,14 +137,16 @@ export async function runOnboardingSetupPlanTests(): Promise<void> {
     await assertConfirmationAndUndo(path.join(root, "confirmation"));
     await assertBindingOnlyUndo(path.join(root, "binding-only"));
     await assertOnboardingRollback(path.join(root, "rollback"));
-    for (const state of ["created", "preserved", "modified", "failed", "english"] as const) await assertGuideLifecycle(path.join(root, `guide-${state}`), state);
+    for (const state of ["created", "preserved", "modified", "failed", "english", "moved", "moved-preserved"] as const) await assertGuideLifecycle(path.join(root, `guide-${state}`), state);
+    for (const mode of ["new", "reused", "user-history", "content"] as const) await assertRepeatableSetup(path.join(root, `repeat-${mode}`), mode);
   }
   finally { await fs.rm(root, { recursive: true, force: true }); }
   console.log("Onboarding setup plans: empty/existing/bindings/reuse/collisions/protected/conflicts/50k/integration PASS");
 }
 
-async function assertGuideLifecycle(root: string, state: "created" | "preserved" | "modified" | "failed" | "english") {
+async function assertGuideLifecycle(root: string, state: "created" | "preserved" | "modified" | "failed" | "english" | "moved" | "moved-preserved") {
   const fixture = await nativeJournalFixture(root);
+  const userGuide = state === "preserved" || state === "moved-preserved";
   const { plugin, app } = fixture;
   plugin.settings.defaultPermission = "workspace-write";
   const before = emptyKnowledgeFolderBindings(); plugin.settings.knowledgeBase.folderBindings = before;
@@ -152,11 +157,11 @@ async function assertGuideLifecycle(root: string, state: "created" | "preserved"
   try {
     await fixture.write("原有资料/记录.md", "# 原有资料\nR3_GUIDE_TOKEN 源笔记");
     // A same-name file forces the actual output folder to differ from the default.
-    if (state !== "preserved") await fixture.write(state === "english" ? "outputs" : "产出", "occupied");
+    if (!userGuide) await fixture.write(state === "english" ? "outputs" : "产出", "occupied");
     const language = state === "english" ? "en" : "zh";
-    if (state === "preserved") await fixture.write("产出/开始使用 EchoInk.md", "USER_GUIDE R3_GUIDE_TOKEN");
+    if (userGuide) await fixture.write("产出/开始使用 EchoInk.md", "USER_GUIDE R3_GUIDE_TOKEN");
     const plan = await service.previewOnboardingSetupPlan(language);
-    assert(plan.guide.path.startsWith(state === "preserved" ? "产出/" : language === "en" ? "outputs 2/" : "产出 2/"), `${state}: ${plan.guide.path}`);
+    assert(plan.guide.path.startsWith(userGuide ? "产出/" : language === "en" ? "outputs 2/" : "产出 2/"), `${state}: ${plan.guide.path}`);
     const applied = await service.applyOnboardingSetupPlan(plan);
     const signature = knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings);
     const create = app.vault.create.bind(app.vault);
@@ -168,9 +173,9 @@ async function assertGuideLifecycle(root: string, state: "created" | "preserved"
       app.vault.create = create;
     }
     const result = await service.writeOnboardingSetupGuide(plan, applied.created);
-    assert.equal(result.action, state === "preserved" ? "preserved" : "created");
+    assert.equal(result.action, userGuide ? "preserved" : "created");
     const content = await fs.readFile(path.join(root, result.path), "utf8");
-    if (state === "preserved") assert.equal(content, "USER_GUIDE R3_GUIDE_TOKEN");
+    if (userGuide) assert.equal(content, "USER_GUIDE R3_GUIDE_TOKEN");
     else {
       assert(content.startsWith(language === "en" ? "# Getting started with EchoInk" : "# 开始使用 EchoInk"));
       assert(!/\{\w+\}/u.test(content)); assert(content.includes(plan.outputLocations.answer));
@@ -179,9 +184,21 @@ async function assertGuideLifecycle(root: string, state: "created" | "preserved"
     let opened = "";
     app.workspace.getLeaf = (() => ({ async openFile(file: { path: string }) { opened = file.path; } })) as never;
     await service.openOnboardingSetupGuide(result.path); assert.equal(opened, result.path);
+    if (state === "moved" || state === "moved-preserved") {
+      const moved = "原有资料/改名后的指南.md";
+      await app.fileManager.renameFile(app.vault.getFileByPath(result.path)!, moved);
+      await (service as unknown as { syncRenamedPaths(from: string, to: string, folder: boolean): Promise<void> }).syncRenamedPaths(result.path, moved, false);
+      result.path = moved;
+      const next = await service.previewOnboardingSetupPlan("zh");
+      assert.equal(next.noteCount, 1, "the moved guide is not counted as an included source note");
+      assert(!(await privateMaintenanceSourceScope(root, { readMaintenanceHistory: false, limit: Infinity })).sourcePaths.includes(moved));
+      const index = new KnowledgeAgentIndex({ vaultPath: root, storageRootPath: path.join(root, ".guide-index") });
+      await index.refresh();
+      assert(!(await index.search({ mode: "recent", limit: 50 })).hits.some(hit => hit.vaultRelativePath === moved));
+    }
     const saved = normalizeKnowledgeFolderBindings(plugin.settings.knowledgeBase.folderBindings)!;
     assert.equal(saved.onboardingGuidePath, result.path, "the exact exclusion survives settings normalization");
-    assert.equal(rebaseKnowledgeFolderBindings(saved, plan.outputLocations.answer, "新产出").onboardingGuidePath, `新产出/${path.basename(result.path)}`);
+    assert.equal(rebaseKnowledgeFolderBindings(saved, plan.outputLocations.answer, "新产出").onboardingGuidePath, state.startsWith("moved") ? result.path : `新产出/${path.basename(result.path)}`);
     assert(!knowledgeRecallCandidateAllowed(saved, result.path));
     const sibling = `${plan.outputLocations.answer}/其他笔记.md`;
     await fixture.write(sibling, "R3_GUIDE_TOKEN 普通产出笔记");
@@ -199,10 +216,55 @@ async function assertGuideLifecycle(root: string, state: "created" | "preserved"
     await service.restoreOriginalDirectories();
     assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(before));
     const remains = await fs.stat(path.join(root, result.path)).then(() => true, () => false);
-    assert.equal(remains, state === "preserved" || state === "modified");
+    assert.equal(remains, userGuide || state === "modified");
     if (!remains) assert.equal(await fs.stat(path.join(root, plan.outputLocations.answer)).then(() => true, () => false), false);
     assert.equal(await fs.readFile(path.join(root, "原有资料/记录.md"), "utf8"), "# 原有资料\nR3_GUIDE_TOKEN 源笔记");
     assert.equal(fixture.providerCalls(), 0, "guide generation is entirely local");
+  } finally { release(); }
+}
+
+async function assertRepeatableSetup(root: string, mode: "new" | "reused" | "user-history" | "content") {
+  const { plugin, app, write } = await nativeJournalFixture(root);
+  plugin.settings.defaultPermission = "workspace-write";
+  plugin.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
+  const originalEnglish = ["用户旧英文库", ...(mode === "user-history" ? ["产出/用户旧历史"] : [])];
+  const originalExpressions = ["用户旧表达库"];
+  Object.assign(plugin.settings.englishDiary, { legacyEnglishDirectories: [...originalEnglish], legacyExpressionDirectories: [...originalExpressions] });
+  await write("用户旧英文库/内容.md", "USER_ENGLISH");
+  if (mode === "reused") await fs.mkdir(path.join(root, "产出"));
+  // Use the real resolver: runtime refresh persists derived output migration roots.
+  plugin.englishDiary = { refreshStoragePaths() {
+    const resolved = resolveEnglishStoragePaths(plugin.settings.englishDiary, plugin.settings.knowledgeBase.folderBindings,
+      app.vault.getAllLoadedFiles().filter(file => !file.path.includes("/") && "children" in file).map(file => file.path));
+    plugin.settings.englishDiary.legacyEnglishDirectories = resolved.legacyEnglishDirectories;
+    plugin.settings.englishDiary.legacyExpressionDirectories = resolved.legacyExpressionDirectories;
+  } };
+  plugin.englishDiary.refreshStoragePaths();
+  const beforeEnglish = [...plugin.settings.englishDiary.legacyEnglishDirectories];
+  const beforeExpressions = [...plugin.settings.englishDiary.legacyExpressionDirectories];
+  const release = registerKnowledgeFolderBindings(root, () => plugin.settings.knowledgeBase.folderBindings);
+  registerKnowledgePrivateRoot(root, path.join(root, ".private"));
+  const service = new EchoInkKnowledgeSurfaceService(plugin);
+  await service.getInitializationState(); await service.linking.ready;
+  try {
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const plan = await service.previewOnboardingSetupPlan("zh");
+      assert.equal(plan.outputLocations.answer, mode === "user-history" ? "产出 2" : "产出", `repeat ${mode} cycle ${cycle}`);
+      const applied = await service.applyOnboardingSetupPlan(plan);
+      plugin.englishDiary.refreshStoragePaths();
+      assert(plugin.settings.englishDiary.legacyEnglishDirectories.some((directory: string) => directory.startsWith(plan.outputLocations.answer + "/")));
+      await service.writeOnboardingSetupGuide(plan, applied.created);
+      if (mode === "content") await write("产出/英文日记/用户内容.md", "KEEP_NEW_DIARY");
+      await service.restoreOriginalDirectories();
+      if (mode === "content") {
+        assert(plugin.settings.englishDiary.legacyEnglishDirectories.includes("产出/英文日记"));
+        assert.equal(await fs.readFile(path.join(root, "产出/英文日记/用户内容.md"), "utf8"), "KEEP_NEW_DIARY");
+        return;
+      }
+      assert.deepEqual(plugin.settings.englishDiary.legacyEnglishDirectories, beforeEnglish, "only the setup's synthetic, missing history roots are removed");
+      assert.deepEqual(plugin.settings.englishDiary.legacyExpressionDirectories, beforeExpressions);
+      assert.equal(await fs.readFile(path.join(root, "用户旧英文库/内容.md"), "utf8"), "USER_ENGLISH");
+    }
   } finally { release(); }
 }
 

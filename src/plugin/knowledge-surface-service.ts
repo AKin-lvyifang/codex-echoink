@@ -124,6 +124,25 @@ export class EchoInkKnowledgeSurfaceService {
       mkdir: (folder) => host.createFolder(folder),
       rename: (from, to, restoring) => this.renameWithLinks(from, to, restoring),
       currentBindings: () => this.plugin.settings.knowledgeBase.folderBindings,
+      englishHistory: () => ({ english: structuredClone(plugin.settings.englishDiary.legacyEnglishDirectories), expressions: structuredClone(plugin.settings.englishDiary.legacyExpressionDirectories) }),
+      restoreEnglishHistory: async (original, outputRoots) => {
+        let changed = false;
+        for (const [kind, key] of [["english", "legacyEnglishDirectories"], ["expressions", "legacyExpressionDirectories"]] as const) {
+          const current = plugin.settings.englishDiary[key];
+          if (!current) continue;
+          const retained: string[] = [];
+          for (const directory of current) {
+            if (!original[kind]?.includes(directory) && outputRoots.some(root => directory === root || directory.startsWith(`${root}/`))) {
+              validateDirectoryModuleSettings({ english: { directory } });
+              const exists = await fsp.lstat(path.join(plugin.getVaultPath(), directory)).then(() => true, (error: NodeJS.ErrnoException) => { if (error.code === "ENOENT" || error.code === "ENOTDIR") return false; throw error; });
+              if (!exists) { changed = true; continue; }
+            }
+            retained.push(directory);
+          }
+          if (changed) plugin.settings.englishDiary[key] = [...new Set([...(original[kind] ?? []), ...retained])];
+        }
+        if (changed) await plugin.saveSettings(true);
+      },
       restoreBindings: async (from, to, keepCurrent, originalBindings) => {
         const bindings = this.plugin.settings.knowledgeBase.folderBindings;
         if (!bindings) return;
@@ -431,6 +450,8 @@ export class EchoInkKnowledgeSurfaceService {
     const { englishDirectory, expressionDirectory, legacyEnglishDirectories, legacyExpressionDirectories, ...englishState } = settings.englishDiary;
     settings.englishDiary = { ...rebaseKnowledgePathRecords(englishState, from, to), englishDirectory, expressionDirectory, legacyEnglishDirectories, legacyExpressionDirectories };
     if (folder) Object.assign(settings, rebaseFolderSettingsPaths(settings, { type: "rename", kind: "folder", from, to }));
+    else if (bindings?.onboardingGuidePath === from) settings.knowledgeBase.folderBindings = { ...bindings, onboardingGuidePath: to, revision: bindings.revision + 1 };
+    await this.directoryHistory.rebaseOnboardingGuide(from, to);
     const privateRoot = knowledgePrivateRoot(this.plugin.getVaultPath());
     if (privateRoot) await rebasePrivateMaintenanceRecords(privateRoot, from, to);
     await this.plugin.pdfReading?.api.rebasePaths(from, to);

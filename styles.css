@@ -22989,7 +22989,7 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 }
 
 .echoink-paper-guide-icon {
-  color: var(--paper-guide-accent);
+  color: var(--paper-guide-secondary);
 }
 
 .echoink-paper-guide-icon svg {
