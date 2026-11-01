@@ -143,3 +143,9 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
 :where(body:not(.is-mobile)) .echoink-origin-control.echoink-settings-overlay[data-slot=select-content] {
   font-size: calc(var(--font-text-size, 16px) * .75);
 }
+
+/* Link capture is one full-width input, rather than a settings value column. */
+.modal.echoink-capture-link-modal .echoink-capture-link-field { flex-direction: column; align-items: stretch; gap: 8px; }
+.modal.echoink-capture-link-modal .echoink-capture-link-field .setting-item-info { margin-inline-end: 0; }
+.modal.echoink-capture-link-modal .echoink-capture-link-field .setting-item-control { width: 100%; justify-content: stretch; }
+.modal.echoink-capture-link-modal .echoink-capture-link-field input[data-slot=input] { width: 100%; max-width: 100%; }

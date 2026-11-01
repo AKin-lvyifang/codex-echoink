@@ -11,6 +11,7 @@ await mkdir(path.dirname(output), { recursive: true });
 await esbuild.build({
   absWorkingDir: root,
   stdin: { contents: 'import { runKnowledgeCaptureLinkTests } from "./src/tests/knowledge-capture-link"; globalThis.DOMParser = window.DOMParser; await runKnowledgeCaptureLinkTests();', resolveDir: root, loader: "ts" },
+  loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text" },
   bundle: true, platform: "node", format: "esm", target: "node22", packages: "external",
   banner: desktopNodeTestBanner,
   alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") },
