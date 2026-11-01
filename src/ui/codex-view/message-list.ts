@@ -1,3 +1,5 @@
+import { showConversationContentLocationNotice } from "../conversation-content-notice";
+import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
 import { ownedFragment, ownedEl } from "../owned-dom";
 import { disposeOriginControls } from "../../settings/origin-controls";
 import { attachNativeTooltip } from "../native-tooltip";
@@ -178,6 +180,8 @@ export interface MessageListRenderInput {
     content?: string;
   }>>;
   onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
+  onAnswerDirectoryReady?: (directory: string) => Promise<void>;
+  onOpenConversationContentSettings?: () => void | Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
   onTaskPlanAction?: (
@@ -1896,7 +1900,8 @@ export class CodexMessageListRenderer {
           answerMarkdown,
           conversationId: env.sessionId,
           conversationTitle: env.conversationTitle,
-          sourcePaths: [...sourcePaths]
+          sourcePaths: [...sourcePaths],
+          onDirectoryReady: env.onAnswerDirectoryReady
         });
         this.answerSaveStates.set(key, { status: "saved", path });
         let receiptError = "";
@@ -1919,7 +1924,9 @@ export class CodexMessageListRenderer {
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         this.answerSaveStates.set(key, { status: "failed", error: reason });
-        new Notice(conversationUiText(env.settingsLanguage, `存为笔记失败：${reason}`, `Could not save note: ${reason}`));
+        if (error instanceof ConversationContentLocationError) {
+          showConversationContentLocationNotice(env.messagesEl.ownerDocument, env.settingsLanguage, () => env.onOpenConversationContentSettings?.());
+        } else new Notice(conversationUiText(env.settingsLanguage, `存为笔记失败：${reason}`, `Could not save note: ${reason}`));
       }
       refresh();
       // A streaming delta may have replaced the button while the write was pending.

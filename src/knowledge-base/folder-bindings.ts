@@ -3,7 +3,7 @@ import { KNOWLEDGE_ROOT_NAMES, KNOWLEDGE_ROOT_ROLES, knowledgeRootRole, rebaseKn
 
 export const KNOWLEDGE_COLLECTION_KINDS = ["web", "wechat", "files", "images", "text", "fileText"] as const;
 export type KnowledgeCollectionKind = typeof KNOWLEDGE_COLLECTION_KINDS[number];
-export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页链接", wechat: "公众号文章", files: "拖入或附加的文档", images: "拖入或附加的图片", text: "对话栏点收藏的文字", fileText: "拖入或附加的文档" };
+export const KNOWLEDGE_COLLECTION_LABELS: Record<KnowledgeCollectionKind, string> = { web: "网页链接", wechat: "公众号文章", files: "拖入或附加的文档", images: "拖入或附加的图片", text: "对话栏内容", fileText: "拖入或附加的文档" };
 export type KnowledgeCollectionTargets = { web: string | null; wechat: string | null; files?: string | null; images?: string | null; text?: string | null; fileText?: string | null };
 
 export interface KnowledgeFolderBinding {
@@ -38,6 +38,8 @@ export interface KnowledgeFolderBindings {
   allowAgentSubfolders?: boolean;
   /** Each capture entry owns a literal destination. Missing fields are migrated once. */
   collectionTargets?: KnowledgeCollectionTargets;
+  /** Only the new default location can be created once, by an explicit save. */
+  conversationDirectoryPending?: boolean;
   /** Former Inbox roots withdrawn from ordinary-chat recall consent. */
   inboxRecallExclusions?: string[];
   roles: Record<KnowledgeRootRole, KnowledgeFolderBinding>;
@@ -80,9 +82,9 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
       allowedSubdirectories: paths(saved.allowedSubdirectories), allowedSubdirectoryRoots: paths(Array.isArray(saved.allowedSubdirectoryRoots) ? saved.allowedSubdirectoryRoots : saved.readPaths).filter(directory => readPaths.includes(directory)),
       compatibilityReadScopes: saved.compatibilityReadScopes === true, native: (role === "journal" || role === "templates") && saved.native === true };
   }
-  if (input.collectionTargets || result.roles.raw.readPaths.length) {
-    result.collectionTargets = knowledgeCollectionTargets({ ...result, collectionTargets: input.collectionTargets });
-  }
+  const collectionInput = { ...result, collectionTargets: input.collectionTargets, conversationDirectoryPending: input.conversationDirectoryPending };
+  result.collectionTargets = knowledgeCollectionTargets(collectionInput);
+  result.conversationDirectoryPending = knowledgeConversationLocation(collectionInput).createIfMissing;
   // Collection migration still needs legacy child destinations. Materialize before retiring grants.
   for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
     result.roles[role].allowedSubdirectories = [];
@@ -102,6 +104,23 @@ export function knowledgeOrganizationSettings(config: KnowledgeFolderBindings | 
     }))] };
 }
 
+export const DEFAULT_CONVERSATION_CONTENT_DIRECTORY = "收藏/对话";
+
+/** Preserve the old text collector first, including its pre-migration literal location. */
+export function knowledgeConversationLocation(config: KnowledgeFolderBindings | null | undefined): { directory: string; createIfMissing: boolean } {
+  const text = config?.collectionTargets?.text;
+  if (typeof text === "string" && text.length) return { directory: text, createIfMissing: config?.conversationDirectoryPending === true && text === DEFAULT_CONVERSATION_CONTENT_DIRECTORY };
+  const raw = config?.roles.raw;
+  const legacyRaw = raw?.writePath ?? (raw?.readPaths.length === 1 ? raw.readPaths[0] : null);
+  if (legacyRaw) {
+    const child = raw!.allowedSubdirectories.includes("articles/手动收集") && (raw!.allowedSubdirectoryRoots ?? raw!.readPaths).includes(legacyRaw) ? "/articles/手动收集" : "";
+    return { directory: `${legacyRaw}${child}`, createIfMissing: false };
+  }
+  const output = config?.roles.outputs.writePath;
+  if (output) return { directory: output, createIfMissing: false };
+  return { directory: DEFAULT_CONVERSATION_CONTENT_DIRECTORY, createIfMissing: true };
+}
+
 /** Materialize the legacy effective destinations; later source edits never retarget them. */
 export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Required<Pick<KnowledgeCollectionTargets, "web" | "wechat" | "files" | "images" | "text">> & Pick<KnowledgeCollectionTargets, "fileText"> {
   const raw = config.roles.raw;
@@ -116,7 +135,7 @@ export function knowledgeCollectionTargets(config: KnowledgeFolderBindings): Req
     web: target(saved && "web" in saved ? saved.web : legacy),
     wechat: target(saved && "wechat" in saved ? saved.wechat : legacy),
     files: target(saved && "files" in saved ? saved.files : legacyFiles),
-    text: target(saved && "text" in saved ? saved.text : child("articles/手动收集"))
+    text: knowledgeConversationLocation(config).directory
   };
   return { ...result, images: target(saved && "images" in saved ? saved.images : result.files), ...(saved && Object.hasOwn(saved, "fileText") ? { fileText: target(saved.fileText) }
     : (!saved || !Object.hasOwn(saved, "files")) && legacyTextFiles !== legacyFiles ? { fileText: target(legacyTextFiles) } : {}) };
@@ -131,13 +150,17 @@ export function knowledgeCollectionLabel(kind: KnowledgeCollectionKind, config?:
   const separateText = config && Object.hasOwn(knowledgeCollectionTargets(config), "fileText");
   const types: readonly { readonly label: string; readonly extensions: readonly string[] }[] = kind === "images" ? COLLECTION_IMAGE_TYPES : kind === "files" || textOnly
     ? COLLECTION_DOCUMENT_TYPES.filter(type => textOnly ? type.label === "Markdown" || type.label === "TXT" : !separateText || type.label !== "Markdown" && type.label !== "TXT") : [];
-  const title = language === "zh" ? KNOWLEDGE_COLLECTION_LABELS[kind] : ({ web: "Web links", wechat: "WeChat articles", files: "Dragged or attached documents", images: "Dragged or attached images", text: "Text saved from chat", fileText: "Dragged or attached documents" })[kind];
+  const title = language === "zh" ? KNOWLEDGE_COLLECTION_LABELS[kind] : ({ web: "Web links", wechat: "WeChat articles", files: "Dragged or attached documents", images: "Dragged or attached images", text: "Conversation content", fileText: "Dragged or attached documents" })[kind];
   const formats = types.map(type => type.label).join(language === "zh" ? "、" : ", ");
   return `${title}${formats ? language === "zh" ? `（${formats}）` : ` (${formats})` : ""}`;
 }
 
 /** An explicit missing/invalid choice must never fall back to another source. */
 export function knowledgeCollectionDirectory(config: KnowledgeFolderBindings | null | undefined, kind: KnowledgeCollectionKind): string | null {
+  if (kind === "text") {
+    const location = knowledgeConversationLocation(config).directory;
+    try { return normalizeKnowledgeDirectory(location) === location ? location : null; } catch { return null; }
+  }
   const raw = config?.roles.raw;
   if (!raw?.enabled) return null;
   const selected = knowledgeCollectionTargets(config!)[kind];
@@ -269,6 +292,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
 export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings | null | undefined): string {
   return JSON.stringify({ organization: { ...knowledgeOrganizationSettings(config), paths: knowledgeOrganizationSettings(config).paths.sort() },
     collectionTargets: config ? knowledgeCollectionTargets(config) : null,
+    conversationDirectoryPending: knowledgeConversationLocation(config).createIfMissing,
     inboxRecallExclusions: [...(config?.inboxRecallExclusions ?? [])].sort(),
     roles: KNOWLEDGE_ROOT_ROLES.map(role => {
     const binding = config?.roles[role];

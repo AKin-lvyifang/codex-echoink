@@ -1,4 +1,5 @@
 import { TFolder, type Vault } from "obsidian";
+import { ensureConversationContentDirectory } from "../../knowledge-base/conversation-content";
 import { normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../../knowledge-base/folder-bindings";
 
 export type AnswerSaveVault = Pick<Vault, "getAbstractFileByPath" | "createFolder" | "create">;
@@ -11,6 +12,7 @@ export interface AnswerSaveInput {
   conversationTitle?: string;
   sourcePaths: readonly string[];
   savedAt?: Date;
+  onDirectoryReady?: (directory: string) => Promise<void>;
 }
 
 // Serialize manual saves in this Vault so simultaneous answers cannot claim the same name.
@@ -26,22 +28,6 @@ export async function saveAnswerAsNote(vault: AnswerSaveVault, input: AnswerSave
   } finally {
     if (pendingSaves.get(vault) === pending) pendingSaves.delete(vault);
   }
-}
-
-function outputDirectory(vault: AnswerSaveVault, bindings: AnswerSaveInput["folderBindings"]): string {
-  const output = bindings?.roles.outputs;
-  if (!output?.enabled || !output.writePath || !output.readPaths.includes(output.writePath)) {
-    throw new Error("尚未绑定输出目录，请到设置 › 知识库绑定。");
-  }
-  try {
-    if (normalizeKnowledgeDirectory(output.writePath) !== output.writePath) throw new Error("invalid path");
-  } catch {
-    throw new Error("输出目录绑定无效，请到设置 › 知识库重新绑定。");
-  }
-  if (!(vault.getAbstractFileByPath(output.writePath) instanceof TFolder)) {
-    throw new Error("输出目录已失效，请到设置 › 知识库重新绑定。");
-  }
-  return output.writePath;
 }
 
 function answerFileName(question: string): string {
@@ -92,20 +78,17 @@ function isNameCollision(error: unknown): boolean {
 }
 
 async function createAnswerNote(vault: AnswerSaveVault, input: AnswerSaveInput): Promise<string> {
-  const output = outputDirectory(vault, input.folderBindings);
+  // Validate sources and metadata before the default destination can create folders.
   const markdown = noteMarkdown(input);
-  const directory = `${output}/摘录`;
-  const existing = vault.getAbstractFileByPath(directory);
-  if (existing && !(existing instanceof TFolder)) throw new Error("摘录路径已被文件占用，未保存笔记。");
-  if (!existing) {
-    try {
-      await vault.createFolder(directory);
-    } catch (error) {
-      // Another native user action may have created this child folder meanwhile.
-      if (!isNameCollision(error) || !(vault.getAbstractFileByPath(directory) instanceof TFolder)) throw error;
-    }
-  }
   const name = answerFileName(input.question);
+  const directory = await ensureConversationContentDirectory({
+    async kind(relative) {
+      const entry = vault.getAbstractFileByPath(relative);
+      return entry instanceof TFolder ? "folder" : entry ? "file" : "missing";
+    },
+    async createFolder(relative) { await vault.createFolder(relative); },
+    ready: input.onDirectoryReady
+  }, input.folderBindings);
   for (let suffix = 1; ; suffix += 1) {
     const path = `${directory}/${name}${suffix === 1 ? "" : ` ${suffix}`}.md`;
     if (vault.getAbstractFileByPath(path)) continue;

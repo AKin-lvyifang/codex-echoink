@@ -1,3 +1,5 @@
+import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
+import { showConversationContentLocationNotice } from "../conversation-content-notice";
 import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
@@ -211,6 +213,10 @@ export function renderToolbar(host: CodexComposerHost): void {
         ).catch((error: unknown) => {
           host.running = false;
           host.renderToolbar();
+          if (error instanceof ConversationContentLocationError) {
+            showConversationContentLocationNotice(host.inputEl.ownerDocument, host.plugin.settings.settingsLanguage, () => host.plugin.openEchoInkConversationContentSettings());
+            return;
+          }
           const detail = error instanceof Error ? error.message : String(error);
           new Notice(conversationUiText(
             host.plugin.settings.settingsLanguage,

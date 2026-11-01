@@ -1,3 +1,4 @@
+import { rememberConversationContentDirectory } from "../../plugin/conversation-content-settings";
 import type { App, Component } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import {
@@ -95,6 +96,8 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     sessionId: session.id,
     conversationTitle: session.title,
     getKnowledgeFolderBindings: () => host.plugin.settings.knowledgeBase.folderBindings,
+    onAnswerDirectoryReady: directory => rememberConversationContentDirectory(host.plugin, directory),
+    onOpenConversationContentSettings: () => host.plugin.openEchoInkConversationContentSettings(),
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,

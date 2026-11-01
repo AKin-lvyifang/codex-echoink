@@ -58,18 +58,18 @@ export async function runAnswerSaveStateUiTests(
         message: { role: "assistant", content: [{ type: "text", text: "重点" }], stopReason: "stop" } }
     ];
     const old = projector.projectSessionBranch({ piSessionId: "saved-session", activeLeafId: "answer", entries }).messages[0];
-    const savedPath = "outputs/摘录/这篇资料的重点.md";
+    const savedPath = "outputs/这篇资料的重点.md";
     let receipts = 0;
     const initial = bind(old, async (messageId, path) => {
-      receipts++; assert.equal(messageId, old.id); assert.equal(path, "outputs/摘录/这篇资料的重点.md");
+      receipts++; assert.equal(messageId, old.id); assert.equal(path, "outputs/这篇资料的重点.md");
     });
-    assert.equal(initial.button.getAttribute("title"), "存为笔记");
+    assert.equal(initial.button.getAttribute("aria-label"), "存为笔记");
     const saving = initial.button.onclick!(click);
     assert.equal(initial.button.disabled, true);
     await initial.button.onclick!(click);
     await saving;
     assert.equal(creates, 1); assert.equal(receipts, 1);
-    assert.equal(initial.button.getAttribute("title"), "已存为笔记，点击打开");
+    assert.equal(initial.button.getAttribute("aria-label"), "已存为笔记，点击打开");
     initial.renderer.dispose();
 
     const reopened = projector.projectSessionBranch({ piSessionId: "saved-session", activeLeafId: "receipt", entries: [
@@ -78,7 +78,7 @@ export async function runAnswerSaveStateUiTests(
         data: { schemaVersion: 1, piSessionId: "saved-session", assistantEntryId: "answer", path: savedPath } }
     ] }).messages[0];
     const cold = bind(reopened, async () => { throw new Error("open must not write another receipt"); });
-    assert.equal(cold.button.getAttribute("title"), "已存为笔记，点击打开");
+    assert.equal(cold.button.getAttribute("aria-label"), "已存为笔记，点击打开");
     await cold.button.onclick!(click);
     assert.deepEqual(context.openedPaths, [savedPath]);
     assert.equal(creates, 1, "a fresh renderer opens the original note without a second save");
@@ -90,7 +90,7 @@ export async function runAnswerSaveStateUiTests(
 
     const failed = bind({ ...old, id: "legacy-answer", savedNotePath: undefined }, async () => { throw new Error("disk full"); });
     await failed.button.onclick!(click);
-    assert.equal(failed.button.getAttribute("title"), "已存为笔记，点击打开");
+    assert.equal(failed.button.getAttribute("aria-label"), "已存为笔记，点击打开");
     const failureNotice = openTestNoticeMessages.at(-1) as unknown as FakeElement;
     assert.match(renderedText(failureNotice), /保存状态未能写入对话.*disk full/u);
     const beforeOpen = creates;
@@ -114,6 +114,19 @@ export async function runAnswerSaveStateUiTests(
     assert.equal(creates, createdBefore + 1);
     assert.equal(context.openedPaths.at(-1), realColdMessage.savedNotePath);
     real.renderer.dispose(); realCold.renderer.dispose();
+    const missingAnswer = { ...old, id: "missing-folder-answer", savedNotePath: undefined };
+    let settingsOpened = 0;
+    const missing = bind(missingAnswer);
+    (missing.renderer as unknown as { env: { onOpenConversationContentSettings?: () => void } }).env.onOpenConversationContentSettings = () => { settingsOpened++; };
+    files.delete("outputs");
+    await missing.button.onclick!(click);
+    const missingNotice = openTestNoticeMessages.at(-1) as unknown as FakeElement;
+    assert.match(renderedText(missingNotice), /对话栏内容的保存位置不存在/u);
+    const settingsButton = missingNotice.children.find(child => child.tag === "button");
+    assert.ok(settingsButton, "missing location exposes an actionable settings button");
+    await settingsButton.onclick!(click);
+    assert.equal(settingsOpened, 1);
+    missing.renderer.dispose();
     console.log("PASS answer-save UI: old records, pending duplicate clicks, cold restore/open, missing notes and receipt-write failure");
     console.log("PASS answer-save UI: real click -> Provider-free plugin callback -> Session JSONL -> fresh projection and renderer -> same note");
   } finally {

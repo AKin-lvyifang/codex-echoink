@@ -353,8 +353,8 @@ export class CodexSettingTab extends PluginSettingTab {
     else if (/journal:templates/u.test(route.focus ?? "")) this.openSettingsDetail("journal-templates");
     else if (/todo:categories/u.test(route.focus ?? "")) this.openSettingsDetail("todo-categories");
     else if (/knowledge:sources/u.test(route.focus ?? "")) { this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open("sources"); }
-    else if (/^knowledge:(?:collections|permissions|management)$/u.test(route.focus ?? "")) {
-      this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open(route.focus!.slice("knowledge:".length) as "collections" | "permissions" | "management");
+    else if (/^knowledge:(?:collections(?::text)?|permissions|management)$/u.test(route.focus ?? "")) {
+      this.desktopModuleExpanded.add("knowledge"); this.ensureDesktopKnowledge().open(route.focus!.split(":")[1] as "collections" | "permissions" | "management");
     }
     else if (route.resourceId) this.openSettingsDetail({ kind: "resource", resourceId: route.resourceId });
     else if (/knowledge:(?:preferences|preference)/u.test(route.focus ?? "")) this.openSettingsDetail("knowledge-preferences");
@@ -893,6 +893,22 @@ export class CodexSettingTab extends PluginSettingTab {
     const sharedKey = settingsContainerFocusIntents.get(this.containerEl);
     const key = sharedKey ?? this.settingsFocusIntent;
     if (!key) return;
+    if (key === "explicit:knowledge:collections:text") {
+      const target = this.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]');
+      if (!target) return;
+      const owner = this.containerEl.ownerDocument.defaultView ?? window;
+      const row = target.closest<HTMLElement>(".setting-item") ?? target;
+      const locate = () => {
+        if (!target.isConnected || target.closest("[hidden], [inert]")) return;
+        row.scrollIntoView({ block: "center" }); target.focus({ preventScroll: true });
+      };
+      row.classList.add("echoink-knowledge-linking-located");
+      owner.setTimeout(() => row.classList.remove("echoink-knowledge-linking-located"), 1800);
+      locate(); owner.requestAnimationFrame(() => { locate(); owner.requestAnimationFrame(locate); });
+      if (sharedKey) settingsContainerFocusIntents.delete(this.containerEl);
+      this.settingsFocusIntent = null;
+      return;
+    }
     if (sharedKey) {
       (this.containerEl.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
         const focusable = Array.from(this.containerEl.querySelectorAll<HTMLElement>(

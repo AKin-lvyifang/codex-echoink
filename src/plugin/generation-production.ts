@@ -1,5 +1,6 @@
 import { TFolder, type App } from "obsidian";
-import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { knowledgeConversationLocation, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { ConversationContentLocationError, ensureConversationContentDirectory } from "../knowledge-base/conversation-content";
 import type { GenerationRuntimePort, GenerationExecutionIdentity } from "../generation/runtime";
 import type { GenerationRequest, GenerationResult } from "../generation/types";
 import { assertGenerationPathSafe, readGenerationSources } from "../generation/sources";
@@ -13,6 +14,7 @@ export interface GenerationProductionOptions {
   app: App;
   vaultRoot: string;
   bindings(): KnowledgeFolderBindings | null | undefined;
+  directoryReady?: (directory: string) => Promise<void>;
   assertRead(path: string, identity: GenerationExecutionIdentity): Promise<void>;
   assertWrite(path: string, identity: GenerationExecutionIdentity): Promise<void>;
   authorization(identity: GenerationExecutionIdentity): PiVaultToolAuthorizationPort;
@@ -20,10 +22,12 @@ export interface GenerationProductionOptions {
   domain: VaultDomainService;
 }
 function assertBinding(options: GenerationProductionOptions, request: GenerationRequest): void {
-  const binding = options.bindings()?.roles.outputs;
-  if (!binding?.enabled || !binding.writePath || !binding.readPaths.includes(binding.writePath)) throw new Error("尚未绑定输出目录，请到设置 › 知识库绑定。");
-  if (binding.writePath !== request.outputRoot) throw new Error("输出目录已换绑，请重新打开生成弹窗。");
-  if (!(options.app.vault.getAbstractFileByPath(request.outputRoot) instanceof TFolder)) throw new Error("输出目录已失效，请到设置 › 知识库重新绑定。");
+  const location = knowledgeConversationLocation(options.bindings());
+  try { if (normalizeKnowledgeDirectory(location.directory) !== location.directory) throw new Error("invalid"); }
+  catch { throw new ConversationContentLocationError(); }
+  if (location.directory !== request.outputRoot) throw new Error("对话栏内容的保存位置已换绑，请重新打开生成弹窗。");
+  const directory = options.app.vault.getAbstractFileByPath(request.outputRoot);
+  if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError();
 }
 export function createGenerationRuntimePort(options: GenerationProductionOptions): GenerationRuntimePort {
   return {
@@ -32,7 +36,7 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
       if (identity.access.mode === "plan" || identity.access.permission === "read-only") throw new Error("生成需要 Agent 模式和可写权限。");
       assertBinding(options, request);
       for (const source of request.sourcePaths) await options.assertRead(source, identity);
-      const assessment = await readGenerationSources(options.vaultRoot, request.sourcePaths, options.bindings()?.roles.outputs.readPaths ?? [], identity.signal);
+      const assessment = await readGenerationSources(options.vaultRoot, request.sourcePaths, [`${request.outputRoot}/报告`, `${request.outputRoot}/导图`], identity.signal);
       if (assessment.error) throw new Error(assessment.error);
       return assessment;
     },
@@ -52,11 +56,26 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
         const { title, content, branchCount, characterCount } = prepareGenerationOutput(request, assessment.sources, modelText, attempt);
         Object.assign(result, { title, ...(branchCount === undefined ? {} : { branchCount }), ...(characterCount === undefined ? {} : { characterCount }) });
         identity.signal.throwIfAborted(); assertBinding(options, request);
-        await assertGenerationPathSafe(options.vaultRoot, request.outputRoot);
         await options.assertWrite(`${request.outputDirectory}/生成成果.${request.outputKind === "canvas" ? "canvas" : "md"}`, identity);
+        await ensureConversationContentDirectory({
+          kind: async directory => {
+            identity.signal.throwIfAborted(); assertBinding(options, request);
+            await assertGenerationPathSafe(options.vaultRoot, directory, true);
+            const entry = options.app.vault.getAbstractFileByPath(directory);
+            return entry instanceof TFolder ? "folder" : entry ? "file" : "missing";
+          },
+          createFolder: async directory => {
+            identity.signal.throwIfAborted(); assertBinding(options, request);
+            await assertGenerationPathSafe(options.vaultRoot, directory, true);
+            await options.app.vault.createFolder(directory);
+          },
+          ready: options.directoryReady
+        }, options.bindings());
+        identity.signal.throwIfAborted(); assertBinding(options, request);
+        await assertGenerationPathSafe(options.vaultRoot, request.outputRoot);
         const directory = options.app.vault.getAbstractFileByPath(request.outputDirectory);
         if (directory && !(directory instanceof TFolder)) throw new Error("生成目录被文件占用，尚未写入文件。");
-        // The explicit Generate action authorizes only this fixed bound child.
+        // The explicit Generate action authorizes only this fixed conversation-content child.
         if (!directory) {
           try { await options.app.vault.createFolder(request.outputDirectory); }
           catch (error) { if (!(options.app.vault.getAbstractFileByPath(request.outputDirectory) instanceof TFolder)) throw error; }

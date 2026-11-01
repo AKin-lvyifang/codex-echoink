@@ -11,6 +11,7 @@ import { renderComposerResourcePanel } from "../ui/codex-view/composer";
 import { renderKnowledgeCommandMatches } from "../ui/codex-view/menus";
 import { handleKnowledgeCommandMenuKeyDown } from "../ui/knowledge-command-menu";
 import { Platform } from "obsidian";
+import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 
 export async function runGenerationUiTests(): Promise<void> {
   installProviderBrowserHost();
@@ -43,7 +44,7 @@ export async function runGenerationUiTests(): Promise<void> {
   assert.equal(host.querySelector(".modal-container"), null, "editor stays inside settings");
   button("返回生成模板").click();
   assert.equal(host.querySelectorAll(".echoink-generation-template-row").length, 4, "editor returns to the independent list");
-  button("返回知识库").click(); assert.equal(list, false);
+  button("返回模块").click(); assert.equal(list, false);
   host.querySelector<HTMLButtonElement>('[data-echoink-focus-key="knowledge:generation-templates"]')!.click();
   button("新增模板").click();
   button("保存").click();
@@ -104,13 +105,14 @@ export async function runGenerationModalTests(): Promise<void> {
   const app = { vault: { getMarkdownFiles: () => files }, metadataCache: { getFileCache: () => ({ frontmatter: {} }) },
     setting: { open() { settingsOpens++; }, openTabById() {} }, keymap: { pushScope() {}, popScope() {} } };
   const plugin = { app, settings, manifest: { id: "echoink" }, prepareDesktopSettingsRoute(route: unknown) { routes.push(route); }, applyAppearanceTheme() {},
+    openEchoInkConversationContentSettings() { routes.push({ tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:text" }); settingsOpens++; },
     async saveSettings() { if (failTemplateSave) throw new Error("测试模板保存失败"); } } as unknown as EchoInkPlugin;
   const service: GenerationModalService = {
     availableNotes: () => files.filter(file => !file.path.startsWith("Outputs/")).map(file => file.path),
     async assessSources(paths) { return { sources: paths.map(path => ({ path, content: "测试资料", bytes: 12 })), totalBytes: paths.length * 12, readFailures: [], ...(assessError ? { error: assessError } : {}) }; },
     disabledReason: input => input.mode === "plan" ? "请切换到 Agent 模式后生成。" : input.permission === "read-only" ? "请切换到可写权限后生成。" : outputError || null,
     createRequest: (template, paths) => ({ version: 1, id: "request", createdAt: new Date().toISOString(), template: { ...template }, sourcePaths: [...paths], outputKind: template.outputKind, outputRoot: "Outputs", outputDirectory: `Outputs/${template.outputKind === "canvas" ? "导图" : "报告"}` }),
-    outputDirectory: kind => { if (outputError) throw new Error(outputError); return `Outputs/${kind === "canvas" ? "导图" : "报告"}`; },
+    outputDirectory: kind => { if (outputError) throw new ConversationContentLocationError(); return `Outputs/${kind === "canvas" ? "导图" : "报告"}`; },
     recommend: (paths, signal, sessionId) => new Promise((resolve, reject) => { recommendations.push({ paths: [...paths], signal, sessionId, resolve, reject }); })
   };
   const open = (paths: string[] = ["Raw/甲.md"], sessionId: string | null = "task-1", templateId?: string) => {
@@ -156,8 +158,10 @@ export async function runGenerationModalTests(): Promise<void> {
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /暂无资料/);
   modal.close(); assessError = "资料太多，请缩小范围"; modal = open(); await flush();
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /资料太多/);
-  modal.close(); assessError = ""; outputError = "输出目录已失效，请重新绑定"; modal = open(); await flush();
-  assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /输出目录已失效/);
+  modal.close(); assessError = ""; outputError = new ConversationContentLocationError().message; modal = open(); await flush();
+  assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /对话栏内容的保存位置不存在/);
+  button(modal, "去设置").click();
+  assert.deepEqual(routes.at(-1), { tab: "modules", section: "knowledgeBase", focus: "knowledge:collections:text" }); assert.equal(settingsOpens, 1);
   modal.close(); outputError = ""; turnOptions.mode = "plan"; modal = open(); await flush();
   assert.equal(button(modal, "生成").disabled, true); assert.match(modal.contentEl.textContent!, /Agent 模式/);
   modal.close(); turnOptions.mode = "agent"; submitError = "测试提交失败"; modal = open(["Raw/甲.md"], null, "mind"); await flush();
@@ -165,7 +169,7 @@ export async function runGenerationModalTests(): Promise<void> {
   assert.match(modal.contentEl.textContent!, /测试提交失败/); assert.equal(button(modal, "思维导图").getAttribute("data-state"), "checked");
   assert.match(modal.contentEl.textContent!, /已选 1 篇笔记/);
   button(modal, "编辑模板「思维导图」").click();
-  assert.deepEqual(routes.at(-1), { tab: "modules", section: "knowledgeBase", focus: "knowledge:generation-template:mind" }); assert.equal(settingsOpens, 1);
+  assert.deepEqual(routes.at(-1), { tab: "modules", section: "knowledgeBase", focus: "knowledge:generation-template:mind" }); assert.equal(settingsOpens, 2);
   modal = open(); await flush(); assert.equal(button(modal, "简报").getAttribute("data-state"), "checked", "reopening does not revive old selections");
   submitError = ""; button(modal, "自制格式").click();
   const customInput = modal.contentEl.querySelector<HTMLTextAreaElement>('[aria-label="自制格式写作要求"]')!;
@@ -222,7 +226,7 @@ export async function runGenerationFileMenuTests(register: (plugin: unknown) => 
     app: { workspace: { on(name: string, callback: typeof onFileMenu) { assert.equal(name, "file-menu"); onFileMenu = callback; return {}; } } },
     registerEvent() { registered++; }, async activateView() { activated++; },
     getCodexView() { return { async waitForTaskUiReady() { return true; }, openGenerationForPath(path: string) { opened.push(path); } }; },
-    generationService: { sourcesFromPath(path: string) { return [path]; } }
+    generationService: { outputDirectory(kind: string) { return `Raw/${kind === "canvas" ? "导图" : "报告"}`; }, sourcesFromPath(path: string) { return [path]; } }
   };
   Object.assign(Platform, { isDesktopApp: false }); register(plugin); assert.equal(registered, 0, "mobile has no file-menu registration");
   Object.assign(Platform, { isDesktopApp: true }); register(plugin); assert.equal(registered, 1);
@@ -235,7 +239,8 @@ export async function runGenerationFileMenuTests(register: (plugin: unknown) => 
     } }, file);
     return items;
   };
-  for (const file of [new File("Raw/a.pdf"), new File("Raw/a.canvas"), new File(".hidden/a.md"), new Folder(".hidden"), new Folder("Outputs"), new Folder("Outputs/报告"), new File("Outputs/报告/a.md")]) assert.equal(menuFor(file).length, 0, `${file.path} has no generation entry`);
+  for (const file of [new File("Raw/a.pdf"), new File("Raw/a.canvas"), new File(".hidden/a.md"), new Folder(".hidden"), new Folder("Raw/报告"), new Folder("Raw/导图"), new File("Raw/报告/a.md")]) assert.equal(menuFor(file).length, 0, `${file.path} has no generation entry`);
+  for (const file of [new Folder("Raw"), new File("Raw/正文.md"), new Folder("Outputs"), new File("Outputs/复盘.md")]) assert.equal(menuFor(file).length, 1, `${file.path} keeps its generation entry outside generated children`);
   const markdown = menuFor(new File("Raw/甲.md")); assert.equal(markdown.length, 1); assert.equal(markdown[0].title, "用 EchoInk 生成…");
   const emptyFolder = menuFor(new Folder("Empty")); assert.equal(emptyFolder.length, 1, "empty folder can open the modal's empty state");
   markdown[0].callback!(); for (let count = 0; count < 3; count++) await Promise.resolve();

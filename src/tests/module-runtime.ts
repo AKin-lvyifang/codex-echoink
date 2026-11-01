@@ -462,7 +462,7 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     assert.equal(removed.collectionTargets!.text, "公众号资料", "source removal retains the literal destination for visible repair");
     for (const kind of knowledgeCollectionKinds(removed)) assert(Object.hasOwn(removed.collectionTargets!, kind));
     const retained = bindings; bindings = removed;
-    await assert.rejects(() => collect("manual after source removal"), /重新选择/u);
+    assert((await collect("manual after source removal"))[0].startsWith("公众号资料/"), "conversation content is independent of Agent source bindings");
     bindings.collectionTargets!.files = "公众号资料";
     await assert.rejects(imported, /重新选择/u);
     bindings = retained;

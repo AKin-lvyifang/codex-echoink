@@ -1,7 +1,7 @@
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
 import type { MobileKnowledgeFoldersPort, MobileKnowledgeFolderPreview, MobileKnowledgeFolderApplyResult } from "./knowledge-folders-contracts";
 import type { MobileServices } from "./services";
-import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeOrganizationSettings, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
+import { emptyKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_KINDS, knowledgeCollectionDirectory, knowledgeCollectionTargets, knowledgeConversationLocation, knowledgeOrganizationSettings, knowledgeFolderIssues, knowledgeInboxRecallExclusions,
   normalizeKnowledgeFolderBindings, rebaseKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { previewKnowledgeDirectoryPlan, type KnowledgeDirectoryPlan } from "../knowledge-base/folder-plan";
 import { rebaseKnowledgePath, KNOWLEDGE_ROOT_ROLES } from "../knowledge-base/root-paths-core";
@@ -70,6 +70,7 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
       if (!knowledgeOrganizationSelectable(normalized, selected) || await kind(this.services.app.vault.adapter, selected) !== "folder") issues.push(`整理范围位置失效：${selected}`);
     }
     for (const source of KNOWLEDGE_COLLECTION_KINDS) {
+      if (source === "text" && knowledgeConversationLocation(normalized).createIfMissing) continue;
       const selected = normalized.collectionTargets?.[source], old = previous ? knowledgeCollectionTargets(previous)[source] : null;
       const newlyEnabled = normalized.roles.raw.enabled && previous?.roles.raw.enabled !== true;
       if (selected && (selected !== old || newlyEnabled) && (knowledgeCollectionDirectory(normalized, source) !== selected
@@ -252,6 +253,7 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
           const currentTargets = knowledgeCollectionTargets(before.bindings), appliedTargets = knowledgeCollectionTargets(applied.bindings);
           const originalTargets = knowledgeCollectionTargets(original.before.bindings ?? emptyKnowledgeFolderBindings());
           config.collectionTargets = { ...currentTargets };
+          if (currentTargets.text === appliedTargets.text && knowledgeConversationLocation(before.bindings).createIfMissing === knowledgeConversationLocation(applied.bindings).createIfMissing) config.conversationDirectoryPending = knowledgeConversationLocation(original.before.bindings).createIfMissing;
           for (const kind of KNOWLEDGE_COLLECTION_KINDS) if (currentTargets[kind] === appliedTargets[kind]) {
             if (kind === "fileText" && originalTargets[kind] === undefined) delete config.collectionTargets.fileText;
             else config.collectionTargets[kind] = originalTargets[kind] ?? null;

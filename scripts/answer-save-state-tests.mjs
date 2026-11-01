@@ -17,6 +17,6 @@ const result = await esbuild.build({
 try {
   await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString("base64")}`);
 } catch (error) {
-  console.error(String(error?.stack ?? error).replace(/data:text\/javascript;base64,[A-Za-z0-9+/=]+/gu, "<compiled answer save state>"));
+  console.error(error?.message ?? String(error));
   process.exitCode = 1;
 }

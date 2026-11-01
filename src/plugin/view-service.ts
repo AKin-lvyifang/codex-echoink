@@ -166,7 +166,8 @@ export class EchoInkViewService {
   async openEchoInkSettings(tab: SettingsTab, focus?: string): Promise<void> {
     this.plugin.settings.settingsTab = tab;
     await this.plugin.saveSettings(true);
-    this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute(tab, { focus }));
+    const route = resolveDesktopSettingsRoute(tab, { focus });
+    this.plugin.prepareDesktopSettingsRoute(route);
     const setting = (this.plugin.app as {
       setting?: { open?: () => void; openTabById?: (id: string) => void };
     }).setting;
@@ -176,6 +177,8 @@ export class EchoInkViewService {
     }
     setting.open();
     setting.openTabById(this.plugin.manifest.id);
+    // Opening native settings can hide/reset the prepared tab before it mounts.
+    if (Platform.isDesktopApp && focus === "knowledge:collections:text") this.plugin.prepareDesktopSettingsRoute(route);
   }
 
   async openReviewHtmlPreview(relativePath: string): Promise<void> {

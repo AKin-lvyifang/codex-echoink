@@ -20,6 +20,7 @@ import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsR
 import { normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
 import { profileSlotDefinition, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
+import { EchoInkViewService } from "../plugin/view-service";
 
 const categories: SettingsTab[] = ["general", "layout", "providers", "resources", "knowledgeBase", "review", "todos", "account"];
 
@@ -571,7 +572,42 @@ async function checkSettingsEntryFocus(win: Window & typeof globalThis, schedule
     row.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Tab", bubbles: true })); back.focus();
     back.dispatchEvent(new win.MouseEvent("pointerdown", { bubbles: true }));
     assert.equal(back.classList.contains("is-keyboard-focused"), false, "pointer activation clears a previous keyboard focus treatment");
-    console.log("PASS settings entry focus: system linking location and five other programmatic detail routes avoid Return");
+    for (const entry of ["direct", "对话栏内容", "Conversation content"]) {
+      if (entry === "direct") f.tab.openDesktopRoute({ tab: "modules", focus: "knowledge:collections:text" });
+      else {
+        assert.ok(mount.definition.items[DESKTOP_SETTINGS_TABS.indexOf("modules")].aliases?.includes(entry));
+        const search = win.document.createElement("input"); search.value = entry;
+        Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: search } } });
+        const nativeRow = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("modules")].setting.settingEl;
+        nativeRow.tabIndex = -1; nativeRow.focus();
+      }
+      await scheduler.flush();
+      const conversation = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]')!;
+      assert.ok(conversation, "conversation location opens the existing collection settings page");
+      assert.equal(conversation.closest<HTMLElement>("[data-collection-kind]")?.dataset.collectionKind, "text");
+      assert.equal(win.document.activeElement, conversation, `${entry} focuses the conversation setting instead of Return`);
+      assert.ok(conversation.closest(".setting-item")?.classList.contains("echoink-knowledge-linking-located"), "the matched setting reuses the neutral location highlight");
+      f.tab.containerEl.querySelector<HTMLButtonElement>(".echoink-settings-back")!.focus();
+      f.state.settingsFocusIntent = "explicit:knowledge:collections:text"; f.state.restoreSettingsFocusIntent(); await scheduler.flush();
+      assert.equal(win.document.activeElement, conversation, "scheduled conversation location wins over host autofocus");
+    }
+    let reopened: ReturnType<typeof mountDefinitions> | undefined;
+    const routeOrder: string[] = [];
+    Object.assign(f.plugin, { prepareDesktopSettingsRoute: (route: Parameters<CodexSettingTab["openDesktopRoute"]>[0]) => { routeOrder.push("route"); f.tab.openDesktopRoute(route); } });
+    Object.assign(f.plugin.app, { setting: {
+      open: () => { routeOrder.push("open"); mount.cleanup(); f.tab.hide(); },
+      openTabById: () => { routeOrder.push("tab"); reopened = mountDefinitions(f.tab); }
+    } });
+    try {
+      await new EchoInkViewService(f.plugin as never).openEchoInkSettings("knowledgeBase", "knowledge:collections:text");
+      await scheduler.flush();
+      assert.deepEqual(routeOrder, ["route", "open", "tab", "route"], "closed settings reapply the conversation route after the host resets and opens the tab");
+      assert.equal(f.state.desktopKnowledge?.navigationKey(), "collections:");
+      const conversation = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="knowledge:collections:text"]')!;
+      assert.ok(conversation, "the closed-to-open service path restores the collection subpage, not only the stored route token");
+      assert.equal(win.document.activeElement, conversation);
+    } finally { reopened?.cleanup(); }
+    console.log("PASS settings entry focus: linking, direct and native-search conversation locations, and five other detail routes avoid Return");
   } finally {
     mount.cleanup(); f.tab.hide(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove();
     await scheduler.flush();
