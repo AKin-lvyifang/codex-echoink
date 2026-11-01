@@ -1,0 +1,32 @@
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import esbuild from "esbuild";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const fixtureRoot = process.env.ECHOINK_TEST_ROOT ?? os.tmpdir();
+const directory = await realpath(await mkdtemp(path.join(fixtureRoot, "collection-locations-")));
+try {
+  const output = path.join(directory, "tests.mjs");
+  await esbuild.build({
+    stdin: { contents: `import { JSDOM } from "jsdom"; import { runKnowledgeCollectionTargetTests } from "./src/tests/module-runtime";
+      const dom = new JSDOM("<!doctype html><body></body>"); globalThis.DOMParser = dom.window.DOMParser; globalThis.Node = dom.window.Node;
+      try { await runKnowledgeCollectionTargetTests(${JSON.stringify(directory)}); console.log("Collection locations: migration, independent writes and withdrawn sources PASS"); } finally { dom.window.close(); }`, resolveDir: root, loader: "ts" },
+    outfile: output, bundle: true, platform: "node", target: "node22", format: "esm",
+    banner: { js: `import {createRequire as runtimeRequire} from "node:module"; const require = runtimeRequire(${JSON.stringify(path.join(root, "package.json"))});` },
+    loader: { ".md": "text", ".txt": "text", ".svg": "dataurl", ".webp": "dataurl" },
+    plugins: [{ name: "runtime-workspace-host", setup(build) {
+      build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, "src/tests/obsidian-shim.ts") }));
+      build.onResolve({ filter: /provider-brand-icons$/ }, () => ({ path: path.join(root, "src/tests/composer-provider-brand-shim.ts") }));
+      build.onResolve({ filter: /^[^./]/ }, args => {
+        if (args.path === "electron") return { path: args.path, external: true };
+        const resolved = import.meta.resolve(args.path);
+        return { path: resolved.startsWith("node:") ? resolved : fileURLToPath(resolved), external: true };
+      });
+    } }]
+  });
+  const result = spawnSync(process.execPath, [output], { cwd: root, env: { ...process.env, PI_OFFLINE: "1" }, stdio: "inherit" });
+  process.exitCode = result.status ?? 1;
+} finally { await rm(directory, { recursive: true, force: true }); }

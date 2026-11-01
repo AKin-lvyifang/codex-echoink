@@ -1,7 +1,7 @@
 import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
-import { openTestNoticeMessages } from "obsidian";
+import { openTestNoticeMessages, Platform } from "obsidian";
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
 import { PdfReadingUploadModal } from "../home/pdf-reading-upload-modal";
 import type { PdfNavigationData, PdfNavigationEntry, PdfNavigationStart } from "../pdf-reading/types";
@@ -11,6 +11,10 @@ export async function runPdfReadingPageTests(): Promise<void> {
   const dom = new JSDOM("<body><main></main><button id=upload>Upload</button></body>", { pretendToBeVisual: true });
   installObsidianDom(dom.window);
   const win = dom.window;
+  win.require = (name: string) => {
+    assert.equal(name, "electron");
+    return { webUtils: { getPathForFile: (file: File & { hostPath?: string }) => file.hostPath ?? "" } };
+  };
   Object.assign(globalThis, { window: win, document: win.document, HTMLElement: win.HTMLElement });
   const proto = win.HTMLElement.prototype as any;
   proto.empty = function () { this.replaceChildren(); };
@@ -51,7 +55,8 @@ export async function runPdfReadingPageTests(): Promise<void> {
     pdfNavigationStartReason: () => startReason,
     validatePdfNavigationStart: async (input: PdfNavigationStart) => { validates.push(input); },
     startPdfNavigationTask: async (input: PdfNavigationStart) => { if (admissionError) throw new Error(admissionError); tasks.push(input); return "new-task"; },
-    openTaskDetail: async (id: string) => { task = id; }, activateHomeView: async () => { home++; }, openEchoInkKnowledgeSettings: async () => { settings++; }
+    openTaskDetail: async (id: string) => { task = id; }, activateHomeView: async () => { home++; },
+    openWorkbenchModuleSettings: async (id: string) => { assert.equal(id, "pdf-reading"); settings++; }
   };
   const view: any = new PdfReadingPageView({} as any, plugin);
   Object.assign(view, { app, contentEl: root, containerEl: root, closed: false });
@@ -123,7 +128,11 @@ export async function runPdfReadingPageTests(): Promise<void> {
   for (const invalid of [[file("wrong.txt")], [file("empty.pdf", 0)], [file("large.pdf", 20 * 1024 * 1024 + 1)], [file(), file()]]) {
     modal.selectFiles(invalid); assert.equal(modal.attachment, null); assert.equal(modal.startButton.disabled, true);
   }
-  modal.selectFiles([{ name: "host.pdf", size: 1024, hostPath: "/synthetic/electron.pdf" }]); assert.equal(modal.attachment.path, "/synthetic/electron.pdf");
+  const desktop = Platform.isDesktopApp;
+  Object.assign(Platform, { isDesktopApp: true });
+  try {
+    modal.selectFiles([{ name: "host.pdf", size: 1024, hostPath: "/synthetic/electron.pdf" }]); assert.equal(modal.attachment.path, "/synthetic/electron.pdf");
+  } finally { Object.assign(Platform, { isDesktopApp: desktop }); }
   modal.selectFiles([file()]); startReason = "研究员还不能整理知识库"; modal.update(); assert.equal(modal.startButton.disabled, true); assert.ok(modal.status.textContent.includes("还不能整理知识库"));
   startReason = "";
   const check = (key: string, value: boolean) => { const control = modal.contentEl.querySelector(`[data-pdf-upload="${key}"]`); control.checked = value; control.dispatchEvent(new win.Event("change", { bubbles: true })); };
@@ -142,8 +151,18 @@ export async function runPdfReadingPageTests(): Promise<void> {
   modal = openForm(); modal.selectFiles([file()]); const cancelled = modal.start(); modal.close(); validateDone(); await cancelled;
   assert.equal(tasks.length, 1, "Cancel during validation does not create a task");
   directories = []; modal = openForm(); assert.equal(modal.startButton.disabled, true);
-  const config = Array.from(modal.contentEl.querySelectorAll("button")).find((button: any) => button.textContent === "去设置资料来源") as HTMLButtonElement;
+  const config = Array.from(modal.contentEl.querySelectorAll("button")).find((button: any) => button.textContent === "去 PDF 设置") as HTMLButtonElement;
   config.click(); await tick(); assert.equal(settings, 1);
+  directories = ["Sources/PDF"];
+  const configuredDefault = plugin.pdfReading.defaultOriginalDirectory;
+  plugin.pdfReading.defaultOriginalDirectory = () => "";
+  modal = openForm(); modal.selectFiles([file()]);
+  assert.equal(modal.directory, "", "an available source folder does not become an implicit PDF destination");
+  assert.equal(modal.startButton.disabled, true);
+  assert.match(modal.status.textContent, /PDF 精读设置.*原 PDF 保存位置/u);
+  const unsetConfig = Array.from(modal.contentEl.querySelectorAll("button")).find((button: any) => button.textContent === "去 PDF 设置") as HTMLButtonElement;
+  unsetConfig.click(); await tick(); assert.equal(settings, 2);
+  plugin.pdfReading.defaultOriginalDirectory = configuredDefault;
   plugin.settings.settingsLanguage = "en"; directories = ["Sources/PDF"];
   modal = openForm(); assert.ok(modal.contentEl.textContent.includes("Extract source text (for citations)")); modal.close();
   plugin.validatePdfNavigationStart = async () => {};

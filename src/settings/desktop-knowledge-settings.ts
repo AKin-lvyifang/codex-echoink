@@ -1,12 +1,12 @@
 import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, knowledgeCollectionDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
+import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { readNativeJournalSettings } from "../home/native-journal";
 import { TODO_SOURCE_PATH } from "../home/todo-store";
 import { OriginSetting } from "./origin-setting";
-import { createOriginButton, createOriginInput, createOriginCheck, createOriginSelect, disposeOriginControls } from "./origin-controls";
+import { createOriginButton, createOriginInput, createOriginCheck, disposeOriginControls } from "./origin-controls";
 import { createSettingsPage, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, createSettingsGroup, attachSettingsHelpTooltip, showSettingsInlineConfirmation } from "./settings-v2";
 import { renderKnowledgeFolderActions } from "./knowledge-folder-actions";
 import { renderKnowledgeLinkingSection } from "./knowledge-linking-section";
@@ -18,7 +18,7 @@ import { initializationFolderIssues, type InitializationFolderField } from "../k
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
 const purposeExplanations: Record<Role, string> = {
-  raw: "保存原始收藏和材料，网页、公众号、PDF 都放这里",
+  raw: "选择 Agent 可以读取的资料文件夹",
   wiki: "保存提炼后的主题知识；选择一个文件夹，Agent 在里面按主题建分类",
   projects: "保存项目型知识",
   inbox: "保存临时笔记"
@@ -147,15 +147,25 @@ export class DesktopKnowledgeSettings {
   }
   private renderCollections(page: HTMLElement): void {
     const bindings = this.bindings();
+    page.querySelector(".echoink-settings-page-heading")?.createDiv({ cls: "echoink-settings-page-description", text: "EchoInk 收藏或导入的资料存到这里；不影响你自己新建的笔记，修改不会移动已有文件。" });
     const targets = createSettingsGroup(createSettingsSection(page, { surface: "flat" }));
-    for (const [key, title] of [["web", "网页"], ["wechat", "公众号文章"]] as const) {
+    targets.addClass("echoink-knowledge-collection-fields");
+    const saved = knowledgeCollectionTargets(bindings);
+    for (const key of knowledgeCollectionKinds(bindings)) {
+      const title = key === "files" && Object.hasOwn(saved, "fileText") ? "导入的 PDF / Word / 图片" : KNOWLEDGE_COLLECTION_LABELS[key];
       const row = new OriginSetting(targets).setName(title);
-      const select = createOriginSelect(row.controlEl, { attr: { "aria-label": `${title}收藏保存到` } }, [], "", this.plugin.app);
-      select.addOption("", "先选择资料来源");
-      for (const path of bindings.roles.raw.readPaths) select.addOption(path, path);
-      select.element.value = knowledgeCollectionDirectory(bindings, key) ?? "";
-      select.element.onchange = () => { const next = this.bindings(); next.collectionTargets ??= { web: knowledgeCollectionDirectory(next, "web"), wechat: knowledgeCollectionDirectory(next, "wechat") }; next.collectionTargets[key] = select.element.value || null; select.element.disabled = true;
-        void this.save(next).then(() => this.navigation.redraw()).catch(() => { select.element.value = knowledgeCollectionDirectory(this.bindings(), key) ?? ""; this.navigation.redraw(); }).finally(() => { select.element.disabled = false; }); };
+      const picker = createKnowledgeFolderPicker(row.controlEl, { label: `${title}保存位置`,
+        folders: () => { const roots = this.bindings().roles.raw.readPaths; return this.plugin.app.vault.getAllFolders(false).map(folder => folder.path).filter(path => roots.some(root => pathInKnowledgeDirectory(path, root))); },
+        values: saved[key] ? [{ path: saved[key], create: false }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
+        onChange: values => {
+          const next = this.bindings(); next.collectionTargets = knowledgeCollectionTargets(next); next.collectionTargets[key] = values[0]?.path ?? null;
+          picker.setDisabled(true);
+          void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
+        }
+      });
+      this.folderPickers.push(picker);
+      const missing = saved[key] && !(this.plugin.app.vault.getAbstractFileByPath(saved[key]) instanceof TFolder);
+      if (!knowledgeCollectionDirectory(bindings, key) || missing) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
     }
   }
   private renderPermissions(page: HTMLElement): void {
@@ -260,7 +270,12 @@ export class DesktopKnowledgeSettings {
       const next = this.bindings(), binding = next.roles[role]; binding.readPaths = path ? binding.readPaths.filter(item => item !== path) : [];
       binding.enabled = binding.readPaths.length > 0; binding.writePath = binding.readPaths.includes(binding.writePath ?? "") ? binding.writePath : binding.readPaths[0] ?? null;
       binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(item => binding.readPaths.includes(item));
-      try { await this.save(next); this.change(role === "raw" ? "sources" : null); }
+      try { await this.save(next);
+        if (role === "raw") {
+          const affected = knowledgeCollectionKinds(next).filter(kind => !knowledgeCollectionDirectory(next, kind));
+          if (affected.length) new Notice(`${affected.map(kind => KNOWLEDGE_COLLECTION_LABELS[kind]).join("、")}的保存位置已失效，请到收藏保存位置重新选择。`);
+        }
+        this.change(role === "raw" ? "sources" : null); }
       catch { this.navigation.redraw(); }
     } });
   }
@@ -272,25 +287,12 @@ export class DesktopKnowledgeSettings {
     const list = section.createDiv({ cls: "echoink-knowledge-source-list" });
     const bindings = this.bindings(); if (!bindings.roles.raw.readPaths.length) list.createDiv({ cls: "setting-item-description echoink-knowledge-source-empty", text: "还没有资料来源" });
     for (const path of bindings.roles.raw.readPaths) this.renderDirectoryEntry(list, page, "raw", path);
-    const multipleSources = bindings.roles.raw.readPaths.length > 1;
     if (bindings.roles.raw.enabled) {
       const search = createSettingsSection(page, { title: "资料检索", surface: "flat" });
       this.renderSearchPermission(search.createDiv({ cls: "echoink-knowledge-source-list" }), "raw");
     }
-    if (multipleSources) {
-      const location = createSettingsSection(page, { title: "保存位置", surface: "flat" });
-      const row = new OriginSetting(location.createDiv({ cls: "echoink-knowledge-source-list" })).setName("资料默认保存到");
-      row.settingEl.addClass("echoink-knowledge-save-location");
-      this.help(row.nameEl, "用于手动收集文字和收集附件；尚未保存独立收藏位置的网页、公众号会跟随此处。PDF 原件已有单独位置时使用单独位置，未单设时使用此处。修改不会移动已有文件。");
-      const select = createOriginSelect(row.controlEl, { attr: { "aria-label": "资料默认保存到" } }, [], "", this.plugin.app);
-      bindings.roles.raw.readPaths.forEach(path => select.addOption(path, path)); select.element.value = bindings.roles.raw.writePath ?? "";
-      let accepted = select.element.value;
-      select.element.onchange = () => {
-        const next = this.bindings(), value = select.element.value; next.roles.raw.writePath = value; select.element.disabled = true;
-        void this.save(next).then(() => { accepted = value; }).catch(error => { select.element.value = accepted; new Notice(String(error)); }).finally(() => { select.element.disabled = false; });
-      };
-    }
   }
+
   private renderInitialization(page: HTMLElement): void {
     if (!this.mode) {
       const routes = page.createDiv({ cls: "echoink-knowledge-init-routes" });
@@ -354,9 +356,6 @@ export class DesktopKnowledgeSettings {
         const binding = bindings.roles[role];
         binding.readPaths = paths; binding.enabled = paths.length > 0;
         binding.writePath = binding.writePath && paths.includes(binding.writePath) ? binding.writePath : paths[0] ?? null;
-        if (role === "raw" && bindings.collectionTargets) for (const kind of ["web", "wechat"] as const) {
-          if (!paths.includes(bindings.collectionTargets[kind] ?? "")) bindings.collectionTargets[kind] = binding.writePath;
-        }
         binding.autoOrganizePaths = (binding.autoOrganizePaths ?? []).filter(path => paths.includes(path));
         if (role === "wiki" && paths.join("\n") !== this.bindings().roles.wiki.readPaths.join("\n")) this.wikiChanged = true;
       });

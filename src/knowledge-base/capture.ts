@@ -2,7 +2,7 @@ import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesyst
 import { getDesktopPath } from "../platform/desktop-paths";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
 import { resolveKnowledgePath } from "./root-paths";
-import { knowledgeCollectionDirectory } from "./folder-bindings";
+import { knowledgeCollectionDirectory, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionTargets, type KnowledgeCollectionKind } from "./folder-bindings";
 
 import { Notice, normalizePath, requestUrl, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -22,7 +22,7 @@ const { constants: fsConstants } = getDesktopFs();
 const fsp = getDesktopFsPromises();
 const path = getDesktopPath();
 
-const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = new Set([".pdf", ".docx", ".md", ".markdown", ".txt"]);
+const KNOWLEDGE_FILE_CAPTURE_EXTENSIONS = SUPPORTED_RAW_EXTENSIONS;
 
 export class KnowledgeBaseCaptureService {
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
@@ -78,7 +78,7 @@ export class KnowledgeBaseCaptureService {
       paths.push(...await this.captureRawArticleInput(trimmed));
       return paths;
     }
-    if (trimmed || copiedAttachments.length) {
+    if (trimmed) {
       const textTarget = target === "inbox" && !copiedAttachments.length ? "inbox" : "raw-articles";
       const body = copiedAttachments.length
         ? [
@@ -124,8 +124,7 @@ export class KnowledgeBaseCaptureService {
     }
     const vaultPath = this.plugin.getVaultPath();
     const source = path.join(vaultPath, file.path);
-    const targetDir = this.captureDirectory(vaultPath, "attachments");
-    await fsp.mkdir(targetDir, { recursive: true });
+    const targetDir = await this.collectionDirectory(vaultPath, "files");
     const target = await this.copyCapturedFile(source, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
     new Notice(`已收集到 ${normalizePath(path.relative(vaultPath, target))}`);
   }
@@ -141,7 +140,7 @@ export class KnowledgeBaseCaptureService {
     const vaultPath = this.plugin.getVaultPath();
     const now = new Date();
     const stamp = formatDateTimeForFile(now);
-    const dir = target === "inbox" ? path.join(vaultPath, getKnowledgeFolderBindings(vaultPath) ? resolveKnowledgeRoleTarget(vaultPath, "inbox") : resolveKnowledgePath(vaultPath, "inbox")) : this.captureDirectory(vaultPath, "articles/手动收集");
+    const dir = target === "inbox" ? path.join(vaultPath, getKnowledgeFolderBindings(vaultPath) ? resolveKnowledgeRoleTarget(vaultPath, "inbox") : resolveKnowledgePath(vaultPath, "inbox")) : await this.collectionDirectory(vaultPath, "text");
     await fsp.mkdir(dir, { recursive: true });
     const fileName = target === "inbox" ? `${stamp} 知识库想法.md` : `${stamp} 手动收集.md`;
     const body = [
@@ -170,20 +169,20 @@ export class KnowledgeBaseCaptureService {
     return [await this.captureHtmlLikePage(url, dest, "web", originalInput, "web")];
   }
 
-  private async collectionDirectory(vaultPath: string, kind: "web" | "wechat"): Promise<string> {
+  private async collectionDirectory(vaultPath: string, kind: KnowledgeCollectionKind): Promise<string> {
     const config = getKnowledgeFolderBindings(vaultPath);
     if (!config) {
-      const legacy = this.captureDirectory(vaultPath, kind === "web" ? "articles/网页收藏" : "articles/微信公众号");
+      const legacy = this.captureDirectory(vaultPath, ({ web: "articles/网页收藏", wechat: "articles/微信公众号", files: "attachments", text: "articles/手动收集", fileText: "articles/文件收藏" })[kind]);
       await fsp.mkdir(legacy, { recursive: true });
       return legacy;
     }
     const relative = knowledgeCollectionDirectory(config, kind);
-    if (!relative) throw new Error("收藏位置尚未选择或已失效，请在知识库设置中重新选择资料来源。");
+    if (!relative) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}收藏位置尚未选择或已失效，请到知识库 → 收藏保存位置重新选择。`);
     let current = await fsp.realpath(vaultPath);
     for (const segment of relative.split("/")) {
       current = path.join(current, segment);
       const stat = await fsp.lstat(current).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
-      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("原收藏目录已失效，请在知识库设置中重新选择资料来源。");
+      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}的原收藏目录已失效，请到知识库 → 收藏保存位置重新选择。`);
     }
     return current;
   }
@@ -235,31 +234,18 @@ export class KnowledgeBaseCaptureService {
     for (const file of files) {
       const ext = path.extname(file.path).toLowerCase();
       if (!KNOWLEDGE_FILE_CAPTURE_EXTENSIONS.has(ext)) continue;
-      const textLike = [".md", ".markdown", ".txt"].includes(ext);
-      const targetDir = textLike
-        ? this.captureDirectory(vaultPath, "articles/文件收藏")
-        : this.captureDirectory(vaultPath, "attachments");
-      await fsp.mkdir(targetDir, { recursive: true });
+      const bindings = getKnowledgeFolderBindings(vaultPath);
+      const kind = [".md", ".markdown", ".txt"].includes(ext) && bindings && Object.hasOwn(knowledgeCollectionTargets(bindings), "fileText") ? "fileText" : "files";
+      const targetDir = await this.collectionDirectory(vaultPath, kind);
       const target = await this.copyCapturedFile(file.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
       copied.push(normalizePath(path.relative(vaultPath, target)));
     }
-    if (!copied.length) throw new Error("请选择 PDF、DOCX、Markdown 或 TXT 文件。");
+    if (!copied.length) throw new Error("请选择 PDF、Word、Markdown、文本或图片文件。");
     return copied;
   }
 
   async copyAttachmentsToRaw(attachments: StoredAttachment[]): Promise<string[]> {
-    if (!attachments.length) return [];
-    const vaultPath = this.plugin.getVaultPath();
-    const targetDir = this.captureDirectory(vaultPath, "attachments");
-    await fsp.mkdir(targetDir, { recursive: true });
-    const copied: string[] = [];
-    for (const attachment of attachments) {
-      const ext = path.extname(attachment.path).toLowerCase();
-      if (!SUPPORTED_RAW_EXTENSIONS.has(ext) || [".md", ".markdown", ".txt"].includes(ext)) continue;
-      const target = await this.copyCapturedFile(attachment.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(attachment.path)}`);
-      copied.push(normalizePath(path.relative(vaultPath, target)));
-    }
-    return copied;
+    return attachments.length ? this.copyFilesToRaw(attachments) : [];
   }
 }
 

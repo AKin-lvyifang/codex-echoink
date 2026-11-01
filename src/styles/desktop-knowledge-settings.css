@@ -20,7 +20,7 @@
   .echoink-knowledge-source-permission { grid-column: 1; grid-row: 2; }
   .echoink-knowledge-source-unbind { grid-column: 2; grid-row: 1 / 3; }
   .echoink-knowledge-init-fields .setting-item { align-items: stretch; flex-direction: column; }
-  .echoink-knowledge-init-fields .setting-item-control { width: 100%; justify-content: flex-start; }
+  :is(.echoink-knowledge-init-fields, .echoink-knowledge-collection-fields) .setting-item-control { width: 100%; justify-content: flex-start; }
   .echoink-knowledge-init-fields .setting-item-control input { width: 100%; }
   .echoink-knowledge-init-impact { flex-basis: 100%; }
 }
@@ -90,6 +90,6 @@
 }
 @container settings (max-width: 600px) {
   .echoink-folder-picker { flex-basis: 100%; width: 100%; }
-  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-fields .setting-item { flex-direction: column; align-items: stretch; }
-  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-module-page .echoink-knowledge-init-fields .setting-item-control { width: 100%; max-width: 100%; justify-content: flex-end; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-module-page :is(.echoink-knowledge-init-fields, .echoink-knowledge-collection-fields) .setting-item { flex-direction: column; align-items: stretch; }
+  .echoink-settings-demo.echoink-settings-aligned .echoink-knowledge-module-page :is(.echoink-knowledge-init-fields, .echoink-knowledge-collection-fields) .setting-item-control { width: 100%; max-width: 100%; justify-content: flex-end; }
 }

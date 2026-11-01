@@ -901,6 +901,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
       || welcomeSettingsChanged
       || retiredDataPresent
       || legacyTokenPlanCustomPresent
+      || JSON.stringify(settingsRecord(settingsRecord(data.knowledgeBase)?.folderBindings)?.collectionTargets) !== JSON.stringify(settings.knowledgeBase.folderBindings?.collectionTargets)
       || JSON.stringify(data.englishDiary) !== JSON.stringify(settings.englishDiary)
       || JSON.stringify(data.agentRegistry) !== JSON.stringify(settings.agentRegistry)
       || JSON.stringify(data.taskWorkspace) !== JSON.stringify(settings.taskWorkspace)

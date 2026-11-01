@@ -516,7 +516,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   async validatePdfNavigationStart(input: PdfNavigationStart): Promise<void> {
     const reason = this.pdfNavigationStartReason(input.options); if (reason) throw new Error(reason);
     if (input.attachment.type !== "file" || !/\.pdf$/iu.test(input.attachment.name) || !input.attachment.path) throw new Error("请选择一份 PDF。");
-    if (!this.pdfReading!.originalDirectories().includes(input.originalDirectory)) throw new Error("原 PDF 保存位置已失效，请重新选择资料来源位置。");
+    if (!this.pdfReading!.originalDirectories().includes(input.originalDirectory)) throw new Error("请在 PDF 精读设置中重新选择原 PDF 保存位置。");
     if (input.options.wiki !== (input.options.reading || input.options.summary === true)) throw new Error("PDF 成果选项不一致，请重新选择。");
   }
   async startPdfNavigationTask(input: PdfNavigationStart): Promise<string> {

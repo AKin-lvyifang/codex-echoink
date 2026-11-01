@@ -228,6 +228,8 @@ export function createSettingsFeatureCard(
   return card;
 }
 
+let navigationLabelSequence = 0;
+
 export function createSettingsNavigationRow(
   section: HTMLElement,
   options: SettingsNavigationRowOptions
@@ -239,12 +241,14 @@ export function createSettingsNavigationRow(
     cls: `echoink-settings-navigation-row setting-row${desktopSummary ? " has-value-summary" : ""}`,
     attr: {
       type: "button",
-      "aria-label": `${options.title}，${desktopSummary && fullValue ? `${fullValue}，` : ""}${options.actionLabel || "进入"}`,
       "data-echoink-focus-key": options.focusKey ?? `navigation:${options.title}`
     }
   });
   const copy = row.createDiv({ cls: "echoink-settings-navigation-copy setting-copy" });
-  const title = copy.createDiv({ cls: "echoink-settings-navigation-title", text: options.title });
+  const title = copy.createDiv({ cls: "echoink-settings-navigation-title", text: options.title, attr: { id: `echoink-navigation-label-${++navigationLabelSequence}` } });
+  // aria-label triggers Obsidian's delegated tooltip. A labelled-by name remains
+  // accessible without repeating the visible navigation text on hover.
+  row.setAttribute("aria-labelledby", title.id);
   if (options.description) {
     copy.createDiv({
       cls: "echoink-settings-navigation-description",
@@ -253,7 +257,9 @@ export function createSettingsNavigationRow(
   }
   const trailing = row.createDiv({ cls: "echoink-settings-navigation-trailing setting-controls" });
   if (options.value) {
-    const value = trailing.createSpan({ cls: "echoink-settings-navigation-value", text: options.value });
+    const value = trailing.createSpan({ cls: "echoink-settings-navigation-value", text: options.value, attr: { id: `${title.id}-value` } });
+    const accessibleValue = row.createSpan({ text: fullValue, attr: { hidden: "", id: `${title.id}-summary` } });
+    row.setAttribute("aria-labelledby", `${title.id} ${accessibleValue.id}`);
     if (options.valueSuffix) trailing.createSpan({ cls: "echoink-settings-navigation-value-suffix", text: options.valueSuffix });
     if (desktopSummary) attachSettingsTooltip(row, fullValue, row, {
       interactive: false,

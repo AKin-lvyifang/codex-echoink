@@ -360,9 +360,6 @@ export class MobileSettingsPages {
         if (binding.readPaths.length === 1) binding.writePath = directory;
         binding.enabled = true; toggle.checked = true; drawPaths(); sync();
       }, "plus", "em-wide-action");
-      const defaults = node(part, "label", "em-field"); node(defaults, "span", "", "新资料默认保存位置");
-      const defaultSelect = node(defaults, "select"); defaultSelect.setAttribute("aria-label", "新资料默认保存位置");
-      defaultSelect.addEventListener("change", () => { binding.writePath = defaultSelect.value || null; });
       const unbind = this.ui.button(part, "解绑位置", () => { if (busy) return; binding.readPaths = []; binding.writePath = null; binding.enabled = false; toggle.checked = false; drawPaths(); sync(); }, "unlink", "em-wide-action");
       const save = this.ui.button(part, "保存", async () => {
         if (busy) return;
@@ -374,16 +371,14 @@ export class MobileSettingsPages {
         } catch (failure) { error.hidden = false; error.textContent = failure instanceof Error ? failure.message : String(failure); }
         finally { busy = false; part.removeAttribute("aria-busy"); sync(); }
       }, "check", "em-primary em-wide-action");
-      const sync = () => { toggle.disabled = busy; select.disabled = busy || !binding.enabled; add.disabled = busy || !binding.enabled; defaultSelect.disabled = busy || !binding.enabled; unbind.disabled = busy; save.disabled = busy; save.querySelector("span:last-child")!.textContent = busy ? "保存中…" : "保存"; paths.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = busy || !binding.enabled; }); };
+      const sync = () => { toggle.disabled = busy; select.disabled = busy || !binding.enabled; add.disabled = busy || !binding.enabled; unbind.disabled = busy; save.disabled = busy; save.querySelector("span:last-child")!.textContent = busy ? "保存中…" : "保存"; paths.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = busy || !binding.enabled; }); };
       const drawPaths = () => {
         paths.replaceChildren();
         for (const directory of binding.readPaths) {
           const row = node(paths, "div", "em-row"); node(row, "span", "em-row-label", directory);
           this.ui.button(row, "移除", () => { if (busy) return; binding.readPaths = binding.readPaths.filter(value => value !== directory); if (binding.writePath === directory) binding.writePath = binding.readPaths.length === 1 ? binding.readPaths[0] : null; drawPaths(); sync(); });
         }
-        defaultSelect.replaceChildren(); node(defaultSelect, "option", "", "请选择默认位置").value = "";
-        for (const directory of binding.readPaths) node(defaultSelect, "option", "", directory).value = directory;
-        defaultSelect.value = binding.writePath ?? ""; defaults.hidden = kind !== "raw";
+
       };
       drawPaths(); sync();
     });
