@@ -257,6 +257,7 @@ export interface PiNativeAgentSessionFactoryInput {
   bindPdfDeliveryJob?(jobId: string): void;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentDrawingRequested?(): boolean;
+  currentRequestText?(): string;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   /** Lazily opens the current, capability-authorized ordinary-chat read workflow. */
@@ -3067,6 +3068,7 @@ export class PiNativeConversationRuntime {
       bindPdfDeliveryJob: jobId => { const run = holder.active?.currentRun; if (run) (run.pdfDeliveryJobs ??= new Set()).add(jobId); },
       currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
       currentDrawingRequested: () => holder.active?.currentRun?.drawingRequested === true,
+      currentRequestText: () => holder.active?.currentRun?.requestText ?? "",
       currentEnglishDiaryRequest: () => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run?.englishDiarySourcePath) return null;

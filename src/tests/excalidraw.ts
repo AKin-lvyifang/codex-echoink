@@ -14,6 +14,8 @@ import { formatApprovalPresentation } from "../ui/codex-view/approval-presentati
 import { createGenerationRuntimePort } from "../plugin/generation-production";
 import type { GenerationExecutionIdentity } from "../generation/runtime";
 import { isKnowledgeMaintenanceSourcePath } from "../knowledge-base/raw-digest-core";
+import { createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtime-composition";
+import { drawingToolPrompt } from "../excalidraw/prompt";
 
 const model = () => ({ title: "资料到知识", elements: [
   { id: "a", type: "rectangle", x: 0, y: 0, width: 320, height: 140, label: { text: "📖 读取资料" }, sourcePaths: ["资料/原文.md"] },
@@ -25,6 +27,22 @@ export async function runExcalidrawTests(root: string): Promise<void> {
   try { await assertExcalidrawTests(root); } finally { Platform.isDesktopApp = previous; }
 }
 async function assertExcalidrawTests(root: string): Promise<void> {
+  // The request's raw text, not a selected Skill or old chat, controls schema injection.
+  for (const mode of ["agent", "plan"] as const) {
+    let requested = false, text = "只回答：收到", calls = 0;
+    const handlers = new Map<string, (...args: any[]) => any>();
+    const extension = createPiKnowledgeInlineExtension({ vaultSecurity: { name: "drawing-prompt-test", factory() {} }, currentTurn: () => null,
+      currentWorkspaceAccess: () => ({ mode, permission: "workspace-write", memoryMode: "normal" }),
+      currentDrawingRequested: () => requested, currentRequestText: () => text,
+      drawingPrompt: async () => { calls++; return mode === "plan" ? "DRAWING_PLAN_ONLY" : drawingToolPrompt("FULL_DRAWING_SCHEMA", requested); } });
+    await extension.factory({ on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler) } as never);
+    const start = () => handlers.get("before_agent_start")!({ systemPrompt: "SYSTEM", prompt: "Skill context mentions Excalidraw" });
+    assert(!String((await start()).systemPrompt).includes("DRAWING")); assert.equal(calls, 0);
+    requested = true; assert(String((await start()).systemPrompt).includes("DRAWING"));
+    requested = false;
+    for (text of ["用 eXcAlIdRaW 画流程", "生成一张手绘图"]) assert(String((await start()).systemPrompt).includes("DRAWING"));
+    text = "下一轮普通问题"; assert(!String((await start()).systemPrompt).includes("DRAWING")); assert.equal(calls, 3);
+  }
   await runDiagramToolTests(root);
   const output = parseDrawingOutput(model(), ["资料/原文.md"]);
   assert.equal(output.boxCount, 2); assert.equal(output.arrowCount, 1);

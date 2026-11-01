@@ -1262,6 +1262,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentDrawingRequested?(): boolean;
+  currentRequestText?(): string;
   drawingPrompt?(requested: boolean): Promise<string>;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentInlineProposalRequest?(): Readonly<InlineModelRequest> | null;
@@ -1384,7 +1385,12 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         let systemPrompt = inlineProposal ? INLINE_PROPOSAL_SYSTEM_PROMPT : access
           ? `${event.systemPrompt}\n\n${piWorkspaceAccessPrompt(access, input.supportsToolCalling !== false)}`
           : event.systemPrompt;
-        if (!inlineProposal && input.drawingPrompt) systemPrompt += "\n\n" + await input.drawingPrompt(input.currentDrawingRequested?.() === true);
+        const drawingRequested = input.currentDrawingRequested?.() === true;
+        if (!inlineProposal && input.drawingPrompt
+          && (drawingRequested || /excalidraw|手绘图/iu.test(input.currentRequestText?.() ?? event.prompt ?? ""))) {
+          const drawingPrompt = await input.drawingPrompt(drawingRequested);
+          if (drawingPrompt) systemPrompt += "\n\n" + drawingPrompt;
+        }
         const selectionMessage = buildPiSelectionAnnotationContextMessage(input.currentSelectionAnnotations?.() ?? []);
         const workbenchMessage = inlineProposal ? null : buildWorkbenchContextMessage(input.currentWorkbenchSource?.());
         const pdfMessage = inlineProposal ? null : buildPdfTaskContextMessage(input.currentPdfTaskRequest?.());
@@ -2646,6 +2652,7 @@ async function createProductionAgentSession(input: {
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
     currentPdfTaskRequest: () => input.input.currentPdfTaskRequest?.(),
     currentDrawingRequested: () => input.input.currentDrawingRequested?.() === true,
+    currentRequestText: () => input.input.currentRequestText?.() ?? "",
     drawingPrompt: async requested => {
       if (!configured.toolCalling || drawingService.disabledReason()) return requested ? (drawingService.disabledReason() ?? "当前模型不支持工具，无法创建手绘图。") : "";
       const access = input.input.currentWorkspaceAccess?.();

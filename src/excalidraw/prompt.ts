@@ -24,6 +24,7 @@ export function drawingToolPrompt(schema: string, requested: boolean): string {
     requested ? "本轮成果应为 Excalidraw 手绘图，优先调用 diagram_create；与 Skill 同时存在时仍以画图为成果。" : "用户明确要求 Excalidraw 手绘图时可调用 diagram_create。",
     "用户说黑板风时 style=blackboard，否则默认 white。不要求来源；仅在确实知道现有库内笔记路径时为相关框附 sourcePaths，不能编造路径。",
     "以下说明用于构造 diagram_create 的 title/elements/style 参数，不是让你把 JSON 当最终回答。检查失败时按工具给的具体问题精简修复，最多重试一次。只有拿到 completed 且 readbackVerified=true 的创建回执才能说图已生成；取消或结果不明时如实说明，不能换名重建。",
+    "成功后向用户只说图已生成、保存路径和框数；不要提工具名、创建回执或 readbackVerified 等内部字段。不要为画图读取已有手绘图或手绘模板。",
     drawingElementPrompt(schema), requested
       ? "本轮通过调用 diagram_create 提交上述结构的参数，不要把 JSON 当最终回答。"
       : "以上规范仅在用户明确请求 Excalidraw 手绘图时使用。用户未明确请求画图时按正常对话回答，不调用 diagram_create，也不输出图的 JSON。",

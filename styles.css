@@ -23194,7 +23194,8 @@ body:not(.is-mobile) .echoink-paper-guide-modal .echoink-paper-guide-choices {
 .echoink-pdf-settings-form label { display:flex; flex-direction:column; align-items:flex-start; gap:8px; font-size:calc(var(--font-text-size,16px)*.75); }
 .echoink-pdf-settings-form p { color:var(--text-muted); font-size:calc(var(--font-text-size,16px)*.6875); line-height:1.85; }
 .echoink-pdf-settings-actions { display:flex; justify-content:flex-end; }
-.codex-composer-resource-row.is-pdf-plugin .codex-composer-resource-name { display:flex; align-items:center; gap:8px; }
+.codex-composer-resource-row.is-pdf-plugin .codex-composer-resource-name { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.codex-composer-resource-row.is-pdf-plugin .echoink-plugin-edition-badge { flex-shrink:0; }
 /* Desktop module drawers reuse the settings surface and Origin controls. */
 .echoink-settings-demo .echoink-desktop-modules .echoink-module-group > .echoink-settings-section-header {
   display: flex;

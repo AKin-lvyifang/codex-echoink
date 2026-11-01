@@ -4,6 +4,7 @@ import { ownedFragment, ownedEl } from "../owned-dom";
 import { disposeOriginControls } from "../../settings/origin-controls";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
+import { drawingApprovalPresentation } from "../../excalidraw/presentation";
 import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy";
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import { openSelectionAnnotationSource } from "../../selection-ask/navigation";
@@ -999,7 +1000,7 @@ export class CodexMessageListRenderer {
       if (icon) setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed"
         && produced.length && produced.every((path) => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
       const title = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-title");
-      const displayedTitle = nodeSource && isGenerationProgressMessage(nodeSource) ? generationProgressTitle(nodeSource) : node.title;
+      const displayedTitle = this.approvalStepTitle(nodeSource, node.title);
       if (title && title.textContent !== displayedTitle) title.setText(displayedTitle);
       const summary = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-summary");
       if (summary && node.summary !== undefined && summary.textContent !== node.summary) {
@@ -2646,8 +2647,8 @@ export class CodexMessageListRenderer {
     const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
     const title = withNativeMessageTooltip(heading.createSpan({
       cls: "codex-assistant-turn-node-title",
-      text: source && generationStage ? generationProgressTitle(source) : node.title,
-      attr: { title: source && generationStage ? generationProgressTitle(source) : node.title }
+      text: this.approvalStepTitle(source, node.title),
+      attr: { title: this.approvalStepTitle(source, node.title) }
     }));
     if (node.status === "running") {
       title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
@@ -3100,6 +3101,10 @@ export class CodexMessageListRenderer {
   }
 
   private renderActionItemTitle(container: HTMLElement, item: ActionItemViewModel): void {
+    if (drawingApprovalPresentation(item.source.approval?.preview)) {
+      container.createSpan({ cls: "codex-action-item-title", text: this.approvalStepTitle(item.source, item.title) });
+      return;
+    }
     const prefix = actionVerb(item, this.requireEnv().settingsLanguage);
     container.createSpan({ cls: "codex-action-item-prefix", text: `${prefix} ` });
     if (item.kind === "edit" && item.source.diffSummary?.files.length) {
@@ -3355,6 +3360,15 @@ export class CodexMessageListRenderer {
     section.createDiv({ cls: "codex-action-error-message", text: error });
   }
 
+  private approvalStepTitle(message: ChatMessage | undefined, fallback: string): string {
+    if (!message) return fallback;
+    if (isGenerationProgressMessage(message)) return generationProgressTitle(message);
+    if (drawingApprovalPresentation(message.approval?.preview)) {
+      return conversationUiText(this.requireEnv().settingsLanguage, "等你确认写入", "Confirm before saving");
+    }
+    return fallback;
+  }
+
   private renderApprovalCard(container: HTMLElement, message: ChatMessage): void {
     const env = this.requireEnv();
     const binding = env.resolveApprovalDecision?.(message) ?? null;
@@ -3362,7 +3376,8 @@ export class CodexMessageListRenderer {
       ?? (binding ? "waiting_approval" : null);
     if (!state) return;
     const rawPresentation = { target: message.approval?.target || binding?.target, preview: message.approval?.preview || binding?.preview };
-    const presentation = isGenerationProgressMessage(message) ? generationApprovalPresentation(rawPresentation.target, rawPresentation.preview) : rawPresentation;
+    const presentation = drawingApprovalPresentation(rawPresentation.preview)
+      ?? (isGenerationProgressMessage(message) ? generationApprovalPresentation(rawPresentation.target, rawPresentation.preview) : rawPresentation);
     const elements = createSmoothAIApprovalCard(container, {
       state,
       ...presentation,

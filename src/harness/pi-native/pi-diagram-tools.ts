@@ -133,7 +133,7 @@ export class PiDiagramToolSecurity implements PiVaultAdditionalToolSecurityPort 
   }
 }
 export function createPiDiagramToolDefinition(security: PiDiagramToolSecurity): ToolDefinition {
-  return defineTool({ name: PI_DIAGRAM_TOOL_ID, label: "创建 Excalidraw 手绘图", description: "免费创建新的 Excalidraw 手绘图。支持无资料画图、emoji、框和吸附箭头。先检查，再按最终路径、样式与完整元素请求确认；只有已保存回执才能报告成功。参数格式见本轮系统提示；默认白底，黑板风用 blackboard。检查错误按工具返回修复一次。不能修改已有图。",
+  return defineTool({ name: PI_DIAGRAM_TOOL_ID, label: "创建 Excalidraw 手绘图", description: '免费创建新的 Excalidraw 手绘图。支持无资料画图、emoji、框和吸附箭头。先检查，再按最终路径、样式与完整元素请求确认；只有已保存回执才能报告成功。默认白底，黑板风用 blackboard。检查错误按工具返回修复一次。不能修改已有图。\n最小参数：{"title":"主题","style":"white","elements":[{"id":"a","type":"rectangle","x":0,"y":0,"width":320,"height":140,"label":{"text":"📖 重点"}}]}；连线用 {"id":"ab","type":"arrow","start":{"id":"a"},"end":{"id":"b"}}，两端须为现存不同框。',
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: 20 }), elements: Type.Array(Type.Any(), { minItems: 1, maxItems: 80 }), style: Type.Optional(Type.Union([Type.Literal("white"), Type.Literal("blackboard")])) }, { additionalProperties: false }),
     execute: async (id, args, signal) => { await security.execute(id, args, signal); return { content: [{ type: "text" as const, text: "diagram_result_pending_safety" }], details: {} }; } });
 }
