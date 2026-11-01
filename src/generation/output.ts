@@ -11,7 +11,7 @@ export function prepareGenerationOutput(request: GenerationRequest, sources: rea
   try {
     const value = parseGenerationModelJson(modelText);
     if (request.outputKind === "excalidraw") {
-      const output = parseDrawingOutput(value, sources.map(source => source.path));
+      const output = parseDrawingOutput(value, sources.map(source => source.path), request.drawingStyle);
       return { title: output.title, content: JSON.stringify(output) };
     }
     if (request.outputKind === "canvas") {

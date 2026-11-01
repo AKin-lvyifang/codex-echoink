@@ -3522,19 +3522,29 @@ export class PiNativeConversationRuntime {
         let modelText = terminalState === "completed" && generatedAssistant ? publicMessageText(generatedAssistant.message) : null;
         let modelAttempts = 1, canvasFallback = false, continuationError: unknown;
         const canvasValidationErrors: string[] = [];
-        // Repair only pure output validation. Nothing from permission, Provider,
-        // cancellation or the write layer can re-enter this loop.
-        // Independent drawing repair: exactly one retry, no Canvas fallback.
+        // Drawing format errors and output truncation share exactly one repair.
+        // Permission, network, cancellation and write failures cannot re-enter it.
         const drawingValidationErrors: string[] = [];
-        while (generation.request.outputKind === "excalidraw" && terminalState === "completed" && modelText !== null) {
+        let drawingFailure: string | undefined;
+        const drawingOutputLimited = () => generatedAssistant?.message.stopReason === "length"
+          || safeProviderFailureCode(generatedAssistant?.message.errorMessage) === "provider_output_limit_reached"
+          || promptError instanceof Error && safeProviderFailureCode(promptError.message) === "provider_output_limit_reached";
+        while (generation.request.outputKind === "excalidraw" && !execution.abortRequested && !execution.knowledgeAbort.signal.aborted) {
           try {
+            if (drawingOutputLimited()) throw new GenerationOutputValidationError("上次输出太长，被模型输出上限截断。请精简到最多 8 个短框，重新输出完整 JSON，不续写残缺内容。");
+            if (terminalState !== "completed" || modelText === null) break;
             prepareGenerationOutput(generation.request, assessment.sources, modelText, generation.attempt);
             break;
           } catch (error) {
             if (!(error instanceof GenerationOutputValidationError)) throw error;
             drawingValidationErrors.push(error.message);
-            if (generation.attempt?.kind === "repair") break;
-            const attempt: GenerationAttempt = { kind: "repair", failedOutput: modelText, validationError: error.message };
+            if (generation.attempt?.kind === "repair") {
+              drawingFailure = drawingOutputLimited()
+                ? "已精简重试一次，模型输出仍被截断，尚未创建手绘图。请减少本次资料，或选择输出额度更大的模型后重试。"
+                : `手绘图精简重试后仍未通过检查，尚未创建文件：${error.message}`;
+              break;
+            }
+            const attempt: GenerationAttempt = { kind: "repair", failedOutput: modelText ?? (generatedAssistant ? publicMessageText(generatedAssistant.message) : ""), validationError: error.message };
             try {
               assertPiSubmissionActive(execution.knowledgeAbort.signal);
               await port.assertContinuation?.(generation.request, this.generationIdentity(active, execution));
@@ -3664,7 +3674,14 @@ export class PiNativeConversationRuntime {
         const result = await port.finish(generation.request, assessment, modelText,
           this.generationIdentity(active, execution), stage => this.setGenerationStage(active, execution, stage), generation.attempt);
         result.modelAttempts = modelAttempts;
-        if (generation.request.outputKind === "excalidraw") result.drawingValidationErrors = drawingValidationErrors;
+        if (generation.request.outputKind === "excalidraw") {
+          result.drawingValidationErrors = drawingValidationErrors;
+          if (drawingFailure && result.writeState === "not_written") {
+            result.error = drawingFailure;
+            terminalState = "failed";
+            promptError = new Error(drawingFailure, { cause: promptError });
+          }
+        }
         if (generation.request.outputKind === "canvas") {
           result.canvasFallback = canvasFallback;
           result.canvasValidationErrors = canvasValidationErrors;
@@ -4354,7 +4371,7 @@ export class PiNativeConversationRuntime {
           this.now()
         );
         const text = publicMessageText(event.message);
-        if (!execution.outputContinuation && !execution.inlineProposal && isAssistantMessage(event.message)
+        if (!execution.outputContinuation && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && isAssistantMessage(event.message)
           && (event.message.stopReason === "length" || event.message.errorMessage === "provider_output_limit_reached")) {
           execution.outputContinuation = {
             messageKey: key, firstFingerprint: messageFingerprint(event.message), text,

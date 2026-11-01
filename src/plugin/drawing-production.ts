@@ -24,7 +24,7 @@ export async function finishDrawing(options: GenerationProductionOptions, reques
   try {
     identity.signal.throwIfAborted();
     if (!modelText) throw new Error("生成未完成，尚未创建手绘图。");
-    const output = parseDrawingOutput(parseGenerationModelJson(modelText), result.sourcePaths);
+    const output = parseDrawingOutput(parseGenerationModelJson(modelText), result.sourcePaths, request.drawingStyle);
     Object.assign(result, { title: output.title, boxCount: output.boxCount, arrowCount: output.arrowCount });
     assertDrawingBinding(options, request);
     await assertGenerationPathSafe(options.vaultRoot, request.outputDirectory, true);

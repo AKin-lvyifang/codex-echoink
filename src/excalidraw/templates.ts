@@ -5,5 +5,5 @@ export function drawingTemplatePath(style: DrawingStyle): string { return `${DRA
 /** File-local export-dark takes precedence over matchThemeAlways on load. No global setting changes. */
 export function drawingTemplateContent(style: DrawingStyle): string {
   const dark = style === "blackboard";
-  return `---\nexcalidraw-plugin: parsed\nexcalidraw-export-dark: ${dark}\nechoink-drawing-template: true\n---\n\n# Excalidraw Data\n\n## Text Elements\n\n%%\n## Drawing\n\`\`\`json\n${JSON.stringify({ type: "excalidraw", version: 2, source: "https://excalidraw.com", elements: [], appState: { theme: dark ? "dark" : "light", viewBackgroundColor: "#ffffff", currentItemFontFamily: 5, currentItemRoughness: 1 }, files: {} })}\n\`\`\`\n%%\n`;
+  return `---\nexcalidraw-plugin: parsed\nexcalidraw-export-dark: ${dark}\nechoink-drawing-template: true\n---\n\n# Excalidraw Data\n\n## Text Elements\n\n%%\n## Drawing\n\`\`\`json\n${JSON.stringify({ type: "excalidraw", version: 2, source: "https://excalidraw.com", elements: [], appState: { theme: dark ? "dark" : "light", viewBackgroundColor: "#ffffff", currentItemFontFamily: 5, currentItemRoughness: 1, frameRendering: { enabled: true, clip: false, name: false, outline: true } }, files: {} })}\n\`\`\`\n%%\n`;
 }

@@ -15,8 +15,8 @@ import type { GenerationExecutionIdentity } from "../generation/runtime";
 import { isKnowledgeMaintenanceSourcePath } from "../knowledge-base/raw-digest-core";
 
 const model = () => ({ title: "资料到知识", elements: [
-  { id: "a", type: "rectangle", x: 0, y: 0, width: 320, height: 140, label: { text: "读取资料" }, sourcePaths: ["资料/原文.md"] },
-  { id: "b", type: "rectangle", x: 450, y: 0, width: 320, height: 140, label: { text: "整理知识" } },
+  { id: "a", type: "rectangle", x: 0, y: 0, width: 320, height: 140, label: { text: "📖 读取资料" }, sourcePaths: ["资料/原文.md"] },
+  { id: "b", type: "rectangle", x: 450, y: 0, width: 320, height: 140, label: { text: "🧩 整理知识" }, sourcePaths: ["资料/原文.md"] },
   { id: "ab", type: "arrow", x: 0, y: 0, start: { id: "a" }, end: { id: "b" } }
 ] });
 export async function runExcalidrawTests(root: string): Promise<void> {
@@ -26,13 +26,37 @@ export async function runExcalidrawTests(root: string): Promise<void> {
 async function assertExcalidrawTests(root: string): Promise<void> {
   const output = parseDrawingOutput(model(), ["资料/原文.md"]);
   assert.equal(output.boxCount, 2); assert.equal(output.arrowCount, 1);
-  assert.equal(output.elements[0].fontFamily, undefined, "CLI only accepts container fonts inside label");
-  assert.equal(output.elements[0].label!.fontFamily, 5);
-  assert.equal(output.elements[2].x, 320);
-  assert.deepEqual(output.elements[2].points, [[0, 0], [130, 0]], "arrow geometry joins the real box edges before the converter binds it");
-  assert.match(output.elements.at(-1)!.text!, /来源/u);
+  assert.equal(output.elements.find(e => e.id === "a")!.fontFamily, undefined, "CLI only accepts container fonts inside label");
+  assert.equal(output.elements.find(e => e.id === "a")!.label!.fontFamily, 5);
+  assert.equal(output.elements.find(e => e.id === "ab")!.x, 320);
+  assert.deepEqual(output.elements.find(e => e.id === "ab")!.points, [[0, 0], [130, 0]], "arrow geometry joins the real box edges before the converter binds it");
+  assert.equal(output.elements.at(-1)!.text, "来源：原文");
+  assert.equal(output.elements.filter(element => element.text?.startsWith("来源：")).length, 1);
+  assert.equal(output.elements.find(element => element.id === "a")!.link, "[[资料/原文.md]]");
+  assert.equal(output.elements[0].text, "资料到知识");
+  assert.equal(output.elements[0].fontSize, 48);
+  assert.equal(output.elements.at(-1)!.fontSize, 16);
+  assert(output.elements.at(-1)!.y > Math.max(...output.elements.filter(e => e.label).map(e => e.y + e.height!)));
+  assert.equal(parseDrawingOutput(model(), ["资料/原文.md"], "blackboard").elements.find(e => e.id === "a")!.backgroundColor, "transparent");
+  const grouped = model(); (grouped.elements as unknown[]).push({ id: "g", type: "frame", name: "流程", children: ["a", "b"] });
+  const grouping = parseDrawingOutput(grouped, ["资料/原文.md"]);
+  assert.equal(grouping.elements.find(e => e.text === "流程")!.fontSize, 32);
+  assert.equal(grouping.elements.find(e => e.id === "g")!.children!.length, 3);
+  const frame = grouping.elements.find(e => e.id === "g")!;
+  assert(grouping.elements.filter(e => frame.children!.includes(e.id)).every(e => e.y > frame.y && e.y + (e.height ?? e.fontSize! * 1.35) < frame.y + frame.height!), "explicit frame bounds contain their heading and boxes");
+  const interleaved = model(); (interleaved.elements as unknown[]).push({ ...model().elements[0], id: "c", x: 900 }, { ...model().elements[0], id: "d", x: 0, y: 220 }, { id: "g1", type: "frame", name: "准备", children: ["a", "b"] }, { id: "g2", type: "frame", name: "分析", children: ["c", "d"] });
+  assert.throws(() => parseDrawingOutput(interleaved, ["资料/原文.md"]), /分组.*重叠/u);
+  const crossing = model(); crossing.elements[1].x = 800; (crossing.elements as unknown[]).push({ ...model().elements[0], id: "middle", x: 400 });
+  assert.throws(() => parseDrawingOutput(crossing, ["资料/原文.md"]), /连线.*穿过/u);
+  const wide = model(); wide.elements[1].x = 1800;
+  assert.throws(() => parseDrawingOutput(wide, ["资料/原文.md"]), /1600/u);
+  const many = { ...model(), elements: Array.from({ length: 13 }, (_, i) => ({ ...model().elements[0], id: String(i), x: (i % 3) * 400, y: Math.floor(i / 3) * 220 })) };
+  assert.throws(() => parseDrawingOutput(many, ["资料/原文.md"]), /1–12/u);
+  const emoji = model(); emoji.elements[0].width = 100; emoji.elements[0].height = 60; emoji.elements[0].label!.text = "👩‍🌾 种";
+  assert.equal(parseDrawingOutput(emoji, ["资料/原文.md"]).elements.find(e => e.id === "a")!.height, 104, "one emoji grapheme still takes room during wrapping");
+
   const overlap = model(); overlap.elements[1].x = 310;
-  assert.ok(parseDrawingOutput(overlap, ["资料/原文.md"]).elements[1].x > 320);
+  assert.ok(parseDrawingOutput(overlap, ["资料/原文.md"]).elements.find(e => e.id === "b")!.x > 320);
   const collision = model(); collision.elements[1].x = 0;
   assert.throws(() => parseDrawingOutput(collision, ["资料/原文.md"]), /严重重叠/u);
   const dangling = model(); dangling.elements[2].end = { id: "missing" };
