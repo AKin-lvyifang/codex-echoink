@@ -255,7 +255,7 @@ export function createKnowledgeFolderPicker(parent: HTMLElement, options: Knowle
                 if (["ArrowDown", "ArrowUp"].includes(event.key) && !isImeKeyEvent(event.nativeEvent)) { event.preventDefault(); setOpen(true); }
               }}>
               <span data-slot="select-value" className="echoink-folder-picker-trigger-value"><span className="echoink-folder-picker-trigger-text">{options.multiple ? t("添加", "Add") : single?.path ?? (options.required ? t("选择文件夹", "Choose a folder") : options.emptyLabel ?? t("不设置", "Not set"))}</span>{single?.create && <span className="echoink-folder-picker-new">{t("新建", "New")}</span>}</span>
-              <span aria-hidden="true"><ChevronDownIcon width={16} height={16} /></span>
+              <ChevronDownIcon className="shrink-0 in-aria-invalid:text-destructive/80 text-muted-foreground/80" aria-hidden="true" width={16} height={16} />
             </Popover.Trigger>
             <Popover.Portal container={ownerDocument.body}>
               <Popover.Content ref={node => { content = node; }} data-slot="select-content" className={`echoink-origin-control echoink-folder-picker-popover echoink-theme-overlay${overlayClass}`} style={popupTheme} align="end" sideOffset={4} collisionPadding={12}
