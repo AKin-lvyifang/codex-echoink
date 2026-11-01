@@ -578,7 +578,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const card = el(planGrid, "article", `plan${plan.id === "early" ? " is-early" : ""}`);
     card.dataset.planId = plan.id;
     el(card, "strong", "plan-title", zh ? plan.zh : plan.en);
-    const badge = desktop ? plan.id === "early" ? t("早鸟买断", "Early bird") : pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1 && pricing.savingsPercent != null && pricing.savingsPercent > 0
+    const badge = desktop ? pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1 && pricing.savingsPercent != null && pricing.savingsPercent > 0
       ? t(`约 ${(pricing.amountMinor / pricing.comparisonAmountMinor! * 10).toFixed(1).replace(/\.0$/, "")} 折`, `Save ${pricing.savingsPercent}%`)
       : plan.id === "early" ? t("早鸟专享", "Early bird") : t("灵活体验", "Flexible access");
     if (badge) el(card, "span", "plan-offer", badge);
@@ -586,7 +586,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const amount = el(price, "span", "price-amount");
     el(amount, "span", "", currencySymbol);
     el(amount, "span", "", money(pricing.amountMinor));
-    el(price, "small", "price-term", desktop ? pricing.days === null ? t("一次购买", "one payment") : t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
+    if (!desktop || plan.id !== "early") el(price, "small", "price-term", desktop ? t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
     el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
       ? t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
       : t("一次买断，终生可用", "One payment, lifetime access"));
