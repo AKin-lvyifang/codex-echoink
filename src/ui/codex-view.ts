@@ -206,6 +206,7 @@ export interface CodexViewMigrationState {
   readonly sessionDrafts?: Array<[string, ComposerSessionDraft]>;
   readonly draftOwner?: string;
   readonly composer: {
+    drawingRequested?: boolean;
     selectedSkill: EchoInkResource | null;
     attachments: StoredAttachment[];
     noteMentions: readonly Readonly<NoteMentionSelection>[];
@@ -221,7 +222,7 @@ export interface CodexViewMigrationState {
   };
 }
 
-interface ComposerSessionDraft { text: string; annotations: SelectionDraft; attachments: StoredAttachment[]; noteMentions: readonly NoteMentionSelection[]; selectedSkill: EchoInkResource | null }
+interface ComposerSessionDraft { drawingRequested?: boolean; text: string; annotations: SelectionDraft; attachments: StoredAttachment[]; noteMentions: readonly NoteMentionSelection[]; selectedSkill: EchoInkResource | null }
 
 export class CodexView extends ItemView {
   private taskUiMounted = false;
@@ -333,12 +334,12 @@ export class CodexView extends ItemView {
       ...(this.inputEl.value.trim() && prefillSource ? { prefillSource } : {}),
       ...(this.inputEl.value.trim() && englishDiarySourcePath ? { englishDiarySourcePath } : {}),
       annotations: composerSelectionAnnotations(this.inputEl), annotationFragments: snapshotSelectionDraft(this.inputEl).fragments,
-      noteMentions: [...composerNoteMentionSelections(this.inputEl)], selectedSkill: this.selectedSkill,
+      noteMentions: [...composerNoteMentionSelections(this.inputEl)], drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill,
       selectedProviderSettingsId: this.selectedProviderSettingsId, selectedModel: this.selectedModel,
       selectedPermission: this.selectedPermission, selectedMode: this.selectedMode };
     this.taskNavigation.save(draft, page);
     this.composerSessionDrafts.set(owner, { text: draft.text, annotations: snapshotSelectionDraft(this.inputEl), attachments: draft.attachments,
-      noteMentions: draft.noteMentions ?? [], selectedSkill: this.selectedSkill });
+      noteMentions: draft.noteMentions ?? [], drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill });
     this.plugin.getConversationRunService().scheduleSave();
   }
   private restoreTaskComposerDraft(): void {
@@ -346,7 +347,7 @@ export class CodexView extends ItemView {
     this.composerDraftOwner = this.taskNavigation.draftKey;
     this.inputEl.value = draft.text;
     restoreSelectionDraft(this.inputEl, { ...emptySelectionDraft(draft.text), annotations: draft.annotations ?? [], fragments: draft.annotationFragments ?? [], nextNumber: Math.max(0, ...(draft.annotations ?? []).map(annotation => annotation.number)) + 1 });
-    this.attachments = draft.attachments.map(attachment => ({ ...attachment })); this.selectedSkill = draft.selectedSkill ?? null;
+    this.attachments = draft.attachments.map(attachment => ({ ...attachment })); this.drawingRequested = draft.drawingRequested === true; this.selectedSkill = draft.selectedSkill ?? null;
     clearComposerNoteMentions(this.inputEl);
     for (const mention of draft.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
     const page = this.taskNavigation.page;
@@ -796,7 +797,7 @@ export class CodexView extends ItemView {
     const inputEl = ownedEl(this.inputEl.ownerDocument, "textarea"); inputEl.value = signal.prompt;
     const adapter = Object.create(this) as CodexViewTurnContext;
     Object.defineProperties(adapter, {
-      inputEl: { value: inputEl }, attachments: { value: [] }, selectedSkill: { value: null },
+      inputEl: { value: inputEl }, attachments: { value: [] }, selectedSkill: { value: null }, drawingRequested: { value: false },
       ensureSession: { value: () => draft }, currentTurnOptions: { value: () => options },
       onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined }
     });
@@ -844,7 +845,7 @@ export class CodexView extends ItemView {
     const draft: StoredSession = { id: newId("pdf-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
     const adapter = Object.create(this) as CodexViewTurnContext;
     Object.defineProperties(adapter, {
-      inputEl: { value: inputEl }, attachments: { value: [{ ...input.attachment }] }, selectedSkill: { value: null },
+      inputEl: { value: inputEl }, attachments: { value: [{ ...input.attachment }] }, selectedSkill: { value: null }, drawingRequested: { value: false },
       ensureSession: { value: () => draft }, currentTurnOptions: { value: () => this.currentTurnOptions(draft) }
     });
     let failure = "PDF 尚未发送，请检查模型和工作区权限。";
@@ -1009,7 +1010,7 @@ export class CodexView extends ItemView {
     }
     this.composerTransfers.set(item.id, { owner, snapshot: { ...item }, cancelled: false, draft: {
       text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl),
-      attachments: this.attachments.map(value => ({ ...value })), noteMentions: composerNoteMentionSelections(this.inputEl), selectedSkill: this.selectedSkill
+      attachments: this.attachments.map(value => ({ ...value })), noteMentions: composerNoteMentionSelections(this.inputEl), drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill
     } });
     this.clearComposerDraft();
     if (this.taskUiMounted) this.saveTaskComposerDraft();
@@ -1031,16 +1032,16 @@ export class CodexView extends ItemView {
       this.turnQueue.pauseSessionQueue(target ?? transfer.owner);
       const active = transfer.owner === (this.composerDraftOwner || this.plugin.settings.activeSessionId);
       const otherTransfer = [...this.composerTransfers.values()].some(value => value.owner === transfer.owner);
-      const newer = otherTransfer || (active ? Boolean(this.inputEl.value.trim() || this.attachments.length || this.selectedSkill
+      const newer = otherTransfer || (active ? Boolean(this.inputEl.value.trim() || this.attachments.length || this.drawingRequested || this.selectedSkill
         || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)
         : Boolean(this.composerSessionDrafts.get(transfer.owner)?.text.trim() || this.composerSessionDrafts.get(transfer.owner)?.attachments.length
-          || this.composerSessionDrafts.get(transfer.owner)?.selectedSkill || this.composerSessionDrafts.get(transfer.owner)?.noteMentions.length
+          || this.composerSessionDrafts.get(transfer.owner)?.drawingRequested || this.composerSessionDrafts.get(transfer.owner)?.selectedSkill || this.composerSessionDrafts.get(transfer.owner)?.noteMentions.length
           || this.composerSessionDrafts.get(transfer.owner)?.annotations.annotations.length));
       if (!newer) {
         this.composerSessionDrafts.set(transfer.owner, transfer.draft);
         if (active) {
           this.inputEl.value = transfer.draft.text; this.attachments = transfer.draft.attachments;
-          this.selectedSkill = transfer.draft.selectedSkill; restoreSelectionDraft(this.inputEl, transfer.draft.annotations);
+          this.drawingRequested = transfer.draft.drawingRequested === true; this.selectedSkill = transfer.draft.selectedSkill; restoreSelectionDraft(this.inputEl, transfer.draft.annotations);
           clearComposerNoteMentions(this.inputEl);
           for (const mention of transfer.draft.noteMentions) addComposerNoteMentionSelection(this.inputEl, mention);
           this.renderAttachments(); if (this.taskUiMounted) {
@@ -1052,7 +1053,7 @@ export class CodexView extends ItemView {
           const page: TaskPage = transfer.owner.startsWith("agent:") ? { kind: "list", agentId: transfer.owner.slice(6) } : { kind: "detail", taskId: transfer.owner };
           this.taskNavigation.save({ text: transfer.draft.text, attachments: transfer.draft.attachments,
             prefillSource: transfer.snapshot.prefillSource, englishDiarySourcePath: transfer.snapshot.englishDiarySourcePath,
-            annotations: transfer.draft.annotations.annotations, annotationFragments: transfer.draft.annotations.fragments, noteMentions: [...transfer.draft.noteMentions], selectedSkill: transfer.draft.selectedSkill }, page);
+            annotations: transfer.draft.annotations.annotations, annotationFragments: transfer.draft.annotations.fragments, noteMentions: [...transfer.draft.noteMentions], drawingRequested: transfer.draft.drawingRequested, selectedSkill: transfer.draft.selectedSkill }, page);
         }
       } else {
         const retained = { ...item, prefillSource: item.prefillSource ?? transfer.snapshot.prefillSource, englishDiarySourcePath: item.englishDiarySourcePath ?? transfer.snapshot.englishDiarySourcePath, sessionId: transfer.owner.startsWith("agent:") ? transfer.owner : item.sessionId };
@@ -1082,13 +1083,14 @@ export class CodexView extends ItemView {
   switchComposerDraft(sessionId: string): void {
     if (!this.inputEl || this.composerDraftOwner === sessionId) return;
     const previous = this.composerDraftOwner || this.plugin.settings.activeSessionId;
-    if (previous && previous !== sessionId) this.composerSessionDrafts.set(previous, { text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl), attachments: this.attachments.map((item) => ({ ...item })), noteMentions: composerNoteMentionSelections(this.inputEl), selectedSkill: this.selectedSkill });
+    if (previous && previous !== sessionId) this.composerSessionDrafts.set(previous, { text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl), attachments: this.attachments.map((item) => ({ ...item })), noteMentions: composerNoteMentionSelections(this.inputEl), drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill });
     this.composerDraftOwner = sessionId;
     this.selectedMode = this.plugin.settings.taskWorkspace?.replyDrafts[sessionId]?.selectedMode ?? "agent";
     const draft = this.composerSessionDrafts.get(sessionId);
     this.inputEl.value = draft?.text ?? "";
     restoreSelectionDraft(this.inputEl, draft?.annotations ?? emptySelectionDraft());
     this.attachments = draft?.attachments.map((item) => ({ ...item })) ?? [];
+    this.drawingRequested = draft?.drawingRequested === true;
     this.selectedSkill = draft?.selectedSkill ?? null;
     clearComposerNoteMentions(this.inputEl);
     for (const mention of draft?.noteMentions ?? []) addComposerNoteMentionSelection(this.inputEl, mention);
@@ -1116,6 +1118,7 @@ export class CodexView extends ItemView {
     const mentions = active ? composerNoteMentionSelections(this.inputEl) : stored!.noteMentions;
     const skill = active ? this.selectedSkill : stored!.selectedSkill;
     if ((item.composerTextSnapshot === undefined ? text.trim() !== item.text : text !== item.composerTextSnapshot) || !selectionAnnotationsMatch(annotations, item.selectionAnnotations ?? [])
+      || Boolean(active ? this.drawingRequested : stored!.drawingRequested) !== Boolean(item.turnOptions?.drawingRequested)
       || (skill?.id ?? null) !== (item.skill?.id ?? null)
       || mentions.length !== (item.noteMentions?.length ?? 0) || mentions.some((mention, index) => mention.vaultRelativePath !== item.noteMentions?.[index].vaultRelativePath)
       || attachments.length !== item.attachments.length || attachments.some((attachment, index) => {
@@ -1203,6 +1206,7 @@ export class CodexView extends ItemView {
   private readonly taskPlanDock = new TaskPlanDockController();
   private readonly interactionDock = new InteractionDockController();
   private get pendingInteractionsBySession(): Map<string, Readonly<EchoInkTurnInteraction>> { return this.plugin.getConversationRunService().pendingInteractions; }
+  private drawingRequested = false;
   private selectedSkill: EchoInkResource | null = null;
   private attachments: StoredAttachment[] = [];
   private selectedProviderSettingsId = "";
@@ -1282,7 +1286,7 @@ export class CodexView extends ItemView {
       const lifecycle = this.turnLifecycleHost(sessionId);
       const context: CodexViewTurnContext = {
         get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
-        get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
+        get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get drawingRequested() { return view.drawingRequested; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
         applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
         onComposerTransferStarted: item => view.onComposerTransferStarted(item),
         onComposerTransferFinished: (item, outcome) => view.onComposerTransferFinished(item, outcome),
@@ -1479,7 +1483,7 @@ export class CodexView extends ItemView {
       annotationDraft: this.inputEl ? snapshotSelectionDraft(this.inputEl) : emptySelectionDraft(),
       sessionDrafts: [...this.composerSessionDrafts], draftOwner: this.composerDraftOwner,
       composer: {
-        selectedSkill: this.selectedSkill,
+        drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill,
         attachments: this.attachments,
         noteMentions: this.inputEl ? composerNoteMentionSelections(this.inputEl) : [],
         selectedProviderSettingsId: this.selectedProviderSettingsId,
@@ -1502,6 +1506,7 @@ export class CodexView extends ItemView {
     for (const [sessionId, interaction] of state.pendingInteractions) {
       this.pendingInteractionsBySession.set(sessionId, interaction);
     }
+    this.drawingRequested = state.composer.drawingRequested === true;
     this.selectedSkill = state.composer.selectedSkill;
     this.attachments = state.composer.attachments;
     this.selectedProviderSettingsId = state.composer.selectedProviderSettingsId;
@@ -2098,7 +2103,7 @@ export class CodexView extends ItemView {
     if (this.taskDerivationInProgress) return;
     const inline = this.taskUiMounted ? this.currentInlineTask() : undefined;
     if (inline) { await this.sendInlineTaskReply(inline); return; }
-    if (this.running && (this.inputEl.value.trim() || this.attachments.length || this.selectedSkill
+    if (this.running && (this.inputEl.value.trim() || this.attachments.length || this.drawingRequested || this.selectedSkill
       || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)) {
       await this.enqueueComposerDraft(); return;
     }

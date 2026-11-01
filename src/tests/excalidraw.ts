@@ -1,3 +1,4 @@
+import { runDiagramToolTests } from "./pi-native/diagram-tools";
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
 import path from "node:path";
@@ -24,6 +25,7 @@ export async function runExcalidrawTests(root: string): Promise<void> {
   try { await assertExcalidrawTests(root); } finally { Platform.isDesktopApp = previous; }
 }
 async function assertExcalidrawTests(root: string): Promise<void> {
+  await runDiagramToolTests(root);
   const output = parseDrawingOutput(model(), ["资料/原文.md"]);
   assert.equal(output.boxCount, 2); assert.equal(output.arrowCount, 1);
   assert.equal(output.elements.find(e => e.id === "a")!.fontFamily, undefined, "CLI only accepts container fonts inside label");

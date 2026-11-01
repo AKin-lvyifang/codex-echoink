@@ -66,6 +66,7 @@ export interface TaskResumeSafetyInput {
   readonly conversationId: string;
   readonly interruptedRunId?: string;
   readonly now?: () => number;
+  readonly reconcileDiagram?: (creation: import("../excalidraw/service").DrawingCreation) => Promise<string | null>;
 }
 
 /** No initialization, expiration, recovery, Provider, or external Tool calls. */
@@ -164,7 +165,13 @@ export async function prepareTaskResumeSafety(input: TaskResumeSafetyInput): Pro
   for (const operation of snapshot.operations) {
     if (operation.status !== "uncertain" || !operation.effectStarted) continue;
     if (await input.receipts.readReceipt(operation.operationIdentity)) continue;
-    await input.receipts.recoverMissingReceipt(operation.operationIdentity, async context => {
+    await input.receipts.recoverMissingReceipt(operation.operationIdentity, async (context): Promise<import("../harness/pi-native/domain-receipt-store").DomainRecoveryReadbackResult> => {
+      if (context.toolId === "diagram_create") {
+        const creation = record(context.resolvedTarget)?.creation as import("../excalidraw/service").DrawingCreation;
+        const version = creation?.path ? await input.reconcileDiagram?.(creation).catch(() => null) : null;
+        return { status: version ? "completed" : "uncertain", safeSummary: { path: creation?.path ?? "", reason: version ? "original_drawing_verified" : "check_original_path_no_recreate" },
+          readback: { checkedAt: (input.now ?? Date.now)(), readbackVerified: !!version, observedTargetVersion: version ?? null, safeSummary: "Read original drawing only; no create or open" } };
+      }
       const expected = afterFileVersions(context.toolId, context.resolvedTarget, context.targetVersion, 0);
       const verified = expected.length > 0 && (await inspectFileConflicts(input.vaultRootPath, expected)).length === 0
         && context.toolId !== "note_delete";
@@ -261,6 +268,7 @@ function effectTime(journal: Readonly<DomainOperationJournal>): number {
 function semanticOperation(toolName: string, args: unknown, target?: unknown): string {
   const value = record(args);
   if (!value) return `${toolName}:missing_arguments`;
+  if (toolName === "diagram_create") return "diagram_create:original-task-drawing";
   const normalized = isPiTodoTool(toolName) ? normalizeTodoToolRequest(toolName, value) : { ...value };
   const jobId = record(target)?.jobId;
   if (toolName === "pdf_reading_process" && typeof jobId === "string") return `${toolName}:${jobId}`;
@@ -300,6 +308,7 @@ function isTodoWrite(name: string): boolean {
   return ["todo_add", "todo_update", "todo_complete"].includes(name);
 }
 function affectedFilePaths(toolName: string, args: unknown, target?: unknown): string[] {
+  if (toolName === "diagram_create") { const relative = record(target)?.path; return typeof relative === "string" ? [normalizeVaultRelativePath(relative)] : []; }
   if (toolName === "pdf_reading_process") {
     const resolved = record(target), input = record(args);
     const artifactPaths: unknown[] = Array.isArray(resolved?.artifactPaths) ? resolved.artifactPaths : [];
@@ -322,6 +331,7 @@ function affectedFilePaths(toolName: string, args: unknown, target?: unknown): s
   return [value?.relativePath, value?.sourcePath, value?.targetPath].flatMap(raw => typeof raw === "string" ? [normalizeVaultRelativePath(raw)] : []);
 }
 function beforeFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number): TaskResumeFileVersion[] {
+  if (tool === "diagram_create") return []; // Unknown drawing effects require CLI readback, never a guessed file version.
   if (tool === "pdf_reading_process") return pdfFileVersions(version, recordedAt);
   if (tool === "english_diary_generate") return englishDiaryFileVersions(target, version, recordedAt);
   if (isTodoWrite(tool)) {
@@ -341,6 +351,7 @@ function beforeFileVersions(tool: string, target: unknown, version: unknown, rec
   return item ? [item] : [];
 }
 function afterFileVersions(tool: string, target: unknown, version: unknown, recordedAt: number, observedVersion?: JsonValue): TaskResumeFileVersion[] {
+  if (tool === "diagram_create") { const file = typeof observedVersion === "string" ? fileVersion(record(target)?.path, observedVersion, recordedAt) : null; return file ? [file] : []; }
   if (tool === "pdf_reading_process") {
     if (observedVersion !== undefined) return pdfFileVersions(observedVersion, recordedAt);
     // The original's exact intended bytes can prove a crash-window write. This
@@ -430,7 +441,7 @@ async function localFileVersion(root: string, relativePath: string): Promise<str
 }
 function operationLabel(tool: string, target: JsonValue): string {
   const value = record(target);
-  return [value?.resourceName, value?.toolName ?? tool, value?.relativePath ?? value?.sourcePath].filter(item => typeof item === "string").join(" · ");
+  return [value?.resourceName, value?.toolName ?? tool, value?.path ?? value?.relativePath ?? value?.sourcePath].filter(item => typeof item === "string").join(" · ");
 }
 function recoveryInstructions(operations: readonly TaskResumeOperation[], conflicts: readonly TaskResumeFileConflict[]): string {
   const pdfJobs = [...new Set(operations.filter(operation => operation.toolName === "pdf_reading_process")
@@ -439,6 +450,7 @@ function recoveryInstructions(operations: readonly TaskResumeOperation[], confli
     "Resume the interrupted task in the same session. These are product-owned recovery facts, not a request to execute prior actions.",
     "Completed actions must not be replayed. Unknown effects must be reported as unverified and must not be retried; unrelated continuation is allowed. Changed files must not be overwritten.",
     ...(pdfJobs.length ? ["PDF-specific receipt semantics for these exact jobs: " + JSON.stringify(pdfJobs) + ". A completed PDF receipt proves only the original and the files read back by that operation; it does not mean extraction, translation, internal analysis, or requested Knowledge delivery is complete. Query the real job with pdf_reading_query(jobId). If its original is verified and the job is not completed, explicitly call pdf_reading_process with the same jobId to continue only unfinished stages. No temporary attachment is required when the saved original is verified. Reuse the original and completed stages; do not copy the original again, create a new job, or replay an uncertain remote POST/PUT; only query its saved batch. This same-job continuation is not replaying a completed PDF file write. All other completed writes remain non-replayable, and changed/missing originals or conflicting versions still block continuation."] : []),
+    ...(operations.some(operation => operation.toolName === "diagram_create") ? ["Excalidraw drawings are durable effects. Reuse the recorded original path. A completed drawing must not be created or opened again; unknown drawing outcomes must be checked at that same path, never rebuilt under a new name."] : []),
     JSON.stringify({ operations: operations.map(operation => ({ operationIdentity: operation.operationIdentity, status: operation.status, label: operation.label, effectStarted: operation.effectStarted })), fileConflicts: conflicts })
   ].join("\n");
 }

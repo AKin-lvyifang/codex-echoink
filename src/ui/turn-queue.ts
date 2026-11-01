@@ -250,5 +250,5 @@ function cloneTurnOptions(options: TurnOptions): TurnOptions {
 export function canInsertQueuedTurn(item: Readonly<QueuedTurnItem>): boolean {
   return Boolean(item.text.trim()) && !item.attachments.length && !item.preparedDocuments?.length
     && !item.noteMentions?.length && !item.selectionAnnotations?.length && !item.skill
-    && !item.prefillSource && !item.generationRequest && !item.pdfTaskRequest && !item.maintenanceScope && !item.resumeContext;
+    && !item.turnOptions.drawingRequested && !item.prefillSource && !item.generationRequest && !item.pdfTaskRequest && !item.maintenanceScope && !item.resumeContext;
 }

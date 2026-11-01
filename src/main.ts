@@ -1,3 +1,5 @@
+import { getExcalidrawService } from "./excalidraw/service";
+import { getDesktopCrypto } from "./platform/desktop-crypto";
 import { DesktopExpertController } from "./plugin/expert-controller";
 import { isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
 import type { AgentRegistry } from "./agents/types";
@@ -1322,7 +1324,12 @@ export default class CodexForObsidianPlugin extends Plugin {
     if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
     await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations, last.knowledge?.workflow === "ask" ? ["knowledge"] : []);
     assertPiSubmissionActive(signal);
-    const safety = await prepareTaskResumeSafety(snapshotInput);
+    const safety = await prepareTaskResumeSafety({ ...snapshotInput, reconcileDiagram: async creation => {
+      if (!(await getExcalidrawService(this.app).reconcile(creation)).verified) return null;
+      const file = this.app.vault.getAbstractFileByPath(creation.path);
+      if (!(file instanceof TFile)) return null;
+      return getDesktopCrypto().createHash("sha256").update(new Uint8Array(await this.app.vault.readBinary(file))).digest("hex");
+    } });
     assertPiSubmissionActive(signal);
     if (safety.fileConflicts.length) throw new Error(`文件已被修改，本次没有继续，也不会覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
     const interruption = {

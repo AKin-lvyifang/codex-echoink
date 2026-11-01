@@ -11128,7 +11128,7 @@ button.codex-message-note-mention-chip:focus-visible {
 }
 
 :is(.codex-container, .codex-context-panel, .echoink-mobile, .echoink-iphone, .echoink-ipad) .codex-composer-resource-panel button.codex-composer-resource-row:focus-visible {
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 58%, transparent);
+  box-shadow: none;
 }
 
 .codex-composer-resource-row.is-active .codex-composer-resource-name {
@@ -11170,6 +11170,17 @@ button.codex-message-note-mention-chip:focus-visible {
   font-weight: 400;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.codex-composer-resource-row.is-drawing-plugin .codex-composer-resource-name {
+  flex: 0 0 auto;
+}
+
+.codex-composer-resource-row.is-drawing-plugin .codex-composer-resource-description {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.4;
 }
 
 .codex-composer-resource-row.is-mcp-status-failed .codex-composer-resource-description {

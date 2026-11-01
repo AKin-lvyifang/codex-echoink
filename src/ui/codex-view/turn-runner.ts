@@ -1,3 +1,4 @@
+import { getExcalidrawService } from "../../excalidraw/service";
 import { agentCapabilityErrorText } from "../../agents/capability-denial";
 import { runErrors } from "../../run-reports/recent-errors";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
@@ -466,7 +467,7 @@ export async function startNextQueuedTurn(view: CodexViewTurnContext, sessionId:
 
 export async function createQueuedTurnFromComposer(view: CodexViewTurnContext, options: { allowLocalKnowledgeCommands: boolean; onError?: (message: string) => void }): Promise<QueuedTurnItem | null> {
   const session = view.ensureSession();
-  const turnOptions = view.currentTurnOptions(session);
+  const turnOptions = { ...view.currentTurnOptions(session), drawingRequested: view.drawingRequested === true };
   const text = view.inputEl.value.trim();
   const composerTextSnapshot = view.inputEl.value;
   const attachments = view.attachments.map((attachment) => ({ ...attachment }));
@@ -591,7 +592,7 @@ export async function startQueuedTurnItem(view: CodexViewTurnContext, item: Queu
     for (const mention of item.noteMentions ?? []) addComposerNoteMentionSelection(input, mention);
     const adapter = Object.create(view) as CodexViewTurnContext;
     Object.defineProperties(adapter, {
-      inputEl: { value: input }, attachments: { value: item.attachments }, selectedSkill: { value: item.skill },
+      inputEl: { value: input }, attachments: { value: item.attachments }, selectedSkill: { value: item.skill }, drawingRequested: { value: item.turnOptions.drawingRequested },
       ensureSession: { value: () => view.sessionById(item.sessionId)! }, currentTurnOptions: { value: () => item.turnOptions },
       onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined }, isComposerTransferCancelled: { value: undefined }
     });
@@ -672,6 +673,14 @@ async function prepareTurnProviderModel(
     (provider) => provider.id === selection.providerSettingsId
   );
   const targetModel = target && getApiProviderModel(target, selection.model);
+  if (selection.drawingRequested) {
+    const reason = selection.mode === "plan" ? "计划模式只讨论方案，请切换到 Agent 模式后画图。"
+      : selection.permission === "read-only" ? "当前是只读权限，请允许写入后再画图。"
+        : targetModel?.toolCalling === false ? "当前模型不支持工具调用，请选择支持工具的模型后画图。"
+          : getExcalidrawService(view.app).disabledReason();
+    if (reason) { new Notice(reason); view.onPiRunFailure?.(reason); return false; }
+  }
+
   if (
     !target
     || !targetModel
@@ -950,6 +959,7 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
       ...(workbenchSource ? { workbenchSource } : {}),
+      ...(item.turnOptions.drawingRequested ? { drawingRequested: true } : {}),
       ...(item.generationRequest ? { generationRequest: item.generationRequest } : {}),
       ...(item.pdfTaskRequest ? { pdfTaskRequest: item.pdfTaskRequest } : {}),
       ...(item.englishDiarySourcePath ? { englishDiarySourcePath: item.englishDiarySourcePath } : {}),
@@ -1956,6 +1966,7 @@ function composerStillMatchesQueuedTurn(
       composerNoteMentionSelections(view.inputEl),
       item.noteMentions ?? []
     )
+    && Boolean(view.drawingRequested) === Boolean(item.turnOptions?.drawingRequested)
     && (view.selectedSkill?.id ?? null) === (item.skill?.id ?? null);
 }
 

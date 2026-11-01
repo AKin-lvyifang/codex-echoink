@@ -256,6 +256,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentWorkbenchSource?(): Readonly<WorkbenchTaskSource> | null;
   bindPdfDeliveryJob?(jobId: string): void;
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
+  currentDrawingRequested?(): boolean;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   /** Lazily opens the current, capability-authorized ordinary-chat read workflow. */
@@ -740,6 +741,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  drawingRequested?: boolean;
   inlineProposal?: { request: Readonly<InlineModelRequest>; previousAutoCompaction?: boolean };
   generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; attempt?: GenerationAttempt; inputBudget?: number; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
   pdfTaskRequest?: Readonly<PdfTaskRequest>;
@@ -1582,7 +1584,8 @@ export class PiNativeConversationRuntime {
     if (request.englishDiarySourcePath && !normalizeEnglishDiarySourcePath(request.englishDiarySourcePath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记原稿位置无效，请从英文日记页重新选择。");
     if (englishDiarySourcePath && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", "生成英文日记需要可写工作区和 Agent 模式；原稿已保留。");
     if (englishDiarySourcePath && (documents.length || promptImages.length || noteMentions.length || selectionAnnotations.length || request.skillPath)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记任务沿已确认的发送范围处理，请移除额外附件、引用和 Skill 后再发送。");
-    if (!active.supportsToolCalling && (mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
+    if (request.drawingRequested && (mode === "plan" || permission === "read-only")) throw new PiNativeConversationRuntimeError("agent_session_invalid", mode === "plan" ? "计划模式只讨论方案，请切换到 Agent 模式后画图；输入已保留。" : "当前是只读权限，请允许写入后画图；输入已保留。");
+    if (!active.supportsToolCalling && (request.drawingRequested || mode === "plan" || knowledgeCommand.kind === "maintain" || pdfTaskRequest || englishDiarySourcePath)) {
       throw new PiNativeConversationRuntimeError("agent_session_invalid", toolCallingDisabledMessage("desktop", active.providerDisplayName, active.session.model?.name ?? active.session.model?.id));
     }
     if (knowledgeCommand.kind === "maintain" && promptImages.length) {
@@ -1635,6 +1638,7 @@ export class PiNativeConversationRuntime {
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
       ...(request.inlineProposalRequest ? { inlineProposal: { request: request.inlineProposalRequest } } : {}),
+      ...(request.drawingRequested ? { drawingRequested: true } : {}),
       ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
       ...(pdfTaskRequest ? { pdfTaskRequest } : {}),
       ...(englishDiarySourcePath ? { englishDiarySourcePath } : {}),
@@ -3062,6 +3066,7 @@ export class PiNativeConversationRuntime {
       currentTaskResumeContext: () => holder.active?.currentRun?.resumeContext,
       bindPdfDeliveryJob: jobId => { const run = holder.active?.currentRun; if (run) (run.pdfDeliveryJobs ??= new Set()).add(jobId); },
       currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
+      currentDrawingRequested: () => holder.active?.currentRun?.drawingRequested === true,
       currentEnglishDiaryRequest: () => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run?.englishDiarySourcePath) return null;

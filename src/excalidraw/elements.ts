@@ -47,7 +47,7 @@ function lineCrosses(a: [number, number], b: [number, number], box: Bounds): boo
   }
   return true;
 }
-export function parseDrawingOutput(value: unknown, sourcePaths?: readonly string[], style: DrawingStyle = "white"): DrawingOutput {
+export function parseDrawingOutput(value: unknown, sourcePaths?: readonly string[], style: DrawingStyle = "white", requireSources = true): DrawingOutput {
   const input = record(value), title = text(input.title, "图标题", 20);
   if (!Array.isArray(input.elements) || !input.elements.length || input.elements.length > 80) throw new Error("手绘图需要 1–80 个元素。");
   const sources = new Set(sourcePaths), ids = new Set<string>();
@@ -61,7 +61,7 @@ export function parseDrawingOutput(value: unknown, sourcePaths?: readonly string
     const element: DrawingElement = { id, type: item.type as DrawingElement["type"], x: number(positionedByProgram ? 0 : item.x, `${id}.x`, -10000, 10000), y: number(positionedByProgram ? 0 : item.y, `${id}.y`, -10000, 10000), roughness: 1, strokeColor: "#1e1e1e" };
     if (element.type === "frame") {
       if (!Array.isArray(item.children) || !item.children.length || item.children.some(child => typeof child !== "string")) throw new Error(`${id} 的分组需要 children 元素 id。`);
-      element.children = item.children as string[]; element.name = text(item.name, `${id} 的分组标题`, 40);
+      element.children = [...item.children as string[]]; element.name = text(item.name, `${id} 的分组标题`, 40);
     } else if (element.type === "arrow") {
       element.start = { id: text(record(item.start).id, `${id} 的起点`, 80) };
       element.end = { id: text(record(item.end).id, `${id} 的终点`, 80) };
@@ -88,7 +88,7 @@ export function parseDrawingOutput(value: unknown, sourcePaths?: readonly string
         const paths = [...new Set(item.sourcePaths as string[])];
         if (paths[0]) element.link = `[[${paths[0]}]]`;
       }
-      if (sourcePaths?.length && !element.link) throw new Error(`${id} 缺少来源，请提供至少一篇本轮成功读取笔记的 sourcePaths。`);
+      if (requireSources && sourcePaths?.length && !element.link) throw new Error(`${id} 缺少来源，请提供至少一篇本轮成功读取笔记的 sourcePaths。`);
     }
     return element;
   });

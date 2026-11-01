@@ -28,6 +28,7 @@ export interface CodexAttachmentHost {
   attachmentsEl: HTMLElement;
   inputEl: HTMLTextAreaElement;
   attachments: StoredAttachment[];
+  drawingRequested?: boolean;
   selectedSkill: EchoInkResource | null;
   renderToolbar(): void;
   onInputChanged?(): void;
@@ -39,7 +40,7 @@ export function renderAttachmentsView(host: CodexAttachmentHost): void {
   if (!host.attachmentsEl) return;
   renderComposerAttachments(host.attachmentsEl, {
     language: host.plugin.settings.settingsLanguage,
-    selectedSkill: host.selectedSkill,
+    selectedSkill: host.selectedSkill, drawingRequested: host.drawingRequested,
     noteMentions: composerNoteMentionSelections(host.inputEl),
     attachments: host.attachments,
     attachmentResolver: createAttachmentResourceResolver(
@@ -48,6 +49,7 @@ export function renderAttachmentsView(host: CodexAttachmentHost): void {
       host.plugin.settings.settingsLanguage
     )
   }, {
+    onRemoveDrawing: () => { host.drawingRequested = false; host.onInputChanged?.(); host.renderAttachments(); host.renderToolbar(); },
     onRemoveSkill: () => {
       host.selectedSkill = null;
       host.renderAttachments();

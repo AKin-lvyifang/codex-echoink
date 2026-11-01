@@ -106,6 +106,7 @@ export interface CodexComposerHost {
   contextPanelReposition: (() => void) | null;
   contextPanelOpen: boolean;
   draggedQueueItemId: string;
+  drawingRequested?: boolean;
   selectedSkill: EchoInkResource | null;
   attachments: StoredAttachment[];
   selectedProviderSettingsId: string;
@@ -280,6 +281,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       resourceSettings: host.plugin.settings.resources,
       language: host.plugin.settings.settingsLanguage,
       canAttachActiveFile: currentDisplayedMarkdownFile(host.app) !== null,
+      drawingReason: Platform.isDesktopApp ? getExcalidrawService(host.app).disabledReason() : undefined,
       pdfPlugin: { enabled: host.plugin.settings.pdfReading?.enabled === true, canWrite: host.plugin.pdfReading?.policy().canWrite === true },
       generationEntryReason: Platform.isDesktopApp ? host.generationEntryReason() : null
     },
@@ -307,6 +309,10 @@ export function renderToolbar(host: CodexComposerHost): void {
         host.renderAttachments();
         host.renderToolbar();
         host.inputEl.focus();
+      },
+      onSelectDrawing: () => {
+        if (!Platform.isDesktopApp || getExcalidrawService(host.app).disabledReason()) return;
+        host.drawingRequested = true; closeResourcePanel(host, false); host.renderAttachments(); host.renderToolbar(); host.inputEl.focus(); host.onInputChanged();
       },
       onSelectPdfPlugin: () => {
         closeResourcePanel(host, false);
@@ -1138,6 +1144,7 @@ export function hasComposerDraft(host: CodexComposerHost): boolean {
     || host.attachments.length
     || composerSelectionAnnotations(host.inputEl).length
     || composerNoteMentionSelections(host.inputEl).length
+    || host.drawingRequested
     || host.selectedSkill
   );
 }
@@ -1153,6 +1160,7 @@ export function clearComposerDraft(host: CodexComposerHost): void {
   clearSelectionDraft(host.inputEl);
   host.plugin.selectionAskController?.refresh();
   host.selectedSkill = null;
+  host.drawingRequested = false;
 }
 
 export function composerStateForSession(host: CodexComposerHost, session: StoredSession): ComposerPrimaryActionState {

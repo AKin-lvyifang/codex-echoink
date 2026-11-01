@@ -10,14 +10,16 @@ import type { GenerationRequest, GenerationResult } from "../generation/types";
 import type { GenerationExecutionIdentity, GenerationStage } from "../generation/runtime";
 import type { GenerationProductionOptions } from "./generation-production";
 
-export function assertDrawingBinding(options: GenerationProductionOptions, request: GenerationRequest): void {
+export function assertDrawingDestination(options: Pick<GenerationProductionOptions, "app" | "bindings">, expectedDirectory?: string): string {
   const reason = getExcalidrawService(options.app).disabledReason(); if (reason) throw new Error(reason);
   const location = knowledgeExcalidrawLocation(options.bindings());
-  if (location.directory !== request.outputDirectory) throw new Error("手绘图保存位置已改变，请重新打开生成弹窗。");
+  if (expectedDirectory !== undefined && location.directory !== expectedDirectory) throw new Error("手绘图保存位置已改变，请重新打开生成弹窗。");
   const existing = options.app.vault.getAbstractFileByPath(location.directory);
   if (existing && !(existing instanceof TFolder) || !existing && !location.createIfMissing) throw new Error("手绘图保存位置已失效，请重新选择文件夹。");
   if (!existing && !(options.app.vault.getAbstractFileByPath(location.directory.split("/").slice(0, -1).join("/")) instanceof TFolder)) throw new Error("手绘图的输出目录已失效，请检查知识库设置。");
+  return location.directory;
 }
+export function assertDrawingBinding(options: GenerationProductionOptions, request: GenerationRequest): void { assertDrawingDestination(options, request.outputDirectory); }
 export async function finishDrawing(options: GenerationProductionOptions, request: GenerationRequest, assessment: GenerationSourceAssessment,
   modelText: string | null, identity: GenerationExecutionIdentity, onStage: (stage: GenerationStage) => Promise<void>): Promise<GenerationResult> {
   const result: GenerationResult = { requestId: request.id, outputKind: "excalidraw", drawingStyle: request.drawingStyle, writeState: "not_written", readFailures: assessment.readFailures, sourcePaths: assessment.sources.map(source => source.path) };

@@ -77,6 +77,11 @@ export class ExcalidrawService {
     catch { /* An interrupted call must be reconciled at this exact path. */ }
     if (result?.ok === true && result.mutation === "applied" && result.persistence === "saved") return { path: input.path, verified: true };
     if (result?.ok === false && result.mutation === "not-applied") throw new Error(result.error?.code === "ALREADY_EXISTS" ? "确认后的路径已被占用，未覆盖已有文件。" : `Excalidraw 未创建图：${result.error?.message ?? "请检查插件后重试"}`);
+    return await this.reconcile(input);
+  }
+  /** Read only: recover the original exact path after a restart or unknown outcome. */
+  async reconcile(input: DrawingCreation): Promise<DrawingReceipt> {
+    const cli = this.instance();
     const readback = await cli.executeCLI({ apiVersion: 1, command: "read", path: input.path, source: "disk", detail: "elements", limit: 200 }).catch(() => undefined);
     const actual = readback?.data?.elements;
     if (readback?.ok === true && Array.isArray(actual)) {
@@ -87,7 +92,7 @@ export class ExcalidrawService {
       const arrows = actual.filter((element: Record<string, unknown>) => element.type === "arrow" && element.startBinding && element.endBinding).length;
       if (boxes === input.output.boxCount && arrows === input.output.arrowCount && JSON.stringify(expectedText) === JSON.stringify(actualText)) return { path: input.path, verified: true };
     }
-    return { path: input.path, verified: false, error: result?.error?.code === "ALREADY_EXISTS" ? "该路径已有文件，未覆盖。" : "绘图结果未确认，请先核对原路径，不要换名重建。" };
+    return { path: input.path, verified: false, error: "绘图结果未确认，请先核对原路径，不要换名重建。" };
   }
   async openOnce(requestId: string, path: string): Promise<void> {
     if (this.opened.has(requestId)) return;

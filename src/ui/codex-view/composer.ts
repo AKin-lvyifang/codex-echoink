@@ -2,6 +2,7 @@ import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import type { CapabilityAccess } from "../../membership/types";
 import { isImeKeyEvent } from "../ime-composition";
 import { attachNativeTooltip } from "../native-tooltip";
+import { excalidrawIconName } from "../../generation/icons";
 import { Platform, setIcon } from "obsidian";
 import { createOriginButton } from "../../settings/origin-controls";
 import { applyDeleteButton } from "../../settings/amicro-buttons";
@@ -106,6 +107,7 @@ export interface ComposerResourcePanelState {
   resourceSettings: Pick<EchoInkResourceSettings, "mcpConnections">;
   language: "zh-CN" | "en";
   canAttachActiveFile: boolean;
+  drawingReason?: string | null;
   pdfPlugin?: { enabled: boolean; canWrite: boolean };
   generationEntryReason?: string | null;
 }
@@ -117,6 +119,7 @@ export interface ComposerResourcePanelCallbacks {
   onSelectPlanMode: () => void;
   onSelectSkill: (skill: EchoInkResource) => void;
   onOpenMcpSettings: () => void;
+  onSelectDrawing?: () => void;
   onSelectPdfPlugin?: () => void;
   onGenerateFromSources?: () => void;
 }
@@ -168,6 +171,7 @@ export interface TurnQueueCallbacks {
 }
 
 export interface ComposerAttachmentsState {
+  drawingRequested?: boolean;
   language?: SettingsLanguage;
   selectedSkill: EchoInkResource | null;
   noteMentions: readonly Readonly<NoteMentionSelection>[];
@@ -176,6 +180,7 @@ export interface ComposerAttachmentsState {
 }
 
 export interface ComposerAttachmentsCallbacks {
+  onRemoveDrawing?: () => void;
   onRemoveSkill: () => void;
   onRemoveNoteMention: (vaultRelativePath: string) => void;
   onRemoveAttachment: (path: string) => void;
@@ -582,6 +587,7 @@ export function renderComposerResourcePanel(
   const pluginGroup = createResourcePanelGroup(container, copy("插件", "Plugins"));
   const pdf = createResourcePanelRow(pluginGroup, "file-text", "PDF 精读", !state.pdfPlugin?.enabled ? copy("请先在插件设置中启用", "Enable in plugin settings") : "", () => callbacks.onSelectPdfPlugin?.(), false, "is-pdf-plugin", !state.pdfPlugin?.enabled || !state.pdfPlugin.canWrite);
   createPluginEditionBadge(pdf.querySelector<HTMLElement>(".codex-composer-resource-name")!, "pro", state.language);
+  if (Platform.isDesktopApp) createResourcePanelRow(pluginGroup, excalidrawIconName(), "Excalidraw", state.drawingReason ?? "", () => callbacks.onSelectDrawing?.(), false, "is-drawing-plugin", Boolean(state.drawingReason));
   const skillGroup = createResourcePanelGroup(container, copy("技能", "Skills"));
   const skills = enabledSkillResources(state.resources);
   if (skills.length) {
@@ -1038,8 +1044,15 @@ export function renderComposerAttachments(container: HTMLElement, state: Compose
   container.empty();
   container.toggleClass(
     "is-empty",
-    !state.selectedSkill && state.noteMentions.length === 0 && state.attachments.length === 0
+    !state.drawingRequested && !state.selectedSkill && state.noteMentions.length === 0 && state.attachments.length === 0
   );
+  if (state.drawingRequested && Platform.isDesktopApp) {
+    const chip = container.createDiv({ cls: "codex-skill-token", attr: { "data-drawing-intent": "true" } });
+    setIcon(chip.createSpan({ cls: "codex-skill-token-icon" }), excalidrawIconName());
+    chip.createSpan({ cls: "codex-skill-token-name", text: "Excalidraw" });
+    const remove = chip.createEl("button", { attr: { type: "button", "aria-label": "移除 Excalidraw" } });
+    setIcon(remove, "x"); remove.onclick = () => callbacks.onRemoveDrawing?.();
+  }
   if (state.selectedSkill) {
     const presentation = resourcePresentation(state.selectedSkill, language);
     const chip = container.createDiv({ cls: "codex-skill-token" });

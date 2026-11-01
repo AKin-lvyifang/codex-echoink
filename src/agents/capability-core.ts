@@ -237,6 +237,12 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     for (const key of ["originalPath", "rawDirectory"] as const) if (typeof target?.[key] === "string" && !relativeTarget(context, target[key])) return decision("pdf-reading", "invalid_target");
     return capability;
   }
+  if (toolName === "diagram_create") {
+    const capability = checkAgentCapability(context, "conversation", "write"); if (!capability.allowed) return capability;
+    const sources = structuredTargets(args); const read = checkTargets(context, sources, "read"); if (!read.allowed) return read;
+    const target = resolvedTarget && typeof resolvedTarget === "object" ? resolvedTarget as Record<string, unknown> : null;
+    return typeof target?.path === "string" ? checkTargets(context, [target.path], "write") : capability;
+  }
   if (toolName === "english_diary_generate") {
     const capability = checkAgentCapability(context, "english-diary", "write");
     if (!capability.allowed) return capability;
