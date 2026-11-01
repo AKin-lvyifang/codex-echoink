@@ -1121,7 +1121,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
   class Component {}
   const exports = { exports: {} };
   const context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, FileView: obsidian.exports.FileView, Component, Modal: class {}, TFile: FixtureTFile, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
+    require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); imported.push(id); if (id !== "obsidian") throw new Error(`Node loaded on mobile: ${id}`); return { Platform: platform, Plugin, ItemView: class {}, FileView: obsidian.exports.FileView, Component, Modal: class {}, TFile: FixtureTFile, TFolder: obsidian.exports.TFolder, Notice: class {}, requestUrl() { throw new Error("startup requested provider"); } }; }
   });
   vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports; const plugin = new MobilePlugin(); await plugin.onload();
   for (const id of ["insert-gallery", "group-selected-images", "split-gallery"]) assert.ok(commands.includes(id), `Mobile gallery command missing: ${id}`);
@@ -1166,7 +1166,7 @@ for (const platform of [{ isMobileApp: true, isMobile: true, isTablet: false }, 
       async open(parent) { parent.append(this.containerEl); await this.onOpen(); }
     }
     const exports = { exports: {} }, context = vm.createContext({ module: exports, exports: exports.exports, window: dom.window, document: dom.window.document, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto, btoa, atob, Blob, FormData, Response, console, setTimeout, clearTimeout,
-      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, FileView: obsidian.exports.FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
+      require(id) { if (editorLibraries.has(id)) return requireEditorLibrary(id); assert.equal(id, "obsidian"); return { Platform: platform, Plugin, ItemView: NativeItemView, FileView: obsidian.exports.FileView, Component: class {}, Modal: class {}, TFile: FixtureTFile, TFolder: obsidian.exports.TFolder, Notice: class { constructor(message) { notices.push(message); } }, requestUrl() { throw new Error("startup requested Provider"); } }; }
     });
     vm.runInContext(code, context); const MobilePlugin = exports.exports.default ?? exports.exports, plugin = new MobilePlugin();
     try {
