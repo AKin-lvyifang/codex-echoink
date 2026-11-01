@@ -418,6 +418,7 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  drawingRequested?: boolean;
   inlineProposalRequest?: Readonly<import("../../inline-agent/protocol").InlineModelRequest>;
   generationRequest?: Readonly<import("../../generation/types").GenerationRequest>;
   /** Locally selected English generation source; never contains source body. */

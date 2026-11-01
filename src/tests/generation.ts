@@ -18,9 +18,11 @@ import { emptyKnowledgeFolderBindings, knowledgeOutputLocation, DEFAULT_GENERATI
 import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 import { GenerationService } from "../generation/service";
 import { runOutputStoragePathsTests } from "./output-storage-paths";
+import { runExcalidrawTests } from "./excalidraw";
 
 const template: GenerationTemplate = { id: "brief", name: "简报", description: "重点", instructions: "基于资料生成简报", outputKind: "markdown", builtin: true };
 export async function runGenerationTests(testRoot: string): Promise<void> {
+  await runExcalidrawTests(testRoot);
   const root = await mkdtemp(path.join(testRoot, "sources-"));
   try {
     await mkdir(path.join(root, "资料")); await mkdir(path.join(root, "输出"));

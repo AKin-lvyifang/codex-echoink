@@ -680,6 +680,7 @@ export class EchoInkKnowledgeSurfaceService {
       if (options.wikiChanged) issues.push(...knowledgeWikiFolderSelectionIssues(next));
       if (issues.length) throw new Error(issues.join("；"));
       const checkPaths = new Set<string>();
+      if (next.excalidrawDirectory && next.excalidrawDirectory !== previous?.excalidrawDirectory) checkPaths.add(next.excalidrawDirectory);
       for (const role of DESKTOP_KNOWLEDGE_ROOT_ROLES) {
         const binding = next.roles[role];
         if (!binding.enabled || (binding.native && ["journal", "templates"].includes(role))) continue;

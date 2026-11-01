@@ -1,5 +1,5 @@
 /** Frozen settings template. Templates supply content instructions, never permissions. */
-export type GenerationOutputKind = "markdown" | "canvas";
+export type GenerationOutputKind = "markdown" | "canvas" | "excalidraw";
 export interface GenerationTemplate {
   id: string;
   name: string;
@@ -17,6 +17,7 @@ export interface GenerationRequest {
   outputKind: GenerationOutputKind;
   outputRoot: string;
   outputDirectory: string;
+  drawingStyle?: import("../excalidraw/elements").DrawingStyle;
 }
 export interface GenerationSource {
   path: string;
@@ -39,6 +40,10 @@ export interface GenerationResult {
   readFailures: GenerationReadFailure[];
   sourcePaths?: string[];
   error?: string;
+  boxCount?: number;
+  arrowCount?: number;
+  drawingStyle?: import("../excalidraw/elements").DrawingStyle;
+  drawingValidationErrors?: string[];
 }
 /** The fixed hierarchy remains the last-attempt compatibility fallback. */
 export interface GenerationMapPoint { text: string; sourcePaths?: string[] }

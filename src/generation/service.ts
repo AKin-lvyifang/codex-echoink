@@ -1,7 +1,9 @@
 import { createPiAgentCapabilityContext } from "../plugin/pi-production-runtime-composition";
 import { checkAgentTool, requireAgentCapability } from "../agents/capability-policy";
 import { TFolder } from "obsidian";
-import { knowledgeOutputLocation, normalizeKnowledgeDirectory } from "../knowledge-base/folder-bindings";
+import { knowledgeOutputLocation, knowledgeExcalidrawLocation, normalizeKnowledgeDirectory } from "../knowledge-base/folder-bindings";
+import { getExcalidrawService } from "../excalidraw/service";
+import type { DrawingStyle } from "../excalidraw/elements";
 import { ConversationContentLocationError } from "../knowledge-base/conversation-content";
 import type EchoInkPlugin from "../main";
 import type { StoredSession } from "../settings/settings";
@@ -19,7 +21,19 @@ export class GenerationService {
     if (!(directory instanceof TFolder) && (directory || !location.createIfMissing)) throw new ConversationContentLocationError("generation");
     return location.directory;
   }
-  outputDirectory(kind: GenerationOutputKind): string { return `${this.outputRoot()}/${kind === "canvas" ? "导图" : "报告"}`; }
+  outputDirectory(kind: GenerationOutputKind): string {
+    if (kind === "excalidraw") {
+      const location = knowledgeExcalidrawLocation(this.plugin.settings.knowledgeBase.folderBindings);
+      const existing = this.plugin.app.vault.getAbstractFileByPath(location.directory);
+      if (existing && !(existing instanceof TFolder) || !existing && !location.createIfMissing) throw new Error("手绘图保存位置已失效，请重新选择文件夹。");
+      return location.directory;
+    }
+    return `${this.outputRoot()}/${kind === "canvas" ? "导图" : "报告"}`;
+  }
+  templateDisabledReason(template: GenerationTemplate): string | null {
+    if (template.outputKind !== "excalidraw") return null;
+    return getExcalidrawService(this.plugin.app).disabledReason();
+  }
   private outputRoots(): string[] {
     const root = knowledgeOutputLocation(this.plugin.settings.knowledgeBase.folderBindings, "generation").directory;
     return [`${root}/报告`, `${root}/导图`];
@@ -34,16 +48,24 @@ export class GenerationService {
   }
   availableNotes(): string[] { return this.plugin.app.vault.getMarkdownFiles().map(file => file.path).filter(value => isGenerationSourcePath(value, this.outputRoots())); }
   assessSources(paths: readonly string[], signal?: AbortSignal) { return readGenerationSources(this.plugin.getVaultPath(), paths, this.outputRoots(), signal); }
-  disabledReason(input: { sessionId?: string; permission: string; mode: string }): string | null {
+  disabledReason(input: { sessionId?: string; permission: string; mode: string; outputKind?: GenerationOutputKind }): string | null {
     if (input.mode === "plan") return "请切换到 Agent 模式后生成。";
     if (input.permission === "read-only") return "请切换到可写权限后生成。";
     if (input.sessionId && (this.plugin.getConversationRunService().runs.get(input.sessionId)?.running || this.plugin.getConversationRunService().runs.get(input.sessionId)?.flight)) return "等这一轮结束。";
-    try { this.outputRoot(); return null; } catch (error) { return error instanceof Error ? error.message : "请到设置 → 模块 → 知识库 → Agent 产出物保存到 → 从资料生成检查保存位置。"; }
+    try { if (input.outputKind === "excalidraw") this.outputDirectory("excalidraw"); else this.outputRoot(); return null; } catch (error) { return error instanceof Error ? error.message : "请到设置 → 模块 → 知识库 → Agent 产出物保存到 → 从资料生成检查保存位置。"; }
   }
-  createRequest(template: GenerationTemplate, paths: readonly string[]): GenerationRequest { return createGenerationRequest(template, paths, this.outputRoot()); }
+  createRequest(template: GenerationTemplate, paths: readonly string[], style: DrawingStyle = "white"): GenerationRequest {
+    const reason = this.templateDisabledReason(template); if (reason) throw new Error(reason);
+    if (template.outputKind === "excalidraw") {
+      const directory = this.outputDirectory("excalidraw");
+      return createGenerationRequest(template, paths, this.plugin.settings.knowledgeBase.folderBindings?.roles.outputs.writePath ?? directory, { directory, style });
+    }
+    return createGenerationRequest(template, paths, this.outputRoot());
+  }
   async submit(sessionId: string, request: GenerationRequest, turnOptions: TurnOptions) {
-    const reason = this.disabledReason({ sessionId, ...turnOptions });
+    const reason = this.disabledReason({ sessionId, ...turnOptions, outputKind: request.outputKind });
     if (reason) throw new Error(reason);
+    const templateReason = this.templateDisabledReason(request.template); if (templateReason) throw new Error(templateReason);
     return this.plugin.getConversationRunService().start({ id: crypto.randomUUID(), sessionId, text: generationRequestSummary(request), generationRequest: request,
       attachments: [], skill: null, turnOptions: { ...turnOptions }, kind: "chat", createdAt: Date.now() }, "composer");
   }

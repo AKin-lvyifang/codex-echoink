@@ -211,6 +211,18 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(skillChips.querySelector(".codex-skill-token-name")?.textContent, "Knowledge Review");
     assert.equal(selectedSkillState.selectedSkill, selectedBuiltinSkill, "language changes preserve the selected Skill object");
     assert.equal(selectedBuiltinSkill.name, "knowledge-review", "display labels preserve the runtime Skill name");
+    const drawingDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+    let drawingRemoved = 0;
+    renderComposerAttachments(skillChips as unknown as HTMLElement, { ...selectedSkillState, drawingRequested: true }, { ...skillCallbacks, onRemoveDrawing: () => drawingRemoved++ });
+    assert.equal(skillChips.querySelectorAll(".codex-skill-token").length, 2, "drawing intent and Skill coexist without sharing identity");
+    const drawingChip = skillChips.querySelectorAll(".codex-skill-token")[0];
+    assert.equal(drawingChip.querySelector(".codex-skill-token-name")?.textContent, "Excalidraw");
+    drawingChip.querySelector("button")?.click(); assert.equal(drawingRemoved, 1);
+    Platform.isDesktopApp = false;
+    renderComposerAttachments(skillChips as unknown as HTMLElement, { ...selectedSkillState, drawingRequested: true }, skillCallbacks);
+    assert.equal(skillChips.querySelectorAll(".codex-skill-token").length, 1, "mobile hides drawing intent");
+    Platform.isDesktopApp = drawingDesktop;
+
     assert.equal(persistentDraft.value, "这段用户输入必须保持不变");
 
     const attachmentContainer = new ComposerTestElement("div");
@@ -453,6 +465,7 @@ export async function runComposerActionTests(): Promise<void> {
     assert.equal(pointerPrevented, true, "mouse and touch pointer selection keeps textarea focus");
     assert.equal(selectedMention, "projects/项目复盘.md");
 
+    const resourceDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
     const resourcePanel = new ComposerTestElement("div");
     renderComposerResourcePanel(
       resourcePanel as unknown as HTMLElement,
@@ -463,7 +476,7 @@ export async function runComposerActionTests(): Promise<void> {
         resources: [],
         resourceSettings: { mcpConnections: {} },
         language: "zh-CN",
-        canAttachActiveFile: false
+        canAttachActiveFile: false, drawingReason: "请先启用 Excalidraw 插件。"
       },
       {
         onDismiss: () => undefined,
@@ -475,6 +488,10 @@ export async function runComposerActionTests(): Promise<void> {
       }
     );
     const resourceRows = resourcePanel.querySelectorAll(".codex-composer-resource-row");
+    const drawingRow = resourcePanel.querySelector(".is-drawing-plugin");
+    assert.equal(drawingRow?.disabled, true); assert.match(renderedComposerText(drawingRow!), /启用 Excalidraw/u);
+    Platform.isDesktopApp = resourceDesktop;
+
     assert.equal(resourceRows[1]?.disabled, true, "current note row is disabled without a displayed Markdown note");
     resourceRows[0]?.focus();
     resourcePanel.onkeydown?.(keyEvent("ArrowDown"));

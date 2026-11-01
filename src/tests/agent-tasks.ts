@@ -276,6 +276,13 @@ function draftsAndDates(): void {
   const item: any = { text: "新事", attachments: [], noteMentions: [{ vaultRelativePath: "a.md" }], skill: null };
   assert.equal(consumeAcceptedTaskDraft(workspace, "agent:sol", item), true);
   assert.equal(workspace.replyDrafts.original.text, "回复");
+  nav.save({ text: "画图", attachments: [], drawingRequested: true }, { kind: "list", agentId: "sol" });
+  const drawing = { ...item, text: "画图", noteMentions: [], turnOptions: { drawingRequested: false } };
+  assert.equal(normalizeTaskWorkspace(workspace).newTaskDrafts.sol.drawingRequested, true);
+  assert.equal(consumeAcceptedTaskDraft(workspace, "agent:sol", drawing), false, "a plain-text acceptance cannot consume a drawing draft");
+  drawing.turnOptions.drawingRequested = true;
+  assert.equal(consumeAcceptedTaskDraft(workspace, "agent:sol", drawing), true);
+
   workspace.newTaskDrafts.sol = { text: "后写的内容", attachments: [] };
   assert.equal(consumeAcceptedTaskDraft(workspace, "agent:sol", item), false, "late acceptance cannot clear a changed draft");
   const now = new Date(2026, 0, 1, 0, 1).getTime();

@@ -1,8 +1,9 @@
-import { Notice, setIcon, TFile, type App } from "obsidian";
+import { Notice, TFile, type App } from "obsidian";
 import type { SettingsLanguage } from "../settings/settings";
 import { conversationUiText } from "../ui/codex-view/ui-i18n";
 import { generationRequestSummary } from "./request";
 import type { GenerationRequest, GenerationResult } from "./types";
+import { setGenerationIcon } from "./icons";
 
 async function openGenerationFile(app: App, relativePath: string, language: SettingsLanguage): Promise<boolean> {
   const file = app.vault.getAbstractFileByPath(relativePath);
@@ -42,13 +43,10 @@ export function renderGenerationResultCard(container: HTMLElement, options: {
   root.dataset.generationRequestId = result.requestId;
   root.dataset.writeState = result.writeState;
   const icon = root.createSpan({ cls: "codex-generation-result-icon", attr: { "aria-hidden": "true" } });
-  setIcon(icon, result.outputKind === "canvas" ? "layout-dashboard" : "file-text");
+  setGenerationIcon(icon, result.outputKind);
   const copy = root.createDiv({ cls: "codex-generation-result-copy" });
-  copy.createDiv({ cls: "codex-generation-result-name", text: result.path.split("/").at(-1) ?? result.path });
-  const counts = result.outputKind === "canvas" && result.branchCount !== undefined
-    ? conversationUiText(language, `${result.branchCount} 个分支`, `${result.branchCount} branches`)
-    : result.characterCount !== undefined ? conversationUiText(language, `${result.characterCount.toLocaleString()} 字`, `${result.characterCount.toLocaleString()} characters`) : "";
-  copy.createDiv({ cls: "codex-generation-result-path", text: `${result.path}${counts ? ` · ${counts}` : ""}` });
+  const title = result.title?.trim() || (result.path.split("/").at(-1) ?? result.path).replace(/(?:\.excalidraw)?\.(?:md|canvas)$/iu, "").replace(/ · 手绘图$/u, "");
+  copy.createDiv({ cls: "codex-generation-result-name", text: title });
   const missing = copy.createDiv({ cls: "codex-generation-result-missing", attr: { role: "status", "aria-live": "polite" } });
   const open = root.createEl("button", { cls: "codex-generation-open", text: result.writeState === "unconfirmed" ? conversationUiText(language, "核对文件", "Check file") : conversationUiText(language, "打开", "Open"), attr: { type: "button" } });
   const markMissing = () => {

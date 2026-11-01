@@ -3,7 +3,7 @@ import path from "node:path";
 import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const result = await esbuild.build({ stdin: { contents: 'import {runGenerationMessageTests} from "./src/tests/generation-messages"; await runGenerationMessageTests();', resolveDir: root, loader: "ts" }, bundle: true, write: false, platform: "node", format: "esm", target: "node22", logLevel: "silent",
-  banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root, "package.json"))});` }, loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
+  banner: { js: `import {createRequire as createGenerationMessageRequire} from "node:module"; const require = createGenerationMessageRequire(${JSON.stringify(path.join(root, "package.json"))});` }, loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
   plugins: [{ name: "generation-message-host", setup(build) {
     build.onResolve({ filter: /^(?:@earendil-works\/pi-(?:agent-core|ai|coding-agent)(?:\/.*)?|yaml|jsdom)$/ }, args => ({ path: import.meta.resolve(args.path), external: true }));
     build.onResolve({ filter: /provider-brand-icons$/ }, () => ({ path: path.join(root, "src/tests/composer-provider-brand-shim.ts") }));

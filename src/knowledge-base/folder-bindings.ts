@@ -46,6 +46,8 @@ export interface KnowledgeFolderBindings {
   generationDirectoryPending?: boolean;
   /** Legacy input only; never grants creation for either output destination. */
   conversationDirectoryPending?: boolean;
+  /** Independent drawing destination. Absent follows outputs/导图; explicit invalid choices never fall back. */
+  excalidrawDirectory?: string | null;
   /** Former Inbox roots withdrawn from ordinary-chat recall consent. */
   inboxRecallExclusions?: string[];
   roles: Record<KnowledgeRootRole, KnowledgeFolderBinding>;
@@ -71,6 +73,7 @@ export function normalizeKnowledgeFolderBindings(value: unknown): KnowledgeFolde
   const result = emptyKnowledgeFolderBindings();
   result.revision = Number.isSafeInteger(input.revision) && input.revision > 0 ? input.revision : 1;
   if (input.configured === true) result.configured = true;
+  if (Object.hasOwn(input, "excalidrawDirectory")) result.excalidrawDirectory = typeof input.excalidrawDirectory === "string" ? input.excalidrawDirectory : null;
   result.organization = knowledgeOrganizationSettings(input);
   if (Array.isArray(input.inboxRecallExclusions)) result.inboxRecallExclusions = [...new Set(input.inboxRecallExclusions.flatMap(value => {
     try { return typeof value === "string" ? [normalizeKnowledgeDirectory(value)] : []; } catch { return []; }
@@ -115,6 +118,15 @@ export const DEFAULT_ANSWER_CONTENT_DIRECTORY = "收藏/回答";
 export const DEFAULT_GENERATION_CONTENT_DIRECTORY = "收藏/生成";
 /** Compatibility alias for callers that save an answer as a note. */
 export const DEFAULT_CONVERSATION_CONTENT_DIRECTORY = DEFAULT_ANSWER_CONTENT_DIRECTORY;
+
+export function knowledgeExcalidrawLocation(config: KnowledgeFolderBindings | null | undefined): { directory: string; createIfMissing: boolean } {
+  const explicit = Boolean(config && Object.hasOwn(config, "excalidrawDirectory"));
+  const output = config?.roles.outputs.writePath;
+  const directory = explicit ? config?.excalidrawDirectory : output ? `${output}/导图` : null;
+  try { if (!directory || normalizeKnowledgeDirectory(directory) !== directory) throw new Error("invalid"); }
+  catch { throw new Error("请到设置 → 知识库 → 收藏保存位置检查 Excalidraw 手绘图的位置。"); }
+  return { directory, createIfMissing: !explicit };
+}
 
 /** Answer and generation migrate independently; legacy text never owns either location. */
 export function knowledgeOutputLocation(config: KnowledgeFolderBindings | null | undefined, kind: KnowledgeOutputKind): { directory: string; createIfMissing: boolean } {
@@ -322,6 +334,7 @@ export function rebaseKnowledgeFolderBindings(config: KnowledgeFolderBindings, f
   if (next.collectionTargets) for (const kind of KNOWLEDGE_COLLECTION_KINDS) {
     if (next.collectionTargets[kind]) next.collectionTargets[kind] = rebaseKnowledgePath(next.collectionTargets[kind], from, to);
   }
+  if (next.excalidrawDirectory) next.excalidrawDirectory = rebaseKnowledgePath(next.excalidrawDirectory, from, to);
   if (next.organization) next.organization.paths = [...new Set(next.organization.paths.map(item => rebaseKnowledgePath(item, from, to)))];
   if (next.inboxRecallExclusions) next.inboxRecallExclusions = [...new Set(next.inboxRecallExclusions.map(item => rebaseKnowledgePath(item, from, to)))];
   if (knowledgeFolderBindingsSignature(next) !== knowledgeFolderBindingsSignature(config)) next.revision += 1;
@@ -334,6 +347,7 @@ export function knowledgeFolderBindingsSignature(config: KnowledgeFolderBindings
     collectionTargets: config ? knowledgeCollectionTargets(config) : null,
     answerDirectoryPending: knowledgeOutputLocation(config, "answer").createIfMissing,
     generationDirectoryPending: knowledgeOutputLocation(config, "generation").createIfMissing,
+    excalidrawDirectory: config?.excalidrawDirectory,
     inboxRecallExclusions: [...(config?.inboxRecallExclusions ?? [])].sort(),
     roles: KNOWLEDGE_ROOT_ROLES.map(role => {
     const binding = config?.roles[role];

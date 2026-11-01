@@ -18,6 +18,7 @@ export interface GenerationSourceAssessment {
   readFailures: GenerationReadFailure[];
   totalBytes: number;
   error?: string;
+  drawingSchema?: string;
 }
 export function normalizeGenerationPath(value: string): string {
   const normalized = value.replace(/\\/gu, "/");
@@ -29,7 +30,7 @@ export function normalizeGenerationPath(value: string): string {
 export function isGenerationSourcePath(value: string, outputRoots: readonly string[] = []): boolean {
   try {
     const relative = normalizeGenerationPath(value);
-    return /\.md$/iu.test(relative) && !outputRoots.some(root => relative === root || relative.startsWith(`${root}/`));
+    return /\.md$/iu.test(relative) && !/\.excalidraw\.md$/iu.test(relative) && !outputRoots.some(root => relative === root || relative.startsWith(`${root}/`));
   } catch { return false; }
 }
 export function generationSourcesFromMessages(messages: readonly ChatMessage[], outputRoots: readonly string[] = []): string[] {

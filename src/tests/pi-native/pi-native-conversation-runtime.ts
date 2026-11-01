@@ -7039,6 +7039,7 @@ export async function runGenerationRuntimeTests(): Promise<void> {
   console.log("PASS generation: actual deleted-source/read-denied/rebound/budget preflight failures call neither prompt nor Provider and reopen with no running generation");
   console.log("PASS generation: formal durable runtime disables retrieval/memory/skills/tools, hides model JSON, and reopens verified/uncertain results");
   await assertCanvasGenerationAttempts();
+  await assertDrawingGenerationAttempts();
 }
 
 async function assertCanvasGenerationAttempts(): Promise<void> {
@@ -7193,4 +7194,47 @@ export async function runPlanModeFailureTests(): Promise<void> {
     });
   }
   console.log("Plan mode: missing plan, cancellation, provider error, maintenance start/stop and generation startup recovery PASS");
+}
+
+/** Drawing retries own their policy; exhausted output never enters Canvas fallback. */
+async function assertDrawingGenerationAttempts(): Promise<void> {
+  for (const mode of ["first", "repair", "exhausted", "permission", "provider", "truncated", "truncated_exhausted", "limit_error"] as const) {
+    let finishes = 0, writes = 0;
+    const id = `drawing-attempts-${mode}`;
+    const output = JSON.stringify({title:"手绘主题",elements:[{id:"a",type:"rectangle",x:0,y:0,width:320,height:140,label:{text:"📖 资料"},sourcePaths:["资料/原文.md"]},{id:"b",type:"rectangle",x:450,y:0,width:320,height:140,label:{text:"🧩 知识"},sourcePaths:["资料/原文.md"]},{id:"ab",type:"arrow",x:0,y:0,start:{id:"a"},end:{id:"b"}}]});
+    await withFixture([id], async fixture => {
+      await fixture.runtime.createConversation({conversationId:id,title:"手绘图",cwd:fixture.root});
+      await fixture.runtime.activateConversation(id);
+      const session=fixture.latestSession();
+      const request=createGenerationRequest({id:"drawing",name:"手绘图",description:"",instructions:"按资料画图",outputKind:"excalidraw"},["资料/原文.md"],"输出",{directory:"输出/导图",style:"white"});
+      const handle=await fixture.submit({conversationId:id,text:generationRequestSummary(request),generationRequest:request,submittedAt:1});
+      if(mode==="provider") session.finishFailed("provider unavailable");
+      else if(mode==="limit_error") session.finishFailed("provider_output_limit_reached",'{"title":"truncated"');
+      else if(mode==="truncated"||mode==="truncated_exhausted") session.finishResilientResponse('{"title":"truncated"',"length");
+      else session.finishSuccessful(mode==="first"?output:'{"title":"INVALID_FIRST"}');
+      if(["repair","exhausted","truncated","truncated_exhausted","limit_error"].includes(mode)) {
+        await waitForTestCondition(()=>session.promptTexts.length===2);
+        const context=fixture.currentGenerationContext()!;
+        assert.equal(context.attempt?.kind,"repair");
+        if(context.attempt?.kind==="repair") assert.match(context.attempt.validationError,mode.startsWith("truncated")||mode==="limit_error"?/截断/u:/元素/u);
+        if(mode==="truncated_exhausted") session.finishResilientResponse('{"title":"still_truncated"',"length");
+        else session.finishSuccessful(mode==="exhausted"?'{"title":"INVALID_SECOND"}':output);
+      }
+      const settled=await handle.result, projection=await fixture.runtime.readProjection(id);
+      const result=projection.messages.find(message=>message.generationResult)!.generationResult!;
+      assert.equal(session.promptTexts.length,["repair","exhausted","truncated","truncated_exhausted","limit_error"].includes(mode)?2:1);
+      assert.equal(result.canvasFallback,undefined);
+      assert.equal(session.continuationMessages.length,0,"drawings compact and restart once instead of continuing broken JSON");
+      if(mode==="truncated_exhausted") assert.match(result.error!,/已精简重试一次/u);
+      assert.equal(result.drawingValidationErrors?.length,mode==="exhausted"||mode==="truncated_exhausted"?2:["repair","permission","truncated","limit_error"].includes(mode)?1:0);
+      assert.equal(finishes,1);assert.equal(writes,["first","repair","truncated","limit_error"].includes(mode)?1:0);
+      assert.equal(settled.terminalState,["first","repair","truncated","limit_error"].includes(mode)?"completed":"failed");
+      assert.equal(projection.messages.some(message=>/INVALID_FIRST|INVALID_SECOND/.test(message.text)),false);
+    },{generation:{
+      prepare:async()=>({sources:[{path:"资料/原文.md",content:"资料形成知识",bytes:18}],totalBytes:18,readFailures:[],drawingSchema:"INSTALLED_SCHEMA"}),
+      assertContinuation:async()=>{if(mode==="permission")throw Error("drawing read denied");},
+      finish:async(request,_assessment,text)=>{finishes++;const verified=!!text&&text===output;if(verified)writes++;return {requestId:request.id,outputKind:"excalidraw",writeState:verified?"verified":"not_written",readFailures:[],...(verified?{path:"输出/导图/手绘图.excalidraw.md"}:{error:"invalid drawing"})};}
+    }});
+    console.log(`PASS independent drawing attempts: ${mode}`);
+  }
 }
