@@ -45,13 +45,8 @@ export function renderGenerationResultCard(container: HTMLElement, options: {
   const icon = root.createSpan({ cls: "codex-generation-result-icon", attr: { "aria-hidden": "true" } });
   setGenerationIcon(icon, result.outputKind);
   const copy = root.createDiv({ cls: "codex-generation-result-copy" });
-  copy.createDiv({ cls: "codex-generation-result-name", text: result.path.split("/").at(-1) ?? result.path });
-  const counts = result.outputKind === "excalidraw" && result.boxCount !== undefined
-    ? conversationUiText(language, `${result.boxCount} 个框 · ${result.arrowCount ?? 0} 条连线`, `${result.boxCount} boxes · ${result.arrowCount ?? 0} arrows`)
-    : result.outputKind === "canvas" && result.branchCount !== undefined
-    ? conversationUiText(language, `${result.branchCount} 个分支`, `${result.branchCount} branches`)
-    : result.characterCount !== undefined ? conversationUiText(language, `${result.characterCount.toLocaleString()} 字`, `${result.characterCount.toLocaleString()} characters`) : "";
-  copy.createDiv({ cls: "codex-generation-result-path", text: `${result.path}${counts ? ` · ${counts}` : ""}` });
+  const title = result.title?.trim() || (result.path.split("/").at(-1) ?? result.path).replace(/(?:\.excalidraw)?\.(?:md|canvas)$/iu, "").replace(/ · 手绘图$/u, "");
+  copy.createDiv({ cls: "codex-generation-result-name", text: title });
   const missing = copy.createDiv({ cls: "codex-generation-result-missing", attr: { role: "status", "aria-live": "polite" } });
   const open = root.createEl("button", { cls: "codex-generation-open", text: result.writeState === "unconfirmed" ? conversationUiText(language, "核对文件", "Check file") : conversationUiText(language, "打开", "Open"), attr: { type: "button" } });
   const markMissing = () => {

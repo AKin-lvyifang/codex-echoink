@@ -39,7 +39,8 @@ export async function runGenerationMessageTests(): Promise<void> {
   await Promise.resolve(); assert.deepEqual(context.openedPaths, ["projects/Alpha.md"]);
   rendered = render(answer);
   assert.ok(rendered.findByClass("codex-generation-result")); assert.equal(rendered.findByClass("codex-answer-save"), null);
-  assert.match(renderedText(rendered), /outputs\/Result.md · 1,240 字/u);
+  assert.equal(rendered.findByClass("codex-generation-result-name")?.textContent, "Result");
+  assert.equal(rendered.findByClass("codex-generation-result-path"), null);
   await rendered.findByClass("codex-generation-open")?.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
   assert.deepEqual(context.openedPaths, ["projects/Alpha.md", "outputs/Result.md"]);
   const turnHost = new FakeElement("div");
@@ -51,7 +52,12 @@ export async function runGenerationMessageTests(): Promise<void> {
   assert.equal(failed.findByClass("codex-generation-result"), null); assert.equal(failed.findByClass("codex-answer-save"), null);
   const missing = new FakeElement("div");
   renderGenerationResultCard(missing as never, { app: context.app as never, language: "zh-CN", result: { ...result, path: "outputs/Moved.canvas", outputKind: "canvas", branchCount: 3 } });
-  assert.equal(missing.findByClass("codex-generation-open")?.disabled, true); assert.match(renderedText(missing), /文件已不存在或已移动/u); assert.match(renderedText(missing), /3 个分支/u);
+  assert.equal(missing.findByClass("codex-generation-open")?.disabled, true); assert.match(renderedText(missing), /文件已不存在或已移动/u);
+  assert.equal(missing.findByClass("codex-generation-result-name")?.textContent, "Moved");
+  const drawingCard = new FakeElement("div");
+  renderGenerationResultCard(drawingCard as never, { app: context.app as never, language: "zh-CN", result: { ...result, path: "输出/手冲咖啡步骤与参数 · 手绘图.excalidraw.md", outputKind: "excalidraw", title: "手冲咖啡步骤与参数", boxCount: 10, arrowCount: 4 } });
+  assert.equal(drawingCard.findByClass("codex-generation-result-name")?.textContent, "手冲咖啡步骤与参数");
+  assert.equal(drawingCard.findByClass("codex-generation-result-path"), null);
   const uncertain = new FakeElement("div"); renderGenerationResultCard(uncertain as never, { app: context.app as never, language: "zh-CN", result: { ...result, writeState: "unconfirmed" } }); assert.match(renderedText(uncertain), /核对文件/u);
   const app = context.app as { vault: { getAbstractFileByPath(path: string): unknown } };
   const lookup = app.vault.getAbstractFileByPath;
