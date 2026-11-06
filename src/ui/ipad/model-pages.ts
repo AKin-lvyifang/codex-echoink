@@ -2,7 +2,7 @@ import { attachNativeTooltip } from "../native-tooltip";
 import type { ApiProviderConfig } from "../../settings/settings";
 import { getApiProviderPreset } from "../../settings/provider-presets";
 import { MOBILE_MODEL_GROUPS } from "../../mobile/model-configuration";
-import { mobileProvider, selectedModel, supportedProvider } from "../../mobile/settings";
+import { mobileProvider, mobileStreamingEnabled, selectedModel, supportedProvider } from "../../mobile/settings";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { createModelParametersPage, type IPadProviderDraft } from "./model-parameters";
 import { settingsText as t } from "./settings-i18n";
@@ -23,8 +23,9 @@ export function createModelPage(ctx: IPadSettingsContext): MobileShellPage {
     const group = settingsGroup(ctx, content, t(ctx, "模型服务"));
     for (const provider of settings.apiProviders) {
       const available = supportedProvider(provider) && provider.providerId !== "ollama";
+      const count = ctx.host.settings().settingsLanguage === "en" ? `${provider.models.length} models` : `${provider.models.length} 个模型`;
       settingsRow(ctx, group, provider.name, available ? "" : t(ctx, "仅电脑可用"), available ? () => ctx.push(createProviderPage(ctx, provider)) : undefined,
-        settingsBrand(ctx, provider), ctx.host.settings().settingsLanguage === "en" ? `${provider.models.length} models` : `${provider.models.length} 个模型`);
+        settingsBrand(ctx, provider), available && !mobileStreamingEnabled(provider) ? `${count} · ${t(ctx, "回答整段出现")}` : count);
     }
     settingsRow(ctx, group, t(ctx, "添加模型服务"), "", () => ctx.push(createAddModelPage(ctx)));
   };

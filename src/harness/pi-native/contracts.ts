@@ -282,8 +282,13 @@ export interface PiKnowledgeMaintenanceSettlement {
 }
 
 export interface PiKnowledgeRuntimePort {
+  shouldPreflightChat?(conversationId: string): boolean;
   maintenanceActivity?(event: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceActivityLifecycle>): Promise<void>;
   prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
+  assertMaintenanceSelection?(input: Readonly<{ conversationId: string; sourcePaths: readonly string[] }>): Promise<void>;
+  openMaintenanceSelection?(input: Readonly<{ conversationId: string; branchProductRunIds: readonly string[] }>): Promise<Readonly<{
+    recordId: string; productRunId: string; sourcePaths: readonly string[]; folderBindingsRevision?: number;
+  }> | null>;
   resolveMaintenanceScope?(request: string): Promise<PiKnowledgeMaintenanceScope>;
   /** Recheck only this frozen selection against current private source state. */
   pendingMaintenanceSourcePaths?(sourcePaths: readonly string[]): Promise<readonly string[]>;
@@ -418,6 +423,9 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** Product-origin company turns must never trigger automatic retrieval. */
+  companyProgrammatic?: boolean;
+  companyApprovalKey?: string;
   drawingRequested?: boolean;
   inlineProposalRequest?: Readonly<import("../../inline-agent/protocol").InlineModelRequest>;
   generationRequest?: Readonly<import("../../generation/types").GenerationRequest>;
@@ -680,6 +688,7 @@ export type PiChatRuntimeEvent =
     })
   | (PiChatRuntimeEventBase & {
       type: "product_run_settled";
+      interruptionReason?: "tool_loop_limit";
       terminalState: PiProductRunTerminalState;
       toolCallTextFailure?: string;
       assistantEntryId?: string;

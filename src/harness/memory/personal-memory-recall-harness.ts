@@ -7,9 +7,15 @@ import type {
 } from "./personal-memory-contracts";
 import { PersonalMemoryRepository } from "./personal-memory-repository";
 import type { PersonalMemoryTurnCatalogCandidate } from "./personal-memory-repository";
+import {
+  selectMemoryDirectory,
+  type MemoryDirectoryEntry,
+  type MemoryDirectoryLlmPort,
+  type MemoryDirectorySelectionResult
+} from "./memory-directory-selector";
 
 export type PersonalMemoryRecallCandidate = Pick<PersonalMemorySearchItem,
-  "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score"
+  "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score" | "daysAgo" | "due" | "overdue" | "recallReason"
   | "basis" | "contentOrigin" | "status" | "asOf" | "supersedes" | "supersededRecord" | "sourceSummary" | "revision" | "file"
 > & Readonly<{
   /** Secondary fact that decisively pulled this Memory into the candidates. */
@@ -23,6 +29,7 @@ export interface PersonalMemoryPreparedTurnContext {
   readonly agent: string;
   readonly user: string | null;
   readonly memory: string | null;
+  readonly core?: readonly import("./personal-memory-contracts").PersonalMemoryCoreCandidate[];
   readonly recall: Readonly<{
     readonly candidates: readonly Readonly<PersonalMemoryRecallCandidate>[];
     readonly exhaustive: boolean;
@@ -32,6 +39,12 @@ export interface PersonalMemoryPreparedTurnContext {
     readonly remaining: number;
   }> | null;
   readonly injectionKeys: readonly string[];
+  /** Diagnostic receipt only; the prompt serializer does not include this. */
+  readonly directorySelection?: MemoryDirectorySelectionResult;
+}
+
+export interface PersonalMemoryRecallHarnessOptions {
+  readonly directory?: Readonly<{ llm: MemoryDirectoryLlmPort; modelInputBudget: number }>;
 }
 
 export const PERSONAL_MEMORY_RECALL_STAGES = Object.freeze([
@@ -68,10 +81,17 @@ export function selectMemoryRecallPreviousUserContext(
 }
 
 export class PersonalMemoryRecallHarness {
-  constructor(private readonly repository: PersonalMemoryRepository) {}
+  constructor(
+    private readonly repository: PersonalMemoryRepository,
+    private readonly options: PersonalMemoryRecallHarnessOptions = {}
+  ) {}
 
   async prepareTurnContext(input: Readonly<{
     memoryMode: PersonalMemoryMode;
+    preview?: boolean;
+    skipDirectory?: boolean;
+    signal?: AbortSignal;
+    now?: number;
     query: string;
     /** Previous user context when known; untyped legacy text is never role-inferred. */
     recentConversation?: readonly string[];
@@ -91,6 +111,7 @@ export class PersonalMemoryRecallHarness {
     ): void | Promise<void>;
   }>): Promise<Readonly<PersonalMemoryPreparedTurnContext>> {
     await input.onProgress?.("loading");
+    if (input.signal?.aborted) throw new Error("memory_recall_aborted");
     const tokenBudget = normalizeTokenBudget(input.tokenBudget);
     const query = input.memoryMode === "normal"
       ? buildBoundedRecallQuery(
@@ -100,27 +121,65 @@ export class PersonalMemoryRecallHarness {
         )
       : "";
     await input.onProgress?.("catalog");
-    const snapshot = await this.repository.prepareTurnSnapshot({
+    if (input.signal?.aborted) throw new Error("memory_recall_aborted");
+    const request = {
       memoryMode: input.memoryMode,
+      preview: input.preview,
+      now: input.now,
       ...(input.memoryMode === "normal"
         ? {
             query,
             scope: input.scope,
             statuses: input.statuses,
             from: input.from,
-            to: input.to,
-            selectCandidateIds: (
-              candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]
-            ) => selectRecallCandidateIds(candidates, tokenBudget)
+            to: input.to
           }
         : {})
-    }, input.memoryMode === "normal" ? {
+    };
+    const runtime = input.memoryMode === "normal" ? {
       vaultId: input.vaultId,
       conversationId: input.conversationId,
       piSessionId: input.piSessionId,
       productRunId: input.productRunId,
-      memoryMode: "normal"
-    } : undefined);
+      memoryMode: "normal" as const
+    } : undefined;
+    let directorySelection: MemoryDirectorySelectionResult | undefined;
+    if (this.options.directory && input.memoryMode === "normal" && !input.preview && !input.skipDirectory) {
+      let catalog: readonly MemoryDirectoryEntry[] = [];
+      let captured = false;
+      await this.repository.prepareTurnSnapshot({
+        ...request,
+        preview: true,
+        includeUnmatchedCandidates: true,
+        selectCandidateIds(candidates) {
+          if (!captured) {
+            catalog = candidates.map(candidate => ({ id: candidate.id, title: candidate.title,
+              recallWhen: candidate.recallWhen, activity: candidate.activity ?? 0 }));
+            captured = true;
+          }
+          return [];
+        }
+      }, runtime);
+      // The repository mutation lane is released before this independent call.
+      directorySelection = await selectMemoryDirectory({
+        entries: catalog,
+        query: input.query,
+        recentConversation: input.recentConversation,
+        modelInputBudget: this.options.directory.modelInputBudget,
+        llm: this.options.directory.llm,
+        memoryMode: input.memoryMode,
+        signal: input.signal
+      });
+    }
+    if (input.signal?.aborted) throw new Error("memory_recall_aborted");
+    const snapshot = await this.repository.prepareTurnSnapshot({
+      ...request,
+      ...(directorySelection?.status === "selected" ? { preferredCandidateIds: directorySelection.ids } : {}),
+      ...(input.memoryMode === "normal" ? {
+        selectCandidateIds: (candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]) =>
+          selectRecallCandidateIds(candidates, tokenBudget)
+      } : {})
+    }, runtime);
     const { search, scanned, ...fixed } = snapshot;
     if (input.memoryMode === "no_memory") {
       await input.onProgress?.("assembling", {
@@ -140,7 +199,7 @@ export class PersonalMemoryRecallHarness {
     if (!search) throw new Error("personal_memory_recall_snapshot_missing_search");
     // Stats-only, fire-and-forget: never blocks or fails the turn.
     const pendingSecondaryHits = search.pendingSecondaryHits ?? [];
-    if (pendingSecondaryHits.length > 0) {
+    if (!input.preview && pendingSecondaryHits.length > 0) {
       void this.repository.recordSecondaryRecallHits(pendingSecondaryHits).catch(() => {});
     }
     await input.onProgress?.("matching");
@@ -162,6 +221,7 @@ export class PersonalMemoryRecallHarness {
     });
     return Object.freeze({
       ...fixed,
+      ...(directorySelection ? { directorySelection } : {}),
       recall: Object.freeze({
         candidates: Object.freeze(candidates),
         exhaustive,
@@ -215,6 +275,9 @@ export function serializeRecallBlocks(input: Readonly<{
     // 只保留 matchedSecondaryId（完整事实只允许出现在 secondary block）。
     const injected: Record<string, unknown> = { ...toRecallCandidate(candidate) };
     delete injected.secondaryMatches;
+    delete injected.file;
+    delete injected.score;
+    delete injected.sourceSummary;
     return injected;
   });
   const recallBlock = [
@@ -358,6 +421,9 @@ function toRecallCandidate(
     recallWhen: item.recallWhen,
     summary: item.summary,
     date: item.date,
+    ...(item.recallReason ? { recallReason: item.recallReason } : {}),
+    ...(item.daysAgo !== undefined ? { daysAgo: item.daysAgo } : {}),
+    ...(item.due ? { due: item.due, overdue: item.overdue } : {}),
     status: item.status,
     basis: item.basis,
     sourceSummary: item.sourceSummary,

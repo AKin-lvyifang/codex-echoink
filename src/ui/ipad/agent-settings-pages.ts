@@ -1,17 +1,21 @@
+import { getModuleOwner } from "../../agents/registry";
+import { AGENT_MODULE_NAMES, AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
+import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
+import { agentRoleGroups } from "../../agents/roster-groups";
 import { isAgentHired } from "../../agents/persona";
-import { Notice } from "obsidian";
-import type { AgentModuleId } from "../../agents/types";
+import { Notice, setIcon } from "obsidian";
 import type { MobileAgentRegistrySnapshot } from "../../mobile/agent-registry-service";
 import type { UserProfileItem, UserProfileSlotDefinition } from "../../harness/memory/user-profile-state";
 import type { MobileMemorySettingsPort, MobileMemorySettingsSnapshot, MobileUserProfileSnapshot, MobileMemoryListSnapshot, MobileMemorySnapshot, MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileArchiveItem } from "../../mobile/memory-contracts";
 import type { MobileSession } from "../../mobile/store";
 import type { MobileShellPage } from "../mobile/shell-types";
-import { IPAD_MODULES, ipadAvatar, ipadIcon } from "./workbench-elements";
+import { IPAD_MODULES, ipadAvatar, ipadIcon, ipadButton } from "./workbench-elements";
 import { settingsText as t } from "./settings-i18n";
 import { el, settingsContent, settingsGroup, settingsRow, settingsSelect, settingsAction, settingsField, settingsSwitch, settingsToggle, settingsError, showSettingsError, liveSettingsPage, leaveSettingsConfirm, type IPadSettingsContext } from "./settings-elements";
 
+const MOBILE_MODULE_ORDER: readonly AgentModuleId[] = ["knowledge-base", "journal", "review", "todos", "finance", "english-diary", "pdf-reading"];
 const memory = (ctx: IPadSettingsContext): MobileMemorySettingsPort => ctx.host.services.memory;
-type EditAgent = (id?: string) => Promise<unknown>;
+type EditAgent = (id?: string, creation?: AgentEditorCreationOptions) => Promise<unknown>;
 const en = (ctx: IPadSettingsContext): boolean => ctx.host.settings().settingsLanguage === "en";
 const itemCount = (ctx: IPadSettingsContext, count: number): string => en(ctx) ? `${count} items` : `${count} 项`;
 const currentItems = (snapshot: MobileUserProfileSnapshot): UserProfileItem[] => snapshot.items.filter(item => item.status === "current");
@@ -85,14 +89,15 @@ function confirm(ctx: IPadSettingsContext, area: HTMLElement, message: string, l
 }
 function status(ctx: IPadSettingsContext, parent: HTMLElement): HTMLElement { const node = el(ctx.document, "div", "pd-agent-status"); node.setAttribute("role", "status"); parent.append(node); return node; }
 
-export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: EditAgent): MobileShellPage {
-  const api = memory(ctx), v = view(ctx, "ipad-settings-agent", "Agent");
+export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: EditAgent, section: "agent" | "memory" | "sessions" = "agent"): MobileShellPage {
+  const api = memory(ctx), v = view(ctx, `ipad-settings-${section}`, section === "agent" ? "Agent" : section === "memory" ? "记忆" : "会话");
+  if (section === "agent") v.page.actions = settingsAction(ctx, "会话", () => v.child(() => ctx.push(createAgentSettingsPage(ctx, editAgent, "sessions"))));
   let settings = api.readSettings(), profileCount: number | null = null, archiveCount: number | null = null, limitDraft: string | undefined, generation = 0, signature = "", dreamExpanded = false;
   let registrySnapshot: MobileAgentRegistrySnapshot | undefined;
   let controller: AbortController | undefined, dreamStatus: HTMLElement | undefined, dreamRun: HTMLButtonElement | undefined, dreamStop: HTMLButtonElement | undefined;
   v.dirty = () => limitDraft !== undefined && limitDraft !== String(settings.dreamRunsPerDay);
   v.discard = () => { limitDraft = undefined; signature = ""; render(); };
-  const stopDream = async () => { if (controller || api.dreamStatus().phase === "running") { controller?.abort(); await api.cancelDream(); } };
+  const stopDream = async () => { if (section !== "memory") return; if (controller || api.dreamStatus().phase === "running") { controller?.abort(); await api.cancelDream(); } };
   v.beforeLeave = stopDream;
   const background = () => { if (ctx.document.hidden) void stopDream().catch(v.report); }, pagehide = () => { void stopDream().catch(v.report); };
   ctx.document.addEventListener("visibilitychange", background); ctx.document.defaultView?.addEventListener("pagehide", pagehide);
@@ -120,20 +125,28 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
     const next = JSON.stringify([registrySnapshot, settings, profileCount, archiveCount, ctx.host.settings().settingsLanguage]);
     if (next === signature) { updateDream(); return; } signature = next;
     paint(ctx, v.body, () => {
-      const registry = registrySnapshot?.registry ?? ctx.host.settings().agentRegistry, agents = settingsGroup(ctx, v.body, t(ctx, "我的 Agent"));
-      for (const agent of registry.agents.filter(isAgentHired)) settingsRow(ctx, agents, agent.name, "", () => v.child(() => editAgent(agent.id)), ipadAvatar(ctx.document, agent), agent.position);
-      settingsRow(ctx, agents, en(ctx) ? "Hire an expert" : "聘请专家", "", () => ctx.host.services.openExpertHall(), ipadIcon(ctx.document, "sparkles"));
-      settingsRow(ctx, agents, t(ctx, "新建 Agent"), "", () => v.child(() => editAgent()), ipadIcon(ctx.document, "user-plus"));
-      const owners = settingsGroup(ctx, v.body, t(ctx, "模块负责人"));
-      for (const moduleId of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"] as const) {
-        const module = IPAD_MODULES.find(item => item.id === moduleId)!;
-        const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[module.id]);
-        const select = settingsSelect(ctx, owners, t(ctx, module.name), registry.agents.filter(isAgentHired).map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
-          if (v.busy || !registrySnapshot || value === registrySnapshot.registry.moduleOwners[module.id]) { select.value = registrySnapshot?.registry.moduleOwners[module.id] ?? ""; return; }
-          void saveOwner(module.id, value);
-        }, owner ? ipadAvatar(ctx.document, owner, "pd-avatar pd-agent-owner-avatar") : undefined);
-        select.disabled = !registrySnapshot; select.dataset.moduleOwner = module.id;
+      if (section === "agent") {
+      const registry = registrySnapshot?.registry ?? ctx.host.settings().agentRegistry;
+      const sections = new Map(agentRoleGroups([], en(ctx)).map(group => { const section = settingsGroup(ctx, v.body, group.label); section.dataset.agentGroup = group.id; return [group.id, section] as const; })), agents = sections.get("role")!;
+      for (const agent of registry.agents.filter(isAgentHired)) settingsRow(ctx, sections.get(agent.id === GENERAL_ASSISTANT_ID ? "main" : "role")!, agent.name, agent.id === GENERAL_ASSISTANT_ID ? t(ctx, agent.companyApprovalMode === "assistant" ? "总助审批" : "我来审批") : "", () => v.child(() => editAgent(agent.id)), ipadAvatar(ctx.document, agent), agent.id === GENERAL_ASSISTANT_ID ? undefined : agent.position || agent.positionDescription);
+      const create = ipadButton(ctx.document, "", () => { void v.child(() => editAgent(undefined, { onReturn: () => ctx.refresh() })); }, "is-text", "plus"); create.setAttribute("aria-label", "新建 Agent"); agents.previousElementSibling?.append(create);
+      const owners = settingsGroup(ctx, v.body, t(ctx, "模块负责人")), count = AGENT_MODULE_IDS.filter(module => !getModuleOwner(registry, module)).length;
+      if (count) owners.previousElementSibling?.append(el(ctx.document, "span", "pd-agent-owner-count", `${count} 个未指定`));
+      for (const moduleId of MOBILE_MODULE_ORDER) {
+        const owner = getModuleOwner(registry, moduleId), name = AGENT_MODULE_NAMES[moduleId][0], icon = el(ctx.document, "span", "pd-agent-owner-value-icon");
+        if (owner) icon.append(ipadAvatar(ctx.document, owner)); else setIcon(icon, "circle-dashed");
+        const select = settingsSelect(ctx, owners, t(ctx, name), [["", owner ? "不指定" : "未指定"], ...registry.agents.filter(agent => agent.id !== GENERAL_ASSISTANT_ID && isAgentHired(agent)).map(agent => [agent.id, agent.name] as const), ["__new_agent__", "新建 Agent…"]], owner?.id ?? "", value => {
+          if (v.busy || !registrySnapshot) { select.value = owner?.id ?? ""; return; }
+          if (value === "__new_agent__") { select.value = owner?.id ?? ""; void v.child(() => editAgent(undefined, { moduleIds: [moduleId], onReturn: () => ctx.refresh() })); return; }
+          void saveOwner(moduleId, value);
+        }, icon);
+        select.disabled = !registrySnapshot; select.dataset.moduleOwner = moduleId; select.parentElement?.classList.add("pd-agent-owner-control");
+        if (select.parentElement) select.parentElement.dataset.ownerLabel = select.selectedOptions[0]?.textContent ?? "";
+        const row = select.closest<HTMLElement>(".pd-settings-row"); if (row) row.prepend(ipadIcon(ctx.document, moduleId === "review" ? "chart-no-axes-combined" : IPAD_MODULES.find(item => item.id === moduleId)!.icon));
       }
+        return;
+      }
+      if (section === "memory") {
       const group = settingsGroup(ctx, v.body, t(ctx, "记忆"));
       settingsSwitch(ctx, group, t(ctx, "长期记忆"), settings.memoryEnabled, enabled => saveSetting({ memoryEnabled: enabled }));
       const dreamRow = settingsRow(ctx, group, t(ctx, "做梦")); dreamRow.classList.add("pd-agent-dream-row");
@@ -159,6 +172,8 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
       } else { dreamStatus = undefined; dreamRun = undefined; dreamStop = undefined; }
       settingsRow(ctx, group, t(ctx, "你的画像"), profileCount === null ? "—" : itemCount(ctx, profileCount), () => open(createProfilePage(ctx)));
       settingsRow(ctx, group, t(ctx, "记忆修正"), "", () => open(createMemoryListPage(ctx)));
+        return;
+      }
       const conversations = settingsGroup(ctx, v.body, t(ctx, "会话"));
       const archive = settingsSwitch(ctx, conversations, t(ctx, "自动归档"), settings.autoArchive, enabled => saveSetting({ autoArchive: enabled }));
       archive.parentElement!.querySelector(".pd-settings-copy")!.append(el(ctx.document, "span", "pd-settings-description", t(ctx, "完成 7 天后")));
@@ -168,8 +183,8 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
   async function loadCounts(): Promise<void> {
     const ticket = ++generation;
     const results = await Promise.allSettled([api.readProfile(), api.listArchives(), ctx.host.agents.snapshot()]); if (!v.alive || v.busy || ticket !== generation) return;
-    if (results[0].status === "fulfilled") profileCount = currentItems(results[0].value).length; else { profileCount = null; v.report(results[0].reason); }
-    if (results[1].status === "fulfilled") archiveCount = results[1].value.length; else { archiveCount = null; v.report(results[1].reason); }
+    if (results[0].status === "fulfilled") profileCount = currentItems(results[0].value).length; else { profileCount = null; if (section === "memory") v.report(results[0].reason); }
+    if (results[1].status === "fulfilled") archiveCount = results[1].value.length; else { archiveCount = null; if (section === "sessions") v.report(results[1].reason); }
     if (results[2].status === "fulfilled") registrySnapshot = results[2].value; else { registrySnapshot = undefined; v.report(results[2].reason); }
     render();
   }

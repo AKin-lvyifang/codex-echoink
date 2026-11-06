@@ -3,7 +3,7 @@ import type { WorkbenchTaskSource } from "./workbench-types";
 
 export const WORKBENCH_CONTEXT_TYPE = "echoink-workbench-task-source-v1";
 export const WORKBENCH_CONTEXT_DETAILS_KEY = "echoinkWorkbenchTaskSource";
-const signalIds = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]);
+const signalIds = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]);
 
 /** Local scope data only. Parsing never grants a capability or authorizes a write. */
 export function freezeWorkbenchTaskSource(value: unknown): Readonly<WorkbenchTaskSource> | null {

@@ -25,6 +25,7 @@ export interface AgentCapabilityContext {
   /** Actual relocated module roots, including disabled modules. */
   readonly modulePaths?: Partial<Record<AgentModuleCapability, readonly string[]>>;
   readonly isRootJournalPath?: (value: string) => boolean;
+  readonly companyRole?: "router" | "worker";
 }
 function relativeTarget(context: AgentCapabilityContext, value: string): string | null {
   const clean = value.replaceAll("\\", "/");

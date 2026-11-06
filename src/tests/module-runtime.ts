@@ -141,6 +141,7 @@ async function automaticLinking(root: string): Promise<void> {
   assert.equal(normalizeSettingsData({}).settings.knowledgeBase.autoLinkEnabled, true);
   assert.equal(normalizeSettingsData({ knowledgeBase: { autoLinkEnabled: false } }).settings.knowledgeBase.autoLinkEnabled, false);
   const fixture = await nativeJournalFixture(root);
+  fixture.plugin.settings.agentRegistry.moduleOwners["knowledge-base"] = "generalist";
   const productionHost = createProductionKnowledgeLinkingHost(fixture.plugin);
   assert.equal(productionHost.automaticEnabled?.(), true);
   fixture.plugin.settings.knowledgeBase.autoLinkEnabled = false;

@@ -1,3 +1,4 @@
+import type { AgentEditorCreationOptions } from "../ui/codex-view/agent-editor-contract";
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { openMobileRunReport } from "../run-reports/mobile-ui";
 import { runErrors } from "../run-reports/recent-errors";
@@ -11,6 +12,8 @@ import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
 import { loadMobileSettings, mobileAgentRegistrySource, type MobileSettings } from "./settings";
 import { MobileRuntime } from "./runtime";
+import { startMobileCompany, type MobileCompany } from "./company-host";
+import { createMobileCompanyFolders } from "./company-folders";
 import { MobileUsageStore } from "./usage-store";
 import { MobileUI } from "../ui/mobile/mobile-ui";
 import { MobileWorkspace, MOBILE_VIEW, MOBILE_SETTINGS_VIEW } from "./workspace";
@@ -31,10 +34,10 @@ import { IPadWorkbench } from "../ui/ipad/workbench";
 import { IPadAgentPane } from "../ui/ipad/agent-pane";
 import type { IPadAgentRoute, IPadWorkbenchHost } from "../ui/ipad/workbench-contract";
 import type { AgentModuleId } from "../agents/types";
-import type { MobileRequest } from "./transport";
+import { webviewFetch, type MobileRequest, type MobileStreamFetch } from "./transport";
 import { IPadSettings } from "../ui/ipad/settings-pages";
 import { ExpertHallView, EXPERT_HALL_VIEW_TYPE } from "../experts/view";
-import { WorkspacePreviewView, WORKSPACE_PREVIEW_VIEW_TYPE } from "../workspace/view";
+import { registerWorkspacePreviewExtension, WorkspacePreviewView, WORKSPACE_PREVIEW_VIEW_TYPE } from "../workspace/view";
 import { workspacePath } from "../workspace/service";
 
 export { MOBILE_VIEW } from "./workspace";
@@ -42,6 +45,8 @@ export default class EchoInkMobilePlugin extends Plugin {
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
+  /** Null when the store is unavailable or the company record cannot load; the classic assistant keeps working. */
+  company: MobileCompany | null = null;
   usage!: MobileUsageStore;
   navigation!: MobileWorkspace;
   services!: MobileServices;
@@ -53,6 +58,8 @@ export default class EchoInkMobilePlugin extends Plugin {
   ipadNavigation?: IPadShellWorkspace;
   workbench?: MobileWorkbenchService;
   modelRequest?: MobileRequest;
+  /** Streaming transport; absent where the WebView has no fetch. */
+  modelFetch?: MobileStreamFetch;
   private settingsWrites: Promise<void> = Promise.resolve();
   private reportedSettingsSaveFailure = false;
   private retainedRegistry?: { present: boolean; value: unknown };
@@ -64,6 +71,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       const saved: unknown = await this.loadData();
       this.settings = loadMobileSettings(saved);
       const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
+      const migratedOwners = JSON.stringify(savedRecord.agentRegistry) !== JSON.stringify(this.settings.agentRegistry);
       const migratedTheme = savedRecord.colorTheme !== this.settings.colorTheme;
       const migratedToolCalling = JSON.stringify(savedRecord.apiProviders ?? []) !== JSON.stringify(this.settings.apiProviders);
       const appearanceDocument = this.app.workspace.containerEl?.ownerDocument ?? document;
@@ -101,15 +109,20 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
         (id, turn) => this.services.context(id, turn), () => this.saveSettings(), () => this.accountService);
       if (!this.store.unavailableReason) this.runtime.setUsage(this.usage);
+      this.modelFetch ??= webviewFetch(); this.runtime.setStreamFetch(this.modelFetch);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.app.vault.configDir, this.manifest.dir));
       await this.services.initialize();
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
-      if (migratedBindings || migratedTheme || migratedToolCalling) await this.saveSettings();
+      if (migratedBindings || migratedTheme || migratedToolCalling || migratedOwners) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
+      if (!this.store.unavailableReason) this.company = await startMobileCompany({ runtime: this.runtime, store: this.store, settings: () => this.settings,
+        adapter: this.app.vault.adapter, file: `${mobileDirectory}/devices/${instanceId}/company.v1.json`,
+        folders: createMobileCompanyFolders(this.app, () => this.settings, () => this.saveSettings()),
+        changed: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); this.runtime.onChange(); } });
       this.registerTaskLifecycle();
       await this.services.initializeFinance();
       this.applyAppearanceTheme();
@@ -175,7 +188,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.applyAppearanceTheme();
       this.workbench?.invalidate();
       this.archiveMobileTasks();
-      void this.runtime.foreground().catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
+      void this.runtime.foreground().then(() => this.company?.service.initialize()).catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
     };
     this.registerDomEvent(document, "visibilitychange", () => {
       if (document.visibilityState === "hidden") suspend("app_backgrounded");
@@ -246,7 +259,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       dismiss: async id => { await this.services.dismissExpert(id); }, open: id => this.services.openExpert(id), upgrade: () => this.showPage("account")
     }));
     this.registerView(WORKSPACE_PREVIEW_VIEW_TYPE, leaf => new WorkspacePreviewView(leaf, { service: this.services.workspace }));
-    this.registerExtensions(["html"], WORKSPACE_PREVIEW_VIEW_TYPE);
+    registerWorkspacePreviewExtension(this);
     this.registerView(LIFE_VIEW_TYPES.finance, leaf => new EchoInkMobileFinanceView(leaf, this.services.lifestyle, "finance"));
     this.workbench = new MobileWorkbenchService(this.app, this.store, () => this.settings, () => this.services, this.runtime);
     if (!Platform.isTablet) {
@@ -318,13 +331,17 @@ export default class EchoInkMobilePlugin extends Plugin {
     const leaf = await this.ipadNavigation!.openHome();
     if (leaf.view instanceof EchoInkIPadView) await leaf.view.openModule(module);
   }
+  async openIPadProject(projectId: string): Promise<void> {
+    const leaf = await this.ipadNavigation!.openHome();
+    if (leaf.view instanceof EchoInkIPadView) await leaf.view.openProject(projectId);
+  }
   async openIPadSearch(): Promise<void> {
     const leaf = await this.ipadNavigation!.openHome();
     if (leaf.view instanceof EchoInkIPadView) await leaf.view.openSearch();
   }
-  async openIPadSettings(category?: string): Promise<void> {
+  async openIPadSettings(category?: string, creation?: AgentEditorCreationOptions): Promise<void> {
     const leaf = await this.ipadNavigation!.openSettings();
-    if (leaf.view instanceof EchoInkIPadSettingsView) await leaf.view.openCategory(category);
+    if (leaf.view instanceof EchoInkIPadSettingsView) await leaf.view.openCategory(category, creation);
   }
   async showPage(page: MobileSettingsRoute): Promise<void> {
     if (Platform.isTablet) {
@@ -342,6 +359,7 @@ export default class EchoInkMobilePlugin extends Plugin {
   }
   onunload(): void {
     this.unloaded = true;
+    this.company?.dispose(); this.company = null;
     (this.app.workspace.containerEl?.ownerDocument ?? document).body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
     this.workbench?.dispose();
     this.iphoneNavigation?.dispose();
@@ -372,9 +390,9 @@ export class EchoInkIPhoneView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
       accountService: this.plugin.accountService, version: this.plugin.manifest.version,
-      modelRequest: this.plugin.modelRequest,
+      modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
@@ -420,15 +438,18 @@ export class EchoInkIPadView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
       accountService: this.plugin.accountService, version: this.plugin.manifest.version,
-      modelRequest: this.plugin.modelRequest,
+      modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
-      openHome: async () => { await this.plugin.ipadNavigation!.openHome(); },
-      openAgent: route => this.plugin.openIPadAgent(route),
+      openHome: async (resetRoute = false) => {
+        const leaf = await this.plugin.ipadNavigation!.openHome();
+        if (resetRoute && leaf.view instanceof EchoInkIPadView) { const ui = await leaf.view.ready(); if (ui instanceof IPadWorkbench) await ui.navigate({ kind: "home" }); }
+      },
+      openAgent: route => this.plugin.openIPadAgent(route), openProject: projectId => this.plugin.openIPadProject(projectId),
       openLegacy: page => this.plugin.showPage(page), openModule: module => this.plugin.openIPadModule(module),
       openSearch: () => this.plugin.openIPadSearch(),
-      openSettings: category => this.plugin.openIPadSettings(category),
+      openSettings: (category, creation) => this.plugin.openIPadSettings(category, creation),
       resumeTask: taskId => this.plugin.resumeIPadTask(taskId),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
@@ -448,6 +469,7 @@ export class EchoInkIPadView extends ItemView {
   async resumeTask(taskId: string): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadAgentPane) await ui.resumeTask(taskId); }
   async openModule(module: AgentModuleId): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openModule(module); }
   async openSearch(): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openSearch(); }
+  async openProject(projectId: string): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openProject(projectId); }
   async onClose(): Promise<void> {
     const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
     this.removeChild(this.markdown); await this.plugin.store.flush();
@@ -474,14 +496,14 @@ export class EchoInkIPadSettingsView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPadSettings(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!,
-      accountService: this.plugin.accountService, version: this.plugin.manifest.version, modelRequest: this.plugin.modelRequest,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
+      accountService: this.plugin.accountService, version: this.plugin.manifest.version, modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openHome: async () => { await this.plugin.ipadNavigation!.openHome(); },
       openAgent: route => this.plugin.openIPadAgent(route),
       openLegacy: page => this.plugin.showPage(page), openModule: module => this.plugin.openIPadModule(module),
       openSearch: () => this.plugin.openIPadSearch(), resumeTask: id => this.plugin.resumeIPadTask(id),
-      openSettings: category => this.plugin.openIPadSettings(category),
+      openSettings: (category, creation) => this.plugin.openIPadSettings(category, creation),
       openNote: async path => {
         const file = this.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile)) throw new Error("笔记不存在。");
@@ -492,8 +514,8 @@ export class EchoInkIPadSettingsView extends ItemView {
     const ui = this.ui;
     return this.mounting = ui.mount().then(() => { if (this.ui === ui) this.refreshSettings(); });
   }
-  async openCategory(category?: string): Promise<void> {
-    const ui = this.ui; await this.mounting; if (this.ui === ui) await ui?.open(category);
+  async openCategory(category?: string, creation?: AgentEditorCreationOptions): Promise<void> {
+    const ui = this.ui; await this.mounting; if (this.ui === ui) await ui?.open(category, creation);
   }
   async onClose(): Promise<void> {
     const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();

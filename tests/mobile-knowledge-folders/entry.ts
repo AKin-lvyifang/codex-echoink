@@ -7,3 +7,5 @@ export { mobileGenerateText } from "../../src/mobile/transport";
 
 export { FolderJournal } from "../../src/mobile/knowledge-folders-journal";
 export { digest, safePath } from "../../src/mobile/knowledge-folders-io";
+
+export { TFile, TFolder } from "obsidian";

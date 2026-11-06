@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -6,9 +7,8 @@ import os from "node:os";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const testRoot = process.env.ECHOINK_TODO_TEST_ROOT ? await realpath(process.env.ECHOINK_TODO_TEST_ROOT) : null;
-if (testRoot && !testRoot.startsWith(allowed + path.sep)) throw new Error("Fixtures must stay in 90-任务临时");
+if (testRoot && !isDisposableTestRoot(testRoot)) throw new Error("Fixtures must stay in 90-任务临时");
 const directory = testRoot ? await mkdtemp(path.join(testRoot, "reminders-")) : path.join(root, ".tmp");
 const output = path.join(directory, "todo-reminder-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });

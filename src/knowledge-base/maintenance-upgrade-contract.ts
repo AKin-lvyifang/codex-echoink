@@ -35,6 +35,7 @@ export interface MaintenanceUpgradeSourceItem {
   addTargetPaths?: string[];
 }
 export interface MaintenanceUpgradeWikiItem {
+  confirmType?: MaintenanceKnowledgeType;
   path: string;
   title: string;
   revision: string;
@@ -47,7 +48,56 @@ export interface MaintenanceUpgradeCounts {
   backlinkCount: number;
   wikiCount: number;
 }
+export interface KnowledgeRepairItem extends MaintenanceUpgradeWikiItem {
+  after: string;
+  descriptions: string[];
+}
+export interface KnowledgeRepairFollowup { path: string; action: "upgrade" | "maintain"; sources?: string[] }
+export interface KnowledgeCheckupActionRow {
+  id: string;
+  kind: string;
+  title: string;
+  path: string;
+  action: string;
+  affectedPaths: string[];
+  followup?: boolean;
+  failure?: string;
+  changes?: { path: string; before: string; after: string }[];
+  merge?: {
+    primary: string;
+    secondary: string;
+    choices: string[];
+    sections: { sourceTitle: string; targetTitle: string }[];
+    anchors: string[];
+    omittedParagraphs?: number;
+    additions?: { title: string; body: string }[];
+    properties?: string[];
+  };
+  operationIds?: string[];
+  choice?: { label: string; value: string; options: { value: string; label: string }[] };
+  skipped?: { path: string; message: string }[];
+}
+export interface KnowledgeRepairMove {
+  id: string;
+  from: string;
+  to: string;
+  revision: string;
+}
+export interface KnowledgeRepairDecision {
+  id: string;
+  domains: [string, string];
+}
+export interface KnowledgeRepairExtras {
+  stopOnFailure?: boolean;
+  moves?: KnowledgeRepairMove[];
+  decisions?: KnowledgeRepairDecision[];
+}
 export interface MaintenanceUpgradePlan {
+  repairExtras?: KnowledgeRepairExtras;
+  checkupActions?: KnowledgeCheckupActionRow[];
+  followups?: KnowledgeRepairFollowup[];
+  purpose?: "checkup";
+  noteRepairs?: KnowledgeRepairItem[];
   version: 1;
   id: string;
   createdAt: number;
@@ -84,6 +134,7 @@ export interface MaintenanceUpgradeWrite {
 }
 /** Stored only within the existing KnowledgeMaintenanceRecord. */
 export interface MaintenanceUpgradeState {
+  repairOperations?: Record<string, { done: boolean }>;
   version: 1;
   plan: MaintenanceUpgradePlan;
   phase: "classify" | "write" | "completed";
@@ -104,6 +155,8 @@ export interface MaintenanceUpgradePreviewRow {
   description?: string;
 }
 export interface MaintenanceUpgradePreview {
+  checkupActions?: KnowledgeCheckupActionRow[];
+  followups?: KnowledgeRepairFollowup[];
   id: string;
   createdAt: number;
   automatic: MaintenanceUpgradePreviewRow[];
@@ -112,6 +165,8 @@ export interface MaintenanceUpgradePreview {
   rootAdditions: MaintenanceUpgradeRootAddition[];
 }
 export interface MaintenanceUpgradeSnapshot {
+  checkupResults?: Array<KnowledgeCheckupActionRow & { status: "success" | "failed" | "pending"; message?: string }>;
+  purpose?: "checkup";
   status: "scanning" | "ready" | "running" | "interrupted" | "completed" | "failed";
   counts: MaintenanceUpgradeCounts;
   preview?: MaintenanceUpgradePreview;
@@ -123,7 +178,7 @@ export interface MaintenanceUpgradeSnapshot {
 /** UI calls these actions; no caller can submit model-authored write contents. */
 export interface MaintenanceUpgradeSurface {
   getUpgradeSnapshot(): Promise<MaintenanceUpgradeSnapshot>;
-  previewUpgrade(): Promise<MaintenanceUpgradePreview>;
+  previewUpgrade(paths?: readonly string[]): Promise<MaintenanceUpgradePreview>;
   confirmUpgrade(previewId: string): Promise<MaintenanceUpgradeSnapshot>;
   stopUpgrade(): Promise<void>;
   resumeUpgrade(): Promise<MaintenanceUpgradeSnapshot>;

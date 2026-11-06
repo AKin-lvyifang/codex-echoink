@@ -1,11 +1,20 @@
+import { getIcon } from "obsidian";
 import { ownedSvg } from "./owned-dom";
+export const NAV_ANIMATE_ICON_NAMES = ["book-open", "list-todo", "wallet", "library", "languages", "file-text", "sparkles", "ellipsis"] as const;
+type NavAnimateIconName = typeof NAV_ANIMATE_ICON_NAMES[number];
 export type EchoInkAnimateIconName =
+  | NavAnimateIconName
   | "upload"
   | "send-horizontal"
   | "circle-stop"
   | "mic"
+  | "brain"
   | "users"
   | "user-round-pen";
+
+export function isAnimateIconName(name: string): name is EchoInkAnimateIconName {
+  return [...NAV_ANIMATE_ICON_NAMES, "upload", "send-horizontal", "circle-stop", "mic", "brain", "users", "user-round-pen"].includes(name);
+}
 
 /**
  * Dependency-free DOM rendering of the pinned Animate Icons lucide sources.
@@ -17,6 +26,24 @@ export function renderAnimateIcon(
   name: EchoInkAnimateIconName
 ): SVGSVGElement {
   const document = container.ownerDocument;
+  if ((NAV_ANIMATE_ICON_NAMES as readonly string[]).includes(name)) {
+    // Keep the host's exact Lucide vector, including version-specific paths.
+    // AnimateIcons variants: book-open, wallet, file-text, sparkles, ellipsis,
+    // list-checks; lucide-animated: languages. library uses a custom book stagger.
+    const source = getIcon(name);
+    const svg = source ? document.importNode(source, true) : ownedSvg(document, "svg");
+    container.classList.add("echoink-animate-icon-host", `is-${name}-icon`);
+    setAttributes(svg, { "aria-hidden": "true", focusable: "false", "data-nav-icon": name });
+    Array.from(svg.children).forEach((layer, index) => {
+      setAttributes(layer, { "data-nav-layer": String(index), pathLength: "1" });
+      // Same line/mark layers as the settings list-todo renderer, on the
+      // current Lucide paths so the navigation's resting shape stays intact.
+      if (name === "list-todo") layer.setAttribute("data-part", index < 3 ? "layout-line" : "layout-box");
+    });
+    container.append(svg);
+    return svg;
+  }
+
   container.classList.add("echoink-animate-icon-host", `is-${name}-icon`);
   const svg = ownedSvg(document, "svg");
   setAttributes(svg, {
@@ -61,6 +88,31 @@ export function renderAnimateIcon(
       path(document,"M19 10v2a7 7 0 0 1-14 0v-2"),
       rect(document,"9", "2", "6", "13", "3")
     );
+  } else if (name === "brain") {
+    // AnimateIcons lucide/brain-icon.tsx: keep the original paths and variant groups.
+    const group = ownedSvg(document, "g");
+    group.setAttribute("class", "echoink-animate-brain-group");
+    const brainPath = (data: string, variant: string) => {
+      const element = path(document, data, `echoink-animate-brain-${variant}`);
+      setAttributes(element, { pathLength: "1", "stroke-dasharray": "1", "stroke-dashoffset": "0" });
+      return element;
+    };
+    group.append(
+      brainPath("M12 18V5", "spine"),
+      brainPath("M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4", "lobe-a"),
+      brainPath("M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5", "lobe-b"),
+      brainPath("M17.997 5.125a4 4 0 0 1 2.526 5.77", "lobe-a"),
+      brainPath("M18 18a4 4 0 0 0 2-7.464", "lobe-b"),
+      brainPath("M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517", "lobe-a"),
+      brainPath("M6 18a4 4 0 0 1-2-7.464", "lobe-b"),
+      brainPath("M6.003 5.125a4 4 0 0 0-2.526 5.77", "lobe-a")
+    );
+    for (const [data, side] of [["M8.5 11.6 10.2 10.4", "left"], ["M13.8 9.4 15.6 10.7", "right"]] as const) {
+      const spark = brainPath(data, `spark-${side}`);
+      setAttributes(spark, { "stroke-width": "1.4", "stroke-dashoffset": "1", opacity: "0" });
+      group.append(spark);
+    }
+    svg.append(group);
   } else if (name === "users") {
     const primary = ownedSvg(document, "g");
     primary.setAttribute("class", "echoink-animate-users-primary");

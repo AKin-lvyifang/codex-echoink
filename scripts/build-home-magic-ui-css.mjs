@@ -96,7 +96,7 @@ const answerMarkdownSource = await readFile(path.join(rootDir, "src/styles/answe
 const settingsGenerated = [settingsStart, selectionAskSource.trim(), inlineAgentSource.trim(), settingsSource.trim(), originSource.trim(), boundarySource.trim(), paperGuideSource.trim(), pdfReadingSource.trim(), moduleSettingsSource.trim(), knowledgeSettingsSource.trim(), accountSettingsSource.trim(), alignedSettingsSource.trim(), alignedFormsSource.trim(), alignedModulesSource.trim(), generationUiSource.trim(), answerMarkdownSource.trim(), inlineAgentInputSource.trim(), inlineAgentTasksSource.trim(), hostAppearanceSource.trim(), settingsEnd].join("\n");
 const agentStart = "/* ECHOINK_AGENT_WORKBENCH_CSS_START */";
 const agentEnd = "/* ECHOINK_AGENT_WORKBENCH_CSS_END */";
-const agentCss = await Promise.all(["run-reports.css", "agent-tasks.css", "agent-editor.css", "agent-approval.css", "workbench.css", "journal-page.css", "journal-format.css", "todo-page.css", "knowledge-page.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "user-profile-settings.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
+const agentCss = await Promise.all(["run-reports.css", "agent-tasks.css", "agent-role-groups.css", "agent-editor.css", "agent-approval.css", "knowledge-system-move.css", "workbench.css", "journal-page.css", "journal-format.css", "todo-page.css", "project-page.css", "knowledge-page.css", "knowledge-map.css", "knowledge-checkup.css", "knowledge-preference-wizard.css", "english-diary-page.css", "pdf-reading-page.css", "module-navigation.css", "agent-settings.css", "memory-page.css", "memory-map.css", "memory-brain.css"].map(name => readFile(path.join(rootDir, "src/styles", name), "utf8")));
 const agentGenerated = `${agentStart}\n${agentCss.map(css => css.trim()).join("\n\n")}\n${agentEnd}`;
 const agentIndex = styles.indexOf(agentStart);
 const agentCurrent = agentIndex < 0 ? "" : styles.slice(agentIndex, styles.indexOf(agentEnd, agentIndex) + agentEnd.length);
@@ -111,7 +111,7 @@ const diaryCurrent = diaryIndex < 0 ? "" : styles.slice(diaryIndex, styles.index
 
 const iphoneStart = "/* ECHOINK_IPHONE_PAGES_START */";
 const iphoneEnd = "/* ECHOINK_IPHONE_PAGES_END */";
-const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css", "settings.css", "capability-pages.css", "agent-settings-pages.css", "account-pages.css", "modules.css", "knowledge-settings-pages.css", "knowledge-pages.css", "english-diary-pages.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
+const iphoneCss = await Promise.all(["shell.css", "workbench.css", "task-detail.css", "integration.css", "settings.css", "capability-pages.css", "agent-settings-pages.css", "account-pages.css", "modules.css", "knowledge-settings-pages.css", "knowledge-pages.css", "english-diary-pages.css", "../mobile/company.css"].map(name => readFile(path.join(rootDir, "src/ui/iphone", name), "utf8")));
 const iphoneGenerated = `${iphoneStart}\n${iphoneCss.map(css => css.trim()).join("\n\n")}\n${iphoneEnd}`;
 const iphoneIndex = styles.indexOf(iphoneStart);
 const iphoneCurrent = iphoneIndex < 0 ? "" : styles.slice(iphoneIndex, styles.indexOf(iphoneEnd, iphoneIndex) + iphoneEnd.length);

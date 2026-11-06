@@ -21,7 +21,7 @@ try {
       "await runPiNativePromptEntryStartupTests();"
     ])
   ].join("\n");
-  await esbuild.build({ stdin: { contents, resolveDir: root, loader: "ts" }, bundle: true, platform: "node", format: "esm", outfile: target, external: ["jsdom", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-ai/providers/faux"], banner: { js: `import {createRequire} from "node:module"; const require = createRequire(${JSON.stringify(path.join(root, "package.json"))});` }, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") }, loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" } });
+  await esbuild.build({ stdin: { contents, resolveDir: root, loader: "ts" }, bundle: true, platform: "node", format: "esm", outfile: target, external: ["jsdom", "yaml", "@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-ai/providers/faux"], banner: { js: `import {createRequire as createIsolatedTestRequire} from "node:module"; const require = createIsolatedTestRequire(${JSON.stringify(path.join(root, "package.json"))});` }, alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") }, loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" } });
   const run = spawnSync(process.execPath, [target], { stdio: "inherit" });
   if (run.status !== 0) process.exitCode = run.status ?? 1;
 } finally { await rm(directory, { recursive: true, force: true }); }

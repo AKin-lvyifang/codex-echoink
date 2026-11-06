@@ -9,6 +9,10 @@
 .echoink-ipad .pd-task-tool summary { display: flex; align-items: center; gap: 6px; min-height: 44px; cursor: pointer; list-style: none; }
 .echoink-ipad .pd-task-tool summary::-webkit-details-marker { display: none; }
 .echoink-ipad .pd-task-tool-body { max-height: 320px; overflow: auto; padding: 8px 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; }
+.echoink-ipad .pd-task-reasoning-body { line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-ipad .pd-task-streaming { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-top: 12px; }
+.echoink-ipad .pd-task-streaming[hidden], .echoink-ipad .pd-task-live[hidden] { display: none; }
+.echoink-ipad .pd-task-answer-live { white-space: pre-wrap; }
 .echoink-ipad .pd-tool-input { max-width: 100%; overflow: auto; white-space: pre; }
 .echoink-ipad .pd-tool-failed, .echoink-ipad .pd-task-error, .echoink-ipad .pd-composer-error, .echoink-ipad .pd-question-error { color: var(--text-error); }
 .echoink-ipad .pd-task-error:empty { display: none; }

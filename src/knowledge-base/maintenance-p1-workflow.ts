@@ -1,16 +1,22 @@
+import { applyDomainMapBlockPatches, domainMapBlock, applyTreePlacement, treeMapPendingCount, appendTreeMapSources } from "./maintenance-tree-map";
+import { knowledgeSystemReminder, reminderProperties } from "./knowledge-system-reminders";
+import { patchKnowledgeProperties, readMaintenanceFrontmatterProperty } from "./maintenance-source-frontmatter";
+import type { MaintenanceTreeAnalysisResult } from "./maintenance-tree-analysis";
+import type { MaintenanceTreeJob } from "./maintenance-p2-contract";
+import { assertMaintenanceWikiTags } from "./maintenance-tag-policy";
 import { isUnknownArray } from "../utils/unknown-array";
 import { maintenanceInspection, type MaintenanceInspectionView } from "./maintenance-p2-receipt";
 import { Phase3MaintenanceError } from "./phase3-maintenance-service";
 import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
-import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
+import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, SOURCE_FRONTMATTER_UNSAFE, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
 import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock, appendMaintenanceManagedBlock, assertMaintenanceQuoteSectionsPreserved } from "./maintenance-section-patch";
 import { appendMaintenanceAliases, maintenancePageTitle } from "./maintenance-page-metadata";
 import { boundedMaintenanceMessage, throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
-import { patchMaintenanceSourceFrontmatter } from "./maintenance-source-frontmatter";
+import { patchMaintenanceSourceFrontmatter, SourceFrontmatterUnsafeError } from "./maintenance-source-frontmatter";
 import { rawDigestFingerprint } from "./raw-digest";
 import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage } from "./maintenance-page-lock";
 import { groundMaintenanceKnowledgeUnits, prepareMaintenanceNewPage, validateMaintenanceNewPage } from "./maintenance-knowledge-quality";
@@ -39,7 +45,9 @@ export interface MaintenanceP1Host {
   targetPath(path: string): Promise<string>;
   preparePageContent?(item: MaintenanceWritingItem, content: string, baseline?: string): Promise<string>;
   candidates(units: readonly MaintenanceKnowledgeUnit[]): Promise<readonly MaintenanceUnitCandidates[]>;
+  validateTreeTargetDirectory?(targetPath: string, domain: string): Promise<void>;
   planMaps(entries: readonly MaintenanceDomainMapEntry[]): Promise<readonly MaintenanceDomainMapDraft[]>;
+  placeTree?(job: MaintenanceTreeJob, input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<MaintenanceTreeAnalysisResult>;
   refresh?(): Promise<void>;
   templateNotice?(): Promise<string | undefined>;
   commit(input: Readonly<PiKnowledgeMaintenanceToolInput>, item: MaintenanceWritingItem, content: string, sourceFields?: MaintenanceSourceFields): Promise<boolean>;
@@ -51,13 +59,13 @@ export interface MaintenanceP1Host {
 export class MaintenanceP1Workflow {
   constructor(private readonly host: MaintenanceP1Host) {}
   async restoreHolds(): Promise<void> {
-    for (const r of await this.host.records()) if (r.p1 && r.p1.phase !== "completed") holdMaintenancePages(r.recordId, this.host.vaultRootPath, [...r.p1.writingPlan.map(p => p.targetPath), ...r.p1.p2?.finalization.map(p => p.targetPath) ?? []]);
+    for (const r of await this.host.records()) if (isP1Open(r)) holdMaintenancePages(r.recordId, this.host.vaultRootPath, [...r.p1!.writingPlan.map(p => p.targetPath), ...r.p1!.p2?.finalization.map(p => p.targetPath) ?? [], ...r.p1!.p2?.treeJobs?.map(job => job.targetPath) ?? []]);
   }
   async execute(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
     try { return await this.run(input); }
     catch (error) {
       const diagnostic = boundedMaintenanceMessage(`${error instanceof Error ? error.message : String(error)}${error && typeof error === "object" && "currentSnapshot" in error ? "\n请重新sections读取完整当前目录，不猜编号。" : ""}`);
-      const record = (await this.host.records().catch((): KnowledgeMaintenanceRecord[] => [])).find(record => record.originConversationId === input.conversationId && record.p1 && record.p1.phase !== "completed");
+      const record = (await this.host.records().catch((): KnowledgeMaintenanceRecord[] => [])).find(record => record.originConversationId === input.conversationId && isP1Open(record));
       const currentPath = input.p1?.targetPath ?? record?.p1?.writingPlan.find(item => item.id === input.p1?.pageId)?.targetPath;
       const userReceipt = { ...(record ? maintenanceReceiptForRecord(record) : { version: 1 as const }), text: maintenanceFailureText(diagnostic, currentPath) };
       const message = `${diagnostic}${record ? `\n${JSON.stringify({ userReceipt })}` : ""}`;
@@ -69,13 +77,22 @@ export class MaintenanceP1Workflow {
     if (!action) throw new Error("请按 stage=decompose -> plan -> write 执行；旧candidateActions已停用。中断后用stage=resume。");
     if (input.signal?.aborted) return { status: "cancelled", message: "维护已停止，清单保留。", processedSourcePaths: [], userReceipt: { version: 1, text: maintenanceFailureText("取消") } };
     const records = await this.host.records();
-    let record = records.find(r => r.originConversationId === input.conversationId && r.p1?.phase !== "completed" && r.p1);
+    let record = records.find(r => r.originConversationId === input.conversationId && isP1Open(r));
     const selected = [...new Set((input.sourcePaths?.length ? input.sourcePaths : input.globalSourcePaths ?? []).map(p => this.host.sourcePath(p)))];
-    if (record && selected.length && (selected.some(p => !record!.sources.some(s => s.path === p)) || record.sources.some(source => source.status !== "processed" && !selected.includes(source.path)))) throw new Error("本会话有未完清单，来源范围不同；请先继续原清单，不能静默换范围。");
+    // Explicit retries reuse the settled original job and its committed pages.
+    const retry = maintenanceP1RetryRecord(records, input.conversationId, selected);
+    record ??= retry;
+    if (record && selected.length && (selected.some(p => !record!.sources.some(s => s.path === p)) || isP1Open(record) && record.sources.some(source => source.status !== "processed" && !selected.includes(source.path)))) throw new Error("本会话有未完清单，来源范围不同；请先继续原清单，不能静默换范围。");
     if (action.stage === "decompose") {
       const replayId = `maintenance-${hash(`${input.productRunId}:${input.toolCallId}:p1`).slice(0, 32)}`;
       const replay = records.find(record => record.recordId === replayId && record.originConversationId === input.conversationId && record.p1);
-      if (replay?.p1?.phase === "completed") return this.receipt(replay, "该调用的清单已完成，保留成功页。");
+      if (replay && !isP1Open(replay)) return this.receipt(replay, "该调用的清单已完成，保留成功页。");
+      if (record && hasP1PartialSettlement(record)) {
+        if (record.p1!.folderBindingsRevision !== input.folderBindingsRevision) throw new Error("维护期间目录配置已变化，原清单保留，停止写入。");
+        await this.assertSources(record);
+        await this.finalize(input, record);
+        return this.receipt(record, "沿用原成果，只核对并补来源属性回写。");
+      }
       if (record && record.p1!.phase !== "decompose") return this.receipt(record, "已有未完成清单，使用resume继续；不会覆盖已存拆解。");
       if (!selected.length || selected.length > 20) throw new Error("拆解须使用当前授权的1–20篇来源。");
       const decompositions = action.decompositions;
@@ -128,7 +145,7 @@ export class MaintenanceP1Workflow {
     }
     if (!record) {
       if ((action.stage === "inspect" || action.stage === "resume") && selected.length > 0 && selected.length <= 20) {
-        if (records.some(r => r.p1 && r.p1.phase !== "completed" && r.sources.some(source => selected.includes(source.path)))) throw new Error("这些来源有历史未完成清单；请回到原会话使用stage=resume继续，不能当作已完成。");
+        if (records.some(r => isP1Open(r) && r.sources.some(source => selected.includes(source.path)))) throw new Error("这些来源有历史未完成清单；请回到原会话使用stage=resume继续，不能当作已完成。");
         const processed = new Set(await this.host.processedSources(selected, records));
         if (selected.every(relative => processed.has(relative))) return {
           status: "completed", maintenanceStage: "completed", processedSourcePaths: selected, producedPaths: [],
@@ -173,7 +190,7 @@ export class MaintenanceP1Workflow {
         state.p2.titlePolicy = MAINTENANCE_SHORT_TITLE_POLICY;
       }
       state.writingPlan = plan; state.phase = "write";
-      holdMaintenancePages(record.recordId, this.host.vaultRootPath, [...plan.map(p => p.targetPath), ...state.p2?.finalization.map(p => p.targetPath) ?? []]);
+      holdMaintenancePages(record.recordId, this.host.vaultRootPath, [...plan.map(p => p.targetPath), ...state.p2?.finalization.map(p => p.targetPath) ?? [], ...state.p2?.treeJobs?.map(job => job.targetPath) ?? []]);
       await this.host.save(record);
       if (!plan.length) await this.finalize(input, record);
       return this.receipt(record, "写作清单已持久化；按pendingPages逐页write。尚无草稿的页需继续写作。");
@@ -244,6 +261,7 @@ export class MaintenanceP1Workflow {
           if (baseline === undefined) validateMaintenanceNewPage(content, own, item.targetPath, state.p2.titlePolicy);
           content = applyMaintenanceRelatedEntries(content, maintenancePlanRelations(state.writingPlan).get(item.targetPath) ?? [], baseline);
         }
+        assertMaintenanceWikiTags(content, baseline);
         content = await this.withSources(content, item, record, baseline);
         assertMaintenanceQuoteSectionsPreserved(baseline, content);
         const generation = state.draftGenerations?.[item.id] ?? 0;
@@ -276,6 +294,7 @@ export class MaintenanceP1Workflow {
   }
   private async planFinalization(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord, plan: readonly MaintenanceWritingItem[]): Promise<void> {
     const state = record.p1!, p2 = state.p2!, units = this.units(record);
+    p2.treeJobs = [];
     const finalization: typeof p2.finalization[number][] = [];
     const relations = maintenancePlanRelations(plan);
     for (const item of plan) for (const relation of item.knowledge?.related ?? []) if (!plan.some(page => page.targetPath === relation.targetPath) && await this.host.read(relation.targetPath) === null) throw new Error(`相关目标不存在，也未安排新建：${relation.targetPath}`);
@@ -295,6 +314,7 @@ export class MaintenanceP1Workflow {
       const unit = units.find(unit => item.knowledge!.unitIds.includes(unit.id))!;
       const before = item.expectedTarget.kind === "file" ? await this.host.read(item.targetPath) ?? "" : "";
       const visible = maintenanceVisibleClassification(before);
+      if (visible.issues?.length) throw new Error(`${item.targetPath}：${visible.issues.join("；")}`);
       return { path: item.targetPath, title: maintenancePageTitle(before, item.targetPath), type: visible.type ?? item.knowledge!.type ?? unit.type, domain: visible.domain ?? item.knowledge!.domain ?? unit.domain };
     }));
     for (const draft of await this.host.planMaps(entries)) {
@@ -302,16 +322,61 @@ export class MaintenanceP1Workflow {
       if (plan.some(item => item.targetPath === targetPath) || finalization.some(item => item.targetPath === targetPath)) throw new Error(`地图目标与正文/相关页冲突：${targetPath}`);
       const before = await this.host.read(targetPath);
       if (draft.expectedTarget.kind === "missing" ? before !== null : before === null || revision(before) !== draft.expectedTarget.contentRevision) throw new Error(`地图已并发变化：${targetPath}`);
+      const sourcePathsFor = (domains: readonly string[]) => [...new Set(plan.filter(item => domains.includes(entries.find(entry => entry.path === item.targetPath)?.domain ?? "")).flatMap(item => item.sourcePaths))];
+      for (const domain of draft.treeDomains ?? []) {
+        for (const item of plan) {
+          if (item.expectedTarget.kind === "missing" && entries.find(entry => entry.path === item.targetPath)?.domain === domain)
+            await this.host.validateTreeTargetDirectory?.(item.targetPath, domain);
+        }
+        const block = domainMapBlock(before ?? "", domain);
+        if (!block) throw new Error("知识树区块暂时读不到，保留原文。");
+        p2.treeJobs ??= [];
+        const declined = readMaintenanceFrontmatterProperty(before ?? "", "不算缺口");
+        if (declined.error || declined.present && (!Array.isArray(declined.value) || declined.value.some(value => typeof value !== "string"))) throw new Error("不算缺口属性必须是文本列表，保留原值。");
+        p2.treeJobs.push({ targetPath, domain, block, declined: declined.value as string[] | undefined, entries: entries.filter(entry => entry.domain === domain), sourcePaths: sourcePathsFor([domain]) });
+      }
+      const listDomains = (draft.domains ?? [draft.domain]).filter(domain => !draft.treeDomains?.includes(domain));
+      if (!listDomains.length) continue;
       const token = "<!-- echoink-domain-map:sources -->";
       if (draft.content.split(token).length !== 2) throw new Error("地图受管来源占位无效。");
-      const domainPaths = [...new Set(plan.filter(item => entries.find(entry => entry.path === item.targetPath)?.domain && (draft.domains ?? [draft.domain]).includes(entries.find(entry => entry.path === item.targetPath)!.domain)).flatMap(item => item.sourcePaths))];
-      const content = draft.content.replace(token, await this.sourceLinks(record, domainPaths, draft.content.includes("\r\n") ? "\r\n" : "\n"));
-      finalization.push({ id: `map-${hash(targetPath).slice(0,16)}`, kind: "map", targetPath, expectedTarget: draft.expectedTarget, sourcePaths: domainPaths, content });
+      const domainPaths = sourcePathsFor(listDomains);
+      const links = await this.sourceLinks(record, domainPaths, draft.content.includes("\r\n") ? "\r\n" : "\n");
+      const content = draft.content.replace(token, links);
+      const item: typeof finalization[number] = { id: `map-${hash(targetPath).slice(0,16)}`, kind: "map", targetPath, expectedTarget: draft.expectedTarget, sourcePaths: domainPaths, content,
+        ...(draft.blockPatches ? { blockPatches: draft.blockPatches.map(patch => ({ ...patch, after: patch.after.replace(token, links) })) } : {}) };
+      for (const domain of listDomains) {
+        const reminder = knowledgeSystemReminder(before ?? "", domain, targetPath, "list", draft.domainCounts?.[domain] ?? entries.filter(entry => entry.domain === domain).length);
+        if (reminder) { item.reminders = [...item.reminders ?? [], reminder]; item.propertyUpdates = { ...item.propertyUpdates, ...reminderProperties(reminder) }; }
+      }
+      if (item.propertyUpdates) {
+        item.propertyExpected = Object.fromEntries(Object.keys(item.propertyUpdates).map(key => [key, readMaintenanceFrontmatterProperty(before ?? "", key)]));
+        item.content = patchKnowledgeProperties(item.content, item.propertyUpdates);
+      }
+      finalization.push(item);
     }
     p2.finalization = finalization;
   }
   private async writeFinalization(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord): Promise<void> {
     const state = record.p1!, p2 = state.p2!;
+    for (const job of p2.treeJobs ?? []) {
+      const id = `tree-${hash(`${job.targetPath}:${job.domain}`).slice(0,16)}`;
+      if (p2.finalization.some(item => item.id === id)) continue;
+      if (!this.host.placeTree) throw new Error("知识树归位模型暂不可用；成功页保留，可继续收尾。");
+      await this.host.current?.(input, "finalize", job.targetPath);
+      const result = await this.host.placeTree(job, input);
+      let after = applyTreePlacement(job, result.plan, result.entries, result.declined);
+      const eol = after.includes("\r\n") ? "\r\n" : "\n";
+      after = appendTreeMapSources(after, await this.sourceLinks(record, job.sourcePaths, eol));
+      const before = await this.host.read(job.targetPath);
+      if (before === null) throw new Error("知识树地图不存在，保留任务。");
+      const item: typeof p2.finalization[number] = { id, kind: "map", targetPath: job.targetPath, domains: [job.domain], sourcePaths: job.sourcePaths,
+        expectedTarget: { kind: "file", contentRevision: revision(before) }, blockPatches: [{ domain: job.domain, before: job.block, after }], content: applyDomainMapBlockPatches(before, [{ domain: job.domain, before: job.block, after }]) };
+      const reminder = knowledgeSystemReminder(before, job.domain, job.targetPath, "tree", treeMapPendingCount(after));
+      if (reminder) { item.reminders = [reminder]; item.propertyUpdates = reminderProperties(reminder); item.propertyExpected = Object.fromEntries(Object.keys(item.propertyUpdates).map(key => [key, readMaintenanceFrontmatterProperty(before, key)])); item.content = patchKnowledgeProperties(item.content, item.propertyUpdates); }
+      job.plan = result.plan; job.coverage = result.coverage;
+      p2.finalization = [...p2.finalization, item];
+      await this.host.save(record);
+    }
     for (const item of p2.finalization) {
       if (p2.committedFinalization[item.id]) continue;
       if (input.signal?.aborted) return;
@@ -319,6 +384,15 @@ export class MaintenanceP1Workflow {
       await serializeMaintenancePage(this.host.vaultRootPath, item.targetPath, async () => {
         await this.assertSources(record);
         const current = await this.host.read(item.targetPath);
+        const completed = await this.host.committedPageReceipt(record, item, { content: item.content, toolCallId: `${record.recordId}:${item.id}` });
+        if (completed) { p2.committedFinalization[item.id] = completed; await this.host.save(record); return; }
+        if (item.blockPatches && current !== item.content) {
+          let content = applyDomainMapBlockPatches(current ?? "", item.blockPatches);
+          for (const [key, expected] of Object.entries(item.propertyExpected ?? {})) if (JSON.stringify(readMaintenanceFrontmatterProperty(current ?? "", key)) !== JSON.stringify(expected)) throw new Error("提醒属性已变化，保留用户原值。");
+          if (item.propertyUpdates) content = patchKnowledgeProperties(content, item.propertyUpdates);
+          item.content = content; item.expectedTarget = current === null ? { kind: "missing" } : { kind: "file", contentRevision: revision(current) };
+          await this.host.save(record);
+        }
         assertMaintenanceQuoteSectionsPreserved(current ?? undefined, item.content);
         if (current !== item.content) {
           if (item.expectedTarget.kind === "missing" ? current !== null : current === null || revision(current) !== item.expectedTarget.contentRevision) throw new Error(`受管收尾并发冲突：${item.targetPath}；保留手写内容，不覆盖。`);
@@ -386,12 +460,15 @@ export class MaintenanceP1Workflow {
   }
   private async finalize(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord): Promise<void> {
     const state = record.p1!;
+    if (input.signal?.aborted) throw new DOMException("维护已取消，原清单保留。", "AbortError");
+    const retryPaths = hasP1PartialSettlement(record) ? new Set(input.sourcePaths?.length ? input.sourcePaths : input.globalSourcePaths ?? record.sources.map(source => source.path)) : undefined;
+    delete state.settlement;
     const pagesReady = state.writingPlan.every(page => state.committedPages[page.id]);
     if (pagesReady) { state.phase = "finalize"; await this.host.save(record); }
     if (state.p2 && pagesReady) await this.writeFinalization(input, record);
     const p2Ready = !state.p2 || (pagesReady && state.p2.finalization.every(item => state.p2!.committedFinalization[item.id]));
     for (const source of record.sources) {
-      if (!p2Ready) continue;
+      if (!p2Ready || retryPaths && !retryPaths.has(source.path)) continue;
       if (state.finalizedSources.includes(source.path)) continue;
       const pages = state.writingPlan.filter(p => p.sourcePaths.includes(source.path));
       if (pages.some(p => !state.committedPages[p.id])) continue;
@@ -400,23 +477,47 @@ export class MaintenanceP1Workflow {
       // readback is a prerequisite to the Raw's matching reverse link.
       if (relationships.some(item => !state.p2!.committedFinalization[item.id])) continue;
       const targetPaths = [...new Set([...pages.map(p => p.targetPath), ...relationships.map(item => item.targetPath)])];
+      if (input.signal?.aborted) throw new DOMException("维护已取消，原清单保留。", "AbortError");
       await this.host.current?.(input, "finalize", source.path);
       await this.assertSources(record);
       const before = await this.host.read(source.path);
       if (before === null) throw new Error("原文暂不可读，反链待恢复。");
       const fields: MaintenanceSourceFields = { status: "已提炼", summary: state.decompositions.find(d => d.sourcePath === source.path)!.summary, targetPaths };
-      const content = patchMaintenanceSourceFrontmatter(before, fields);
+      let content: string;
+      try { content = patchMaintenanceSourceFrontmatter(before, fields); }
+      catch (error) {
+        if (!(error instanceof SourceFrontmatterUnsafeError)) throw error;
+        state.sourceFrontmatterFailures ??= {};
+        state.sourceFrontmatterFailures[source.path] = { contentRevision: revision(before) };
+        source.status = "failed";
+        record.result = createKnowledgeMaintenanceResultEnvelope({ ...record.result, status: "partial", issues: [
+          ...record.result.issues.filter(issue => issue.code !== SOURCE_FRONTMATTER_UNSAFE || issue.path !== source.path),
+          { code: SOURCE_FRONTMATTER_UNSAFE, path: source.path, message: `${source.path}：${error.message}` }
+        ] });
+        await this.host.save(record);
+        continue;
+      }
       if (content !== before && !await this.host.commit({ ...input, p1RecordId: record.recordId, toolCallId: `${record.recordId}:source:${hash(source.path).slice(0, 16)}` }, { id: "source", targetPath: source.path, sourcePaths: [source.path], expectedTarget: { kind: "file", contentRevision: revision(before) } }, content, fields)) throw new Error(`知识页已保存，原文反链待恢复：${source.path}；resume只补原文。`);
       if (await this.host.read(source.path) !== content) throw new Error(`原文反链回读失败：${source.path}`);
+      if (state.sourceFrontmatterFailures) delete state.sourceFrontmatterFailures[source.path];
+      record.result = createKnowledgeMaintenanceResultEnvelope({ ...record.result, issues: record.result.issues.filter(issue => issue.code !== SOURCE_FRONTMATTER_UNSAFE || issue.path !== source.path) });
       state.finalizedSources.push(source.path); source.status = "processed"; source.evidencePaths = targetPaths;
       await this.host.save(record);
     }
     if (record.sources.every(s => state.finalizedSources.includes(s.path))) { state.phase = "completed"; }
     else state.phase = state.writingPlan.every(p => state.committedPages[p.id]) ? "finalize" : "write";
-    record.result = createKnowledgeMaintenanceResultEnvelope({ status: state.phase === "completed" ? state.writingPlan.length ? "completed" : "noop" : "partial", issues: state.phase === "completed" ? [] : [{ code: "p1_pending", message: "维护阶段尚未完成" }], notes: state.writingPlan.filter(p => state.committedPages[p.id]).map(p => knowledgeMaintenanceNoteFromReadback({ operation: p.expectedTarget.kind === "missing" ? "created" : "updated", path: p.targetPath, content: state.drafts[p.id].content })) });
-    record.summary = state.phase === "completed" ? "知识清单与原文双链已完成" : "清单部分完成，保留未完页与反链";
+    const formatIssues = record.result.issues.filter(issue => issue.code === SOURCE_FRONTMATTER_UNSAFE && !!issue.path && !!state.sourceFrontmatterFailures?.[issue.path]);
+    const partialSettled = pagesReady && p2Ready && record.sources.every(source => state.finalizedSources.includes(source.path)
+      || state.sourceFrontmatterFailures?.[source.path] && formatIssues.some(issue => issue.path === source.path));
+    if (state.phase !== "completed" && partialSettled) state.settlement = { version: 1, status: "partial" };
+    const retainedIssues = record.result.issues.filter(issue => issue.code !== SOURCE_FRONTMATTER_UNSAFE && issue.code !== "p1_pending");
+    record.result = createKnowledgeMaintenanceResultEnvelope({ ...record.result,
+      status: state.phase === "completed" && !retainedIssues.length ? state.writingPlan.length ? "completed" : "noop" : "partial",
+      issues: [...retainedIssues, ...formatIssues, ...(!partialSettled ? [{ code: "p1_pending", message: "维护阶段尚未完成" }] : [])],
+      notes: state.writingPlan.filter(p => state.committedPages[p.id]).map(p => knowledgeMaintenanceNoteFromReadback({ operation: p.expectedTarget.kind === "missing" ? "created" : "updated", path: p.targetPath, content: state.drafts[p.id].content })) });
+    record.summary = state.phase === "completed" ? retainedIssues.length ? "知识与来源已保存，仍有未完成项" : "知识清单与原文双链已完成" : partialSettled ? "本批部分完成，来源属性回写失败" : "清单部分完成，保留未完页与反链";
     await this.host.save(record);
-    if (state.phase === "completed") releaseMaintenancePages(record.recordId);
+    if (!isP1Open(record)) releaseMaintenancePages(record.recordId);
   }
   private receipt(record: KnowledgeMaintenanceRecord, message: string, view?: MaintenanceInspectionView, offset = 0): PiKnowledgeMaintenanceToolResult {
     const state = record.p1!;
@@ -425,6 +526,6 @@ export class MaintenanceP1Workflow {
     const userReceipt = maintenanceReceiptForRecord(record);
     const summary = { recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, userReceipt, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
     const notice = state.p2?.templateNotice ? `\n${state.p2.templateNotice}` : "";
-    return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, userReceipt, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(state.phase === "completed" ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };
+    return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, userReceipt, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(!isP1Open(record) ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${hasP1PartialSettlement(record) ? "本批部分完成；部分来源属性无法安全回写，请修正属性后重试。" : !isP1Open(record) && record.result.status === "partial" ? "本批仍有未完成项，请查看具体错误。" : message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };
   }
 }

@@ -1,3 +1,4 @@
+import { TOOL_ROUND_STOP_MESSAGE } from "./tool-round-budget";
 import { localizeKnownConversationSystemCopy } from "../ui/codex-view/ui-i18n";
 import type { TaskInterruptionRecord } from "./task-resume";
 import { providerFailureHttpStatus, providerFailureText, safeProviderFailureCode } from "../harness/pi/provider-failure";
@@ -14,6 +15,7 @@ export function interruptionErrorDetail(message: string): string {
 export function taskInterruptionExplanation(info: (Pick<TaskInterruptionRecord, "detail" | "retryAttempts"> & { reason: string }) | undefined | null, language: string): string | undefined {
   if (!info) return;
   const en = language === "en";
+  if (info.reason === "tool_loop_limit") return TOOL_ROUND_STOP_MESSAGE;
   if (info.reason === "watchdog") return en
     ? "The agent made no progress for 5 minutes and was stopped. Tap Continue to retry."
     : "Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。";

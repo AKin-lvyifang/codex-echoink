@@ -139,7 +139,7 @@ export const profileSharedModules = new Map([
   // These are the existing Modal's small DOM helpers, without business changes.
   ["src/ui/agent-avatar-presets.ts", ["DEFAULT_AGENT_AVATAR_PRESET_ID", "AGENT_AVATAR_PRESETS", "resolveAgentAvatarPresetAsset", "resolveAgentAvatarUrl"]],
   ["src/settings/amicro-buttons.ts", ["applyAmicroButton", "applyDeleteButton", "applyParticleButton", "triggerParticleButton", "setAmicroButtonPending", "confirmAmicroButton"]],
-  ["src/ui/animate-icon.ts", ["renderAnimateIcon"]],
+  ["src/ui/animate-icon.ts", ["renderAnimateIcon", "isAnimateIconName"]],
   ["src/utils/sha256.ts", ["sha256Hex"]]
 ]);
 

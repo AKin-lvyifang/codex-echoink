@@ -14,7 +14,9 @@ export function normalizeInjectedMemorySources(value: unknown): InjectedPersonal
     const id = item.id.trim(), title = item.title.trim();
     if (!id || !title || sources.has(id)) continue;
     const revision = item.revision;
+    const reason = typeof item.reason === "string" && ["pinned", "title_or_trigger", "content_or_association"].includes(item.reason) ? item.reason : undefined;
     sources.set(id, { id, title,
+      ...(reason ? { reason } : {}),
       ...(typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0 ? { revision } : {}) });
   }
   return [...sources.values()];

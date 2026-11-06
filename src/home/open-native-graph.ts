@@ -74,7 +74,7 @@ export async function openObsidianFolderGraphLeaf(
 }
 
 /**
- * Opens a new native Local Graph leaf centered on one existing Vault file.
+ * Opens or reveals a native Local Graph leaf centered on one existing Vault file.
  * EchoInk supplies only the center file; Obsidian owns the graph neighborhood,
  * rendering, filters, and interaction.
  */
@@ -91,7 +91,16 @@ export async function openObsidianLocalGraphLeaf(
   }
 
   try {
-    const leaf = app.workspace.getLeaf("tab");
+    let leaf = app.workspace.getLeavesOfType("localgraph").find(candidate =>
+      candidate.getViewState().state?.file === normalizedPath);
+    if (leaf) {
+      leaf.setPinned(true);
+      await app.workspace.revealLeaf(leaf);
+      return true;
+    }
+    leaf = app.workspace.getLeaf("tab");
+    // Native Local Graph follows the last active note unless its leaf is pinned.
+    leaf.setPinned(true);
     await leaf.setViewState({
       type: "localgraph",
       active: true,

@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -7,10 +8,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 if (!process.env.ECHOINK_TASK_RESUME_TEST_ROOT) throw new Error("Explicit ECHOINK_TASK_RESUME_TEST_ROOT is required");
 const parent = await realpath(process.env.ECHOINK_TASK_RESUME_TEST_ROOT);
-if (!parent.startsWith(allowed + path.sep)) throw new Error("Task resume fixtures must stay in 90-任务临时");
+if (!isDisposableTestRoot(parent)) throw new Error("Task resume fixtures must stay in 90-任务临时");
 const fixture = await mkdtemp(path.join(parent, "p4-runtime-tests-"));
 const stageOnly = process.argv.includes("--stage-only");
 const restartOnly = process.argv.includes("--restart-only");
@@ -18,7 +18,7 @@ try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
   const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "CodexForObsidianPlugin");
   const names = ["conversationRunService", "piTaskMetadataWriteTails", "piTaskMetadataSyncTail", "getConversationRunService", "consumeAcceptedTaskComposerDraft", "setPiConversationTaskMetadata", "resumeTask", "isTaskResuming", "getTaskResumeError", "activeTaskResumeSafety", "resumeTaskAndOpenDetail", "readTaskInterruption", "recordTaskInterruption", "prepareTaskResume", "deleteAgent", "agentRegistryWriteTail", "agentRegistryListeners", "writeAgentRegistry"];
-  const recoveryImports = 'import {enableTargetToolCalling,toolCallFailureInfo,toolCallRecoveryGuidance,toolCallRecoveryTarget,TOOL_CALL_RESUME_PROMPT} from "./src/agents/tool-call-recovery";';
+  const recoveryImports = 'import {Platform} from "obsidian"; import {knownAgentCapabilityDenial,agentCapabilityErrorText} from "./src/agents/capability-denial"; import {isExpertAgent} from "./src/agents/persona"; import {isUndeletableAgent} from "./src/agents/types";' + 'import {enableTargetToolCalling,toolCallFailureInfo,toolCallRecoveryGuidance,toolCallRecoveryTarget,TOOL_CALL_RESUME_PROMPT} from "./src/agents/tool-call-recovery";';
   const members = names.map(name => {
     const member = declaration.members.find(member => member.name?.getText(source) === name);
     if (!member) throw new Error(`Missing production member ${name}`);
@@ -58,7 +58,7 @@ try {
     'import {resolveComposerReasoningState} from "./src/ui/composer-reasoning";',
     'import {assertPiSubmissionActive} from "./src/harness/pi-native/pi-submission-lifecycle";',
     'import {getActiveApiProviderModel,getApiProviderModel,apiProviderHasUsableCredential,validateApiProvider,newId} from "./src/settings/settings";',
-    'import {GENERAL_ASSISTANT_ID} from "./src/agents/types";',
+    'import {GENERAL_ASSISTANT_ID,GENERALIST_AGENT_ID} from "./src/agents/types";',
     'import {removeAgentDefinition} from "./src/agents/registry";',
     'import {applyConversationTaskMetadata,patchConversationTaskMetadata} from "./src/agents/task-metadata";',
     'import {consumeAcceptedTaskDraft} from "./src/agents/task-workspace";',

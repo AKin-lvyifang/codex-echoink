@@ -1,7 +1,9 @@
+import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { openTaskMenu } from "../ui/codex-view/task-menu";
 import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
+import { isAnimateIconName, renderAnimateIcon } from "../ui/animate-icon";
 import { workbenchAgentState } from "./workbench-doll-motion";
 import { WorkbenchWeatherStage } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
@@ -39,12 +41,21 @@ import { renderVaultMemoryBanner } from "./vault-memory-banner";
 import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
 import { diaryHomeSummary } from "./diary-organizer-summary";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
+import type { CompanyService } from "../company/service";
+import { companyApprovals, companyDecisions, CompanyInteractionController } from "../company/interaction-bridge";
+import { pendingDecisions } from "../company/logic";
+import { agentLookup } from "./project-parts";
+import { workbenchProjectCard, workbenchProjectSignature, workbenchProjects } from "./workbench-projects";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
 type TaskGroups = Record<"interrupted" | "waiting" | "running" | "completed", TaskEntry[]>;
 let viewId = 0;
-const WORKBENCH_NAVIGATION = [...WORKBENCH_MODULES, { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const];
+export const WORKBENCH_NAVIGATION_DELAY_MS = 240;
+const WORKBENCH_NAVIGATION = [
+  ...WORKBENCH_MODULES,
+  { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const
+];
 
 function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceActivity>[], entries: readonly TaskEntry[] = []): Map<string, Readonly<MaintenanceActivity>> {
   const latest = new Map<string, Readonly<MaintenanceActivity>>();
@@ -92,6 +103,9 @@ export class EchoInkWorkbenchView extends ItemView {
   private readonly onboardingChecks = new Map<string, string>();
   private navObserver?: ResizeObserver;
   private navFrame?: number;
+  private navigationInFlight = false;
+  private navigationDelay: { owner: Window; id: number; cancel(): void } | null = null;
+  private readonly navigationAnimations = new Map<HTMLButtonElement, () => void>();
   private overflowModules: typeof WORKBENCH_NAVIGATION[number][] = [];
   private memoryNotice: VaultMemoryNotice | null = null;
   private memoryError: string | null = null;
@@ -132,9 +146,13 @@ export class EchoInkWorkbenchView extends ItemView {
   private searchIndex = -1;
   private lockedModule: typeof WORKBENCH_MODULES[number]["id"] | null = null;
   private modulePageState = "";
+  private companyService: CompanyService | null = null;
+  private companyUnsubscribe?: () => void;
+  private readonly companyInteractions: CompanyInteractionController;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
     super(leaf);
+    this.companyInteractions = new CompanyInteractionController(plugin);
     this.port = getWorkbenchDataService(plugin);
     this.searchService = new HomeSearchService(plugin.app, path => isHomeNotePath(path, plugin.settings.englishDiary));
   }
@@ -188,6 +206,8 @@ export class EchoInkWorkbenchView extends ItemView {
     this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear(); this.linkingTask = null;
+    this.companyUnsubscribe?.(); this.companyUnsubscribe = undefined; this.companyService = null;
+    this.companyInteractions.dispose();
     this.clearTimers(); this.stopSearchWork();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
   }
@@ -201,6 +221,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.closed) return;
     this.weatherStage?.setActive(active); this.starters?.setActive(active);
     if (!active) {
+      this.clearNavigationPlayback();
       this.clearTimers(); this.stopSearchWork(); this.refreshVersion++; this.refreshPending = true;
       return;
     }
@@ -230,7 +251,40 @@ export class EchoInkWorkbenchView extends ItemView {
       if (this.active()) this.render(); else this.refreshPending = true;
     });
   }
-  private taskGroups(now: number): TaskGroups { return groupWorkbenchTasks(this.entries ?? [], now, [...this.maintenance.values()]); }
+  /** The company service can load after the workbench opens; render() re-checks it. */
+  private watchCompany(): void {
+    const service = this.plugin.companyService;
+    if (service === this.companyService) return;
+    this.companyUnsubscribe?.(); this.companyUnsubscribe = undefined; this.companyService = service;
+    if (service) this.companyUnsubscribe = service.subscribe(() => { if (this.active()) this.render(); else this.refreshPending = true; });
+  }
+  private renderProjects(): void {
+    this.watchCompany();
+    const doc = this.companyService?.doc;
+    const projects = doc ? workbenchProjects(doc) : [];
+    const section = this.group("projects", this.t("项目", "Projects"), projects.length, false);
+    if (!section || !doc) return;
+    const agents = this.plugin.settings.agentRegistry.agents, agent = agentLookup(agents);
+    const approvals = companyApprovals(this.plugin, doc);
+    const roster = agents.map(a => [a.id, a.name, a.avatar]);
+    this.syncRows(section.lastElementChild as HTMLElement, projects, project => `project-${project.id}`,
+      project => JSON.stringify([this.language, workbenchProjectSignature(doc, project), roster, approvals.filter(a => a.dispatch.projectId === project.id).map(a => a.key)]),
+      project => workbenchProjectCard(this.contentEl.ownerDocument, doc, project, agent,
+        () => { void this.plugin.activateProjectPage(project.id).catch(error => new Notice(message(error))); }, approvals.filter(a => a.dispatch.projectId === project.id).length));
+  }
+  private renderCompanyDecisions(): void {
+    const doc = this.companyService?.doc;
+    const count = doc ? companyApprovals(this.plugin, doc).length + companyDecisions(this.plugin, doc).length : 0;
+    const section = this.group("company-decisions", this.t("等你定", "Your decision"), count, true);
+    if (!section) { this.companyInteractions.dispose(); return; }
+    this.companyInteractions.render(section.lastElementChild as HTMLElement, {}, () => this.render());
+  }
+  private taskGroups(now: number): TaskGroups {
+    const doc = this.plugin.companyService?.doc;
+    const companyPending = new Set(doc ? [...companyApprovals(this.plugin, doc, { includeJudging: true }).map(item => item.dispatch.id),
+      ...pendingDecisions(doc).map(dispatch => dispatch.id)] : []);
+    return groupWorkbenchTasks((this.entries ?? []).filter(entry => !companyPending.has(entry.conversationId)), now, [...this.maintenance.values()]);
+  }
   private taskState(entry: TaskEntry): keyof TaskGroups {
     const activity = this.maintenance.get(entry.conversationId);
     return activity ? maintenanceTaskStatus(activity) : taskState(entry);
@@ -324,9 +378,54 @@ export class EchoInkWorkbenchView extends ItemView {
     const button = createOriginButton(parent, { cls: `wb-button is-${variant}`, text, attr: { "data-wb-focus": key, ...(variant === "icon" ? { "aria-label": text } : {}) } });
     if (variant === "icon") { button.textContent = ""; attachNativeTooltip(button, text); }
     applyAmicroButton(button, { variant });
-    if (icon) { const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } }); setIcon(node, icon); button.prepend(node); }
+    if (icon) { const node = button.createSpan({ cls: "wb-button-icon", attr: { "aria-hidden": "true" } }); if (isAnimateIconName(icon)) renderAnimateIcon(node, icon); else setIcon(node, icon); button.prepend(node); }
     button.onclick = () => { void Promise.resolve().then(action).catch(error => showWorkbenchActionFailure(this.plugin, error)); };
     return button;
+  }
+  private navigationButton(parent: HTMLElement, text: string, key: string, icon: string, action: () => unknown, delay = WORKBENCH_NAVIGATION_DELAY_MS): HTMLButtonElement {
+    const button = this.button(parent, text, key, async () => {
+      this.playNavigationIcon(button);
+      if (delay === 0) { await action(); return; }
+      if (this.navigationInFlight) return;
+      this.navigationInFlight = true;
+      try {
+        const proceed = await new Promise<boolean>(resolve => {
+          const owner = button.ownerDocument.defaultView!;
+          const id = owner.setTimeout(() => { this.navigationDelay = null; resolve(true); }, delay);
+          this.navigationDelay = { owner, id, cancel: () => resolve(false) };
+        });
+        if (proceed && !this.closed && button.isConnected) await action();
+      } finally { this.navigationInFlight = false; }
+    }, "tertiary", icon);
+    return button;
+  }
+  private playNavigationIcon(button: HTMLButtonElement): void {
+    this.navigationAnimations.get(button)?.();
+    const owner = button.ownerDocument.defaultView!;
+    const cleanup = () => {
+      owner.clearTimeout(timer);
+      button.removeEventListener("animationend", onEnd);
+      button.classList.remove("is-nav-animating");
+      this.navigationAnimations.delete(button);
+    };
+    const onEnd = () => {
+      if (!button.getAnimations?.({ subtree: true }).some(animation => animation.playState === "running" || animation.pending)) cleanup();
+    };
+    // Fallback also clears reduced-motion / hidden-document animations that emit no end event.
+    const timer = owner.setTimeout(cleanup, 1_000);
+    this.navigationAnimations.set(button, cleanup);
+    button.addEventListener("animationend", onEnd);
+    button.classList.remove("is-nav-animating");
+    // Flush the removed state so a repeated activation restarts the same CSS animation.
+    void button.offsetWidth;
+    button.classList.add("is-nav-animating");
+  }
+  private clearNavigationPlayback(): void {
+    if (this.navigationDelay) {
+      this.navigationDelay.owner.clearTimeout(this.navigationDelay.id);
+      this.navigationDelay.cancel(); this.navigationDelay = null;
+    }
+    for (const cleanup of this.navigationAnimations.values()) cleanup();
   }
   private renderShell(): void {
     this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
@@ -336,12 +435,13 @@ export class EchoInkWorkbenchView extends ItemView {
     const titles = header.createDiv({ cls: "wb-heading" });
     titles.createEl("h1", { text: this.t("工作台", "Workbench") });
     titles.createEl("time", { cls: "wb-date", attr: { "data-wb": "date" } });
-    const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-label": this.t("插件导航", "Modules") } });
+    const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-labelledby": `${this.id}-nav-label` } });
+    header.createSpan({ cls: "echoink-sr-only", text: this.t("插件导航", "Modules"), attr: { id: `${this.id}-nav-label` } });
     for (const module of WORKBENCH_NAVIGATION) {
-      const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => this.openModule(module.id), "tertiary", module.icon);
+      const button = this.navigationButton(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, module.icon, () => this.openModule(module.id));
       button.dataset.module = module.id;
     }
-    this.button(nav, this.t("更多", "More"), "module-more", () => this.openMoreModules(), "tertiary", "ellipsis").dataset.wb = "module-more";
+    this.navigationButton(nav, this.t("更多", "More"), "module-more", "ellipsis", () => this.openMoreModules(), 0).dataset.wb = "module-more";
     this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, state => {
       const key = { unfinished: "interrupted", waiting: "waiting", working: "running", done: "completed", idle: "" }[state];
       const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
@@ -369,6 +469,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private disposeHeader(): void {
+    this.clearNavigationPlayback();
     this.navObserver?.disconnect(); this.navObserver = undefined;
     if (this.navFrame !== undefined) this.contentEl.ownerDocument.defaultView?.cancelAnimationFrame(this.navFrame);
     this.navFrame = undefined; this.weatherStage?.dispose(); this.weatherStage = undefined;
@@ -489,6 +590,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
     if (previous) { this.disposeControls(previous); previous.remove(); }
     this.lockedModule = id;
+    this.clearNavigationPlayback();
     this.weatherStage?.setActive(false); this.starters?.setActive(false);
     this.field("page").hidden = true;
     this.field("page").inert = true;
@@ -552,6 +654,8 @@ export class EchoInkWorkbenchView extends ItemView {
     this.weatherStage?.update(state, state === "unfinished" ? this.t(`${count} 件没做完`, `${count} unfinished`) : state === "waiting" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : state === "working" ? this.t(`${count} 件在跑`, `${count} in progress`) : state === "done" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
+    this.renderProjects();
+    this.renderCompanyDecisions();
     for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {
       this.taskGroup(state, this.t(zh, en), groups[state], now);
     }
@@ -607,10 +711,11 @@ export class EchoInkWorkbenchView extends ItemView {
       section.createDiv({ cls: list ? "wb-rows" : "wb-grid" });
     }
     section.querySelector("h2")!.textContent = title;
-    const taskGroup = !["signals", "todos"].includes(key);
-    const available = taskGroup ? this.entries !== null : this.snapshot !== null;
-    const error = taskGroup ? this.taskError : this.dataError;
-    const uncertain = !taskGroup && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
+    // Projects come from the company store, which is already in memory: no loading or error state.
+    const projects = key === "projects" || key === "company-decisions", taskGroup = !projects && !["signals", "todos"].includes(key);
+    const available = projects || (taskGroup ? this.entries !== null : this.snapshot !== null);
+    const error = projects ? "" : taskGroup ? this.taskError : this.dataError;
+    const uncertain = !taskGroup && !projects && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
     const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count ? "ready" : "empty";
     if (status === "empty") { this.disposeControls(section); section.remove(); return null; }
     section.dataset.state = status;
@@ -628,7 +733,7 @@ export class EchoInkWorkbenchView extends ItemView {
     } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
     section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
-    const order = ["waiting", "running", "interrupted", "signals", "completed", "todos"];
+    const order = ["company-decisions", "projects", "waiting", "running", "interrupted", "signals", "completed", "todos"];
     const next = Array.from(host.children).find(node => order.indexOf((node as HTMLElement).dataset.wbGroup!) > order.indexOf(key));
     if (next && section.nextElementSibling !== next) host.insertBefore(section, next);
     return section;
@@ -688,6 +793,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private pending(entry: TaskEntry): Readonly<EchoInkTurnInteraction> | undefined { return this.plugin.getConversationRunService().pendingInteractions.get(entry.conversationId); }
   private summary(entry: TaskEntry): string {
+    if (taskState(entry) === "completed" && entry.resultSummary) return entry.resultSummary;
     const activity = this.maintenance.get(entry.conversationId);
     if (activity) return maintenanceActivityText(activity, this.language === "en");
     const session = this.plugin.settings.sessions.find(session => session.id === entry.conversationId);
@@ -701,7 +807,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private completedPreviewRevision(entry: TaskEntry): string { return JSON.stringify([entry.piSessionId, entry.updatedAt, entry.taskCompletedAt, entry.taskMetadataUpdatedAt]); }
   /** Same read-only projection as P3; retain only today's plain-text summaries. */
   private async loadCompletedPreviews(entries: readonly TaskEntry[], version: number, now: number): Promise<void> {
-    const missing = entries.filter(entry => !this.maintenance.has(entry.conversationId) && !this.plugin.settings.sessions.find(session => session.id === entry.conversationId)?.messages.some(item => item.role === "assistant" && item.text.trim())
+    const missing = entries.filter(entry => !entry.resultSummary && !this.maintenance.has(entry.conversationId) && !this.plugin.settings.sessions.find(session => session.id === entry.conversationId)?.messages.some(item => item.role === "assistant" && item.text.trim())
       && this.completedPreviews.get(entry.conversationId)?.revision !== this.completedPreviewRevision(entry));
     let next = 0;
     const worker = async () => {
@@ -804,6 +910,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
       app_closed: ["关闭 Obsidian 时中断", "Obsidian closed"], user_stopped: ["被你停止", "Stopped by you"],
       plugin_disabled: ["插件关闭时中断", "Plugin stopped"], run_failed: ["执行失败后中断", "Execution failed"],
+      tool_loop_limit: ["工具调用达到上限，已自动停止", "Automatically stopped at the tool limit"],
       process_unknown: ["意外中断", "Unexpected interruption"], watchdog: ["等待超时后中断", "Timed out"]
     };
     return `${time}${this.t(...reasons[info.reason])}${info.detail ? ` · ${info.detail}` : ""}`;
@@ -858,10 +965,8 @@ export class EchoInkWorkbenchView extends ItemView {
         const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
         row.createSpan({ cls: "wb-grow", text: signal.description });
-        const registry = this.plugin.settings.agentRegistry;
-        const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[signal.moduleId]) ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)!;
         const key = `signal-${signal.key}`;
-        const button = this.button(row, this.t(`交给 ${owner.name}`, `Assign to ${owner.name}`), key,
+        const button = this.button(row, moduleOwnerLabel(this.plugin, signal.moduleId), key,
           () => this.runAction(key, async () => {
             await launchWorkbenchSignal(this.plugin, signal, { load: async now => {
               const current = await this.port.load(now);
@@ -870,7 +975,7 @@ export class EchoInkWorkbenchView extends ItemView {
           }), "secondary");
         button.classList.add("is-small"); button.disabled = !!this.dataError || this.busy.has(key); setAmicroButtonPending(button, this.busy.has(key));
         button.dataset.wbMemory = "true"; button.dataset.wbBusy = key; button.dataset.wbSource = "data";
-        button.dataset.wbSignalLabel = this.t(`交给 ${owner.name}`, `Assign to ${owner.name}`);
+        button.dataset.wbSignalLabel = moduleOwnerLabel(this.plugin, signal.moduleId);
         return row;
       });
   }

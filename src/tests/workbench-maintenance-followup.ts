@@ -1,3 +1,6 @@
+import { knowledgeMaintenanceBatchPrompt } from "../knowledge-base/initializer";
+import { createObsidianWorkspaceService } from "../workspace/service";
+import { createDesktopWorkspacePathGuard } from "../workspace/desktop-safety";
 import { fixtureKnowledgeUnit } from "./maintenance-staged-fixture";
 import { createMaintenanceSectionSnapshot } from "../knowledge-base/maintenance-section-patch";
 import assert from "node:assert/strict";
@@ -17,7 +20,7 @@ import { createPiProductionRuntimeBundle } from "../plugin/pi-production-runtime
 import { prepareTaskResumeSafety } from "../plugin/task-resume-safety";
 import { DEFAULT_SETTINGS, createApiProviderConfig } from "../settings/settings";
 import { emptyKnowledgeFolderBindings, registerKnowledgeFolderBindings, registerKnowledgePrivateRoot } from "../knowledge-base/root-paths";
-import { inspectPiSessionJsonl } from "../harness/pi-native/pi-session-durability";
+import { persistPiActiveLeaf, inspectPiSessionJsonl } from "../harness/pi-native/pi-session-durability";
 import { diskApp } from "./workbench-maintenance-chain";
 import type { PiChatSubmitRequest } from "../harness/pi-native/contracts";
 import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
@@ -34,13 +37,80 @@ const checklistContinuation = "/maintain 继续当前这批14篇来源的原维�
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  await scenario("r-da4ae1-partial-new-conversation-guard", async f => {
+    await f.write(source, "---\n<% synthetic_template %>\n---\n# 星系专题\n星系专题记录可追溯的观测资料。\n");
+    const settled = await f.run("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source);
+    assert.equal(settled.tool?.isError, false, settled.tool?.content);
+    assert.match(settled.tool?.content ?? "", /部分来源属性无法安全回写/u);
+    await f.createConversation("new-retry-conversation");
+    const requests = f.bodies.length;
+    await assert.rejects(f.preflight("/maintain 重试已保存成果", { conversationId: "new-retry-conversation", maintenanceScope: { mode: "batch", sourcePaths: [source] } }), /回到原整理任务/u);
+    await assert.rejects(f.preflight("/maintain 混合旧来源与新来源", { maintenanceScope: { mode: "batch", sourcePaths: [source, other] } }), /单独重试/u);
+    assert.equal(f.bodies.length, requests, "cross-conversation and mixed retries fail before any provider request");
+  });
+  await scenario("r-da4ae1-queued-supplied-scope-preacceptance", async f => {
+    await f.run("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "plan");
+    const before = await f.branchEntries();
+    const providerCount = f.bodies.length;
+    await assert.rejects(f.preflight("/maintain 后续批次", { maintenanceScope: { mode: "batch", sourcePaths: [other] } }), /原批整理尚未结束/u);
+    assert.equal(f.bodies.length, providerCount, "a rejected queued batch never reaches the provider");
+    const after = await f.branchEntries();
+    assert.deepEqual(after.filter(entry => entry.type === "message" && entry.message.role === "user").map(entry => entry.id),
+      before.filter(entry => entry.type === "message" && entry.message.role === "user").map(entry => entry.id), "rejection precedes durable user entry acceptance");
+    const resumed = await f.run("继续", {}, source, "resume");
+    assert.equal(resumed.tool?.isError, false, resumed.tool?.content);
+  });
+  for (const genericResume of [false, true]) await scenario(`r-da4ae1-legacy-second-batch-${genericResume ? "generic-resume" : "confirmation"}`, async f => {
+    const first = await f.run(knowledgeMaintenanceBatchPrompt({ sourcePaths: [source], batchIndex: 0, expectedBatches: 2 }), { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "plan");
+    let interrupted: Awaited<ReturnType<typeof f.interruptConfirmation>> | undefined;
+    await f.withLegacyScopeBehavior(async () => {
+      await f.run(knowledgeMaintenanceBatchPrompt({ sourcePaths: [other], batchIndex: 1, expectedBatches: 2 }), { maintenanceScope: { mode: "batch", sourcePaths: [other] } });
+      if (genericResume) interrupted = await f.interruptConfirmation();
+    });
+    await f.reopen();
+    let resumeContext: PiChatSubmitRequest["resumeContext"];
+    if (interrupted) {
+      const safety = await prepareTaskResumeSafety({ catalog: f.catalog, productRuns: f.productRuns, receipts: f.receipts, approvals: f.approvals,
+        vaultRootPath: f.vault, conversationId: "followup", interruptedRunId: interrupted.productRunId });
+      assert.deepEqual(safety.maintenanceContext?.scope.mode === "batch" ? safety.maintenanceContext.scope.sourcePaths : [], [other], "legacy recovery and saved scope both name the wrong newer batch");
+      resumeContext = { safety, interruption: interrupted.interruption! };
+    }
+    const searches = f.rawQueries.length;
+    const followed = await f.run(genericResume ? "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。" : "继续", resumeContext ? { resumeContext } : {}, source, "resume");
+    assert.equal(followed.tool?.isError, false, followed.tool?.content);
+    assert.equal(f.rawQueries.length, searches);
+    assert.equal(followed.result.piSessionId, first.result.piSessionId);
+    assert.deepEqual((await f.productRuns.read(followed.result.productRunId))?.maintenance?.processedSourcePaths, [source]);
+    assert.doesNotMatch(await f.wiki(), /第二范围/u);
+  });
+  for (const genericResume of [false, true]) await scenario(`r-da4ae1-explicit-new-advice-${genericResume ? "resume" : "confirm"}`, async f => {
+    await f.run("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "plan");
+    await f.run(`请整理 ${other}，先分析建议，不要执行。`, { permission: "read-only" });
+    if (genericResume) {
+      const interrupted = await f.interruptConfirmation();
+      await f.reopen();
+      const safety = await prepareTaskResumeSafety({ catalog: f.catalog, productRuns: f.productRuns, receipts: f.receipts, approvals: f.approvals,
+        vaultRootPath: f.vault, conversationId: "followup", interruptedRunId: interrupted.productRunId });
+      const followed = await f.run("请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。", { resumeContext: { safety, interruption: interrupted.interruption! } }, other, "resume-only");
+      assert.match(followed.tool?.content ?? "", /原批整理尚未结束/u);
+    } else {
+      const followed = await f.run("继续", {}, other, "resume-only");
+      assert.match(followed.tool?.content ?? "", /原批整理尚未结束/u);
+    }
+  });
+  for (const topic of ["/ask 帮我查另一件事", "/dream", "/skill:synthetic 换个任务"]) await scenario(`r-da4ae1-topic-${topic.split(" ")[0].replace(/[^a-z]/giu, "")}`, async f => {
+    await f.run("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source, "plan");
+    await f.appendTopicBoundary(topic);
+    const followed = await f.run("继续", {}, source, "resume-only");
+    assert.match(followed.tool?.content ?? "", /请说明要维护哪些资料/u, "another topic cannot revive an open maintenance job");
+  });
   for (const polluted of [false, true]) await scenario(`original-checklist-continuation-${polluted ? "legacy-query" : "fresh"}`, async f => {
     const paths = [source, other, third];
     const first = await f.run("/maintain 整理这批资料", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, paths, "plan");
     assert.equal(first.tool?.isError, false);
     if (polluted) {
       // Reproduce the old composer preflight's durable, incorrectly narrowed query.
-      await f.run(checklistContinuation, { maintenanceScope: { mode: "query", candidatePaths: [other] } });
+      await f.withLegacyScopeBehavior(async () => { await f.run(checklistContinuation, { maintenanceScope: { mode: "query", candidatePaths: [other] } }); });
       await f.reopen();
     }
     const searches = f.rawQueries.length;
@@ -482,7 +552,8 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   const personalMemory = new PersonalMemoryRepository({ vaultPath: storage, vaultId });
   await Promise.all([catalog.initialize(), productRuns.initialize(), approvals.initialize(), receipts.initialize(), knowledgeUsageStore.initialize(), personalMemory.initialize()]);
   const device = path.join(vault, "fixture-device"); await fs.mkdir(device);
-  const plugin = { app: diskApp(vault), settings, getVaultPath: () => vault, getPluginDataDirName: () => "echoink", persistPiNativeSettings: async () => {},
+  const workspaceFiles = createObsidianWorkspaceService(diskApp(vault), { assertSafePath: createDesktopWorkspacePathGuard(vault) });
+  const plugin = { app: diskApp(vault), getWorkspaceFiles: () => workspaceFiles, settings, getVaultPath: () => vault, getPluginDataDirName: () => "echoink", persistPiNativeSettings: async () => {},
     resolveOpenAICodexAccessToken: async () => "", buildRuntimeEchoInkResourceCatalog: async () => [], readPersistedEchoInkResourceSnapshot: async () => settings.resources,
     listEchoInkMcpTools: async () => [], callEchoInkMcpTool: async () => { throw new Error("unused MCP"); }, callEchoInkMcpToolFromResourceSnapshot: async () => { throw new Error("unused MCP"); },
     getTodoStore: () => ({}), createSkillReviewLlmPort: () => null, requireAvailableEchoInkSkill: async () => { throw new Error("unexpected Skill"); },
@@ -505,7 +576,27 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   observeRawQueries();
   const createConversation = (conversationId: string) => bundle.runtime.createConversation({ conversationId, title: "维护跟进", cwd: vault });
   await createConversation("followup");
-  return { vault, catalog, productRuns, approvals, receipts, bodies, runs, rawQueries, createConversation, runtime: () => bundle.runtime,
+  const branchEntries = async () => {
+    const entry = (await catalog.get("followup"))!;
+    const inspection = inspectPiSessionJsonl({ sessionRoot: catalog.sessionRootPath, sessionFile: entry.sessionFile! });
+    assert.ok(inspection.valid); return inspection.entries;
+  };
+  return { vault, catalog, productRuns, approvals, receipts, bodies, runs, rawQueries, createConversation, branchEntries,
+    preflight: (text: string, extra: Partial<PiChatSubmitRequest>) => bundle.runtime.submit({ conversationId: "followup", text, submittedAt: Date.now(), permission: "workspace-write", runtimeProviderId: provider.runtimeProviderId, modelId: provider.models[0].id, reasoning: "none", memoryMode: "no_memory", ...extra }),
+    withLegacyScopeBehavior: async (operation: () => Promise<void>) => {
+      const options = (bundle.runtime as any).options;
+      const knowledge = options.knowledge;
+      options.knowledge = { ...knowledge, openMaintenanceSelection: async () => null };
+      try { await operation(); } finally { options.knowledge = knowledge; }
+    },
+    appendTopicBoundary: async (text: string) => {
+      await bundle.runtime.shutdown();
+      const entry = (await catalog.get("followup"))!;
+      const manager = SessionManager.open(entry.sessionFile!, catalog.sessionRootPath, vault);
+      manager.appendMessage({ role: "user", content: text, timestamp: Date.now() });
+      persistPiActiveLeaf({ sessionRoot: catalog.sessionRootPath, sessionManager: manager });
+      bundle = await createPiProductionRuntimeBundle(plugin, localData); observeRawQueries();
+    }, runtime: () => bundle.runtime,
     maintenanceSnapshot: async () => {
       const snapshot: Record<string, string> = {};
       const visit = async (relative: string): Promise<void> => {

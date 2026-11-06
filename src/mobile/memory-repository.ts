@@ -9,6 +9,8 @@ import { emptyUserProfileState, parseUserProfileState, migrateLegacyUserProfileS
 import { renderUserMarkdown } from "../harness/memory/cognitive-projection";
 import { invalidatedMemoryProductRunIds, productRunIdFromExperienceProfileSourceId } from "../harness/memory/dream-source-group";
 import { sha256Hex } from "../utils/sha256";
+import { MemoryActivityStore, MEMORY_ACTIVITY_PATH } from "../harness/memory/memory-activity-store";
+import { assertMemoryPinLimit } from "../harness/memory/memory-relevance";
 import { mobileAtomicFilePort } from "./finance-store";
 import { MobileDataConflictError, type MobileStore } from "./store";
 import { newVaultId, legacyPathVaultId } from "../storage/vault-identity";
@@ -35,6 +37,13 @@ export class MobileMemoryRepository {
   constructor(readonly adapter: DataAdapter, readonly owner: string, private now = Date.now, private mutationIssue?: string | (() => string | undefined), private storageRoot = "") {
     this.root = storageRoot ? `${storageRoot}/${ROOT}` : ROOT;
   }
+  private activityFlight?: Promise<MemoryActivityStore>;
+  activity(): Promise<MemoryActivityStore> {
+    return this.activityFlight ??= this.portableIdentity().then(vaultId => new MemoryActivityStore(vaultId, mobileAtomicFilePort(this.adapter, `${this.root}${MEMORY_ACTIVITY_PATH}`)));
+  }
+  async memoryActivity() { return (await this.activity()).snapshot(this.now()); }
+  async recordRecalledMemories(ids: readonly string[], turnId: string) { try { return (await this.activity()).record(ids, turnId, this.now()); } catch { return false; } }
+  async restoreMemoryActivity(id: string) { return (await this.activity()).restore(id, this.now()); }
   private identityFlight?: Promise<string>;
   /** Both adapters run the same inventory, merge and rollback protocol. */
   private portableIdentity(): Promise<string> {
@@ -283,6 +292,7 @@ export class MobileMemoryRepository {
         }
         draft.profile = { ...draft.profile, legacyUserMigration: "done" };
       }
+      assertMemoryPinLimit(draft.records);
       const oldProfile = draft.profile;
       const validSources = new Set(draft.records.filter(record => record.status === "current").map(record => record.id)), invalidated = invalidatedMemoryProductRunIds(draft.records);
       for (const item of oldProfile.items) for (const source of item.sourceMemoryIds) { const run = productRunIdFromExperienceProfileSourceId(source); if (run && !invalidated.has(run)) validSources.add(source); }
@@ -330,7 +340,7 @@ export class MobileMemoryRepository {
       files.set(marker, json({ schema: "echoink.mobile-memory-import.v1", sourcePath: store.statePath, sourceHash: sha256Hex(source), mapping }));
     });
   }
-  newRecord(input: { kind: PersonalMemoryKind; title: string; content: string; recallWhen: string; basis: PersonalMemoryRecord["basis"]; source: string; revision: number; contentOrigin?: PersonalMemoryRecord["contentOrigin"] }): PersonalMemoryRecord {
+  newRecord(input: { kind: PersonalMemoryKind; title: string; content: string; recallWhen: string; basis: PersonalMemoryRecord["basis"]; source: string; revision: number; contentOrigin?: PersonalMemoryRecord["contentOrigin"]; pinned?: boolean }): PersonalMemoryRecord {
     const id = `mem_${crypto.randomUUID().replaceAll("-", "")}`;
     return parseCanonicalMemoryRecord(serializeCanonicalMemoryRecord({ schema: PERSONAL_MEMORY_SCHEMA, id, status: "current", date: new Date(this.now()).toISOString().slice(0, 10), file: canonicalMemoryPath(input.kind, id), ...input }), canonicalMemoryPath(input.kind, id));
   }

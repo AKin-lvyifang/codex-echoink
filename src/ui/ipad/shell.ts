@@ -193,7 +193,9 @@ export class IPadShell {
     title.tabIndex = -1;
     headings.append(title);
     if (page.subtitle) headings.append(shellElement(document, "div", "echoink-ipad-subtitle", page.subtitle));
-    header.append(back, headings);
+    header.append(back);
+    if (page.titleLeading) header.append(page.titleLeading);
+    header.append(headings);
     if (page.actions) {
       const actions = shellElement(document, "div", "echoink-ipad-actions");
       actions.append(page.actions);
@@ -215,11 +217,11 @@ export class IPadShell {
   }
 
   private canAttachPage(page: MobileShellPage, replacing?: PageState): boolean {
-    const slots = [page.content, page.footer, page.actions].filter((slot): slot is HTMLElement => !!slot);
+    const slots = [page.content, page.footer, page.actions, page.titleLeading].filter((slot): slot is HTMLElement => !!slot);
     if (slots.some(slot => slot.contains(this.root) || slot.contains(this.pages)) ||
       slots.some((slot, index) => slots.some((other, otherIndex) => index !== otherIndex && slot.contains(other)))) return false;
     return !this.stack.some(state => (state !== replacing && state.page.id === page.id) ||
-      [state.page.content, state.page.footer, state.page.actions].some(existing => existing &&
+      [state.page.content, state.page.footer, state.page.actions, state.page.titleLeading].some(existing => existing &&
         slots.some(slot => existing === slot || existing.contains(slot) || slot.contains(existing))));
   }
 

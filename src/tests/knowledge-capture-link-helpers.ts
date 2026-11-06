@@ -23,7 +23,7 @@ export async function waitForCaptureLinkModal(): Promise<Modal> {
   installCaptureModalDom();
   for (let attempt = 0; attempt < 100; attempt++) {
     const modal = openTestModals.find(modal => modal.contentEl.querySelector("[data-capture-link-input]"));
-    if (modal) return modal;
+    if (modal?.contentEl.querySelector("[data-capture-link-kind]")) return modal;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
   throw new Error("Link confirmation did not open");

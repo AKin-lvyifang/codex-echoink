@@ -9,7 +9,7 @@ import { obsidianCliArgv, obsidianCliEffect } from "../harness/pi-native/obsidia
 import type { VaultDomainAdapter } from "../harness/pi-native/vault-domain-service";
 import { VaultTargetResolver } from "../harness/pi-native/vault-target-resolver";
 import { normalizeJsonValue, canonicalJsonStringify, type JsonValue } from "../harness/pi-native/tool-authorization";
-import { createOfficialObsidianCliTransport, type ObsidianCliTransport } from "./obsidian-official-cli";
+import { createOfficialObsidianCliTransport, OBSIDIAN_CLI_RAW_CONTENT_COMMANDS, obsidianCliOutputIsNotEnabled, type ObsidianCliTransport } from "./obsidian-official-cli";
 import { ObsidianPluginDirectory } from "./obsidian-plugin-directory";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { isEchoInkFinanceBase } from "../lifestyle/finance-paths";
@@ -60,7 +60,8 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
   const version = async (relativePath: string) => (await snapshot(relativePath))?.version ?? null;
   const run = async (argv: string[], signal?: AbortSignal): Promise<ObsidianCliResult> => {
     const result = await transport.run(argv, signal);
-    const rawContent = ["read", "daily:read", "template:read", "history:read", "search:context", "diff", "property:read", "properties", "outline", "base:query", "aliases"].includes(argv[0]);
+    if (obsidianCliOutputIsNotEnabled(argv[0], result.output)) return { available: false, engine: effectEngine, command: argv[0], status: "unavailable", output: result.output, reason: "Obsidian CLI is not enabled. Turn it on in Obsidian Settings > General > Advanced > Command line interface." };
+    const rawContent = OBSIDIAN_CLI_RAW_CONTENT_COMMANDS.includes(argv[0]);
     const unsupported = !rawContent && /^(?:unknown command|command not found|not supported)/iu.test(result.output);
     return { available: result.status !== "unavailable", engine: effectEngine, command: argv[0], status: unsupported ? "unsupported" : result.status === "completed" && !result.output.trim() ? "empty" : result.status, output: result.output, ...(result.reason ? { reason: result.reason } : {}) };
   };
@@ -198,6 +199,7 @@ export function createObsidianNativePort(app: App, adapter: VaultDomainAdapter, 
       if (unavailable) return { effect, target, targetVersion, preview: target, unavailable: { ...unavailable, command: request.command }, execute: async () => ({ ...unavailable, command: request.command }) };
       if (!financePrepared) {
         const help = await run(["help"], signal);
+        if (help.status === "unavailable") return { effect, target, targetVersion, preview: target, unavailable: help, execute: async () => help };
         if (!["completed", "empty"].includes(help.status) || !new RegExp(`(?:^|\\s)${request.command}(?:\\s|$)`, "mu").test(help.output ?? "")) {
           const failure: ObsidianCliResult = { available: true, engine: effectEngine, command: request.command, status: "unsupported", reason: "Installed public CLI does not advertise this command." };
           return { effect, target, targetVersion, preview: target, unavailable: failure, execute: async () => failure };

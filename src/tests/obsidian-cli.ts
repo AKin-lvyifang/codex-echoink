@@ -3,11 +3,11 @@ import { View } from "obsidian";
 import { mkdir, readFile, rename, rm, symlink } from "node:fs/promises";
 import * as path from "node:path";
 import { nativeJournalFixture } from "./native-journal-fixture";
-import { nativeJournalPathForDate } from "../home/native-journal";
+import { nativeJournalPathForDate, readNativeJournalContext } from "../home/native-journal";
 import { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, obsidianCliEffect, obsidianCliArgv } from "../harness/pi-native/obsidian-cli-policy";
 import { createObsidianNativePort } from "../plugin/obsidian-native-tools";
 import { ObsidianPluginDirectory } from "../plugin/obsidian-plugin-directory";
-import { obsidianCliOutputIsError, type ObsidianCliTransport } from "../plugin/obsidian-official-cli";
+import { OBSIDIAN_CLI_RAW_CONTENT_COMMANDS, obsidianCliOutputIsError, obsidianCliOutputIsNotEnabled, type ObsidianCliProcessResult, type ObsidianCliTransport } from "../plugin/obsidian-official-cli";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import { PiObsidianToolSecurity, createPiObsidianToolDefinitions } from "../harness/pi-native/pi-obsidian-tools";
 import { FileApprovalTicketStore, normalizeJsonValue, type ApprovalOperationContract } from "../harness/pi-native/tool-authorization";
@@ -35,14 +35,17 @@ export async function runObsidianCliPrivateBoundaryTests(root: string): Promise<
   fake.state.dailyPath = "私有记忆/偏好.md";
   const observations = [];
   const contextObservations = [];
+  await readNativeJournalContext(fixture.app, { legacyDirectory: "journal", readTemplate: async () => { throw new Error("No selected template must not read a path"); } });
+
   const originalRead = adapter.readFile.bind(adapter), contextReads: string[] = [];
   adapter.readFile = async (target, options) => { contextReads.push(target.relativePath); return await originalRead(target, options); };
   const records = fixture.records as Record<string, { instance: { options: Record<string, string> } }>;
+  records["daily-notes"].enabled = true;
   for (const template of ["私有记忆/偏好.md", ".obsidian/plugins/echoink/cache.md", "linked-private.md", "私有记忆备份/公开.md"]) {
     records["daily-notes"].instance.options = { folder: "公开", format: "YYYY-MM-DD", template };
     contextReads.length = 0;
     try { contextObservations.push({ template, value: await port.context(), reads: [...contextReads] }); }
-    catch (error) { contextObservations.push({ template, error: String(error), reads: [...contextReads] }); }
+    catch (error) { contextObservations.push({ template, error: error instanceof Error ? error.stack : String(error), reads: [...contextReads] }); }
   }
   console.log(JSON.stringify({ kind: "private-boundary-obsidian-context", contextObservations }));
   for (const row of contextObservations) {
@@ -73,7 +76,7 @@ export async function runObsidianCliPrivateBoundaryTests(root: string): Promise<
 type Fixture = Awaited<ReturnType<typeof nativeJournalFixture>>;
 export function officialCliFixture(fixture: Fixture, root: string) {
   const calls: string[][] = [];
-  const state = { available: true, failAfterDailyWrite: false, truncate: false, mismatch: false, dailyPath: undefined as string | undefined, advertised: [...OBSIDIAN_CLI_COMMANDS], historyContent: "Restored snapshot\n", enabled: new Set<string>(), installed: new Set(["sample-plugin"]), activeFile: "", activeView: "markdown" };
+  const state = { available: true, responses: new Map<string, ObsidianCliProcessResult>(), failAfterDailyWrite: false, truncate: false, mismatch: false, dailyPath: undefined as string | undefined, advertised: [...OBSIDIAN_CLI_COMMANDS], historyContent: "Restored snapshot\n", enabled: new Set<string>(), installed: new Set(["sample-plugin"]), activeFile: "", activeView: "markdown" };
   const dailyPath = () => state.dailyPath ?? nativeJournalPathForDate(fixture.app, new Date(), "old-directory");
   const app = fixture.app as any;
   app.workspace.getActiveFile = () => app.vault.getFileByPath(state.activeFile);
@@ -88,6 +91,8 @@ export function officialCliFixture(fixture: Fixture, root: string) {
     const done = (output = "") => ({ status: "completed" as const, started: true, output });
     if (signal?.aborted) return { status: "cancelled", started: false, output: "" };
     if (!state.available) return { status: "unavailable", started: false, output: "", reason: "fixture_binary_missing" };
+    const response = state.responses.get(command);
+    if (response) return response;
     if (command === "vault") return done(state.mismatch ? path.join(root, "other") : root);
     if (command === "help") return done(state.advertised.join("\n"));
     if (command === "version") return done("1.13.7 (installer 1.12.7)");
@@ -214,6 +219,67 @@ export async function runOfficialCliTests(root: string): Promise<void> {
   await fixture.write("Views/test.base", "views:\n  - type: table\n    name: All\n");
   await mkdir(path.join(root, "Records"), { recursive: true });
   assert.equal((await call({ command: "read", path: "Read.md" })).value.status, "completed");
+  const disabledOutput = "Command line interface is not enabled. Please turn it on in Settings > General > Advanced.\n";
+  const disabledReason = "Obsidian CLI is not enabled. Turn it on in Obsidian Settings > General > Advanced > Command line interface.";
+  const disabledOutputs = [disabledOutput, disabledOutput.toUpperCase(), "CLI is not enabled.\n", "cli IS NOT ENABLED.\n"];
+  const assertUnavailable = (value: any) => {
+    assert.equal(value.available, false);
+    assert.equal(value.status, "unavailable");
+    assert.equal(value.reason, disabledReason);
+  };
+  const readContent = await readFile(path.join(root, "Read.md"), "utf8");
+  for (const output of disabledOutputs) {
+    assert.equal(obsidianCliOutputIsNotEnabled("vault", output), true);
+    assert.equal(obsidianCliOutputIsError("vault", output, ""), true, "transport must report disabled CLI output as an error");
+    for (const command of OBSIDIAN_CLI_RAW_CONTENT_COMMANDS) {
+      assert.equal(obsidianCliOutputIsNotEnabled(command, output), false);
+      assert.equal(obsidianCliOutputIsError(command, output, ""), false);
+    }
+    for (const status of ["completed", "failed"] as const) {
+      const response = { status, started: true, output, reason: "obsidian_cli_reported_error" };
+      fake.state.responses.set("vault", response);
+      const callsBefore = fake.calls.length;
+      assertUnavailable(await port.cli({ command: "version" }));
+      const modelRead = await call({ command: "version" });
+      assertUnavailable(modelRead.value);
+      assert.equal(modelRead.isError, true);
+      const prepared = await port.prepare({ command: "daily:append", content: "Must not be written" });
+      assertUnavailable(prepared.unavailable);
+      assertUnavailable(await prepared.execute(undefined, async () => { assert.fail("Unavailable CLI must not start a write"); }));
+      access = { ...access, permission: "workspace-write" };
+      const confirmationsBefore = confirmations;
+      const modelWrite = await call({ command: "daily:append", content: "Must not be written" });
+      assertUnavailable(modelWrite.value);
+      assert.equal(modelWrite.isError, true);
+      assert.equal(confirmations, confirmationsBefore);
+      access = { ...access, permission: "read-only" };
+      assert.deepEqual(fake.calls.slice(callsBefore), Array.from({ length: 4 }, () => ["vault", "info=path"]), "Disabled CLI must stop before help, daily target resolution or content commands");
+      fake.state.responses.delete("vault");
+      fake.state.responses.set("help", response);
+      const helpCallsBefore = fake.calls.length;
+      const modelHelp = await call({ command: "version" });
+      assertUnavailable(modelHelp.value);
+      assert.equal(modelHelp.value.command, "help", "Unavailable help result must pass through unchanged");
+      assert.equal(modelHelp.value.output, output);
+      assert.equal(modelHelp.isError, true);
+      assert.deepEqual(fake.calls.slice(helpCallsBefore), [["vault", "info=path"], ["help"]]);
+      fake.state.responses.delete("help");
+    }
+    await fixture.write("Read.md", `${output}This is note content.\n`);
+    const modelContent = await call({ command: "read", path: "Read.md" });
+    assert.equal(modelContent.value.status, "completed");
+    assert.equal(modelContent.isError, false);
+    assert.equal(modelContent.value.output, `${output}This is note content.\n`);
+  }
+  await fixture.write("Read.md", readContent);
+  await assert.rejects(readFile(path.join(root, nativeJournalPathForDate(fixture.app, new Date(), "old-directory")), "utf8"), { code: "ENOENT" });
+  for (const output of ["Something is not enabled", "arbitrary text", `First line\n${disabledOutput}`, `\n${disabledOutput}`, ` ${disabledOutput}`]) {
+    assert.equal(obsidianCliOutputIsNotEnabled("vault", output), false);
+    fake.state.responses.set("vault", { status: "completed", started: true, output });
+    await assert.rejects(port.cli({ command: "version" }), /obsidian_cli_vault_mismatch/);
+    assert.equal((await call({ command: "version" })).reason, "obsidian_cli_vault_mismatch");
+  }
+  fake.state.responses.clear();
   assert.equal((await call({ command: "search", query: "missing", path: "Records" })).value.status, "empty");
   assert.equal((await call({ command: "folder", path: "Read.md" })).block, true);
   assert.equal((await call({ command: "read", path: "../escape.md" })).block, true);
@@ -283,6 +349,8 @@ export async function runOfficialCliTests(root: string): Promise<void> {
   assert.equal((await call({ command: "outline", path: "Read.md" })).value.status, "unsupported");
   fake.state.mismatch = true;
   assert.equal((await call({ command: "files" })).block, true);
+  assert.equal((await call({ command: "files" })).reason, "obsidian_cli_vault_mismatch");
+  await assert.rejects(port.cli({ command: "files" }), /obsidian_cli_vault_mismatch/);
   fake.state.mismatch = false;
   fake.state.truncate = true;
   assert.equal((await call({ command: "files" })).value.status, "truncated");

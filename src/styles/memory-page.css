@@ -1,0 +1,96 @@
+.echoink-memory-page { overflow: auto; padding: 0; color: var(--text-normal); }
+.memory-page-content { box-sizing: border-box; max-width: 1000px; margin: 0 auto; padding: 24px 32px 40px; }
+.memory-page-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.memory-page-title { display: flex; align-items: center; gap: 8px; }
+.memory-page-title h1 { margin: 0; font-size: 22px; font-weight: 600; line-height: 1.5; }
+.echoink-memory-page .memory-page-title .memory-button.is-icon { border-color: transparent; background: transparent; }
+.echoink-memory-page .memory-search { box-sizing: border-box; display: flex; align-items: center; width: 250px; height: 30px; gap: 6px; padding: 0 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; }
+.memory-search-icon { display: flex; flex: 0 0 14px; color: var(--text-muted); }
+.memory-search-icon svg { width: 14px; height: 14px; }
+.echoink-memory-page .memory-search input { min-width: 0; width: 100%; height: 28px; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; font-size: 12px; }
+.memory-page-status:empty { display: none; }
+.memory-page-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; font-size: 12px; }
+.memory-error { color: var(--text-error); }
+.memory-disabled { color: var(--text-muted); }
+.memory-page-columns { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; align-items: start; }
+.memory-page-canvas { min-width: 0; margin-top: 32px; }
+.memory-page-panel { min-width: 0; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.memory-page-panel [hidden], .memory-page-canvas[hidden], .memory-page-panel[hidden] { display: none; }
+.echoink-memory-page .memory-button { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-height: 26px; height: auto; padding: 3px 10px; gap: 6px; border: 1px solid transparent; border-radius: 8px; box-shadow: none; outline: none; font-size: 12px; font-weight: 400; line-height: 18px; cursor: pointer; }
+.echoink-memory-page .memory-button.is-tertiary { background: transparent; color: var(--text-muted); }
+.echoink-memory-page .memory-button.is-secondary, .echoink-memory-page .memory-button.is-icon { background: var(--background-primary); border-color: var(--background-modifier-border); color: var(--text-normal); }
+.echoink-memory-page .memory-button.is-primary { color: var(--echoink-control-on-fill, var(--text-on-accent)); background: var(--echoink-control-fill, var(--interactive-accent)); border-color: transparent; }
+.echoink-memory-page .memory-button:hover, .echoink-memory-page .memory-button:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-memory-page .memory-button.is-primary:hover { background: var(--echoink-control-fill, var(--interactive-accent-hover)); }
+.echoink-memory-page .memory-button.is-primary:focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); }
+.echoink-memory-page .memory-button:active { transform: translateY(1px); }
+.echoink-memory-page .memory-button:disabled { opacity: .45; cursor: default; transform: none; }
+.echoink-memory-page .memory-button.is-icon { padding: 5px; width: 28px; min-width: 28px; }
+.memory-button-icon { display: inline-flex; align-items: center; }
+.memory-button-icon svg, .memory-button.is-icon svg { width: 14px; height: 14px; }
+.memory-panel-back { margin-bottom: 8px; margin-left: -10px; }
+.memory-panel-heading { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.memory-section-heading { font-size: 12px; font-weight: 600; margin: 16px 0 6px; }
+.memory-section { font-size: 12px; }
+.memory-list { border: 1px solid var(--background-modifier-border); border-radius: 12px; overflow: hidden; }
+.echoink-memory-page .memory-list-row { display: flex; align-items: center; width: 100%; min-height: 36px; height: auto; justify-content: flex-start; padding: 8px 12px; gap: 8px; border: 0; border-bottom: 1px solid var(--background-modifier-border); border-radius: 0; text-align: left; white-space: normal; color: var(--text-normal); font-size: 13px; line-height: 1.5; }
+.echoink-memory-page .memory-list-row:last-child { border-bottom: 0; }
+.echoink-memory-page .memory-list-row.is-expanded { background: var(--background-modifier-hover); }
+.memory-list-label { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.memory-list-empty { padding: 8px 12px; color: var(--text-muted); font-size: 12px; }
+.memory-count { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.memory-list-row[data-memory-layer] .memory-count { font-size: 12px; }
+.memory-chevron { color: var(--text-faint); flex-shrink: 0; }
+.memory-layer-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-normal); opacity: .65; flex-shrink: 0; }
+.memory-layer-dot.is-core { opacity: 1; }
+.memory-layer-dot.is-peripheral { opacity: .3; }
+.memory-layer-dot.is-faded { background: transparent; border: 1px solid var(--text-faint); }
+.memory-meta, .memory-muted { color: var(--text-muted); font-size: 12px; }
+.memory-recent-age { color: var(--text-faint); font-size: 12px; flex-shrink: 0; }
+.memory-meta { margin-bottom: 4px; }
+.memory-detail-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.memory-detail-body { font-size: 13px; line-height: 1.65; white-space: pre-wrap; margin-bottom: 12px; }
+.memory-fields { display: flex; flex-direction: column; gap: 3px; margin-bottom: 14px; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.memory-field { display: flex; gap: 12px; }
+.memory-field-label { flex: 0 0 48px; color: var(--text-faint); }
+.memory-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.echoink-memory-page .memory-edit-title { width: 100%; height: 30px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+.echoink-memory-page .memory-editor { display: block; box-sizing: border-box; width: 100%; min-height: 92px; resize: vertical; border: 1px solid var(--background-modifier-border); border-radius: 8px; background: var(--background-primary); color: var(--text-normal); padding: 8px 10px; font-family: inherit; font-size: 13px; line-height: 1.65; outline: none; box-shadow: none; }
+.memory-edit-title + .memory-editor { margin-bottom: 8px; }
+.memory-editor + .memory-actions { margin-bottom: 14px; }
+.echoink-memory-page input:focus, .echoink-memory-page textarea:focus { border-color: var(--background-modifier-border); outline: none; box-shadow: none; }
+.memory-profile-expanded { display: flex; flex-direction: column; padding: 12px; gap: 12px; border-top: 1px solid var(--background-modifier-border); border-bottom: 1px solid var(--background-modifier-border); }
+.memory-profile-expanded:last-child { border-bottom: 0; }
+.memory-profile-expanded .memory-actions { margin: 0; }
+.memory-profile-expanded .memory-editor { min-height: 32px; field-sizing: content; }
+.memory-profile-group-heading { color: var(--text-muted); font-weight: 400; }
+.memory-profile-count { flex-shrink: 0; color: var(--text-faint); font-size: 12px; }
+.memory-profile-sources { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.memory-history { margin: 4px 0; color: var(--text-muted); font-size: 12px; }
+.memory-history-body { white-space: pre-wrap; }
+.memory-confirm { margin-top: 12px; padding: 12px 0; border-top: 1px solid var(--background-modifier-border); font-size: 12px; }
+.memory-confirm .memory-actions { margin-top: 8px; }
+.echoink-memory-page .memory-source-link { white-space: normal; text-align: left; justify-content: flex-start; padding-left: 0; }
+.echoink-memory-page.is-stacked .memory-page-columns { grid-template-columns: minmax(0, 1fr); }
+.echoink-memory-page.is-stacked .memory-page-canvas { margin-top: 16px; }
+.echoink-memory-page.is-stacked .memory-page-panel { width: 100%; }
+.echoink-memory-page.is-stacked .memory-page-header { flex-wrap: wrap; }
+.echoink-memory-page.is-stacked .memory-search { max-width: 100%; }
+/* Match host button specificity; the native button:not(.clickable-icon) rule otherwise wins. */
+.codex-answer-sources button.codex-memory-receipt { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; height: auto; min-height: 26px; border: 0; border-radius: 6px; box-shadow: none; background: transparent; color: var(--text-muted); padding: 3px 6px; font-size: 12px; cursor: pointer; }
+.codex-answer-sources button.codex-memory-receipt:is(:hover, :focus-visible, :active) { background: var(--background-modifier-hover); color: var(--text-normal); outline: none; box-shadow: none; }
+.codex-memory-receipt svg { width: 14px; height: 14px; }
+.codex-memory-receipt > span:first-child { display: inline-flex; flex-shrink: 0; }
+.codex-memory-source-target { border-radius: var(--echoink-conversation-radius-md, 8px); outline: none; animation: echoink-memory-source-hint 2s ease-out; animation-delay: var(--memory-source-hint-delay, 0ms); }
+@keyframes echoink-memory-source-hint { 0%, 45% { background-color: var(--background-modifier-hover); } 100% { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .codex-memory-source-target { animation-duration: 1ms; } }
+.memory-map-column { min-width: 0; }
+.memory-recall-summary { display: flex; align-items: center; gap: 8px; min-height: 26px; font-size: 12px; line-height: 18px; color: var(--text-muted); }
+.memory-recall-summary[hidden] { display: none; }
+.memory-recall-summary:not([hidden]) + .memory-page-canvas { margin-top: 6px; }
+.memory-summary-icon { display: inline-flex; flex: 0 0 15px; }
+.memory-summary-icon svg { width: 15px; height: 15px; }
+.memory-summary-question { min-width: 0; overflow-wrap: anywhere; }
+.memory-summary-count { flex-shrink: 0; color: var(--text-normal); font-weight: 600; }
+.echoink-memory-page .memory-recall-summary .memory-button { flex-shrink: 0; border: 0; background: transparent; }
+.echoink-memory-page .memory-recall-summary .memory-button:is(:hover, :focus-visible) { background: var(--background-modifier-hover); }

@@ -435,10 +435,14 @@ async function repositoryAndLifecycle(): Promise<void> {
     const identityBytes = await fs.readFile(system.repository.layout.agentIdentity);
     const beforeAgent = await fs.readFile(system.repository.layout.agent);
     const root = system.repository.layout.root;
+    const activityPath = path.join(root, "shared-user/.runtime/memory-activity.json");
+    await system.repository.recordRecalledMemories([parent.id], "backup-activity");
+    const activityBytes = await fs.readFile(activityPath, "utf8");
     const backups = new MemoryDeveloperBackups(root);
     await system.dispose();
     const { backup } = await backups.change("reset", validateReopen);
     assert.equal(await backups.latestResetPath(), backup);
+    assert.equal(Buffer.from(JSON.parse(await fs.readFile(backup, "utf8")).files["shared-user/.runtime/memory-activity.json"], "base64").toString("utf8"), activityBytes);
     await assert.rejects(system.repository.readUserControlState(), /disposed/u);
     system = await reopen();
     assert.equal((await system.repository.readUserControlState()).records.length, 0);
@@ -457,6 +461,7 @@ async function repositoryAndLifecycle(): Promise<void> {
     assert.ok(beforeBackup.equals(await fs.readFile(backup)));
     system = await reopen();
     assert.equal((await system.repository.readUserControlState()).records.length, 7);
+    assert.equal(await fs.readFile(activityPath, "utf8"), activityBytes, "活动文件随开发者备份恢复，计数不丢失");
     assert.equal((await system.repository.readUserControlState()).forgottenIds.length, 1);
     assert.equal((await system.listAllSecondary()).length, 1);
     assert.match((await system.repository.readUserControlState()).user, /fixture-derived/u);

@@ -84,5 +84,6 @@ export interface KnowledgeLinkingTask extends KnowledgeLinkingOrigin {
   targetVersions?: Record<string, string>;
   dismissed?: boolean;
   writeConfirmed?: boolean;
+  pausedForMove?: boolean;
   error?: string;
 }

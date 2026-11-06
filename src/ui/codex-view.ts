@@ -1,4 +1,10 @@
+import { requireModuleOwner } from "../agents/registry";
+import { TOOL_ROUND_STOP_MESSAGE } from "../agents/tool-round-budget";
+import { KnowledgeSystemConversationCard } from "./codex-view/knowledge-system-card";
+import { CompanyConversationCard } from "./codex-view/company-card";
+import { companyRouterWaiting } from "../company/interaction-bridge";
 import { renderExpertConversationDecorations } from "./codex-view/expert-decorations";
+import { projectCounts } from "../company/logic";
 import { isExpertAgent } from "../agents/persona";
 import { ownedDiv, ownedEl } from "./owned-dom";
 import { openTaskMenu } from "./codex-view/task-menu";
@@ -9,7 +15,6 @@ import type { PdfNavigationStart } from "../pdf-reading/types";
 import { GenerationModal } from "../generation/modal";
 import { getGenerationService } from "../generation/service";
 import { freezePdfTaskRequest } from "../pdf-reading/task-context";
-import { workbenchModuleOwner } from "../home/module-navigation";
 import type { WorkbenchSignal } from "../home/workbench-types";
 import { WorkbenchSetupRequired } from "../home/workbench-action-feedback";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
@@ -241,6 +246,8 @@ export class CodexView extends ItemView {
   private taskDetailHeaderEl?: HTMLElement;
   private inlineTaskBodyEl?: HTMLElement;
   private inlineTaskDetail?: InlineTaskDetailView;
+  private knowledgeSystemCard?: KnowledgeSystemConversationCard;
+  private companyCard?: CompanyConversationCard;
   private inlineTaskDispose?: () => void;
   private inlineTaskObservedHost?: InlineTaskHost;
   private inlineComposerKey = "";
@@ -438,7 +445,18 @@ export class CodexView extends ItemView {
       this.showTaskError(`${this.taskText("读取任务失败：", "Could not load the task: ")}${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  refreshAgentTasks(): void { if (this.taskUiMounted) void this.reloadTaskCatalog(); }
+
+  revealMessage(messageId: string): void {
+    this.messagesBottomFollowPaused = true;
+    this.messageListRenderer.revealMessage(messageId);
+  }
+  revealPiEntry(entryId: string): void {
+    const session = this.plugin.settings.sessions.find(session => session.id === this.plugin.settings.activeSessionId);
+    const message = session?.messages.find(message => piEntryIdFromProjectedMessageId(message.id) === entryId);
+    if (message) this.revealMessage(message.id);
+    else new Notice(this.taskText("来源消息已不存在。", "The source message is no longer available."));
+  }
+  refreshAgentTasks(): void { if (this.taskUiMounted) { void this.reloadTaskCatalog(); this.renderCompanyCard(); } }
   private async leaveUnavailableTask(taskId: string, owner?: string): Promise<void> {
     if (this.taskNavigation.page.kind !== "detail" || this.taskNavigation.page.taskId !== taskId) return;
     const agentId = owner ?? this.currentTaskAgent().id;
@@ -549,7 +567,9 @@ export class CodexView extends ItemView {
     }
     const pending = this.taskSubmitting.has(`resume:${id}`) || this.plugin.isTaskResuming(id);
     const recovery = this.plugin.taskToolCallRecovery?.(id, record.info);
-    renderTaskInterruption(element, { info: record.info, error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
+    renderTaskInterruption(element, { info: record.info,
+      explanationAlreadyVisible: record.info?.reason === "tool_loop_limit" && this.plugin.settings.sessions.find(session => session.id === id)?.messages.some(message => message.text === TOOL_ROUND_STOP_MESSAGE),
+      error: pending ? undefined : this.taskResumeErrors.get(id) ?? this.plugin.getTaskResumeError(id) ?? record.error,
       ...(recovery ? { explanation: recovery.message, buttonLabel: recovery.enable ? this.taskText("开启工具调用并继续", "Enable tools and continue") : this.taskText("继续", "Continue") } : {}),
       pending, language: this.plugin.settings.settingsLanguage, onReport: () => this.openTaskRunReport(id),
       onResume: () => { void this.resumeInterruptedTask(id, false); } });
@@ -585,7 +605,8 @@ export class CodexView extends ItemView {
     const displayEntries = projectInlineTaskEntries(this.taskEntries.map(task => {
       const activity = maintenanceActivityForTask(task, this.taskMaintenanceActivities ?? []), entry = taskEntryWithMaintenance(task, this.taskMaintenanceActivities ?? []);
       return activity ? { ...entry, title: maintenanceTaskTitle(activity, this.plugin.settings.settingsLanguage === "en") } : entry;
-    }), inlineHost?.service.list() ?? []).filter(task => task.status === "active");
+    }), inlineHost?.service.list() ?? []).filter(task => task.status === "active")
+      .map(task => companyRouterWaiting(this.plugin, task.conversationId) ? { ...task, taskStatus: "waiting" as const } : task);
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => {
         const selected = this.plugin.settings.agentRegistry.agents.find(item => item.id === id);
@@ -596,6 +617,9 @@ export class CodexView extends ItemView {
     this.taskDetailEl.hidden = !!this.taskEditor || page.kind !== "detail";
     const interrupted = page.kind === "detail" && !!entry && taskState(entry) === "interrupted";
     this.inputEl.parentElement!.hidden = this.taskDerivationInProgress || !!this.taskEditor || page.kind === "detail" && !this.taskDetailLoaded;
+    const readOnly = page.kind === "detail" && this.isDispatchedTask(page.taskId);
+    this.inputEl.disabled = readOnly; this.inputEl.parentElement!.toggleClass("is-readonly", readOnly);
+    if (readOnly) this.inputEl.placeholder = this.taskText("任务会话只能看，不能插话；有事回总助对话说", "Read-only task. Talk to the assistant instead.");
     this.renderTaskInterruptionCard();
     const ready = page.kind === "detail" && this.taskDetailLoaded && !this.taskEditor && !this.taskDerivationInProgress;
     this.messagesEl.parentElement!.hidden = !ready || !!inline;
@@ -621,11 +645,13 @@ export class CodexView extends ItemView {
     if (page.kind === "list") renderAgentTaskList(this.taskListEl, agent, displayEntries, this.plugin.settings.sessions.filter(session => !inlineHost?.service.latestForTask(session.id)), {
       onTask: id => void this.openTaskDetail(id), onEdit: () => this.openAgentEditor(agent.id),
       onTaskMenu: (event, taskId) => { void openTaskMenu(this.plugin, event, taskId, () => this.refreshAgentTasks()); },
-      summary: entry => this.taskSummaryText(entry),
-      status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; }
+      summary: entry => this.companyCardSummary(entry) ?? this.taskSummaryText(entry),
+      status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; },
+      ...(agent.id === GENERAL_ASSISTANT_ID && this.plugin.companyService ? { section: (entry: TaskEntry) => entry.companyRole === "router" && entry.projectId ? "project" as const : "chat" as const } : {})
     }, Date.now(), this.plugin.settings.settingsLanguage);
     else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
-      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) } : undefined, {
+      inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) }
+        : companyRouterWaiting(this.plugin, entry.conversationId) ? { subtitle: agent.name, status: this.taskText("等你回应", "Waiting for you"), state: "waiting" } : undefined, {
         export: async () => exportDesktopRunReport(this.app, this.plugin.getVaultPath(), await this.plugin.captureRunReport(entry.conversationId), this.plugin.settings.settingsLanguage === "en"),
         report: () => this.plugin.openRunReport(entry.conversationId)
       });
@@ -636,6 +662,20 @@ export class CodexView extends ItemView {
     this.updateInputPlaceholder();
     this.renderInlineComposer();
     this.renderComposerTransfers();
+  }
+  /** Dispatched task composers are read-only; their original approval buttons remain available. */
+  private isDispatchedTask(taskId: string): boolean { return !!this.plugin.companyService?.dispatchOf(taskId); }
+  /** Project cards show the same counts as the project page: 里程碑 x/y · who is working. */
+  private companyCardSummary(entry: TaskEntry): string | undefined {
+    const company = this.plugin.companyService; if (!company) return undefined;
+    const project = company.projectForRouter(entry.conversationId);
+    if (!project) return companyRouterWaiting(this.plugin, entry.conversationId) ? "员工等你定" : undefined;
+    if (project.status === "proposed") return `待开工 · ${project.plan.length} 件活`;
+    const c = projectCounts(company.doc, project), head = `里程碑 ${c.milestonesDone}/${c.milestonesTotal}`;
+    if (project.status === "done") return `${head} · 已结项`;
+    if (c.tasksWaiting || companyRouterWaiting(this.plugin, entry.conversationId)) return `${head} · 等你定`;
+    const names = company.doc.dispatches.filter(d => d.projectId === project.id && d.status === "running").map(d => this.plugin.settings.agentRegistry.agents.find(a => a.id === d.agentId)?.name ?? d.agentId);
+    return `${head} · ${names.length ? names.join("、") + " 在做" : "排队中"}`;
   }
   private taskSummaryText(entry: TaskEntry): string | undefined {
     const inline = inlineTaskHost(this.plugin)?.service.latestForTask(entry.conversationId);
@@ -772,6 +812,38 @@ export class CodexView extends ItemView {
   }
 
   private readonly workbenchSignalFlights = new Map<string, Promise<string>>();
+  companyCardAccess(taskId: string): { permission: PermissionMode; mode: UiMode } {
+    const active = this.plugin.settings.activeSessionId === taskId && (!this.taskUiMounted
+      || this.taskNavigation.page.kind === "detail" && this.taskNavigation.page.taskId === taskId);
+    const draft = this.plugin.settings.taskWorkspace?.replyDrafts[taskId];
+    const previous = this.plugin.getConversationRunService().lastTurnOptions.get(taskId);
+    return { permission: active ? this.selectedPermission : draft?.selectedPermission ?? previous?.permission ?? this.plugin.settings.defaultPermission,
+      mode: active ? this.selectedMode : draft?.selectedMode ?? previous?.mode ?? this.plugin.settings.defaultMode };
+  }
+  knowledgeSystemWorkspaceAccess(taskId: string): import("../harness/pi-native/pi-workspace-access").PiWorkspaceAccess {
+    const active = this.taskNavigation.page.kind === "detail" && this.taskNavigation.page.taskId === taskId;
+    const draft = this.plugin.settings.taskWorkspace?.replyDrafts[taskId];
+    return { permission: active ? this.selectedPermission : draft?.selectedPermission ?? this.plugin.settings.defaultPermission,
+      mode: active ? this.selectedMode : draft?.selectedMode ?? this.plugin.settings.defaultMode, memoryMode: "no_memory" };
+  }
+  async startKnowledgeSystemConversation(taskId: string, prompt: string): Promise<void> {
+    const session = this.sessionById(taskId);
+    if (!session) throw new Error("梳理会话尚未打开。");
+    const inputEl = ownedEl(this.inputEl.ownerDocument, "textarea"); inputEl.value = prompt;
+    const adapter = Object.create(this.createTurnRunnerContext(taskId)) as CodexViewTurnContext;
+    Object.defineProperties(adapter, { inputEl: { value: inputEl }, attachments: { value: [] }, selectedSkill: { value: null }, drawingRequested: { value: false },
+      ensureSession: { value: () => session }, onComposerTransferStarted: { value: undefined }, onComposerTransferFinished: { value: undefined } });
+    const item = await createQueuedTurnFromComposerRunner(adapter, { allowLocalKnowledgeCommands: false });
+    if (!item || !await validateTaskTurnBeforeCreation(adapter, item)) throw new Error("请检查模型和工作区设置后继续梳理。");
+    const outcome = await this.plugin.getConversationRunService().start(item, "composer");
+    if (outcome !== "running" && outcome !== "completed") throw new Error("梳理未启动，可以继续重试。");
+  }
+  startModulePromptTask(moduleId: import("../agents/types").AgentModuleId, prompt: string, englishDiarySourcePath?: string): Promise<string> {
+    const owner = requireModuleOwner(this.plugin.settings.agentRegistry, moduleId);
+    const key = newId("module-task");
+    return this.createWorkbenchSignalTask(owner.id, { id: 1, key, moduleId, icon: "bot", description: prompt.slice(0, 64), prompt,
+      source: { version: 1, signalId: 1, businessKey: key, moduleId, objects: [], prompt, capturedAt: Date.now() } }, undefined, true, englishDiarySourcePath);
+  }
   startWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>): Promise<string> {
     const existing = this.workbenchSignalFlights.get(signal.key);
     if (existing) return existing;
@@ -781,10 +853,11 @@ export class CodexView extends ItemView {
     return flight;
   }
 
-  private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>): Promise<string> {
+  private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>, modulePrompt = false, englishDiarySourcePath?: string): Promise<string> {
     if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists."));
+    if (!onboardingScope && requireModuleOwner(this.plugin.settings.agentRegistry, signal.moduleId).id !== agentId) throw new Error("负责人已变化，请重新发起。");
     this.saveTaskComposerDraft();
-    const draft: StoredSession = { id: newId("workbench-draft"), title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
+    const draft: StoredSession = { id: newId("workbench-draft"), agentId, title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
     const options = { ...this.currentTurnOptions(draft), ...(onboardingScope ? { mode: "agent" as const, permission: "workspace-write" as const } : {}) };
     const provider = this.plugin.settings.apiProviders.find(value => value.id === options.providerSettingsId);
     if (!provider || !getApiProviderModel(provider, options.model) || !apiProviderHasUsableCredential(provider, this.plugin.settings.openAICodexCredential) || validateApiProvider(provider).length) {
@@ -802,7 +875,8 @@ export class CodexView extends ItemView {
     let failure = this.taskText("任务尚未发送，请检查对话栏设置后重试。", "The task was not sent. Check the conversation settings and try again.");
     const item = await createQueuedTurnFromComposerRunner(adapter, { allowLocalKnowledgeCommands: false, onError: message => { failure = message; } });
     if (!item || !await validateTaskTurnBeforeCreation(adapter, item)) throw new Error(failure);
-    item.prefillSource = JSON.stringify(signal.source);
+    if (!modulePrompt) item.prefillSource = JSON.stringify(signal.source);
+    if (englishDiarySourcePath) { await this.plugin.validateEnglishDiaryTaskSource(englishDiarySourcePath); item.englishDiarySourcePath = englishDiarySourcePath; }
     if (onboardingScope) item.maintenanceScope = structuredClone(onboardingScope);
     const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: signal.description,
       agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
@@ -860,7 +934,7 @@ export class CodexView extends ItemView {
     if (!request) throw new Error("PDF 选项无效，请重新选择。");
     item.pdfTaskRequest = request;
     await this.plugin.validatePdfNavigationStart(input);
-    const owner = workbenchModuleOwner(this.plugin, "pdf-reading");
+    const owner = requireModuleOwner(this.plugin.settings.agentRegistry, "pdf-reading");
     const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: input.attachment.name,
       agentId: owner.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
     const session = createPiConversationShell(this.sessionHost(), entry);
@@ -904,12 +978,13 @@ export class CodexView extends ItemView {
     if (!Platform.isDesktopApp) return;
     const service = getGenerationService(this.plugin);
     const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
+    if (!owner) { this.plugin.openModuleOwnerPicker("knowledge-base", async () => this.openGenerationForPath(path)); return; }
     const draft: StoredSession = { id: "generation-draft", title: "", agentId: owner.id, cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
     new GenerationModal(this.plugin, { sourcePaths: service.sourcesFromPath(path), service, turnOptions: () => this.currentTurnOptions(draft),
       onSubmit: async (request, options) => {
         const reason = service.disabledReason({ ...options, outputKind: request.outputKind }); if (reason) throw new Error(reason);
         this.saveTaskComposerDraft();
-        const owner = this.plugin.getWorkbenchModuleOwner("knowledge-base");
+        const owner = requireModuleOwner(this.plugin.settings.agentRegistry, "knowledge-base");
         const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: `用「${request.template.name}」生成`, agentId: owner.id,
           cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
         const session = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(session);
@@ -946,7 +1021,7 @@ export class CodexView extends ItemView {
       if (!item || !await validateTaskTurnBeforeCreation(context, item) || this.viewLifecycleAbortController.signal.aborted || this.isComposerTransferCancelled(item.id)) return;
       item.prefillSource = prefillSource;
       const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: item.text.trim().slice(0, 64) || item.attachments[0]?.name || this.taskText("新任务", "New task"),
-        agentId: page.agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+        agentId: page.agentId, cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal", ...this.routerCardMetadata(page.agentId, prefillSource) });
       created = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(created);
       item.sessionId = created.id; item.clearComposerAfterPiAcceptance = true;
       this.composerConversationTargets.set(key, created.id); this.rehomeComposerQueue(key, created.id);
@@ -1379,6 +1454,7 @@ export class CodexView extends ItemView {
           if (this.viewLifecycleAbortController.signal.aborted) return;
           if (this.taskUiMounted) this.scheduleTaskCatalogRefresh();
           this.renderTabs(); this.renderQueue(); this.renderToolbar(); this.applyStatus();
+          this.renderCompanyCard();
           const session = this.sessionById(id);
           if (session) { this.renderMessagesIfActive(session, message); if (this.plugin.settings.activeSessionId === id) this.renderInteractionDock(session); }
         }
@@ -1419,6 +1495,8 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.companyCard?.dispose(); this.companyCard = undefined;
+    this.knowledgeSystemCard?.dispose(); this.knowledgeSystemCard = undefined;
     this.settleTaskUiReady(false);
     if (this.taskUiMounted) { this.saveTaskComposerDraft(); this.rememberTaskListPosition(); }
     this.taskEditor?.dispose(); this.taskEditor = undefined;
@@ -1841,13 +1919,27 @@ export class CodexView extends ItemView {
     if (this.taskUiMounted) { this.renderTaskPages(); return; }
     renderTabsView(this.sessionHost());
   }
+  private renderKnowledgeSystemCard(): void {
+    if (!this.plugin.getConversationRunService().managesConversation(this.plugin.settings.activeSessionId)) { this.knowledgeSystemCard?.dispose(); return; }
+    const service = this.plugin.getKnowledgeSystemService?.();
+    this.knowledgeSystemCard ??= new KnowledgeSystemConversationCard(this.plugin);
+    this.knowledgeSystemCard.render(this.messagesEl, service?.forConversation(this.plugin.settings.activeSessionId));
+    this.scheduleMeasureVirtualRows();
+  }
   private renderMessages(options: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean } = {}): void {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
     if (this.taskUiMounted && this.currentInlineTask()) { this.renderTaskPages(); return; }
     if (this.taskUiMounted) this.renderTaskInterruptionCard();
     renderMessagesAction(this.messageHost(), options);
+    this.renderKnowledgeSystemCard();
+    this.renderCompanyCard();
     this.turnNavigator?.handleRender();
     this.renderComposerTransfers();
+  }
+  private renderCompanyCard(): void {
+    if (!this.messagesEl || this.taskUiMounted && (this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) { this.companyCard?.dispose(); return; }
+    this.companyCard ??= new CompanyConversationCard(this.plugin);
+    this.companyCard.render(this.messagesEl, this.plugin.settings.activeSessionId);
   }
   private renderExpertDecorations(session: StoredSession, root: HTMLElement, rows: readonly MessageListRenderedRow[]): void {
     const agent = this.plugin.settings.agentRegistry.agents.find(item => item.id === session.agentId);
@@ -1866,6 +1958,11 @@ export class CodexView extends ItemView {
     });
   }
   private renderInteractionDock(session: StoredSession): void {
+    if (this.isDispatchedTask(session.id)) {
+      this.interactionDock.render(this.interactionDockEl, { sessionId: session.id, onStale() {}, onScheduleMeasure() {} });
+      this.interactionDockEl.hidden = true; return;
+    }
+    this.interactionDockEl.hidden = false;
     if (this.taskUiMounted && this.currentInlineTask()) { this.interactionDockEl.hidden = true; return; }
     const pending = this.pendingInteractionsBySession.get(session.id);
     const questionBinding = pending?.kind === "question"
@@ -2114,6 +2211,7 @@ export class CodexView extends ItemView {
       if (this.taskEditor) return;
       if (this.taskNavigation.page.kind === "list") { await this.sendNewAgentTask(); return; }
       const taskId = this.taskNavigation.page.taskId, token = this.taskNavigation.token;
+      if (this.isDispatchedTask(taskId)) { new Notice(this.taskText("这是总助派出去的任务会话，只能看。有事回总助对话说。", "This task was dispatched by the assistant and is read-only. Talk to the assistant instead.")); return; }
       const entry = this.currentTaskEntry();
       if (token !== this.taskNavigation.token) return;
       if (!entry || !isUserTask(entry)) return;
@@ -2189,12 +2287,16 @@ export class CodexView extends ItemView {
     this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
     this.focusInput();
   }
+  /** A new plain card for the general assistant is a router card for every entry, including historical module continuations. */
+  private routerCardMetadata(agentId: string, _prefillSource?: string): { companyRole?: "router" } {
+    return agentId === GENERAL_ASSISTANT_ID ? { companyRole: "router" } : {};
+  }
   private async resumeQueuedTurns(sessionId: string): Promise<void> {
     try {
       if (sessionId.startsWith("agent:")) {
         const items = this.turnQueue.itemsForSession(sessionId);
         if (!items.length) return;
-        const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: items[0].text.trim().slice(0, 64) || items[0].attachments[0]?.name || this.taskText("新任务", "New task"), agentId: sessionId.slice(6), cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal" });
+        const entry = await this.plugin.createPiConversation({ conversationId: newId("conversation"), title: items[0].text.trim().slice(0, 64) || items[0].attachments[0]?.name || this.taskText("新任务", "New task"), agentId: sessionId.slice(6), cwd: this.plugin.getVaultPath(), defaultMemoryMode: "normal", ...this.routerCardMetadata(sessionId.slice(6), items[0].prefillSource) });
         const session = createPiConversationShell(this.sessionHost(), entry); this.plugin.settings.sessions.push(session);
         for (const item of items) { this.turnQueue.enqueue({ ...item, sessionId: session.id }); this.turnQueue.removeQueuedItem(sessionId, item.id); }
         this.turnQueue.resumeSessionQueue(sessionId);
@@ -2300,6 +2402,8 @@ export class CodexView extends ItemView {
     if (this.taskUiMounted && (this.taskDerivationInProgress || this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded || this.taskEditor)) return;
     if (this.taskUiMounted && this.currentInlineTask()) { this.renderTaskPages(); return; }
     renderMessagesIfActiveAction(this.messageHost(), session, updatedMessage);
+    if (this.plugin.settings.activeSessionId === session.id) this.renderKnowledgeSystemCard();
+    if (this.plugin.settings.activeSessionId === session.id) this.renderCompanyCard();
     this.renderComposerTransfers();
   }
   private handleMessagesScroll(): void {

@@ -1,3 +1,4 @@
+import { isActiveKnowledgeWiki, isGeneralKnowledgeWiki, knowledgeWikiProperties, type KnowledgeWikiProperties } from "./knowledge-wiki-policy";
 import { extractKnowledgeLinks, extractKnowledgeApplicability, resolveKnowledgeLink, type KnowledgeLink, type KnowledgeApplicability, type KnowledgeLinkResolver, type KnowledgeRelation, type KnowledgeRelationPage } from "./knowledge-relations";
 import { locateKnowledgeAnchor } from "./search/markdown-navigation";
 import type { KnowledgeAnchorLocation } from "./search/contracts";
@@ -162,6 +163,7 @@ interface StoredKnowledgeEntry {
   links?: KnowledgeLink[];
   applicability?: KnowledgeApplicability;
   relationSchema?: 2;
+  wikiPolicy?: KnowledgeWikiProperties;
 }
 
 interface StoredKnowledgeAgentIndex {
@@ -306,6 +308,7 @@ export class KnowledgeAgentIndex {
       ? decodeCursor(request.cursor, cursorGeneration, queryHash, mode)
       : 0;
     const candidates = Object.values(index.entries)
+      .filter(entry => entry.kind !== "wiki" || !entry.wikiPolicy || isActiveKnowledgeWiki(entry.wikiPolicy))
       .filter(entry => entry.vaultRelativePath !== getKnowledgeFolderBindings(this.vaultPath)?.onboardingGuidePath)
       .filter((entry) => !this.bodySearch || this.bodySearch.allowsPath(entry.vaultRelativePath))
       .filter((entry) => kinds.includes(entry.kind))
@@ -437,7 +440,7 @@ export class KnowledgeAgentIndex {
   async *scanLinkingDocuments(): AsyncGenerator<KnowledgeLinkingDocument> {
     await this.ensureFresh();
     const entries = Object.values(this.requireCurrent().entries)
-      .filter((entry) => entry.kind === "wiki" || entry.kind === "projects")
+      .filter((entry) => entry.kind === "projects" || entry.kind === "wiki" && (!entry.wikiPolicy || isGeneralKnowledgeWiki(entry.wikiPolicy)))
       .sort((left, right) => left.vaultRelativePath.localeCompare(right.vaultRelativePath));
     let processed = 0;
     for (const entry of entries) {
@@ -506,7 +509,7 @@ export class KnowledgeAgentIndex {
   }
 
   private rebuildRelations(index: StoredKnowledgeAgentIndex): void {
-    const paths = Object.keys(index.entries);
+    const paths = Object.keys(index.entries).filter(path => index.entries[path].kind !== "wiki" || !index.entries[path].wikiPolicy || isActiveKnowledgeWiki(index.entries[path].wikiPolicy));
     const names = Object.fromEntries(paths.map((entryPath) => [entryPath, [index.entries[entryPath].title, ...(index.entries[entryPath].aliases ?? [])]]));
     const graph = new Map<string, KnowledgeRelation[]>();
     const target = (value: string) => { const entry = index.entries[value]; return { vaultRelativePath: value, title: entry.title, contentRevision: entry.contentRevision }; };
@@ -534,7 +537,7 @@ export class KnowledgeAgentIndex {
     const raw = index.entries[rawPath];
     if (!raw || raw.kind !== "raw") return null;
     const linked = Object.values(index.entries)
-      .filter((entry) => entry.kind === "wiki" || entry.kind === "projects")
+      .filter((entry) => entry.kind === "projects" || entry.kind === "wiki" && (!entry.wikiPolicy || isGeneralKnowledgeWiki(entry.wikiPolicy)))
       .filter((entry) => entry.rawSources.some((source) =>
         source.vaultRelativePath === rawPath
       ))
@@ -588,7 +591,7 @@ export class KnowledgeAgentIndex {
         if (scannedCount % 16 === 0) await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
         if (knowledgePathRole(vaultRoot, file.vaultRelativePath) !== kind) continue;
         const oldEntry = previous.entries[file.vaultRelativePath];
-        if (oldEntry?.relationSchema === 2 && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
+        if (oldEntry?.relationSchema === 2 && (kind !== "wiki" || oldEntry.wikiPolicy !== undefined) && oldEntry.kind === kind && (previous.bindingRevision ?? 0) === (getKnowledgeFolderBindings(vaultRoot)?.revision ?? 0) && metadataMatches(oldEntry, file.stat)) {
           reused.set(file.vaultRelativePath, oldEntry);
           reusedCount += 1;
           continue;
@@ -750,6 +753,7 @@ async function buildCandidateEntry(
     titleTokens: tokenCounts([title, ...aliases].join("\n")),
     bodyTokens: isText ? tokenCounts(text) : {},
     relationSchema: 2,
+    ...(kind === "wiki" ? { wikiPolicy: knowledgeWikiProperties(text) } : {}),
     links: extractKnowledgeLinks(text),
     applicability: extractKnowledgeApplicability(text),
     rawLinks: kind === "raw"
@@ -1189,6 +1193,7 @@ function normalizeStoredEntry(value: unknown, vaultRoot = ""): StoredKnowledgeEn
       title: typeof record.title === "string" && record.title.trim()
         ? record.title.trim()
         : path.posix.basename(relativePath, path.posix.extname(relativePath)),
+      ...(record.wikiPolicy && typeof record.wikiPolicy.merged === "boolean" && typeof record.wikiPolicy.specialized === "boolean" ? { wikiPolicy: record.wikiPolicy } : {}),
       aliases: Array.isArray(record.aliases) ? record.aliases.filter((alias): alias is string => typeof alias === "string") : [],
       contentRevision: revision,
       size: normalizeNonNegativeNumber(record.size),
@@ -1248,6 +1253,7 @@ function sameEntry(
     bodyTokens: left.bodyTokens,
     rawSources: left.rawSources,
     links: left.links,
+    wikiPolicy: left.wikiPolicy,
     applicability: left.applicability
   }) === JSON.stringify({
     entryId: right.entryId,
@@ -1261,6 +1267,7 @@ function sameEntry(
     bodyTokens: right.bodyTokens,
     rawSources: right.rawSources,
     links: right.links,
+    wikiPolicy: right.wikiPolicy,
     applicability: right.applicability
   });
 }

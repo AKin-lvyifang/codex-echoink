@@ -9,12 +9,14 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-model-se
 assert.ok(!Object.keys(build.metafile.inputs).some(file => /pi-provider-configuration-service|settings\/pi-model-catalog|node_modules\/@earendil-works\/pi-ai\/dist\/providers\//u.test(file)));
 const module = { exports: {} };
 let fastTimeout = false;
+const fixtureSetTimeout = (callback, delay, ...args) => setTimeout(callback, fastTimeout && delay === 20_000 ? 1 : delay, ...args);
 vm.runInNewContext(build.outputFiles[0].text, {
   module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController, structuredClone, crypto: webcrypto,
-  setTimeout: (callback, delay, ...args) => setTimeout(callback, fastTimeout && delay === 20_000 ? 1 : delay, ...args), clearTimeout,
+  // Production uses window timers (Obsidian review rule); this VM has no DOM.
+  window: { setTimeout: fixtureSetTimeout, clearTimeout }, setTimeout: fixtureSetTimeout, clearTimeout,
   require: name => { assert.equal(name, "obsidian"); return { requestUrl: () => { throw new Error("Unexpected real request"); } }; }
 });
-const { MobileModelConfiguration, MOBILE_MODEL_GROUPS, validateMobileModelParameters, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, supportedProvider, piModel, buildMobileRequest, mobileGenerateText, mobileStream } = module.exports;
+const { MobileModelConfiguration, MOBILE_MODEL_GROUPS, validateMobileModelParameters, loadMobileSettings, mobileProvider, mobileModel, mobilePresets, mobileStreamingEnabled, supportedProvider, piModel, buildMobileRequest, mobileGenerateText, mobileStream, visibleReasoning, MOBILE_STREAM_BLOCKED } = module.exports;
 const plain = value => JSON.parse(JSON.stringify(value));
 const answer = (protocol = "openai-completions") => ({ status: 200, json: protocol === "openai-responses"
   ? { output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }], status: "completed" }
@@ -374,5 +376,103 @@ await test("streaming and one-shot requests consume configured reasoning without
   await stream.result(); assert.equal(body.reasoning_effort, "max");
   await mobileGenerateText(provider, { ...model, reasoningEnabled: false }, request, "Fixture", "Only OK", 32, new AbortController().signal);
   assert.deepEqual(body.thinking, { type: "disabled" }); assert.equal(body.reasoning_effort, undefined);
+});
+// Streaming fixtures: bytes are cut at arbitrary offsets, including inside CRLF and a UTF-8 character.
+const sseBytes = events => new TextEncoder().encode(events.map(event => `data: ${typeof event === "string" ? event : JSON.stringify(event)}\r\n\r\n`).join(""));
+const sseFetch = (bytes, cuts = [], status = 200, type = "text/event-stream") => {
+  const calls = [], bounds = [0, ...cuts, bytes.length];
+  const fetch = async (url, init) => {
+    calls.push({ url, init }); let index = 0;
+    return { status, headers: { get: name => name === "content-type" ? type : null }, text: async () => new TextDecoder().decode(bytes),
+      body: { getReader: () => ({ read: async () => index < bounds.length - 1 ? { done: false, value: bytes.slice(bounds[index], bounds[++index]) } : { done: true }, cancel: async () => {} }) } };
+  };
+  return { fetch, calls };
+};
+const collect = async stream => { const events = []; for await (const event of stream) events.push(event); return { events, message: await stream.result() }; };
+const noRequest = async () => { throw new Error("requestUrl must not be used while streaming"); };
+await test("Chat Completions streaming emits thinking then text and stores the buffered message shape", async () => {
+  const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, model = reasoningModel("deepseek-v4-flash", true, "max");
+  const bytes = sseBytes([{ id: "r1", model: "deepseek-v4-flash", choices: [{ delta: { reasoning_content: "先想" } }] }, { choices: [{ delta: { reasoning_content: "一下" } }] },
+    { choices: [{ delta: { content: "你好，" } }] }, { choices: [{ delta: { content: "世界" }, finish_reason: "stop" }] }, "[DONE]"]);
+  const utf8 = bytes.indexOf(0xe4), cuts = [3, 40, utf8 + 1, utf8 + 2, bytes.indexOf(13) + 1, bytes.length - 4];
+  const { fetch, calls } = sseFetch(bytes, cuts.filter((cut, i, all) => cut > 0 && cut < bytes.length && all.indexOf(cut) === i).sort((a, b) => a - b));
+  const { events, message } = await collect(mobileStream(provider, noRequest, undefined, "conversation", fetch)(piModel(provider, model), context, {}));
+  assert.equal(JSON.parse(calls[0].init.body).stream, true); assert.equal(calls[0].init.headers.Authorization, "Bearer synthetic-fixture-key");
+  assert.deepEqual(events.map(event => event.type), ["start", "thinking_start", "thinking_delta", "thinking_delta", "thinking_end", "text_start", "text_delta", "text_delta", "text_end", "done"]);
+  assert.equal(events.filter(event => event.type === "text_delta").map(event => event.delta).join(""), "你好，世界");
+  assert.deepEqual(plain(message.content), [{ type: "text", text: "你好，世界" }]);
+  assert.equal(message.mobileReasoning, "先想一下"); assert.equal(message.responseId, "r1"); assert.equal(message.stopReason, "stop");
+  assert.equal(visibleReasoning(message), "先想一下");
+});
+await test("streamed tool calls assemble like buffered ones and DeepSeek reasoning returns on the next turn", async () => {
+  const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, model = { ...reasoningModel("deepseek-v4-flash"), toolCalling: true };
+  const { fetch } = sseFetch(sseBytes([{ choices: [{ delta: { reasoning_content: "查一下" } }] },
+    { choices: [{ delta: { tool_calls: [{ id: "call-1", function: { name: "note_", arguments: "{\"pa" } }] } }] },
+    { choices: [{ delta: { tool_calls: [{ function: { name: "read", arguments: "th\":\"a.md\"}" } }] }, finish_reason: "tool_calls" }] }]));
+  const { message } = await collect(mobileStream(provider, noRequest, undefined, "conversation", fetch)(piModel(provider, model), context, {}));
+  assert.equal(message.stopReason, "toolUse");
+  assert.deepEqual(plain(message.content), [{ type: "toolCall", id: "call-1", name: "note_read", arguments: { path: "a.md" } }]);
+  const next = { ...context, messages: [...context.messages, message, { role: "toolResult", toolCallId: "call-1", toolName: "note_read", content: [{ type: "text", text: "内容" }], isError: false, timestamp: 2 }] };
+  const assistant = JSON.parse(buildMobileRequest(provider, piModel(provider, model), next).body).messages.find(item => item.role === "assistant");
+  assert.equal(assistant.reasoning_content, "查一下"); assert.equal(assistant.tool_calls[0].function.arguments, "{\"path\":\"a.md\"}");
+});
+await test("Responses streaming shows summary deltas and stores the completed response object", async () => {
+  const provider = { ...mobileProvider("custom"), apiProtocol: "openai-responses", baseUrl: "https://custom.example/v1", apiKey: "synthetic-fixture-key" };
+  const response = { id: "resp-1", status: "completed", usage: { input_tokens: 5, output_tokens: 3 }, output: [
+    { type: "reasoning", summary: [{ type: "summary_text", text: "概括思路" }] }, { type: "message", content: [{ type: "output_text", text: "结论" }] }] };
+  const { fetch } = sseFetch(sseBytes([{ type: "response.reasoning_summary_text.delta", delta: "概括" }, { type: "response.reasoning_summary_text.delta", delta: "思路" },
+    { type: "response.output_text.delta", delta: "结论" }, { type: "response.completed", response }]), [17]);
+  const { events, message } = await collect(mobileStream(provider, noRequest, undefined, "conversation", fetch)(piModel(provider, mobileModel("gpt-x")), context, {}));
+  assert.equal(events.filter(event => event.type === "thinking_delta").map(event => event.delta).join(""), "概括思路");
+  assert.deepEqual(plain(message.content), [{ type: "text", text: "结论" }]); assert.equal(message.responseId, "resp-1");
+  assert.equal(visibleReasoning(message), "概括思路"); assert.equal(message.usage.input, 5);
+});
+await test("streaming failures keep the Provider message, name a blocked stream, and never save half an answer", async () => {
+  const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, model = piModel(provider, mobileModel("deepseek-v4-flash"));
+  const run = async fetch => (await collect(mobileStream(provider, noRequest, undefined, "conversation", fetch)(model, context, {}))).message;
+  const denied = await run(sseFetch(new TextEncoder().encode(JSON.stringify({ error: { message: "Authentication Fails" } })), [], 401, "application/json").fetch);
+  assert.equal(denied.stopReason, "error"); assert.match(denied.errorMessage, /401.*Authentication Fails/u);
+  const blocked = await run(async () => { throw new TypeError("Load failed"); });
+  assert.equal(blocked.errorMessage, MOBILE_STREAM_BLOCKED); assert.deepEqual(plain(blocked.content), []);
+  const cut = await run(sseFetch(sseBytes([{ choices: [{ delta: { content: "半句" } }] }])).fetch);
+  assert.equal(cut.stopReason, "error"); assert.match(cut.errorMessage, /中断/u); assert.deepEqual(plain(cut.content), []);
+  const midStream = await run(sseFetch(sseBytes([{ choices: [{ delta: { content: "先" } }] }, { error: { message: "rate limited" } }])).fetch);
+  assert.match(midStream.errorMessage, /rate limited/u);
+});
+await test("Stop mid-stream aborts at once and late chunks cannot change the result or emit events", async () => {
+  const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, controller = new AbortController();
+  const first = sseBytes([{ choices: [{ delta: { content: "第一段" } }] }]), late = sseBytes([{ choices: [{ delta: { content: "迟到" }, finish_reason: "stop" }] }]);
+  let reads = 0, release;
+  const fetch = async (_url, init) => {
+    assert.equal(init.signal, controller.signal);
+    return { status: 200, headers: { get: () => "text/event-stream" }, text: async () => "", body: { getReader: () => ({ cancel: async () => {},
+      read: () => reads++ === 0 ? Promise.resolve({ done: false, value: first }) : reads === 2 ? new Promise(resolve => { release = () => resolve({ done: false, value: late }); }) : Promise.resolve({ done: true }) }) } };
+  };
+  const stream = mobileStream(provider, noRequest, undefined, "conversation", fetch)(piModel(provider, mobileModel("deepseek-v4-flash")), context, { signal: controller.signal });
+  const deltas = []; const consumed = (async () => { for await (const event of stream) if (event.type === "text_delta") deltas.push(event.delta); })();
+  while (!release) await turn();
+  controller.abort(); const message = await stream.result(); await consumed;
+  assert.equal(message.stopReason, "aborted"); assert.deepEqual(plain(message.content), []); assert.deepEqual(deltas, ["第一段"]);
+  release(); await turn(); await turn();
+  assert.deepEqual(deltas, ["第一段"]); assert.deepEqual(plain(message.content), []);
+});
+await test("streaming defaults follow verified presets, explicit choices win and survive mobile loading", () => {
+  assert.deepEqual(["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"].map(id => mobileStreamingEnabled(mobileProvider(id))), [false, true, true, true, false, false]);
+  assert.equal(mobileStreamingEnabled({ ...mobileProvider("deepseek"), mobileStreaming: false }), false);
+  assert.equal(mobileStreamingEnabled({ ...mobileProvider("glm"), mobileStreaming: true }), true);
+  assert.equal(Object.hasOwn(mobileProvider("deepseek"), "mobileStreaming"), false, "new services inherit future preset changes");
+  // Desktop normalization is covered in provider-settings-behavior.ts (Node-only bundle).
+  const kept = loadMobileSettings({ apiProviders: [{ ...mobileProvider("kimi"), mobileStreaming: false }] }).apiProviders[0];
+  assert.equal(kept.mobileStreaming, false);
+});
+await test("connection test uses the streaming path when streaming is on and keeps the blocked-stream reason", async () => {
+  const f = fixture(), stream = sseFetch(sseBytes([{ choices: [{ delta: { content: "OK" }, finish_reason: "stop" }] }]));
+  const streaming = new MobileModelConfiguration(() => f.settings, f.save, async input => { f.calls.push(input); return answer(); }, undefined, stream.fetch);
+  const draft = streaming.createDraft(f.provider); draft.mobileStreaming = true; await streaming.save(draft);
+  assert.equal(stream.calls.length, 1); assert.equal(f.calls.length, 0); assert.equal(f.settings.apiProviders[0].mobileStreaming, true);
+  const blocked = new MobileModelConfiguration(() => f.settings, f.save, async () => answer(), undefined, async () => { throw new TypeError("Load failed"); });
+  await assert.rejects(blocked.save(blocked.createDraft(f.settings.apiProviders[0])), error => error.message === MOBILE_STREAM_BLOCKED);
+  const off = blocked.createDraft(f.settings.apiProviders[0]); off.mobileStreaming = false; await blocked.save(off);
+  assert.equal(f.settings.apiProviders[0].mobileStreaming, false, "turning streaming off falls back to requestUrl and saves");
 });
 console.log(`OK ${passed} mobile model settings tests; browser-only shared service; fixtures stay in memory`);

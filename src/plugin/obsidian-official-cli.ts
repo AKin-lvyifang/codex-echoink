@@ -19,9 +19,17 @@ export interface ObsidianCliProcessResult {
 export interface ObsidianCliTransport {
   run(argv: readonly string[], signal?: AbortSignal): Promise<ObsidianCliProcessResult>;
 }
+export const OBSIDIAN_CLI_RAW_CONTENT_COMMANDS: readonly string[] = Object.freeze([
+  "read", "daily:read", "template:read", "history:read", "search:context", "diff", "property:read", "properties", "outline", "base:query", "aliases"
+]);
+export function obsidianCliOutputIsNotEnabled(command: string, output: string): boolean {
+  return !OBSIDIAN_CLI_RAW_CONTENT_COMMANDS.includes(command)
+    && /^(?:Command line interface is not enabled|CLI is not enabled)/iu.test(output);
+}
 export function obsidianCliOutputIsError(command: string, stdout: string, stderr: string): boolean {
-  const rawContent = ["read", "daily:read", "template:read", "history:read", "search:context", "diff", "property:read", "properties", "outline", "base:query", "aliases"].includes(command);
-  return (!rawContent && /^(?:Error:|Unknown command|Command not found|CLI is not enabled)/iu.test(stdout)) || !!stderr.trim();
+  const rawContent = OBSIDIAN_CLI_RAW_CONTENT_COMMANDS.includes(command);
+  return obsidianCliOutputIsNotEnabled(command, stdout)
+    || (!rawContent && /^(?:Error:|Unknown command|Command not found)/iu.test(stdout)) || !!stderr.trim();
 }
 /** Fixed official installation/registration locations. Never resolve arbitrary PATH programs. */
 export async function findObsidianCliExecutable(): Promise<string | null> {
@@ -44,7 +52,7 @@ export function createOfficialObsidianCliTransport(vaultRootPath: string): Obsid
     async run(argv, signal) {
       if (signal?.aborted) return { status: "cancelled", started: false, output: "", reason: "obsidian_cli_cancelled" };
       const executable = await findObsidianCliExecutable();
-      if (!executable) return { status: "unavailable", started: false, output: "", reason: "Obsidian CLI binary missing. Install Obsidian 1.12.7+ and enable Settings > General > Command line interface." };
+      if (!executable) return { status: "unavailable", started: false, output: "", reason: "Obsidian CLI binary missing. Install Obsidian 1.12.7+ and enable Settings > General > Advanced > Command line interface." };
       return await new Promise<ObsidianCliProcessResult>((resolve) => {
         let started = false;
         // Public CLI selects the Vault containing cwd. The caller verifies `vault info=path`

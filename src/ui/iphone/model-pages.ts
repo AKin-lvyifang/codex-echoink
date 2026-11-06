@@ -1,7 +1,7 @@
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../../settings/settings";
 import { getApiProviderPreset, type ApiProviderId, type ApiProviderProtocol } from "../../settings/provider-presets";
 import { MobileModelConfiguration, MOBILE_MODEL_GROUPS, validateMobileModelParameters } from "../../mobile/model-configuration";
-import { mobileModel, mobileProvider, selectedModel, supportedProvider } from "../../mobile/settings";
+import { mobileModel, mobileProvider, mobileStreamingEnabled, selectedModel, supportedProvider } from "../../mobile/settings";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { settingsMessage, settingsText } from "./settings-language";
 import type { IPhonePageContext } from "./workbench-contract";
@@ -22,7 +22,7 @@ export class IPhoneModelPages {
   private renderList?: () => void;
   private readonly verified = new Map<string, string>();
   constructor(private readonly ctx: IPhonePageContext, private readonly changed: () => void) {
-    this.configuration = new MobileModelConfiguration(ctx.host.settings, ctx.host.saveSettings, ctx.host.modelRequest, ctx.host.services.usageObserver);
+    this.configuration = new MobileModelConfiguration(ctx.host.settings, ctx.host.saveSettings, ctx.host.modelRequest, ctx.host.services.usageObserver, ctx.host.modelFetch);
   }
   async open(): Promise<void> {
     const { ctx } = this, id = "iphone-settings-model";
@@ -34,7 +34,7 @@ export class IPhoneModelPages {
       settingsRow(ctx, defaults, current?.model.displayName || current?.model.id || "选择默认模型", { literal: !!current, leading: current ? settingsBrand(ctx, current.provider.providerId) : iphoneIcon(ctx.document, "sparkles"), detail: current?.provider.name, literalDetail: true, action: () => this.defaults() });
       const providers = settingsGroup(ctx, body, "模型服务");
       for (const provider of ctx.host.settings().apiProviders) settingsRow(ctx, providers, provider.name, {
-        literal: true, leading: settingsBrand(ctx, provider.providerId), detail: mobileAvailable(provider) ? `${provider.models.length} 个模型` : unavailable(provider),
+        literal: true, leading: settingsBrand(ctx, provider.providerId), detail: mobileAvailable(provider) ? `${provider.models.length} 个模型${mobileStreamingEnabled(provider) ? "" : " · 回答整段出现"}` : unavailable(provider),
         value: this.verified.get(provider.id) === JSON.stringify(provider) ? "已连接" : undefined, valueLeading: this.verified.get(provider.id) === JSON.stringify(provider) ? iphoneIcon(ctx.document, "circle-check") : undefined,
         action: mobileAvailable(provider) ? () => this.form(provider) : undefined
       });
@@ -149,6 +149,7 @@ export class IPhoneModelPages {
     if (!protocols.some(([id]) => id === draft.apiProtocol)) protocols.push([draft.apiProtocol, draft.apiProtocol]);
     for (const [id, name] of protocols) { const option = el(ctx.document, "option", "", name); option.value = id; protocol.append(option); }
     protocol.value = draft.apiProtocol; protocol.addEventListener("change", () => { draft.apiProtocol = protocol.value as ApiProviderProtocol; changed(); });
+    settingsCheck(ctx, connection, "流式输出", mobileStreamingEnabled(draft), checked => { draft.mobileStreaming = checked; changed(); });
     const modelArea = el(ctx.document, "div", "ip-settings-parameters"); body.append(modelArea);
     const invalid = new Set<HTMLInputElement>();
     const renderModel = (model: ApiProviderModelConfig) => {

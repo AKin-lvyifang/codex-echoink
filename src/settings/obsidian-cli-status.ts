@@ -59,7 +59,7 @@ export function renderObsidianCliStatus(container: HTMLElement, zh: boolean): vo
         target: "_blank", rel: "noopener noreferrer",
         title: needsUpdate
           ? (zh ? "需要 Obsidian 1.12.7 以上安装包" : "Requires Obsidian installer 1.12.7 or later")
-          : (zh ? "在 Obsidian 设置 → 通用中查看并开启命令行界面" : "Check Command line interface in Obsidian Settings → General")
+          : (zh ? "在 Obsidian 设置 → 通用 → 高级中查看并开启命令行界面" : "Check Command line interface in Obsidian Settings → General → Advanced")
       }
     });
     attachNativeTooltip(link, link.title);

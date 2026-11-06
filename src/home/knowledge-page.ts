@@ -1,9 +1,13 @@
-import { ItemView, Notice, TFile, TFolder, setIcon, type EventRef, type WorkspaceLeaf } from "obsidian";
+import { ModuleOwnerRequired } from "../agents/registry";
+import { moduleOwnerLabel } from "../ui/module-owner-modal";
+import { KnowledgeCheckupPanel } from "./knowledge-checkup/panel";
+import { KnowledgeMapPanel } from "./knowledge-map/panel";
+import { renderKnowledgeStatistics } from "./knowledge-map/statistics";
+import { ItemView, Notice, TFolder, setIcon, type EventRef, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { createOriginButton, createOriginPagination, disposeOriginControls } from "../settings/origin-controls";
+import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { renderActivityHeatmap, setActivityHeatmapsActive } from "../settings/activity-heatmap";
-import { renderSettingsKnowledgeDashboard } from "../settings/knowledge-dashboard";
 import { knowledgeMaintenanceHistoryTitle, knowledgeMaintenanceHistoryDescription, knowledgeMaintenanceHistoryStatus, knowledgeUpgradeHistorySummary, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "../settings/knowledge-maintenance-history";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { MaintenanceUpgradePreview, MaintenanceUpgradeSnapshot, MaintenanceUpgradeSurface } from "../knowledge-base/maintenance-upgrade-contract";
@@ -13,15 +17,16 @@ import { renderMaintenanceProgressBar } from "../ui/codex-view/knowledge-linking
 import { ForegroundView } from "../ui/foreground-view";
 import { loadKnowledgePageData, type KnowledgePageSnapshot } from "./knowledge-page-data";
 import { getWorkbenchDataService } from "./workbench-data";
-import { prefillWorkbenchModule, workbenchModuleOwner } from "./module-navigation";
-import { openObsidianFolderGraphLeaf } from "./open-native-graph";
+import { prefillWorkbenchModule } from "./module-navigation";
+
 
 export const KNOWLEDGE_PAGE_VIEW_TYPE = "echoink-knowledge-page";
 type Page = "overview" | "health" | "history" | "upgrade";
-type Issue = "isolated" | "sources";
 
 /** Knowledge handoffs stay drafts; legacy upgrades write only after their preview is confirmed. */
 export class KnowledgePageView extends ItemView {
+  private checkupPanel: KnowledgeCheckupPanel | null = null;
+  private mapPanel: KnowledgeMapPanel | null = null;
   private closed = true;
   private foreground: ForegroundView | null = null;
   private releases: Array<() => void> = [];
@@ -31,20 +36,13 @@ export class KnowledgePageView extends ItemView {
   private settingsSignature = "";
   private snapshot: KnowledgePageSnapshot | null = null;
   private page: Page = "overview";
-  private issue: Issue | null = null;
-  private issuePage = 1;
   private detail: KnowledgeMaintenanceRecord | null = null;
   private detailBack: Page = "history";
   private historyState = { date: "", page: 1, listScroll: 0 };
   private secondaryCleanup: (() => void) | null = null;
-  private expanded = new Set<string>();
   private heatmapSignature = "";
   private heatmapPending = false;
-  private healthSignature = "";
-  private healthExpanded = true;
   private overviewScroll = 0;
-  private pendingIssue: Issue | null = null;
-  private healthDataset: Record<string, string> = {};
   private upgradePreview: MaintenanceUpgradePreview | null = null;
   private upgradeBusy = false;
   private upgradeError = "";
@@ -71,6 +69,7 @@ export class KnowledgePageView extends ItemView {
     await this.refresh();
   }
   async onClose(): Promise<void> {
+    this.checkupPanel?.dispose(); this.checkupPanel = null;
     this.closed = true; this.syncHeatmaps(); this.generation++; this.upgradeReadGeneration++; this.unsubscribe();
     this.secondaryCleanup?.(); this.secondaryCleanup = null;
     this.foreground?.dispose(); this.foreground = null;
@@ -86,6 +85,12 @@ export class KnowledgePageView extends ItemView {
     observe(this.app.metadataCache, this.app.metadataCache.on("resolved", () => this.scheduleRefresh()));
     observe(this.app.metadataCache, this.app.metadataCache.on("changed", () => this.scheduleRefresh()));
     this.releases.push(getWorkbenchDataService(this.plugin).subscribe(() => this.scheduleRefresh()));
+    const system = this.plugin.getKnowledgeSystemService();
+    this.releases.push(system.subscribe(task => {
+      if (task?.phase === "completed") this.scheduleRefresh();
+      else this.mapPanel?.refreshActions();
+    }));
+    void system.ready.then(() => { if (this.active()) this.mapPanel?.refreshActions(); });
     const source = this.plugin.getKnowledgeActivitySource?.();
     if (source) this.releases.push(source.subscribe(snapshot => {
       if (snapshot.maintenance.some(activity => activity.taskKind === "upgrade")) void this.refreshUpgrade();
@@ -99,9 +104,10 @@ export class KnowledgePageView extends ItemView {
     queueMicrotask(() => { this.scheduled = false; if (this.pending && this.active()) void this.refresh(); });
   }
   refreshIfSettingsChanged(): void { if (this.signature() !== this.settingsSignature) { this.pending = true; if (this.active()) void this.refresh(); } }
-  refreshLanguage(): void { this.heatmapSignature = ""; this.healthSignature = ""; this.refreshIfSettingsChanged(); }
-  private loadSnapshot(): Promise<KnowledgePageSnapshot> { return loadKnowledgePageData(this.plugin, bindings => getWorkbenchDataService(this.plugin).loadKnowledgeLinkHealth(bindings)); }
+  refreshLanguage(): void { this.heatmapSignature = ""; this.refreshIfSettingsChanged(); }
+  private loadSnapshot(): Promise<KnowledgePageSnapshot> { return loadKnowledgePageData(this.plugin); }
   async refresh(): Promise<void> {
+    if (this.page === "health" && this.checkupPanel) { await this.checkupPanel.refresh(); return; }
     this.pending = true;
     if (!this.active()) return;
     this.pending = false;
@@ -125,11 +131,11 @@ export class KnowledgePageView extends ItemView {
     }
   }
   openPage(page: Page): void {
-    if (this.page === "overview" && !this.issue && !this.detail && page !== "overview") this.overviewScroll = this.contentEl.scrollTop;
-    this.page = page; this.issue = null; this.detail = null;
+    if (this.page === "overview" && !this.detail && page !== "overview") this.overviewScroll = this.contentEl.scrollTop;
+    this.page = page; this.detail = null;
     if (!this.contentEl.querySelector('[data-knowledge="overview"]')) return;
     this.showPage(); this.renderSecondary();
-    if (this.active() && !this.snapshot) void this.refresh();
+    if (this.active() && (page === "overview" || !this.snapshot)) void this.refresh();
   }
   private reset(host: HTMLElement): void { disposeOriginControls(host); host.empty(); }
   private error(error: unknown): string { return error instanceof Error ? error.message : String(error); }
@@ -144,7 +150,7 @@ export class KnowledgePageView extends ItemView {
           button.disabled = true; setAmicroButtonPending(button, true);
           try { await Promise.resolve(result); } finally { button.disabled = false; setAmicroButtonPending(button, false); }
         }
-      } catch (error) { new Notice(this.error(error)); }
+      } catch (error) { if (error instanceof ModuleOwnerRequired) this.plugin.openModuleOwnerPicker(error.moduleId, async () => action()); else new Notice(this.error(error)); }
     };
     return button;
   }
@@ -155,9 +161,14 @@ export class KnowledgePageView extends ItemView {
     inner.createDiv({ cls: "knowledge-status", attr: { "data-knowledge": "status", role: "status", "aria-live": "polite" } });
     const overview = inner.createDiv({ attr: { "data-knowledge": "overview" } });
     overview.createDiv({ cls: "knowledge-header", attr: { "data-knowledge": "header" } });
-    overview.createDiv({ cls: "knowledge-upgrade-banner", attr: { "data-knowledge": "upgrade", role: "status", "aria-live": "polite" } });
+    const reminders = overview.createDiv({ cls: "knowledge-map-reminders", attr: { "data-knowledge": "reminders" } });
+    overview.createDiv({ cls: "knowledge-upgrade-banner", attr: { "data-knowledge": "upgrade", role: "status" } });
+    overview.createDiv({ cls: "knowledge-location-reminders", attr: { "data-knowledge": "locations" } });
     overview.createDiv({ cls: "knowledge-metrics", attr: { "data-knowledge": "metrics" } });
-    for (const name of ["activity", "directories", "issues", "recent"]) overview.createEl("section", { cls: `knowledge-${name}`, attr: { "data-knowledge": name } });
+    overview.createEl("section", { cls: "knowledge-activity", attr: { "data-knowledge": "activity" } });
+    const map = overview.createEl("section", { attr: { "data-knowledge": "map" } });
+    this.mapPanel = new KnowledgeMapPanel(map, reminders, this.plugin, () => this.refresh());
+    overview.createEl("section", { cls: "knowledge-recent", attr: { "data-knowledge": "recent" } });
     inner.createDiv({ attr: { "data-knowledge": "secondary" } });
     this.field("activity").addEventListener("focusout", () => queueMicrotask(() => { if (this.heatmapPending && !this.closed) this.renderHeatmap(); }));
     this.renderHeader(); this.showPage();
@@ -171,8 +182,8 @@ export class KnowledgePageView extends ItemView {
       this.button(header, "", () => prefillWorkbenchModule(this.plugin, "knowledge-base", this.t("帮我看看知识库里有哪些值得整理的内容", "Help me review what is worth organizing in my knowledge base")), "is-primary").dataset.knowledge = "owner";
     }
     header.querySelector("h1")!.setText(this.t("知识库", "Knowledge"));
-    const owner = workbenchModuleOwner(this.plugin, "knowledge-base").name;
-    this.field("owner").setText(this.t(`交给 ${owner}`, `Ask ${owner}`));
+    const label = moduleOwnerLabel(this.plugin, "knowledge-base");
+    this.field("owner").setText(label);
   }
   private heading(host: HTMLElement, title: string): HTMLElement { const heading = host.createDiv({ cls: "knowledge-heading" }); heading.createEl("h2", { text: title }); return heading; }
   private regionError(host: HTMLElement, message?: string): void {
@@ -181,22 +192,19 @@ export class KnowledgePageView extends ItemView {
     this.button(error, this.t("重试", "Retry"), () => this.refresh());
   }
   private renderOverview(): void {
-    const data = this.snapshot!; this.renderUpgradeBanner(); const metrics = this.field("metrics"); this.reset(metrics);
-    const health = data.health;
-    const available = health && ["local-structure", "limited"].includes(health.assessment);
-    for (const [label, value, unit] of [
-      [this.t("知识健康", "Knowledge health"), available ? health.score : null, ""],
-      [this.t("本周新增", "Added this week"), data.weekly.added, this.t("篇", "notes")],
-      [this.t("本周整理", "Organized this week"), data.weekly.organized, this.t("次", "batches")]
-    ] as const) {
-      const item = metrics.createDiv({ cls: "knowledge-metric" }); item.createSpan({ text: label });
-      const number = item.createDiv({ cls: "knowledge-metric-number" }); number.createEl("strong", { text: value === null ? "—" : String(value) }); if (unit) number.createSpan({ text: unit });
-      if (label === this.t("知识健康", "Knowledge health")) {
-        this.button(item, this.t("评分说明", "Score details"), () => this.openPage("health"));
-        if (!available || health?.assessment === "limited") item.createSpan({ cls: "knowledge-note", text: health?.assessment === "uninitialized" ? this.t("未初始化", "Not initialized") : available ? this.t("检查不完整", "Limited coverage") : this.t("暂无法评估", "Unavailable") });
-      }
-    }
-    this.renderHeatmap(); this.renderDirectories(); this.renderIssues(); this.renderRecent();
+    const data = this.snapshot!;
+    this.renderUpgradeBanner();
+    this.mapPanel?.update(
+      data.mapDomains ?? [], data.systemReminders ?? [],
+      data.directories.find(directory => directory.role === "inbox")?.count ?? null,
+      data.errors.system,
+    );
+    renderKnowledgeStatistics(
+      this.field("metrics"), data, this.plugin.settings.settingsLanguage === "en",
+      () => this.openPage("health"),
+      () => { void this.openInbox().catch(error => new Notice(this.error(error))); },
+    );
+    this.renderLocations(); this.renderHeatmap(); this.renderRecent();
   }
   private upgradeService(): Partial<MaintenanceUpgradeSurface> | null { return this.plugin.getKnowledgeSurfaceService(); }
   private upgradeActivity(): Readonly<MaintenanceActivity> | undefined {
@@ -238,6 +246,13 @@ export class KnowledgePageView extends ItemView {
     }
     if (!upgrade) return;
     if (upgrade.status === "scanning") { host.createSpan({ text: this.t("正在检查旧资料…", "Checking legacy notes…") }); return; }
+    if (upgrade.purpose === "checkup") {
+      if (upgrade.status !== "completed") {
+        host.createSpan({ text: upgrade.status === "running" ? "正在修复知识库" : "知识库修复尚未完成" });
+        this.button(host, "查看修复", () => this.openPage("health"), "is-secondary");
+      }
+      return;
+    }
     const ready = upgrade.status === "ready", activity = this.upgradeActivity();
     const additions: string[] = [];
     if (upgrade.counts.sourceStatusCount) additions.push(this.t(`${upgrade.counts.sourceStatusCount} 篇资料待补状态`, `${upgrade.counts.sourceStatusCount} sources need status`));
@@ -253,14 +268,14 @@ export class KnowledgePageView extends ItemView {
     host.createSpan({ text });
     this.button(host, ready ? automatic ? this.t("查看并升级", "Review and upgrade") : this.t("查看清单", "Review items") : this.t("查看升级", "View upgrade"), () => ready ? this.openUpgradePreview() : this.openPage("upgrade"), "is-secondary").disabled = this.upgradeBusy;
   }
-  private async openUpgradePreview(): Promise<void> {
+  private async openUpgradePreview(paths?: readonly string[]): Promise<void> {
     if (this.upgradeBusy) return;
     const preview = this.upgradeService()?.previewUpgrade;
     if (!preview) throw new Error(this.t("旧资料检查暂时不可用", "Legacy check is unavailable"));
     this.upgradeBusy = true; this.renderUpgradeBanner();
     try {
       const service = this.upgradeService()!;
-      const next = await service.previewUpgrade!();
+      const next = await service.previewUpgrade!(paths);
       const upgrade = await service.getUpgradeSnapshot?.();
       if (this.closed) return;
       this.upgradePreview = next; this.upgradeError = "";
@@ -293,7 +308,10 @@ export class KnowledgePageView extends ItemView {
         await service.stopUpgrade(); next = await service.getUpgradeSnapshot?.();
       }
       if (!this.closed && this.snapshot && next) { this.upgradeReadGeneration++; this.snapshot.upgrade = next; delete this.snapshot.errors.upgrade; }
-    } catch (error) { this.upgradeError = this.error(error); }
+    } catch (error) {
+      if (error instanceof ModuleOwnerRequired) this.plugin.openModuleOwnerPicker(error.moduleId, () => this.upgradeAction(action));
+      else this.upgradeError = this.error(error);
+    }
     finally {
       this.upgradeBusy = false;
       if (!this.closed) { this.renderUpgradeBanner(); if (this.page === "upgrade") this.renderSecondary(); }
@@ -390,103 +408,56 @@ export class KnowledgePageView extends ItemView {
     const editor = host.querySelector<HTMLElement>(".activity-range-editor");
     if ((editor && !editor.hidden) || host.contains(host.ownerDocument.activeElement)) { this.heatmapPending = true; return; }
     this.heatmapPending = false; this.heatmapSignature = signature; this.reset(host);
-    const heading = this.heading(host, this.t("新增与整理", "Additions and organization"));
+    const heading = this.field("metrics");
+    heading.querySelector(".activity-heatmap-controls")?.remove();
+    heading.querySelector(".activity-heatmap-period")?.remove();
     const byDate = new Map(data.activityDays.map(day => [day.date, day]));
     const label = (date: string) => { const day = byDate.get(date); return this.t(`${date} · 新增${day?.added ?? 0}篇 · 整理${day?.organized ?? 0}次`, `${date} · ${day?.added ?? 0} added notes · ${day?.organized ?? 0} organized batches`); };
     if (!data.errors.activity) renderActivityHeatmap(host, heading, host, { days: data.activityDays.map(day => ({ date: day.date, count: day.total, label: label(day.date) })), title: this.t("新增与整理", "Additions and organization"), stateKey: "knowledgeActivity", zh: this.plugin.settings.settingsLanguage !== "en", app: this.app, label,
+      summaryInFooter: true,
       summary: days => { const records = days.map(day => byDate.get(day.date)); const added = records.reduce((sum, day) => sum + (day?.added ?? 0), 0), organized = records.reduce((sum, day) => sum + (day?.organized ?? 0), 0); return this.t(`新增 ${added} 篇 · 整理 ${organized} 次`, `${added} added notes · ${organized} organized batches`); } });
     this.regionError(host, data.errors.activity);
     if (data.weekly.unknownCreatedAtCount) host.createDiv({ cls: "knowledge-note", text: this.t("部分文件创建时间未知", "Some file creation dates are unknown") });
-    const rules = host.createEl("details", { cls: "knowledge-rules" }); rules.createEl("summary", { text: this.t("统计口径", "How counts work") });
-    rules.createEl("p", { text: this.t("新增按知识成果文件的创建时间统计，复制或同步可能改变该时间；整理只计算正式维护中完成或核实无需改动的批次。", "Additions use knowledge file creation dates, which copying or syncing may change. Organization counts completed or verified no-change maintenance batches only.") });
+    const footer = host.querySelector<HTMLElement>(".heatmap-footer");
+    if (footer) {
+      const info = this.button(footer, "", () => new Notice(this.t(
+        "新增按知识笔记的创建时间；整理按已完成或核实无需改动的维护批次。复制或同步可能改变创建时间。",
+        "Added notes use creation dates; organization counts completed maintenance batches. Copying can change dates.",
+      )), "is-icon");
+      info.setAttribute("aria-label", this.t("统计口径", "How counts work"));
+      setIcon(info, "info");
+    }
   }
   private roleLabel(role: string): string { const names: Record<string, [string, string]> = { raw: ["资料来源", "Sources"], wiki: ["知识成果", "Knowledge"], projects: ["项目", "Projects"], inbox: ["收件箱", "Inbox"] }; return this.t(...names[role]); }
   private directoryState(state: string): string {
     const labels: Record<string, [string, string]> = { disabled: ["未启用", "Disabled"], unbound: ["尚未设置知识库位置", "No location configured"], invalid: ["位置已失效", "Location is unavailable"], unavailable: ["位置暂时读不到", "Location cannot be read"], partial: ["部分位置尚未更新", "Some locations are not updated"] };
     return labels[state] ? this.t(...labels[state]) : "";
   }
-  private renderDirectories(): void {
-    const host = this.field("directories"); this.reset(host);
-    const heading = this.heading(host, this.t("目录", "Folders"));
-    this.button(heading, this.t("打开图谱", "Open graph"), () => this.openGraph(), "is-secondary");
-    const list = host.createDiv({ cls: "knowledge-directory-list" });
-    for (const directory of this.snapshot!.directories) {
-      const group = list.createDiv({ cls: "knowledge-directory-group" });
-      const multiple = directory.roots.length > 1;
-      const row = this.button(group, "", async () => {
-        if (multiple) { if (this.expanded.has(directory.role)) this.expanded.delete(directory.role); else this.expanded.add(directory.role); this.renderDirectories(); this.field("directories").querySelector<HTMLButtonElement>(`[data-role="${directory.role}"]`)?.focus(); }
-        else if (["ready", "partial"].includes(directory.roots[0]?.state ?? "")) await this.openFolder(directory.roots[0].path);
-        else await this.plugin.openEchoInkKnowledgeSettings();
-      }, "is-tertiary knowledge-directory-row");
-      row.dataset.role = directory.role;
-      if (multiple) row.setAttribute("aria-expanded", String(this.expanded.has(directory.role)));
-      this.renderIcon(row, multiple ? this.expanded.has(directory.role) ? "chevron-down" : "chevron-right" : "folder");
-      const copy = row.createDiv({ cls: "knowledge-row-copy" }); copy.createEl("strong", { text: this.roleLabel(directory.role) });
-      copy.createSpan({ cls: "knowledge-note", text: multiple ? directory.roots.map(root => root.path).join(" · ") : directory.roots[0]?.path ?? this.directoryState(directory.state) });
-      if (directory.state !== "ready" && directory.roots.length) copy.createSpan({ cls: "knowledge-note", text: this.directoryState(directory.state) });
-      const figures = row.createDiv({ cls: "knowledge-directory-figures" });
-      figures.createSpan({ cls: "knowledge-count", text: directory.count === null ? "—" : `${directory.count} ${this.plugin.settings.settingsLanguage === "en" ? ({ raw: "files", wiki: "notes", projects: "projects", inbox: "items" }[directory.role]) : directory.unit}` });
-      figures.createSpan({ cls: "knowledge-note", text: directory.latestMtime ? this.t("最近更新 ", "Updated ") + this.time(directory.latestMtime) : this.t("暂无记录", "No record") });
-      if (!multiple) {
-        if (["ready", "partial"].includes(directory.roots[0]?.state ?? "")) this.renderIcon(row, "chevron-right");
-        else row.createSpan({ cls: "knowledge-note", text: this.t("去设置", "Settings") });
-      }
-      if (multiple && this.expanded.has(directory.role)) {
-        const roots = group.createDiv({ cls: "knowledge-directory-roots" });
-        for (const root of directory.roots) {
-          const entry = this.button(roots, "", () => ["ready", "partial"].includes(root.state) ? this.openFolder(root.path) : this.plugin.openEchoInkKnowledgeSettings(), "is-tertiary knowledge-root-row");
-          entry.createSpan({ text: root.path }); entry.createSpan({ cls: "knowledge-note", text: root.state === "ready" ? root.count === null ? "—" : String(root.count) : root.error || this.directoryState(root.state) });
-        }
-      }
-    }
-    this.regionError(host, this.snapshot!.errors.directories);
+  private renderLocations(): void {
+    const host = this.field("locations");
+    this.reset(host);
+    const unavailable = this.snapshot!.directories.filter(directory =>
+      ["unbound", "invalid", "unavailable", "partial"].includes(directory.state));
+    if (!unavailable.length && this.snapshot!.bindings.roles.wiki.enabled) return;
+    const row = host.createDiv({ cls: "knowledge-map-reminder" });
+    row.createSpan({ cls: "knowledge-map-reminder-copy", text: unavailable.length
+      ? unavailable.map(directory => `${this.roleLabel(directory.role)}${this.directoryState(directory.state)}`).join("；")
+      : this.t("尚未设置知识库位置", "Choose knowledge locations") });
+    this.button(row, this.t("去设置", "Settings"), () => this.plugin.openEchoInkKnowledgeSettings(), "is-secondary");
+  }
+  private async openInbox(): Promise<void> {
+    const roots = this.snapshot?.directories.find(directory => directory.role === "inbox")?.roots
+      .filter(root => root.state === "ready") ?? [];
+    if (!roots.length) return this.plugin.openEchoInkKnowledgeSettings();
+    await this.openFolder(this.snapshot!.bindings.roles.inbox.writePath ?? roots[0].path);
   }
   private async openFolder(path: string): Promise<void> {
     const folder = this.app.vault.getAbstractFileByPath(path);
     const leaf = this.app.workspace.getLeavesOfType("file-explorer")[0];
+    await leaf?.loadIfDeferred();
     const view = leaf?.view as { revealInFolder?: (folder: TFolder) => unknown } | undefined;
     if (!(folder instanceof TFolder) || !leaf || !view?.revealInFolder) throw new Error(this.t(`无法在文件列表中打开目录：${path}，请启用文件列表并核对位置。`, `Cannot reveal folder: ${path}. Enable the file explorer and check its location.`));
     await view.revealInFolder(folder); await this.app.workspace.revealLeaf(leaf);
-  }
-  private async openGraph(): Promise<void> {
-    const signature = this.signature();
-    const next = await this.loadSnapshot();
-    if (this.closed) return;
-    if (signature !== this.signature()) { await this.refresh(); throw new Error(this.t("目录位置已更新，请重试", "Folder locations changed. Retry.")); }
-    const roots = next.directories.filter(directory => directory.role === "wiki" || directory.role === "projects").flatMap(directory => directory.roots.filter(root => ["ready", "partial"].includes(root.state)).map(root => root.path));
-    if (!roots.length) { new Notice(this.t("请先在设置中选择有效的知识成果或项目位置", "Choose a valid knowledge or project folder in settings first")); return; }
-    await openObsidianFolderGraphLeaf(this.app, roots, this.plugin.settings.settingsLanguage);
-  }
-  private issuePaths(issue: Issue, data: KnowledgePageSnapshot): string[] { return issue === "isolated" ? data.links.state === "ready" && !data.errors.links ? data.links.isolatedPaths : [] : !data.errors.sources ? data.sources.missing.map(item => item.path) : []; }
-  private issueText(issue: Issue, count: number): string { return issue === "isolated" ? this.t(`${count} 篇笔记没有任何链接`, `${count} notes have no links`) : this.t(`${count} 篇知识成果的来源文件找不到了`, `Source files are missing for ${count} knowledge notes`); }
-  private renderIssues(): void {
-    const host = this.field("issues"); this.reset(host); this.heading(host, this.t("可以处理", "Ready to handle"));
-    let count = 0;
-    for (const issue of ["isolated", "sources"] as const) {
-      const paths = this.issuePaths(issue, this.snapshot!); if (!paths.length) continue; count++;
-      const row = host.createDiv({ cls: "knowledge-issue-row" });
-      const body = this.button(row, this.issueText(issue, paths.length), () => { this.overviewScroll = this.contentEl.scrollTop; this.issue = issue; this.issuePage = 1; this.showPage(); this.renderSecondary(); }, "is-tertiary knowledge-issue-copy"); body.dataset.issue = issue;
-      const handoff = this.button(row, this.t(`交给 ${workbenchModuleOwner(this.plugin, "knowledge-base").name}`, `Ask ${workbenchModuleOwner(this.plugin, "knowledge-base").name}`), () => this.handoffIssue(issue), "is-secondary"); handoff.disabled = this.pendingIssue !== null;
-    }
-    if (this.snapshot!.links.state !== "ready") host.createDiv({ cls: "knowledge-note", text: this.t("链接还在解析", "Links are still being resolved") });
-    this.regionError(host, this.snapshot!.errors.links); this.regionError(host, this.snapshot!.errors.sources);
-    if (!count && this.snapshot!.links.state === "ready" && !this.snapshot!.errors.links && !this.snapshot!.errors.sources && this.snapshot!.sources.state !== "unknown") host.createDiv({ cls: "knowledge-empty", text: this.t("暂时没有可处理的问题", "No issues to handle right now") });
-    if (this.snapshot!.sources.state !== "ready") host.createDiv({ cls: "knowledge-note", text: this.t("部分来源尚无法核实", "Some sources could not be verified") });
-  }
-  private async handoffIssue(issue: Issue): Promise<void> {
-    if (this.pendingIssue) return;
-    this.pendingIssue = issue;
-    try {
-    const generation = ++this.generation, next = await this.loadSnapshot();
-    if (this.closed || generation !== this.generation || !this.active()) return;
-    this.snapshot = next; this.renderOverview(); this.renderSecondary();
-    if (issue === "isolated" && (next.links.state !== "ready" || next.errors.links) || issue === "sources" && next.errors.sources) throw new Error(this.t("问题范围暂时无法核实，请重试", "Issue scope could not be verified. Retry."));
-    const paths = this.issuePaths(issue, next);
-    if (!paths.length) { new Notice(this.t("这条提醒已更新", "This reminder has changed")); return; }
-    const prompt = issue === "isolated" ? this.t(`帮我看看这 ${paths.length} 篇没有任何链接的笔记`, `Help me review these ${paths.length} notes with no links`) : this.t(`帮我核对这 ${paths.length} 篇知识成果的来源文件`, `Help me verify the source files of these ${paths.length} knowledge notes`);
-    const objects = issue === "isolated" ? paths.map(path => `- ${path}`).join("\n") : next.sources.missing.map(item => `- ${item.path}\n${item.sourcePaths.map(path => this.t(`  原来源：${path}`, `  Original source: ${path}`)).join("\n")}`).join("\n");
-    await prefillWorkbenchModule(this.plugin, "knowledge-base", `${prompt}\n\n${objects}`);
-    } finally { this.pendingIssue = null; if (this.active() && this.snapshot) this.renderIssues(); }
   }
   private renderRecent(): void {
     const data = this.snapshot!, host = this.field("recent"); this.reset(host);
@@ -511,14 +482,14 @@ export class KnowledgePageView extends ItemView {
       copy.createSpan({ cls: "knowledge-note", text: record ? `${knowledgeMaintenanceHistoryStatus(entry, this.plugin.settings.settingsLanguage !== "en", record)} · ${summary}` : knowledgeMaintenanceHistoryDescription(entry, this.plugin.settings.settingsLanguage !== "en") });
     }
   }
-  private time(at: number): string { return new Date(at).toLocaleString(this.plugin.settings.settingsLanguage === "en" ? "en-US" : "zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
   private openPath(path: string): Promise<void> { return openKnowledgeMaintenancePath(this.app, path, this.plugin.settings.settingsLanguage !== "en"); }
   private showPage(): void {
     const wasHidden = this.field("overview").hidden;
-    this.field("overview").hidden = this.page !== "overview" || !!this.issue || !!this.detail;
+    this.field("overview").hidden = this.page !== "overview" || !!this.detail;
+    this.field("status").hidden = this.field("overview").hidden;
     const secondary = this.field("secondary");
     secondary.hidden = !this.field("overview").hidden;
-    const legacy = !this.issue && (this.page === "health" || this.page === "history" || !!this.detail);
+    const legacy = (this.page === "history" || !!this.detail);
     secondary.toggleClass("echoink-settings-demo", legacy);
     secondary.toggleClass("knowledge-legacy", legacy);
     this.syncHeatmaps();
@@ -532,43 +503,29 @@ export class KnowledgePageView extends ItemView {
   }
   private renderSecondary(): void {
     this.showPage();
-    if (!this.field("overview").hidden) { this.secondaryCleanup?.(); this.secondaryCleanup = null; return; }
+    if (!this.field("overview").hidden) { this.checkupPanel?.dispose(); this.checkupPanel = null; this.secondaryCleanup?.(); this.secondaryCleanup = null; return; }
     const host = this.field("secondary"), data = this.snapshot;
+    if (this.page === "health" && !this.detail) {
+      if (!this.checkupPanel) {
+        this.secondaryCleanup?.(); this.secondaryCleanup = null; this.reset(host);
+        this.checkupPanel = new KnowledgeCheckupPanel(host, this.plugin,
+          () => this.openPage("overview"), path => { void this.openUpgradePreview(path ? [path] : undefined); });
+        void this.checkupPanel.refresh();
+      }
+      return;
+    }
+    this.checkupPanel?.dispose(); this.checkupPanel = null;
+
     if (this.page === "upgrade") { this.renderUpgradePage(host); return; }
-    if (this.page === "health" && !this.issue && !this.detail) {
-      const signature = JSON.stringify([data?.dashboard, data?.errors.health, this.healthExpanded, this.plugin.settings.settingsLanguage]);
-      const editor = host.querySelector<HTMLElement>(".activity-range-editor");
-      if (signature === this.healthSignature || editor && !editor.hidden ) return;
-      this.healthSignature = signature;
-    } else this.healthSignature = "";
-    const oldDashboard = host.querySelector<HTMLElement>(".settings-knowledge-dashboard");
-    if (oldDashboard) this.healthDataset = { ...oldDashboard.dataset } as Record<string, string>;
     this.secondaryCleanup?.(); this.secondaryCleanup = null; this.reset(host);
     if (this.detail) {
       this.secondaryCleanup = renderKnowledgeMaintenanceRecordDetail(host, { zh: this.plugin.settings.settingsLanguage !== "en", record: this.detail, onBack: () => { this.detail = null; this.page = this.detailBack; this.renderSecondary(); }, onOpenPath: path => this.openPath(path) }); return;
     }
-    if (this.page === "history" && !this.issue && data) {
+    if (this.page === "history" && data) {
       this.secondaryCleanup = renderKnowledgeMaintenanceHistoryList(host, { zh: this.plugin.settings.settingsLanguage !== "en", entries: data.maintenanceHistory, records: data.maintenanceRecords, state: this.historyState, error: data.errors.history, onBack: () => this.openPage("overview"), onChange: () => this.renderSecondary(), onSelectRecord: record => { this.detail = record; this.detailBack = "history"; this.renderSecondary(); }, onOpenPath: path => this.openPath(path), onUnavailable: () => { new Notice(this.t("维护记录尚未读取或已缺失", "Maintenance record is unavailable")); } }); return;
     }
     this.button(host, this.t("返回知识库", "Back to knowledge"), () => this.openPage("overview"));
     if (!data) { host.createDiv({ text: this.t("正在读取…", "Reading…") }); return; }
-    if (this.issue) { this.renderIssueList(host, this.issue, data); return; }
-    const dashboard = host.createDiv(); Object.assign(dashboard.dataset, this.healthDataset);
-    renderSettingsKnowledgeDashboard(dashboard, { language: this.plugin.settings.settingsLanguage, visible: true, snapshot: data.dashboard, expanded: this.healthExpanded, loading: false, error: data.errors.health ?? "", recovery: this.plugin.getKnowledgeSurfaceService()?.maintenanceRecoveryStatus ?? { state: "ready", message: "" } }, { onRefresh: () => { this.healthSignature = ""; void this.refresh(); }, onToggleExpanded: () => { this.healthExpanded = !this.healthExpanded; this.healthSignature = ""; this.renderSecondary(); }, onOpenHistory: () => this.openPage("history"), onOpenRaw: () => { const raw = data.directories.find(item => item.role === "raw"); const roots = raw?.roots.filter(root => ["ready", "partial"].includes(root.state)) ?? []; if (roots.length === 1) void this.openFolder(roots[0].path).catch(error => new Notice(this.error(error))); else { this.openPage("overview"); this.expanded.add("raw"); this.renderDirectories(); this.field("directories").scrollIntoView({ block: "nearest" }); } } }, this.app);
-  }
-  private renderIssueList(host: HTMLElement, issue: Issue, data: KnowledgePageSnapshot): void {
-    const paths = this.issuePaths(issue, data), pages = Math.max(1, Math.ceil(paths.length / 20)); this.issuePage = Math.min(this.issuePage, pages);
-    host.createEl("h1", { text: this.issueText(issue, paths.length) });
-    const list = host.createDiv({ cls: "knowledge-object-list" });
-    for (const path of paths.slice((this.issuePage - 1) * 20, this.issuePage * 20)) {
-      const row = list.createDiv({ cls: "knowledge-object-row" });
-      this.button(row, path, async () => { const file = this.app.vault.getAbstractFileByPath(path); if (!(file instanceof TFile)) { await this.refresh(); throw new Error(this.t("文件已移动或不存在", "File moved or missing")); } await this.app.workspace.getLeaf("tab").openFile(file, { active: true }); });
-      if (issue === "sources") for (const source of data.sources.missing.find(item => item.path === path)?.sourcePaths ?? []) row.createSpan({ cls: "knowledge-note", text: this.t(`原来源：${source}`, `Original source: ${source}`) });
-    }
-    if (!paths.length) host.createDiv({ cls: "knowledge-empty", text: this.t("这条提醒已更新", "This reminder has changed") });
-    const pagination = host.createDiv({ cls: "knowledge-pagination" });
-    pagination.createSpan({ text: this.t(`${this.issuePage} / ${pages} 页 · 每页 20 条`, `${this.issuePage} / ${pages} pages · 20 per page`) });
-    createOriginPagination(pagination, this.issuePage, pages, page => { this.issuePage = page; this.renderSecondary(); });
-    this.regionError(host, issue === "isolated" ? data.errors.links : data.errors.sources);
+
   }
 }

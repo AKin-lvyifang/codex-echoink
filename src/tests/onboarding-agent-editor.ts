@@ -87,7 +87,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.root.getAttribute("aria-busy"), "true"); assert.match(f.root.textContent!, /正在创建/);
     assert.equal(button(f.root, "取消").disabled, true);
     let left = false; f.editor.requestLeave(() => { left = true; }); assert.equal(left, false);
-    assert.equal(f.settings.agentRegistry.agents.length, initialCount); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "sol");
+    assert.equal(f.settings.agentRegistry.agents.length, initialCount); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     gate.resolve(); await saving; await settle();
     assert.deepEqual(f.closed, [f.saved[0].agent.id]); assert.equal(f.editor.element, null);
     assert.equal(f.root.classList.contains("is-onboarding"), false);
@@ -100,7 +100,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     const f = fixture(); await f.open(); f.failSave(true);
     await f.editor.submitOnboarding(); await settle();
     assert.equal(f.saved.length, 1); assert.equal(f.closed.length, 0); assert.equal(f.editor.isPending(), false);
-    assert.match(f.root.textContent!, /合成保存失败/); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "sol");
+    assert.match(f.root.textContent!, /合成保存失败/); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="name"]')!.value, "整理员");
     const original = structuredClone(f.saved[0]);
     await f.reopen(); assert.equal(f.allocatedIds.length, 1);
@@ -118,8 +118,8 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     if (change === "position") input(f.root, "position", "用户自己填写的职位");
     if (change === "avatar") f.root.querySelector<HTMLButtonElement>('[aria-label="Nova"]')!.click();
     if (change === "current-avatar") f.root.querySelector<HTMLButtonElement>('[aria-label="默认头像"]')!.click();
-    if (change === "style") f.root.querySelector<HTMLButtonElement>('[role="radiogroup"][aria-label="风格"] [aria-label="严谨分析"]')!.click();
-    if (change === "current-style") f.root.querySelector<HTMLButtonElement>('[role="radiogroup"][aria-label="风格"] [aria-label="干脆执行"]')!.click();
+    if (change === "style") f.root.querySelector<HTMLButtonElement>('[data-persona-template="analysis"]')!.click();
+    if (change === "current-style") f.root.querySelector<HTMLButtonElement>('[data-persona-template="execution"]')!.click();
     if (change === "module") f.root.querySelector<HTMLButtonElement>('[data-module-id="journal"]')!.click();
     if (change === "capability") f.root.querySelector<HTMLButtonElement>('[data-capability-id="journal"]')!.click();
     await settle();
@@ -132,7 +132,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.saved[0].agent.name, "我的同事"); assert.equal(f.saved[0].agent.id, f.allocatedIds[0]);
     assert.equal(f.saved[0].agent.position, change === "position" ? "用户自己填写的职位" : "");
     assert.deepEqual(f.saved[0].moduleIds, change === "module" ? ["journal"] : []);
-    assert.deepEqual(f.saved[0].agent.capabilityIds, change === "capability" ? ["journal"] : []);
+    assert.deepEqual(f.saved[0].agent.capabilityIds, ["module", "capability"].includes(change) ? ["journal"] : []);
     if (change === "avatar") assert.deepEqual(f.saved[0].agent.avatar, { kind: "preset", presetId: "nova" });
     if (change === "style") assert.equal(f.saved[0].agent.styleId, "analysis");
     f.dispose();
@@ -161,7 +161,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.saved[0].agent.name, "我的记账员"); assert.equal(f.saved[0].agent.position, "保留我的职位");
     assert.deepEqual(f.saved[0].moduleIds, ["finance"]); assert.deepEqual(f.saved[0].agent.capabilityIds, ["finance"]);
     assert.equal(f.settings.lifestyle.finance.enabled, false);
-    assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "sol");
+    assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     f.dispose();
     console.log("PASS selected presets and user overrides keep their own module/capability fields without enabling modules");
   }
@@ -179,7 +179,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.root.querySelector<HTMLInputElement>('[data-field="position"]')!.value, "离开前的自定义草稿");
     leave(); button(f.root, "放弃修改").click(); await settle();
     assert.equal(action === "requestLeave" ? left : f.closed.length === 1, true);
-    assert.equal(f.saved.length, 0); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "sol");
+    assert.equal(f.saved.length, 0); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     f.dispose();
   }
   {
@@ -194,7 +194,7 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     await f.editor.submitOnboarding(); assert.equal(f.saved.length, 0, "the guide submission API cannot submit an ordinary editor");
     input(f.root, "name", "普通新建"); submit(f.root).click(); await settle();
     assert.deepEqual(f.saved[0].moduleIds, []); assert.deepEqual(f.saved[0].agent.capabilityIds, []);
-    assert.equal(f.saved[0].agent.position, ""); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "sol");
+    assert.equal(f.saved[0].agent.position, ""); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "");
     f.dispose();
     const editing = fixture(false); await editing.open("sol");
     assert.equal(submit(editing.root).textContent, "保存"); submit(editing.root).click(); await settle();

@@ -7,10 +7,10 @@ export interface KnowledgeStructureHealthInput {
   maintenanceHistory: KnowledgeBaseMaintenanceHistoryEntry[];
   rawExists: boolean; wikiExists: boolean; wikiIndexExists: boolean; trackerExists: boolean;
   rawDigestStatus: { calibration: number };
+  structure?: { total: number; broken: number; oneWay: number; isolated: number };
 }
-const MAX_DASHBOARD_FILES = 3000;
 const HEALTH_SCORE_THRESHOLD_TEXT = "85+ 健康，60-84 风险，低于 60 异常；raw、wiki 或 Tracker 缺失各扣 24 分且覆盖分数阈值，直接显示异常。";
-const HEALTH_SCORE_CHECK_NOTE = "总分 = max(0, min(100, 100 − 各项扣分之和))。维护成功不代表完成全库体检，整理队列和运行失败不扣结构分。";
+const HEALTH_SCORE_CHECK_NOTE = "原结构分再扣链接问题：死链每条 2 分、最多 20；单向相关每条 1 分、最多 10；孤立页占通用 Wiki 的比例 × 20，四舍五入、最多 20。已选不再提示的不扣，内容问题不扣分。";
 const CRITICAL_HEALTH_PENALTY = 24;
 const RISK_HEALTH_PENALTY = 2;
 
@@ -36,9 +36,12 @@ export function buildKnowledgeStructureHealth(input: KnowledgeStructureHealthInp
     });
   };
 
-  if (!input.rawExists && (!input.mappedFolders || input.settings.folderBindings?.roles.raw.enabled)) addReason("critical", "资料来源位置失效", "资料来源位置失效", 1, "已绑定的原始来源区不可用。");
-  if (!input.wikiExists && (!input.mappedFolders || input.settings.folderBindings?.roles.wiki.enabled)) addReason("critical", "知识成果位置失效", "知识成果位置失效", 1, "已绑定的知识区不可用。");
-  if (!input.mappedFolders && !input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
+  // Mapped roles already report each unavailable position through bindingIssues.
+  if (!input.mappedFolders) {
+    if (!input.rawExists) addReason("critical", "资料来源位置失效", "资料来源位置失效", 1, "已绑定的原始来源区不可用。");
+    if (!input.wikiExists) addReason("critical", "知识成果位置失效", "知识成果位置失效", 1, "已绑定的知识区不可用。");
+    if (!input.trackerExists) addReason("critical", "tracker 缺失", "tracker 缺失", 1, "说明来源消化登记无法确认。");
+  }
   for (const issue of input.bindingIssues ?? []) addReason("critical", issue, issue, 1, "已启用的用途位置不可用，请重新选择。");
 
   const history = normalizeHealthHistory(input.settings.healthHistory ?? []);
@@ -47,11 +50,26 @@ export function buildKnowledgeStructureHealth(input: KnowledgeStructureHealthInp
     addReason("risk", `Raw 状态待校准 ${input.rawDigestStatus.calibration} 个`, "Raw 状态待校准", input.rawDigestStatus.calibration,
       "1–20 项合计扣 4 分，超过 20 项合计扣 10 分；历史记录显示可能已提炼，但缺少可信机器标记。", input.rawDigestStatus.calibration > 20 ? 8 : 2);
   }
+  if (input.structure) {
+    const { total, broken, oneWay, isolated } = input.structure;
+    for (const [label, count, penalty, explanation] of [
+      ["死链", broken, Math.min(20, broken * 2), "每条扣 2 分，最多 20 分。"],
+      ["单向相关", oneWay, Math.min(10, oneWay), "每条扣 1 分，最多 10 分。"],
+      ["孤立页", isolated, total ? Math.min(20, Math.round(isolated / total * 20)) : 0,
+        "占通用 Wiki 的比例 × 20，四舍五入；地图和来源链接不算连接。"],
+    ] as const) {
+      if (count) {
+        risk.push(`${label} ${count} 项`);
+        scoreReasons.push({ label, count, penalty, explanation });
+      }
+    }
+  }
   // Existing knowledge structures remain assessable even when legacy settings
   // have no initialization receipt. Missing core pieces still deduct points.
   const initialized = input.mappedFolders ? Object.values(input.settings.folderBindings?.roles ?? {}).some(binding => binding.enabled) : input.rawExists || input.wikiExists || input.wikiIndexExists || input.trackerExists
     || input.settings.initialization.status === "initialized" || input.settings.initialization.initializedAt > 0;
-  const assessment = !initialized ? "uninitialized" : input.readFailed ? "unavailable" : input.limited ? "limited" : "local-structure";
+  const assessment = !initialized || input.structure?.total === 0 ? "uninitialized"
+    : input.readFailed ? "unavailable" : input.limited ? "limited" : "local-structure";
   const available = assessment === "local-structure" || assessment === "limited";
   if (!available) scoreReasons.length = 0;
   const score = healthScore(scoreReasons);
@@ -62,8 +80,8 @@ export function buildKnowledgeStructureHealth(input: KnowledgeStructureHealthInp
   const reasons = reasonTexts.length ? reasonTexts : ["已检查的本地结构未发现扣分项"];
   return {
     assessment,
-    coverage: assessment === "limited" ? `本地结构与已读取的来源状态；每个目录最多扫描 ${MAX_DASHBOARD_FILES} 个文件，部分来源因读取预算尚未检查。` : input.mappedFolders ? "检查已启用的资料、知识位置与私有来源处理记录；不是全库体检。" : "仅检查 raw、wiki、Tracker 及 Raw 来源状态；不是全库体检。",
-    unchecked: ["断链", "孤儿页面", "过时内容", "索引链接有效性"],
+    coverage: "检查已启用的位置、已有来源校准标记及通用 Wiki 的死链、单向相关和孤立页；内容问题不计分。",
+    unchecked: ["内容准确性", "过时内容"],
     status,
     label,
     score: available ? score : 0,

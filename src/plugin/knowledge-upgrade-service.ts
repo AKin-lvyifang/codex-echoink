@@ -1,8 +1,9 @@
+import { requireModuleOwner } from "../agents/registry";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 
-import { Notice } from "obsidian";
+import { Notice, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -12,10 +13,26 @@ import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "
 import { createKnowledgeMaintenanceResultEnvelope } from "../knowledge-base/knowledge-maintenance-result";
 import { newMaintenanceProgress } from "../knowledge-base/maintenance-activity";
 import { buildMaintenanceUpgradePlan, previewMaintenanceUpgradePlan } from "../knowledge-base/maintenance-upgrade-plan";
-import { patchMaintenanceUpgradeSourceFrontmatter, readMaintenanceFrontmatterProperty } from "../knowledge-base/maintenance-source-frontmatter";
+import {
+  patchKnowledgeProperties,
+  patchMaintenanceUpgradeSourceFrontmatter,
+  readMaintenanceFrontmatterProperty,
+} from "../knowledge-base/maintenance-source-frontmatter";
 import { appendMaintenancePageType } from "../knowledge-base/maintenance-page-metadata";
-import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage } from "../knowledge-base/maintenance-page-lock";
-import type { MaintenanceUpgradeClassification, MaintenanceUpgradeFile, MaintenanceUpgradePlan, MaintenanceUpgradePreview, MaintenanceUpgradeRootAddition, MaintenanceUpgradeSnapshot, MaintenanceUpgradeWrite } from "../knowledge-base/maintenance-upgrade-contract";
+import { holdMaintenancePages, releaseMaintenancePages, serializeMaintenancePage, maintenancePageIsHeld } from "../knowledge-base/maintenance-page-lock";
+import type {
+  KnowledgeRepairItem,
+  KnowledgeCheckupActionRow,
+  KnowledgeRepairFollowup,
+  MaintenanceUpgradeClassification,
+  MaintenanceUpgradeFile,
+  MaintenanceUpgradePlan,
+  MaintenanceUpgradePreview,
+  MaintenanceUpgradeRootAddition,
+  MaintenanceUpgradeSnapshot,
+  MaintenanceUpgradeWrite,
+  KnowledgeRepairExtras,
+} from "../knowledge-base/maintenance-upgrade-contract";
 import { FilePhase3MaintenanceStateStore, readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { pluginDataDir } from "./plugin-data-paths";
 import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
@@ -23,6 +40,7 @@ import { ObsidianVaultDomainAdapter } from "./obsidian-vault-domain-adapter";
 import { confirmAndConsumeApprovalTicket, createOperationIdentity, type ApprovalOperationContract } from "../harness/pi-native/tool-authorization";
 import { classifyKnowledgeUpgradePage, KnowledgeUpgradeClassificationError } from "./pi-production-runtime-composition";
 import { isUnknownArray } from "../utils/unknown-array";
+import { knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 
@@ -40,7 +58,7 @@ export interface KnowledgeUpgradeHost {
   bindings(): KnowledgeFolderBindings | null | undefined;
   records(): Promise<KnowledgeMaintenanceRecord[]>;
   save(record: KnowledgeMaintenanceRecord): Promise<void>;
-  createTask(): Promise<string>;
+  createTask(purpose?: "checkup"): Promise<string>;
   taskStatus(taskId: string, status: "running" | "interrupted" | "completed"): Promise<void>;
   registerRoots(roots: readonly MaintenanceUpgradeRootAddition[], expectedRevision: number): Promise<number>;
   classify(item: MaintenanceUpgradePlan["wikiItems"][number], record: KnowledgeMaintenanceRecord, signal: AbortSignal): Promise<MaintenanceUpgradeClassification>;
@@ -48,6 +66,9 @@ export interface KnowledgeUpgradeHost {
   changed(record: KnowledgeMaintenanceRecord): void;
   notice(message: string): void;
   historyRoots?(): Promise<readonly MaintenanceUpgradeRootAddition[]>;
+  repairMove?(from: string, to: string): Promise<void>;
+  repairDecision?(domains: [string, string]): Promise<void>;
+  repairsCompleted?(plan: MaintenanceUpgradePlan): Promise<void>;
 }
 
 /** One upgrade task in the existing maintenance record. Scan and preview never write notes. */
@@ -67,38 +88,151 @@ export class KnowledgeUpgradeService {
   get running(): boolean { return this.runFlight !== null; }
   async getUpgradeSnapshot(): Promise<MaintenanceUpgradeSnapshot> {
     await this.ready;
-    const record = this.record, upgrade = record?.upgrade;
+    const record = this.record,
+      upgrade = record?.upgrade;
     if (upgrade) {
       const completed = upgradeCounts(record);
-      return { status: upgrade.phase === "completed" ? "completed" : this.running ? "running" : "interrupted", counts: upgrade.plan.counts,
-        preview: this.preview(upgrade.plan), recordId: record.recordId, taskId: record.originConversationId,
-        completed, ...(record.progress?.failures[0] ? { message: record.progress.failures[0].message } : {}) };
+      return {
+        purpose: upgrade.plan.purpose,
+        checkupResults: upgrade.plan.checkupActions?.map(action => {
+          const operations = action.operationIds ?? [];
+          const failed = [...action.affectedPaths, ...operations].find(path => upgrade.skipped[path]);
+          const failure = action.failure ?? (failed ? upgrade.skipped[failed] : undefined);
+          return { ...action,
+            status: failure ? "failed" : !action.followup && (action.affectedPaths.length > 0 || operations.length > 0) &&
+              operations.every(id => upgrade.repairOperations?.[id]?.done) &&
+              action.affectedPaths.every(path => upgrade.writes[path]?.done || upgrade.preserved?.includes(path))
+              ? "success" : "pending",
+            ...(failure ? { message: failure } : {}),
+          };
+        }),
+        status:
+          upgrade.phase === "completed" ? "completed"
+            : record.progress?.status === "interrupted" ? "interrupted"
+              : this.running ? "running" : "interrupted",
+        counts: upgrade.plan.counts,
+        preview: this.preview(upgrade.plan),
+        recordId: record.recordId,
+        taskId: record.originConversationId,
+        completed,
+        ...(record.progress?.failures[0] ? { message: record.progress.failures[0].message } : {}),
+      };
     }
-    return { status: this.error ? "failed" : this.plan ? "ready" : "scanning", counts: this.plan?.counts ?? countEmpty(),
-      ...(this.plan ? { preview: previewMaintenanceUpgradePlan(this.plan) } : {}), ...(this.error ? { message: this.error } : {}) };
+    return {
+      purpose: this.plan?.purpose,
+      status: this.error ? "failed" : this.plan ? "ready" : "scanning",
+      counts: this.plan?.counts ?? countEmpty(),
+      ...(this.plan ? { preview: this.preview(this.plan) } : {}),
+      ...(this.error ? { message: this.error } : {}),
+    };
   }
-  async previewUpgrade(): Promise<MaintenanceUpgradePreview> {
+  async previewUpgrade(paths?: readonly string[]): Promise<MaintenanceUpgradePreview> {
     await this.ready;
-    if (!this.record || this.record.upgrade?.phase === "completed") { this.record = null; await this.scan(); }
+    if (!this.record || this.record.upgrade?.phase === "completed") {
+      this.record = null;
+      await this.scan();
+    }
+    if (paths) {
+      if (this.record?.upgrade && this.record.upgrade.phase !== "completed")
+        throw new Error("请先继续当前升级/修复任务。");
+      if (this.plan) {
+        const selected = new Set(paths);
+        this.plan = {
+          ...this.plan,
+          id: `upgrade-preview-${randomUUID()}`,
+          sourceItems: [],
+          wikiItems: this.plan.wikiItems.filter((item) => selected.has(item.path)),
+          rootAdditions: [],
+          issues: this.plan.issues.filter((issue) => !issue.path || selected.has(issue.path)),
+          counts: {
+            ...countEmpty(),
+            wikiCount: this.plan.wikiItems.filter((item) => selected.has(item.path)).length,
+          },
+        };
+      }
+    }
     const plan = this.record?.upgrade?.plan ?? this.plan;
     if (!plan || this.error) throw new Error(this.error || "旧资料暂时读不到，请重试。");
     return this.preview(plan);
   }
+  async prepareRepairs(
+    items: KnowledgeRepairItem[],
+    followups: KnowledgeRepairFollowup[] = [],
+    checkupActions: KnowledgeCheckupActionRow[] = [],
+    repairExtras: KnowledgeRepairExtras = {},
+  ): Promise<MaintenanceUpgradePreview> {
+    await this.ready;
+    if (this.running || (this.record?.upgrade && this.record.upgrade.phase !== "completed"))
+      throw new Error("请先继续或结束当前知识库升级/修复任务。");
+    this.record = null;
+    this.error = "";
+    this.plan = {
+      version: 1,
+      purpose: "checkup",
+      id: `repair-preview-${randomUUID()}`,
+      createdAt: Date.now(),
+      bindingRevision: this.host.bindings()?.revision ?? 0,
+      sourceItems: [],
+      wikiItems: [],
+      rootAdditions: [],
+      issues: [],
+      counts: { ...countEmpty(), wikiCount: items.length },
+      checkupActions: structuredClone(checkupActions),
+      repairExtras: structuredClone(repairExtras),
+      noteRepairs: structuredClone(items),
+      followups: structuredClone(followups),
+    };
+    return this.preview(this.plan);
+  }
   async confirmUpgrade(previewId: string): Promise<MaintenanceUpgradeSnapshot> {
     await this.ready;
     if (this.running) return this.getUpgradeSnapshot();
-    if (this.record?.upgrade?.phase !== "completed" && this.record?.upgrade) return this.resumeUpgrade();
+    if (this.record?.upgrade?.phase !== "completed" && this.record?.upgrade)
+      return this.resumeUpgrade();
     const plan = this.plan;
     if (!plan || plan.id !== previewId) throw new Error("这份预览已变化，请重新查看后确认。");
-    if ((this.host.bindings()?.revision ?? 0) !== plan.bindingRevision) throw new Error("知识库目录已变化，请重新查看升级预览。");
-    for (const item of [...plan.sourceItems, ...plan.wikiItems]) if (version(await this.read(item.path)) !== item.revision) throw new Error("预览中的资料有了新修改，请重新查看后确认。");
-    const taskId = await this.host.createTask(), now = Date.now();
-    this.record = { schemaVersion: 1, recordId: `maintenance-${randomUUID().replaceAll("-", "")}`, runId: `knowledge-upgrade-${randomUUID()}`,
-      originConversationId: taskId, at: now, date: localDateKey(now), summary: "升级旧知识", sources: [],
-      result: createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "upgrade_incomplete", message: "旧知识升级尚未完成。" }] }), progress: newMaintenanceProgress(now),
-      upgrade: { version: 1, plan: structuredClone(plan), phase: "classify", classifications: {}, writes: {}, skipped: {}, rootsRegistered: false } };
-    holdMaintenancePages(this.record.recordId, this.host.vaultRoot, plan.wikiItems.map(item => item.path));
-    await this.persist(); this.start(false);
+    if ((this.host.bindings()?.revision ?? 0) !== plan.bindingRevision)
+      throw new Error("知识库目录已变化，请重新查看升级预览。");
+    for (const item of [...plan.sourceItems, ...plan.wikiItems, ...(plan.noteRepairs ?? [])])
+      if (version(await this.read(item.path)) !== item.revision)
+        throw new Error("预览中的资料有了新修改，请重新查看后确认。");
+    for (const item of plan.noteRepairs ?? [])
+      if (maintenancePageIsHeld(this.host.vaultRoot, item.path))
+        throw new Error("涉及的笔记有未完成维护，请先继续或结束它。");
+    const taskId = await this.host.createTask(plan.purpose),
+      now = Date.now();
+    this.record = {
+      schemaVersion: 1,
+      recordId: `maintenance-${randomUUID().replaceAll("-", "")}`,
+      runId: `knowledge-upgrade-${randomUUID()}`,
+      originConversationId: taskId,
+      at: now,
+      date: localDateKey(now),
+      summary: plan.purpose === "checkup" ? "体检修复" : "升级旧知识",
+      sources: [],
+      result: createKnowledgeMaintenanceResultEnvelope({
+        status: "partial",
+        issues: [{ code: "upgrade_incomplete", message: "旧知识升级尚未完成。" }],
+      }),
+      progress: newMaintenanceProgress(now),
+      upgrade: {
+        version: 1,
+        plan: structuredClone(plan),
+        phase: "classify",
+        classifications: {},
+        writes: {},
+        skipped: {},
+        rootsRegistered: false,
+      },
+    };
+    holdMaintenancePages(
+      this.record.recordId,
+      this.host.vaultRoot,
+      [...plan.wikiItems, ...(plan.noteRepairs ?? [])].map((item) => item.path)
+        .concat(plan.repairExtras?.moves?.map(move => move.to) ?? []),
+    );
+    await this.persist();
+    this.start(false);
     return this.getUpgradeSnapshot();
   }
   async stopUpgrade(): Promise<void> {
@@ -119,7 +253,9 @@ export class KnowledgeUpgradeService {
         this.error = "";
         const records = await this.host.records();
         for (const record of records) if (record.upgrade && record.upgrade.phase !== "completed") {
-          holdMaintenancePages(record.recordId, this.host.vaultRoot, record.upgrade.plan.wikiItems.map(item => item.path));
+          holdMaintenancePages(record.recordId, this.host.vaultRoot,
+            [...record.upgrade.plan.wikiItems, ...record.upgrade.plan.noteRepairs ?? []].map(item => item.path)
+              .concat(record.upgrade.plan.repairExtras?.moves?.map(move => move.to) ?? []));
         }
         const unfinished = [...records].filter(record => record.upgrade && record.upgrade.phase !== "completed").sort((a,b) => b.at-a.at)[0];
         if (unfinished) {
@@ -192,8 +328,13 @@ export class KnowledgeUpgradeService {
   }
   private preview(plan: MaintenanceUpgradePlan): MaintenanceUpgradePreview {
     const preview = previewMaintenanceUpgradePlan(plan);
+    preview.followups = plan.followups;
+    preview.checkupActions = plan.checkupActions;
+    if (plan.purpose === "checkup") preview.automatic = (plan.noteRepairs ?? []).map(item => ({
+      path: item.path, title: item.title, properties: item.descriptions,
+    }));
     for (const [file, message] of Object.entries(this.record?.upgrade?.skipped ?? {})) {
-      const title = [...plan.sourceItems, ...plan.wikiItems].find(item => item.path === file)?.title;
+      const title = [...plan.sourceItems, ...plan.wikiItems, ...plan.noteRepairs ?? []].find(item => item.path === file)?.title;
       preview.issues.push({ path: file, title, message, kind: "review", executionFailure: true });
     }
     return preview;
@@ -213,6 +354,16 @@ export class KnowledgeUpgradeService {
       progress.stage = value; progress.currentPath = currentPath; progress.status = "running"; progress.failures = []; await this.persist();
     };
     try {
+      if (retry && state.plan.repairExtras?.stopOnFailure) {
+        for (const write of Object.values(state.writes).filter(write => write.done)) {
+          const move = state.plan.repairExtras.moves?.find(move => move.from === write.path);
+          const moved = move && (state.repairOperations?.[move.id]?.done ||
+            await this.readOptional(move.from) === null && await this.readOptional(move.to) !== null);
+          const currentPath = moved ? move.to : write.path;
+          if (version(await this.read(currentPath)) !== version(write.content))
+            throw new Error(`「${currentPath}」在中断期间被修改，已停下，原文保留。`);
+        }
+      }
       await this.host.taskStatus(record.originConversationId!, "running"); await stage("scan");
       state.confirmedBindingRevision = await this.host.registerRoots(state.plan.rootAdditions, state.confirmedBindingRevision ?? state.plan.bindingRevision);
       state.rootsRegistered = true; await this.persist();
@@ -226,9 +377,10 @@ export class KnowledgeUpgradeService {
         await stage("decompose", item.path);
         try {
           const current = await this.read(item.path);
-          if (readMaintenanceFrontmatterProperty(current, "类型").present) { preserve(item.path); await this.persist(); continue; }
+          if (readMaintenanceFrontmatterProperty(current, "类型").present && !item.confirmType) { preserve(item.path); await this.persist(); continue; }
           if (version(current) !== item.revision) { fail(item.path, "这页有了新修改，保留现状，未补类型。"); await this.persist(); continue; }
-          if (!state.classifications[item.path]) state.classifications[item.path] = await this.host.classify(item, record, signal);
+          if (item.confirmType) state.classifications[item.path] = { type: item.confirmType, uncertain: false };
+          else if (!state.classifications[item.path]) state.classifications[item.path] = await this.host.classify(item, record, signal);
           delete state.classificationFailures?.[item.path];
         } catch (error) {
           if (signal.aborted) throw new Error("stopped");
@@ -239,8 +391,10 @@ export class KnowledgeUpgradeService {
         await this.persist();
       }
       state.phase = "write"; await stage("plan");
-      for (const item of [...state.plan.sourceItems, ...state.plan.wikiItems]) {
+      for (const item of [...state.plan.sourceItems, ...state.plan.wikiItems, ...state.plan.noteRepairs ?? []]) {
         if (signal.aborted) throw new Error("stopped");
+        if (state.plan.repairExtras?.stopOnFailure && Object.keys(state.skipped).length)
+          throw new Error("部分步骤未写入，已停下，后续步骤保留。");
         if (state.writes[item.path]?.done || state.preserved.includes(item.path) || state.skipped[item.path]) continue;
         await stage("write", item.path);
         try {
@@ -248,8 +402,17 @@ export class KnowledgeUpgradeService {
           if (!write) {
             const current = await this.read(item.path);
             const source = state.plan.sourceItems.find(source => source.path === item.path);
-            const content = source ? patchMaintenanceUpgradeSourceFrontmatter(current, { status: source.addStatus, targetPaths: source.addTargetPaths })
-              : appendMaintenancePageType(current, state.classifications[item.path]);
+            const repair = state.plan.noteRepairs?.find(repair => repair.path === item.path);
+            const content = repair
+              ? repair.after
+              : source
+                ? patchMaintenanceUpgradeSourceFrontmatter(current, {
+                    status: source.addStatus,
+                    targetPaths: source.addTargetPaths,
+                  })
+                : "confirmType" in item && item.confirmType
+                  ? patchKnowledgeProperties(current, { 类型待确认: false })
+                  : appendMaintenancePageType(current, state.classifications[item.path]);
             if (content === current) { preserve(item.path); await this.persist(); continue; }
             if (version(current) !== item.revision) { fail(item.path, "这页在升级期间有了新修改，保留现状，请核对后继续。"); await this.persist(); continue; }
             write = state.writes[item.path] = { operationId: `${record.recordId}:${version(item.path).slice(0, 16)}`, path: item.path, role: source ? "source" : "wiki", expectedVersion: item.revision, content };
@@ -262,8 +425,17 @@ export class KnowledgeUpgradeService {
             // replaying an old draft over a changed file.
             const current = await this.read(item.path);
             const source = state.plan.sourceItems.find(source => source.path === item.path);
-            const missing = source ? patchMaintenanceUpgradeSourceFrontmatter(current, { status: source.addStatus, targetPaths: source.addTargetPaths })
-              : appendMaintenancePageType(current, state.classifications[item.path]);
+            const repair = state.plan.noteRepairs?.find(repair => repair.path === item.path);
+            const missing = repair
+              ? repair.after
+              : source
+                ? patchMaintenanceUpgradeSourceFrontmatter(current, {
+                    status: source.addStatus,
+                    targetPaths: source.addTargetPaths,
+                  })
+                : "confirmType" in item && item.confirmType
+                  ? patchKnowledgeProperties(current, { 类型待确认: false })
+                  : appendMaintenancePageType(current, state.classifications[item.path]);
             if (missing === current && current !== write.content) preserve(item.path);
             else fail(item.path, outcome.reason || "这页尚未核对，已保留现状，点继续重试。");
           }
@@ -274,6 +446,42 @@ export class KnowledgeUpgradeService {
         await this.persist();
       }
       if (signal.aborted) throw new Error("stopped");
+      if (!Object.keys(state.skipped).length) {
+        state.repairOperations ??= {};
+        for (const move of state.plan.repairExtras?.moves ?? []) {
+          if (signal.aborted) throw new Error("stopped");
+          if (state.repairOperations[move.id]?.done) continue;
+          await stage("write", move.from);
+          try {
+            const target = await this.readOptional(move.to);
+            if (target === null) {
+              if (version(await this.read(move.from)) !== move.revision) throw new Error("归档前笔记有新修改，原文保留。");
+              if (!this.host.repairMove) throw new Error("归档操作不可用。");
+              await serializeMaintenancePage(this.host.vaultRoot, move.from, () => this.host.repairMove!(move.from, move.to));
+            } else if (await this.readOptional(move.from) !== null) throw new Error("归档目标已存在，原文件保留。");
+            if (version(await this.read(move.to)) !== move.revision) throw new Error("归档后回读不一致，已停下。");
+            if (target !== null) await this.host.repairMove?.(move.from, move.to);
+            state.repairOperations[move.id] = { done: true };
+            await this.persist();
+          } catch (error) {
+            fail(move.id, error instanceof Error ? error.message : "归档未完成。");
+            throw error;
+          }
+        }
+        for (const decision of state.plan.repairExtras?.decisions ?? []) {
+          if (signal.aborted) throw new Error("stopped");
+          if (state.repairOperations[decision.id]?.done) continue;
+          try {
+            if (!this.host.repairDecision) throw new Error("领域决定暂时无法保存。");
+            await this.host.repairDecision(decision.domains);
+            state.repairOperations[decision.id] = { done: true };
+            await this.persist();
+          } catch (error) {
+            fail(decision.id, error instanceof Error ? error.message : "领域决定未保存。");
+            throw error;
+          }
+        }
+      }
       await stage("finalize");
       if (Object.keys(state.skipped).length) {
         progress.status = "interrupted"; delete progress.completedAt;
@@ -281,18 +489,22 @@ export class KnowledgeUpgradeService {
         record.result = createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "upgrade_incomplete", message: "旧知识升级尚未完成。" }] });
         await this.persist(); await this.host.taskStatus(record.originConversationId!, "interrupted"); return;
       }
+      if (state.plan.purpose === "checkup") await this.host.repairsCompleted?.(state.plan);
       state.phase = "completed"; progress.status = "completed"; progress.completedAt = Date.now();
       record.result = createKnowledgeMaintenanceResultEnvelope({ status: "noop" });
       await this.persist(); releaseMaintenancePages(record.recordId); await this.host.taskStatus(record.originConversationId!, "completed");
       if (!progress.notified.includes("upgrade-completed")) {
         progress.notified.push("upgrade-completed"); await this.persist();
-        const done = upgradeCounts(record); this.host.notice(`已补好 ${done.sources} 篇资料状态、${done.links} 条链接，为 ${done.wiki} 页 Wiki 补好类型。`);
+        const done = upgradeCounts(record); this.host.notice(state.plan.purpose === "checkup" ? "体检修复已结束。" : `已补好 ${done.sources} 篇资料状态、${done.links} 条链接，为 ${done.wiki} 页 Wiki 补好类型。`);
       }
     } catch (error) {
       const stopped = signal.aborted || (error instanceof Error && error.message === "stopped");
-      progress.status = "interrupted"; delete progress.completedAt; progress.failures = [{ key: "upgrade", message: stopped ? "升级已停下，已补好的内容会保留，点继续会接着处理。" : "升级没做完，已补好的内容会保留，请继续重试。", at: Date.now() }];
+      progress.status = "interrupted"; delete progress.completedAt; progress.failures = [{ key: "upgrade", message: stopped ? "修复已停下，已完成的步骤会保留，点继续接着处理。" : error instanceof Error ? error.message : "修复没做完，已完成的步骤会保留。", at: Date.now() }];
       await this.persist(); await this.host.taskStatus(record.originConversationId!, "interrupted");
     } finally { progress.elapsedMs[progress.stage] = (progress.elapsedMs[progress.stage] ?? 0) + Date.now() - tick; await this.persist(); }
+  }
+  private async readOptional(relative: string): Promise<string | null> {
+    return await this.safeStat(relative) === null ? null : this.read(relative);
   }
   private async persist(): Promise<void> { if (this.record) { this.record.progress!.updatedAt = Date.now(); await this.host.save(structuredClone(this.record)); this.host.changed(this.record); } }
 }
@@ -311,8 +523,23 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
     records: () => readPrivateMaintenanceRecords(privateRoot),
     historyRoots: () => readUpgradeHistoryRoots(pluginDataDir(root, plugin.getPluginDataDirName())),
     save: async record => { const data = await local(); await new FilePhase3MaintenanceStateStore({ storageRootPath: privateRoot, vaultRootPath: root, vaultId: data.deviceScope.vaultIdDigest }).saveUpgradeRecord(record); },
-    createTask: async () => { const id = `knowledge-upgrade-${randomUUID()}`; await plugin.createPiConversation({ conversationId: id, title: "升级旧知识", titleSource: "fallback", cwd: root, defaultMemoryMode: "no_memory", agentId: plugin.settings.agentRegistry.moduleOwners["knowledge-base"], taskStatus: "running", taskStartedAt: Date.now() }); return id; },
-    taskStatus: async (id, status) => { await plugin.setPiConversationTaskMetadata(id, { taskStatus: status, ...(status === "completed" ? { taskCompletedAt: Date.now() } : {}), ...(status === "interrupted" ? { taskInterruptedAt: Date.now() } : {}), pendingResponse: undefined }); plugin.getCodexView?.()?.refreshAgentTasks(); },
+    createTask: async purpose => { const id = `knowledge-upgrade-${randomUUID()}`; await plugin.createPiConversation({ conversationId: id, title: purpose === "checkup" ? "体检修复" : "升级旧知识", titleSource: "fallback", cwd: root, defaultMemoryMode: "no_memory", agentId: requireModuleOwner(plugin.settings.agentRegistry, "knowledge-base").id, taskStatus: "running", taskStartedAt: Date.now() }); return id; },
+    taskStatus: async (id, status) => {
+      const snapshot = await service.getUpgradeSnapshot();
+      const count = snapshot.completed?.wiki ?? 0;
+      const completed = snapshot.checkupResults?.filter(item => item.status === "success").length ?? 0;
+      const summary = count ? `已更新 ${count} 篇知识笔记` : completed
+        ? `已完成 ${completed} 项体检修复` : snapshot.preview?.followups?.length
+          ? `${snapshot.preview.followups.length} 项待继续` : "请查看体检修复结果";
+      await plugin.setPiConversationTaskMetadata(id, {
+        taskStatus: status,
+        ...(status === "completed" ? { taskCompletedAt: Date.now() } : {}),
+        ...(status === "interrupted" ? { taskInterruptedAt: Date.now() } : {}),
+        ...(status === "completed" && snapshot.purpose === "checkup" ? { resultSummary: summary } : {}),
+        pendingResponse: undefined,
+      });
+      plugin.getCodexView?.()?.refreshAgentTasks();
+    },
     registerRoots: async (roots, revision) => {
       const previous = plugin.settings.knowledgeBase.folderBindings ?? emptyKnowledgeFolderBindings();
       const missing = roots.filter(entry => !previous.roles[entry.role].enabled || !previous.roles[entry.role].readPaths.includes(entry.path));
@@ -327,7 +554,40 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
       return next.revision;
     },
     classify: async (item, record, signal) => classifyKnowledgeUpgradePage(plugin, await local(), { conversationId: record.originConversationId!, runId: record.runId, path: item.path, content: item.content, signal }),
+    repairMove: async (from, to) => {
+      if (plugin.settings.defaultPermission === "read-only" || plugin.settings.defaultMode !== "agent")
+        throw new Error("当前工作区只读，请允许写入后再修复。");
+      const bindings = plugin.settings.knowledgeBase.folderBindings;
+      if (!bindings || !knowledgeMayOrganizeMove(bindings, from, to)) throw new Error("知识成果目录管理权限已变化。");
+      const surface = plugin.getKnowledgeSurfaceService()!;
+      if (!plugin.app.vault.getFileByPath(from)) {
+        await surface.syncKnowledgeSystemMove(from, to);
+        return;
+      }
+      const directory = to.slice(0, to.lastIndexOf("/"));
+      if (!plugin.app.vault.getAbstractFileByPath(directory)) await plugin.app.vault.createFolder(directory);
+      else if (!(plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) throw new Error("归档位置不是文件夹。");
+      await surface.moveKnowledgeSystemNote(from, to);
+    },
+    repairDecision: async domains => {
+      if (plugin.settings.defaultPermission === "read-only" || plugin.settings.defaultMode !== "agent")
+        throw new Error("当前工作区只读，请允许写入后再修复。");
+      const previous = plugin.settings.knowledgeBase.separateDomainPairs ?? [];
+      const key = [...domains].sort().join("\0");
+      if (previous.some(pair => [...pair].sort().join("\0") === key)) return;
+      plugin.settings.knowledgeBase.separateDomainPairs = [...previous, domains];
+      try { await plugin.saveSettings(true); }
+      catch (error) { plugin.settings.knowledgeBase.separateDomainPairs = previous; throw error; }
+    },
+    repairsCompleted: async plan => {
+      if (!plan.repairExtras?.moves?.length) return;
+      const index = await plugin.getKnowledgeLinkingIndex();
+      index.invalidate();
+      index.bodySearch?.invalidate();
+    },
     write: async function performWrite(write, record, signal, retry) {
+      if (record.upgrade?.plan.purpose === "checkup" && (plugin.settings.defaultPermission === "read-only" || plugin.settings.defaultMode !== "agent"))
+        throw new Error("当前工作区只读，请允许写入后再修复。");
       const data = await local(), vaultId = data.deviceScope.vaultIdDigest, task = await data.catalog.get(record.originConversationId!);
       if (!task) throw new Error("升级任务会话暂时读不到。");
       domain ??= new VaultDomainService(new ObsidianVaultDomainAdapter(plugin.app, vaultId, root));

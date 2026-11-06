@@ -53,7 +53,8 @@ export function desktopSettingsCategoryDefinitions(
   const aliases: Record<DesktopSettingsTab, readonly string[]> = {
     general: [...CATEGORY_ALIASES.general.filter(alias => !/memory|记忆|个性化|人格|头像|personalization|personality|avatar|journal|日记|folder|文件夹/iu.test(alias)), ...CATEGORY_ALIASES.layout, "快捷 AI 小窗", "Quick AI window", "关于", "检查更新"],
     models: [...CATEGORY_ALIASES.providers, "providers", "agents", "大模型API", "默认模型"],
-    agent: ["Agent", "身份", "用户画像", "长期记忆", "Memory", "personality", "avatar", "Dream", "做梦", "归档", "archive", "记忆修正", "自动归档"],
+    agent: ["Agent", "身份", "identity", "人格", "personality", "头像", "avatar", "个性化", "personalization", "归档", "archive", "自动归档"],
+    memory: ["记忆", "用户画像", "你的画像", "Your profile", "长期记忆", "Memory", "Dream", "做梦", "记忆修正", "Memory correction", "记忆管理", "Memory management", "打开记忆页", "Open memory page"],
     capabilities: ["能力", "Skills & MCP", "resources", "技能", "Skills", "我的Skill", "MCP Server", "Tavily", "DeepSeek", "联网搜索", "web search", "工具", "tools"],
     modules: [...CATEGORY_ALIASES.knowledgeBase, ...CATEGORY_ALIASES.todos, ...CATEGORY_ALIASES.review.filter(alias => !/archive|归档|memory|记忆/iu.test(alias)), "plugins", "插件", "@Agent", "正文管家", "唤起符号", "@Agent in notes", "Trigger character", "财务", "finance", "记账", "账单", "管理商户", "管理账户", "分析保存位置", "英文日记", "English diary", "移动端英文日记快捷入口", "English diary shortcut on mobile", "首页快捷入口", "Home shortcut", "表达库", "PDF", "MinerU", "默认翻译语言", "选文", "划词", "selection", "提问选项", "提问模板", "日记", "journal", "日记模板", "journal templates", "导入模板", "生成模板", "Generation templates", "资料来源", "sources", "知识成果", "收件箱", "Agent 产出物保存到", "Agent output locations", "存为笔记的回答", "Saved answers", "从资料生成", "Generated materials", "Agent 权限与维护", "目录管理", "公众号", "新建子文件夹", "待办分类", "知识提炼偏好", "知识关联", "复原仓库"],
     account: CATEGORY_ALIASES.account

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHost, answer } from "../mobile/host.mjs";
+import { gatedStreamFetch } from "../mobile/streaming.mjs";
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(check, label) {
@@ -356,13 +357,13 @@ export async function runIPadWorkbenchScenarios(api, win) {
   await test("new Agent preset stays local until one atomic save includes identity and module ownership", async () => {
     const f = await fixture();
     try {
-      const page = await f.form(); page.content.querySelector(".pd-preset").click(); assert.equal(f.registryWrites, 0); assert.equal(f.settings.agentRegistry.agents.length, 2);
+      const page = await f.form(); page.content.querySelector(".pd-preset").click(); assert.equal(f.registryWrites, 0); assert.equal(f.settings.agentRegistry.agents.length, 3);
       input(win, page.content.querySelector("input[type=text]"), "新整理员");
       let release; f.gateSave(new Promise(resolve => { release = resolve; })); click(page.footer, "创建");
       await until(() => f.registryWrites === 1, "one atomic settings save starts");
-      assert.equal(f.settings.agentRegistry.agents.length, 2); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "agent-b");
+      assert.equal(f.settings.agentRegistry.agents.length, 3); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], "agent-b");
       assert.equal(button(page.footer, "正在保存…").disabled, true); assert.equal(await f.shell.back(), false);
-      release(); await until(() => f.settings.agentRegistry.agents.length === 3, "atomic candidate published");
+      release(); await until(() => f.settings.agentRegistry.agents.length === 4, "atomic candidate published");
       const created = f.settings.agentRegistry.agents.find(agent => agent.name === "新整理员"); assert.ok(created); assert.equal(f.settings.agentRegistry.moduleOwners["knowledge-base"], created.id);
       assert.equal(f.settings.agentRegistry.moduleOwners.review, "agent-b"); assert.equal(f.registryWrites, 1);
     } finally { await f.close(); }
@@ -375,7 +376,7 @@ export async function runIPadWorkbenchScenarios(api, win) {
       const fresh = await f.agents.snapshot(); await f.agents.update(registry => { registry.agents[0].position = "其他窗口已修改"; }, fresh.version);
       const writesBeforeSave = f.registryWrites; click(page.footer, "保存"); await until(() => !page.content.querySelector(".pd-error").hidden, "real version conflict shown");
       assert.match(page.content.querySelector(".pd-error").textContent, /配置已变化/u); assert.equal(field.value, "冲突也要保留原稿");
-      assert.equal(f.settings.agentRegistry.agents[1].name, "乙助"); assert.equal(f.registryWrites, writesBeforeSave); assert.equal(f.shell.activePageId, page.id);
+      assert.equal(f.settings.agentRegistry.agents.find(agent => agent.id === "agent-b").name, "乙助"); assert.equal(f.registryWrites, writesBeforeSave); assert.equal(f.shell.activePageId, page.id);
       click(page.footer, "取消"); await until(() => !!page.footer.querySelector(".pd-confirm"), "dirty cancel asks inline"); click(page.footer, "继续编辑"); await settle(); assert.equal(f.shell.activePageId, page.id); assert.equal(field.value, "冲突也要保留原稿");
       click(page.footer, "取消"); await until(() => !!page.footer.querySelector(".pd-confirm"), "second cancel"); click(page.footer, "放弃修改"); await until(() => f.shell.activePageId === "fixture", "discard returns"); assert.equal(f.registryWrites, writesBeforeSave);
     } finally { await f.close(); }
@@ -384,13 +385,13 @@ export async function runIPadWorkbenchScenarios(api, win) {
   await test("editing preserves custom avatar, hidden capabilities and unshown ownership in one save", async () => {
     const f = await fixture();
     try {
-      const page = await f.form("agent-b"); assert.equal(page.content.querySelector(".pd-avatar-option.is-selected").getAttribute("aria-label"), "头像 自定义头像");
+      const page = await f.form("agent-b"); assert.ok(page.content.querySelector(".pd-agent-avatar-preview img")?.getAttribute("src")?.startsWith("data:")); assert.equal(page.content.querySelectorAll(".pd-avatar-option").length, 15);
       input(win, page.content.querySelector("input[type=text]"), "资料整理"); click(page.footer, "保存"); await until(() => f.shell.activePageId === "fixture", "saved form exits");
       const saved = f.settings.agentRegistry.agents.find(agent => agent.id === "agent-b"); assert.equal(saved.name, "资料整理"); assert.equal(saved.avatar.kind, "custom"); assert.ok(saved.capabilityIds.includes("hidden-desktop-capability")); assert.equal(f.settings.agentRegistry.moduleOwners.review, "agent-b"); assert.equal(f.registryWrites, 1);
     } finally { await f.close(); }
   });
 
-  await test("central signals default to five; expand/collapse and handoff reveal an unsent Agent draft without task admission", async () => {
+  await test("central signals default to five; assigned handoff admits exactly one employee task", async () => {
     const signals = Array.from({ length: 7 }, (_, index) => ({ id: index + 1, key: `fixture-${index}`, moduleId: "knowledge-base", icon: "library", description: `待整理信号${index}`, prompt: `请整理第${index}项`, source: { version: 1, signalId: index + 1, businessKey: `fixture-${index}`, moduleId: "knowledge-base", objects: [`source-${index}.md`], prompt: `请整理第${index}项`, capturedAt: 1 } }));
     const f = await fixture({ signals });
     try {
@@ -398,9 +399,31 @@ export async function runIPadWorkbenchScenarios(api, win) {
       click(f.central, "还有 2 条"); assert.equal(f.central.querySelectorAll(".pd-signal-row").length, 7); assert.equal(f.central.querySelector(".pd-section-more").getAttribute("aria-expanded"), "true");
       click(f.central, "收起"); assert.equal(f.central.querySelectorAll(".pd-signal-row").length, 5);
       const count = f.store.state.sessions.length; f.central.querySelector(".pd-signal-row button").click();
-      await until(() => f.handoffs.length === 1 && composerInput(f.right)?.value === signals[0].prompt, "handoff reveals prefilled responsible Agent");
-      assert.equal(f.store.state.sessions.length, count); assert.equal(f.calls.length, 0); assert.equal(f.central.querySelectorAll(".pd-signal-row").length, 5);
-      assert.equal(f.store.state.newTaskDrafts["agent-b"].text, signals[0].prompt); assert.equal(pageId(f.right), "ipad-agent-agent-b");
+      await until(() => f.handoffs.length === 1 && f.store.state.sessions.length === count + 1 && f.calls.length === 1, "handoff admits one responsible employee task");
+      const task = f.store.state.sessions.find(task => task.agentId === "agent-b"); assert.ok(task);
+      assert.equal(f.store.state.newTaskDrafts["agent-b"], undefined); assert.equal(pageId(f.right), `task:${task.id}`);
+      f.calls[0].resolve(answer("openai-completions", "模块任务完成")); await until(() => f.store.getSession(task.id)?.taskStatus === "completed", "employee task completes through real runtime");
+
+    } finally { await f.close(); }
+  });
+
+  await test("a streaming service shows thinking and text live, then the saved answer with folded reasoning", async () => {
+    const f = await fixture(), sse = gatedStreamFetch();
+    try {
+      const id = f.store.session.id; f.settings.apiProviders[0].mobileStreaming = true; f.runtime.setStreamFetch(sse.fetch);
+      const page = api.createTaskPage(f.ctx, id); await f.shell.push(page);
+      const live = page.content.querySelector(".pd-task-streaming");
+      const submission = await f.runtime.submit("流式问题", id); void submission.completion.catch(() => {});
+      await until(() => sse.calls.length === 1, "streaming fetch used"); assert.equal(f.calls.length, 0, "requestUrl stays unused");
+      sse.send({ reasoning_content: "先想" });
+      await until(() => !live.hidden && live.querySelector(".pd-task-reasoning")?.open === true, "live thinking open");
+      assert.equal(page.content.querySelector(".pd-task-live")?.hidden ?? true, true, "stage loader yields to the live answer");
+      sse.send({ content: "第一句" });
+      await until(() => live.querySelector(".pd-task-answer-live")?.textContent === "第一句", "live text shown");
+      sse.send({ content: "，完成" }, "stop"); sse.end(); await submission.completion;
+      await until(() => live.hidden && page.content.querySelector(".pd-task-answer")?.textContent === "第一句，完成", "saved answer replaces live copy");
+      const saved = page.content.querySelector('.pd-task-reasoning[data-tool-id^="reasoning:"]'); assert.ok(saved); assert.equal(saved.open, false);
+      assert.equal(page.content.querySelectorAll(".pd-task-answer").length, 1, "no duplicate answer");
     } finally { await f.close(); }
   });
 

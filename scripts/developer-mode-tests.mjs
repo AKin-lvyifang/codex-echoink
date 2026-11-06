@@ -26,7 +26,8 @@ try {
         const start = source.indexOf("function installProviderModalDomFixture(): void {");
         const end = source.indexOf("function withSettingsTabDefaults<", start);
         if (start < 0 || end < 0) throw new Error("Settings DOM fixture boundaries were not found");
-        return { loader: "ts", contents: [
+        return { resolveDir: root, loader: "ts", contents: [
+          'import {installMockObsidianDom} from "./src/tests/obsidian-dom";',
           "let providerModalTestDocument: ProviderModalTestDocument;",
           source.slice(start, end),
           "export { installProviderModalDomFixture, ProviderModalTestElement };"

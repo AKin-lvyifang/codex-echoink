@@ -23,7 +23,7 @@ export interface MobileMemoryServiceOptions {
   changed(): void; isBusy(id: string): boolean; now?: () => number;
 }
 interface DreamLedger { schema: "echoink.mobile-dream.v1"; dayKey: string; attempts: number; status: MobileDreamStatus; owner: string }
-export interface MobileCanonicalMemoryWritePlan { revision: number; record: PersonalMemoryRecord; original?: PersonalMemoryRecord; duplicate: boolean }
+export interface MobileCanonicalMemoryWritePlan { mode?: "pin"; revision: number; record: PersonalMemoryRecord; original?: PersonalMemoryRecord; duplicate: boolean }
 export class MobileMemoryService implements MobileMemorySettingsPort {
   readonly repository: MobileMemoryRepository;
   private initialization?: Promise<void>;
@@ -92,10 +92,17 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     const source = `pi://${[before.manifest.vaultId, taskId, runId, callId].map(encodeURIComponent).join("/")}?productRun=${encodeURIComponent(runId)}`;
     const record = this.repository.newRecord({ kind, title: input.title, content: input.content, recallWhen: input.recallWhen, basis: input.basis,
       contentOrigin: input.basis === "explicit" ? "user_statement" : "current_instruction", source, revision: before.manifest.revision + 1 });
-    return { revision: before.manifest.revision, record: { ...record, ...(original ? { supersedes: original.id, reason: "用户修正" } : {}) }, original, duplicate: false };
+    return { revision: before.manifest.revision, record: { ...record, ...(original ? { supersedes: original.id, reason: "用户修正", pinned: original.pinned } : {}) }, original, duplicate: false };
+  }
+  async preparePin(id: string, pinned: boolean): Promise<MobileCanonicalMemoryWritePlan> {
+    const before = await this.read(id);
+    if (before.record.status !== "current") throw new Error("当前记忆不存在。");
+    return { mode: "pin", revision: before.revision, original: before.record,
+      record: { ...before.record, pinned, revision: before.revision + 1 }, duplicate: false };
   }
   async commitToolMemory(plan: MobileCanonicalMemoryWritePlan, guard: () => void): Promise<PersonalMemoryRecord> {
     guard();
+    if (plan.mode === "pin") return (await this.setPinned(plan.record.id, !!plan.record.pinned, plan.revision, guard)).record;
     if (plan.duplicate) { const found = await this.read(plan.record.id); guard(); if (found.revision !== plan.revision || found.record.revision !== plan.record.revision) throw memoryConflict(); return found.record; }
     await this.repository.mutate(plan.revision, "memory-tool-write", (draft, files) => {
       guard(); if (draft.records.some(record => record.id === plan.record.id)) throw memoryConflict();
@@ -119,6 +126,19 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     }
     return { revision: snapshot.manifest.revision, records: clone(snapshot.records.filter(record => !needle || `${record.title}\n${record.content}`.toLocaleLowerCase().includes(needle))), forgotten };
   }
+  async memoryActivity() { return this.repository.memoryActivity(); }
+  async recordRecalledMemories(ids: readonly string[], turnId: string) { return this.repository.recordRecalledMemories(ids, turnId); }
+  async restoreMemoryActivity(id: string) { await this.read(id); return this.repository.restoreMemoryActivity(id); }
+  async setPinned(id: string, pinned: boolean, revision: number, guard: () => void = () => {}) {
+    await this.repository.mutate(revision, "memory-pin", (draft, files) => {
+      const current = draft.records.find(record => record.id === id && record.status === "current");
+      if (!current) throw new Error("当前记忆不存在。");
+      const record = { ...current, pinned, revision: draft.manifest.revision + 1 };
+      draft.records = draft.records.map(item => item.id === id ? record : item);
+      files.set(record.file, serializeCanonicalMemoryRecord(record, draft.originals.get(record.file) ?? undefined));
+    }, guard);
+    this.emit(); return this.read(id);
+  }
   async read(id: string) { const snapshot = await this.snapshot(), record = snapshot.records.find(item => item.id === id); if (!record) throw new Error("这条记忆不存在或已忘记。"); return { revision: snapshot.manifest.revision, record: clone(record) }; }
   async previewCorrection(id: string, draft: MobileMemoryCorrection, revision: number): Promise<MobileMemoryCorrectionPreview> {
     const snapshot = await this.read(id); if (snapshot.revision !== revision) throw memoryConflict();
@@ -132,7 +152,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       const original = draft.records.find(record => record.id === preview.id); if (!original || original.status !== "current") throw memoryConflict();
       const revision = draft.manifest.revision + 1;
       replacement = this.repository.newRecord({ kind: original.kind, title: validated.title, content: validated.content, recallWhen: validated.recallWhen, basis: "explicit", contentOrigin: "user_edit", source: "ui://personal-memory-correction", revision });
-      replacement = { ...replacement, supersedes: original.id, reason: "用户修正", ...(original.scope ? { scope: original.scope } : {}), ...(original.asOf ? { asOf: original.asOf } : {}), ...(original.due ? { due: original.due } : {}), ...(original.remindAt ? { remindAt: original.remindAt } : {}) };
+      replacement = { ...replacement, pinned: original.pinned, supersedes: original.id, reason: "用户修正", ...(original.scope ? { scope: original.scope } : {}), ...(original.asOf ? { asOf: original.asOf } : {}), ...(original.due ? { due: original.due } : {}), ...(original.remindAt ? { remindAt: original.remindAt } : {}) };
       const superseded = { ...original, status: "superseded" as const, revision, reason: "用户修正" };
       draft.records = draft.records.map(record => record.id === original.id ? superseded : record).concat(replacement);
       draft.profile = { ...draft.profile, ...rebindProfileSource(draft.profile, { previousMemoryId: original.id, replacementMemoryId: replacement.id, previousMemoryRevision: original.revision, replacementText: replacement.content, now: this.now() }) };
@@ -181,7 +201,8 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       const previous = current?.sourceMemoryIds.map(id => draft.records.find(record => record.id === id && record.status === "current")).find((record): record is PersonalMemoryRecord => !!record);
       const same = draft.records.find(record => record.kind === "fact" && record.status === "current" && record.basis === "explicit" && record.content.normalize("NFKC").trim() === text.normalize("NFKC").trim());
       if (current && previous && previous.id === same?.id && current.text === text.trim() && !(draft.profile.deletionBarriers ?? []).some(item => item.profileKey === profileKey)) return false;
-      const record = same ?? this.repository.newRecord({ kind: "fact", title: `用户画像：${slot.labelZh}`, content: text.trim(), recallWhen: `需要了解用户的${slot.labelZh}时`, basis: "explicit", contentOrigin: "user_edit", source: "ui://user-profile-control", revision: targetRevision });
+      let record = same ?? this.repository.newRecord({ kind: "fact", title: `用户画像：${slot.labelZh}`, content: text.trim(), recallWhen: `需要了解用户的${slot.labelZh}时`, basis: "explicit", contentOrigin: "user_edit", source: "ui://user-profile-control", pinned: previous?.pinned, revision: targetRevision });
+      if (same && previous?.pinned && !same.pinned) { record = { ...same, pinned: true, revision: targetRevision }; draft.records = draft.records.map(item => item.id === same.id ? record : item); files.set(record.file, serializeCanonicalMemoryRecord(record, draft.originals.get(record.file) ?? undefined)); }
       if (!same) { draft.records.push(record); files.set(record.file, serializeCanonicalMemoryRecord(record)); }
       if (previous && previous.id !== record.id) {
         const superseded = { ...previous, status: "superseded" as const, revision: targetRevision, reason: "profile_update" };
@@ -189,7 +210,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
         draft.profile = { ...draft.profile, ...rebindProfileSource(draft.profile, { previousMemoryId: previous.id, replacementMemoryId: record.id, previousMemoryRevision: previous.revision, replacementText: text.trim(), now: this.now() }) };
       }
       draft.profile = { ...draft.profile, deletionBarriers: (draft.profile.deletionBarriers ?? []).filter(item => item.profileKey !== profileKey) };
-      draft.profile = { ...draft.profile, ...applyDreamProfileUpdate(draft.profile, { items: [{ section: slot.section, profileKey, text: text.trim(), basis: "explicit_memory", sourceMemoryId: record.id, sourceEvidence: { kind: "memory", revision: record.revision } }], processedSources: [{ memoryId: record.id, memoryRevision: record.revision }], now: this.now() }), legacyUserMigration: "done" };
+      draft.profile = { ...draft.profile, ...applyDreamProfileUpdate(draft.profile, { authority: "user", items: [{ section: slot.section, profileKey, text: text.trim(), basis: "explicit_memory", sourceMemoryId: record.id, sourceEvidence: { kind: "memory", revision: record.revision } }], processedSources: [{ memoryId: record.id, memoryRevision: record.revision }], now: this.now() }), legacyUserMigration: "done" };
     }); this.emit(); return this.readProfile();
   }
   async confirmProfile(profileKey: string, revision: number) { const before = await this.readProfile(), item = before.items.find(item => item.profileKey === profileKey); if (!item || before.revision !== revision) throw memoryConflict(); return this.saveProfile(profileKey, item.text, revision); }

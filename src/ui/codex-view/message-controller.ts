@@ -101,10 +101,12 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,
+    hideApprovalCards: !!host.plugin.companyService?.dispatchOf(session.id),
     tokenUsage: session.tokenUsage,
     vaultPath: host.plugin.getVaultPath(),
     readRawMessageText: (rawRef) => host.plugin.readRawMessageText(rawRef),
     readPersonalMemorySource: (id, revision) => host.plugin.readEchoInkPersonalMemorySource(id, revision),
+    onOpenMemoryReceipt: receipt => host.plugin.activateMemoryView({ receipt }),
     onAnswerSaved: async (messageId, path) => {
       await host.plugin.recordPiAnswerSave(session.id, messageId, path);
       const entryId = piEntryIdFromProjectedMessageId(messageId);
@@ -114,6 +116,7 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
       if (message) message.savedNotePath = path;
     },
     resolveApprovalDecision: (message) => {
+      if (host.plugin.companyService?.dispatchOf(session.id)) return null;
       const piSessionId = session.piSessionId?.trim();
       const productRunId = message.runId?.trim();
       const toolCallId = piToolCallIdFromProjectedMessageId(message.id);

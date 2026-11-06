@@ -1,3 +1,4 @@
+import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { todoPageRecords } from "./todo-page-model";
 export { todoPageRecords } from "./todo-page-model";
 import { ItemView, Notice, TFolder, type TAbstractFile, type EventRef, type WorkspaceLeaf, setIcon } from "obsidian";
@@ -9,7 +10,7 @@ import { confirmModal } from "../ui/modals";
 import { EchoInkTodoFormModal } from "./todo-edit-modal";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { getTodoProjects, resolveTodoProject, type TodoProject } from "./todo-projects";
-import { prefillWorkbenchModule, workbenchModuleOwner } from "./module-navigation";
+import { prefillWorkbenchModule } from "./module-navigation";
 import { renderTodoTable, todoTableCopy } from "./todo-table";
 
 export const TODO_PAGE_VIEW_TYPE = "echoink-todo-page";
@@ -171,8 +172,8 @@ export class TodoPageView extends ItemView {
     }
     header.querySelector("h1")!.setText(this.t("待办", "To-dos"));
     this.field("back").setAttribute("aria-label", this.t("返回工作台", "Back to workbench"));
-    const owner = workbenchModuleOwner(this.plugin, "todos").name;
-    this.field("owner").setText(this.t(`交给 ${owner} 排一排`, `Plan with ${owner}`));
+    const label = moduleOwnerLabel(this.plugin, "todos");
+    this.field("owner").setText(label);
   }
   private async handoff(): Promise<void> {
     this.renderHeader();

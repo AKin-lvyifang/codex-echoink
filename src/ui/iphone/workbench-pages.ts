@@ -1,3 +1,6 @@
+import { getModuleOwner } from "../../agents/registry";
+import { openModuleOwnerSheet } from "../mobile/module-owner-sheet";
+import { agentRoleGroups } from "../../agents/roster-groups";
 import { isAgentHired } from "../../agents/persona";
 import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
@@ -13,12 +16,21 @@ import { IPHONE_MODULES, iphoneAvatar, iphoneButton, iphoneClock, iphoneDateGrou
   iphoneIcon, iphoneStatus, iphoneTaskProjection, iphoneTasks, iphoneTaskStatus, iphoneTaskSummary,
   iphoneTaskTime, iphoneTaskUnread } from "./workbench-elements";
 
+import { disposeCompanyTree } from "../mobile/company-ui";
+import { iphoneCompanyHidden, renderIPhoneCompanyHome } from "./company-pages";
+
 export { createAgentFormPage } from "./agent-form";
 
 function agentStrip(ctx: IPhonePageContext, current?: string): HTMLElement {
   const strip = el(ctx.document, "nav", "ip-agent-strip"); strip.setAttribute("aria-label", "Agent");
   const tasks = iphoneTasks(ctx.host.store.state.sessions);
-  for (const agent of ctx.host.settings().agentRegistry.agents.filter(isAgentHired)) {
+  const groups = new Map(agentRoleGroups(ctx.host.settings().agentRegistry.agents.filter(isAgentHired), ctx.host.settings().settingsLanguage === "en").map(group => {
+    const section = el(ctx.document, "div", "ip-agent-group"); section.dataset.agentGroup = group.id;
+    section.append(el(ctx.document, "div", "ip-agent-group-label", group.label));
+    const items = el(ctx.document, "div", "ip-agent-group-items"); section.append(items); strip.append(section);
+    return [group.id, items] as const;
+  }));
+  for (const agent of agentRoleGroups(ctx.host.settings().agentRegistry.agents.filter(isAgentHired)).flatMap(group => group.agents)) {
     const mine = tasks.filter(task => task.agentId === agent.id);
     const waiting = mine.filter(task => iphoneTaskStatus(task) === "waiting").length;
     const interrupted = mine.some(task => iphoneTaskStatus(task) === "interrupted");
@@ -38,9 +50,9 @@ function agentStrip(ctx: IPhonePageContext, current?: string): HTMLElement {
       button.append(badge);
     }
     button.addEventListener("click", () => { if (current !== agent.id) void ctx.navigate({ kind: "agent", agentId: agent.id }, !!current).catch(error => ctx.error(error)); });
-    strip.append(button);
+    groups.get(agent.id === GENERAL_ASSISTANT_ID ? "main" : "role")!.append(button);
   }
-  strip.append(shellIconButton(ctx.document, "新建 Agent", "user-plus", () => {
+  groups.get("role")!.append(shellIconButton(ctx.document, "新建 Agent", "user-plus", () => {
     if (!ctx.host.services.openExpertHall) { void ctx.navigate({ kind: "agent-form" }).catch(ctx.error); return; }
     ctx.shell.openSheet({ title: "添加 Agent", content: mobileAgentCreationChoice(ctx.document, {
       create: () => ctx.navigate({ kind: "agent-form" }), hire: () => ctx.host.services.openExpertHall(), close: () => ctx.shell.closeSheet(), error: ctx.error
@@ -70,7 +82,7 @@ function cardNavigation(ctx: IPhonePageContext, card: HTMLElement, taskId: strin
 function interruptedAt(task: MobileSession): string {
   const at = task.interruption?.at ?? task.taskInterruptedAt;
   const reasons = { app_closed: "应用关闭时中断", user_stopped: "已停止", plugin_disabled: "插件关闭时中断", run_failed: "执行失败时中断",
-    process_unknown: "发现上次未正常结束", watchdog: "运行超时中断", app_backgrounded: "切到后台时中断" };
+    process_unknown: "发现上次未正常结束", tool_loop_limit: "工具调用达到上限，已自动停止", watchdog: "运行超时中断", app_backgrounded: "切到后台时中断" };
   const reason = task.interruption ? reasons[task.interruption.reason] : "已中断";
   return at === undefined ? "未记录中断时间" : `${formatMobileDateTime(at)} ${reason}`;
 }
@@ -88,9 +100,10 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
     button.append(iphoneIcon(ctx.document, module.icon), el(ctx.document, "span", "", module.name));
     button.addEventListener("click", () => { void ctx.host.openModule(module.id).catch(error => ctx.error(error)); }); navigation.append(button);
   }
+  const companySlot = el(ctx.document, "div", "ip-company-slot");
   const topTasks = el(ctx.document, "div", "ip-task-groups"), signals = el(ctx.document, "div", "ip-signals"), bottomTasks = el(ctx.document, "div", "ip-completed-group"), todos = el(ctx.document, "div", "ip-home-todos");
   const readError = el(ctx.document, "div", "ip-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
-  content.append(header, strip, navigation, topTasks, signals, bottomTasks, todos, readError);
+  content.append(header, strip, navigation, companySlot, topTasks, signals, bottomTasks, todos, readError);
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, topTasks);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "";
   const questions = new Map<string, ReturnType<typeof createInlineQuestion>>();
@@ -125,9 +138,10 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   };
   const renderTasks = (force = false) => {
     if (disposed) return;
-    const tasks = iphoneTasks(ctx.host.store.state.sessions), registry = ctx.host.settings().agentRegistry;
-    const next = iphoneTaskProjection(tasks) + JSON.stringify(registry);
+    const all = iphoneTasks(ctx.host.store.state.sessions), tasks = all.filter(task => !iphoneCompanyHidden(ctx, task)), registry = ctx.host.settings().agentRegistry;
+    const next = iphoneTaskProjection(all) + JSON.stringify([registry, all.map(task => ctx.host.runtime.isCompanyApprovalJudging?.(task.id))]);
     if (!force && signature === next) return; signature = next;
+    renderIPhoneCompanyHome(ctx, companySlot);
     for (const [id, question] of questions) {
       if (!tasks.some(task => task.id === id && iphoneTaskStatus(task) === "waiting")) { question.dispose(); questions.delete(id); }
     }
@@ -154,10 +168,15 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
     }
   };
   const signalRow = (signal: WorkbenchSignal): HTMLElement => {
-    const row = el(ctx.document, "div", "ip-row ip-signal-row"), ownerId = ctx.host.settings().agentRegistry.moduleOwners[signal.moduleId];
-    const owner = ctx.host.settings().agentRegistry.agents.find(agent => agent.id === ownerId);
+    const row = el(ctx.document, "div", "ip-row ip-signal-row"), owner = getModuleOwner(ctx.host.settings().agentRegistry, signal.moduleId);
     row.append(iphoneIcon(ctx.document, signal.icon), el(ctx.document, "div", "ip-grow", signal.description));
-    const action = iphoneButton(ctx.document, `交给${owner?.name ?? "总助"}`, () => { void handoff(false); }); row.append(action);
+    const action = iphoneButton(ctx.document, owner ? `交给 ${owner.name}` : "指定负责人", () => {
+      if (getModuleOwner(ctx.host.settings().agentRegistry, signal.moduleId)) { void handoff(false).catch(() => {}); return; }
+      openModuleOwnerSheet({ document: ctx.document, prefix: "ip", agents: ctx.host.agents, roster: ctx.host.settings().agentRegistry.agents, shell: ctx.shell,
+        avatar: agent => iphoneAvatar(ctx.document, agent), button: (text, click, variant) => iphoneButton(ctx.document, text, click, variant),
+        create: () => ctx.navigate({ kind: "agent-form", creation: { moduleIds: [signal.moduleId], onReturn: () => ctx.host.workbench.refreshTasks?.() } }),
+        start: async () => { await handoff(false); }, error: ctx.error }, signal.moduleId);
+    }); row.append(action);
     const handoff = async (replace: boolean) => {
       action.disabled = true;
       try {
@@ -166,9 +185,13 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
           if (row.querySelector(".ip-confirm")) return;
           const confirm = el(ctx.document, "div", "ip-confirm", "已有未发送的内容，是否替换？"); const choices = el(ctx.document, "div", "ip-confirm-actions");
           choices.append(iphoneButton(ctx.document, "保留原稿", () => { confirm.remove(); void openNewTask(ctx, result.agentId).catch(error => ctx.error(error)); }),
-            iphoneButton(ctx.document, "替换草稿", () => { confirm.remove(); void handoff(true); }, "is-primary")); confirm.append(choices); row.append(confirm);
-        } else await openNewTask(ctx, result.agentId);
-      } catch (error) { ctx.error(error); }
+            iphoneButton(ctx.document, "替换草稿", () => { confirm.remove(); void handoff(true).catch(() => {}); }, "is-primary")); confirm.append(choices); row.append(confirm);
+        } else {
+          const submission = await ctx.host.runtime.sendNew(result.agentId, signal.prompt);
+          void submission.completion.catch(failure => ctx.error(failure));
+          await ctx.navigate({ kind: "task", taskId: submission.taskId });
+        }
+      } catch (error) { ctx.error(error); throw error; }
       finally { action.disabled = false; }
     };
     return row;
@@ -212,6 +235,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const unsubscribeRuntime = ctx.host.runtime.subscribe(() => { renderTasks(); });
   const unsubscribeFacts = ctx.host.workbench.subscribe(() => { renderTasks(); void loadFacts(); });
   const unsubscribeIdentity = ctx.host.services.subscribeIdentity(() => { renderTasks(); renderFacts(); });
+  const unsubscribeCompany = ctx.host.company?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
   let localDay = new Date().toDateString();
   const window = ctx.document.defaultView;
   const clock = window?.setInterval(() => {
@@ -229,7 +253,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       if (task && iphoneTaskStatus(task) === "running") card.querySelector(".ip-status")?.replaceWith(iphoneStatus(ctx.document, task));
     }
   }, 60_000);
-  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); questions.forEach(question => question.dispose()); questions.clear(); } };
+  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
 }
 
 export function createAgentPage(ctx: IPhonePageContext, agentId: string): MobileShellPage {

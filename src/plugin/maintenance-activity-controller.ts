@@ -1,5 +1,5 @@
-import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceCompletionText, maintenancePageCounts, maintenanceRecordStage, newMaintenanceProgress, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
-import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceCompletionText, maintenancePartialCompletionText, maintenancePageCounts, maintenanceRecordStage, newMaintenanceProgress, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
+import { isP1Open, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { PiKnowledgeMaintenanceToolInput } from "../harness/pi-native/contracts";
 import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
 import type { FilePhase3MaintenanceStateStore } from "./pi-knowledge-maintenance-production";
@@ -51,7 +51,7 @@ export class MaintenanceActivityController {
       let active = this.active.get(event.conversationId);
       if (event.type === "start") {
         if (active?.runId === event.productRunId) return;
-        const record = (await this.host.records()).filter(r => r.originConversationId === event.conversationId && r.p1 && r.p1.phase !== "completed").sort((a,b) => b.at - a.at)[0];
+        const record = (await this.host.records()).filter(r => r.originConversationId === event.conversationId && isP1Open(r)).sort((a,b) => b.at - a.at)[0];
         const prior = record ? undefined : (await this.host.runs?.list(event.conversationId))?.filter(run => run.maintenanceActivity && !run.maintenanceActivity.recordId && run.maintenanceActivity.progress.status !== "completed").sort((a,b) => b.createdAt - a.createdAt)[0]?.maintenanceActivity;
         const progress = structuredClone(record?.progress ?? prior?.progress ?? newMaintenanceProgress(this.host.now()));
         progress.waitingReasons = []; progress.status = "running";
@@ -77,7 +77,7 @@ export class MaintenanceActivityController {
         });
       } else {
         await this.mutate(event.conversationId, active, progress => {
-          if (progress.status !== "completed") progress.status = event.failed ? "failed" : "interrupted";
+          if (!["completed", "partial"].includes(progress.status)) progress.status = event.failed ? "failed" : "interrupted";
           progress.waitingReasons = [];
         });
         if (event.type === "settled") {
@@ -106,7 +106,7 @@ export class MaintenanceActivityController {
       await this.host.state.saveP1Record(record, (current, previous) => {
         const progress = this.advance(structuredClone(previous ?? active?.initial.progress ?? current.progress ?? newMaintenanceProgress(this.host.now(), maintenanceRecordStage(current))), active);
         progress.stage = maintenanceRecordStage(current);
-        if (current.p1?.phase === "completed") { progress.status = "completed"; progress.completedAt ??= this.host.now(); progress.waitingReasons = []; progress.currentPath = undefined; }
+        if (current.p1 && !isP1Open(current)) { progress.status = current.p1.phase === "completed" && current.result.status !== "partial" ? "completed" : "partial"; progress.completedAt ??= this.host.now(); progress.waitingReasons = []; progress.currentPath = undefined; }
         return progress;
       });
       if (active && !active.recordId) {
@@ -115,7 +115,7 @@ export class MaintenanceActivityController {
         active.initial.recordId = record.recordId;
         await this.persistRun(active);
       }
-      this.host.onRecord?.(record, record.p1?.phase === "completed");
+      this.host.onRecord?.(record, !!record.p1 && !isP1Open(record));
     });
   }
   async afterTool(input: Readonly<PiKnowledgeMaintenanceToolInput>, failed: boolean, message: string): Promise<void> {
@@ -163,11 +163,12 @@ export class MaintenanceActivityController {
     let notice = "";
     const record = await this.host.state.updateP1Progress(recordId, record => {
       const progress = record.progress ??= newMaintenanceProgress(this.host.now(), maintenanceRecordStage(record));
-      const complete = record.p1?.phase === "completed";
+      const complete = record.p1?.phase === "completed" && record.result.status !== "partial";
       const key = complete ? "completed" : `settled:${runId}`;
       if (progress.notified.includes(key)) return;
       progress.notified.push(key);
       if (complete) { progress.status = "completed"; progress.completedAt ??= this.host.now(); notice = maintenanceCompletionText({ sourceCount: new Set(record.sources.map(source => source.path)).size, pageCounts: maintenancePageCounts(record) }); }
+      else if (record.p1 && !isP1Open(record)) { progress.status = "partial"; progress.completedAt ??= this.host.now(); notice = maintenancePartialCompletionText(record); }
       else {
         const count = Object.keys(record.p1!.committedPages).length;
         progress.status = count ? "partial" : failed ? "failed" : "interrupted";
@@ -197,7 +198,7 @@ export class MaintenanceActivityController {
       update(progress, record); record.progress = progress;
       active.liveSince = progress.status === "running" && !progress.waitingReasons.length ? this.host.now() : null;
     });
-    if (record) this.host.onRecord?.(record, record.p1?.phase === "completed");
+    if (record) this.host.onRecord?.(record, !!record.p1 && !isP1Open(record));
   }
   private async mutate(conversationId: string, active: ActiveMaintenance, update: (progress: MaintenanceActivityProgress) => void): Promise<void> {
     if (active.recordId) return this.patch(active, active.recordId, update);

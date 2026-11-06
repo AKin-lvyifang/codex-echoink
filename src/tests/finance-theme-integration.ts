@@ -40,8 +40,10 @@ export async function runFinanceThemeIntegrationTests(): Promise<void> {
   const finance = parse(financeText);
   const palettes: Rule[] = [];
   stylesheet.walkRules((rule) => {
-    if (declarations(rule).has("--echoink-theme-scheme")) palettes.push(rule);
+    if (declarations(rule).has("--echoink-theme-scheme") && !/^(?:html )?body(?:\.theme-(?:light|dark))?\[data-echoink-theme="host"\]/u.test(rule.selector)) palettes.push(rule);
   });
+  const hostRules: Rule[] = []; stylesheet.walkRules(rule => { if (declarations(rule).has("--echoink-theme-scheme") && /^(?:html )?body(?:\.theme-(?:light|dark))?\[data-echoink-theme="host"\]/u.test(rule.selector)) hostRules.push(rule); });
+  assert.equal(hostRules.length, 3, "host appearance has its fallback and light/dark mappings");
   assert.equal(palettes.length, 6, "Finance reuses the three appearances in light and dark modes");
   for (const palette of palettes) {
     for (const surface of [".echoink-home-workspace", ".echoink-settings-host", ".echoink-settings-demo",

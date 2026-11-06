@@ -144,9 +144,9 @@ export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId
     const before = store.state;
     await store.handoffAgentTasks("planner");
     assert.equal(store.state.revision, before.revision + 1);
-    assert.deepEqual(store.state.sessions, before.sessions.map(session => session.agentId === "planner" ? { ...session, agentId: "sol" } : session));
-    assert.equal(store.getSession(active.id).agentId, "sol"); assert.equal(store.getSession(archived.id).archivedAt, 3);
-    assert.deepEqual(store.state.page, { kind: "list", agentId: "sol" });
+    assert.deepEqual(store.state.sessions, before.sessions.map(session => session.agentId === "planner" ? { ...session, agentId: "generalist" } : session));
+    assert.equal(store.getSession(active.id).agentId, "generalist"); assert.equal(store.getSession(archived.id).archivedAt, 3);
+    assert.deepEqual(store.state.page, { kind: "list", agentId: "generalist" });
     assert.deepEqual(store.state.newTaskDrafts, before.newTaskDrafts); assert.equal(store.state.activeSessionId, before.activeSessionId);
     const reopened = new MobileStore(adapter, root, instance); await reopened.load(); assert.deepEqual(reopened.state, store.state);
   });

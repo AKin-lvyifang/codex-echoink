@@ -1,3 +1,4 @@
+import { Platform } from "obsidian";
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -132,6 +133,12 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     await assert.rejects(plugin.resumeTask("A"), /能力已被关闭/);
     assert.equal(requests, beforeCapabilityFailure);
     assert.equal((await f.catalog.get("A"))!.taskStatus, "interrupted");
+    const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
+    try {
+      const routerPrepared = await plugin.prepareTaskResume("A");
+      assert.ok(routerPrepared.resumeContext, "legacy desktop Sol keeps recovery facts without requiring its old module grants");
+      assert.equal(requests, beforeCapabilityFailure, "preparing router continuation never starts a model");
+    } finally { Platform.isDesktopApp = previousDesktop; }
     general.disabledCapabilityIds = [];
 
     // A button uses this task's selected model/access while preserving its unsent content.
@@ -188,7 +195,7 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     release.resolve();
     assert.equal(await resumingDeletedTask, "cancelled");
     await deleting;
-    assert.equal((await f.catalog.get(deletingTask))!.agentId, "sol");
+    assert.equal((await f.catalog.get(deletingTask))!.agentId, "generalist");
     assert.equal(f.requests.get(deletingTask)!.length, beforeDeletionRequests, "A cancelled preflight cannot start under the new owner");
     plugin.readPiConversationProjection = projectionReader;
 

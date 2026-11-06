@@ -69,7 +69,6 @@ body:not(.is-mobile) .echoink-settings-demo :is(.settings-input,.settings-search
 
 /* General responds to the available settings pane, independent of browser width. */
 .echoink-settings-demo .general-page{container:general-page / inline-size}
-.echoink-settings-demo .echoink-dream-options{padding-inline-start:18px;min-width:0}
 .echoink-settings-demo .general-user h4{flex-wrap:wrap}
 .echoink-settings-demo .general-growth-description{font-size:calc(var(--font-text-size, 16px) * 0.6875);color:var(--secondary);line-height:1.9;margin-top:10px}
 .echoink-settings-demo .general-template-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}

@@ -52,6 +52,7 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
   saveSkillAgents(id: string, agentIds: string[], expected: string) { return this.skillsService.saveSkillAgents(id, agentIds, expected); }
   defaultSkillContent(id: string) { return this.skillsService.defaultSkillContent(id); }
   recordSkillUse(id: string) { return this.skillsService.recordUse(id); }
+  hasRunSkills(taskId: string): boolean { return this.skillsService.hasRunSkills(taskId); }
   resolveRunSkills(taskId: string, agentId: string, text: string, skillId?: string, recordUsage = true) { return this.skillsService.resolveRunSkills(taskId, agentId, text, skillId, recordUsage); }
   assertRunSkills(taskId: string) { this.skillsService.assertRunSkills(taskId); }
   releaseRunSkills(taskId: string) { this.skillsService.releaseRunSkills(taskId); }

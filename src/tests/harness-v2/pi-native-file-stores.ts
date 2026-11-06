@@ -3,18 +3,29 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile
 } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { mock } from "node:test";
+import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import { FileConversationCatalog } from "../../harness/pi-native/file-conversation-catalog";
 import { FileProductRunStore } from "../../harness/pi-native/file-product-run-store";
 import {
   PI_NATIVE_FILE_SCHEMA_VERSION,
-  PiNativeFileStoreError
+  PiNativeFileStoreError,
+  atomicWriteJsonFile,
+  serializePiNativeFileWrite
 } from "../../harness/pi-native/file-store-utils";
+import {
+  FilePhase3MaintenanceStateStore,
+  readPrivateMaintenanceRecords
+} from "../../plugin/pi-knowledge-maintenance-production";
+import { createKnowledgeMaintenanceResultEnvelope } from "../../knowledge-base/knowledge-maintenance-result";
+import type { KnowledgeMaintenanceRecord } from "../../knowledge-base/maintenance-record";
 import {
   knowledgeReferenceEntryDetails
 } from "../../knowledge-base/usage";
@@ -24,9 +35,11 @@ import { runProductRunSnapshotTests } from "../pi-native/product-run-snapshots";
 export async function runPiNativeFileStoreTests(): Promise<void> {
   assertKnowledgeReferenceContract();
   const storageRootPath = await mkdtemp(
-    path.join(os.tmpdir(), "echoink-pi-native-file-stores-")
+    path.join(process.env.ECHOINK_TEST_ROOT || os.tmpdir(), "echoink-pi-native-file-stores-")
   );
   try {
+    await assertAtomicRenameRetries(path.join(storageRootPath, "rename-retries"));
+    await assertStoreRenameRetryChains(path.join(storageRootPath, "retry-chains"));
     let now = 1_000;
     const catalog = new FileConversationCatalog({
       storageRootPath,
@@ -301,6 +314,183 @@ export async function runPiNativeFileStoreTests(): Promise<void> {
   } finally {
     await rm(storageRootPath, { recursive: true, force: true });
   }
+}
+
+interface RenameFaultTrace {
+  attempts: { temporaryPath: string; targetPath: string }[];
+  waits: number[];
+}
+
+/** Patch only this sequential fixture's Node methods; restore even on failure. */
+async function withRenameFaults(
+  platform: NodeJS.Platform,
+  failure: (targetPath: string, attempt: number) => Error | undefined,
+  run: (trace: RenameFaultTrace) => Promise<void>
+): Promise<void> {
+  const fs = getDesktopFsPromises();
+  const originalRename = fs.rename;
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  if (!windowDescriptor) Object.defineProperty(globalThis, "window", { configurable: true, value: globalThis });
+  const originalTimeout = window.setTimeout;
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const trace: RenameFaultTrace = { attempts: [], waits: [] };
+  const attempts = new Map<string, number>();
+  const snapshots = new Map<string, unknown>();
+  Object.defineProperty(process, "platform", { ...platformDescriptor, value: platform });
+  const renameMock = mock.method(fs, "rename", async (source, destination) => {
+    const temporaryPath = String(source), targetPath = String(destination);
+    assert.equal(path.dirname(temporaryPath), path.dirname(targetPath));
+    assert.match(temporaryPath, /\.tmp$/u);
+    const info = await stat(temporaryPath, { bigint: true });
+    const snapshot = {
+      bytes: await readFile(temporaryPath, "utf8"),
+      ino: info.ino,
+      mtimeNs: info.mtimeNs,
+      ctimeNs: info.ctimeNs
+    };
+    if (snapshots.has(temporaryPath)) {
+      assert.deepEqual(snapshot, snapshots.get(temporaryPath), "retry reuses the written temp without rewriting it");
+    } else snapshots.set(temporaryPath, snapshot);
+    trace.attempts.push({ temporaryPath, targetPath });
+    const attempt = (attempts.get(targetPath) ?? 0) + 1;
+    attempts.set(targetPath, attempt);
+    const error = failure(targetPath, attempt);
+    if (error) throw error;
+    await originalRename(source, destination);
+  });
+  const timeoutMock = mock.method(window, "setTimeout", ((callback, delay, ...args) => {
+    trace.waits.push(delay);
+    return originalTimeout(callback, 0, ...args);
+  }) as typeof setTimeout);
+  try {
+    await run(trace);
+  } finally {
+    timeoutMock.mock.restore();
+    if (!windowDescriptor) Reflect.deleteProperty(globalThis, "window");
+    renameMock.mock.restore();
+    Object.defineProperty(process, "platform", platformDescriptor);
+  }
+}
+
+function renameError(code: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`synthetic rename ${code}`), { code });
+}
+
+async function assertAtomicRenameRetries(root: string): Promise<void> {
+  for (const codes of [["EPERM"], ["EBUSY", "EBUSY"], ["EPERM", "EBUSY", "EPERM"]]) {
+    const filePath = path.join(root, `${codes.join("-")}.json`);
+    let businessWrites = 0, normalizations = 0, serializations = 0;
+    await withRenameFaults("win32", (_target, attempt) => codes[attempt - 1] ? renameError(codes[attempt - 1]) : undefined, async trace => {
+      const result = await serializePiNativeFileWrite(root, async () => {
+        businessWrites++;
+        return atomicWriteJsonFile(filePath, { version: 2 }, "retry fixture", value => {
+          normalizations++;
+          return { toJSON() { serializations++; return value; } };
+        });
+      });
+      assert.ok(result);
+      assert.equal(businessWrites, 1);
+      assert.equal(normalizations, 1);
+      assert.equal(serializations, 1);
+      assert.equal(trace.attempts.length, codes.length + 1);
+      assert.equal(new Set(trace.attempts.map(attempt => attempt.temporaryPath)).size, 1);
+      assert.deepEqual(trace.waits, [25, 75, 150].slice(0, codes.length));
+      assert.deepEqual(JSON.parse(await readFile(filePath, "utf8")), { version: 2 });
+    });
+  }
+
+  for (const scenario of [
+    { platform: "win32", codes: ["EPERM", "EPERM", "EPERM", "EPERM"], waits: [25, 75, 150] },
+    { platform: "win32", codes: ["EBUSY", "EBUSY", "EBUSY", "EBUSY"], waits: [25, 75, 150] },
+    { platform: "win32", codes: ["EACCES"], waits: [] },
+    { platform: "win32", codes: ["EIO"], waits: [] },
+    { platform: "win32", codes: ["EPERM", "ENOENT"], waits: [25] },
+    { platform: "darwin", codes: ["EPERM"], waits: [] },
+    { platform: "linux", codes: ["EBUSY"], waits: [] }
+  ] as const) {
+    const filePath = path.join(root, "failure.json");
+    const previousBytes = '{"version":1}\n';
+    await writeFile(filePath, previousBytes, "utf8");
+    const errors = scenario.codes.map(renameError);
+    await withRenameFaults(scenario.platform, (_target, attempt) => errors[attempt - 1], async trace => {
+      await assert.rejects(
+        atomicWriteJsonFile(filePath, { version: 2 }, "failure fixture", value => value),
+        error => error === errors[errors.length - 1],
+        "preserve the original filesystem error, including code"
+      );
+      assert.equal(trace.attempts.length, errors.length);
+      assert.deepEqual(trace.waits, scenario.waits);
+      assert.equal(await readFile(filePath, "utf8"), previousBytes);
+      assert.equal((await readdir(root)).some(name => name.endsWith(".tmp")), false);
+    });
+  }
+}
+
+async function assertStoreRenameRetryChains(root: string): Promise<void> {
+  const catalog = new FileConversationCatalog({ storageRootPath: root, vaultId: "retry-vault" });
+  await catalog.initialize();
+  await catalog.upsert({
+    conversationId: "retry-conversation", piSessionId: "retry-session", vaultId: "retry-vault",
+    title: "Initial", status: "active", defaultMemoryMode: "normal", createdAt: 1, updatedAt: 1
+  });
+  await withRenameFaults("win32", (target, attempt) => target === catalog.filePath && attempt <= 2 ? renameError(attempt === 1 ? "EPERM" : "EBUSY") : undefined, async trace => {
+    const results = await Promise.all([
+      catalog.rename("retry-conversation", "First queued update", 2),
+      catalog.appendDiagnostic({
+        diagnosticId: "retry-diagnostic", conversationId: "retry-conversation", piSessionId: "retry-session",
+        code: "runtime_interrupted", message: "synthetic", createdAt: 3
+      })
+    ]);
+    assert.equal(results[0].title, "First queued update");
+    assert.deepEqual(trace.waits, [25, 75]);
+    const writes = trace.attempts.filter(attempt => attempt.targetPath === catalog.filePath);
+    assert.equal(writes.length, 4);
+    assert.equal(new Set(writes.slice(0, 3).map(attempt => attempt.temporaryPath)).size, 1);
+    assert.notEqual(writes[2].temporaryPath, writes[3].temporaryPath, "queued mutation starts after retried publication");
+    assert.equal((await catalog.list())[0].title, "First queued update");
+    assert.equal((await catalog.diagnostics("retry-conversation")).length, 1);
+  });
+  const catalogBytes = await readFile(catalog.filePath, "utf8");
+  const catalogError = renameError("EBUSY");
+  await withRenameFaults("win32", target => target === catalog.filePath ? catalogError : undefined, async trace => {
+    await assert.rejects(catalog.rename("retry-conversation", "Must not publish", 4), error => error === catalogError);
+    assert.equal(trace.attempts.length, 4);
+    assert.equal(await readFile(catalog.filePath, "utf8"), catalogBytes);
+  });
+  // A rejected write must release the existing queue for the next operation.
+  await catalog.rename("retry-conversation", "Queue recovered", 5);
+
+  const stateRoot = path.join(await realpath(root), "maintenance");
+  const state = new FilePhase3MaintenanceStateStore({ storageRootPath: stateRoot, vaultId: "retry-vault" });
+  const record: KnowledgeMaintenanceRecord = {
+    schemaVersion: 1, recordId: `maintenance-${"a".repeat(32)}`, runId: "retry-run", originConversationId: "retry-conversation",
+    at: 1, date: "2026-11-01", result: createKnowledgeMaintenanceResultEnvelope({ status: "noop" }), sources: [], summary: "Synthetic initial",
+    p1: { version: 1, phase: "plan", sourceFingerprints: {}, decompositions: [], writingPlan: [], drafts: {}, committedPages: {}, finalizedSources: [] }
+  };
+  await state.saveP1Record(record);
+  let progressUpdates = 0;
+  await withRenameFaults("win32", (_target, attempt) => attempt <= 2 ? renameError(attempt === 1 ? "EBUSY" : "EPERM") : undefined, async trace => {
+    await Promise.all([
+      state.updateP1Progress(record.recordId, saved => { progressUpdates++; saved.summary = "Synthetic updated"; }),
+      state.updateP1Progress(record.recordId, saved => { progressUpdates++; saved.at++; })
+    ]);
+    assert.equal(progressUpdates, 2, "each business mutation runs once despite rename retry");
+    assert.deepEqual(trace.waits, [25, 75]);
+    assert.equal(trace.attempts.length, 4);
+    assert.equal(new Set(trace.attempts.slice(0, 3).map(attempt => attempt.temporaryPath)).size, 1);
+    const [saved] = await readPrivateMaintenanceRecords(stateRoot, { vaultId: "retry-vault" });
+    assert.equal(saved.summary, "Synthetic updated");
+    assert.equal(saved.at, 2, "serialized progress update retains preceding mutation");
+  });
+  const recordPath = path.join(stateRoot, "records", `${record.recordId}.json`);
+  const previousRecord = await readFile(recordPath, "utf8");
+  const stateError = renameError("EPERM");
+  await withRenameFaults("win32", () => stateError, async trace => {
+    await assert.rejects(state.updateP1Progress(record.recordId, saved => { saved.summary = "Must not publish"; }), error => error === stateError);
+    assert.equal(trace.attempts.length, 4);
+    assert.equal(await readFile(recordPath, "utf8"), previousRecord);
+  });
+  assert.equal((await readdir(root, { recursive: true })).some(name => name.endsWith(".tmp")), false);
 }
 
 function assertKnowledgeReferenceContract(): void {

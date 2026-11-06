@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdir, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,8 +9,7 @@ import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(temporaryVaults, "工作台改版-20261017"));
-const relativeFixture = path.relative(temporaryVaults, fixture);
-if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture)) throw new Error("Workbench UI fixtures must be inside EchoInk-TestVaults/90-任务临时");
+if (!isDisposableTestRoot(fixture)) throw new Error("Workbench UI fixtures must be inside EchoInk-TestVaults/90-任务临时");
 const directory = path.join(fixture, ".p5-ui-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");

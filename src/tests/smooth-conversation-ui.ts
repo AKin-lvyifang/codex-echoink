@@ -1,3 +1,4 @@
+import { visiblePiConversationDiagnostics } from "../ui/codex-view/composer";
 import { installMockObsidianDom, installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -680,6 +681,7 @@ async function assertInlineApprovalDockIntegration(): Promise<void> {
   renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
   const view = Object.assign({}, {
     renderInteractionDock: (CodexView.prototype as unknown as { renderInteractionDock(session: StoredSession): void }).renderInteractionDock,
+    isDispatchedTask: () => false,
     pendingApprovalBinding: (CodexView.prototype as unknown as { pendingApprovalBinding(session: StoredSession): unknown }).pendingApprovalBinding,
     plugin: { settings: { settingsLanguage: "zh-CN" }, piAgentApprovalBinding: () => broker.bindingFor(identity) },
     pendingInteractionsBySession: new Map(), messagesEl, interactionDockEl: dockEl,
@@ -1513,6 +1515,35 @@ function taskPlanMessage(
 }
 
 export async function runSmoothConversationUiTests(): Promise<void> {
+  const interruptedDiagnostic = {
+    diagnosticId: "old-run",
+    conversationId: "system",
+    piSessionId: "session",
+    code: "runtime_interrupted" as const,
+    message: "previous stopped run",
+    createdAt: 1
+  };
+  for (const status of ["running", "waiting", "completed"] as const) {
+    const support = {
+      catalog: { taskStatus: status },
+      diagnostics: [interruptedDiagnostic],
+      drafts: []
+    };
+    assert.deepEqual(
+      visiblePiConversationDiagnostics(support as never), [],
+      "a recovered task does not expose an obsolete run diagnostic"
+    );
+  }
+  const failedSupport = {
+    catalog: { taskStatus: "interrupted" },
+    diagnostics: [interruptedDiagnostic],
+    drafts: []
+  };
+  assert.equal(
+    visiblePiConversationDiagnostics(failedSupport as never).length, 1,
+    "a current failure remains visible"
+  );
+
   assertSourceLineRangeContracts();
   assertReasoningVisibilityContracts();
   assertWorkRecordProjectionContracts();
@@ -4160,7 +4191,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
             ...(used === undefined ? {} : { current: used, completed: used }) }] }
       }, {
         id: "memory-count-answer", role: "assistant", text: "回答", status: "completed", runId: "memory-count-run", createdAt: 4,
-        askSourceAttribution: true, personalMemorySources: titles
+        askSourceAttribution: true, personalMemorySources: titles,
+        injectedMemorySources: titles.map(source => ({ ...source, reason: "title_or_trigger" as const }))
       }]);
       assert.equal(projection[1]?.kind, "assistantTurn");
       if (existingAnswer) {
@@ -4174,19 +4206,19 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       return surface.findByClass("codex-assistant-turn-final")!;
     };
     const countOnlyAnswer = renderMemoryCountTurn(3);
-    assert.match(renderedText(countOnlyAnswer.findByClass("codex-answer-memory-count")!), /记忆：用上 3 条/u,
-      "filtered-away titles fall back to the actual injected memory count below the answer");
+    assert.equal(countOnlyAnswer.findByClass("codex-memory-receipt"), null,
+      "progress counts without a real receipt do not invent memory sources");
     assert.doesNotMatch(renderedText(countOnlyAnswer), /26/u, "candidate totals never claim to be used memories");
-    assert.equal(renderMemoryCountTurn(undefined).findByClass("codex-answer-memory-count"), null,
-      "unknown used counts are not guessed from candidates");
+    assert.equal(renderMemoryCountTurn(undefined).findByClass("codex-memory-receipt"), null);
     const initiallyUnknownMemory = renderMemoryCountTurn(undefined);
-    renderMemoryCountTurn(3, [], initiallyUnknownMemory);
-    assert.match(renderedText(initiallyUnknownMemory.findByClass("codex-answer-memory-count")!), /用上 3 条/u,
-      "a later injected count refreshes the cached empty source host");
-    assert.equal(renderMemoryCountTurn(2, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-b", title: "已有记忆乙" }])
-      .findByClass("codex-answer-memory-count"), null, "titled memories are not counted a second time");
-    assert.match(renderedText(renderMemoryCountTurn(3, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-b", title: "已有记忆乙" }])
-      .findByClass("codex-answer-memory-count")!), /用上 1 条/u, "partial metadata counts only the remaining untitled memories");
+    renderMemoryCountTurn(3, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-b", title: "已有记忆乙" }], initiallyUnknownMemory);
+    assert.match(renderedText(initiallyUnknownMemory.findByClass("codex-memory-receipt")!), /用了 2 条记忆/u,
+      "actual receipts refresh the cached source host and determine the count");
+    assert.equal(initiallyUnknownMemory.findAllByClass("codex-memory-receipt").length, 1);
+    assert.equal(initiallyUnknownMemory.findByClass("codex-answer-memory-count"), null,
+      "there is one receipt entry instead of a second inferred count");
+    assert.match(renderedText(renderMemoryCountTurn(3, [{ id: "memory-a", title: "已有记忆甲" }, { id: "memory-a", title: "已有记忆甲" }])
+      .findByClass("codex-memory-receipt")!), /用了 1 条记忆/u, "one memory is counted once per actual turn");
 
     const diffMessage = renderMessage(renderer, {
       id: "file-change-diff",

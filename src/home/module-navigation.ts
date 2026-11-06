@@ -1,6 +1,6 @@
 import type CodexForObsidianPlugin from "../main";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
-import { GENERAL_ASSISTANT_ID } from "../agents/types";
+import { getModuleOwner } from "../agents/registry";
 
 export const WORKBENCH_MODULES: readonly { id: AgentModuleId; icon: string; zh: string; en: string }[] = [
   { id: "journal", icon: "book-open", zh: "日记", en: "Journal" },
@@ -11,16 +11,15 @@ export const WORKBENCH_MODULES: readonly { id: AgentModuleId; icon: string; zh: 
   { id: "pdf-reading", icon: "file-text", zh: "PDF 精读", en: "PDF reading" }
 ];
 
-/** Read the current registry at the action boundary; deleted owners fall back to Sol. */
-export function workbenchModuleOwner(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId): AgentDefinition {
-  const registry = plugin.settings.agentRegistry;
-  return registry.agents.find(agent => agent.id === registry.moduleOwners[moduleId])
-    ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)!;
+/** Always read live assignments; unassigned modules have no fallback. */
+export function workbenchModuleOwner(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId): AgentDefinition | null {
+  return getModuleOwner(plugin.settings.agentRegistry, moduleId);
 }
 
-/** Opening a module handoff never sends, creates a task or replaces an existing draft. */
 export async function prefillWorkbenchModule(plugin: CodexForObsidianPlugin, moduleId: AgentModuleId, text: string): Promise<boolean> {
-  return plugin.openAgentTaskList(workbenchModuleOwner(plugin, moduleId).id, text);
+  const owner = workbenchModuleOwner(plugin, moduleId);
+  if (!owner) { plugin.openModuleOwnerPicker(moduleId, () => plugin.startModulePromptTask(moduleId, text)); return false; }
+  return plugin.openAgentTaskList(owner.id, text);
 }
 
 /** New module pages replace only their own legacy navigation targets. */

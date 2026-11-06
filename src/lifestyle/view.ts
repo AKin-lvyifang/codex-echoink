@@ -62,7 +62,7 @@ export class LifestyleView extends ItemView {
     if (Platform.isDesktopApp && this.service.plugin.prefillWorkbenchModule && this.service.plugin.getWorkbenchModuleOwner) {
       const handoff = createOriginButton(actions, { cls: "echoink-module-handoff", attr: { type: "button" } });
       applyAmicroButton(handoff, { variant: "primary" });
-      const label = () => { handoff.textContent = `交给 ${this.service.plugin.getWorkbenchModuleOwner!("finance").name}`; };
+      const label = () => { const owner = this.service.plugin.getWorkbenchModuleOwner!("finance"); handoff.textContent = owner ? `交给 ${owner.name}` : "指定负责人"; };
       label(); handoff.onfocus = label; handoff.onpointerenter = label;
       handoff.onclick = () => {
         if (handoff.disabled) return;

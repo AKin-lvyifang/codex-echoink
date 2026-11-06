@@ -1,3 +1,4 @@
+import { ToolRoundBudget } from "../../agents/tool-round-budget";
 import { requiresProductFreshnessVerification } from "../resources/skill-routing";
 import { runErrors } from "../../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
@@ -117,7 +118,7 @@ import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
 import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
-import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, isMaintenanceScopeConfirmation, isNewMaintenanceScopeRequest, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
+import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, isMaintenanceScopeConfirmation, isNewMaintenanceScopeRequest, isFrozenMaintenanceBatchSuccessor, maintenanceTopicBoundary, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
 import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
@@ -230,6 +231,10 @@ type PiChatRuntimeEventPayload = DistributiveOmit<
 >;
 
 export interface PiNativeAgentSessionFactoryInput {
+  /** Frozen approval-only registry scope. Absent from everyday sessions. */
+  companyApprovalKey?: string;
+  currentToolRoundBudget?(): ToolRoundBudget | undefined;
+  stopToolRoundLimit?(): void;
   currentInlineProposalRequest?(): Readonly<InlineModelRequest> | null;
   currentGenerationContext?(): { request: GenerationRequest; assessment: GenerationSourceAssessment; attempt?: GenerationAttempt } | null;
   providerSettingsId?: string;
@@ -258,6 +263,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentDrawingRequested?(): boolean;
   currentRequestText?(): string;
+  currentCompanyProgrammatic?(): boolean;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
   /** Lazily opens the current, capability-authorized ordinary-chat read workflow. */
@@ -297,6 +303,7 @@ export interface PiNativeAgentSessionFactoryInput {
 }
 
 export interface PiNativeMemoryTurnContext {
+  readonly signal?: AbortSignal;
   readonly vaultId: string;
   readonly conversationId: string;
   readonly piSessionId: string;
@@ -607,6 +614,7 @@ export interface DerivePiNativeConversationInput {
 }
 
 export interface ActivatePiNativeConversationOptions {
+  companyApprovalKey?: string;
   providerSettingsId?: string;
   runtimeProviderId?: string;
   modelId?: string;
@@ -742,6 +750,8 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  companyProgrammatic?: boolean;
+  toolRoundBudget: ToolRoundBudget;
   drawingRequested?: boolean;
   inlineProposal?: { request: Readonly<InlineModelRequest>; previousAutoCompaction?: boolean };
   generation?: { request: GenerationRequest; assessment?: GenerationSourceAssessment; attempt?: GenerationAttempt; inputBudget?: number; stage?: GenerationStage; previousAutoCompaction?: boolean; durable?: boolean; pendingEntries: { customType: string; data: unknown }[] };
@@ -1275,10 +1285,22 @@ export class PiNativeConversationRuntime {
     updatedAt = this.now()
   ): Promise<Readonly<PiConversationCatalogEntry>> {
     this.assertReady();
-    const updated = await this.catalog.updateTaskMetadata(conversationId, metadata, expectedRevision, updatedAt);
-    const active = this.active.get(conversationId);
-    if (active) active.catalog = updated;
-    return updated;
+    const current = await this.requireCatalogConversation(conversationId);
+    const changesRole = current.companyRole !== metadata.companyRole;
+    if (changesRole) {
+      const active = this.active.get(conversationId);
+      if (this.submitting.has(conversationId) || active?.currentRun || active?.pendingSettlement || active?.session.isStreaming) {
+        throw new PiNativeConversationRuntimeError("conversation_busy", "运行期间不能更换公司角色，请等待本轮结束。");
+      }
+      // Reserve the submission window until the durable role and live projection agree.
+      this.submitting.add(conversationId);
+    }
+    try {
+      const updated = await this.catalog.updateTaskMetadata(conversationId, metadata, expectedRevision, updatedAt);
+      const active = this.active.get(conversationId);
+      if (active) active.catalog = updated;
+      return updated;
+    } finally { if (changesRole) this.submitting.delete(conversationId); }
   }
 
   async setConversationStatus(
@@ -1525,11 +1547,11 @@ export class PiNativeConversationRuntime {
       : null;
 
     const knowledgeCommand: KnowledgeConversationCommand =
-      request.inlineProposalRequest || request.generationRequest || mode === "plan" || !this.options.knowledge
+      request.companyProgrammatic || request.inlineProposalRequest || request.generationRequest || mode === "plan" || !this.options.knowledge
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
+    const selectedRuntimeSkill = !request.companyProgrammatic && !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
       ? request.skillId && this.options.skills?.resolveById
         ? await this.options.skills.resolveById({ id: request.skillId, catalog })
         : !request.skillPath && catalog.defaultSkillId
@@ -1553,6 +1575,7 @@ export class PiNativeConversationRuntime {
     const active = await this.requireActiveConversation(
       request.conversationId,
       {
+        companyApprovalKey: request.companyProgrammatic ? request.companyApprovalKey : undefined,
         providerSettingsId: request.providerSettingsId,
         runtimeProviderId: request.runtimeProviderId,
         modelId: request.modelId,
@@ -1638,6 +1661,8 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      toolRoundBudget: new ToolRoundBudget(),
+      ...(request.companyProgrammatic ? { companyProgrammatic: true } : {}),
       ...(request.inlineProposalRequest ? { inlineProposal: { request: request.inlineProposalRequest } } : {}),
       ...(request.drawingRequested ? { drawingRequested: true } : {}),
       ...(request.generationRequest ? { generation: { request: freezeGenerationRequest(request.generationRequest), pendingEntries: [] } } : {}),
@@ -1797,9 +1822,10 @@ export class PiNativeConversationRuntime {
           providerResourceText: preflight.providerResourceText,
           references: preflight.references
         });
-      } else if (mode !== "plan"
+      } else if (!request.companyProgrammatic && mode !== "plan"
         && knowledgeCommand.kind === "chat"
         && this.options.knowledge?.retrieveChat
+        && this.options.knowledge.shouldPreflightChat?.(catalog.conversationId) !== false
         && shouldPreflightPersonalKnowledge(request.text, execution.skillTurnContext?.skillId)) {
         await this.emitRuntimeEvent(active, execution, {
           type: "knowledge_progress",
@@ -1863,7 +1889,12 @@ export class PiNativeConversationRuntime {
             "Pi Knowledge maintenance preferences are unavailable"
           );
         }
+        // Reject a queued later batch before the user entry or prompt is durable.
+        const original = await this.openMaintenanceSelection(active);
         const suppliedScope = request.maintenanceScope;
+        if (original && suppliedScope && !sameMaintenancePaths(maintenanceScopePaths(suppliedScope), original.sourcePaths)) {
+          throw new PiNativeConversationRuntimeError("agent_session_invalid", "原批整理尚未结束，请回到原任务继续；后续批次保留并暂停。");
+        }
         if (suppliedScope?.mode === "batch" && suppliedScope.folderBindingsRevision !== undefined
           && suppliedScope.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) {
           throw new PiNativeConversationRuntimeError("agent_session_invalid", "目录配置已变化，停止剩余批次；已完成的整理保留。");
@@ -1872,17 +1903,19 @@ export class PiNativeConversationRuntime {
         const selection = !suppliedScope || (suppliedScope.mode === "global" && !suppliedScope.sourcePaths)
           ? await this.resolveMaintenanceSelection(active, execution, knowledgeCommand.request)
           : { scope: suppliedScope, request: knowledgeCommand.request };
+        if (original && selection.scope && !sameMaintenancePaths(maintenanceScopePaths(selection.scope), original.sourcePaths)) throw new PiNativeConversationRuntimeError("agent_session_invalid", "原批整理尚未结束，请先回到原任务继续，不能更换来源范围。");
         const resolvedCommand = maintenanceCommandContext({ ...knowledgeCommand, request: selection.request }, preference, selection.scope);
-        const structureResult = await this.options.knowledge?.prepareMaintenanceStructure?.({
-          initialization: request.maintenanceScope?.mode === "batch",
-          assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
-        });
         const scope = resolvedCommand.scope.mode === "global" ? resolvedCommand.scope : resolvedCommand.scope.mode === "query"
           ? { ...resolvedCommand.scope, candidatePaths: resolvedCommand.scope.candidatePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) }
           : resolvedCommand.scope.mode === "exact" ? { ...resolvedCommand.scope, sourcePaths: [resolveKnowledgePath(active.cwd, resolvedCommand.scope.sourcePaths[0], false)] as const }
           : { ...resolvedCommand.scope, sourcePaths: resolvedCommand.scope.sourcePaths.map((value) => resolveKnowledgePath(active.cwd, value, false)) };
         const scopedPaths = scope.mode === "query" ? scope.candidatePaths : scope.sourcePaths ?? [];
         if (scopedPaths.some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new PiNativeConversationRuntimeError("agent_session_invalid", "维护范围包含未绑定的资料来源，请重新选择。");
+        await this.options.knowledge?.assertMaintenanceSelection?.({ conversationId: active.catalog.conversationId, sourcePaths: scopedPaths });
+        const structureResult = await this.options.knowledge?.prepareMaintenanceStructure?.({
+          initialization: request.maintenanceScope?.mode === "batch",
+          assertActive: () => { if (execution.abortRequested) throw new DOMException("维护已取消", "AbortError"); }
+        });
         execution.maintenanceScope = scope;
         const command = Object.freeze({ ...resolvedCommand, scope, folderBindingsRevision: scope.mode === "global" ? scope.folderBindingsRevision ?? getKnowledgeFolderBindings(active.cwd)?.revision : getKnowledgeFolderBindings(active.cwd)?.revision, preference: Object.freeze({
           ...preference, providerResourceText: [structureResult, preference.providerResourceText].filter(Boolean).join("\n")
@@ -2169,6 +2202,14 @@ export class PiNativeConversationRuntime {
     run.maintenanceScopePersisted = true;
   }
 
+  private async openMaintenanceSelection(active: ActiveConversation) {
+    const branch = new Set(active.sessionManager.getBranch().map(entry => entry.id));
+    const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId))
+      .filter(run => run.piSessionId === active.catalog.piSessionId && branch.has(run.userEntryId));
+    return await this.options.knowledge?.openMaintenanceSelection?.({ conversationId: active.catalog.conversationId,
+      branchProductRunIds: runs.map(run => run.productRunId) }) ?? null;
+  }
+
   private async resolveMaintenanceSelection(active: ActiveConversation, run: ActiveProductRun, request: string): Promise<{ scope: PiKnowledgeMaintenanceScope | undefined; request: string }> {
     if (run.maintenanceScope) {
       const revision = run.maintenanceScope.mode === "batch" || run.maintenanceScope.mode === "global" ? run.maintenanceScope.folderBindingsRevision : undefined;
@@ -2176,19 +2217,42 @@ export class PiNativeConversationRuntime {
       return { scope: run.maintenanceScope, request };
     }
     const resume = run.resumeContext;
+    const recoveryScope = freezeMaintenanceScopeContext(resume?.safety.maintenanceContext);
+    const maintenanceResume = !!resume && (!!recoveryScope
+      || (await this.productRuns.read(resume.safety.interruptedRunId))?.knowledge?.workflow === "maintain");
     const confirmation = isMaintenanceScopeConfirmation(request);
     // A new explicit source/query wins even on a resumed turn. The product's
     // generic resume instruction is recovery context, never a Raw query.
     const newScope = isNewMaintenanceScopeRequest(request, active.cwd)
-      || run.commandKind === "maintain" && !!request.trim() && !confirmation;
+      || run.commandKind === "maintain" && !!request.trim() && !confirmation && !resume;
     if (!newScope) {
+      // A genuine continuation uses durable open work even when a later batch
+      // polluted both saved and recovery selections. Explicit selections win.
+      const original = confirmation || maintenanceResume ? await this.openMaintenanceSelection(active) : null;
+      const branch = active.sessionManager.getBranch();
+      const branchRuns = (await this.productRuns.listReadOnly(active.catalog.conversationId)).filter(prior => prior.piSessionId === active.catalog.piSessionId);
+      const owningRun = original ? branchRuns.find(prior => prior.productRunId === original.productRunId) : null;
+      const originalPosition = owningRun ? branch.findIndex(entry => entry.id === owningRun.userEntryId) : -1;
+      const topicChanged = branch.slice(originalPosition + 1).some(entry => {
+        if (entry.type !== "message" || entry.message.role !== "user") return false;
+        const text = messageContentText(entry.message.content);
+        const historicalRun = branchRuns.find(prior => prior.userEntryId === entry.id);
+        const queuedSuccessor = !!original && !!historicalRun
+          && isFrozenMaintenanceBatchSuccessor(branch, original.productRunId, historicalRun.productRunId);
+        return !queuedSuccessor && maintenanceTopicBoundary(text, active.cwd);
+      });
+      if (original && topicChanged) throw new Error("请说明要维护哪些资料；原批整理尚未结束，请回到原任务继续。");
+      if (original) {
+        if (original.folderBindingsRevision !== undefined && original.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
+        if (original.sourcePaths.some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
+        return { scope: { mode: "batch", sourcePaths: original.sourcePaths, folderBindingsRevision: original.folderBindingsRevision }, request: "继续原维护清单" };
+      }
       const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId)).filter(prior => prior.piSessionId === active.catalog.piSessionId);
       const saved = maintenanceScopeContextFromEntries(active.sessionManager.getBranch(), runs, {
         excludeProductRunId: run.productRunId,
         vaultRootPath: active.cwd,
         ...(resume ? { throughProductRunId: resume.safety.interruptedRunId } : {})
       });
-      const recoveryScope = freezeMaintenanceScopeContext(resume?.safety.maintenanceContext);
       if (resume && recoveryScope && (!saved || JSON.stringify(saved) !== JSON.stringify(recoveryScope))) throw new Error("无法确认原任务的维护范围，请说明要维护哪些资料。");
       const inherited: MaintenanceScopeContext | null = recoveryScope ?? saved;
       if (inherited) {
@@ -2463,11 +2527,13 @@ export class PiNativeConversationRuntime {
       });
     }
     await active.session.steer(text);
+    if (active.currentRun && !active.currentRun.abortRequested) active.currentRun.toolRoundBudget = new ToolRoundBudget();
   }
 
   async followUp(conversationId: string, text: string): Promise<void> {
     const active = this.requireRunningConversation(conversationId);
     await active.session.followUp(text);
+    if (active.currentRun && !active.currentRun.abortRequested) active.currentRun.toolRoundBudget = new ToolRoundBudget();
   }
 
   private async requireDraftForSubmission(
@@ -2931,7 +2997,9 @@ export class PiNativeConversationRuntime {
     this.assertReady();
     this.assertConversationNotRecovering(conversationId);
     assertValidSkillBinding(options);
-    const resourceKey = resourceKeyFor(options);
+    const catalog = await this.requireCatalogConversation(conversationId);
+    // A role changes the tool registry and system prompt, including already-open legacy cards.
+    const resourceKey = resourceKeyFor(options) + "\0company-role:" + (catalog.companyRole ?? "");
     const existing = this.active.get(conversationId);
     const selectedModelMatches = !options.runtimeProviderId
       || (existing?.session.model?.provider === options.runtimeProviderId
@@ -2951,7 +3019,6 @@ export class PiNativeConversationRuntime {
       await this.releaseConversation(conversationId);
     }
 
-    const catalog = await this.requireCatalogConversation(conversationId);
     if (catalog.status === "deleted") {
       throw new PiNativeConversationRuntimeError(
         "conversation_deleted",
@@ -2964,6 +3031,7 @@ export class PiNativeConversationRuntime {
     const created = await this.options.createAgentSession({
       catalog,
       cwd,
+      companyApprovalKey: options.companyApprovalKey,
       providerSettingsId: options.providerSettingsId,
       runtimeProviderId: options.runtimeProviderId,
       modelId: options.modelId,
@@ -2972,6 +3040,17 @@ export class PiNativeConversationRuntime {
       skillName: options.skillName,
       skillPaths: options.skillPaths,
       skillNames: options.skillNames,
+      currentToolRoundBudget: () => {
+        const run = holder.active?.currentRun;
+        run?.toolRoundBudget.upgrade(run.selectedSkillIds.length > 0 || run.commandKind === "maintain");
+        return run?.toolRoundBudget;
+      },
+      stopToolRoundLimit: () => {
+        const active = holder.active, run = active?.currentRun;
+        if (!active || !run || run.abortRequested) return;
+        run.interruption = { at: this.now(), reason: "tool_loop_limit", stage: taskInterruptionStage(active) };
+        void this.abort(conversationId).catch(error => { run.eventError ??= error; });
+      },
       currentExecutionContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
@@ -3046,6 +3125,7 @@ export class PiNativeConversationRuntime {
           const selection = await this.resolveMaintenanceSelection(active, run, request);
           const command = maintenanceCommandContext({ kind: "maintain", originalText: run.requestText, request: selection.request }, preference, selection.scope);
           if (maintenanceScopePaths(command.scope).some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("维护范围不在当前资料目录中，请说明要维护哪些资料。");
+          await this.options.knowledge?.assertMaintenanceSelection?.({ conversationId: active.catalog.conversationId, sourcePaths: maintenanceScopePaths(command.scope) });
           run.maintenanceScope = command.scope;
           this.persistMaintenanceScope(active, run, selection.request);
           run.maintenanceCommand = Object.freeze({ ...command, folderBindingsRevision: getKnowledgeFolderBindings(active.cwd)?.revision });
@@ -3069,6 +3149,7 @@ export class PiNativeConversationRuntime {
       currentPdfTaskRequest: () => holder.active?.currentRun?.pdfTaskRequest,
       currentDrawingRequested: () => holder.active?.currentRun?.drawingRequested === true,
       currentRequestText: () => holder.active?.currentRun?.requestText ?? "",
+      currentCompanyProgrammatic: () => holder.active?.currentRun?.companyProgrammatic === true,
       currentEnglishDiaryRequest: () => {
         const active = holder.active, run = active?.currentRun;
         if (!active || !run?.englishDiarySourcePath) return null;
@@ -3109,7 +3190,7 @@ export class PiNativeConversationRuntime {
       currentMemoryTurnContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
-        if (!active || !run || run.englishDiarySourcePath || run.generation) return null;
+        if (!active || !run || run.companyProgrammatic || run.englishDiarySourcePath || run.generation) return null;
         const branch = active.sessionManager.getBranch();
         // before_agent_start may run before or after Pi appends this turn's
         // user message. Entry identity preserves earlier identical text.
@@ -3124,6 +3205,7 @@ export class PiNativeConversationRuntime {
           piSessionId: catalog.piSessionId,
           productRunId: run.productRunId,
           memoryMode: run.memoryMode,
+          signal: run.knowledgeAbort.signal,
           ...(run.projectId ? { projectId: run.projectId } : {}),
           query: run.requestText,
           recentConversation: run.inlineProposal ? [] : selectMemoryRecallPreviousUserContext(branch.flatMap((entry) =>
@@ -4171,6 +4253,7 @@ export class PiNativeConversationRuntime {
       await this.emitRuntimeEvent(active, execution, {
         type: "product_run_settled",
         terminalState,
+        ...(execution.interruption?.reason === "tool_loop_limit" ? { interruptionReason: "tool_loop_limit" as const } : {}),
         ...(toolCallTextFailure ? { toolCallTextFailure } : {}),
         assistantEntryId
       });
@@ -7010,6 +7093,7 @@ function lastEntryOfType(
 function runIdentity(run: Readonly<PiProductRunRecord>): PiChatUiRunIdentity {
   return {
     productRunId: run.productRunId,
+    ...(run.interruption?.reason === "tool_loop_limit" ? { interruptionReason: "tool_loop_limit" as const } : {}),
     userEntryId: run.userEntryId,
     assistantEntryId: run.assistantEntryId,
     toolCallIds: run.toolCallIds,
@@ -7489,6 +7573,7 @@ function resourceKeyFor(
     options.skillPath ?? "",
     options.skillName ?? "",
     options.skillRevision ?? "",
+    options.companyApprovalKey ?? "",
     ...(options.skillPaths ?? []),
     ...(options.skillNames ?? [])
   ].join("\0");
@@ -7625,4 +7710,14 @@ function taskInterruptionStage(active: {
     }
   }
   return candidates.sort((left, right) => right.at - left.at)[0]?.title.slice(0, 500) ?? "";
+}
+
+function sameMaintenancePaths(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every(path => right.includes(path));
+}
+function messageContentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: unknown[] = content;
+  return parts.flatMap(part => part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string" ? [part.text] : []).join("\n");
 }

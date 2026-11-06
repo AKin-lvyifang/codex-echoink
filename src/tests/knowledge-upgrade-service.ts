@@ -31,7 +31,10 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
     await put(vault, "Wiki/map.md", "# 地图\n[[Raw/source.md|来源]] [[Raw/linked.md]]\n");
     let bindings = emptyKnowledgeFolderBindings(), stored: KnowledgeMaintenanceRecord[] = [], classified = 0, tasks = 0;
     let blocked = true, failWiki = true, failClassification = false;
+    let enteredClassification!: () => void;
+    const classificationStarted = new Promise<void>(resolve => { enteredClassification = resolve; });
     const changed: KnowledgeMaintenanceRecord[] = [], writes: string[] = [], notices: string[] = [], statuses: string[] = [];
+    const interruptedSnapshots: Array<ReturnType<KnowledgeUpgradeService["getUpgradeSnapshot"]>> = [];
     const host: KnowledgeUpgradeHost = {
       vaultRoot: vault, bindings: () => bindings, records: async () => structuredClone(stored),
       save: async record => { stored = [structuredClone(record)]; }, createTask: async () => { tasks++; return "upgrade-task"; },
@@ -45,6 +48,7 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
       },
       classify: async (_item, _record, signal) => {
         classified++;
+        enteredClassification();
         if (blocked) await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
         if (signal.aborted) throw new Error("aborted");
         if (failClassification) throw new KnowledgeUpgradeClassificationError("这页的类型判断没有返回完整结果，原文件会保留，点继续重试。", "invalid-json", "length");
@@ -55,15 +59,21 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
         assert.equal(sha(await fs.readFile(path.join(vault, write.path), "utf8")), write.expectedVersion);
         writes.push(write.path); await fs.writeFile(path.join(vault, write.path), write.content); return { done: true, revision: sha(write.content) };
       },
-      changed: record => changed.push(structuredClone(record)), notice: message => notices.push(message)
+      changed: record => {
+        changed.push(structuredClone(record));
+        if (record.progress?.status === "interrupted")
+          interruptedSnapshots.push(service.getUpgradeSnapshot());
+      },
+      notice: message => notices.push(message)
     };
     const service = new KnowledgeUpgradeService(host); await service.ready;
     const preview = await service.previewUpgrade();
     assert.equal(classified, 0); assert.equal(tasks, 0); assert.equal(writes.length, 0); assert.equal(stored.length, 0);
-    assert.equal(preview.counts.sourceStatusCount, 1); assert.equal(preview.counts.wikiCount, 1, "maps are classified too");
+    assert.equal(preview.counts.sourceStatusCount, 1); assert.equal(preview.counts.wikiCount, 1, "ordinary Wiki classification remains in scope");
     assert.ok(preview.rootAdditions.some(item => item.path === "Raw"));
     await assert.rejects(service.confirmUpgrade("stale"), /预览/);
     const live = await service.confirmUpgrade(preview.id); assert.equal(live.status, "running");
+    await classificationStarted;
     let backgroundWrites = 0;
     const backgroundController = new AbortController();
     const background = backgroundMaintenancePageWrite(vault, "Wiki/map.md", async () => { backgroundWrites++; await fs.appendFile(path.join(vault, "Wiki/map.md"), "后台关联。\n"); }, backgroundController.signal);
@@ -71,6 +81,11 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
     assert.equal(maintenancePageIsHeld(vault, "Wiki/map.md"), true);
     assert.equal(backgroundWrites, 0, "confirmed upgrade defers the actual shared background write gate");
     await service.stopUpgrade(); assert.equal((await service.getUpgradeSnapshot()).status, "interrupted");
+    assert.ok(interruptedSnapshots.length);
+    assert.ok(
+      (await Promise.all(interruptedSnapshots)).every(snapshot => snapshot.status === "interrupted"),
+      "An interrupted notification must not present a still-running repair to subscribers",
+    );
     assert.equal(writes.length, 0, "stop during classify never writes");
     assert.equal(maintenancePageIsHeld(vault, "Wiki/map.md"), true, "stop retains the P1 page hold");
     blocked = false; failClassification = true; await service.resumeUpgrade();
@@ -106,8 +121,8 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
     assert.equal(backgroundWrites, 1, "completion releases the shared gate and the deferred filesystem write runs once");
     assert.equal(maintenancePageIsHeld(vault, "Wiki/map.md"), false);
     const activity = projectMaintenanceActivity(stored[0])!;
-    assert.match(maintenanceCompletionText(activity), /1 篇资料状态、2 条链接.*1 页/);
-    const recheck = await cold.previewUpgrade(); assert.equal(recheck.automatic.length, 0); assert.equal(writes.length, 3);
+    assert.match(maintenanceCompletionText(activity), /1 篇资料状态.*2 条链接.*1 页/);
+    const recheck = await cold.previewUpgrade(); assert.equal(recheck.automatic.length, 1, "Uncertain type has an explicit confirmation action on recheck"); assert.equal(writes.length, 3);
     report.push("read-only-confirm-stop-partial-cold-resume-counts-recheck", "shared-background-hold-stop-cold-restore-release");
   }
   {
@@ -125,6 +140,40 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
     assert.equal((await service.getUpgradeSnapshot()).completed?.wiki, 0);
     report.push("new-user-type-preserved-without-write");
   }
+  {
+    const vault = path.join(root, "checkup-repairs"), original = "---\ntags: [用户标签] # 保留\ncustom: 0021\n---\n正文。\n";
+    await put(vault, "Wiki/a.md", original); await put(vault, "Wiki/b.md", original);
+    let records: KnowledgeMaintenanceRecord[] = [], calls: string[] = [], stopOnce = true;
+    let service: KnowledgeUpgradeService;
+    const bindings = emptyKnowledgeFolderBindings(); bindings.roles.wiki = { enabled: true, searchEnabled: true, readPaths: ["Wiki"], writePath: "Wiki", allowedSubdirectories: [] };
+    const host: KnowledgeUpgradeHost = {
+      vaultRoot: vault, bindings: () => bindings, records: async () => structuredClone(records),
+      save: async record => { records = [structuredClone(record)]; }, createTask: async () => "checkup-task",
+      taskStatus: async () => {}, registerRoots: async () => bindings.revision,
+      classify: async () => { throw new Error("Prepared deterministic repairs never call a model"); },
+      write: async write => {
+        calls.push(write.path); assert.equal(sha(await fs.readFile(path.join(vault, write.path), "utf8")), write.expectedVersion);
+        await fs.writeFile(path.join(vault, write.path), write.content);
+        if (stopOnce) { stopOnce = false; void service.stopUpgrade(); }
+        return { done: true, revision: sha(write.content) };
+      }, changed: () => {}, notice: () => {},
+    };
+    service = new KnowledgeUpgradeService(host); await service.ready;
+    const items = ["Wiki/a.md", "Wiki/b.md"].map(file => ({ path: file, title: file, content: original, revision: sha(original), after: original + "修复。\n", descriptions: ["已选修复"] }));
+    const preview = await service.prepareRepairs(items);
+    assert.equal((await service.getUpgradeSnapshot()).preview?.automatic.length, 2, "A pending repair restores the exact visible preview");
+    assert.equal(calls.length, 0); assert.equal(records.length, 0, "Preview is read-only for notes and task records");
+    await assert.rejects(service.confirmUpgrade("stale"), /预览/u);
+    await service.confirmUpgrade(preview.id); assert.equal((await settle(service)).status, "interrupted");
+    releaseMaintenancePages(records[0].recordId);
+    service = new KnowledgeUpgradeService(host); await service.ready; await service.resumeUpgrade();
+    assert.equal((await settle(service)).status, "completed");
+    assert.deepEqual(calls, ["Wiki/a.md", "Wiki/b.md"], "Cold resume only writes remaining notes");
+    assert.equal((await service.getUpgradeSnapshot()).purpose, "checkup");
+    assert.equal(maintenanceCompletionText(projectMaintenanceActivity(records[0])!), "已更新 2 篇知识笔记");
+    for (const item of items) assert.equal(await fs.readFile(path.join(vault, item.path), "utf8"), item.after);
+    report.push("checkup-reuses-upgrade-preview-confirm-stop-cold-resume-byte-preservation");
+  }
   await productionDurability(path.join(root, "production"), report);
   await fs.writeFile(path.join(root, "service-result.json"), JSON.stringify({ passed: true, scenarios: report }, null, 2));
 }
@@ -132,6 +181,7 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
 async function productionDurability(root: string, report: string[]) {
   for (const mode of ["failed-retry", "receipt-gap"] as const) {
     const vault = path.join(root, mode), f = await nativeJournalFixture(vault), privateRoot = path.join(vault, ".obsidian/plugins/codex-echoink/pi-agent-product-v1/knowledge"), storage = path.dirname(privateRoot);
+    f.plugin.settings.agentRegistry.moduleOwners["knowledge-base"] = "generalist";
     await put(vault, "raw/articles/old.md", "# 普通旧来源\n保留正文  \n");
     const bindings = emptyKnowledgeFolderBindings();
     bindings.roles.raw = { ...bindings.roles.raw, enabled: true, writePath: "原始资料", readPaths: ["原始资料"] };

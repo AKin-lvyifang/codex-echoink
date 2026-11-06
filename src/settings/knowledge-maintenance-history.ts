@@ -235,7 +235,8 @@ export function knowledgeMaintenanceHistoryTitle(
   zh: boolean,
   record?: Readonly<KnowledgeMaintenanceRecord>
 ): string {
-  if (record?.upgrade) return `${formatKnowledgeMaintenanceTime(entry.at, entry.date, zh)} · ${zh ? "旧知识升级" : "Legacy knowledge upgrade"}`;
+  if (record?.upgrade) return `${formatKnowledgeMaintenanceTime(entry.at, entry.date, zh)} · ${record.upgrade.plan.purpose === "checkup"
+    ? zh ? "体检修复" : "Knowledge repair" : zh ? "旧知识升级" : "Legacy knowledge upgrade"}`;
   const modeLabels = zh
     ? {
         maintain: "知识提炼",
@@ -295,6 +296,11 @@ export function knowledgeMaintenanceHistoryStatus(
 }
 
 export function knowledgeUpgradeHistorySummary(record: Readonly<KnowledgeMaintenanceRecord>, zh: boolean): string {
+  if (record.upgrade?.plan.purpose === "checkup") {
+    const count = Object.values(record.upgrade.writes).filter(write => write.done).length;
+    if (!count) return zh ? "体检修复，请查看结果" : "Knowledge repair: view results";
+    return zh ? `体检修复，已更新 ${count} 篇笔记` : `Knowledge repair: ${count} notes updated`;
+  }
   const activity = projectMaintenanceActivity(record);
   return activity?.upgradeCounts ? maintenanceCompletionText(activity, !zh) : zh ? "升级结果待核对" : "Upgrade results need verification";
 }

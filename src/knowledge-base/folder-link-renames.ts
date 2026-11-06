@@ -13,7 +13,7 @@ function references(app: App, file: TFile): ReferenceCache[] {
 }
 
 /** Locate only the destination of a metadata-confirmed link; keep its label/title intact. */
-function destination(original: string): { start: number; end: number; wiki: boolean } | null {
+export function knowledgeLinkDestination(original: string): { start: number; end: number; wiki: boolean } | null {
   const wiki = /^!?\[\[/u.exec(original);
   if (wiki) {
     const end = original.search(/[|\]]/u);
@@ -62,7 +62,7 @@ function absoluteVaultLink(app: App, rawPath: string): { relative: string; base:
 }
 
 function replacement(app: App, original: string, source: string, from: string, to: string): string | null {
-  const span = destination(original);
+  const span = knowledgeLinkDestination(original);
   if (!span) return null;
   const raw = original.slice(span.start, span.end);
   const hash = raw.indexOf("#");

@@ -1,3 +1,4 @@
+import { requireModuleOwner } from "../agents/registry";
 import { createPiAgentCapabilityContext } from "../plugin/pi-production-runtime-composition";
 import { checkAgentTool, requireAgentCapability } from "../agents/capability-policy";
 import { TFolder } from "obsidian";
@@ -72,7 +73,7 @@ export class GenerationService {
   /** Called only by the explicit recommendation button. It never saves a template. */
   async recommend(paths: readonly string[], signal?: AbortSignal, sessionId?: string): Promise<GenerationTemplate[]> {
     const session = sessionId ? this.plugin.settings.sessions.find(value => value.id === sessionId) : undefined;
-    const agentId = session?.agentId ?? this.plugin.getWorkbenchModuleOwner("knowledge-base").id;
+    const agentId = session?.agentId ?? requireModuleOwner(this.plugin.settings.agentRegistry, "knowledge-base").id;
     const context = createPiAgentCapabilityContext(this.plugin, agentId, [], { permission: "read-only", mode: "agent", memoryMode: "no_memory" });
     for (const relativePath of paths) requireAgentCapability(checkAgentTool(context, "note_read", { relativePath }));
     const assessment = await this.assessSources(paths, signal);

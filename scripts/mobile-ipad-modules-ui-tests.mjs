@@ -69,6 +69,7 @@ const service = {
   async writeConversationBill(action, id, version, patch) { requireWrite(); Object.assign(financeData.financeBillPlans.find(item => item.id === id), patch); financeEvents.emit(); },
   async saveOption(key, value) { requireWrite(); settings.lifestyle.finance[key] = value; }, async saveAnalysisDirectory(value) { requireWrite(); settings.lifestyle.finance.analysisDirectory = value; },
   async saveCatalog(kind, values) { requireWrite(); settings.lifestyle.finance[kind] = values; },
+  previewImport(rows) { return { rows: structuredClone(rows), linked: [], pending: [], duplicates: [], invalid: [], added: rows.length, updated: 0 }; },
   async confirmImport(rows, { signal }) { requireWrite(); calls.imports++; if (importMode === "cancel") await new Promise(resolve => { importRelease = resolve; signal.addEventListener("abort", resolve, { once: true }); }); const result = { added: 1, updated: 0, duplicates: 1, invalid: 0, created: [{ entry: rows[0].entry, path: "import.md" }], ...(importMode === "partial" ? { writeError: "部分写入，需核对" } : {}) }; return result; },
   async prepareImport(created) { service.lastCreated = created; service.organization = { rows: [{ entry: { ...created[0].entry }, review: "", reason: "" }], warnings: [] }; return service.organization; },
   async applyImportSuggestions(created, rows) { assert.equal(created, service.lastCreated, "created identity is retained"); assert.equal(rows, service.organization.rows, "organization row identity is retained"); calls.apply++; return { applied: 1, skipped: 0 }; },

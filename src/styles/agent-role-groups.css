@@ -1,0 +1,8 @@
+.echoink-agent-roster-group { display: flex; flex: 0 0 auto; flex-direction: column; gap: 4px; padding-inline-end: 12px; }
+.echoink-agent-roster-group-label { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-muted); }
+.echoink-agent-roster-group-items { display: flex; align-items: center; gap: 2px; }
+.echoink-agent-company-approval .echoink-origin-radio-group { display: flex; flex-wrap: wrap; gap: 14px; }
+.echoink-agent-approval-choice { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.echoink-iphone .ip-agent-group, .echoink-ipad .pd-agent-group { display: flex; flex: 0 0 auto; flex-direction: column; padding-inline-end: 12px; gap: 2px; }
+.echoink-iphone .ip-agent-group-label, .echoink-ipad .pd-agent-group-label { font-size: .85em; font-weight: 600; line-height: 1.4; color: var(--text-muted); }
+.echoink-iphone .ip-agent-group-items, .echoink-ipad .pd-agent-group-items { display: flex; align-items: center; gap: 2px; }

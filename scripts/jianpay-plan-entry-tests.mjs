@@ -31,10 +31,11 @@ try {
     export async function runTests(){
       installProviderBrowserHost(); HTMLElement.prototype.scrollIntoView=()=>{};
       for(const platform of ['desktop','iphone','ipad']){
-        const empty=createUnavailableAccountAdapter().read();
+        const products=[{id:'quarter',prices:{CNY:990,USD:199},days:90,available:true,availability:'available'},{id:'early',prices:{CNY:2990,USD:999},days:null,available:false,availability:'unavailable'}];
+        const empty={...createUnavailableAccountAdapter().read(),products};
         const opened=[];
         const base=process.env.ECHOINK_PLAN_ENTRY_BASE_URL || 'https://plan-entry.invalid';
-        const service=new AccountService({persistent:false,read:async()=>({}),write:async()=>{},identity:async()=>{throw new Error('unused anonymous identity');}},async path=>{assert.equal(path,'/api/products');return {products:[],salesOpen:true};},base,url=>opened.push(url),base,()=> 'configured');
+        const service=new AccountService({persistent:false,read:async()=>({}),write:async()=>{},identity:async()=>{throw new Error('unused anonymous identity');}},async path=>{assert.equal(path,'/api/products');return {products,salesOpen:true};},base,url=>opened.push(url),base,()=> 'configured');
         await service.initialize();
         let vm={...empty,salesOpen:true,serviceAvailable:true};const listeners=new Set(),calls=[];
         const adapter={read:()=>vm,subscribe:f=>{listeners.add(f);return()=>listeners.delete(f);},actions:{selectPlan:async input=>{calls.push(input);await service.actions.selectPlan(input);}}};

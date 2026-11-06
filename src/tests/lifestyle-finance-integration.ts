@@ -24,7 +24,7 @@ function fixture(root: string) {
     app: { workspace, vault: { on: (event: string) => { vaultEvents.push(event); return {}; } } },
     settings: { lifestyle: normalizeLifestyleSettings({ finance: { enabled: true }, map: { enabled: true }, health: { enabled: true } }) },
     getVaultPath: () => root,
-    getPluginDataDirName: () => "codex-echoink",
+    getPluginDataDirName: () => ".obsidian/plugins/codex-echoink",
     registerView: (type: string) => { registeredViews.push(type); },
     addCommand: (command: { id: string; callback: () => void }) => { commands.push(command); },
     registerEvent: () => undefined,

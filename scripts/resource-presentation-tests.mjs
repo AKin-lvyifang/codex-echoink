@@ -13,7 +13,7 @@ try {
   await esbuild.build({
     entryPoints: ["src/tests/resource-presentation-dom.ts"], absWorkingDir: root,
     bundle: true, platform: "node", target: "node22", format: "esm", outfile: entry,
-    banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' },
+    banner: { js: 'import {createRequire as createIsolatedTestRequire} from "node:module"; const require = createIsolatedTestRequire(import.meta.url);' },
     loader: { ".md": "text", ".svg": "dataurl", ".webp": "dataurl" },
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
     alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") }, logLevel: "silent"

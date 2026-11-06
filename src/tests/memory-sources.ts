@@ -92,11 +92,13 @@ export async function runMemorySourceTests(): Promise<void> {
       const plugin = Object.assign(Object.create(CodexForObsidianPlugin.prototype), { piLocalData: { personalMemory: fixture.repository } }) as CodexForObsidianPlugin;
       let reads = 0;
       const context = createTestContext();
+      let openedReceipt: unknown;
       const render = () => {
         const renderer = new CodexMessageListRenderer();
         (renderer as unknown as { env: unknown }).env = { ...context, sessionId: conversationId, settingsLanguage: "zh-CN",
           messagesEl: new FakeElement("div"), virtualListEl: new FakeElement("div"), messages: projection.messages, options: {},
           readPersonalMemorySource: async (id: string, revision?: number) => { reads++; return await plugin.readEchoInkPersonalMemorySource(id, revision); },
+          onOpenMemoryReceipt: async (receipt: unknown) => { openedReceipt = receipt; },
           onScheduleMeasure: () => undefined };
         const process = new FakeElement("div"), footer = new FakeElement("div");
         (renderer as any).renderAssistantTurnProcessNode(process, turn, node);
@@ -105,8 +107,13 @@ export async function runMemorySourceTests(): Promise<void> {
       };
       const initial = render();
       assert.equal(reads, 0, "collapsed details never read Memory bodies");
-      assert.match(renderedText(initial.footer), /记忆：银槐颜色/u); assert.match(renderedText(initial.footer), /记忆：银槐饮品/u);
-      assert.equal(initial.footer.findByClass("is-memory")!.querySelector("button"), null);
+      assert.match(renderedText(initial.footer), /用了 2 条记忆/u);
+      assert.doesNotMatch(renderedText(initial.footer), /银槐颜色|银槐饮品/u, "the receipt entry keeps detailed sources on the memory page");
+      const receiptButton = initial.footer.findByClass("codex-memory-receipt")!;
+      await receiptButton.onclick!({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+      assert.deepEqual(openedReceipt, { conversationId, messageId: turn.finalAnswer?.id, question: "银槐验收", sources }, "opening the page passes the frozen actual receipt");
+      assert.ok(sources.every(source => source.reason === "title_or_trigger" || source.reason === "content_or_association"));
+      assert.deepEqual(projection.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, sources, "cold projection retains original recall reasons");
       const disclosure = initial.process.findByClass("codex-assistant-turn-resource")!;
       disclosure.open = true; await disclosure.ontoggle!({ isTrusted: true });
       assert.equal(reads, 2);

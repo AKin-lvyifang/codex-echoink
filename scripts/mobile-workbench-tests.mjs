@@ -11,10 +11,12 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile/workbenc
 for (const file of Object.keys(build.metafile.inputs)) assert.ok(!["src/home/workbench-data.ts", "src/home/workbench-records.ts", "src/home/task-launcher.ts", "src/knowledge-base/raw-digest.ts", "src/settings/settings.ts"].includes(file), `desktop import: ${file}`);
 const module = { exports: {} };
 class FixtureFolder { constructor(path) { this.path = path; this.name = path.split("/").pop(); this.children = []; } }
-vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, structuredClone, TextEncoder, TextDecoder,
+const browser = vm.createContext({ module, exports: module.exports, crypto: webcrypto, structuredClone, TextEncoder, TextDecoder,
   AbortController, URL, setTimeout, clearTimeout, console, require(id) {
     assert.equal(id, "obsidian"); return { TFile: FixtureTFile, TFolder: FixtureFolder, moment, parseYaml, Notice: class {} };
-  } }, { filename: "mobile-workbench-browser.cjs" });
+  } });
+browser.self = browser;
+vm.runInContext(build.outputFiles[0].text, browser, { filename: "mobile-workbench-browser.cjs" });
 const { MobileWorkbenchService, MobileRuntime, MobileStore, loadMobileSettings, mobileProvider, mobileModel, parseTodoMarkdown,
   localWorkbenchDate, workbenchWeekKey, emptyKnowledgeFolderBindings, EMPTY_LIFESTYLE_DATA, parseMobileWorkbenchSource, sha256Hex } = module.exports;
 let passed = 0;
@@ -23,7 +25,9 @@ const keyDate = localWorkbenchDate(Date.now());
 const oldDate = new Date(); oldDate.setDate(oldDate.getDate() - 6);
 const todoText = (title = "到期待办") => `- [ ] ${title}\n  - 截止日期: ${localWorkbenchDate(oldDate)}\n`;
 const make = async (seed = {}, raw = {}, providerRequest) => {
-  const host = createHost(seed); let scans = 0, reads = 0, requests = 0;
+  const host = createHost(seed);
+  for (const file of Object.keys(seed)) { const parts = file.split("/"); for (let end = 1; end < parts.length; end++) host.folders.add(parts.slice(0, end).join("/")); }
+  let scans = 0, reads = 0, requests = 0;
   const files = host.app.vault.getFiles.bind(host.app.vault), abstract = host.app.vault.getAbstractFileByPath.bind(host.app.vault);
   host.app.vault.getFiles = () => { scans++; return files(); };
   host.app.vault.getAbstractFileByPath = path => host.folders.has(path) ? new FixtureFolder(path) : abstract(path);
@@ -78,30 +82,31 @@ await test("unknown source failures stay null and never create English/review/li
 });
 await test("handoff is only an unsent Agent-list draft; conflict preserves draft, note context and tasks", async () => {
   const f = await make({ "EchoInk/待办.md": todoText() });
+  f.settings.agentRegistry.moduleOwners.todos = "generalist";
   const snapshot = await f.workbench.load(), signal = snapshot.signals.find(item => item.id === 1);
   assert.ok(signal, JSON.stringify(snapshot)); const ids = f.store.state.sessions.map(task => task.id);
-  await f.store.update(latest => { latest.newTaskDrafts.sol = { text: "已有的不同草稿", attachments: [], noteMentions: [{ vaultRelativePath: "旧.md", fileName: "旧" }], selectedPermission: "read-only" }; });
-  const before = JSON.stringify(f.store.state.newTaskDrafts.sol), page = JSON.stringify(f.store.state.page);
+  await f.store.update(latest => { latest.newTaskDrafts.generalist = { text: "已有的不同草稿", attachments: [], noteMentions: [{ vaultRelativePath: "旧.md", fileName: "旧" }], selectedPermission: "read-only" }; });
+  const before = JSON.stringify(f.store.state.newTaskDrafts.generalist), page = JSON.stringify(f.store.state.page);
   assert.equal((await f.workbench.handoff(signal)).conflict, true);
-  assert.equal(JSON.stringify(f.store.state.newTaskDrafts.sol), before); assert.equal(JSON.stringify(f.store.state.page), page);
+  assert.equal(JSON.stringify(f.store.state.newTaskDrafts.generalist), before); assert.equal(JSON.stringify(f.store.state.page), page);
   assert.equal((await f.workbench.handoff(signal, true)).conflict, false);
-  const draft = f.store.state.newTaskDrafts.sol;
+  const draft = f.store.state.newTaskDrafts.generalist;
   assert.equal(draft.text, signal.prompt); assert.equal(draft.selectedPermission, "read-only"); assert.equal(draft.noteMentions, undefined);
-  assert.equal(f.store.state.page.kind, "list"); assert.equal(f.store.state.page.agentId, "sol");
+  assert.equal(f.store.state.page.kind, "list"); assert.equal(f.store.state.page.agentId, "generalist");
   assert.deepEqual(f.store.state.sessions.map(task => task.id), ids); assert.equal(f.counts().requests, 0);
   assert.ok((await f.workbench.load()).signals.some(item => item.key === signal.key)); f.close();
 });
 await test("click rechecks source bytes without needing a file event and rejects a now-stale row", async () => {
   const f = await make({ "EchoInk/待办.md": todoText() }); const signal = (await f.workbench.load()).signals.find(item => item.id === 1);
   assert.ok(signal); f.files.set("EchoInk/待办.md", todoText("内容已修改，日期不变"));
-  await reject(f.workbench.handoff(signal), /提醒已更新/u); assert.equal(f.store.state.newTaskDrafts.sol, undefined); assert.equal(f.counts().requests, 0); f.close();
+  await reject(f.workbench.handoff(signal), /提醒已更新/u); assert.equal(f.store.state.newTaskDrafts.generalist, undefined); assert.equal(f.counts().requests, 0); f.close();
 });
 await test("real accepted candidate writes businessKey atomically; prefill remains visible until admission", async () => {
   let release; const response = new Promise(resolve => { release = resolve; });
   const f = await make({ "EchoInk/待办.md": todoText() }, {}, () => response);
   const signal = (await f.workbench.load()).signals.find(item => item.id === 1); assert.ok(signal);
   await f.workbench.handoff(signal); assert.ok((await f.workbench.load()).signals.some(item => item.key === signal.key));
-  const sent = await f.runtime.sendNew("sol", f.store.state.newTaskDrafts.sol.text);
+  const sent = await f.runtime.sendNew("generalist", f.store.state.newTaskDrafts.generalist.text);
   assert.equal(f.store.getSession(sent.taskId).businessKey, signal.key); assert.equal(f.store.getSession(sent.taskId).taskStatus, "running");
   assert.ok(!(await f.workbench.load()).signals.some(item => item.key === signal.key));
   const reopened = new MobileStore(f.adapter, "plugin/mobile", "workbench-fixture"); await reopened.load(); assert.equal(reopened.getSession(sent.taskId).businessKey, signal.key);
@@ -114,11 +119,11 @@ await test("invalid/edited provenance never attributes an unrelated task and no 
   assert.equal(parseMobileWorkbenchSource(JSON.stringify({ ...signal.source, businessKey: "workbench:finance:due:bad" })), null);
   assert.equal(parseMobileWorkbenchSource(JSON.stringify({ ...signal.source, signalId: 8 })), null);
   await f.workbench.handoff(signal); f.settings.apiProviders = [];
-  await reject(f.runtime.sendNew("sol", signal.prompt), /提供商/u);
-  assert.equal(f.store.state.newTaskDrafts.sol.text, signal.prompt); assert.equal(f.store.state.sessions.length, 1); assert.equal(f.counts().requests, 0); f.close();
+  await reject(f.runtime.sendNew("generalist", signal.prompt), /提供商/u);
+  assert.equal(f.store.state.newTaskDrafts.generalist.text, signal.prompt); assert.equal(f.store.state.sessions.length, 1); assert.equal(f.counts().requests, 0); f.close();
   const edited = await make({ "EchoInk/待办.md": todoText() });
   const row = (await edited.workbench.load()).signals.find(item => item.id === 1); await edited.workbench.handoff(row);
-  const sent = await edited.runtime.sendNew("sol", "完全不同的事情"); await sent.completion;
+  const sent = await edited.runtime.sendNew("generalist", "完全不同的事情"); await sent.completion;
   assert.equal(edited.store.getSession(sent.taskId).businessKey, undefined); edited.close();
 });
 await test("streaming changes notify task projection without rescanning the Vault", async () => {
@@ -210,7 +215,7 @@ await test("ledger snapshot-read emissions do not loop; only changed entries or 
   unsubscribe(); f.close();
 });
 await test("journal missing and 3-day states are mutually exclusive; verified baselines enable English missing evidence", async () => {
-  const f = await make({}, { englishDiary: { enabled: true } });
+  const f = await make({ "日记（journal）/已存在.md": "旧日记" }, { englishDiary: { enabled: true } });
   f.services.accountService = { checkCapability: () => true, subscribe: () => () => {} };
   const ids = (await f.workbench.load()).signals.map(item => item.id); assert.ok(ids.includes(10)); assert.ok(!ids.includes(4));
   const path = `日记（journal）/${keyDate.slice(0, 7)}/${keyDate}.md`;

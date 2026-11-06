@@ -123,6 +123,20 @@ export class Modal {
   setTitle(text: string) { this.titleEl.textContent = text; }
   register() {} registerDomEvent(element: HTMLElement, name: string, cb: EventListener) { element.addEventListener(name, cb); }
 }
+/** Existing folder picker surface in browser-only mobile host. */
+export class FuzzySuggestModal<T> extends Modal {
+  setPlaceholder(_value: string) {}
+  getItems(): T[] { return []; }
+  getItemText(_item: T): string { return ""; }
+  onChooseItem(_item: T) {}
+  onClose() {}
+  onOpen() {
+    for (const item of this.getItems()) {
+      const button = document.createElement("button"); button.textContent = this.getItemText(item);
+      button.onclick = () => { this.onChooseItem(item); this.close(); }; this.contentEl.append(button);
+    }
+  }
+}
 export const Platform = { isMobileApp: true, isMobile: true, isTablet: false };
 export class Scope { constructor(_parent?: unknown) {} register() {} }
 export const MarkdownRenderer = { async render(_app: unknown, text: string, element: HTMLElement) { element.textContent = text; } };

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.9 — one-click setup to get started" src="assets/releases/echoink-agent-2.8.9-release.png">
+    <img width="1024" alt="EchoInk 2.8.10 — start your one-person company" src="assets/releases/echoink-agent-2.8.10-release.png">
   </a>
 </p>
 
@@ -21,7 +21,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9"><img src="https://img.shields.io/badge/version-2.8.9-0EA5E9?style=flat-square" alt="Version 2.8.9"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="Version 2.8.10"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
@@ -32,26 +32,26 @@ EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your not
 | What you want to do | How EchoInk helps |
 | --- | --- |
 | Chat with your notes | Chat with notes; on desktop, add attachments or propose edits with @Agent in notes (PRO) |
-| Turn sources into knowledge | Organize folders by purpose, follow related sources from a question, maintain knowledge incrementally, and trace answers to sources |
-| Let AI remember you | View, correct, export, forget, and restore long-term memory; managing existing memory needs no model connection |
+| Turn sources into knowledge | Maintain knowledge and trace sources; organize domain trees, run checkups, and preview repairs on desktop |
+| Let AI remember you | Inspect profile and sources and pin important memories in the desktop constellation; managing existing memory needs no model connection |
 | Record everyday life | Keep journals and manage to-dos; on desktop, enable automatic journal organization, with PRO required for finances |
-| Share work across agents | Dispatch tasks to different agents and view reminders on the workbench; hire expert agents on desktop (PRO) |
+| Share work across agents | The assistant delegates and employees execute; review project proposals, then handle questions and approvals in Pending decisions; expert hiring requires PRO |
 | Create outputs | Generate notes, Canvas layouts, or drawings from sources on desktop, or use PDF reading (PRO) |
 
 ## News
 
 | Version | Date | Update |
 | --- | --- | --- |
+| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | One-person company, module owners, memory constellation, and knowledge checkups |
 | [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | One-click setup, drawings, journal naming, and expert hiring |
 | [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | Automatic journal-to-task and finance organization on desktop; finances require PRO |
 | [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | Grouped workbench entries, DeepSeek search, and run-record export |
 | [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | @Agent in notes (PRO), with proposed edits written back after confirmation |
 | [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | Three appearances and image galleries; model-connection and memory-identity fixes |
-| [2.8.4](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.4) | 2026-10-23 | Knowledge maintenance, chat formatting, and workbench display fixes |
 
 See the [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) for the full history.
 
-**Upgrade every device to 2.8.9.** Finance, English Diary, PDF reading, @Agent in notes, expert hiring, and the EchoInk MCP server require active PRO. **PRO does not include model credits.** See the [website](https://echoink.cn/plans) for current offers and prices. **Mobile remains in Beta; this version has not completed phone hardware acceptance.** Supported features are listed below.
+**Upgrade every device to 2.8.10.** Finance, English Diary, PDF reading, @Agent in notes, expert hiring, and the EchoInk MCP server require active PRO. **PRO does not include model credits.** See the [website](https://echoink.cn/plans) for current offers and prices. **Mobile remains in Beta; this version's additions and fixes have not been verified on physical iPhone or iPad devices.** Supported features are listed below.
 
 ## Quick start
 
@@ -74,6 +74,7 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 | --- | --- | --- | --- |
 | Agent conversations | Ask with notes, continue conversations, or archive them; desktop supports attachments | ✅ | ✅ |
 | Knowledge Q&A (Ask) | Follow related sources and cite the sources actually used | ✅ | ✅ |
+| Knowledge systems and checkups | Organize domain trees and run quick or deep checkups on desktop; preview and confirm repairs. Review model judgments; deep checkups and organization use model credits | ✅ | ✅ |
 | Knowledge maintenance | Organize new or changed sources incrementally, update existing knowledge, and preserve handwritten content | ✅ | ✅ |
 | Generate from sources | Generate notes, Canvas layouts, or editable drawings on desktop; drawings require Excalidraw 2.29 or later enabled and a model supporting tool calls | ✅ | ✅ |
 | PDF reading and extraction | Extract originals and generate translations and reading notes on desktop; optional MinerU enhanced parsing | ❌ | ✅ |
@@ -84,7 +85,8 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 | Feature | Description | Basic | PRO |
 | --- | --- | --- | --- |
-| Long-term memory | Browse, correct, export, forget, and restore; knowledge retrieval excludes private memory | ✅ | ✅ |
+| Long-term memory | Browse, correct, export, forget, restore, and pin; fading does not delete memories, and knowledge retrieval excludes private memory | ✅ | ✅ |
+| Memory constellation | Inspect profile, memories, and sources on desktop via Settings → Memory; correct, pin, or restore memories | ✅ | ✅ |
 | Skills (built-in and custom) | Built-in basic Skills, custom Skills, and basic knowledge review | ✅ | ✅ |
 | Official methodology Skills and enhanced knowledge review | Seven official methodology Skills and enhanced knowledge review download on demand | ❌ | ✅ |
 | EchoInk MCP server | On desktop, share authorized knowledge, profile, and memories with external agents on the same computer; off by default and read-only | ❌ | ✅ |
@@ -103,7 +105,9 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 | Feature | Description | Basic | PRO |
 | --- | --- | --- | --- |
-| Multi-agent tasks | Manage tasks for different agents on the workbench; choose when interrupted tasks continue. On mobile, handing something to an agent only prepares the text | ✅ | ✅ |
+| One-person company | The assistant delegates on desktop, iPhone, and iPad; projects start after proposal confirmation, with questions and approvals in Pending decisions. Mobile is in Beta | ✅ | ✅ |
+| Module owners | Assign role agents to modules in Agent settings; choose an owner before starting. Paid modules retain their own entitlement requirements | ✅ | ✅ |
+| Multi-agent tasks | View employee tasks and outputs; review interruptions before resuming. Projects and employee conversations cannot yet be viewed or resumed across devices | ✅ | ✅ |
 | Expert hiring | Browse and hire experts on desktop, continue from their avatars, and retain conversations after dismissal | ❌ | ✅ |
 
 ### 🎨 Appearance and platforms
@@ -112,7 +116,7 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 | --- | --- |
 | Appearance | Minimal is free; Highlighter and Manifesto require active PRO. Install the companion theme separately from [echoink.cn/theme](https://echoink.cn/theme) |
 | Desktop | Provides the desktop entries described above; validation in native Windows and Linux environments remains incomplete |
-| Mobile Beta | Mobile Beta adds separately designed iPhone and iPad workbenches, multi-Agent tasks, six settings groups, and pages for journals, to-dos, finance, knowledge, and English diaries; interrupted tasks continue when you choose, and handing something to an Agent only prepares the text. Note generation, generation-template settings, and PDF close reading are desktop-only; tasks do not sync across devices. Attachments, CLI, and desktop background knowledge tasks are not yet available; Skills use only the available mobile tools, and MCP currently saves configuration only. Validation on iPhone, Android, some native iPad flows, and native Windows and Linux environments remains incomplete. |
+| Mobile Beta | iPhone and iPad provide the workbench, company workflow, module owners, settings, and Journal, To-dos, Finance, Knowledge, and English Diary pages. Handle questions and approvals in Pending decisions. Projects and employee conversations cannot yet be viewed or resumed across devices; projects advance only in the foreground, with interrupted work checked before resuming. Stream answers and reasoning per model service where supported. Memory constellation, knowledge system organization, knowledge checkups, source generation, generation-template settings, and PDF reading are desktop-only. Attachments, CLI, and desktop background knowledge tasks are not connected; Skills use existing mobile tools, and MCP currently saves configuration only. This version's additions and fixes have not been verified on physical iPhone or iPad devices; native Android validation remains incomplete. |
 
 ## Privacy and data
 

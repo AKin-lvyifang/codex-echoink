@@ -14,7 +14,7 @@ const path = getDesktopPath();
 const FIXED = [
   "agents/echoink/AGENT.md", "agents/echoink/agent-self-meta.json",
   "shared-user/USER.md", "shared-user/MEMORY.md", "shared-user/user-profile-state.json",
-  ...["manifest.json", "search-index.json", "source-map.json", "audit.jsonl", "dream-state.json", "dream-experience-inbox.json"]
+  ...["manifest.json", "search-index.json", "source-map.json", "audit.jsonl", "dream-state.json", "dream-experience-inbox.json", "memory-activity.json"]
     .map((name) => `shared-user/.runtime/${name}`)
 ] as const;
 const LEGACY_AGENT_FILES = new Set<string>(FIXED.slice(0, 2));

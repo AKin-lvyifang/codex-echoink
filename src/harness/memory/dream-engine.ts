@@ -325,7 +325,7 @@ export class DreamEngine {
     }
 
     // --- 3. Select memories to process --------------------------------------
-    const selection = this.selectMemories(currentRecords, dreamState, secondaryRecords);
+    const selection = this.selectMemories(currentRecords.filter(record => !record.pinned), dreamState, secondaryRecords);
     const selected = selection.selected;
 
     // --- 4. Provider gate ----------------------------------------------------
@@ -829,6 +829,7 @@ export function buildDreamPrompts(
     "用户画像只能来自用户本人陈述或跨独立来源一致支持的用户行为；不得仅凭 Assistant 对自己或用户的描述形成长期画像。",
     "",
     "本次结构化输出协议：",
+    "固定记忆和用户手动编辑的画像由用户维护，不得修改固定状态或覆盖手动画像。",
     "1. 没有可靠变化时只输出 no_change；否则只输出一个 JSON 对象，键为 secondaryFacts、userProfileItems；不要 Markdown 围栏、注释或解释。",
     `2. secondaryFacts：0-${SECONDARY_MAX_CANDIDATES} 条临时候选（宁缺毋滥，没有可靠推理就输出空数组），作为未来相关查询召回这条记忆的桥梁概念（上位类别、具体实例、属性、场景、常见联想）。`,
     `3. 每条 secondaryFact 必须包含：{"title":≤${SECONDARY_TITLE_MAX_CHARS}字, "content":≤${SECONDARY_CONTENT_MAX_CHARS}字且使用不确定语气如"可能/也许相关/可参考", "recallWhen":≤${SECONDARY_RECALL_WHEN_MAX_CHARS}字, "matchTerms":≤${SECONDARY_MAX_MATCH_TERMS}个完整词或短语且每个≤${SECONDARY_MATCH_TERM_MAX_CHARS}字（禁止单个汉字）, "relation":"category|instance|attribute|context|associated", "supportLevel":"direct|strong_inference|weak_inference"（direct=记忆直接陈述，strong_inference=强推理，weak_inference=弱联想）, "reason":≤${SECONDARY_REASON_MAX_CHARS}字, "evidence":≤${SECONDARY_EVIDENCE_MAX_CHARS}字，说明该事实如何由这条一级记忆推导}。任一字段缺失或越界整条丢弃，不截断。`,

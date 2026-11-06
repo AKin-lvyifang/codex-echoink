@@ -26,18 +26,17 @@ export async function runAgentScenarios(api) {
   let passed = 0;
   async function test(name, run) { await run(); passed++; console.log(`OK ${name}`); }
 
-  await test("fresh install: only sol, one initialization and no legacy writes", async () => {
+  await test("fresh install: known defaults, one initialization and no legacy writes", async () => {
     const f = setup();
     await Promise.all([f.service.initialize(), f.service.profile(), f.service.context(false)]);
     assert.equal(f.writes, 1);
     const snapshot = await f.service.snapshot(), profile = await f.service.profile();
-    assert.equal(snapshot.registry.agents.length, 1);
-    assert.equal(snapshot.registry.agents[0].id, "sol");
+    assert.deepEqual(plain(snapshot.registry.agents.map(agent => agent.id)), ["sol", "generalist"]);
     assert.equal(profile.identity.displayName, "总助");
     assert.equal(profile.identity.avatar.presetId, "sol");
     assert.equal(profile.templateId, "executor");
     assert.equal(profile.profile.representativeHabits.length, 0);
-    assert.ok(Object.values(snapshot.registry.moduleOwners).every(owner => owner === "sol"));
+    assert.ok(Object.values(snapshot.registry.moduleOwners).every(owner => owner === ""));
     const reopened = setup({}, JSON.parse(f.saved));
     assert.equal((await reopened.service.profile()).version, profile.version);
     f.unchanged();
@@ -245,8 +244,8 @@ export async function runAgentScenarios(api) {
     await assert.rejects(f.service.update(draft => { draft.agents = []; }, snapshot.version), /general_assistant_cannot_be_deleted/u);
     // Synthetic empty-task precondition: caller has no runs/tasks left to hand off.
     snapshot = await f.service.removeAgent("researcher", snapshot.version);
-    assert.equal(snapshot.registry.agents.length, 1);
-    assert.equal(snapshot.registry.moduleOwners["knowledge-base"], "sol");
+    assert.deepEqual(plain(snapshot.registry.agents.map(agent => agent.id)), ["sol", "generalist"]);
+    assert.equal(snapshot.registry.moduleOwners["knowledge-base"], "");
     await assert.rejects(f.service.context(false, "researcher"), /agent_not_found/u);
   });
   console.log(`${passed} mobile Agent Registry checks passed (memory adapter; no UI, Provider or Vault).`);

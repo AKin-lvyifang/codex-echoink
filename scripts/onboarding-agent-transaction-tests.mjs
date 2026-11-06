@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +9,7 @@ const repo = fileURLToPath(new URL("../", import.meta.url));
 if (!process.env.ECHOINK_ONBOARDING_AGENT_TRANSACTION_TEST_ROOT?.trim()) throw new Error("Explicit ECHOINK_ONBOARDING_AGENT_TRANSACTION_TEST_ROOT is required");
 const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
 const fixture = await realpath(path.resolve(process.env.ECHOINK_ONBOARDING_AGENT_TRANSACTION_TEST_ROOT));
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Onboarding Agent transaction fixtures must stay in the explicit disposable test root");
+if (!isDisposableTestRoot(fixture)) throw new Error("Onboarding Agent transaction fixtures must stay in the explicit disposable test root");
 const run = await mkdtemp(path.join(fixture, ".onboarding-agent-transaction-run-"));
 const originalFetch = globalThis.fetch;
 let networkCalls = 0;

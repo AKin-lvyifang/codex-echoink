@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import os from "node:os";
@@ -7,12 +8,11 @@ import esbuild from "esbuild";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
 if (!process.env.ECHOINK_ONBOARDING_TEST_ROOT) throw new Error("Explicit ECHOINK_ONBOARDING_TEST_ROOT is required");
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const requested = path.resolve(process.env.ECHOINK_ONBOARDING_TEST_ROOT);
-if (!requested.startsWith(allowed + path.sep)) throw new Error("Use disposable test Vaults");
+if (!isDisposableTestRoot(requested)) throw new Error("Use disposable test Vaults");
 await mkdir(requested, { recursive: true });
 const fixture = await realpath(requested);
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Fixture symlinks cannot leave disposable test Vaults");
+if (!isDisposableTestRoot(fixture)) throw new Error("Fixture symlinks cannot leave disposable test Vaults");
 const run = await mkdtemp(path.join(fixture, "desktop-onboarding-"));
 try {
   const output = path.join(run, "tests.mjs");

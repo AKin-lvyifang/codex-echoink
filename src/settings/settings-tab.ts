@@ -1,3 +1,6 @@
+import { getModuleOwner } from "../agents/registry";
+import { KnowledgePreferenceWizard } from "../ui/knowledge-preference-wizard";
+import { knowledgePreferenceWizardHost } from "../plugin/knowledge-preference-wizard-host";
 import { mountJournalFormatSettings, mountJournalOrganization } from "../home/journal-format-view";
 import { createKnowledgeFolderPicker } from "./knowledge-folder-picker";
 import { renderMcpServerSettings } from "./mcp-server-settings";
@@ -10,7 +13,6 @@ import { skillIcon } from "../agents/skill-icons";
 import { DesktopAgentSettings } from "./agent-settings";
 import { renderInlineAgentSettings } from "./inline-agent-settings";
 import { DesktopMemorySettings } from "./desktop-memory-settings";
-import { UserProfileSettingsController } from "./user-profile-settings";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings, type SelectionAnnotationSettingsController } from "./selection-annotation-settings";
@@ -42,7 +44,7 @@ import { renderProviderServicePicker } from "./provider-service-picker";
 import { renderCompactAbout } from "./about-section";
 import { ReleaseUpdateController } from "./release-update";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
-import { GENERAL_ASSISTANT_ID } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList } from "../agents/types";
 import { checkAgentSkill, mcpToolCapabilityId } from "../agents/capability-policy";
 import { Component, MarkdownRenderer, Modal, Notice, Platform, PluginSettingTab, Setting, TFolder, setIcon, setTooltip } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
@@ -133,7 +135,6 @@ import {
 import {
   confirmModal,
   memoryCorrectionModal,
-  MemoryCorrectionModal,
   textInputModal
 } from "../ui/modals";
 import { SETTINGS_LANGUAGE_OPTIONS, settingsCopy, type SettingsCopy } from "./i18n";
@@ -226,6 +227,7 @@ export class CodexSettingTab extends PluginSettingTab {
     KnowledgeMaintenancePreferenceControlState | null = null;
   private knowledgePreferenceEditor:
     Readonly<KnowledgeMaintenancePreferenceEditorState> | null = null;
+  private knowledgePreferenceWizard: KnowledgePreferenceWizard | null = null;
   private knowledgePreferenceLoading = false;
   private knowledgePreferenceLoadError: string | null = null;
   private knowledgeLinkingTaskId: string | null = null;
@@ -315,9 +317,6 @@ export class CodexSettingTab extends PluginSettingTab {
   private desktopAgents: DesktopAgentSettings | null = null;
   private pendingDesktopAgentEditor: string | null = null;
   private desktopMemory: DesktopMemorySettings | null = null;
-  private desktopProfile: UserProfileSettingsController | null = null;
-  private desktopProfileOpen = false;
-  private desktopCorrection: { id: string; category: PersonalMemoryCorrectionCategory; invalidated: boolean; controller: MemoryCorrectionModal } | null = null;
   private desktopSelection: { host: HTMLElement; controller: SelectionAnnotationSettingsController | undefined } | null = null;
   private desktopTemplate: { host: HTMLElement; dispose: () => void } | null = null;
   private desktopGenerationTemplates: GenerationTemplatesSection | null = null;
@@ -378,10 +377,9 @@ export class CodexSettingTab extends PluginSettingTab {
       if (route.focus === "english-diary:home-shortcut") this.settingsFocusIntent = "explicit:english-diary:home-shortcut";
     }
     else if (/^selection-ask/u.test(route.focus ?? "")) this.openSettingsDetail("selection-ask");
-    else if (/review:archives/u.test(route.focus ?? "")) this.openSettingsDetail("review-archives");
-    else if (/agent:profile/u.test(route.focus ?? "")) { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; }
+    else if (/review:(?:archives|auto-archive)/u.test(route.focus ?? "")) this.openSettingsDetail("review-archives");
     else if (/general:personality-template/u.test(route.focus ?? "")) this.pendingDesktopAgentEditor = GENERAL_ASSISTANT_ID;
-    else if (/review:memory/u.test(route.focus ?? "")) this.openSettingsDetail("review-memory");
+    else if (route.focus === "agent:memory-page") void this.openMemoryPage();
     this.scheduleDisplay();
   }
 
@@ -489,6 +487,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    if (this.settingsDetail !== "knowledge-preference-wizard") {
+      this.knowledgePreferenceWizard?.dispose();
+      this.knowledgePreferenceWizard = null;
+    }
     // Host 1.13+ owns the definition rows; an imperative refresh must not delete them.
     if (this.nativeSettingsNavigation) {
       this.scheduleDisplay();
@@ -516,6 +518,8 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   hide(): void {
+    this.knowledgePreferenceWizard?.dispose();
+    this.knowledgePreferenceWizard = null;
     this.journalSettingsCleanup?.(); this.journalOrganizationCleanup?.();
     if (this.settingsViewUnloaded) { this.disposeSettingsView(); super.hide(); return; }
     if (this.hasDesktopCloseDraft()) {
@@ -556,8 +560,7 @@ export class CodexSettingTab extends PluginSettingTab {
     return !this.settingsViewUnloaded && Platform.isDesktopApp && Boolean(
       this.desktopAccount?.hasDraft || this.desktopAccount?.submitting
       || this.desktopSelection?.controller?.hasUnsavedChanges() || this.desktopKnowledge?.hasDraft
-      || this.desktopAgents?.hasDraft || this.desktopAgents?.submitting || this.desktopProfile?.hasDraft || this.desktopProfile?.submitting
-      || this.desktopCorrection?.controller.hasDraft || this.desktopCorrection?.controller.submitting || this.desktopMemory?.submitting
+      || this.desktopAgents?.hasDraft || this.desktopAgents?.submitting || this.desktopMemory?.submitting
       || this.settingsDetail === "knowledge-preferences" && knowledgeMaintenancePreferenceIsDirty(this.knowledgePreferenceEditor)
     );
   }
@@ -587,12 +590,10 @@ export class CodexSettingTab extends PluginSettingTab {
     this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
     this.desktopMemory?.suspend(); this.desktopAccount?.suspend();
-    this.desktopAgents?.suspend(); this.desktopProfile?.suspend(); this.desktopCorrection?.controller.suspend();
+    this.desktopAgents?.suspend();
     if (!this.preserveDesktopCloseDraft) {
       this.desktopAccount?.dispose(); this.desktopAccount = null;
       this.desktopAgents?.dispose(); this.desktopAgents = null;
-      this.desktopProfile?.dispose(); this.desktopProfile = null; this.desktopProfileOpen = false;
-      this.desktopCorrection?.controller.close(); this.desktopCorrection = null;
     }
     if (this.preserveDesktopCloseDraft) { this.desktopKnowledge?.suspend(); this.desktopSelection?.host.remove(); }
     else { this.desktopKnowledge?.dispose(); this.desktopKnowledge = null; this.clearDesktopSelection(); }
@@ -662,9 +663,9 @@ export class CodexSettingTab extends PluginSettingTab {
     this.settingsBodyEl = workspace.createDiv({ cls: "codex-settings-body" });
     this.settingsBodyEl.addEventListener("keydown", event => {
       if (event.key !== "Escape" || event.defaultPrevented || !Platform.isDesktopApp) return;
-      if (!this.desktopAgents?.isDetail && !this.desktopProfileOpen && !this.desktopCorrection) return;
+      if (!this.desktopAgents?.isDetail) return;
       event.preventDefault(); event.stopPropagation();
-      const key = this.desktopAgents?.isDetail ? this.desktopAgents.returnFocusKey : this.desktopProfileOpen ? "agent:profile" : "review:memory";
+      const key = this.desktopAgents.returnFocusKey;
       this.leaveDesktopAgentDetail(() => { this.settingsFocusIntent = `explicit:${key}`; this.scheduleDisplay(); });
     });
     this.settingsStatusEl = workspace.createDiv({
@@ -684,15 +685,13 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSettingsContent(): void {
-    const correctionScrollSnapshot = this.desktopCorrection ? captureSettingsScrollSnapshot(this.containerEl) : null;
-    if (this.desktopCorrection) this.captureSettingsFocusIntent();
     this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.captureModuleInputs();
     this.pdfSettingsPanel?.dispose();
     this.knowledgeLinkingCleanup?.(); this.knowledgeLinkingCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
     this.desktopKnowledge?.suspend(); this.desktopAccount?.suspend();
-    this.desktopAgents?.suspend(); this.desktopMemory?.suspend(); this.desktopProfile?.suspend(); this.desktopCorrection?.controller.suspend();
+    this.desktopAgents?.suspend(); this.desktopMemory?.suspend();
     this.membershipRowsDisposers.splice(0).forEach(dispose => dispose());
     this.disposeDiaryActivity?.();
     this.disposeDiaryActivity = null;
@@ -708,7 +707,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.captureTabFocusIntent();
     this.captureSettingsFocusIntent();
     const copy = this.copy;
-    const settingsScrollSnapshot = correctionScrollSnapshot ?? captureSettingsScrollSnapshot(this.containerEl);
+    const settingsScrollSnapshot = captureSettingsScrollSnapshot(this.containerEl);
     try {
       this.clearResourceSearchDebounceTimer();
       const titleEl = this.settingsTitleEl;
@@ -757,6 +756,8 @@ export class CodexSettingTab extends PluginSettingTab {
         this.renderProviderModelManager(bodyEl);
       } else if (Platform.isDesktopApp && activeTab === "agent") {
         this.renderDesktopAgentSettings(bodyEl);
+      } else if (Platform.isDesktopApp && activeTab === "memory") {
+        this.renderDesktopMemorySettings(bodyEl);
       } else if (Platform.isDesktopApp && activeTab === "modules") {
         this.renderDesktopModuleSettings(bodyEl);
       } else if (Platform.isDesktopApp && activeTab === "capabilities") {
@@ -803,7 +804,7 @@ export class CodexSettingTab extends PluginSettingTab {
       }
     } finally {
       const tab = this.activeSettingsTab();
-      const location = JSON.stringify([tab, this.desktopAgents?.isDetail, this.desktopProfileOpen, this.settingsDetail, this.desktopCorrection?.controller.settingsPageStep ?? null, this.knowledgeMaintenanceSelectedRecord?.recordId ?? null,
+      const location = JSON.stringify([tab, this.desktopAgents?.isDetail, this.settingsDetail, this.knowledgeMaintenanceSelectedRecord?.recordId ?? null,
         tab === "resources" || tab === "capabilities" ? this.plugin.settings.resourceManagementTab : null,
         this.desktopRoute?.section ?? null, this.desktopRoute?.capabilityTab ?? null, this.providerPickerOpen, this.inlineEditor?.key ?? null,
         tab === "modules" && !this.settingsDetail ? this.desktopKnowledge?.navigationKey() ?? null : null,
@@ -1429,20 +1430,10 @@ export class CodexSettingTab extends PluginSettingTab {
       setAgentModuleOwner: (module, id) => plugin.setAgentModuleOwner(module, id)
     }, { redraw: () => this.scheduleDisplay(), restoreFocus: key => { this.settingsFocusIntent = `explicit:${key}`; } });
   }
-  private ensureDesktopProfile(): UserProfileSettingsController {
-    return this.desktopProfile ??= new UserProfileSettingsController({
-      read: () => this.plugin.readEchoInkUserProfile(),
-      update: input => this.plugin.saveEchoInkUserProfile(input),
-      confirm: async input => {
-        const state = await this.plugin.readEchoInkUserProfile();
-        if (state.revision !== input.expectedRevision) throw new Error("revision_conflict");
-        const item = state.items.find(item => item.profileKey === input.profileKey);
-        if (!item) throw new Error("profile_item_missing");
-        return this.plugin.saveEchoInkUserProfile({ ...input, text: item.text });
-      },
-      remove: input => this.plugin.deleteEchoInkUserProfile(input),
-      back: () => { this.desktopProfileOpen = false; this.settingsFocusIntent = "explicit:agent:profile"; this.scheduleDisplay(); }
-    }, this.plugin.settings.settingsLanguage);
+  openModuleAgentCreation(moduleId: import("../agents/types").AgentModuleId, onReturn?: () => void): void {
+    this.openDesktopRoute({ tab: "agent" });
+    this.ensureDesktopAgents().open(undefined, { moduleIds: [moduleId], onReturn });
+    this.scheduleDisplay();
   }
   private renderDesktopAgentSettings(container: HTMLElement): void {
     const agents = this.ensureDesktopAgents();
@@ -1451,22 +1442,35 @@ export class CodexSettingTab extends PluginSettingTab {
       agents.open(agentId);
     }
     if (agents.isDetail) { agents.renderDetail(container); return; }
-    if (this.desktopProfileOpen) { this.ensureDesktopProfile().render(container); return; }
-    if (this.desktopCorrection) { this.renderDesktopMemoryCorrection(container); return; }
-    if (this.settingsDetail === "review-archives" || this.settingsDetail === "review-memory"
-      || typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "review-memory-category") {
+    if (this.settingsDetail === "review-archives") {
       this.renderReviewSettings(container); return;
     }
     const page = createSettingsPage(container, { title: "Agent", titleVisibility: "screen-reader" });
     page.addClass("echoink-desktop-agent-page");
     agents.renderSummary(page);
+    const archiveHeader = page.querySelector<HTMLElement>('[data-agent-group="main"] .echoink-settings-section-header');
+    if (archiveHeader) {
+      const archives = createOriginButton(archiveHeader, { text: this.plugin.settings.settingsLanguage === "en" ? "Conversations" : "会话", cls: "text-button", attr: { "data-echoink-focus-key": "review:archives" } });
+      archives.onclick = () => this.openSettingsDetail("review-archives");
+    }
+    if (!this.archivedConversations && !this.archivedConversationsLoading && !this.archivedConversationsError) void this.loadArchivedConversations();
+  }
+  private renderDesktopMemorySettings(container: HTMLElement): void {
+    const page = createSettingsPage(container, { title: this.plugin.settings.settingsLanguage === "en" ? "Memory" : "记忆", titleVisibility: "screen-reader" });
+    page.addClass("echoink-desktop-memory-page");
     this.desktopMemory ??= new DesktopMemorySettings(this.plugin, {
-      redraw: () => this.scheduleDisplay(), openCorrection: () => this.openSettingsDetail("review-memory"),
-      openProfile: () => { this.ensureDesktopProfile().refreshWhenOpened(); this.desktopProfileOpen = true; this.scheduleDisplay(); }
+      redraw: () => this.scheduleDisplay(), openMemoryPage: () => void this.openMemoryPage()
     });
     this.desktopMemory.render(page);
-    this.renderReviewManagement(page);
-    if (!this.archivedConversations && !this.archivedConversationsLoading && !this.archivedConversationsError) void this.loadArchivedConversations();
+  }
+  private async openMemoryPage(): Promise<void> {
+    try {
+      (this.app as unknown as { setting?: { close?(): void } }).setting?.close?.();
+      await this.plugin.activateMemoryView();
+    }
+    catch (error) {
+      new Notice(error instanceof Error ? error.message : this.plugin.settings.settingsLanguage === "en" ? "Memory page could not open. Try again." : "记忆页未能打开，请重试。");
+    }
   }
   private leaveDesktopAccount(done: () => void): boolean {
     if (!Platform.isDesktopApp || !this.desktopAccount) return false;
@@ -1479,13 +1483,6 @@ export class CodexSettingTab extends PluginSettingTab {
   private leaveDesktopAgentDetail(done: () => void): boolean {
     if (!Platform.isDesktopApp) return false;
     if (this.desktopAgents?.isDetail) { this.desktopAgents.requestLeave(done); return true; }
-    if (this.desktopProfileOpen) {
-      this.desktopProfile?.requestLeave(() => { this.desktopProfileOpen = false; done(); }); return true;
-    }
-    if (this.desktopCorrection) {
-      const controller = this.desktopCorrection.controller;
-      controller.requestLeave(() => { controller.suspend(); this.desktopCorrection = null; done(); }); return true;
-    }
     if (this.desktopMemory?.submitting) return true;
     return false;
   }
@@ -1496,6 +1493,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (this.settingsDetail === "generation-template") { this.ensureGenerationTemplates().renderEditor(container); return; }
     if (this.settingsDetail === "generation-templates") { this.ensureGenerationTemplates().renderList(container); return; }
     if (this.plugin.consumeKnowledgeLinkingFocus()) { this.knowledgeLinkingTaskId = this.plugin.consumeKnowledgeLinkingTaskId(); this.openSettingsDetail("knowledge-linking"); }
+    if (this.settingsDetail === "knowledge-preference-wizard") { this.renderKnowledgePreferenceWizard(container); return; }
     if (this.settingsDetail === "knowledge-preferences") { this.desktopModuleExpanded.add("knowledge"); this.renderKnowledgeMaintenancePreferences(container); return; }
     if (this.settingsDetail === "knowledge-linking") { this.desktopModuleExpanded.add("knowledge"); this.settingsDetail = null; knowledge.openLinking(this.knowledgeLinkingTaskId ?? undefined); this.knowledgeLinkingTaskId = null; return; }
     if (typeof this.settingsDetail === "object" && this.settingsDetail?.kind === "resource") {
@@ -1560,7 +1558,7 @@ export class CodexSettingTab extends PluginSettingTab {
         if (module === "knowledge") {
           const count = this.plugin.settings.knowledgeBase.folderBindings?.roles.raw.readPaths.length ?? 0;
           const registry = this.plugin.settings.agentRegistry;
-          const owner = registry?.agents.find(agent => agent.id === registry.moduleOwners["knowledge-base"]) ?? registry?.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID);
+          const owner = registry ? getModuleOwner(registry, "knowledge-base") : null;
           return zh ? `资料来源 ${count} 个 · 负责人 ${owner?.name || "未分配"}` : `${count} source folders · Owner ${owner?.name || "Unassigned"}`;
         }
         return module === "journal" ? readNativeJournalSettings(this.app, this.plugin.settings.journalDirectory, this.plugin.settings.knowledgeBase?.folderBindings).folder : module === "review" ? this.plugin.settings.review.outputDir : module === "todo" ? TODO_SOURCE_PATH : module === "finance" ? this.plugin.lifestyle.finance.ledger.paths().root : module === "english" ? this.plugin.settings.englishDiary.englishDirectory : module === "pdf" ? this.plugin.settings.pdfReading.engine === "mineru" ? "MinerU" : zh ? "本地文字提取" : "Local text extraction" : "";
@@ -1994,6 +1992,40 @@ export class CodexSettingTab extends PluginSettingTab {
     this.renderDesktopModuleSettings(container);
   }
 
+  private async openKnowledgePreferenceWizard(): Promise<void> {
+    if (knowledgeMaintenancePreferenceIsDirty(this.knowledgePreferenceEditor) && !await this.confirmKnowledgePreferenceDiscard()) return;
+    const host = knowledgePreferenceWizardHost(this.plugin);
+    const baseline = await host.read();
+    this.resetKnowledgePreferenceDraft();
+    this.knowledgePreferenceWizard?.dispose();
+    this.knowledgePreferenceWizard = new KnowledgePreferenceWizard(host, baseline, {
+      language: this.plugin.settings.settingsLanguage,
+      changed: () => this.scheduleDisplay(),
+      done: saved => {
+        if (saved) {
+          this.knowledgePreferenceState = saved;
+          this.knowledgePreferenceEditor = createKnowledgeMaintenancePreferenceEditor(saved);
+        }
+        this.settingsDetail = "knowledge-preferences";
+        this.knowledgePreferenceWizard?.dispose();
+        this.knowledgePreferenceWizard = null;
+        this.scheduleDisplay();
+      },
+    });
+    this.openSettingsDetail("knowledge-preference-wizard");
+  }
+
+  private renderKnowledgePreferenceWizard(container: HTMLElement): void {
+    const wizard = this.knowledgePreferenceWizard;
+    if (!wizard) return;
+    const page = createSettingsPage(container, {
+      title: wizard.title, detail: true,
+      backLabel: this.plugin.settings.settingsLanguage === "en" ? "Back to preferences" : "返回知识提炼偏好",
+      onBack: () => wizard.cancel(),
+    });
+    wizard.render(page, this.app);
+  }
+
   private renderKnowledgeMaintenancePreferences(container: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const page = createSettingsPage(container, {
@@ -2044,6 +2076,10 @@ export class CodexSettingTab extends PluginSettingTab {
       surface: "group"
     });
     const preferenceGroup = createSettingsGroup(preferenceSection);
+    const remake = createOriginButton(preferenceSection, { text: zh ? "按用途重做" : "Generate for a purpose", cls: "button" });
+    applyAmicroButton(remake, { variant: "secondary" });
+    remake.onclick = () => { void this.openKnowledgePreferenceWizard().catch(error => new Notice(String(error))); };
+
 
     if (this.knowledgePreferenceLoading) {
       createSettingsState(
@@ -2187,12 +2223,13 @@ export class CodexSettingTab extends PluginSettingTab {
       this.renderArchivedConversationSettings(container);
       return;
     }
-    if (this.settingsDetail === "review-memory") {
+    if (!Platform.isDesktopApp && this.settingsDetail === "review-memory") {
       this.renderPersonalMemoryCorrectionCategories(container);
       return;
     }
     if (
-      typeof this.settingsDetail === "object"
+      !Platform.isDesktopApp
+      && typeof this.settingsDetail === "object"
       && this.settingsDetail?.kind === "review-memory-category"
     ) {
       this.renderPersonalMemoryCorrectionRecords(
@@ -2245,14 +2282,9 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!Platform.isDesktopApp) this.renderReviewManagement(page);
   }
 
-  private renderReviewManagement(page: HTMLElement): void {
+  private renderAutoArchiveSetting(group: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const management = createSettingsSection(page, {
-      title: Platform.isDesktopApp ? (zh ? "会话" : "Conversations") : (zh ? "管理" : "Management"),
-      surface: "group"
-    });
-    const managementGroup = createSettingsGroup(management);
-    const autoArchive = applySettingsRow(new OriginSetting(managementGroup)
+    const autoArchive = applySettingsRow(new OriginSetting(group)
       .setName(zh ? "自动归档" : "Automatically archive")
       .setDesc(Platform.isDesktopApp
         ? (zh ? "多久没更新的对话自动归档" : "How long conversations stay inactive before archiving")
@@ -2276,6 +2308,16 @@ export class CodexSettingTab extends PluginSettingTab {
       setIcon(help, "circle-alert");
       attachSettingsHelpTooltip(help, zh ? "跳过使用中或有待发送内容的对话" : "Conversations in use or with pending drafts are skipped.", wrapper);
     }
+  }
+
+  private renderReviewManagement(page: HTMLElement): void {
+    const zh = this.plugin.settings.settingsLanguage !== "en";
+    const management = createSettingsSection(page, {
+      title: Platform.isDesktopApp ? (zh ? "会话" : "Conversations") : (zh ? "管理" : "Management"),
+      surface: "group"
+    });
+    const managementGroup = createSettingsGroup(management);
+    this.renderAutoArchiveSetting(managementGroup);
     createSettingsNavigationRow(managementGroup, {
       title: zh ? "已归档会话" : "Archived conversations",
       description: Platform.isDesktopApp
@@ -2337,7 +2379,7 @@ export class CodexSettingTab extends PluginSettingTab {
   private renderArchivedConversationSettings(container: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
     const page = createSettingsPage(container, {
-      title: zh ? "已归档会话" : "Archived conversations",
+      title: Platform.isDesktopApp ? (zh ? "会话" : "Conversations") : (zh ? "已归档会话" : "Archived conversations"),
       description: zh
         ? "你可以搜索、恢复或删除会话；删除后无法在设置中恢复。"
         : "You can search, restore, or delete conversations. Deleted conversations cannot be restored in Settings.",
@@ -2349,6 +2391,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!this.archivedConversations && !this.archivedConversationsLoading && !this.archivedConversationsError) {
       void this.loadArchivedConversations();
     }
+    if (Platform.isDesktopApp) this.renderAutoArchiveSetting(createSettingsGroup(page));
     const toolbar = page.createDiv({ cls: "settings-toolbar review-archive-toolbar" });
     const search = createOriginInput(toolbar, {
       cls: "echoink-review-archive-search settings-input",
@@ -2497,7 +2540,7 @@ export class CodexSettingTab extends PluginSettingTab {
       title: zh ? "记忆修正" : "Memory correction",
       description: undefined,
       detail: true,
-      backLabel: Platform.isDesktopApp ? (zh ? "返回 Agent" : "Back to Agent") : (zh ? "返回复盘" : "Back to Review"),
+      backLabel: zh ? "返回复盘" : "Back to Review",
       onBack: () => void this.closeSettingsDetail()
     });
     if (!this.personalMemoryState && !this.personalMemoryLoading && !this.personalMemoryError) {
@@ -2585,15 +2628,11 @@ export class CodexSettingTab extends PluginSettingTab {
         attr: {
           type: "button",
           "aria-label": `${zh ? "修正" : "Correct"} ${record.title}`,
-          "data-echoink-focus-key": `review:memory:${category.id}:correct:${Platform.isDesktopApp ? record.id : recordIndex}`
+          "data-echoink-focus-key": `review:memory:${category.id}:correct:${recordIndex}`
         }
       });
       correct.disabled = this.memoryActionRunning;
-      correct.onclick = () => {
-        if (Platform.isDesktopApp) this.openDesktopMemoryCorrection(record, category.id);
-        else void this.correctPersonalMemoryRecord(record);
-      };
-      correct.disabled = this.memoryActionRunning || !!this.desktopCorrection && this.desktopCorrection.id !== record.id;
+      correct.onclick = () => void this.correctPersonalMemoryRecord(record);
       const forget = createOriginButton(actions, {
         cls: "mod-warning",
         text: zh ? "忘掉" : "Forget",
@@ -2604,9 +2643,7 @@ export class CodexSettingTab extends PluginSettingTab {
         }
       });
       forget.disabled = this.memoryActionRunning;
-      if (Platform.isDesktopApp) applyDeleteButton(forget);
       forget.onclick = () => showSettingsInlineConfirmation(row, forget, {
-        deleteAction: Platform.isDesktopApp,
         message: zh ? `忘掉“${record.title}”后，它不会再被召回；相关用户画像与关联记忆会同步更新。` : `After “${record.title}” is forgotten, it will no longer be recalled. Related user-profile and memory projections will be updated too.`,
         confirmLabel: zh ? "确认忘掉" : "Confirm forgetting", cancelLabel: this.copy.common.cancel,
         onConfirm: () => this.forgetPersonalMemoryRecord(record)
@@ -2631,88 +2668,6 @@ export class CodexSettingTab extends PluginSettingTab {
       });
       recall.createDiv({ cls: "echoink-memory-card-body", text: record.recallWhen });
     }
-  }
-
-  private renderDesktopMemoryCorrection(container: HTMLElement): void {
-    const editing = this.desktopCorrection;
-    if (!editing) return;
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    const category = personalMemoryCorrectionCategory(editing.category);
-    editing.controller.mountSettingsPage(container, {
-      backLabel: zh ? category.labelZh : category.labelEn,
-      unavailable: editing.invalidated ? (zh ? "这条记忆已失效，无法保存修正；你的文字已保留。" : "This memory is no longer current. Your correction cannot be saved; your text is retained.") : undefined,
-      onNavigate: () => {
-        this.settingsFocusIntent = `explicit:memory-correction:${editing.controller.settingsPageStep === "preview" ? "save" : "input"}`;
-        this.scheduleDisplay();
-      }
-    });
-  }
-
-  private openDesktopMemoryCorrection(record: Readonly<PersonalMemoryRecord>, categoryId: PersonalMemoryCorrectionCategory = "facts"): void {
-    if (this.desktopCorrection || this.memoryActionRunning || !this.personalMemoryState) return;
-    const zh = this.plugin.settings.settingsLanguage !== "en";
-    let expectedRevision = this.personalMemoryState.revision;
-    let targetId = record.id;
-    const originalIndex = this.currentPersonalMemoryRecords(categoryId).findIndex(item => item.id === record.id);
-    const latestRecord = (state: PersonalMemoryControlState) => {
-      let candidate = state.records.find(item => item.id === record.id);
-      const seen = new Set<string>();
-      while (candidate && candidate.status !== "current" && !seen.has(candidate.id)) {
-        seen.add(candidate.id);
-        candidate = state.records.find(item => item.supersedes === candidate!.id);
-      }
-      return candidate?.status === "current" ? candidate : undefined;
-    };
-    const refreshTarget = async () => {
-      const state = await this.plugin.getEchoInkPersonalMemoryState();
-      this.personalMemoryState = state;
-      const latest = latestRecord(state);
-      if (this.desktopCorrection) {
-        this.desktopCorrection.invalidated = !latest;
-        if (latest) {
-          this.desktopCorrection.id = latest.id;
-          this.desktopCorrection.controller.updateSettingsRecord({ memoryType: personalMemoryKindLabel(latest.kind, zh), title: latest.title, content: latest.content, recallWhen: latest.recallWhen });
-        }
-      }
-      this.scheduleDisplay();
-      return { state, latest };
-    };
-    const controller = new MemoryCorrectionModal(this.app, {
-      memoryType: personalMemoryKindLabel(record.kind, zh), title: record.title,
-      content: record.content, recallWhen: record.recallWhen
-    }, this.plugin.settings.settingsLanguage, {
-      generate: async (correction, signal) => {
-        const { state, latest } = await refreshTarget();
-        if (!latest) throw new Error(zh ? "这条记忆已失效，无法保存修正；你的文字已保留。" : "This memory is no longer current. Your text has been retained.");
-        expectedRevision = state.revision; targetId = latest.id;
-        return this.plugin.generateEchoInkPersonalMemoryCorrection({ kind: latest.kind, title: latest.title, content: latest.content, recallWhen: latest.recallWhen }, correction, signal);
-      },
-      save: async (preview, correction) => {
-        try {
-          await this.plugin.applyEchoInkPersonalMemoryCorrection({ targetId, title: preview.title, content: preview.content, recallWhen: preview.recallWhen,
-            reason: `${zh ? "用户明确修正" : "User correction"}：${correction}`.slice(0, 1900), expectedRevision });
-        } catch (error) {
-          if (isPersonalMemoryRevisionConflict(error)) await refreshTarget().catch(() => undefined);
-          throw error;
-        }
-        try { this.personalMemoryState = await this.plugin.getEchoInkPersonalMemoryState(); }
-        catch { this.personalMemoryState = null; this.personalMemoryError = zh ? "已保存，暂时读不到新内容" : "Saved; new content is temporarily unavailable"; }
-      }
-    }, result => {
-      if (this.desktopCorrection?.controller === controller) {
-        this.desktopCorrection = null;
-        this.settingsDetail = { kind: "review-memory-category", category: categoryId };
-        const records = this.currentPersonalMemoryRecords(categoryId);
-        const latest = this.personalMemoryState ? latestRecord(this.personalMemoryState) : undefined;
-        const target = records.find(item => item.id === latest?.id) ?? records[Math.max(0, Math.min(originalIndex, records.length - 1))];
-        this.settingsFocusIntent = target ? `explicit:review:memory:${categoryId}:correct:${target.id}` : "explicit:settings-detail:content";
-      }
-      if (result === "saved") new Notice(zh ? "记忆已保存为新版本" : "Memory saved as a new version");
-      this.scheduleDisplay();
-    });
-    this.desktopCorrection = { id: record.id, category: categoryId, invalidated: false, controller };
-    this.settingsFocusIntent = "explicit:memory-correction:input";
-    this.scheduleDisplay();
   }
 
   private currentPersonalMemoryRecords(
@@ -3035,9 +2990,9 @@ export class CodexSettingTab extends PluginSettingTab {
       button.setAttr("aria-selected", String(isActive));
       button.setAttr("tabindex", isActive ? "0" : "-1");
       button.setAttr("data-tab-name", label);
-      // Native Obsidian tooltip: independent floating layer, not clipped by
-      // the nav strip's overflow (a ::after pseudo-element was clipped flat).
-      setTooltip(button, label, { placement: "top" });
+      // Visible tab text supplies the accessible name without a duplicate tooltip.
+      if (Platform.isDesktopApp) button.removeAttribute("aria-label");
+      else setTooltip(button, label, { placement: "top" });
       const icon = button.querySelector<HTMLElement>(".codex-settings-tab-icon")
         ?? button.createSpan({ cls: "codex-settings-tab-icon settings-motion-icon" });
       renderAnimatedSettingsTabIcon(
@@ -3126,7 +3081,7 @@ export class CodexSettingTab extends PluginSettingTab {
     tabId: VisibleSettingsTab,
     focus: boolean
   ): Promise<void> {
-    if (this.activeSettingsTab() === tabId && !this.desktopRoute?.section && !this.settingsDetail && !this.desktopKnowledge?.isDetail && !this.desktopAgents?.isDetail && !this.desktopProfileOpen) return;
+    if (this.activeSettingsTab() === tabId && !this.desktopRoute?.section && !this.settingsDetail && !this.desktopKnowledge?.isDetail && !this.desktopAgents?.isDetail) return;
     if (this.leaveDesktopAccount(() => { void this.activateSettingsTab(tabId, focus); })) return;
     if (this.leaveDesktopAgentDetail(() => { void this.activateSettingsTab(tabId, focus); })) return;
     if (Platform.isDesktopApp && this.desktopSelection?.controller?.hasUnsavedChanges()) {
@@ -4181,7 +4136,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (activeTab === "tools") {
       toolbar.remove();
       const tools = wrapper.createDiv({ cls: "codex-capability-tools", attr: { id: RESOURCE_PANEL_ID, role: "tabpanel", "aria-labelledby": resourceTabDomId("tools"), tabindex: "0" } });
-      const count = this.plugin.settings.agentRegistry.agents.filter(agent => agent.id === GENERAL_ASSISTANT_ID ? !agent.disabledCapabilityIds?.includes("web-search") : agent.capabilityIds?.includes("web-search")).length;
+      const count = this.plugin.settings.agentRegistry.agents.filter(agent => usesDisabledCapabilityList(agent.id) ? !agent.disabledCapabilityIds?.includes("web-search") : agent.capabilityIds?.includes("web-search")).length;
       tools.createDiv({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(count) });
       renderTavilySettings(tools, this.plugin, undefined, () => { void this.activateSettingsTab("models", true); });
       const toolsButton = activeButton as HTMLButtonElement | null;
@@ -5286,7 +5241,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (resource.kind === "mcp-server") {
       const tools = resolveMcpConnectionRecord(resource, settings.resources)?.tools ?? [];
       const capabilities = tools.map(tool => mcpToolCapabilityId(resource.id, tool.name));
-      return settings.agentRegistry.agents.filter(agent => capabilities.some(capability => agent.id === GENERAL_ASSISTANT_ID
+      return settings.agentRegistry.agents.filter(agent => capabilities.some(capability => usesDisabledCapabilityList(agent.id)
         ? !agent.disabledCapabilityIds?.includes(capability) : agent.capabilityIds?.includes(capability))).length;
     }
     if (resource.kind !== "skill") return 0;
@@ -5748,6 +5703,7 @@ type SettingsDetail =
   | "knowledge-linking"
   | "knowledge-folders"
   | "knowledge-preferences"
+  | "knowledge-preference-wizard"
   | "knowledge-maintenance-history"
   | "review-archives"
   | "review-memory"

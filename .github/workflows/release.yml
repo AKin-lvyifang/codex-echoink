@@ -84,6 +84,7 @@ jobs:
           cache: npm
 
       - name: Prepare isolated test Vault
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests == true }}
         run: node scripts/prepare-ci-test-vault.mjs
 
       - name: Install dependencies
@@ -132,13 +133,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build
+      - name: Build historical release when tests are skipped
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests == true }}
         run: npm run build
 
       - name: Check built bundle size and review markers
         run: npm run check:bundle
 
       - name: Check mobile runtime and production entry without Node
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests == true }}
         run: npm run test:mobile
 
       - name: Prepare Obsidian release assets

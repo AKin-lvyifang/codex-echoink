@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { WorkspaceLeaf, TFile } from "obsidian";
-import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
+import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, WORKBENCH_NAVIGATION_DELAY_MS, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
 import { openWorkbenchModule } from "../home/module-navigation";
 import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
 import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
@@ -82,7 +82,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
       workspace: { containerEl: document.body, on() { return {}; }, getLeaf() { return { async openFile(file: TFile) { calls.push(["note", file.path]); } }; } }
     },
-    settings: { ...structuredClone(DEFAULT_SETTINGS), expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "sol"])) } },
+    settings: { ...structuredClone(DEFAULT_SETTINGS), expertsEnabled: undefined as boolean | undefined, settingsLanguage: "zh-CN", workbenchOnboardingDismissed: false, knowledgeBase: structuredClone(DEFAULT_SETTINGS.knowledgeBase), lifestyle: { finance: { enabled: true } }, pdfReading: { enabled: true }, englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS, enabled: false }, sessions: [] as { id: string; messages: ChatMessage[] }[], agentRegistry: { agents: [{ id: "sol", name: "总助", avatar: { kind: "default" } }, { id: "generalist", name: "通才", avatar: { kind: "default" } }], moduleOwners: Object.fromEntries(["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "review"].map(id => [id, "generalist"])) } },
     async saveSettings() { savedSettings.push(structuredClone(host.settings)); },
     notifyHomeSurfacesChanged() {},
     async openWorkbenchSetup(target: string) { calls.push(["setup", target]); },
@@ -119,6 +119,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
     async activateKnowledgeView() { calls.push(["knowledge"]); },
+    async activateMemoryView() { calls.push(["memory"]); },
     async activateTodoView() { calls.push(["todos"]); },
     async activateJournalView() { calls.push(["journal"]); },
     async activateEnglishDiaryPage() { calls.push(["english"]); },
@@ -145,7 +146,11 @@ export async function runWorkbenchUiTests(): Promise<void> {
     registerDomEvent(element: EventTarget, type: string, callback: EventListener, options?: AddEventListenerOptions) { element.addEventListener(type, callback, options); cleanups.push(() => element.removeEventListener(type, callback, options)); }
   });
   const button = (key: string) => Array.from(content.querySelectorAll<HTMLButtonElement>("[data-wb-focus]")).find(node => node.dataset.wbFocus === key)!;
-  const click = async (key: string) => { button(key).click(); await tick(); };
+  const click = async (key: string) => {
+    const target = button(key); target.click();
+    if (target.hasAttribute("data-module")) await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
+    await tick();
+  };
   try {
     assert.equal(view.getViewType(), VIEW_TYPE_ECHOINK_WORKBENCH);
     await view.onOpen();
@@ -232,6 +237,22 @@ export async function runWorkbenchUiTests(): Promise<void> {
     memoryError = null; host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
+    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>('.wb-modules [data-module]')).map(node => node.dataset.module),
+      ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts"],
+      "navigation keeps the existing module order followed by Experts");
+    const journalButton = button("module-journal"), callsBeforeNavigation = calls.length;
+    journalButton.click(); journalButton.click(); await tick();
+    assert.ok(journalButton.classList.contains("is-nav-animating"), "activation starts playback immediately");
+    assert.equal(calls.length, callsBeforeNavigation, "module opening waits for the icon lead-in");
+    await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
+    assert.deepEqual(calls.slice(callsBeforeNavigation), [["journal"]], "rapid activations open the module only once");
+    journalButton.dispatchEvent(new Event("animationend"));
+    assert.equal(journalButton.classList.contains("is-nav-animating"), false, "animation completion clears its playback state");
+    await click("module-journal");
+    assert.ok(journalButton.classList.contains("is-nav-animating"), "later activation restarts the same icon");
+    (view as unknown as { foregroundChanged(active: boolean): void }).foregroundChanged(false);
+    assert.equal(journalButton.classList.contains("is-nav-animating"), false, "leaving the workbench clears playback before return");
+    (view as unknown as { foregroundChanged(active: boolean): void }).foregroundChanged(true);
     const beforeExperts = JSON.stringify(host.settings.agentRegistry);
     assert.equal(button("module-experts").hidden, false, "PRO discovers the expert tab by default");
     await click("module-experts"); assert.deepEqual(calls.at(-1), ["experts"]);
@@ -249,6 +270,10 @@ export async function runWorkbenchUiTests(): Promise<void> {
 
     pro = false; host.settings.englishDiary.enabled = true; await view.refresh();
     assert.equal(button("module-experts").hidden, true, "free defaults to a hidden expert tab");
+    assert.equal(content.querySelector('[data-module="memory"]'), null, "memory is available from Settings instead of workbench navigation");
+    const navLandmark = content.querySelector('[data-wb="modules"]')!;
+    assert.equal(navLandmark.hasAttribute("aria-label"), false, "the nav landmark must not trigger a delegated tooltip");
+    assert.ok(navLandmark.getAttribute("aria-labelledby"), "the nav landmark keeps a screen reader name");
     for (const id of ["finance", "english-diary", "pdf-reading"] as const) {
       assert.equal(button(`module-${id}`).hidden, false);
       assert.ok(button(`module-${id}`).querySelector('[data-plugin-edition="pro"]'));
@@ -256,6 +281,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       await click(`module-${id}`);
       const locked = content.querySelector<HTMLElement>(`[data-locked-module="${id}"]`)!;
       assert.ok(locked); assert.match(locked.textContent ?? "", /PRO 模块/);
+      assert.equal(button(`module-${id}`).classList.contains("is-nav-animating"), false, "locked pages hide the workbench without retaining playback for return");
       assert.equal(calls.length, previousCalls, "locked navigation never opens the module service");
       assert.equal(content.querySelector<HTMLElement>('[data-wb="page"]')!.inert, true);
       await click("module-lock-login"); assert.deepEqual(calls.at(-1), ["account", "login"]);
@@ -265,7 +291,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     host.settings.lifestyle.finance.enabled = false; await view.refresh();
     assert.equal(button("module-finance").hidden, false);
     const disabledCalls = calls.length;
-    button("module-finance").click(); await tick(); assert.equal(calls.length, disabledCalls, "disabled PRO navigation cannot open the module service");
+    await click("module-finance"); assert.equal(calls.length, disabledCalls, "disabled PRO navigation cannot open the module service");
     assert.ok(content.querySelector('[data-locked-module="finance"]'), "PRO gating precedes setup");
     await click("module-lock-back");
     pro = true; host.settings.pdfReading.enabled = false;
@@ -516,7 +542,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const navStyles = document.createElement("style"); navStyles.textContent = ".wb-header { column-gap: 16px } .wb-modules { column-gap: 4px }"; document.head.append(navStyles);
     cleanups.push(() => navStyles.remove());
     const navButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-module]")), more = content.querySelector<HTMLElement>('[data-wb="module-more"]')!;
-    [80, 80, 140, 105, 160, 160].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
+    [80, 80, 140, 105, 160, 160, 80].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
     more.getBoundingClientRect = () => ({ width: 74 } as DOMRect);
     let withoutWeather = 950;
     nav.getBoundingClientRect = () => ({ width: Math.max(1, withoutWeather
@@ -539,7 +565,12 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(Number.parseFloat(header.style.columnGap) < 16);
     console.log("Workbench UI passed: task groups, cold-shell result projections and revision cache, no duplicate summaries after redraw, bounded read concurrency and retry, local date, real routes, valid question binding, prefill, collapse and focus, stale errors, to-do success/failure, search keyboard, foreground lifecycle.");
   } finally {
-    await view.onClose(); for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
+    const beforeClose = calls.length;
+    button("module-journal")?.click(); await tick();
+    await view.onClose();
+    await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
+    assert.equal(calls.length, beforeClose, "closing the view cancels a pending module opening");
+    for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
     assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0); assert.equal(activityListeners.size, 0);
   }
   await runDesktopModuleSettingsTests();
@@ -555,7 +586,17 @@ async function runGuidedSetupModelDependencyTest(): Promise<void> {
     outputLocations: { answer: "产出", generation: "产出" }, guide: { path: "产出/开始使用 EchoInk.md", action: "create" } } as OnboardingSetupPlan;
   for (const connected of [false, true]) {
     const unexpectedWrite = async (): Promise<never> => { throw new Error("Reviewing choices must not execute setup"); };
-    const options: PaperGuideModalOptions = { language: "zh-CN", preview: async choices => ({ ...plan, choices }), model: () => connected ? "Fixture model" : null,
+    const options: PaperGuideModalOptions = { language: "zh-CN",
+      preferences: {
+        read: async () => ({
+          state: "custom", content: "已有偏好", revision: "fixture",
+          profileVersion: "echoink-knowledge-preference-profile-v1",
+        }),
+        save: async () => { throw new Error("not used"); },
+        available: () => false,
+        generate: async () => { throw new Error("not used"); },
+      },
+      preview: async choices => ({ ...plan, choices }), model: () => connected ? "Fixture model" : null,
       apply: unexpectedWrite, connect: unexpectedWrite, writeGuide: unexpectedWrite, openGuide: unexpectedWrite, refine: unexpectedWrite,
       onManual: unexpectedWrite, onTry: unexpectedWrite, onDismiss: async () => {}, onClosed() {} };
     const dialog = new PaperGuideModal({ scope: {}, keymap: { pushScope() {}, popScope() {} } } as unknown as import("obsidian").App, options);

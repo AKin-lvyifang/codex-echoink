@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
@@ -10,8 +11,10 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-memory-settings/entry.ts"), metafile: true });
 assert.ok(!Object.keys(build.metafile.inputs).some(path => /node:|personal-memory-repository\.ts|dream-engine\.ts|agent-self\.ts|agent-self-metadata\.ts/u.test(path)));
 const module = { exports: {} };
-vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, crypto: webcrypto, TextEncoder, TextDecoder, Uint8Array, URL, URLSearchParams,
+const browser = vm.createContext({ module, exports: module.exports, crypto: webcrypto, TextEncoder, TextDecoder, Uint8Array, URL, URLSearchParams,
   structuredClone, AbortController, setTimeout, clearTimeout, require: name => { assert.equal(name, "obsidian"); return { TFile: class {}, TFolder: class {} }; } });
+browser.self = browser;
+vm.runInContext(build.outputFiles[0].text, browser);
 const { MobileMemoryService, MobileMemoryRepository, MobileStore, loadMobileSettings, mobileProvider, mobileModel, MobileCapabilityPolicy, mobileTools,
   inspectMobileTaskResume, USER_PROFILE_SLOTS, applyDreamProfileUpdate, parseCanonicalMemoryRecord, indexChecksum } = module.exports;
 const plain = value => JSON.parse(JSON.stringify(value)), clone = value => structuredClone(value);
@@ -44,6 +47,57 @@ function model(f) {
   f.settings.apiProviders = [provider]; f.settings.activeApiProviderId = provider.id; f.settings.defaultModel = "fixture";
 }
 const answer = text => ({ status: 200, json: { choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }] } });
+await test("pinned canonical inheritance, core limit, profile protection and independent merged activity survive mobile cold reads", async () => {
+  const f = await fixture(); await seed(f, [{ ...oldMemory(), pinned: true }]); await f.service.initialize();
+  const initial = await f.service.read("mem_old"); assert.equal(initial.record.pinned, true);
+  const preview = await f.service.previewCorrection("mem_old", { title: "移动修正", content: "喜欢具体例子", recallWhen: "解释时" }, initial.revision);
+  const corrected = await f.service.applyCorrection(preview); assert.equal(corrected.record.pinned, true);
+  const plan = await f.service.prepareToolMemory({ targetId: corrected.record.id, kind: "fact", title: "再次修正", content: "喜欢生活里的具体例子", recallWhen: "解释时", basis: "explicit" }, "task", "run", "call");
+  const replacement = await f.service.commitToolMemory(plan, () => {}); assert.equal(replacement.pinned, true);
+  const forgotten = await f.service.forget(replacement.id, "用户忘记", (await f.service.list()).revision);
+  const restored = await f.service.restore(replacement.id, forgotten.revision); assert.equal(restored.record.pinned, true);
+  let profile = await f.service.readProfile();
+  profile = await f.service.saveProfile("identity.health_safety", "青霉素过敏", profile.revision);
+  const health = profile.sources.find(source => source.profileKey === "identity.health_safety");
+  await f.service.setPinned(health.id, true, profile.revision);
+  profile = await f.service.saveProfile("identity.health_safety", "青霉素和花生过敏", (await f.service.list()).revision);
+  assert.equal((await f.service.read(profile.sources.find(source => source.profileKey === "identity.health_safety").id)).record.pinned, true);
+  const snapshot = await f.service.repository.snapshot();
+  const dream = applyDreamProfileUpdate(snapshot.profile, { items: [{ section: "identity", profileKey: "identity.health_safety", text: "没有过敏", basis: "explicit_memory", sourceMemoryId: "model-source" }], processedSources: [], now: 1 });
+  assert.equal(dream.items.find(item => item.profileKey === "identity.health_safety").text, "青霉素和花生过敏");
+  assert.equal((await f.service.readProfile()).items.find(item => item.profileKey === "identity.health_safety").userEdited, true);
+  const beforeManifest = f.files.get(".echoink/shared-user/.runtime/manifest.json");
+  await f.service.memoryActivity();
+  await f.service.recordRecalledMemories([restored.record.id], "one-turn");
+  await f.service.recordRecalledMemories([restored.record.id], "one-turn");
+  const cold = await fixture(undefined, f); await cold.service.initialize(); await cold.service.recordRecalledMemories([health.id], "another-turn");
+  const activity = await f.service.memoryActivity(); assert.equal(activity.records[restored.record.id].recallCount, 1); assert.equal(activity.records[health.id].recallCount, 1);
+  assert.equal(f.files.get(".echoink/shared-user/.runtime/manifest.json"), beforeManifest);
+  await f.service.restoreMemoryActivity(restored.record.id); assert.equal((await f.service.memoryActivity()).records[restored.record.id].recallCount, 1);
+  const activityBefore = f.files.get(".echoink/shared-user/.runtime/memory-activity.json"); f.failInstall();
+  assert.equal(await f.service.recordRecalledMemories([restored.record.id], "failed-turn"), false); assert.equal(f.files.get(".echoink/shared-user/.runtime/memory-activity.json"), activityBefore);
+  for (let index = 0; index < 8; index++) {
+    const created = await f.service.commitToolMemory(await f.service.prepareToolMemory({ kind: "fact", title: `固定条目 ${index}`, content: `独立固定记录 ${index}`, recallWhen: `核对第 ${index} 条`, basis: "explicit" }, "task", `pin-${index}`, "create"), () => {});
+    await f.service.setPinned(created.id, true, (await f.service.list()).revision);
+  }
+  const eleventh = await f.service.commitToolMemory(await f.service.prepareToolMemory({ kind: "fact", title: "第十一条", content: "不允许静默挤出核心", recallWhen: "核对上限", basis: "explicit" }, "task", "eleven", "create"), () => {});
+  await assert.rejects(f.service.setPinned(eleventh.id, true, (await f.service.list()).revision), /先取消一条/u);
+  const exported = await f.service.export(); assert.match(f.files.get(exported.path), /Pinned: true/u); assert.equal(f.calls(), 0);
+});
+await test("mobile Agent pin/unpin requires the current user quote and uses the existing durable write/readback journal", async () => {
+  const f = await fixture(); await seed(f); await f.service.initialize(); const taskId = f.store.session.id;
+  await f.store.updateSession(taskId, task => { task.runs = [{ id: "pin-run", status: "running", startedAt: 1 }]; });
+  const app = { vault: { adapter: f.adapter, getMarkdownFiles: () => [], getAbstractFileByPath: () => null }, metadataCache: {}, workspace: {} };
+  const policy = new MobileCapabilityPolicy({ store: f.store, settings: () => f.settings, agentId: "sol" });
+  const write = mobileTools(app, f.store, () => "", () => null, undefined, taskId, policy, { runId: "pin-run", userText: "把这条固定到核心，然后取消固定" }, f.service).find(tool => tool.name === "memory_write");
+  await assert.rejects(write.execute("forged", { operation: "pin", targetId: "mem_old", evidenceQuote: "此前用户同意" }), /原话/u);
+  await write.execute("pin", { operation: "pin", targetId: "mem_old", evidenceQuote: "把这条固定到核心" });
+  assert.equal((await f.service.read("mem_old")).record.pinned, true);
+  await write.execute("unpin", { operation: "unpin", targetId: "mem_old", evidenceQuote: "取消固定" });
+  assert.equal((await f.service.read("mem_old")).record.pinned, false);
+  assert.ok(f.store.getSession(taskId).operations.every(operation => operation.status === "completed"));
+  const cold = await fixture(undefined, f); await cold.service.initialize(); assert.equal((await inspectMobileTaskResume(app, cold.store, taskId)).issues.length, 0);
+});
 await test("unavailable identity keeps canonical reads and independent settings but never creates an ephemeral Memory transaction", async () => {
   const f = await fixture(); await seed(f); await f.service.initialize();
   const store = new MobileStore(f.adapter, "plugin/mobile", "ephemeral-shell", "本机任务标识无法保存");
@@ -134,8 +188,8 @@ await test("a real interrupted multi-file transaction rolls back on cold reopeni
   const cold = await fixture(undefined, f); await cold.service.initialize(); assert.equal(f.files.get(".echoink/shared-user/USER.md"), originalUser); assert.equal(f.files.get(".echoink/shared-user/.runtime/manifest.json"), originalManifest);
   assert.equal((await cold.service.readProfile()).items.length, 0); assert.ok(![...f.files.keys()].some(path => path.endsWith("/plan.json")));
 });
-await test("24 slots/three groups, explicit source confirmation, delete preserves source and blocks old evidence", async () => {
-  const f = await fixture(); await f.service.initialize(); assert.equal(USER_PROFILE_SLOTS.length, 24); assert.deepEqual([...new Set(USER_PROFILE_SLOTS.map(slot => slot.section))].sort(), ["collaboration", "identity", "preference"]);
+await test("26 slots/three groups, explicit source confirmation, delete preserves source and blocks old evidence", async () => {
+  const f = await fixture(); await f.service.initialize(); assert.equal(USER_PROFILE_SLOTS.length, 26); assert.deepEqual([...new Set(USER_PROFILE_SLOTS.map(slot => slot.section))].sort(), ["collaboration", "identity", "preference"]);
   let profile = await f.service.readProfile(); profile = await f.service.saveProfile("preference.tone", "直接清楚", profile.revision);
   assert.equal(profile.items[0].basis, "explicit_memory"); const source = profile.sources[0].id; const record = (await f.service.read(source)).record;
   profile = await f.service.confirmProfile("preference.tone", profile.revision); profile = await f.service.deleteProfile("preference.tone", profile.revision); assert.equal(profile.items.length, 0); assert.equal((await f.service.read(source)).record.content, record.content);
@@ -214,12 +268,12 @@ await test("automatic archive is completed+seven days only, protects drafts/queu
 const crossEndRoot = process.env.ECHOINK_MOBILE_MEMORY_TEST_ROOT;
 if (crossEndRoot) {
   const registered = path.resolve(process.env.HOME, "EchoInk-TestVaults/90-任务临时/移动端改版-M9-20261019"), requested = path.resolve(crossEndRoot);
-  assert.ok(requested.startsWith(`${registered}${path.sep}`), "Cross-end fixtures must stay inside the registered M9 disposable root");
+  assert.ok(isDisposableTestRoot(requested), "Cross-end fixtures must stay inside the registered M9 disposable root");
   await fs.mkdir(requested, { recursive: true });
-  assert.ok((await fs.realpath(requested)).startsWith(`${await fs.realpath(registered)}${path.sep}`), "Cross-end fixture root must not escape through a symlink");
+  assert.ok(isDisposableTestRoot(await fs.realpath(requested)), "Cross-end fixture root must not escape through a symlink");
   const desktopBuild = await esbuild.build({ entryPoints: ["src/harness/memory/personal-memory-repository.ts"], bundle: true, write: false, format: "cjs", platform: "node", target: "node20", external: ["obsidian"], loader: { ".md": "text" }, logLevel: "silent" });
   const desktopModule = { exports: {} }, require = createRequire(import.meta.url);
-  new Function("require", "module", "exports", desktopBuild.outputFiles[0].text)(require, desktopModule, desktopModule.exports);
+  new Function("require", "module", "exports", desktopBuild.outputFiles[0].text)(id => id === "obsidian" ? { Platform: { isDesktop: true } } : require(id), desktopModule, desktopModule.exports);
   const { PersonalMemoryRepository } = desktopModule.exports;
   const managed = ".echoink/shared-user", userPath = `${managed}/USER.md`, journalPath = `${managed}/.runtime/mobile-transactions`;
   async function diskFixture(run) {

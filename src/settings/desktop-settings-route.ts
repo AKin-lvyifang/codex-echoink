@@ -1,7 +1,7 @@
 import type { ResourceManagementTab, SettingsTab } from "./settings";
 
 /** Desktop navigation stays separate from the legacy value persisted for mobile. */
-export const DESKTOP_SETTINGS_TABS = ["general", "models", "agent", "capabilities", "modules", "account"] as const;
+export const DESKTOP_SETTINGS_TABS = ["general", "models", "agent", "memory", "capabilities", "modules", "account"] as const;
 export type DesktopSettingsTab = typeof DESKTOP_SETTINGS_TABS[number];
 export type DesktopModuleSection = "knowledgeBase" | "todos" | "review" | "journal";
 export type DesktopCapabilityTab = "skills" | "mcp" | "tools";
@@ -18,13 +18,14 @@ export function normalizeDesktopSettingsRoute(
   currentResourceTab: ResourceManagementTab,
   previousCapabilityTab?: DesktopCapabilityTab
 ): DesktopSettingsRoute {
+  if (route.focus?.replace(/^explicit:/u, "") === "general:memory:drawer") route = { ...route, tab: "memory", focus: route.focus.replace("general:memory:drawer", "general:memory:enabled") };
   if (route.tab !== "capabilities") return { ...route };
   return { ...route, capabilityTab: route.capabilityTab ?? previousCapabilityTab ?? (currentResourceTab === "plugins" ? "skills" : currentResourceTab) };
 }
 
 export function desktopSettingsTabLabel(tab: DesktopSettingsTab, language: string): string {
   const labels: Record<DesktopSettingsTab, readonly [string, string]> = {
-    general: ["通用", "General"], models: ["模型", "Models"], agent: ["Agent", "Agent"],
+    general: ["通用", "General"], models: ["模型", "Models"], agent: ["Agent", "Agent"], memory: ["记忆", "Memory"],
     capabilities: ["能力", "Capabilities"], modules: ["模块", "Modules"], account: ["账号与会员", "Account and membership"]
   };
   return labels[tab][language === "en" ? 1 : 0];
@@ -33,16 +34,17 @@ export function resolveDesktopSettingsRoute(
   legacyTab: SettingsTab | "agents" | DesktopSettingsTab,
   options: { focus?: string; resourceTab?: ResourceManagementTab; resourceId?: string } = {}
 ): DesktopSettingsRoute {
-  const focus = options.focus ?? "";
+  const focus = (options.focus ?? "").replace("general:memory:drawer", "general:memory:enabled");
   if (focus.replace(/^explicit:/u, "") === "knowledge:provider") return { tab: "models", focus: "models:default" };
   const extra = { ...(focus ? { focus } : {}), ...(options.resourceId ? { resourceId: options.resourceId } : {}) };
+  if (/memory|dream|画像|记忆|做梦/iu.test(focus)) return { tab: "memory", ...extra };
   if (legacyTab === "agents" || legacyTab === "providers") {
     return { tab: /tavily|deepseek|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|deepseek|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };
   }
   if (legacyTab === "resources") return { tab: options.resourceTab === "plugins" ? "modules" : "capabilities", ...(options.resourceTab !== "plugins" ? { capabilityTab: options.resourceTab ?? "skills" } : {}), ...extra };
   if (legacyTab === "knowledgeBase" || legacyTab === "todos") return { tab: "modules", section: legacyTab, ...extra };
-  if (legacyTab === "review") return /memory|archive/iu.test(focus) ? { tab: "agent", ...extra } : { tab: "modules", section: "review", ...extra };
-  if (legacyTab === "general" && /memory|identity|personality|personalization|profile|avatar|dream|welcome/iu.test(focus)) return { tab: "agent", ...extra };
+  if (legacyTab === "review") return /archive/iu.test(focus) ? { tab: "agent", ...extra } : { tab: "modules", section: "review", ...extra };
+  if (legacyTab === "general" && /identity|personality|personalization|profile|avatar|welcome/iu.test(focus)) return { tab: "agent", ...extra };
   if (legacyTab === "general" && /journal/iu.test(focus)) return { tab: "modules", section: "journal", ...extra };
   return { tab: legacyTab === "layout" ? "general" : legacyTab, ...extra };
 }
@@ -80,11 +82,14 @@ export function resolveDesktopSettingsSearchRoute(tab: DesktopSettingsTab, query
     if (/review|复盘|周报|月报|报告|output|输出/iu.test(term)) return { tab, section: "review" };
     if (/journal|日记/iu.test(term)) return { tab, section: "journal" };
   }
+  if (tab === "memory") {
+    if (/profile|画像|correction|记忆修正|记忆管理|记忆页|memory.*(?:management|page)/iu.test(term)) return { tab, focus: "agent:memory-page" };
+    if (/dream|做梦/iu.test(term)) return { tab, focus: "general:memory:dream" };
+    if (/memory|记忆/iu.test(term)) return { tab, focus: "general:memory:enabled" };
+  }
   if (tab === "agent") {
     if (/auto.*archive|自动归档/iu.test(term)) return { tab, focus: "review:auto-archive" };
     if (/archive|归档/iu.test(term)) return { tab, focus: "review:archives" };
-    if (/correction|记忆修正|记忆管理/iu.test(term)) return { tab, focus: "review:memory" };
-    if (/profile|画像/iu.test(term)) return { tab, focus: "agent:profile" };
     if (/identity|personality|avatar|身份|人格|头像/iu.test(term)) return { tab, focus: "general:personality-template" };
   }
   return null;

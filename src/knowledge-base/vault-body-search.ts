@@ -1,3 +1,4 @@
+import { isActiveKnowledgeWiki, knowledgeWikiPropertiesFromMetadata } from "./knowledge-wiki-policy";
 import { readNativeJournalSettings } from "../home/native-journal";
 import { parseJournalDate } from "../home/journal-format";
 import { TFile, type App } from "obsidian";
@@ -190,6 +191,7 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       if (!kind || this.options.resolveSourcePath && !canonicalPaths.has(file.path)) return [];
       let cache: ReturnType<App["metadataCache"]["getFileCache"]> = null;
       try { cache = this.app.metadataCache?.getFileCache(file) ?? null; } catch { /* Missing metadata must not hide readable Markdown. */ }
+      if (kind === "wiki" && !isActiveKnowledgeWiki(knowledgeWikiPropertiesFromMetadata(cache?.frontmatter))) return [];
       const array = (value: unknown): string[] => typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
       const aliases = array(cache?.frontmatter?.aliases ?? cache?.frontmatter?.alias);
       const tags = [...array(cache?.frontmatter?.tags), ...(cache?.tags?.map(tag => tag.tag) ?? [])];

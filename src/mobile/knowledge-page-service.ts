@@ -106,7 +106,7 @@ export class MobileKnowledgePageService implements MobileKnowledgePagePort {
     });
     if (wiki.directory.state !== "ready") { sources.state = sources.checkedCount ? "partial" : "unknown"; errors.sources = "知识成果位置尚未完整读取，来源状态未核实。"; }
     let health: KnowledgePageSnapshot["health"] = null;
-    try { health = await loadMobileKnowledgeHealth(this.services, bindings, scans, maintenanceHistory, check); if (!health) errors.health = "尚未启用可评估的知识用途位置。"; }
+    try { health = await loadMobileKnowledgeHealth(this.services, bindings, check); if (!health) errors.health = "尚未启用可评估的知识用途位置。"; }
     catch (error) { check(); errors.health = error instanceof Error ? error.message : "健康状态暂时无法核实。"; }
     check();
     return { generatedAt: now, bindings, dashboard: null, health, ...activity, directories: scans.map(scan => scan.directory), links, sources,

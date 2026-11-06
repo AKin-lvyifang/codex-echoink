@@ -115,3 +115,32 @@
   box-shadow: none;
   background: var(--background-modifier-hover);
 }
+
+
+/* Knowledge proposals reuse the conversation confirmation shell and its local scrolling. */
+.codex-knowledge-system-message { display: block; min-width: 0; max-width: 100%; }
+.codex-knowledge-system-message > .codex-smooth-ai-approval-card {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  min-width: 0; min-height: 0; max-height: min(46vh, 420px); margin: 0;
+}
+.codex-knowledge-system-message .codex-interaction-options {
+  flex: 0 0 auto; min-width: 0; margin-top: 0;
+}
+.codex-knowledge-system-message .codex-interaction-option { box-sizing: border-box; }
+.codex-knowledge-system-message .codex-interaction-option.is-selected,
+.codex-knowledge-system-message .codex-interaction-option:focus-within {
+  border-color: transparent; background: var(--background-modifier-hover); outline: none; box-shadow: none;
+}
+.codex-knowledge-system-message .codex-interaction-option-control {
+  accent-color: var(--text-normal); outline: none; box-shadow: none;
+}
+.codex-knowledge-system-message .codex-knowledge-system-preview {
+  display: block; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain;
+}
+.codex-knowledge-system-preview h3 {
+  font-size: var(--echoink-conversation-font-body); font-weight: 600; line-height: var(--echoink-conversation-line-body);
+  margin: var(--echoink-conversation-space-3) 0 var(--echoink-conversation-space-1);
+}
+.codex-knowledge-system-preview h3:first-child { margin-top: 0; }
+.codex-knowledge-system-preview ul { margin-block: 0; padding-inline-start: 20px; }
+.codex-knowledge-system-message .codex-smooth-ai-approval-actions { flex: 0 0 auto; flex-wrap: wrap; }

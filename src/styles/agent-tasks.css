@@ -84,3 +84,107 @@
 .codex-turn-queue-preview, .codex-turn-queue-meta { white-space: normal; overflow-wrap: anywhere; }
 .codex-turn-queue-item > .codex-turn-queue-insert { min-width: 0; max-width: 12ch; height: auto; min-height: 26px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; padding: 3px 6px; font-size: var(--echoink-conversation-font-label-secondary, 12px); color: var(--text-muted); background: transparent; border-color: transparent; box-shadow: none; }
 .codex-turn-queue-insert:is(:hover, :focus-visible) { color: var(--text-normal); background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+
+/* One-person company: the general assistant's cards split into 项目 and 日常. Section titles are 13/600, never smaller than the cards under them. */
+.echoink-task-section-label { display: flex; align-items: center; gap: 6px; margin: 14px 0 6px; font-size: 13px; font-weight: 600; color: var(--text-normal); }
+.echoink-task-section-label svg { width: 14px; height: 14px; color: var(--text-muted); }
+.echoink-task-section-count { font-size: 11px; font-weight: 400; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.echoink-task-card-kind { display: inline-flex; flex: 0 0 auto; color: var(--text-muted); }
+.echoink-task-card-kind svg { width: 14px; height: 14px; }
+/* Dispatched task conversations are read-only: the composer stays visible but cannot send. */
+.echoink-agent-tasks .codex-input-wrap.is-readonly { background: var(--background-secondary); }
+.echoink-agent-tasks .codex-input-wrap.is-readonly textarea { cursor: not-allowed; }
+.echoink-agent-tasks .codex-input-wrap.is-readonly .codex-toolbar { opacity: .45; pointer-events: none; }
+
+/* Program-owned project controls reuse the original conversation and approval surfaces. */
+.echoink-company-message { display: flex; flex-direction: column; gap: 12px; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.echoink-company-proposal { display: flex; flex-direction: column; gap: 10px; }
+.echoink-company-proposal h2, .echoink-company-proposal h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.echoink-company-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.echoink-company-facts dt, .echoink-company-caption { color: var(--text-muted); font-size: 12px; }
+.echoink-company-facts dd { margin: 0; min-width: 0; }
+.echoink-company-plan, .echoink-company-criteria { margin: 0; padding-inline-start: 20px; }
+.echoink-company-plan li + li { margin-top: 6px; }
+.echoink-company-actions, .echoink-company-waiting { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.echoink-company-waiting > span { flex: 1; min-width: 120px; }
+button.echoink-company-button { height: auto; min-height: 30px; padding: 4px 10px; font-size: 13px; white-space: normal; box-shadow: none; outline: none; }
+.echoink-company-button:not(:disabled):is(:hover, :focus-visible) { background: var(--background-modifier-hover); box-shadow: none; outline: none; }
+.echoink-company-button.is-primary { background: var(--echoink-control-fill, var(--interactive-accent)); color: var(--echoink-control-on-fill, var(--text-on-accent)); }
+.echoink-company-button:disabled { opacity: .45; }
+.echoink-company-folder-dialog { display: flex; flex-direction: column; gap: 16px; }
+
+/* One shared 等你定 surface. Original InteractionDock geometry and controls are retained. */
+.echoink-company-interactions { display: flex; flex-direction: column; gap: 12px; }
+.echoink-company-interaction {
+  min-width: 0; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere;
+  --echoink-conversation-space-1: 4px; --echoink-conversation-space-2: 8px; --echoink-conversation-space-3: 12px;
+  --echoink-conversation-radius-sm: 6px; --echoink-conversation-radius-md: 8px; --echoink-conversation-radius-lg: 10px;
+  --echoink-conversation-font-label-primary: 13px; --echoink-conversation-font-label-secondary: 12px;
+  --echoink-conversation-font-body: 13px; --echoink-conversation-font-status: 12px;
+  --echoink-conversation-font-caption: 12px; --echoink-conversation-line-caption: 1.4;
+  --echoink-conversation-line-label: 1.4; --echoink-conversation-line-body: 1.55; --echoink-conversation-line-status: 1.4;
+  --echoink-conversation-status-muted: var(--text-muted);
+  --echoink-conversation-status-running: var(--echoink-control-fill, var(--interactive-accent));
+  --echoink-conversation-status-danger: var(--text-error);
+}
+.echoink-company-interaction-owner { margin-bottom: 6px; color: var(--text-muted); font-size: 12px; }
+.echoink-company-interaction-dock.codex-interaction-dock { display: block; margin: 0; padding: 0; border: 0; }
+.echoink-company-interaction-dock .codex-interaction-card { box-shadow: none; }
+.echoink-company-interaction-dock .codex-smooth-ai-approval-card { border-inline-start-width: 1px; box-shadow: none; }
+.echoink-company-interaction-dock .codex-interaction-confirmation-card { padding: 0; border: 0; background: transparent; }
+.echoink-company-interaction-dock .codex-interaction-progress { font-size: 11px; }
+/* Operation, path and content already carry their own labels in this compact shared surface. */
+.echoink-company-interaction-dock .codex-approval-presentation-section > .codex-smooth-ai-approval-label { display: none; }
+.echoink-company-interaction-dock .codex-interaction-option.is-selected { border-color: transparent; background: var(--background-modifier-hover); }
+.echoink-company-interaction-dock :is(.codex-interaction-action, .codex-interaction-supplement-input, .codex-smooth-ai-approval-button):focus-visible { outline: none; box-shadow: none; background: var(--background-modifier-hover); }
+.echoink-company-interaction-dock :is(.codex-interaction-action.is-primary, .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button)) { background: var(--echoink-control-fill, var(--interactive-accent)); color: var(--echoink-control-on-fill, var(--text-on-accent)); }
+/* The shared approval focus rule applies later; its neutral background needs a matching foreground. */
+.echoink-company-interaction-dock .codex-ai-elements-confirmation.has-readable-approval .codex-smooth-ai-approval-button.is-approve:not(.echoink-delete-button):not(:disabled):focus-visible { background: var(--background-modifier-hover); color: var(--text-normal); outline: none; box-shadow: none; }
+.echoink-workbench [data-wb-group="company-decisions"] > .wb-rows { display: flex; flex-direction: column; gap: 12px; border: 0; border-radius: 0; }
+.echoink-workbench [data-wb-group="company-decisions"] h2 { font-size: 13px; font-weight: 600; }
+
+/* Paper COMPANY-WAIT v2: only the company mounts opt into the compact Dock presentation. */
+.echoink-company-interaction-dock.is-company-compact > .codex-interaction-confirmation-card { max-height: none; overflow: visible; }
+.echoink-company-interactions,
+.echoink-workbench [data-wb-group="company-decisions"] > .wb-rows { gap: 8px; }
+.echoink-company-interaction-dock .codex-ai-elements-confirmation.has-readable-approval.echoink-company-compact-card,
+.echoink-company-interaction-dock .codex-interaction-question-card.echoink-company-compact-card {
+  display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0; min-height: 0; max-height: none;
+  margin: 0; padding: 10px 12px; border: 1px solid var(--background-modifier-border); border-radius: 8px;
+  background: var(--background-primary); color: var(--text-normal); box-shadow: none; overflow: visible;
+  font-family: var(--font-interface); font-size: 13px; line-height: 18px;
+}
+.echoink-company-interaction-dock .echoink-company-compact-head { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 28px; }
+.echoink-company-interaction-dock .is-question .echoink-company-compact-head { min-height: 20px; align-items: flex-start; }
+.echoink-company-interaction-dock .echoink-company-compact-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 20px; width: 20px; height: 20px; overflow: hidden; border-radius: 50%; color: var(--text-muted); }
+.echoink-company-interaction-dock .echoink-company-compact-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.echoink-company-interaction-dock .echoink-company-compact-avatar svg { width: 16px; height: 16px; }
+.echoink-company-interaction-dock h2.echoink-company-compact-title { flex: 1; min-width: 0; margin: 0; color: var(--text-normal); font-size: 13px; font-weight: 600; line-height: 18px; overflow-wrap: anywhere; }
+.echoink-company-interaction-dock .is-approval h2.echoink-company-compact-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.echoink-company-interaction-dock .is-question h2.echoink-company-compact-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-height: 36px; overflow: hidden; white-space: normal; }
+.echoink-company-interaction-dock .is-danger .echoink-company-compact-verb { color: var(--text-error); }
+.echoink-company-interaction-dock .echoink-company-compact-actions.codex-smooth-ai-approval-actions { flex-shrink: 0; flex-wrap: nowrap; gap: 6px; margin: 0; padding: 0; }
+.echoink-company-interaction-dock .echoink-company-compact-actions .codex-smooth-ai-approval-button { min-width: 48px; min-height: 28px; height: 28px; margin: 0; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 16px; box-shadow: none; }
+.echoink-company-interaction-dock .echoink-company-compact-actions .codex-smooth-ai-approval-button.is-approve { min-width: 56px; }
+.echoink-company-interaction-dock.is-company-compact .echoink-company-compact-card.is-danger .echoink-company-compact-actions button.codex-smooth-ai-approval-button.is-approve.echoink-delete-button { width: 56px; background: var(--text-error); border-color: var(--text-error); color: var(--text-on-accent); }
+.echoink-company-interaction-dock .echoink-company-compact-card.is-danger .echoink-company-compact-actions .echoink-delete-button-icon { display: none; }
+.echoink-company-interaction-dock .echoink-company-compact-actions .codex-smooth-ai-approval-button.is-reject { border: 1px solid var(--background-modifier-border); background: transparent; color: var(--text-normal); }
+.echoink-company-interaction-dock .echoink-company-compact-details { min-width: 0; }
+.echoink-company-interaction-dock .echoink-company-compact-summary { display: flex; align-items: center; gap: 8px; min-height: 18px; padding-left: 28px; cursor: pointer; list-style: none; color: var(--text-muted); }
+.echoink-company-interaction-dock .echoink-company-compact-summary::-webkit-details-marker { display: none; }
+.echoink-company-interaction-dock .echoink-company-compact-summary::marker { content: ""; }
+.echoink-company-interaction-dock .echoink-company-compact-meta { flex: 1; min-width: 0; color: var(--text-muted); font-size: 12px; font-weight: 400; line-height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.echoink-company-interaction-dock .echoink-company-compact-detail-label { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; font-size: 12px; line-height: 18px; }
+.echoink-company-interaction-dock .echoink-company-compact-chevron { display: inline-flex; }
+.echoink-company-interaction-dock .echoink-company-compact-chevron svg { width: 12px; height: 12px; }
+.echoink-company-interaction-dock .echoink-company-compact-details[open] > summary .echoink-company-compact-chevron { transform: rotate(90deg); }
+.echoink-company-interaction-dock .echoink-company-compact-summary:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-company-interaction-dock .echoink-company-compact-body { display: flex; flex-direction: column; gap: 8px; max-height: min(46vh, 420px); margin-top: 8px; padding-left: 28px; overflow: auto; overscroll-behavior: contain; }
+.echoink-company-interaction-dock .echoink-company-compact-question-meta { margin-left: 28px; }
+.echoink-company-interaction-dock .echoink-company-compact-choices { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; padding-top: 4px; margin-left: 28px; }
+.echoink-company-interaction-dock button.echoink-company-compact-choice { min-height: 28px; height: auto; margin: 0; padding: 5px 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; background: transparent; color: var(--text-normal); font: inherit; font-size: 12px; line-height: 18px; white-space: normal; box-shadow: none; }
+.echoink-company-interaction-dock button.echoink-company-compact-choice:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.echoink-company-interaction-dock .echoink-company-compact-answer { flex: 1 1 100%; font-size: 13px; line-height: 18px; }
+.echoink-company-interaction-dock .echoink-company-compact-send { min-height: 28px; margin-left: auto; padding: 4px 10px; font-size: 12px; line-height: 18px; }
+.echoink-company-interaction-dock .echoink-company-compact-error { margin: 0 0 0 28px; font-size: 12px; }
+.echoink-company-interaction-dock .echoink-company-compact-error:empty { display: none; }

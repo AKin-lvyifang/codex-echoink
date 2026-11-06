@@ -137,7 +137,7 @@ export class PdfReadingUploadModal extends Modal {
     const choose = this.contentEl.querySelector<HTMLButtonElement>('[data-pdf-upload="choose"]')!;
     choose.setText(this.attachment ? this.t("换一个", "Replace") : this.t("选择文件", "Choose file")); choose.disabled = this.busy;
     const owner = workbenchModuleOwner(this.plugin, "pdf-reading");
-    this.owner.setText(this.t(`交给 ${owner.name}`, `Assigned to ${owner.name}`));
+    this.owner.setText(owner ? this.t(`交给 ${owner.name}`, `Assigned to ${owner.name}`) : this.t("指定负责人", "Assign owner"));
     const reason = this.unavailable();
     this.status.setText(this.busy ? this.t("正在准备…", "Preparing…") : this.error || reason);
     this.status.toggleClass("is-error", Boolean(this.error));

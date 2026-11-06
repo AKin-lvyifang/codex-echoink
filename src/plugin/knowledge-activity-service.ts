@@ -1,5 +1,5 @@
 import { projectMaintenanceActivity, type KnowledgeActivity, type KnowledgeActivitySnapshot, type KnowledgeActivitySource, type MaintenanceActivity } from "../knowledge-base/maintenance-activity";
-import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { isP1Open, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 
 /** One plugin-owned read projection; views never create tasks or advance clocks. */
@@ -45,7 +45,7 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
     if (!activity) return;
     const previous = this.maintenance.get(activity.id);
     this.maintenance.set(activity.id, activity);
-    if (holdForHandoff && activity.status === "completed" && previous?.status !== "completed") this.holdCompleted.add(activity.id);
+    if (holdForHandoff && ["completed", "partial"].includes(activity.status) && previous?.status !== activity.status) this.holdCompleted.add(activity.id);
     this.publish();
   }
   updateInitial(activity: Readonly<MaintenanceActivity>): void {
@@ -55,7 +55,7 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
   }
   bind(record: Readonly<KnowledgeMaintenanceRecord>): void {
     for (const [id, old] of this.maintenance) if (id.startsWith("run:") && old.originConversationId === record.originConversationId) this.maintenance.delete(id);
-    this.update(record, record.p1?.phase === "completed");
+    this.update(record, !!record.p1 && !isP1Open(record));
   }
   settle(recordId: string): void {
     // Linking persists its new task before start returns, but batches subscriber

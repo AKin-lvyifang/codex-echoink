@@ -2844,10 +2844,18 @@ async function assertSettingsAccessibleNamesAndOverflow(): Promise<void> {
   assert.equal(tab.containerEl.querySelector('input[aria-label="欢迎标题"]'), null);
   assert.equal(tab.containerEl.querySelector('input[aria-label="问候语"]'), null);
   const memoryHost = tab.containerEl.createDiv();
-  const memory = new DesktopMemorySettings(plugin as never, { redraw() {}, openCorrection() {}, openProfile() {} });
+  let memoryPageOpens = 0;
+  const memory = new DesktopMemorySettings(plugin as never, { redraw() {}, openMemoryPage() { memoryPageOpens += 1; } });
   memory.render(memoryHost);
-  assert.ok(memoryHost.querySelector('[aria-label="使用长期记忆"]'), "current Agent settings keep the accessible Memory switch");
+  assert.ok(memoryHost.querySelector('[aria-label="使用长期记忆"]'), "desktop Memory settings keep the accessible switch");
   assert.ok(memoryHost.querySelector('[aria-label="空闲时整理记忆（做梦）"]'));
+  assert.equal(memoryHost.querySelector('[data-animateicons-icon="brain"]'), null, "independent Memory settings do not repeat the tab icon inside the group");
+  const memoryPage = memoryHost.querySelector<HTMLButtonElement>('[data-echoink-focus-key="agent:memory-page"]');
+  assert.ok(memoryPage, "Memory settings expose one shared page entry");
+  assert.match(memoryPage.textContent ?? "", /打开记忆页/u);
+  assert.doesNotMatch(memoryHost.textContent ?? "", /记忆修正|你的画像/u);
+  memoryPage.click();
+  assert.equal(memoryPageOpens, 1);
   memory.suspend(); memoryHost.remove();
   assert.doesNotMatch(
     tab.containerEl.textContent,
@@ -3773,6 +3781,19 @@ function assertSettingsV53MigrationContract(): void {
     assert.equal(customName?.name, "My Token Plan");
   });
 
+  check("saved separate-domain decisions survive an unchanged settings round trip", () => {
+    const saved = normalizeSettingsData({
+      ...structuredClone(DEFAULT_SETTINGS),
+      knowledgeBase: {
+        ...structuredClone(DEFAULT_SETTINGS.knowledgeBase),
+        separateDomainPairs: [["用户研究", "产品策略"]],
+      },
+    }).settings;
+    const reopened = normalizeSettingsData(structuredClone(saved));
+    assert.deepEqual(reopened.settings.knowledgeBase.separateDomainPairs, [["用户研究", "产品策略"]]);
+    assert.equal(reopened.changed, false);
+  });
+
   check("v51 manual limits migrate with legacy clamping and remain idempotent", () => {
     const general = createApiProviderConfig("custom", "legacy-general-limits");
     general.baseUrl = "https://legacy-general.example/v1";
@@ -4271,6 +4292,16 @@ function assertSettingsV53MigrationContract(): void {
     assert.deepEqual(normalized.resources.catalog, []);
     assert.deepEqual(catalog, []);
     assert.deepEqual(enabledSkillResources(catalog), []);
+  });
+
+  check("desktop saves keep the mobile streaming choice and drop invalid values", () => {
+    const stored = (mobileStreaming: unknown) => normalizeSettingsData({
+      ...structuredClone(DEFAULT_SETTINGS),
+      apiProviders: [{ ...createApiProviderConfig("kimi", "mobile-streaming"), apiKey: "k", mobileStreaming }]
+    }).settings.apiProviders[0];
+    assert.equal(stored(false)?.mobileStreaming, false);
+    assert.equal(stored(true)?.mobileStreaming, true);
+    assert.equal(Object.hasOwn(stored("yes") ?? {}, "mobileStreaming"), false);
   });
 
   if (failures.length > 0) {
@@ -10401,7 +10432,7 @@ async function assertPersonalMemoryDtoAndRegistryIdentity(): Promise<void> {
   settings.taskWorkspace.page = { kind: "list", agentId: "editor" };
   assert.equal(identity().displayName, "整理员");
   assert.equal(identity().avatarUrl, resolveAgentAvatarUrl({ kind: "preset", presetId: "mica" }));
-  settings.agentRegistry.agents[1].name = "最新整理员";
+  settings.agentRegistry.agents.find(agent => agent.id === "editor")!.name = "最新整理员";
   assert.equal(identity().displayName, "最新整理员", "each read uses the current registry");
   settings.taskWorkspace.page = { kind: "detail", taskId: "saved-task" };
   settings.sessions = [{ id: "saved-task", agentId: "editor" } as never];
@@ -10463,14 +10494,14 @@ async function assertManualDreamSettingsUi(): Promise<void> {
   } };
   plugin.getCognitiveSystem = async () => system;
   const container = providerModalTestDocument.body.createDiv();
-  const memory = new DesktopMemorySettings(plugin as never, { redraw: () => tab.display(), openCorrection() {}, openProfile() {} });
+  const memory = new DesktopMemorySettings(plugin as never, { redraw: () => tab.display(), openMemoryPage() {} });
   const tab = {
     containerEl: container,
     display() { container.empty(); memory.render(container as unknown as HTMLElement); },
     hide() { memory.suspend(); container.remove(); }
   };
   const findButton = () => tab.containerEl.querySelectorAll<ProviderModalTestElement>("button")
-    .find(button => ["立即做梦", "整理中…", "Dream now", "Consolidating…"].includes(button.textContent));
+    .find(button => ["开始", "整理中…", "Start", "Consolidating…"].includes(button.textContent));
   const result = { startedAt: 1, finishedAt: 2, processedMemoryIds: ["fixture"], failedMemoryIds: [],
     factsCreated: 1, factsReused: 0, factsRetired: 0, decayed: 0, autoDisabled: 0,
     userUpdated: false, providerUnavailable: false, committed: true, error: null };
@@ -10517,15 +10548,15 @@ async function assertManualDreamSettingsUi(): Promise<void> {
 
   plugin.settings.memory.dreamEnabled = false;
   tab.display();
-  assert.equal(findButton(), undefined, "disabled Dream hides the manual action");
+  assert.equal(findButton()?.disabled, true, "disabled Dream retains a disabled manual action");
   plugin.settings.memory.dreamEnabled = true;
   plugin.settings.memory.useLongTermMemory = false;
   tab.display();
-  assert.equal(findButton(), undefined, "disabled long-term memory hides the manual action");
+  assert.equal(findButton()?.disabled, true, "disabled long-term memory retains a disabled manual action");
   plugin.settings.memory.useLongTermMemory = true;
   plugin.settings.settingsLanguage = "en";
   tab.display();
-  assert.equal(findButton()?.textContent, "Dream now");
+  assert.equal(findButton()?.textContent, "Start");
   tab.hide();
   console.log("PASS manual Dream: production settings entry, deduplication across redraws, outcomes and toggle gates");
 }
@@ -11294,8 +11325,11 @@ class ProviderModalTestElement {
     for (const child of [...children].reverse()) this.insertBefore(child, this.children[0]);
   }
 
-  append(...children: ProviderModalTestElement[]): void {
-    for (const child of children) this.appendChild(child);
+  append(...children: (ProviderModalTestElement | string)[]): void {
+    for (const child of children) {
+      if (typeof child === "string") { const text = this.ownerDocument.createElement("span"); text.textContent = child; this.appendChild(text); }
+      else this.appendChild(child);
+    }
   }
 
   appendChild(child: ProviderModalTestElement): ProviderModalTestElement {

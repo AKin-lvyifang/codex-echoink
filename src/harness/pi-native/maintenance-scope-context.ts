@@ -67,10 +67,33 @@ export function isNewMaintenanceScopeRequest(text: string, vaultRootPath?: strin
 }
 
 /** Explicit task changes end inheritance; clarification and failed turns do not. */
-function maintenanceTopicBoundary(text: string, vaultRootPath?: string): boolean {
+export function maintenanceTopicBoundary(text: string, vaultRootPath?: string): boolean {
   if (isMaintenanceScopeConfirmation(text)) return false;
   return isNewMaintenanceScopeRequest(text, vaultRootPath) || /^\s*\/(?:ask|maintain|dream|skill:)/iu.test(text)
     || /(?:换(?:个|一个)?话题|另(?:一个|外的?)问题|接下来(?:聊|谈)|(?:不要|不再|停止|取消|暂停)(?:继续)?(?:整理|维护|处理)(?:这些|这批)?(?:资料|笔记|知识库)?)/u.test(text);
+}
+
+/** A later frozen product batch is recoverable history, not an explicit topic change. */
+export function isFrozenMaintenanceBatchSuccessor(entries: readonly SessionEntry[], originalRunId: string, candidateRunId: string): boolean {
+  const context = (id: string) => entries.flatMap(entry => entry.type === "custom" && entry.customType === MAINTENANCE_SCOPE_CONTEXT_TYPE
+    ? [freezeMaintenanceScopeContext(entry.data)] : []).find(value => value?.productRunId === id);
+  const parse = (value: Readonly<MaintenanceScopeContext> | null | undefined) => {
+    if (!value || value.scope.mode !== "batch") return null;
+    const sourcePaths = value.scope.sourcePaths;
+    const match = /^(?:\/maintain\s+)?用户已确认(从工作台整理资料|知识库初始化)，本批\s+(\d+)\/(\d+)。/u.exec(value.request.trim());
+    if (!match) return null;
+    const index = Number(match[2]), total = Number(match[3]);
+    if (!Number.isSafeInteger(index) || !Number.isSafeInteger(total) || index < 1 || total < index) return null;
+    const marker = "\n本批来源：\n", offset = value.request.lastIndexOf(marker);
+    if (offset < 0) return null;
+    try {
+      const paths: unknown[] = value.request.slice(offset + marker.length).split("\n").map((line): unknown => JSON.parse(line));
+      if (paths.length !== sourcePaths.length || paths.some((path, index) => path !== sourcePaths[index])) return null;
+    } catch { return null; }
+    return { origin: match[1], index, total };
+  };
+  const original = parse(context(originalRunId)), candidate = parse(context(candidateRunId));
+  return !!original && !!candidate && original.origin === candidate.origin && original.total === candidate.total && candidate.index > original.index;
 }
 
 /** Only durable selections whose owning user entry is on this branch qualify. */

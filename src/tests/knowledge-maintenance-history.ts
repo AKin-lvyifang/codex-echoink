@@ -141,19 +141,19 @@ export async function runKnowledgeMaintenanceHistoryTests(): Promise<void> {
   assert.equal(upgradeEntry.resultStatus, "noop", "the generic envelope is preserved; the upgrade projection reads its own durable facts");
   assert.match(knowledgeMaintenanceHistoryTitle(upgradeEntry, true, upgradeRecord), /旧知识升级/u);
   assert.equal(knowledgeMaintenanceHistoryStatus(upgradeEntry, true, upgradeRecord), "已完成");
-  assert.match(knowledgeMaintenanceHistoryDescription(upgradeEntry, true, upgradeRecord), /已完成.*已补好 1 篇资料状态、2 条链接.*1 页 Wiki/u);
+  assert.match(knowledgeMaintenanceHistoryDescription(upgradeEntry, true, upgradeRecord), /已完成.*已补好 1 篇资料状态.*2 条链接.*1 页 Wiki/u);
   cleanup(); host.empty();
   cleanup = renderKnowledgeMaintenanceHistoryList(host, { zh: true, entries: [upgradeEntry], records: [upgradeRecord], state: { date: "", page: 1, listScroll: 0 }, onBack() {}, onChange() {},
     onSelectRecord(value) { selected = value; detail(); }, onOpenPath: open, onUnavailable() {} });
-  assert.match(host.textContent!, /旧知识升级.*已完成.*1 篇资料状态、2 条链接.*1 页 Wiki/u);
+  assert.match(host.textContent!, /旧知识升级.*已完成.*1 篇资料状态.*2 条链接.*1 页 Wiki/u);
   assert.doesNotMatch(host.textContent!, /已检查|无需新增/u);
   click(".echoink-maintenance-record-list button");
-  assert.match(host.textContent!, /旧知识升级详情.*已完成.*已补好 1 篇资料状态、2 条链接.*1 页 Wiki.*已补好的文件/u);
+  assert.match(host.textContent!, /旧知识升级详情.*已完成.*已补好 1 篇资料状态.*2 条链接.*1 页 Wiki.*已补好的文件/u);
   for (const text of ["补状态", "仅补链接", "已补类型", "需核对旧资料"]) assert.ok(host.textContent!.includes(text));
   assert.doesNotMatch(host.textContent!, /本轮没有选中来源|本轮没有新增或更新|无需新增/u);
   const partialUpgrade = structuredClone(upgradeRecord); partialUpgrade.upgrade!.phase = "write"; partialUpgrade.upgrade!.writes["Wiki/已补类型.md"].done = false; partialUpgrade.upgrade!.skipped["Wiki/已补类型.md"] = "这页的类型尚未补完。";
   cleanup(); host.empty(); cleanup = renderKnowledgeMaintenanceRecordDetail(host, { zh: true, record: partialUpgrade, onBack() {}, onOpenPath: open });
-  assert.match(host.textContent!, /没做完.*1 篇资料状态、2 条链接.*0 页 Wiki.*未补完的文件.*类型尚未补完/us);
+  assert.match(host.textContent!, /没做完.*1 篇资料状态.*2 条链接.*未补完的文件.*类型尚未补完/us);
   assert.equal(JSON.stringify(upgradeRecord), upgradeBefore, "upgrade list/detail are read-only projections");
   cleanup(); host.remove();
   sibling.querySelector<HTMLButtonElement>("button")!.click(); assert.equal(siblingClicks, 1, "history disposer preserves unrelated Origin controls");

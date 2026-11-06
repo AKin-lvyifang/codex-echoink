@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHost, answer } from "../mobile/host.mjs";
+import { gatedStreamFetch } from "../mobile/streaming.mjs";
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(condition, label) { const deadline = Date.now() + 4000; while (!condition() && Date.now() < deadline) await settle(); assert.ok(condition(), label); }
 const click = (root, label) => { const button = [...root.querySelectorAll("button")].find(item => item.getAttribute("aria-label") === label || item.textContent.trim() === label); assert.ok(button, `button ${label}`); button.click(); return button; };
@@ -279,6 +280,29 @@ export async function runIPhoneTaskScenarios(api, win) {
       assert.equal(f.store.getSession(id).lastReadAt, 2000, "hidden retained task cannot consume unread result"); assert.equal(f.refreshes.tasks, 1);
       assert.ok(f.workbenchListeners.size > 0); page.dispose(); assert.equal(f.workbenchListeners.size, 0);
       f.runtime.onChange(); assert.equal(f.runtime.isBusy(id), false);
+    } finally { await f.close(); }
+  });
+  await test("a streaming service shows thinking and text live, then the saved answer with folded reasoning", async () => {
+    const f = await fixture(), sse = gatedStreamFetch();
+    try {
+      const id = f.store.session.id; f.settings.apiProviders[0].mobileStreaming = true; f.runtime.setStreamFetch(sse.fetch);
+      const page = api.createTaskPage(f.ctx, id); f.ctx.shell.mount(page);
+      const live = page.content.querySelector(".ip-task-streaming");
+      const submission = await f.runtime.submit("流式问题", id); void submission.completion.catch(() => {});
+      await until(() => sse.calls.length === 1, "streaming fetch used"); assert.equal(f.calls.length, 0, "requestUrl stays unused"); assert.equal(sse.calls[0].body.stream, true);
+      sse.send({ reasoning_content: "先想" });
+      await until(() => !live.hidden && live.textContent.includes("先想"), "live thinking shown");
+      const thinking = live.querySelector(".ip-task-reasoning"); assert.equal(thinking.open, true); assert.match(thinking.querySelector("summary").textContent, /思考中/u);
+      sse.send({ content: "第一句" });
+      await until(() => live.querySelector(".ip-task-answer-live")?.textContent === "第一句", "live text shown");
+      assert.equal(live.querySelector(".ip-task-reasoning").open, false, "thinking folds once the answer starts");
+      assert.equal(f.markdown.includes("第一句"), false, "live text is not re-rendered as Markdown");
+      sse.send({ content: "，完成" }, "stop"); sse.end(); await submission.completion;
+      await until(() => live.hidden && page.content.querySelector(".ip-task-answer")?.textContent === "第一句，完成", "saved answer replaces live copy");
+      const saved = page.content.querySelector('.ip-task-reasoning[data-tool-id^="reasoning:"]'); assert.ok(saved); assert.equal(saved.open, false);
+      assert.equal(saved.querySelector(".ip-task-reasoning-body").textContent, "先想");
+      assert.equal(page.content.querySelectorAll(".ip-task-answer").length, 1, "no duplicate answer");
+      page.dispose();
     } finally { await f.close(); }
   });
 }

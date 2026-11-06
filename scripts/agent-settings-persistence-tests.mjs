@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import assert from 'node:assert/strict';
 import {readFile, realpath, mkdtemp, rm} from 'node:fs/promises';
@@ -7,9 +8,8 @@ import os from 'node:os';
 import ts from 'typescript';
 import esbuild from 'esbuild';
 const root=fileURLToPath(new URL('../',import.meta.url));
-const allowed=await realpath(path.join(os.homedir(),'EchoInk-TestVaults/90-任务临时'));
 const fixture=await realpath(process.env.ECHOINK_AGENTS_TEST_ROOT||'');
-assert(fixture.startsWith(allowed+path.sep),'Explicit disposable fixture root required');
+assert(isDisposableTestRoot(fixture),'Explicit disposable fixture root required');
 const run=await mkdtemp(path.join(fixture,'agent-persistence-'));
 try {
  const source=ts.createSourceFile('main.ts',await readFile(path.join(root,'src/main.ts'),'utf8'),ts.ScriptTarget.Latest,true);
@@ -17,7 +17,7 @@ try {
  const names=['agentRegistryWriteTail','agentRegistryListeners','writeAgentRegistry','onAgentRegistryChanged','saveAgentDefinition','setAgentModuleOwner'];
  const code=names.map(name=>cls.members.find(m=>m.name?.getText(source)===name).getText(source)).join('\n');
  const output=path.join(run,'test.mjs');
- await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,stdin:{contents:`import {normalizeAgentRegistry,setModuleOwner} from './src/agents/registry'; import {AGENT_MODULE_IDS,GENERAL_ASSISTANT_ID} from './src/agents/types'; export class Host { constructor(){this.settings={agentRegistry:normalizeAgentRegistry(null)}; this.disk=null;this.saveCount=0;this.fail=false;} getCodexView(){return null;} async saveSettings(immediate){if(!immediate)throw Error('not durable');this.saveCount++; if(this.gate){const g=this.gate;this.gate=null;await g;}if(this.fail){this.fail=false;throw Error('disk failed');}this.disk=structuredClone(this.settings.agentRegistry);} ${code} }`,resolveDir:root,loader:'ts'},outfile:output,bundle:true,platform:'node',format:'esm',logLevel:'silent'});
+ await esbuild.build({ banner: desktopNodeTestBanner, alias: desktopNodeTestAliases,stdin:{contents:`import {assertExpertAgentLocks,isAgentHired} from './src/agents/persona'; import {normalizeAgentRegistry,setModuleOwner} from './src/agents/registry'; import {AGENT_MODULE_IDS,GENERAL_ASSISTANT_ID} from './src/agents/types'; export class Host { constructor(){this.settings={agentRegistry:normalizeAgentRegistry(null)}; this.disk=null;this.saveCount=0;this.fail=false;} getCodexView(){return null;} async saveSettings(immediate){if(!immediate)throw Error('not durable');this.saveCount++; if(this.gate){const g=this.gate;this.gate=null;await g;}if(this.fail){this.fail=false;throw Error('disk failed');}this.disk=structuredClone(this.settings.agentRegistry);} ${code} }`,resolveDir:root,loader:'ts'},outfile:output,bundle:true,platform:'node',format:'esm',logLevel:'silent'});
  const {Host}=await import(pathToFileURL(output).href); const h=new Host();let notices=0;h.onAgentRegistryChanged(()=>notices++);
  const first={id:'fixture-one',name:'First',avatar:{kind:'default'},position:'Research',styleId:'analysis',capabilityIds:['knowledge']};
  const second={...first,id:'fixture-two',name:'Second'};
@@ -25,7 +25,7 @@ try {
  let release;h.gate=new Promise(r=>release=r);h.fail=true;
  const failed=h.setAgentModuleOwner('knowledge-base',first.id);const succeeded=h.setAgentModuleOwner('journal',second.id); release();
  await assert.rejects(failed,/disk failed/);await succeeded;
- assert.equal(h.disk.moduleOwners['knowledge-base'],'sol');assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(notices,3);
+ assert.equal(h.disk.moduleOwners['knowledge-base'],'');assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(notices,3);
  await Promise.all([h.saveAgentDefinition({...first,name:'Renamed'},['knowledge-base'],{agent:structuredClone(h.settings.agentRegistry.agents.find(a=>a.id===first.id)),moduleIds:[]}),h.setAgentModuleOwner('review',second.id)]);
  assert.equal(h.disk.agents.find(a=>a.id===first.id).name,'Renamed');assert.equal(h.disk.moduleOwners['knowledge-base'],first.id);assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(h.disk.moduleOwners.review,second.id);
  await assert.rejects(h.saveAgentDefinition({...first,name:'Duplicate new'},[]),/already created|已经创建/);

@@ -2,23 +2,24 @@
 .env
 .env.*
 
-AGENT.md
-AGENTS.md
-USER.md
-MEMORY.md
-CONTEXT.md
-.codex-memory/
 node_modules/
 dist/
 release/
 .tmp/
 .omx/
 
-docs/
-experiments/
-scripts/agent-evals-*.mjs
-src/tests/agent-evals/
-src/tests/fixtures/agent-evals-v1/
+# 内部资料提交到私有仓库 origin；发版时 scripts/export-public.mjs 把它们挡在公开仓库外。
+# 下面这些体积大、含凭据或属于验收证据，私有仓库也不提交。
+/experiments/
+/.codex-memory/.runtime/
+/docs/internal/test-evidence/
+/docs/internal/acceptance/
+/docs/internal/verification/
+/docs/internal/测试账号.md
+/docs/测试集/
+docs/**/data.json
+docs/**/.obsidian/
+docs/**/*设计稿*
 
 *.log
 /companion-theme/

@@ -6,7 +6,7 @@ import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/nativ
 import { isEchoInkFinanceBase, isFinanceRootName, isLegacyFinancePath } from "../lifestyle/finance-paths";
 import { sha256Hex } from "../utils/sha256";
 import type { MobileServices } from "./services";
-import { prepareKnowledgeModuleDirectories } from "../knowledge-base/module-directories";
+import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories } from "../knowledge-base/module-directories";
 import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 
 export interface FolderFile { path: string; size: number; mtime: number }
@@ -115,7 +115,11 @@ export async function readBaseline(services: MobileServices) {
     revision: services.settings.knowledgeBase.folderBindings?.revision ?? 0, bindings: knowledgeFolderBindingsSignature(services.settings.knowledgeBase.folderBindings) }) };
 }
 export async function protectedPaths(services: MobileServices, files: FolderInventory, modules?: KnowledgeModuleDirectories): Promise<string[]> {
-  const settings = services.settings, native = readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings ?? emptyKnowledgeFolderBindings());
+  const settings = services.settings;
+  assertKnowledgeModulePath(settings.journalDirectory, "EchoInk 日记目录", true);
+  const nativeFolder = nativeJournalFolder(services);
+  if (nativeFolder !== undefined) assertKnowledgeModulePath(nativeFolder, "Obsidian 日记文件夹", true);
+  const native = readNativeJournalSettings(services.app, settings.journalDirectory, settings.knowledgeBase.folderBindings ?? emptyKnowledgeFolderBindings());
   const paths = new Set([services.app.vault.configDir, services.directory.replace(/\/mobile$/u, ""), services.getTodoStore().sourcePath,
     "EchoInk/待办-settings-backup.json", "EchoInk/财务", settings.lifestyle.finance.analysisDirectory, native.template]);
   if (services.lifestyle) paths.add(services.lifestyle.finance.ledger.paths().root);

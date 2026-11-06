@@ -1,5 +1,5 @@
 import type { AgentDefinition, AgentRegistry } from "./types";
-import { GENERAL_ASSISTANT_ID, AGENT_MODULE_IDS } from "./types";
+import { AGENT_MODULE_IDS } from "./types";
 import { isExpertAgent } from "./persona";
 import { normalizeExpertDisclosure } from "../experts/disclosure";
 import type { ResolvedExpertPackage } from "../experts/service";
@@ -31,7 +31,7 @@ export function dismissExpert(registry: AgentRegistry, agentId: string): void {
   const agent = registry.agents.find(item => item.id === agentId);
   if (!isExpertAgent(agent)) throw new Error("专家不存在。");
   agent.expert.hired = false;
-  for (const moduleId of AGENT_MODULE_IDS) if (registry.moduleOwners[moduleId] === agentId) registry.moduleOwners[moduleId] = GENERAL_ASSISTANT_ID;
+  for (const moduleId of AGENT_MODULE_IDS) if (registry.moduleOwners[moduleId] === agentId) registry.moduleOwners[moduleId] = "";
 }
 
 export function rememberExpertConversation(registry: AgentRegistry, agentId: string, conversationId: string, at = Date.now()): void {

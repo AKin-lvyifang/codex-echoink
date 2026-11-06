@@ -1,6 +1,10 @@
 export const PI_EFFECTIVE_INPUT_RATIO = 0.75 as const;
 export const PI_DEFAULT_KEEP_RECENT_TOKENS = 20_000 as const;
 
+export function personalMemoryRecallTokenBudget(effectiveInputBudget: number): number {
+  return Math.max(512, Math.min(4_000, Math.floor(effectiveInputBudget * 0.05)));
+}
+
 export interface PiEffectiveInputBudget {
   readonly contextWindow: number;
   readonly maxOutputReserve: number;

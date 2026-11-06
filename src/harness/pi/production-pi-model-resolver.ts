@@ -38,7 +38,7 @@ export interface ControlledPiStreamInput {
     reasoning?: SimpleStreamOptions["reasoning"];
     maxTokens?: number;
     temperature: number;
-    cacheRetention: "none";
+    cacheRetention: "none" | "short";
     maxRetries: 0;
     timeoutMs: number;
   };

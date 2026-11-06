@@ -139,6 +139,22 @@ export async function runMobileTaskUIScenarios(api, win) {
     } finally { f.adapter.write = write; await f.close(); }
   });
 
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} live revocation shows a handled task error and the same task resumes`, async () => {
+    const provider = providerQueue(); const f = await fixture(provider.request, tablet);
+    try {
+      const id = f.store.session.id; await f.send("撤权前受理的问题"); await until(() => provider.calls.length === 1, "request admitted");
+      await f.store.setMemoryEnabled(false); provider.calls[0].resolve(answer("openai-completions", "late answer"));
+      await until(() => !f.runtime.isBusy(id) && /权限|资源/u.test(f.root.querySelector(".em-error").textContent), "real task interruption is visible");
+      assert.equal(f.store.getSession(id).taskStatus, "interrupted"); assert.equal(f.store.getSession(id).queuePaused, true);
+      assert.equal(f.store.getSession(id).messages.filter(message => message.role === "user").length, 1);
+      assert.equal(f.root.querySelector(".em-input").value, "");
+      await f.store.setMemoryEnabled(true); await f.send("核对后继续"); await until(() => provider.calls.length === 2, "same task resumed");
+      provider.calls[1].resolve(answer("openai-completions", "恢复完成"));
+      await until(() => !f.runtime.isBusy(id) && f.store.getSession(id).taskStatus === "completed", "resumed task completes");
+      assert.equal(f.store.session.id, id); assert.equal(f.root.querySelector(".em-error").textContent, "");
+    } finally { for (const call of provider.calls) call.resolve(answer("openai-completions", "teardown")); await f.close(); }
+  });
+
   const questionProvider = async request => {
     const body = JSON.parse(request.body);
     if (body.messages.at(-1)?.role === "tool") return answer("openai-completions", "收到真实选择");
@@ -267,8 +283,8 @@ export async function runMobileTaskUIScenarios(api, win) {
   });
 
   await test("Skill use clears the old selectedSkill override and affects only the task captured by its sheet", async () => {
-    const chosen = { id: "clarify-real-question", kind: "skill", source: "echoink-local", name: "新的虚构 Skill", description: "合成说明", enabled: true, bridgeMode: "prompt-only" };
-    const previous = { ...chosen, id: "two-layer-explanation", name: "旧的虚构 Skill" };
+    const chosen = { id: "synthetic-new-skill", kind: "skill", source: "echoink-local", name: "新的虚构 Skill", description: "合成说明", enabled: true, bridgeMode: "prompt-only" };
+    const previous = { ...chosen, id: "synthetic-old-skill", name: "旧的虚构 Skill" };
     const services = { subscribeIdentity() { return () => {}; }, plugins() { return []; }, skills() { return [chosen]; }, async requireAvailableEchoInkSkill(id) { assert.equal(id, chosen.id); return "虚构 Skill 正文"; } };
     const calls = []; const f = await fixture(async request => { calls.push(JSON.parse(request.body)); return answer("openai-completions", "Skill已使用"); }, false, services);
     try {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runKnowledgeMapDataTests } from "./knowledge-map-data";
 import * as fsp from "node:fs/promises";
 import * as path from "node:path";
 import type { App } from "obsidian";
@@ -17,28 +18,31 @@ const entry = (runId: string, date: string, overrides: Partial<KnowledgeBaseMain
 const marker = (source: string, revision = `sha256:${"a".repeat(64)}`): string => `<!-- echoink-source: ${JSON.stringify({ path: source, revision })} -->`;
 
 export async function runKnowledgePageDataTests(testRoot: string): Promise<void> {
-  const now = at("2026-01-04T18:00:00-08:00"); // Sunday: this week begins in the previous year.
-  const monday = at("2025-12-29T00:00:00-08:00");
+  runKnowledgeMapDataTests();
+  // The production calendar uses local days/weeks. Keep fixture wall times local too,
+  // so Sunday stays Sunday on both the main computer and the company computer.
+  const now = at("2026-01-04T18:00:00"); // Sunday: this week begins in the previous year.
+  const monday = at("2025-12-29T00:00:00");
   const history = [
-    entry("completed", "2025-12-29T00:00:00-08:00", { resultStatus: "completed" }),
-    entry("noop", "2026-01-01T10:00:00-08:00", { resultStatus: "noop" }),
-    entry("partial", "2026-01-01T10:00:00-08:00", { resultStatus: "partial" }),
-    entry("failed", "2026-01-01T10:00:00-08:00", { status: "failed", resultStatus: "failed" }),
-    entry("uncertain", "2026-01-01T10:00:00-08:00", { resultStatus: "write_uncertain" }),
-    entry("cancel", "2026-01-01T10:00:00-08:00", { status: "canceled", resultStatus: "cancelled" }),
-    entry("legacy", "2026-01-02T10:00:00-08:00"),
-    entry("legacy-date", "2026-01-03T10:00:00-08:00", { at: 0 }),
-    entry("dateless", "2026-01-03T10:00:00-08:00", { at: 0, date: "" }),
-    entry("invalid-date", "2026-01-03T10:00:00-08:00", { at: 0, date: "2026-02-30" }),
-    entry("future", "2026-01-05T10:00:00-08:00"),
-    entry("old", "2024-01-01T10:00:00-08:00"),
-    entry("legacy-partial", "2026-01-02T10:00:00-08:00", { completion: "partial" })
+    entry("completed", "2025-12-29T00:00:00", { resultStatus: "completed" }),
+    entry("noop", "2026-01-01T10:00:00", { resultStatus: "noop" }),
+    entry("partial", "2026-01-01T10:00:00", { resultStatus: "partial" }),
+    entry("failed", "2026-01-01T10:00:00", { status: "failed", resultStatus: "failed" }),
+    entry("uncertain", "2026-01-01T10:00:00", { resultStatus: "write_uncertain" }),
+    entry("cancel", "2026-01-01T10:00:00", { status: "canceled", resultStatus: "cancelled" }),
+    entry("legacy", "2026-01-02T10:00:00"),
+    entry("legacy-date", "2026-01-03T10:00:00", { at: 0 }),
+    entry("dateless", "2026-01-03T10:00:00", { at: 0, date: "" }),
+    entry("invalid-date", "2026-01-03T10:00:00", { at: 0, date: "2026-02-30" }),
+    entry("future", "2026-01-05T10:00:00"),
+    entry("old", "2024-01-01T10:00:00"),
+    entry("legacy-partial", "2026-01-02T10:00:00", { completion: "partial" })
   ];
   const data = aggregateKnowledgePageActivity([
     { path: "wiki/start.md", mtime: now, birthtime: monday },
     { path: "wiki/start.md", mtime: now, birthtime: monday },
     { path: "wiki/sunday.md", mtime: now, birthtime: monday - 1 },
-    { path: "wiki/edited.md", mtime: now, birthtime: at("2024-01-01T00:00:00-08:00") },
+    { path: "wiki/edited.md", mtime: now, birthtime: at("2024-01-01T00:00:00") },
     { path: "wiki/unknown.md", mtime: now, birthtime: null }
   ], [...history, history[0]], now);
   assert.equal(data.weekly.weekStart, monday);
@@ -47,11 +51,11 @@ export async function runKnowledgePageDataTests(testRoot: string): Promise<void>
   assert.equal(data.weekly.unknownCreatedAtCount, 1);
   assert.deepEqual(data.activityDays.find(day => day.date === "2025-12-29"), { date: "2025-12-29", added: 1, organized: 1, total: 2 });
   assert.ok(data.activityDays.some(day => day.date === "2024-01-01"), "old event years remain available to range selectors");
-  assert.equal(aggregateKnowledgePageActivity([], [], at("2026-03-09T00:30:00-07:00")).weekly.weekStart, at("2026-03-09T00:00:00-07:00"), "week boundary survives daylight saving time");
+  assert.equal(aggregateKnowledgePageActivity([], [], at("2026-03-09T00:30:00")).weekly.weekStart, at("2026-03-09T00:00:00"), "week boundary survives daylight saving time");
   for (const mode of ["maintain", "reingest", "inbox", "lint", "outputs", "unknown"] as const) {
     const qualifies = ["maintain", "reingest", "inbox", "outputs"].includes(mode);
     for (const resultStatus of [undefined, "completed", "noop"] as const) {
-      const modeData = aggregateKnowledgePageActivity([], [entry(`mode-${mode}-${resultStatus}`, "2026-01-01T10:00:00-08:00", { mode, resultStatus })], now);
+      const modeData = aggregateKnowledgePageActivity([], [entry(`mode-${mode}-${resultStatus}`, "2026-01-01T10:00:00", { mode, resultStatus })], now);
       assert.equal(modeData.weekly.organized, qualifies ? 1 : 0, `${mode}/${resultStatus ?? "legacy-success"}: only proven organization modes count`);
       assert.equal(modeData.activityDays.reduce((total, day) => total + day.organized, 0), qualifies ? 1 : 0, "heatmap and weekly figures use the same mode boundary");
     }
@@ -118,27 +122,27 @@ export async function runKnowledgePageDataTests(testRoot: string): Promise<void>
       metadataCache: { resolvedLinks: graph, on: () => ({}), offref() {}, getFileCache: () => ({}) }, workspace: { layoutReady: true } } as unknown as App;
     linkService = new KnowledgeLinkHealthService(app);
     const sharedLinks = await linkService.load(bindings);
-    assert.ok(!sharedLinks.isolatedPaths.includes("wiki/sub/linked.md"), "incoming links from outside the knowledge range count");
+    assert.ok(sharedLinks.isolatedPaths.includes("wiki/sub/linked.md"), "outside, source and project links do not connect Wiki knowledge");
     assert.ok(sharedLinks.isolatedPaths.includes("wiki/old.md"), "self and attachment links do not count");
     const health = { score: 73, status: "risk", assessment: "limited" } as KnowledgeBaseDashboardSnapshot["health"];
     const privateFailure = { schemaVersion: 1, recordId: "private", runId: "override", at: Date.now(), date: "2026-10-18", cancelled: false,
       result: { status: "failed", issues: [] }, sources: [], summary: "failed" } as unknown as KnowledgeMaintenanceRecord;
     const host: KnowledgePageHost = { app, settings: { knowledgeBase: { folderBindings: bindings, maintenanceHistory: [entry("override", new Date().toISOString())] } as KnowledgeBaseSettings },
       settingsKnowledgeBindings: () => bindings,
-      getKnowledgeSurfaceService: () => ({ getDashboardSnapshot: async () => ({ health } as KnowledgeBaseDashboardSnapshot), getMaintenanceRecords: async () => [privateFailure] }) };
-    const snapshot = await loadKnowledgePageData(host, async () => sharedLinks, Date.now() + 1000);
+      getKnowledgeSurfaceService: () => ({ getHealthSnapshot: () => health, getMaintenanceRecords: async () => [privateFailure] }) };
+    const snapshot = await loadKnowledgePageData(host, Date.now() + 1000);
     assert.strictEqual(snapshot.health, health, "health projection preserves the dashboard score and assessment");
-    assert.strictEqual(snapshot.links, sharedLinks, "the knowledge page consumes the workbench service result");
+    assert.ok(!("links" in snapshot) && !("sources" in snapshot), "Removed issue pages no longer request legacy link/source projections");
     assert.equal(snapshot.weekly.organized, 0, "private failure supersedes the successful settings copy");
-    assert.equal(snapshot.directories.find(directory => directory.role === "raw")?.count, 2, "supported formats and overlapping roots deduplicate");
+    assert.equal(snapshot.directories.find(directory => directory.role === "raw")?.count, null, "Removed folder cards no longer count raw files");
     assert.equal(snapshot.directories.find(directory => directory.role === "wiki")?.count, 7, "scope matches directory boundaries");
-    assert.equal(snapshot.directories.find(directory => directory.role === "projects")?.count, 3, "project count uses immediate child folders across legacy roots");
+    assert.equal(snapshot.directories.find(directory => directory.role === "projects")?.count, null, "Removed folder cards no longer traverse projects");
     const inbox = snapshot.directories.find(directory => directory.role === "inbox")!;
     assert.equal(inbox.state, "partial"); assert.equal(inbox.count, 1); assert.equal(inbox.roots[1].count, null, "missing roots never become zero");
     assert.equal(snapshot.weekly.added, 7, "real file birthtime reaches the current week's figures");
-    const failed = await loadKnowledgePageData({ ...host, getKnowledgeSurfaceService: () => ({ getDashboardSnapshot: async () => { throw new Error("health unavailable"); }, getMaintenanceRecords: async () => { throw new Error("history unavailable"); } }) }, async () => { throw new Error("resolver unavailable"); });
+    const failed = await loadKnowledgePageData({ ...host, getKnowledgeSurfaceService: () => ({ getHealthSnapshot: () => { throw new Error("health unavailable"); }, getMaintenanceRecords: async () => { throw new Error("history unavailable"); } }) });
     assert.equal(failed.health, null); assert.equal(failed.weekly.organized, null); assert.equal(failed.weekly.added, 7);
-    assert.equal(failed.links.state, "unknown"); assert.ok(failed.errors.health && failed.errors.history && failed.errors.links);
+    assert.ok(failed.errors.health && failed.errors.history);
     assert.ok(failed.errors.activity, "unavailable authoritative history cannot appear as a complete activity heatmap");
     bindings.roles.raw.readPaths = ["removed-source-root"];
     assert.equal((await loadKnowledgeSourceHealth(vaultPath, bindings, ["wiki/missing.md"])).missing.length, 0, "unbinding a source cannot manufacture a missing-file alert");
@@ -146,7 +150,7 @@ export async function runKnowledgePageDataTests(testRoot: string): Promise<void>
     bindings = emptyKnowledgeFolderBindings();
     for (const enabled of [false, true]) {
       bindings.roles.wiki.enabled = enabled;
-      const empty = await loadKnowledgePageData(host, async () => sharedLinks);
+      const empty = await loadKnowledgePageData(host);
       assert.equal(empty.weekly.added, 0);
       assert.equal(empty.errors.activity, undefined, "unconfigured knowledge is an empty page, not a retryable read error");
     }
@@ -156,13 +160,13 @@ export async function runKnowledgePageDataTests(testRoot: string): Promise<void>
     const timer = setInterval(() => { turns++; }, 0);
     const started = performance.now();
     let bulk: Awaited<ReturnType<typeof loadKnowledgePageData>>;
-    try { bulk = await loadKnowledgePageData(host, async () => ({ state: "unknown", candidatePaths: [], isolatedPaths: [], reason: "解析中" }), Date.now() + 1000); }
+    try { bulk = await loadKnowledgePageData(host, Date.now() + 1000); }
     finally { clearInterval(timer); }
     assert.equal(bulk.directories.find(directory => directory.role === "wiki")?.count, 1000);
     assert.equal(bulk.weekly.added, 1000);
     assert.equal(bulk.activityDays.reduce((total, day) => total + day.added, 0), 1000);
     assert.ok(turns >= 10, "large real-file scans yield to the event loop");
-    assert.equal(bulk.sources.missing.length, 0, "unmarked legacy notes are not source problems");
+    assert.ok(!("sources" in bulk));
     console.log(`P8 data: calendar/status/dedupe/source boundaries and independent errors passed; 1000 real files in ${Math.round(performance.now() - started)}ms, ${turns} event-loop turns.`);
   } finally { linkService?.dispose(); unregister(); }
 }

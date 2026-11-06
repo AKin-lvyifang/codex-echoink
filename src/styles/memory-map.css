@@ -1,0 +1,128 @@
+.echoink-memory-map-host {
+  --color-memory-light-core: #e1e1e1;
+  --color-memory-light-mid: #efefef;
+  --color-memory-light-out: #f8f8f8;
+  --color-memory-dark-core: #2e2e2e;
+  --color-memory-dark-mid: #1f1f1f;
+  --color-memory-dark-out: #161616;
+  --color-memory-core: var(--color-memory-light-core);
+  --color-memory-mid: var(--color-memory-light-mid);
+  --color-memory-out: var(--color-memory-light-out);
+  --font-memory: "PingFang SC", var(--font-interface);
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.theme-dark .echoink-memory-map-host {
+  --color-memory-core: var(--color-memory-dark-core);
+  --color-memory-mid: var(--color-memory-dark-mid);
+  --color-memory-out: var(--color-memory-dark-out);
+}
+
+.echoink-memory-map {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  font-family: var(--font-memory);
+  color: var(--text-normal);
+}
+
+.echoink-memory-map text {
+  fill: currentColor;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+}
+
+.echoink-memory-map-ring.is-core { fill: var(--color-memory-core); }
+.echoink-memory-map-ring.is-frequent { fill: var(--color-memory-mid); }
+.echoink-memory-map-ring.is-peripheral { fill: var(--color-memory-out); }
+.echoink-memory-map-ring.is-faded {
+  fill: none;
+  stroke: var(--text-faint);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+}
+
+.echoink-memory-map-rings,
+.echoink-memory-map-separators,
+.echoink-memory-map-connections,
+.echoink-memory-map-clues { pointer-events: none; }
+.echoink-memory-map-separators line {
+  stroke: var(--background-primary);
+  stroke-width: 1.5;
+}
+.echoink-memory-map-connections line {
+  stroke: var(--text-normal);
+  stroke-width: 1;
+  opacity: .55;
+}
+.echoink-memory-map-clues line {
+  stroke: var(--text-faint);
+  stroke-width: 1;
+}
+.echoink-memory-map-clue-dot { fill: var(--text-faint); }
+
+.echoink-memory-map-star,
+.echoink-memory-map-label,
+.echoink-memory-map-center {
+  cursor: pointer;
+  outline: none;
+}
+.echoink-memory-map-star {
+  transition: transform 600ms ease, opacity 180ms ease;
+}
+.echoink-memory-map-star.is-dimmed { opacity: .14; }
+.echoink-memory-map-star.is-dimmed .echoink-memory-map-star-dot { opacity: 1; }
+.echoink-memory-map-star-hit {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+}
+.echoink-memory-map-star-dot {
+  fill: var(--text-normal);
+  opacity: var(--memory-star-opacity, 1);
+  pointer-events: none;
+}
+.echoink-memory-map-star.is-faded .echoink-memory-map-star-dot {
+  fill: none;
+  stroke: var(--text-normal);
+  stroke-width: 1.2;
+}
+.echoink-memory-map-star.is-selected .echoink-memory-map-star-hit,
+.echoink-memory-map-star:hover .echoink-memory-map-star-hit,
+.echoink-memory-map-star:focus-visible .echoink-memory-map-star-hit {
+  fill: var(--background-modifier-hover);
+}
+.echoink-memory-map-star:hover .echoink-memory-map-star-dot,
+.echoink-memory-map-star:focus-visible .echoink-memory-map-star-dot {
+  opacity: 1;
+}
+
+.echoink-memory-map-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.echoink-memory-map-label rect { fill: transparent; }
+.echoink-memory-map-category-name { font-size: 13px; font-weight: 600; fill: var(--text-normal); }
+.echoink-memory-map-label:hover rect,
+.echoink-memory-map-label:focus-visible rect { fill: var(--background-modifier-hover); }
+.echoink-memory-map-center-disc { fill: var(--text-normal); }
+.echoink-memory-map .echoink-memory-map-center-text {
+  fill: var(--background-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.echoink-memory-map-center:hover .echoink-memory-map-center-disc,
+.echoink-memory-map-center:focus-visible .echoink-memory-map-center-disc { fill: var(--text-muted); }
+.echoink-memory-map-empty {
+  fill: var(--text-muted);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echoink-memory-map-star { transition: none; }
+}

@@ -1,5 +1,5 @@
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../../settings/settings";
-import { mobileModel } from "../../mobile/settings";
+import { mobileModel, mobileStreamingEnabled } from "../../mobile/settings";
 import { validateMobileModelParameters } from "../../mobile/model-configuration";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { settingsText as t } from "./settings-i18n";
@@ -16,6 +16,8 @@ export function createModelParametersPage(ctx: IPadSettingsContext, state: IPadP
   protocol.value = provider.apiProtocol;
   protocol.addEventListener("change", () => { provider.apiProtocol = protocol.value as ApiProviderConfig["apiProtocol"]; state.changed(); });
   protocolField.append(el(ctx.document, "span", "pd-settings-field-label", t(ctx, "协议")), protocol); content.append(protocolField);
+  const streaming = el(ctx.document, "div", "pd-settings-group"); content.append(streaming);
+  settingsSwitch(ctx, streaming, t(ctx, "流式输出"), mobileStreamingEnabled(provider), checked => { provider.mobileStreaming = checked; state.changed(); });
   const rows = el(ctx.document, "div", "pd-model-parameters"); content.append(rows);
   const render = () => {
     rows.replaceChildren();

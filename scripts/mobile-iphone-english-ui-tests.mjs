@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import fs from "node:fs/promises";
@@ -7,6 +8,7 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-english-ui/iphone-entry.ts"), metafile: true });
 assert.equal(Object.keys(build.metafile.inputs).some(path => /english-diary\/(?:view|controller|repository|model|service)\.ts$/u.test(path)), false, "UI bundles no desktop DOM or Node service wrappers");
 const dom = new JSDOM("<!doctype html><body><aside><textarea>Right Agent draft</textarea></aside><main class='echoink-iphone'><article id='base'></article></main></body>", { pretendToBeVisual: true, url: "https://iphone-english-ui.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window, root = document.querySelector("main"), right = document.querySelector("aside textarea"), module = { exports: {} };
 const style = document.createElement("style"); style.textContent = await fs.readFile("src/ui/iphone/english-diary-pages.css", "utf8"); document.head.append(style);
 const icon = () => document.createElementNS("http://www.w3.org/2000/svg", "svg"); dom.window.HTMLElement.prototype.scrollIntoView = function () {};

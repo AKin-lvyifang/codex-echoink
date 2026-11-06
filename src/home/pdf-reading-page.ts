@@ -132,13 +132,13 @@ export class PdfReadingPageView extends ItemView {
       const title = header.createDiv({ cls: "pdf-page-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
       setIcon(back, "arrow-left"); title.createEl("h1");
-      const upload = this.button(header, "", () => new PdfReadingUploadModal(this.plugin, upload).open(), "is-primary");
+      const upload = this.button(header, "", () => { if (!workbenchModuleOwner(this.plugin, "pdf-reading")) this.plugin.openModuleOwnerPicker("pdf-reading", async () => { new PdfReadingUploadModal(this.plugin, upload).open(); }); else new PdfReadingUploadModal(this.plugin, upload).open(); }, "is-primary");
       upload.dataset.pdfPage = "upload";
     }
     header.querySelector("h1")!.setText(this.getDisplayText());
     header.querySelector(".is-icon")!.setAttribute("aria-label", this.t("返回工作台", "Back to workbench"));
     const owner = workbenchModuleOwner(this.plugin, "pdf-reading");
-    this.field("upload").setText(this.t(`上传 PDF 交给 ${owner.name}`, `Upload PDF for ${owner.name}`));
+    this.field("upload").setText(owner ? this.t(`上传 PDF 交给 ${owner.name}`, `Upload PDF for ${owner.name}`) : this.t("指定负责人", "Assign owner"));
   }
   private state(entry: PdfNavigationEntry): string {
     const job = entry.job;

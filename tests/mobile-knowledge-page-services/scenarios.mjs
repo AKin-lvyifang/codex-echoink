@@ -7,7 +7,7 @@ const same = (actual, expected, message) => assert.deepEqual(JSON.parse(JSON.str
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 const record = (index, status, extra = {}) => ({ schemaVersion: 1, recordId: `maintenance-${index.toString(16).padStart(32, "0")}`, runId: `run-${index}`, at: Date.now() - 1000, date: new Date().toISOString().slice(0, 10), summary: "Original summary", sources: [{ path: "Sources/a.md", fingerprint: "synthetic", status: "unread", evidencePaths: [] }], result: { schema: "echoink.knowledge-maintenance-result.v1", status, notes: status === "completed" ? [{ operation: "created", path: "Wiki/result.md", title: "Original", summary: "Original" }] : [], issues: status === "partial" ? [{ code: "unread", message: "Unread" }] : [], systemPaths: [] }, ...extra });
 
-export async function runPageScenarios(api, root) {
+export async function runPageScenarios(api, root, { wikiOnlyIsolation = true } = {}) {
   const f = await pageFixture(api, path.join(root, "mobile"), {
     "Sources/a.md": "# raw\n", "Sources/nested/b.pdf": "synthetic PDF", "Sources/no.exe": "ignored", "Sources/.hidden/x.md": "hidden",
     "Wiki/missing.md": marker("Sources/missing.md"), "Wiki/changed.md": marker("Sources/a.md"), "Wiki/legacy.md": "[[Sources/manual-missing.md]]",
@@ -24,8 +24,15 @@ export async function runPageScenarios(api, root) {
   let snap = await f.service.read(); await tick();
   assert.equal(notifications, 0, "read must not invalidate itself");
   same(snap.directories.map(directory => [directory.role, directory.count]), [["raw", 2], ["wiki", 4], ["projects", 3], ["inbox", 1]]);
-  assert.equal(snap.weekly.added, 4); assert.equal(snap.weekly.organized, 0); assert.equal(snap.health.score, 100);
-  assert.equal(snap.links.state, "ready"); assert.ok(!snap.links.isolatedPaths.includes("Wiki/sub/linked.md"));
+  assert.equal(snap.weekly.added, 4); assert.equal(snap.weekly.organized, 0); assert.equal(snap.health.score, wikiOnlyIsolation ? 78 : 100);
+  assert.equal(snap.links.state, "ready");
+  assert.equal(snap.links.isolatedPaths.includes("Wiki/sub/linked.md"), wikiOnlyIsolation, "current health counts Wiki-to-Wiki edges; immutable baseline keeps its original full-Vault contract");
+  await f.write("Wiki/legacy.md", "[[Wiki/sub/linked.md]]");
+  f.resolve({ "Wiki/legacy.md": { "Wiki/sub/linked.md": 1 } }); await tick();
+  const wikiConnected = await f.service.read();
+  assert.ok(!wikiConnected.links.isolatedPaths.includes("Wiki/sub/linked.md"), "a real Wiki-to-Wiki edge removes isolation");
+  await f.write("Wiki/legacy.md", "[[Sources/manual-missing.md]]");
+  f.resolve({ "outside/incoming.md": { "Wiki/sub/linked.md": 1 } }); await tick();
   same(snap.sources.missing, [{ path: "Wiki/missing.md", sourcePaths: ["Sources/missing.md"] }]);
   assert.equal(snap.sources.unknownCount, 2); // Unmarked legacy + linked note.
   assert.equal((await f.service.readFolder("Wiki")).files.length, 4);
@@ -40,18 +47,31 @@ export async function runPageScenarios(api, root) {
   f.adapter.stat = originalStat;
   const originalRead = f.adapter.read.bind(f.adapter);
   f.adapter.read = async relative => { if (relative === "Sources/a.md") throw Error("sync unavailable"); return originalRead(relative); };
-  snap = await f.service.read(); assert.equal(snap.health, null); assert.ok(snap.errors.health);
+  snap = await f.service.read(); assert.equal(snap.health.score, 78, "Body read failures do not prevent metadata scoring");
   f.adapter.read = originalRead;
   const originalList = f.adapter.list.bind(f.adapter);
   f.adapter.list = async relative => { if (relative === "Sources") throw Error("source root unreadable"); return originalList(relative); };
-  snap = await f.service.read(); assert.equal(snap.directories[0].count, null); assert.equal(snap.health, null);
+  snap = await f.service.read(); assert.equal(snap.directories[0].count, null); assert.equal(snap.health.score, 78);
   f.adapter.list = originalList;
   f.adapter.stat = async relative => { if (relative === "Sources") throw Error("not readable"); return originalStat(relative); };
   snap = await f.service.read(); assert.equal(snap.sources.missing.length, 0, "unreadable source root cannot prove missing");
   f.adapter.stat = originalStat;
   f.settings.knowledgeBase.processedSources["Sources/a.md"] = {}; // Original known-but-unverified record.
-  snap = await f.service.read(); assert.equal(snap.health.score, 96); delete f.settings.knowledgeBase.processedSources["Sources/a.md"];
-  await f.write("Sources/large.md", "x".repeat(262145)); snap = await f.service.read(); assert.equal(snap.health, null); await fs.unlink(f.full("Sources/large.md"));
+  snap = await f.service.read();
+  assert.equal(snap.health.score, wikiOnlyIsolation ? 78 : 96, "A legacy hint keeps the current canonical source-state score");
+  delete f.settings.knowledgeBase.processedSources["Sources/a.md"];
+  if (wikiOnlyIsolation) {
+    await f.write("Sources/a.md", "---\n提炼状态: 待校准\n---\n# raw\n");
+    // This host caches references only; supply the native frontmatter snapshot for this case.
+    const metadata = f.app.metadataCache.getFileCache;
+    f.app.metadataCache.getFileCache = file => file.path === "Sources/a.md"
+      ? { ...metadata(file), frontmatter: { 提炼状态: "待校准" } } : metadata(file);
+    snap = await f.service.read();
+    assert.equal(snap.health.score, 74, "Explicit calibration retains the original base penalty");
+    f.app.metadataCache.getFileCache = metadata;
+    await f.write("Sources/a.md", "# raw\n");
+  }
+  await f.write("Sources/large.md", "x".repeat(262145)); snap = await f.service.read(); assert.equal(snap.health.score, 78, "Raw body size does not limit metadata health"); await fs.unlink(f.full("Sources/large.md"));
   const states = ["completed", "noop", "partial", "failed", "write_uncertain"];
   const records = states.map((status, index) => record(index + 1, status)); records.push(record(6, "completed", { cancelled: true }));
   for (const value of records) await f.record(value);
@@ -88,7 +108,7 @@ export async function runPageScenarios(api, root) {
   const pending = f.service.readRecord(records[1].recordId); f.service.dispose(); release();
   await assert.rejects(pending, /关闭/u); assert.equal(f.vaultEvents.size, 0); assert.equal(f.metadataEvents.size, 0);
   same(f.calls.writes, []); same(f.calls.removes, []); same(f.calls.renames, []); assert.equal(f.calls.model, 0); assert.equal(f.calls.usage, 0);
-  console.log("PASS real mobile filesystem: four roles/overlaps/hidden files; ctime/unknown; histories/strict records; actual health/calibration/read budgets; full-Vault links; source unknown/absent/changed; program source revisions; graph/fallback/stale scope; zero writes/Provider; read/subscription/disposal.");
+  console.log("PASS real mobile filesystem: four roles/overlaps/hidden files; ctime/unknown; histories/strict records; actual health/calibration/read budgets; Wiki isolation/current-vs-historical links; source unknown/absent/changed; program source revisions; graph/fallback/stale scope; zero writes/Provider; read/subscription/disposal.");
   const now = new Date("2026-01-04T18:00:00-08:00").getTime(), monday = new Date("2025-12-29T00:00:00-08:00").getTime();
   const activity = api.aggregateKnowledgePageActivity([{ path: "Wiki/old.md", mtime: now, birthtime: monday - 1 }, { path: "Wiki/new.md", mtime: 0, birthtime: monday }], [], now);
   assert.equal(activity.weekly.added, 1); assert.equal(activity.weekly.weekStart, monday);

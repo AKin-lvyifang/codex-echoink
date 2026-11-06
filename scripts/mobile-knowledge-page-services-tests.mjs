@@ -73,6 +73,6 @@ try {
     vm.runInContext(built.outputFiles[0].text, context);
     assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");
     console.log(`PASS browser graph: ${Object.keys(built.metafile.inputs).length} inputs; no Node wrappers; only obsidian external; process/Buffer absent`);
-    try { await runPageScenarios(module.exports, root); } finally { dom.window.close(); }
+    try { await runPageScenarios(module.exports, root, { wikiOnlyIsolation: !process.argv.includes("--baseline") }); } finally { dom.window.close(); }
   }
 } finally { await fs.rm(root, { recursive: true }); }

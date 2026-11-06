@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "../../scripts/disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import path from "node:path";
@@ -19,18 +20,35 @@ export async function runKnowledgeMaintainP4Tests(root: string): Promise<void> {
   assert.ok(configuredRoot?.trim(), "P4 fixtures require the explicitly assigned test root");
   const allowed = path.resolve(configuredRoot!);
   const disposable = path.join(homedir(), "EchoInk-TestVaults/90-任务临时");
-  assert.ok(allowed.startsWith(disposable + path.sep), "P4 assigned root stays inside the disposable test tree");
+  assert.ok(isDisposableTestRoot(allowed), "P4 assigned root stays inside the disposable test tree");
   assert.ok(path.resolve(root).startsWith(allowed + path.sep), "P4 fixtures stay inside the assigned automatic root");
   await fs.mkdir(root, { recursive: true });
   testPriority();
   testBytePatches();
   testMalformedPreviewMessages();
   testSourceScanLineEndings();
+  testMapTypeScope();
   const completedSourceReview = testCompletedSourceReview();
   const summary = testPlan();
   await testRegistryReaders(root);
   await fs.writeFile(path.join(root, "p4-core-result.json"), JSON.stringify({ passed: true, ...summary, completedSourceReview }, null, 2));
   console.log("Knowledge maintenance P4 core: PASS (priority, all registries, unique source relationships, byte patches, classification scope, idempotence)");
+}
+
+function testMapTypeScope(): void {
+  const source = file("Raw/索引原文.md", "raw", "# 索引原文\n真实资料。\n");
+  const maps = [
+    file("Wiki/用户研究索引.md", "wiki", "# 用户研究索引\n## 来源\n[[Raw/索引原文.md]]\n"),
+    file("Wiki/自定义名称.md", "wiki", "<!-- echoink-domain-map:BEGIN research -->\n## 研究\n"),
+    file("Wiki/index.md", "wiki", "---\n类型待确认: true\n类型: 概念\n---\n# 目录\n"),
+  ];
+  const ordinary = file("Wiki/普通知识.md", "wiki", "# 普通知识\n正文。\n");
+  const plan = buildMaintenanceUpgradePlan({ files: [source, ...maps, ordinary], bindingRevision: 1 });
+  assert.equal(plan.counts.wikiCount, 1, "Index notes never inflate the missing-type banner");
+  assert.deepEqual(plan.wikiItems.map(item => item.path), [ordinary.path]);
+  assert.deepEqual(plan.sourceItems.find(item => item.path === source.path)?.addTargetPaths,
+    [maps[0].path], "Excluding map classification must not alter source/backlink scanning");
+  assert.equal(plan.counts.sourceLinkCount, 1);
 }
 
 function testSourceScanLineEndings(): void {
@@ -200,9 +218,10 @@ function testPlan() {
   assert.equal(plan.sourceItems.find(item => item.path === "Raw/无记录.md")?.addStatus, "未提炼");
   assert.ok(plan.sourceItems.filter(item => item.path.includes("同名")).every(item => !item.addTargetPaths));
   assert.equal(plan.sourceItems.some(item => item.path === "Raw/已齐.md" || item.path === "Raw/自定.md"), false);
-  assert.ok(plan.wikiItems.some(item => item.path.endsWith("index.md")) && plan.wikiItems.some(item => item.path === "Wiki/地图.md"));
+  assert.equal(plan.wikiItems.some(item => item.path.endsWith("index.md")), false);
+  assert.ok(plan.wikiItems.some(item => item.path === "Wiki/地图.md"), "An ordinary page named 地图 remains in scope");
   assert.equal(plan.wikiItems.some(item => ["Wiki/标准.md", "Wiki/自定.md", "Wiki/坏头.md"].includes(item.path)), false);
-  assert.deepEqual(plan.counts, { sourceCount: 7, sourceStatusCount: 5, sourceLinkCount: 2, backlinkCount: 5, wikiCount: 7 });
+  assert.deepEqual(plan.counts, { sourceCount: 7, sourceStatusCount: 5, sourceLinkCount: 2, backlinkCount: 5, wikiCount: 6 });
   assert.equal(plan.issues.find(item => item.path === "Wiki/歧义.md" && item.message.includes("同名"))?.message, "来源“同名”有 2 篇同名资料，分不清是哪一篇，原链接先保留。");
   assert.equal(plan.issues.find(item => item.message.includes("失踪资料"))?.message, "没有找到来源“失踪资料”对应的资料，原链接先保留，请你核对。");
   assert.equal(plan.issues.find(item => item.path === "Wiki/歧义.md" && item.message.includes("不完整"))?.message, "这页有一处旧来源信息不完整，原文先保留，请你核对。");

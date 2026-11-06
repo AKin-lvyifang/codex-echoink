@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { Platform } from "obsidian";
 import { JSDOM } from "jsdom";
 import { installComposerMenuDomHelpers } from "./composer-menu-dom-host";
-import { formatApprovalPresentation, renderApprovalPresentation } from "../ui/codex-view/approval-presentation";
+import { companyApprovalSummary, formatApprovalPresentation, renderApprovalPresentation } from "../ui/codex-view/approval-presentation";
 import { createAIElementsConfirmation, createSmoothAIApprovalCard, type SmoothAIApprovalState } from "../ui/codex-view/smooth-chat-ui";
 import { InteractionDockController } from "../ui/codex-view/interaction-dock";
+import { disposeCompanyCompactTooltips } from "../ui/codex-view/company-compact-interaction";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -32,11 +33,12 @@ function assertVaultPresentation(): void {
     }, byteLength: 20, contentSha256: "fixture-sha" })
   });
   assert.equal(create.action, "新建文件");
+  assert.deepEqual(companyApprovalSummary(create), { verb: "新建", target: "新增.md", folder: "Outputs" });
   assert.deepEqual(create.destination, [{ label: "文件路径", value: "Outputs/新增.md" }]);
   assert.ok(create.changes.some((field) => field.label === "新增内容" && field.value === "# 标题\n正文\n"));
-  assert.match(values(create), /新增行数: 3/u);
-  assert.match(values(create), /移除行数: 0/u);
-  assert.match(values(create), /contentSha256: fixture-sha/u);
+  assert.equal(create.changes.length, 1, "simple create shows the content once, without transport or diff metadata");
+  for (const technical of ["change.kind", "byteLength", "contentSha256", "新增行数", "移除行数"]) assert.ok(!values(create).includes(technical));
+  assert.match(create.technicalDetails[1]?.value ?? "", /"byteLength":20.*"contentSha256":"fixture-sha"/u);
 
   const updatePreview = {
     operation: "note_update", relativePath: "Wiki/原稿.md", expectedVersion: "v1", change: {
@@ -59,21 +61,25 @@ function assertVaultPresentation(): void {
   assert.equal(move.action, "移动文件");
   assert.deepEqual(move.destination, [{ label: "原位置", value: "Old.md" }, { label: "新位置", value: "New.md" }]);
   const remove = formatApprovalPresentation({ target: json({ relativePath: "Trash.md" }), preview: json({ operation: "note_delete", relativePath: "Trash.md", recoverableTrashOnly: true }) });
+  assert.equal(remove.action, "删除文件");
+  assert.deepEqual(companyApprovalSummary(remove), { verb: "删除", target: "Trash.md", folder: "" });
+  assert.deepEqual(remove.destination, [{ label: "文件路径", value: "Trash.md" }]);
   assert.match(remove.notices.join(""), /将删除以上文件/u);
-  assert.match(values(remove), /recoverableTrashOnly: true/u);
+  assert.ok(!values(remove).includes("recoverableTrashOnly"));
+  assert.match(remove.technicalDetails[1]!.value, /"recoverableTrashOnly":true/u);
   const append = formatApprovalPresentation({ target: json({ command: "daily:append", dailyPath: "Daily/Today.md" }), preview: json({ command: "daily:append", content: "追加\n完整内容", target: { dailyPath: "Daily/Today.md" }, atomicVersionCheck: false }) });
   assert.equal(append.action, "追加日记内容");
   assert.ok(append.changes.some((field) => field.value === "追加\n完整内容"));
-  assert.match(values(append), /atomicVersionCheck: false/u);
+  assert.ok(!values(append).includes("atomicVersionCheck"));
+  assert.match(append.technicalDetails[1]!.value, /"atomicVersionCheck":false/u);
 
   const truncated = formatApprovalPresentation({ preview: json({ operation: "note_update", change: {
     kind: "update", added: 10000, removed: 9000, truncated: true,
     diff: "--- a/Long.md\n+++ b/Long.md\n@@ -1,9000 +1,10000 @@\n-old\n+partial\n[DIFF_PREVIEW_TRUNCATED]"
   } }) });
   assert.equal(truncated.notices[0], "工具提供的预览已截断，当前仅展示部分内容");
-  assert.match(values(truncated), /10000/u);
-  assert.match(values(truncated), /9000/u);
-  assert.match(values(truncated), /change\.truncated: true/u);
+  assert.ok(!values(truncated).includes("change.truncated"));
+  assert.match(truncated.technicalDetails[0]!.value, /"added":10000,"removed":9000,"truncated":true/u);
   assert.match(truncated.technicalDetails[0]!.value, /DIFF_PREVIEW_TRUNCATED/u);
 }
 
@@ -157,6 +163,30 @@ async function assertRealDomAndBindings(): Promise<void> {
     assert.equal(card.rejectButton, card.root.querySelector(".is-reject"));
     assert.equal(card.approveButton?.type, "button");
     assert.equal(card.approveButton?.disabled, false);
+    const compact = createAIElementsConfirmation(parent, { ...options, companyCompact: { name: "研究员", context: "项目名", avatarUrl: "avatar-fixture.svg" } });
+    const compactHead = compact.root.querySelector(".echoink-company-compact-head")!;
+    assert.equal(compact.root.querySelector(".echoink-company-compact-title")?.textContent, "新建 file.md");
+    assert.equal(dom.window.document.getElementById(compact.root.querySelector(".echoink-company-compact-title")!.getAttribute("aria-labelledby")!)?.textContent, "新建 file.md");
+    assert.equal(compact.approveButton?.closest(".echoink-company-compact-head"), compactHead);
+    assert.equal(compact.rejectButton?.nextElementSibling, compact.approveButton, "紧凑卡仍复用原拒绝/批准按钮与顺序");
+    assert.equal(compact.root.querySelector(".codex-smooth-ai-approval-header"), null);
+    assert.equal(compact.root.querySelector<HTMLDetailsElement>(".echoink-company-compact-details")?.open, false);
+    assert.ok(compact.root.querySelector(".echoink-company-compact-meta")?.textContent?.startsWith("研究员 · 项目名 · "));
+    assert.equal(compactHead.querySelector("img")?.getAttribute("src"), "avatar-fixture.svg");
+    assert.ok([...compact.root.querySelectorAll(".codex-approval-field-value")].some(node => node.textContent === longContent), "收起详情不裁切原正文");
+    const compactDelete = createAIElementsConfirmation(parent, { ...options, deleteAction: true,
+      target: json({ relativePath: "测试/验证.md" }), preview: json({ operation: "note_delete", relativePath: "测试/验证.md", recoverableTrashOnly: true }), companyCompact: { name: "编辑" } });
+    assert.equal(compactDelete.root.querySelector(".echoink-company-compact-title")?.textContent, "删除 验证.md");
+    assert.equal(compactDelete.root.classList.contains("is-danger"), true);
+    assert.equal(compactDelete.approveButton?.classList.contains("echoink-delete-button"), true, "删除批准沿原显式delete样式");
+    assert.equal(compactDelete.root.querySelectorAll("details").length, 1, "公司变体仅一个详情容器");
+    assert.ok(!compactDelete.root.textContent?.includes("将删除以上文件。"), "紧凑删除卡不重复删除动作提示");
+    const compactWarning = createAIElementsConfirmation(parent, { ...options, preview: json({ operation: "note_update", content: longContent,
+      change: { truncated: true } }), companyCompact: { name: "研究员" } });
+    assert.match(compactWarning.root.querySelector(".codex-approval-notice")?.textContent ?? "", /预览已截断/u, "真正影响判断的截断信息仍在详情内保留");
+    disposeCompanyCompactTooltips(compactWarning.root); compactWarning.root.remove();
+    disposeCompanyCompactTooltips(compact.root); disposeCompanyCompactTooltips(compactDelete.root);
+    compact.root.remove(); compactDelete.root.remove();
     let decisions = 0;
     card.approveButton!.onclick = () => { decisions++; };
     technical.open = true;
@@ -207,6 +237,7 @@ async function assertRealDomAndBindings(): Promise<void> {
     renderApprovalPresentation(parent, formatApprovalPresentation({ preview: "{broken json" }));
     assert.equal(parent.querySelector("img, script"), null);
     await assertDockBinding(parent);
+    await assertDockBinding(parent, true);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
     else Reflect.deleteProperty(globalThis, "window");
@@ -214,7 +245,7 @@ async function assertRealDomAndBindings(): Promise<void> {
   }
 }
 
-async function assertDockBinding(parent: HTMLElement): Promise<void> {
+async function assertDockBinding(parent: HTMLElement, compact = false): Promise<void> {
   const broker = new PiAgentApprovalBroker();
   const dock = new InteractionDockController();
   const container = parent.createDiv();
@@ -226,8 +257,13 @@ async function assertDockBinding(parent: HTMLElement): Promise<void> {
   assert.equal(binding.preview, original.preview);
   let resolved = 0;
   let stale = 0;
-  const input = { sessionId: identity.conversationId, confirmation: { binding, onResolved() { resolved++; } }, onStale() { stale++; }, onScheduleMeasure() {} };
+  const input = { sessionId: identity.conversationId, ...(compact ? { companyCompact: { name: "研究员" } } : {}), confirmation: { binding, onResolved() { resolved++; } }, onStale() { stale++; }, onScheduleMeasure() {} };
   dock.render(container, input);
+  if (compact) {
+    container.querySelector<HTMLElement>(".echoink-company-compact-summary")!.click();
+    assert.equal(resolved, 0, "展开紧凑详情不审批原票据");
+    assert.ok(broker.bindingFor(identity));
+  }
   const first = container.querySelector<HTMLButtonElement>(".is-approve")!;
   first.click();
   assert.equal(await pending, true);

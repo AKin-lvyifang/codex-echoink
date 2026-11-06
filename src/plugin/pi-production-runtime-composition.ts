@@ -1,4 +1,13 @@
-import { TFile } from "obsidian";
+import { withToolRoundLimit } from "../harness/pi-native/pi-tool-round-limit";
+import { createKnowledgeSystemTools, knowledgeSystemInlineExtension, KNOWLEDGE_SYSTEM_TOOLS } from "../harness/pi-native/pi-knowledge-system-tools";
+import { maintenanceTreePlacementPrompt, type MaintenanceTreeAnalysisRequest } from "../knowledge-base/maintenance-tree-analysis";
+import { maintenanceDomainCatalog } from "../knowledge-base/maintenance-domain-catalog";
+import { Platform, TFile } from "obsidian";
+import type { CompanyService } from "../company/service";
+import { CompanyToolSecurity, createCompanyRouterTools, createCompanyWorkerTools } from "../company/tools";
+import { companyRouterPrompt, companyWorkerPrompt } from "../company/prompts";
+import { companyHumanTurnBackground, createCompanyRuntimeContext } from "../company/runtime-context";
+import type { CompanyApprovalCoordinator } from "../company/approval-coordinator";
 import { PiDiagramToolSecurity, createPiDiagramToolDefinition } from "../harness/pi-native/pi-diagram-tools";
 import { getExcalidrawService } from "../excalidraw/service";
 import { parseDrawingOutput } from "../excalidraw/elements";
@@ -31,7 +40,7 @@ import { PiTodoToolSecurity, createPiTodoToolDefinitions, PI_TODO_TOOL_IDS } fro
 import { getTodoProjects } from "../home/todo-projects";
 import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
 import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
-import type { AgentRunSnapshot } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "../agents/types";
 import type { TaskResumeContext } from "../agents/task-resume";
 import { assertTaskResumeToolAllowed, type TaskResumePendingAction } from "./task-resume-safety";
 import type { CapabilityAccess } from "../membership/types";
@@ -98,6 +107,7 @@ import {
   type PiEffectiveInputBudget,
   type PiPersonalMemoryRecallEvidence
 } from "../harness/pi-native/pi-context-budget";
+import { personalMemoryRecallTokenBudget } from "../harness/pi-native/pi-effective-input-budget";
 import {
   PiNativeConversationRuntime,
   type PiNativeAgentSessionFactoryInput,
@@ -248,6 +258,8 @@ import {
   createPhase3MaintenanceVaultDomainAdapter
 } from "./obsidian-vault-domain-adapter";
 import {
+  assertMaintenanceRetrySelection,
+  readOpenMaintenanceSelection,
   createProductionPiKnowledgeMaintenanceToolPort,
   type ProductionPiKnowledgeMaintenanceToolPort
 } from "./pi-knowledge-maintenance-production";
@@ -306,6 +318,10 @@ const fsp = getDesktopFsPromises();
 const path = getDesktopPath();
 
 export interface PiProductionPluginHost {
+  /** One-person company dispatcher; null on mobile or before it loads. */
+  readonly companyService?: CompanyService | null;
+  readonly companyApprovalCoordinator?: CompanyApprovalCoordinator | null;
+  getKnowledgeSystemService?(): import("../knowledge-base/knowledge-system-task").KnowledgeSystemTaskService;
   getWorkspaceFiles?(): WorkspaceService;
   prepareExpertRuntime?(agentId: string, conversationId: string, text: string): Promise<{ prompt: string; assertAvailable(): void }>;
   getKnowledgeSurfaceService?(): { activity: import("./knowledge-activity-service").KnowledgeActivityService } | null;
@@ -454,6 +470,24 @@ export async function classifyKnowledgeUpgradePage(plugin: PiProductionPluginHos
   return { type: parsed.type as MaintenanceUpgradeClassification["type"], uncertain: parsed.uncertain, ...(typeof parsed.reason === "string" ? { reason: parsed.reason.slice(0,500) } : {}) };
 }
 
+/** Uses the configured production transport, with no tools; only the durable maintenance workflow can apply its proposal. */
+export async function proposeMaintenanceTreePlacement(plugin: PiProductionPluginHost, local: PiLocalDataService, input: MaintenanceTreeAnalysisRequest): Promise<import("../knowledge-base/maintenance-p2-contract").MaintenanceTreePlan> {
+  const selection = upgradeModelSelection(plugin.settings);
+  const authority = await createParallelPiChatStoreBindingAuthority(local.storeScope, local.roots);
+  const prepared = await preparePiProductionProvider({ plugin, roots: local.roots, storeBindingAuthority: authority, modelSelection: { runtimeProviderId: selection.runtimeProviderId, modelId: selection.modelId } });
+  const configured = prepared.configured, model = createPiProductionModelDefinitionFromResolved(configured);
+  const transport = new PiProviderProtocolTransport({ authorityId: prepared.binding.authorityId, storeSetId: prepared.binding.pluginData.rootBindingDigest, resolveAuthToken: prepared.resolveAuthToken,
+    recordUsage: event => plugin.recordModelUsage?.(event), dispatcher: createConfiguredPiProviderProtocolDispatcher({ providerId: normalizeApiProviderId(configured.provider.providerId, configured.baseUrl, configured.provider.name), runtimeProviderId: configured.providerId, apiProtocol: configured.apiProtocol, baseUrl: configured.baseUrl }) });
+  const stream = await transport.stream({ runId: input.runId, conversationId: input.conversationId, turnId: input.runId, correlationId: `tree-placement-${createHash("sha256").update(input.job.domain).digest("hex").slice(0,16)}`,
+    provider: prepared.provider, model, context: { systemPrompt: "你为现有知识树提出最小归位修改。只输出JSON，无工具无写入权限。", messages: [{ role: "user", content: [{ type: "text", text: maintenanceTreePlacementPrompt(input) }], timestamp: Date.now() }] },
+    options: { signal: input.signal, reasoning: selection.reasoning === "none" ? undefined : selection.reasoning, maxTokens: Math.min(10000, configured.requestMaxOutputTokens ?? model.maxTokens), temperature: 0,
+      ...(configured.apiProtocol === "openai-completions" ? { onPayload: (payload: unknown) => ({ ...payload as Record<string, unknown>, response_format: { type: "json_object" } }) } : {}), cacheRetention: "none", maxRetries: 0, timeoutMs: 240000 } });
+  const result = await stream.result();
+  if (input.signal?.aborted || result.stopReason !== "stop") throw new Error("知识树归位未完成，成功页与原地图保留，可继续。");
+  const text = result.content.filter(block => block.type === "text").map(block => block.type === "text" ? block.text : "").join("").trim().replace(/^```(?:json)?\s*/u, "").replace(/\s*```$/u, "");
+  try { const value: unknown = JSON.parse(text); if (!value || typeof value !== "object" || !Array.isArray((value as Record<string, unknown>).placements) || !Array.isArray((value as Record<string, unknown>).gaps)) throw new Error(); return value as import("../knowledge-base/maintenance-p2-contract").MaintenanceTreePlan; } catch { throw new Error("归位模型未返回完整JSON，原地图保留，可继续。"); }
+}
+
 function createPiProductionModelDefinitionFromResolved(
   configured: ReturnType<typeof resolveProvider>
 ): Model<Api> {
@@ -583,8 +617,8 @@ export async function createPiProductionRuntimeBundle(
     knowledgeAgentIndex,
     knowledgePreferences,
     processedSources: () => plugin.settings.knowledgeBase.processedSources,
-    isConversationKnowledgeAllowed: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read").allowed,
-    conversationKnowledgeDecision: async (id, write) => checkAgentCapability(await currentAgentCapabilityContext(plugin, catalog, id), "knowledge", write ? "resource" : "read"),
+    shouldPreflightChat: id => !plugin.getKnowledgeSystemService?.().ownsConversation(id),
+    ...createPiKnowledgeCapabilityPolicy(plugin, catalog),
     prepareStructure: (initialization) => plugin.prepareWikiFolderNamesForMaintenance?.(initialization) ?? Promise.resolve(""),
     usage: new KnowledgeUsageBridge(knowledgeUsageStore),
     onNaturalMaintenance: (request) => knowledgeMaintenance.finalizeNatural(request),
@@ -605,6 +639,7 @@ export async function createPiProductionRuntimeBundle(
     userId: localPiVaultUserId(deviceScope.deviceIdDigest),
     deviceId: deviceScope.deviceIdDigest,
     domainService: maintenanceVaultDomainService,
+    treePlacement: request => proposeMaintenanceTreePlacement(plugin, localData, request),
     productRuns, activitySource: plugin.getKnowledgeSurfaceService?.()?.activity, notice: message => new Notice(message),
     knowledgeAgentIndex,
     linkingOwnsDraftLinks: typeof plugin.queueKnowledgeLinking === "function",
@@ -661,7 +696,7 @@ export async function createPiProductionRuntimeBundle(
       resolveAgentRunSnapshot: entry => resolveAgentRunSnapshot(plugin.settings, entry.agentId),
       assertAgentActionAllowed: async ({ catalog: entry, action, access }) => {
         const context = await currentAgentCapabilityContext(plugin, catalog, entry.conversationId, access);
-        requireAgentCapability(checkAgentCapability(context, "knowledge", action === "knowledge-write" ? "write" : "read"));
+        requireAgentCapability(checkPiKnowledgeAction(context, action === "knowledge-write" ? "write" : "read"));
       },
       generation: createGenerationRuntimePort({
         app: plugin.app, vaultRoot: vaultRootPath, bindings: () => plugin.settings.knowledgeBase.folderBindings,
@@ -851,6 +886,7 @@ export function createProductionPiKnowledgeToolRetriever(vaultRootPath: string, 
 
 export function createProductionPiKnowledgeRuntime(input: Readonly<{
   onMaintenanceActivity?: PiKnowledgeRuntimePort["maintenanceActivity"];
+  shouldPreflightChat?: PiKnowledgeRuntimePort["shouldPreflightChat"];
   vaultRootPath: string;
   knowledgeAgentIndex: KnowledgeAgentIndex;
   knowledgePreferences: KnowledgeMaintenancePreferenceRepository;
@@ -867,14 +903,24 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
   const egress = new EchoInkVaultToolEgressPolicy();
   const runtime: PiKnowledgeRuntimePort = {
     maintenanceActivity: input.onMaintenanceActivity,
+    shouldPreflightChat: input.shouldPreflightChat,
     async prepareMaintenanceStructure(initialization) {
       const result = await input.prepareStructure?.(initialization) ?? "";
       input.knowledgeAgentIndex.invalidate();
       await input.knowledgeAgentIndex.refresh();
       return result;
     },
+    assertMaintenanceSelection: request => assertMaintenanceRetrySelection(input.vaultRootPath, request),
+    openMaintenanceSelection: request => readOpenMaintenanceSelection(input.vaultRootPath, request),
     async resolveMaintenanceScope(request) {
-      if (!request.trim()) return Object.freeze({ mode: "global" as const, ...await privateMaintenanceSourceScope(input.vaultRootPath, { processedSources: input.processedSources?.() }) });
+      if (!request.trim()) {
+        const scope = await privateMaintenanceSourceScope(input.vaultRootPath, { processedSources: input.processedSources?.() });
+        if (!scope.sourcePaths.length && scope.deferredSourcePaths.length) throw new Error(`部分来源属性回写失败，请修正属性后重试：${scope.deferredSourcePaths.join("、")}`);
+        // One global invocation owns one compatible retry group. The full
+        // scanner result remains available to the workbench's queued batches.
+        return Object.freeze({ mode: "global" as const, folderBindingsRevision: scope.folderBindingsRevision,
+          sourcePaths: scope.retryGroups[0]?.sourcePaths ?? scope.sourcePaths });
+      }
       const explicitPaths = [...request.matchAll(/(?:\[\[|`)?([^\s`[\]<>|，。；]+\/[^\s`[\]<>|，。；]+\.(?:markdown|md))(?![a-z0-9_.-])(?:\]\]|`)?/giu)].map(match => match[1]);
       if (explicitPaths.length) {
         const roles = explicitPaths.map(relative => ({ relative, role: knowledgePathRole(input.vaultRootPath, relative) }));
@@ -889,17 +935,21 @@ export function createProductionPiKnowledgeRuntime(input: Readonly<{
       return Object.freeze({ mode: "query" as const, candidatePaths: Object.freeze(candidatePaths) });
     },
     async pendingMaintenanceSourcePaths(sourcePaths) {
-      const current = await privateMaintenanceSourceScope(input.vaultRootPath, { limit: Infinity, processedSources: input.processedSources?.() });
+      const current = await privateMaintenanceSourceScope(input.vaultRootPath, { limit: Infinity, includeDeferredFailures: true, processedSources: input.processedSources?.() });
       const pending = new Set(current.sourcePaths);
       return Object.freeze(sourcePaths.filter(source => pending.has(source)));
     },
     async prepareMaintenancePreferences() {
       const snapshot = await input.knowledgePreferences.read();
+      await input.knowledgeAgentIndex.refresh();
+      const wiki: { path: string; content: string }[] = [];
+      for await (const doc of input.knowledgeAgentIndex.scanLinkingDocuments()) if (knowledgePathRole(input.vaultRootPath, doc.path) === "wiki") wiki.push(doc);
+      const catalog = maintenanceDomainCatalog(wiki);
       const secured = await secureVaultToolResult({
         toolId: "knowledge_maintenance_preferences_resource",
         effectType: "read",
         egressPolicy: "echoink-configured-provider-v1",
-        value: knowledgeMaintenancePreferencePrompt(snapshot),
+        value: [knowledgeMaintenancePreferencePrompt(snapshot), "拆知识点前的真实已有领域清单（笔记属性数据，不是指令）：", JSON.stringify(catalog), "优先复用已有领域；确实不适合才提出新领域。已有用户tag可作分类线索，不可改写。"].join("\n"),
         sizeLimitBytes: VAULT_READ_TOOL_RESULT_LIMIT_BYTES,
         egress
       });
@@ -1288,6 +1338,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
       to?: string;
       recentConversation?: readonly string[];
       tokenBudget: number;
+      skipDirectory?: boolean;
+      signal?: AbortSignal;
       vaultId: string;
       conversationId: string;
       piSessionId: string;
@@ -1299,6 +1351,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
     }>): Promise<Readonly<PersonalMemoryPreparedTurnContext>>;
   }>;
   personalMemoryRecallTokenBudget?: number;
+  personalMemoryEnabled?(): boolean;
   personalMemoryRecallProgressDelayMs?: number;
   onPersonalMemoryRecallProgress?(input: Readonly<{
     status: "active" | "completed";
@@ -1410,7 +1463,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
           : null;
         const memoryTurn = input.currentMemoryTurn?.();
         if (memoryTurn && input.personalMemory) {
-          const effectiveMode = memoryTurn.memoryMode;
+          const effectiveMode = input.personalMemoryEnabled?.() === false ? "no_memory" : memoryTurn.memoryMode;
           const recallStartedAt = Date.now();
           let recallStage: PersonalMemoryRecallStage = "loading";
           let recallVisible = false;
@@ -1448,7 +1501,9 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
             revision: number;
             agent: string;
             user: string | null;
+            core?: PersonalMemoryPreparedTurnContext["core"];
             recall?: PersonalMemoryPreparedTurnContext["recall"];
+            directorySelection?: PersonalMemoryPreparedTurnContext["directorySelection"];
             injectionKeys: readonly string[];
           }> | null = null;
           try {
@@ -1461,6 +1516,8 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
                   ? { recentConversation: memoryTurn.recentConversation }
                   : {}),
                 tokenBudget: input.personalMemoryRecallTokenBudget ?? 1_200,
+                skipDirectory: Boolean(inlineProposal),
+                signal: memoryTurn.signal,
                 vaultId: memoryTurn.vaultId,
                 conversationId: memoryTurn.conversationId,
                 piSessionId: memoryTurn.piSessionId,
@@ -1500,7 +1557,7 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
               });
             }
           }
-          const capability = memoryTurn.memoryMode === "no_memory"
+          const capability = effectiveMode === "no_memory"
             ? "not_applicable"
             : inlineProposal || input.personalMemoryAvailable === false
               ? "recall_only"
@@ -1691,6 +1748,10 @@ export function createPiKnowledgeInlineExtension(input: Readonly<{
         if (recovery) backgroundMessages.push({ role: "custom", customType: "echoink-task-resume-v1", display: false,
           content: JSON.stringify({ type: "echoink.turn-material.v1", contextType: "echoink-task-resume-v1",
             source: "host-recovery-check", instructions: recovery.safety.recoveryInstructions }), timestamp: Date.now() });
+        if (input.personalMemoryEnabled?.() === false) {
+          transientTurnContext = null;
+          transientAskPersonalMemorySources = null;
+        }
         if (transientTurnContext) {
           backgroundMessages.push(structuredClone(transientTurnContext));
           input.contextLedger?.captureTransientContextMessages([
@@ -1910,6 +1971,7 @@ function takePiCurrentTurnResourceContext(
 }
 
 function primaryPersonalMemorySources(fixed: Readonly<{
+  core?: PersonalMemoryPreparedTurnContext["core"];
   recall?: PersonalMemoryPreparedTurnContext["recall"];
 }>): readonly Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>[] {
   const unique = new Map<string, Readonly<import("../settings/settings").InjectedPersonalMemorySourceReference>>();
@@ -1917,15 +1979,18 @@ function primaryPersonalMemorySources(fixed: Readonly<{
     const id = candidate.id.trim();
     const title = candidate.title.trim();
     if (!id || !title || unique.has(id)) continue;
-    unique.set(id, Object.freeze({ id, title, ...(candidate.revision === undefined ? {} : { revision: candidate.revision }) }));
+    unique.set(id, Object.freeze({ id, title, reason: candidate.recallReason, ...(candidate.revision === undefined ? {} : { revision: candidate.revision }) }));
   }
+  for (const core of fixed.core ?? []) unique.set(core.id, Object.freeze({ id: core.id, title: core.title, reason: "pinned" }));
   return Object.freeze([...unique.values()]);
 }
 
 function buildPersonalMemoryContextMessage(fixed: Readonly<{
   revision: number;
   user: string | null;
+  core?: PersonalMemoryPreparedTurnContext["core"];
   recall?: PersonalMemoryPreparedTurnContext["recall"];
+  directorySelection?: PersonalMemoryPreparedTurnContext["directorySelection"];
   injectionKeys: readonly string[];
 }>): AgentMessage {
   const secondaryFacts: Array<{
@@ -1947,6 +2012,7 @@ function buildPersonalMemoryContextMessage(fixed: Readonly<{
     role: "custom",
     customType: PI_PERSONAL_MEMORY_CONTEXT_CUSTOM_TYPE,
     content: [
+      ...((fixed.core?.length ?? 0) > 0 ? ["<echoink_memory_core trust=\"user-owned-memory\">", JSON.stringify(fixed.core!.map(({ id, title, summary }) => ({ id, title, summary }))), "</echoink_memory_core>"] : []),
       ...(fixed.user === null
         ? []
         : [
@@ -1980,6 +2046,7 @@ function buildPersonalMemoryContextMessage(fixed: Readonly<{
       type: "echoink.personal-memory-context.v1",
       schemaVersion: 1,
       revision: fixed.revision,
+      ...(fixed.directorySelection ? { directorySelection: fixed.directorySelection } : {}),
       injectionKeys: Object.freeze(fixed.injectionKeys.filter(
         (key) => key !== "echoink.agent" && key !== "echoink.memory.overview"
       ))
@@ -2114,14 +2181,21 @@ async function createProductionAgentSession(input: {
   approvalBroker: PiAgentApprovalBroker;
   interactionBroker: PiTurnInteractionBroker;
 }): Promise<PiNativeAgentSessionFactoryResult> {
-  let expertContext: { prompt: string; assertAvailable(): void } | undefined;
-  const linkingBatch = getPiKnowledgeLinkingBatch(input.input.catalog.conversationId);
+  const agentRuntimeContext = createCompanyRuntimeContext({
+    prepareExpertRuntime: input.plugin.prepareExpertRuntime
+      ? (agentId, conversationId, text) => input.plugin.prepareExpertRuntime!(agentId, conversationId, text) : undefined
+  });
+  const routerIdentity = (input.input.catalog.agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID;
+  const linkingBatch = routerIdentity ? null : getPiKnowledgeLinkingBatch(input.input.catalog.conversationId);
+  const systemService = input.plugin.getKnowledgeSystemService?.();
+  await systemService?.ready;
+  const systemTask = routerIdentity ? null : systemService?.forConversation(input.input.catalog.conversationId);
   const preparedProvider = await preparePiProductionProvider({
     ...input,
     modelSelection: input.input
   });
   const { configured, binding, controlledConfig } = preparedProvider;
-  if (linkingBatch && !configured.toolCalling) throw new Error(toolCallingDisabledMessage("desktop", configured.provider.name, configured.modelRef));
+  if ((linkingBatch || systemTask) && !configured.toolCalling) throw new Error(toolCallingDisabledMessage("desktop", configured.provider.name, configured.modelRef));
   const productProviderId = normalizeApiProviderId(
     configured.provider.providerId,
     configured.baseUrl,
@@ -2134,7 +2208,7 @@ async function createProductionAgentSession(input: {
       ? (event) => input.plugin.recordModelUsage?.(event)
       : undefined,
     observeRequest: (context, execution, additionalInputTokens) => {
-      expertContext?.assertAvailable();
+      agentRuntimeContext.assertAvailable();
       assertInlineDispatch(context, execution, additionalInputTokens);
       contextLedger.recordProviderRequest(context, execution, additionalInputTokens);
     },
@@ -2190,16 +2264,35 @@ async function createProductionAgentSession(input: {
   if (Boolean(input.input.skillPath) !== Boolean(input.input.skillName)) {
     throw new Error("Pi-native Skill path and name must be selected together");
   }
+  // Company role is fixed when the session is created: router cards dispatch, workers report.
+  const companyEntry = await input.catalog.get(input.input.catalog.conversationId);
+  if (companyEntry?.companyRole === "router" && companyEntry.agentId !== GENERAL_ASSISTANT_ID) throw new Error("agent_capability_router_identity_invalid");
+  const companyRole = companyEntry?.companyRole;
+  const companyPort = companyRole ? input.plugin.companyService ?? null : null;
+  const approvalTool = companyRole === "router" && input.input.companyApprovalKey
+    ? input.plugin.companyApprovalCoordinator?.decisionTool(input.input.catalog.conversationId, input.input.companyApprovalKey) : undefined;
+  if (input.input.companyApprovalKey && !approvalTool) throw new Error("company_approval_scope_invalid");
+  const companyTools = approvalTool ? [approvalTool] : companyPort && companyRole === "router" ? createCompanyRouterTools(companyPort, input.input.catalog.conversationId)
+    : companyPort && companyRole === "worker" ? createCompanyWorkerTools(companyPort, input.input.catalog.conversationId) : [];
+  const companySecurity = companyTools.length ? new CompanyToolSecurity(companyTools.map(tool => tool.name)) : null;
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
   const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
-    expertContext?.assertAvailable();
+    agentRuntimeContext.assertAvailable();
     if (input.input.currentInlineProposalRequest?.()) throw new Error("inline_proposal_tool_scope_blocked");
     if (input.input.currentGenerationContext?.()) throw new Error("generation_tool_scope_blocked");
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
+    if (systemTask && !KNOWLEDGE_SYSTEM_TOOLS.some(tool => tool === name)) throw new Error("梳理会话只允许读取全文和提交提案。");
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
     const context = await liveCapabilityContext();
     const access = context.access;
+    if (name === "approval_decide") {
+      if (!approvalTool || context.agentId !== GENERAL_ASSISTANT_ID || context.companyRole !== "router"
+        || !input.input.companyApprovalKey || !input.plugin.companyApprovalCoordinator?.isJudging(input.input.companyApprovalKey)
+        || !access || access.permission === "read-only" || access.mode === "plan") throw new Error("company_approval_scope_invalid");
+      requireAgentCapability(checkAgentCapability(context, "conversation"));
+      return;
+    }
     if (!access) throw new Error("agent_capability_workspace_unavailable");
     const workspaceDecision = piWorkspaceToolDecision({ ...access, toolName: name, toolArguments: { ...args },
       planToolNames: linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames,
@@ -2459,7 +2552,7 @@ async function createProductionAgentSession(input: {
     }
   });
   const conceptTool = createPiConceptTool(conceptSecurity);
-  const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity, async call => {
+  const mcpSnapshot: PiMcpCustomToolSnapshot = linkingBatch || companyRole === "router" ? { toolNames: [], customTools: [], toolSecurity: [], warnings: [] } : await discoverPiMcpTools(input, mcpSecurity, async call => {
     const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.resourceId === call.resourceId && tool.toolName === call.toolName);
     if (!descriptor || !await isPiMcpToolCurrentlyAllowed(input.plugin, descriptor)) throw new Error("agent_capability_mcp_admission_revoked");
     await assertToolAllowed(descriptor.name, call.arguments, undefined, { productRunId: call.executionContext.productRunId, toolCallId: call.toolCallId });
@@ -2498,9 +2591,9 @@ async function createProductionAgentSession(input: {
   const workspaceSecurity = workspaceService ? new PiWorkspaceToolSecurity({ service: workspaceService,
     currentRunIdentity: () => input.input.currentToolExecutionContext(), assertToolAllowed,
     guard: (operation, target) => {
-      expertContext?.assertAvailable();
-      const context = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
-      requireAgentCapability(checkAgentTool(context, `workspace_${operation}`, { path: target }));
+      agentRuntimeContext.assertAvailable();
+      const base = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
+      requireAgentCapability(checkAgentTool(companyRole ? { ...base, companyRole } : base, `workspace_${operation}`, { path: target }));
     }
   }) : undefined;
   const workspaceTools = workspaceSecurity ? createPiWorkspaceToolDefinitions(workspaceSecurity) : [];
@@ -2534,6 +2627,7 @@ async function createProductionAgentSession(input: {
     },
     additionalToolSecurity: maintenanceSecurity,
     additionalToolSecurities: [
+      ...(companySecurity ? [companySecurity] : []),
       webSearchSecurity,
       mcpSecurity,
       taskPlanSecurity,
@@ -2612,7 +2706,51 @@ async function createProductionAgentSession(input: {
     retriever: createProductionPiKnowledgeToolRetriever(input.vaultRootPath, input.knowledgeAgentIndex, () => input.input.currentKnowledgeTurnContext()?.kind ?? "none"),
     security: knowledgeReadSecurity
   });
-  const personalMemoryRecall = new PersonalMemoryRecallHarness(input.personalMemory);
+  // A separate text-only request shares this conversation's resolved Provider,
+  // not the global active-model setting or the answering session's tools.
+  const directoryTransport = new PiProviderProtocolTransport({
+    authorityId: binding.authorityId,
+    storeSetId: binding.pluginData.rootBindingDigest,
+    resolveAuthToken: preparedProvider.resolveAuthToken,
+    recordUsage: input.plugin.recordModelUsage
+      ? event => input.plugin.recordModelUsage?.(event) : undefined,
+    dispatcher: createConfiguredPiProviderProtocolDispatcher({
+      providerId: productProviderId, runtimeProviderId: configured.providerId,
+      apiProtocol: configured.apiProtocol, baseUrl: configured.baseUrl
+    })
+  });
+  const personalMemoryRecall = new PersonalMemoryRecallHarness(input.personalMemory, {
+    directory: {
+      modelInputBudget: contextBudget.effectiveInputBudget,
+      llm: {
+        call: async request => {
+          if (request.signal.aborted || input.plugin.settings.memory.useLongTermMemory === false) {
+            throw new Error("memory_directory_unavailable");
+          }
+          const execution = input.input.currentExecutionContext();
+          const stream = await directoryTransport.stream({
+            ...execution, correlationId: `${execution.correlationId}:memory-directory`,
+            provider: preparedProvider.provider, model,
+            context: {
+              systemPrompt: request.systemPrompt,
+              messages: [{ role: "user", content: request.userPrompt, timestamp: Date.now() }],
+              tools: []
+            },
+            options: {
+              signal: request.signal, maxTokens: Math.min(request.maxTokens, model.maxTokens),
+              temperature: 0, cacheRetention: "short", maxRetries: 0, timeoutMs: request.timeoutMs
+            }
+          });
+          const message = await stream.result();
+          if (request.signal.aborted || message.stopReason !== "stop") throw new Error("memory_directory_failed");
+          return {
+            text: message.content.filter(block => block.type === "text").map(block => block.type === "text" ? block.text : "").join(""),
+            usage: message.usage
+          };
+        }
+      }
+    }
+  });
   const contextLedger = new PiContextLedgerRecorder({
     conversationId: input.input.catalog.conversationId,
     piSessionId: input.input.catalog.piSessionId,
@@ -2638,7 +2776,7 @@ async function createProductionAgentSession(input: {
     supportsToolCalling: configured.toolCalling,
     currentExecutionContext: () => input.input.currentExecutionContext(),
     ...(isExpertAgent(input.plugin.settings.agentRegistry.agents.find(agent => agent.id === input.input.catalog.agentId))
-      ? { assertResponseAllowed: () => expertContext?.assertAvailable() } : {})
+      ? { assertResponseAllowed: () => agentRuntimeContext.assertAvailable() } : {})
   }));
   const inlineExtension = createPiKnowledgeInlineExtension({
     knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings,
@@ -2646,11 +2784,22 @@ async function createProductionAgentSession(input: {
     currentAgentSnapshot: async () => { const context = await liveCapabilityContext(); return resolveAgentRunSnapshot(context.settings, context.agentId); },
     privateAgentContext: async text => {
       const context = await liveCapabilityContext();
+      const company = companyRole ? input.plugin.companyService ?? null : null;
+      let companyPrompt = "";
+      if (companyRole && company) {
+        const project = companyRole === "router" ? company.projectForRouter(input.input.catalog.conversationId) : (() => { const d = company.dispatchOf(input.input.catalog.conversationId); return d?.projectId ? company.projectOf(d.projectId) : undefined; })();
+        companyPrompt = companyRole === "router" ? companyRouterPrompt(project?.status === "proposed" ? undefined : project, company.status(input.input.catalog.conversationId)) : companyWorkerPrompt(project);
+      }
+      const staffBackground = companyHumanTurnBackground({ agentId: context.agentId, companyRole,
+        companyProgrammatic: input.input.currentCompanyProgrammatic?.() === true, background: () => company?.staffActivityBackground() ?? "" });
+      companyPrompt = [companyPrompt, staffBackground].filter(Boolean).join("\n\n");
+      if (input.input.companyApprovalKey) {
+        const judgment = input.plugin.companyApprovalCoordinator?.judgmentPrompt(input.input.catalog.conversationId, input.input.companyApprovalKey);
+        if (!judgment) throw new Error("company_approval_scope_invalid");
+        companyPrompt = [companyPrompt, judgment].filter(Boolean).join("\n\n");
+      }
       const agent = context.settings.agentRegistry.agents.find(agent => agent.id === context.agentId);
-      if (!isExpertAgent(agent)) { expertContext = undefined; return ""; }
-      if (!input.plugin.prepareExpertRuntime) throw new Error("专家服务尚未就绪。");
-      expertContext = await input.plugin.prepareExpertRuntime(context.agentId, input.input.catalog.conversationId, text);
-      expertContext.assertAvailable(); return expertContext.prompt;
+      return await agentRuntimeContext.prepare({ agent, conversationId: input.input.catalog.conversationId, text, companyPrompt });
     },
     currentTaskResumeContext: () => input.input.currentTaskResumeContext?.(),
     currentWorkbenchSource: () => input.input.currentWorkbenchSource?.() ?? null,
@@ -2693,15 +2842,16 @@ async function createProductionAgentSession(input: {
       loadFixedContext: (request) => input.personalMemory.loadFixedContext(request),
       prepareTurnContext: (request) => personalMemoryRecall.prepareTurnContext(request)
     },
-    personalMemoryRecallTokenBudget: Math.max(
-      512,
-      Math.min(4_000, Math.floor(contextBudget.effectiveInputBudget * 0.05))
-    ),
+    personalMemoryRecallTokenBudget: personalMemoryRecallTokenBudget(contextBudget.effectiveInputBudget),
+    personalMemoryEnabled: () => input.plugin.settings.memory.useLongTermMemory !== false,
     onPersonalMemoryRecallProgress: (progress) =>
       input.input.reportMemoryRecallProgress?.(progress),
     onAskPersonalMemorySourcesInjected: (snapshot) =>
       input.input.reportAskPersonalMemorySources?.(snapshot),
-    onPersonalMemorySourcesInjected: snapshot => input.input.reportPersonalMemorySourcesInjected?.(snapshot),
+    onPersonalMemorySourcesInjected: async snapshot => {
+      await input.input.reportPersonalMemorySourcesInjected?.(snapshot);
+      await input.personalMemory.recordRecalledMemories(snapshot.sources.filter(source => source.reason !== "pinned").slice(0, 3).filter(source => source.reason === "title_or_trigger").map(source => source.id), snapshot.productRunId);
+    },
     personalMemoryAvailable: configured.toolCalling,
     supportsToolCalling: configured.toolCalling,
     contextLedger
@@ -2718,11 +2868,20 @@ async function createProductionAgentSession(input: {
     },
     assertBeforeAgentStart: async () => {
       const context = await liveCapabilityContext();
-      requireAgentCapability(checkAgentCapability(context, linkingBatch ? "knowledge" : "conversation"));
+      requireAgentCapability(checkAgentCapability(context, linkingBatch || systemTask ? "knowledge" : "conversation"));
     },
     systemPrompt: buildEchoInkRuntimeSystemPrompt(),
     appendSystemPrompt: configured.toolCalling ? [WEB_SEARCH_INSTRUCTIONS] : [],
-    inlineExtension: linkingBatch ? knowledgeLinkingInlineExtension() : inlineExtension
+    inlineExtension: withToolRoundLimit(systemTask
+      ? knowledgeSystemInlineExtension(systemService!, systemTask.conversationId, async () => {
+          const context = await liveCapabilityContext();
+          return agentTaskSystemPrompt(resolveAgentRunSnapshot(context.settings, systemTask.agentId));
+        })
+      : linkingBatch ? knowledgeLinkingInlineExtension() : inlineExtension, () => {
+        const budget = input.input.currentToolRoundBudget?.();
+        budget?.upgrade(Boolean(systemTask || linkingBatch));
+        return budget;
+      }, () => input.input.stopToolRoundLimit?.())
   });
   const loadedSkills = resourceLoader.getSkills();
   let skillCommandName: string | undefined;
@@ -2748,7 +2907,7 @@ async function createProductionAgentSession(input: {
     );
   }
 
-  const registeredTools = linkingBatch ? [createPiKnowledgeLinkingTool(linkingBatch)] : [
+  const registeredTools = systemTask ? createKnowledgeSystemTools(systemService!, systemTask.conversationId) : linkingBatch ? [createPiKnowledgeLinkingTool(linkingBatch)] : [
     createWebSearchTool(webSearchSecurity),
     ...vaultTools,
     ...workspaceTools,
@@ -2763,7 +2922,8 @@ async function createProductionAgentSession(input: {
     ...personalMemoryTools,
     ...knowledgeReadTools,
     conceptTool,
-    ...mcpSnapshot.customTools
+    ...mcpSnapshot.customTools,
+    ...companyTools
   ];
   createControlledPiKnowledgeToolRegistration([
     ...vaultTools,
@@ -2815,7 +2975,7 @@ async function createProductionAgentSession(input: {
     resourceLoader,
     ...toolRegistration
   });
-  created.session.setActiveToolsByName(!configured.toolCalling ? [] : linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [
+  created.session.setActiveToolsByName(!configured.toolCalling ? [] : systemTask ? [...KNOWLEDGE_SYSTEM_TOOLS] : linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [
     WEB_SEARCH_TOOL_NAME,
     ...PI_VAULT_TOOL_IDS,
     ...workspaceTools.map(tool => tool.name),
@@ -2827,12 +2987,13 @@ async function createProductionAgentSession(input: {
     maintenanceTool.name,
     taskPlanTool.name,
     userQuestionTool.name,
+    ...companyTools.map(tool => tool.name),
     ...(configured.toolCalling ? [...PI_PERSONAL_MEMORY_TOOL_IDS] : []),
     ...PI_KNOWLEDGE_READ_TOOL_IDS,
     "explore_concept",
     ...mcpSnapshot.toolNames
   ]);
-  const planToolNames = [
+  const planToolNames = systemTask ? [...KNOWLEDGE_SYSTEM_TOOLS] : [
     "workspace_read",
     "explore_concept",
     "todo_query",
@@ -2857,25 +3018,30 @@ async function createProductionAgentSession(input: {
   ]
     .filter((warning): warning is string => Boolean(warning))
     .map((warning) => redactEchoInkLocalSecretsV1(warning));
+  const publicationResources = await input.plugin.buildRuntimeEchoInkResourceCatalog();
   return {
     providerSettingsId: configured.provider.id,
     providerDisplayName: configured.provider.name,
     supportsToolCalling: configured.toolCalling,
     isToolCurrentlyEnabled: (name) => {
+      if (name === "approval_decide") return configured.toolCalling && !!approvalTool && !!input.input.companyApprovalKey
+        && input.plugin.companyApprovalCoordinator?.isJudging(input.input.companyApprovalKey) === true;
+      if (approvalTool) return false;
       if (!configured.toolCalling || name === "diagram_create" && drawingService.disabledReason()) return false;
       const descriptor = mcpSnapshot.toolSecurity.find(tool => tool.name === name);
-      const context = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
+      const base = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", publicationResources, input.input.currentWorkspaceAccess?.());
+      // Publication must see the company role too, or a router card never receives its dispatch tools.
+      const context = companyRole ? { ...base, companyRole } : base;
       // Publication is advisory; dispatch and execute re-read Catalog, settings and resources.
-      return descriptor ? checkAgentCapability(context, `mcp:${encodeURIComponent(descriptor.resourceId)}:${encodeURIComponent(descriptor.toolName)}`).allowed
-        : checkAgentTool(context, name).allowed;
+      return isPiAgentToolPublished(context, name, descriptor);
     },
     session: created.session,
     generationInputBudget: contextBudget.effectiveInputBudget,
     memoryToolNames: configured.toolCalling
       ? PI_PERSONAL_MEMORY_TOOL_IDS
       : Object.freeze([]),
-    planToolNames: Object.freeze(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames),
-    externalReadToolNames: Object.freeze(linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity
+    planToolNames: Object.freeze(systemTask ? [...KNOWLEDGE_SYSTEM_TOOLS] : linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : planToolNames),
+    externalReadToolNames: Object.freeze(systemTask ? [...KNOWLEDGE_SYSTEM_TOOLS] : linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [WEB_SEARCH_TOOL_NAME, ...mcpSnapshot.toolSecurity
       .filter((descriptor) => descriptor.readOnly)
       .map((descriptor) => descriptor.name)]),
     ...(skillCommandName ? { skillCommandName } : {}),
@@ -2973,7 +3139,33 @@ export function createPiAgentCapabilityContext(plugin: PiProductionPluginHost, a
 async function currentAgentCapabilityContext(plugin: PiProductionPluginHost, catalog: FileConversationCatalog, conversationId: string, access?: Readonly<PiWorkspaceAccess> | null): Promise<AgentCapabilityContext> {
   const entry = await catalog.get(conversationId);
   if (!entry) throw new Error("agent_capability_catalog_missing");
-  return createPiAgentCapabilityContext(plugin, entry.agentId ?? "sol", await plugin.buildRuntimeEchoInkResourceCatalog(), access);
+  const context = createPiAgentCapabilityContext(plugin, entry.agentId ?? "sol", await plugin.buildRuntimeEchoInkResourceCatalog(), access);
+  if (entry.companyRole === "router" && entry.agentId !== GENERAL_ASSISTANT_ID) throw new Error("agent_capability_router_identity_invalid");
+  return entry.companyRole ? { ...context, companyRole: entry.companyRole } : context;
+}
+
+/** Preflight and slash commands need the same role boundary as explicit Knowledge tools. */
+export function checkPiKnowledgeAction(context: AgentCapabilityContext, effect: "read" | "write" | "resource" = "read"): AgentCapabilityDecision {
+  return context.companyRole === "router" && (context.agentId !== GENERAL_ASSISTANT_ID || effect !== "read")
+    ? { allowed: false, capabilityId: "knowledge", reason: "router_only" }
+    : checkAgentCapability(context, "knowledge", effect);
+}
+
+export function createPiKnowledgeCapabilityPolicy(plugin: PiProductionPluginHost, catalog: FileConversationCatalog) {
+  const conversationKnowledgeDecision = async (id: string, write: boolean) =>
+    checkPiKnowledgeAction(await currentAgentCapabilityContext(plugin, catalog, id), write ? "resource" : "read");
+  return {
+    conversationKnowledgeDecision,
+    isConversationKnowledgeAllowed: async (id: string, write: boolean) => (await conversationKnowledgeDecision(id, write)).allowed
+  };
+}
+
+/** Publication and dispatch share the complete Agent/MCP policy, including company roles. */
+export function isPiAgentToolPublished(context: AgentCapabilityContext, name: string, descriptor?: Readonly<PiMcpToolSecurityDescriptor>): boolean {
+  return checkAgentTool(context, name, undefined, undefined, descriptor ? {
+    resourceId: descriptor.resourceId, toolName: descriptor.toolName, readOnly: descriptor.readOnly,
+    externalOnly: isPiMcpExternalOnly(context, descriptor), executable: piMcpSchemaHasExecutableTarget(descriptor.inputSchema), inputSchema: descriptor.inputSchema
+  } : undefined).allowed;
 }
 
 /** Resume uses current policy before creating a run; this only reads local resource records. */
@@ -2988,6 +3180,8 @@ export async function assertTaskResumeCapabilities(
   };
   const basic = checkAgentCapability(context, "conversation");
   if (!basic.allowed) fail(basic.reason, basic.capabilityId);
+  // Desktop Sol continues as a router; old module grants and pending write tools are historical context.
+  if (Platform.isDesktopApp && context.agentId === GENERAL_ASSISTANT_ID) return;
   for (const capability of requiredCapabilities) {
     const result = checkAgentCapability(context, capability);
     if (!result.allowed) fail(result.reason, result.capabilityId);

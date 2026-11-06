@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { webSearchAvailable } from "../tools/web-search-settings";
 import { searchTavily, TavilyError, type TavilyTransport } from "../tools/tavily-search";
 import { normalizeSettingsData } from "../settings/settings";
 import { PiWebSearchSecurity, createWebSearchTool } from "../harness/pi-native/pi-web-search";
@@ -40,7 +41,8 @@ assert.equal(normalizeSettingsData({}).settings.tavily.enabled, false);
 assert.equal(normalizeSettingsData({}).settings.autoArchiveDays, 0);
 const restored = normalizeSettingsData(JSON.parse(JSON.stringify({ tavily: { enabled: true, apiKey: secret }, autoArchiveDays: 14 }))).settings;
 assert.deepEqual(restored.tavily, { enabled: true, apiKey: secret, provider: "tavily", deepseekApiKey: "" }); assert.equal(restored.autoArchiveDays, 14);
-assert.equal(normalizeSettingsData({ tavily: { enabled: true, apiKey: " " }, autoArchiveDays: 8 }).settings.tavily.enabled, false);
+assert.equal(normalizeSettingsData({ tavily: { enabled: true, apiKey: " " }, autoArchiveDays: 8 }).settings.tavily.enabled, true);
+assert.equal(webSearchAvailable(normalizeSettingsData({ tavily: { enabled: true, apiKey: " " } }).settings.tavily), false);
 assert.equal(normalizeSettingsData({autoArchiveDays: 8}).settings.autoArchiveDays, 0);
 
 const root = await realpath(await mkdtemp(path.join(tmpdir(), "echoink-tools-archive-")));

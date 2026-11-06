@@ -23,7 +23,8 @@ export async function mobileStartupConflictScenarios({ code, dom, test, FileView
       registerEditorExtension() {} registerMarkdownPostProcessor() {} registerEvent() {} register() {} registerDomEvent() {}
       registerInterval(id) { this.interval = id; }
       registerView(type) { views.push(type); }
-      registerExtensions() {}
+      // Newer Obsidian builds (and other plugins) may already own "html"; Obsidian throws on duplicates.
+      registerExtensions() { throw new Error('Attempting to register an existing file extension "html"'); }
       addRibbonIcon() { return dom.window.document.createElement("button"); } addCommand(command) { commands.push(command.id); }
     }
     const module = { exports: {} };

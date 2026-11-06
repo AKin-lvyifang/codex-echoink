@@ -69,11 +69,11 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   const allow = async (name: string, args: Readonly<Record<string, unknown>>, target?: unknown) => requireAgentCapability(checkAgentTool(context(), name, args, target));
   settings.agentRegistry.agents.push({ id: "organizer", name: "整理员", avatar: { kind: "default" }, position: "整理知识", styleId: "analysis", capabilityIds: ["knowledge", "web-search"] });
   const snapshot = resolveAgentRunSnapshot(settings, "organizer");
-  settings.agentRegistry.agents[1].capabilityIds = [];
+  settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = [];
   assert.deepEqual(snapshot.capabilityIds, ["knowledge", "web-search"]);
   agentId = "organizer";
   assert.equal(checkAgentCapability(context(), "knowledge").allowed, false);
-  settings.agentRegistry.agents[1].capabilityIds = ["knowledge", "web-search"];
+  settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = ["knowledge", "web-search"];
   assert.equal(checkAgentTool(context(), "finance_query", { action: "records" }).allowed, false);
   assert.equal(checkAgentTool(context(), "task_update", {}).allowed, true);
   assert.equal(checkAgentTool(context(), "memory_read", {}).allowed, true);
@@ -110,7 +110,7 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   sol.disabledCapabilityIds = [];
   agentId = "organizer";
   assert.equal(checkAgentSkill(context(), "new-custom").allowed, false);
-  settings.agentRegistry.agents[1].capabilityIds!.push(vaultSkillCapabilityId(custom.id));
+  settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds!.push(vaultSkillCapabilityId(custom.id));
   assert.equal(checkAgentSkill(context(), "new-custom").allowed, true);
   agentId = "sol";
   console.log("PASS actual Skill selection, resource loading, explicit custom resource IDs and revocation before body expansion");
@@ -498,6 +498,7 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   provider.models = [model]; provider.defaultModelId = model.id;
   f.plugin.settings.apiProviders = [provider]; activateApiProviderModel(f.plugin.settings, provider, model.id);
   f.plugin.settings.agentRegistry.agents.push({ id: "origin-agent", name: "发起人", avatar: { kind: "default" }, position: "知识整理", styleId: "analysis", capabilityIds: ["knowledge"] });
+  f.plugin.settings.agentRegistry.moduleOwners["knowledge-base"] = "origin-agent";
   const catalog = new FileConversationCatalog({ storageRootPath: path.join(root, "catalog-store"), vaultId: "linking-origin" });
   await catalog.initialize();
   await catalog.upsert({ conversationId: "origin-task", piSessionId: "origin-session", vaultId: catalog.vaultId, title: "Source", status: "active", defaultMemoryMode: "normal", agentId: "origin-agent", createdAt: 1, updatedAt: 1 });
@@ -530,7 +531,7 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   ], results: [], writeConfirmed: true });
   const deniedStore = new KnowledgeLinkingStateStore(path.join(root, "denied-state", "state.json"));
   await deniedStore.save(task("denied-task"));
-  f.plugin.settings.agentRegistry.agents[1].capabilityIds = [];
+  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.capabilityIds = [];
   const denied = new KnowledgeLinkingService(createProductionKnowledgeLinkingHost(plugin as never), deniedStore);
   await denied.ready; await denied.resume(); await denied.waitForIdle();
   assert.equal(await readFile(path.join(root, "wiki/a.md"), "utf8"), "A before\n");
@@ -541,7 +542,7 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   assert.equal(reloadedDenied.snapshot()?.originConversationId, "origin-task");
   await assert.rejects(createProductionKnowledgeLinkingHost(plugin as never).write("wiki/a.md", "A before\n", "forbidden", reloadedDenied.snapshot()!), /agent_capability_agent_disabled/);
   await reloadedDenied.dispose();
-  f.plugin.settings.agentRegistry.agents[1].capabilityIds = ["knowledge"];
+  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.capabilityIds = ["knowledge"];
   await assert.rejects(production.write("wiki/a.md", "A before\n", "forbidden", { authorizationSource: "unknown" }), /origin_unknown/);
   const unknownStore = new KnowledgeLinkingStateStore(path.join(root, "unknown-state", "state.json"));
   const oldTask = task("old-unknown-task"); delete oldTask.originConversationId; delete oldTask.authorizationSource;

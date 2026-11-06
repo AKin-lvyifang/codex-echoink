@@ -9,6 +9,7 @@ import { validateManifestSource } from "./manifest-contract.mjs";
 import { runManifestContractTests } from "./manifest-contract-tests.mjs";
 import { compileReleaseNotes, isTrackedReleaseHero } from "./release-notes.mjs";
 import { runReleaseNotesTests } from "./release-notes-tests.mjs";
+import { local as localTestSuites, modes as testModes } from "./test-suites.mjs";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const args = parseArgs(process.argv.slice(2));
@@ -97,14 +98,54 @@ function validatePlatformBoundary() {
   }
   check(packageJson.scripts?.["test:mobile"] === "node scripts/mobile-tests.mjs",
     "test:mobile must run the mobile integration and production no-Node entry checks.");
-  const verify = packageJson.scripts?.["verify:obsidian"] ?? "";
-  check(verify.includes("npm run build") && verify.indexOf("npm run test:mobile") > verify.indexOf("npm run build"),
-    "verify:obsidian must check the mobile entry after building the production bundle.");
+  check(packageJson.scripts?.test === "node scripts/run-tests.mjs",
+    "npm test must use the local test runner that builds before checking the production entries.");
+  check(packageJson.scripts?.["test:integration"] === "node scripts/run-tests.mjs --integration",
+    "test:integration must use only the explicit integration mode of the test runner.");
+  validateLocalTestTopology();
+  const verificationCommands = (packageJson.scripts?.["verify:obsidian"] ?? "").split("&&").map(command => command.trim());
+  check(JSON.stringify(verificationCommands) === JSON.stringify([
+    "npm run check:public", "npm run lint", "npm run typecheck", "npm test", "npm run check:bundle"
+  ]), "verify:obsidian must run public, review, type and full local test gates before checking the built bundle, with one build and mobile check owned by npm test.");
   const review = parseWorkflow(path.join(rootDir, ".github/workflows/obsidian-review.yml"))?.toJS();
-  check(review?.jobs?.review?.steps?.some(step => step.run === "npm run verify:obsidian"),
+  const reviewSteps = review?.jobs?.review?.steps ?? [];
+  check(reviewSteps.some(step => step.run === "npm run verify:obsidian" && step.if === undefined),
     "review CI must run verify:obsidian, including the mobile production entry.");
-  check(review?.jobs?.["bundle-load"]?.steps?.some(step => step.run === "npm run test:mobile"),
+  check(!reviewSteps.some(step => step.run === "node scripts/prepare-ci-test-vault.mjs"),
+    "review CI must let the local test runner own its isolated test environment.");
+  const bundleJob = review?.jobs?.["bundle-load"];
+  const bundleSteps = bundleJob?.steps ?? [];
+  const downloadIndex = bundleSteps.findIndex(step => typeof step.uses === "string" && step.uses.startsWith("actions/download-artifact@")
+    && step.with?.name === "obsidian-review-bundle" && step.with?.path === "dist");
+  const environmentIndex = bundleSteps.findIndex(step => step.run === "node scripts/prepare-ci-test-vault.mjs" && step.if === undefined);
+  const mobileIndex = bundleSteps.findIndex(step => step.run === "npm run test:mobile" && step.if === undefined);
+  check(downloadIndex >= 0 && environmentIndex > downloadIndex && mobileIndex > environmentIndex,
     "cross-platform CI must check the mobile entry in the same downloaded production bundle.");
+  check(JSON.stringify([...(bundleJob?.strategy?.matrix?.os ?? [])].sort())
+    === JSON.stringify(["macos-latest", "ubuntu-latest", "windows-latest"]),
+  "cross-platform CI must retain Linux, macOS and Windows bundle checks.");
+}
+
+function validateLocalTestTopology() {
+  const runner = fs.readFileSync(path.join(rootDir, "scripts/run-tests.mjs"), "utf8");
+  const buildCalls = [...runner.matchAll(/\brun\(npm,\s*\["run",\s*"build"\],\s*"npm run build"\)/gu)];
+  const localLoop = /for\s*\(const file of entries\)\s*run\(process\.execPath,\s*\[file\],\s*file\)/u.exec(runner);
+  const modeLoop = /for\s*\(const mode of extra\)\s*run\(process\.execPath,\s*\[mode\.file,\s*\.\.\.mode\.args\],\s*mode\.file,\s*mode\.args\)/u.exec(runner);
+  check(/from\s+["']\.\/test-suites\.mjs["']/u.test(runner)
+    && /const entries = isIntegration \? integration : local;/u.test(runner)
+    && /if\s*\(!isIntegration\)\s*run\(npm,\s*\["run",\s*"build"\],\s*"npm run build"\)/u.test(runner)
+    && buildCalls.length === 1 && localLoop && buildCalls[0].index < localLoop.index,
+  "the local test runner must build once before executing every local suite; integration mode must not build.");
+  check(/const result = spawnSync\(command, args,/u.test(runner)
+    && /if\s*\(result\.status !== 0\)\s*throw new Error/u.test(runner),
+  "the test runner must execute suites synchronously and stop when a build or test fails.");
+  check(localTestSuites.filter(file => file === "scripts/mobile-tests.mjs").length === 1,
+    "the full local test inventory must directly check the mobile production entry exactly once.");
+  check(testModes.some(mode => mode.file === "scripts/pi-brace-expansion-tests.mjs" && mode.group === "local"
+    && JSON.stringify(mode.args) === JSON.stringify(["--production"]))
+    && /const extra = modes\.filter\(mode => mode\.group === "local" && !isIntegration\);/u.test(runner)
+    && localLoop && modeLoop && modeLoop.index > localLoop.index,
+  "npm test must retain the production dependency check after the shared build.");
 }
 
 function validateReleaseWorkflow(config) {
@@ -115,15 +156,24 @@ function validateReleaseWorkflow(config) {
   const publishIndex = steps.findIndex(isPublishStep);
   const guardIndex = steps.findIndex(isExistingReleaseGuard);
   const attestIndex = steps.findIndex((step) => typeof step?.uses === "string" && step.uses.startsWith("actions/attest@"));
+  const testIndex = steps.findIndex(step => step.run === "npm run test");
   const buildIndex = steps.findIndex(step => step.run === "npm run build");
+  const environmentIndex = steps.findIndex(step => step.run === "node scripts/prepare-ci-test-vault.mjs");
   const desktopCheckIndex = steps.findIndex(step => step.run === "npm run check:bundle");
   const mobileCheckIndex = steps.findIndex(step => step.run === "npm run test:mobile");
   const notesIndex = steps.findIndex(step => typeof step.run === "string" && step.run.includes("node scripts/release-notes.mjs"));
 
+  const runTestsCondition = "${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}";
+  const skipTestsCondition = "${{ github.event_name == 'workflow_dispatch' && inputs.skip_tests == true }}";
+  check(testIndex >= 0 && testIndex < desktopCheckIndex && steps[testIndex]?.if === runTestsCondition,
+    "release workflow must run the full local test gate unless a historical dispatch explicitly skips tests.");
   check(buildIndex >= 0 && desktopCheckIndex > buildIndex && mobileCheckIndex > buildIndex
     && mobileCheckIndex < attestIndex && desktopCheckIndex < attestIndex
-    && steps[mobileCheckIndex]?.if === undefined,
-    "release workflow must verify desktop and mobile production entries after build and before attestation.");
+    && steps[desktopCheckIndex]?.if === undefined
+    && steps[buildIndex]?.if === skipTestsCondition && steps[mobileCheckIndex]?.if === skipTestsCondition,
+    "release workflow must reuse npm test's build and mobile checks normally, and explicitly build then verify both production entries before attestation when historical tests are skipped.");
+  check(environmentIndex >= 0 && environmentIndex < buildIndex && steps[environmentIndex]?.if === skipTestsCondition,
+    "historical rebuilds that skip the local runner must still prepare an isolated test environment.");
 
   check(attestIndex >= 0, "release workflow must attest the release assets.");
   check(draftIndex >= 0, "release workflow must create a draft release without overwriting files.");

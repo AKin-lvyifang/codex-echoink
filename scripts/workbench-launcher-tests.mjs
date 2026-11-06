@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -7,8 +8,7 @@ import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT?.trim() || path.join(temporaryVaults, "工作台改版-20261017"));
-const relativeFixture = path.relative(temporaryVaults, fixture);
-if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixture)).isDirectory()) {
+if (!isDisposableTestRoot(fixture) || !(await stat(fixture)).isDirectory()) {
   throw new Error("Workbench launcher fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
 }
 const runRoot = await mkdtemp(path.join(fixture, ".workbench-launcher-tests-"));

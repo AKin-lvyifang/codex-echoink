@@ -50,7 +50,7 @@ export async function runTodoPageModelTests(): Promise<void> {
   let reads = 0, readFailure = false;
   store.reload = async () => { reads++; if (readFailure) throw new Error("读取失败"); };
   store.updateTodo = async (_target: any, values: any) => { patch = values; if (fail) throw new Error("文件冲突"); };
-  const plugin: any = { app, settings: { settingsLanguage: "zh-CN", todoCategories: [{ id: "work", name: "工作" }], knowledgeBase: { folderBindings: { roles: { projects: { enabled: true, readPaths: ["Projects"] } } } }, agentRegistry: { agents: [{ id: "sol", name: "总助" }], moduleOwners: { todos: "sol" } } }, getTodoStore: () => store, saveSettings: async () => {}, openAgentTaskList: async (_id: string, text: string) => { handoffs++; handoffText = text; return true; } };
+  const plugin: any = { app, settings: { settingsLanguage: "zh-CN", todoCategories: [{ id: "work", name: "工作" }], knowledgeBase: { folderBindings: { roles: { projects: { enabled: true, readPaths: ["Projects"] } } } }, agentRegistry: { agents: [{ id: "generalist", name: "通才" }], moduleOwners: { todos: "generalist" } } }, getTodoStore: () => store, saveSettings: async () => {}, openAgentTaskList: async (_id: string, text: string) => { handoffs++; handoffText = text; return true; } };
   const view: any = new TodoPageView({} as any, plugin);
   Object.assign(view, { app, contentEl: win.document.querySelector("main"), closed: false, initialized: true });
   view.renderShell(); view.renderData();

@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -8,8 +9,7 @@ import esbuild from "esbuild";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const fixtureRoot = await realpath(process.env.ECHOINK_MODULES_TEST_ROOT ?? path.join(temporaryVaults, "工作台P12自动测试-20261019"));
-const relativeFixture = path.relative(temporaryVaults, fixtureRoot);
-if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(fixtureRoot)).isDirectory()) {
+if (!isDisposableTestRoot(fixtureRoot) || !(await stat(fixtureRoot)).isDirectory()) {
   throw new Error("P12 runtime fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
 }
 const directory = await mkdtemp(path.join(fixtureRoot, "runtime-"));
@@ -17,7 +17,7 @@ try {
   const output = path.join(directory, "tests.mjs");
   await esbuild.build({
     stdin: { contents: `import { JSDOM } from "jsdom"; import { runModuleRuntimeTests } from "./src/tests/module-runtime";
-      const dom = new JSDOM("<!doctype html><body></body>"); globalThis.DOMParser = dom.window.DOMParser; globalThis.Node = dom.window.Node;
+      const dom = new JSDOM("<!doctype html><body></body>"); for (const name of ["window", "document", "navigator", "Element", "Node", "DocumentFragment", "MutationObserver", "CustomEvent", "Event", ...Object.getOwnPropertyNames(dom.window).filter(name => /^HTML.*Element$/.test(name))]) Object.defineProperty(globalThis, name, {configurable:true,writable:true,value:name==="window"?dom.window:dom.window[name]}); globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window); globalThis.window = dom.window; globalThis.document = dom.window.document; globalThis.HTMLElement = dom.window.HTMLElement; globalThis.DOMParser = dom.window.DOMParser; globalThis.Node = dom.window.Node;
       try { await runModuleRuntimeTests(${JSON.stringify(directory)}); } finally { dom.window.close(); }`, resolveDir: root, loader: "ts" },
     outfile: output, bundle: true, platform: "node", target: "node22", format: "esm",
     banner: { js: `import {createRequire as runtimeRequire} from "node:module"; const require = runtimeRequire(${JSON.stringify(path.join(root, "package.json"))});` },

@@ -9,7 +9,7 @@ import type { DiaryRepository, ExpressionEntry } from "../english-diary/types";
 import type { HomeHost } from "./home-host";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
 import type { SettingsLanguage } from "../settings/settings";
-import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import type { KnowledgeBaseDashboardHealth } from "../knowledge-base/dashboard";
 import { HomeWorkbenchDataService, type HomeEntrySummary, type HomeWorkbenchData } from "./home-workbench-data";
 import { readNativeJournalSettings } from "./native-journal";
 import { dateKey, isHomeRecentNotePath, journalDateFromPath, type HomeVaultFileRecord } from "./home-workbench-model";
@@ -52,7 +52,7 @@ export class EchoInkHomeView extends ItemView {
   private readonly dataService: HomeWorkbenchDataService;
   private readonly searchService: HomeSearchService;
   private searchResolvedQuery: string | null = null;
-  private snapshot: KnowledgeBaseDashboardSnapshot | null = null;
+  private health: KnowledgeBaseDashboardHealth | null = null;
   private healthLoading = true;
   private data: HomeWorkbenchData | null = null;
   private dataSettingsSignature = "";
@@ -266,11 +266,11 @@ export class EchoInkHomeView extends ItemView {
     return true;
   }
   private async refreshHealth(version: number): Promise<void> {
-    let snapshot: KnowledgeBaseDashboardSnapshot | null = null;
-    try { snapshot = await this.plugin.getKnowledgeSurfaceService()?.getDashboardSnapshot() ?? null; }
+    let health: KnowledgeBaseDashboardHealth | null = null;
+    try { health = this.plugin.getKnowledgeSurfaceService()?.getHealthSnapshot() ?? null; }
     catch { /* Keep the existing unavailable state for a failed health scan. */ }
     if (!this.canFinishRefresh(version)) return;
-    this.snapshot = snapshot;
+    this.health = health;
     this.healthLoading = false;
     this.renderHealth();
   }
@@ -643,7 +643,7 @@ export class EchoInkHomeView extends ItemView {
     this.renderHealth();
   }
   private renderHealth(): void {
-    const health = this.snapshot?.health;
+    const health = this.health;
     const score = health && health.status !== "unknown" ? String(health.score) : "—";
     this.el(".review-score strong").setText(score);
     const status = this.healthLoading ? this.t("正在检查知识库…", "Checking knowledge…") : !health ? this.plugin.homeUnavailableReason ?? this.t("健康状态暂不可用", "Health is unavailable") : health.assessment === "uninitialized" ? this.t("初始化知识库", "Initialize knowledge") : health.assessment === "unavailable" ? this.t("健康状态无法评估", "Health cannot be assessed") : this.t(`本地结构 ${score} 分${health.assessment === "limited" ? " · 检查受限" : ""}`, `Local structure ${score}${health.assessment === "limited" ? " · Limited" : ""}`);

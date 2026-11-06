@@ -133,6 +133,7 @@ export interface PersonalMemorySourceReference {
 /** Identity of a primary Memory actually inserted into this turn's model context. */
 export interface InjectedPersonalMemorySourceReference extends PersonalMemorySourceReference {
   revision?: number;
+  readonly reason?: string;
 }
 
 export interface DiffFileSummary {
@@ -360,6 +361,7 @@ export interface KnowledgeBaseMaintenanceHistoryEntry {
 }
 
 export interface KnowledgeBaseSettings {
+  separateDomainPairs?: [string, string][];
   /** Initialization completed, or the user permanently dismissed its reminder. */
   initialized?: boolean;
   autoLinkEnabled?: boolean;
@@ -419,6 +421,8 @@ export interface ApiProviderConfig {
   defaultModelId: string;
   apiKey: string;
   queryParams?: Record<string, string>;
+  /** Mobile-only streaming choice; absent means the preset default. */
+  mobileStreaming?: boolean;
 }
 
 export type ApiProviderModelInput = "text" | "image";
@@ -840,7 +844,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: currentProductData ? normalizeStoredSessions(data?.sessions) : [],
-    agentRegistry: normalizeAgentRegistry(data.agentRegistry),
+    agentRegistry: normalizeAgentRegistry(data.agentRegistry, Object.keys(data).length > 0),
     taskWorkspace: normalizeTaskWorkspace(data.taskWorkspace),
     activeSessionId: currentProductData && typeof data?.activeSessionId === "string"
       ? data.activeSessionId
@@ -947,6 +951,7 @@ function hasLegacyTokenPlanCustomProvider(value: unknown): boolean {
 }
 
 const KNOWLEDGE_BASE_SETTINGS_KEYS = new Set<string>([
+  "separateDomainPairs",
   "initialized",
   "autoLinkEnabled",
   "journalSearchDisclosureSeen",
@@ -1017,6 +1022,7 @@ export function applyApiProviderPreset(
     : [];
   provider.defaultModelId = provider.models[0]?.id ?? "";
   delete provider.queryParams;
+  delete provider.mobileStreaming;
   clearApiProviderApiKey(settings, provider);
   settings.providerMode = "custom-api";
   settings.activeApiProviderId = provider.id;
@@ -1910,6 +1916,10 @@ function normalizeMemorySettings(input: unknown): EchoInkMemorySettings {
 function normalizeKnowledgeBaseSettings(input: unknown): KnowledgeBaseSettings {
   const value = settingsRecord(input) ?? {};
   const normalized: KnowledgeBaseSettings = {
+    separateDomainPairs: Array.isArray(value.separateDomainPairs)
+      ? value.separateDomainPairs.filter((pair): pair is [string, string] =>
+          Array.isArray(pair) && pair.length === 2 && pair.every(name => typeof name === "string" && name.trim()))
+      : [],
     initialized: value.initialized === true,
     autoLinkEnabled: value.autoLinkEnabled !== false,
     ...(value.journalSearchDisclosureSeen === true ? { journalSearchDisclosureSeen: true } : {}),
@@ -2769,7 +2779,10 @@ function normalizeApiProviders(
         : typeof record.apiKey === "string"
         ? record.apiKey.trim()
         : "",
-      ...(Object.keys(queryParams).length ? { queryParams } : {})
+      ...(Object.keys(queryParams).length ? { queryParams } : {}),
+      ...(typeof record.mobileStreaming === "boolean"
+        ? { mobileStreaming: record.mobileStreaming }
+        : {})
     };
   });
 }

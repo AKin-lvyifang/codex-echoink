@@ -46,12 +46,14 @@ function relativeLink(targetPath: string, entryPath: string): string {
   return [...from.slice(common).map(() => ".."), ...to.slice(common).map(segment => encodeURIComponent(segment))].join("/");
 }
 
-interface ManagedBlock { domain: string; start: number; end: number }
+export type MaintenanceDomainMapMode = "list" | "tree";
+export const maintenanceDomainMapModeMarker = (mode: MaintenanceDomainMapMode): string => `<!-- echoink-domain-map:MODE ${mode} -->`;
+export interface ManagedBlock { domain: string; start: number; end: number; mode?: MaintenanceDomainMapMode }
 
 /** Parse only exact whole-line markers; refuse malformed, nested, or duplicate blocks. */
-function managedBlocks(content: string): ManagedBlock[] {
+export function readMaintenanceDomainBlocks(content: string): ManagedBlock[] {
   const blocks: ManagedBlock[] = [];
-  let open: { domain: string; start: number; sources: number } | undefined;
+  let open: { domain: string; start: number; sources: number; mode?: MaintenanceDomainMapMode } | undefined;
   let fence: string | undefined;
   let frontmatter = false;
   let comment = false;
@@ -65,7 +67,10 @@ function managedBlocks(content: string): ManagedBlock[] {
     const hidden = frontmatter || !!fence || comment || !!rawTag;
     if (line.includes(markerPrefix)) {
       if (hidden) throw new Error("领域地图标记位于代码、属性或 HTML 内，无法安全确定边界。");
-      if (line === MAINTENANCE_DOMAIN_MAP_SOURCES_PLACEHOLDER) {
+      if (/^<!-- echoink-domain-map:MODE (list|tree) -->$/u.test(line)) {
+        if (!open || open.mode) throw new Error("领域地图模式标记重复或不在领域区块内。");
+        open.mode = line.includes("MODE tree") ? "tree" : "list";
+      } else if (line === MAINTENANCE_DOMAIN_MAP_SOURCES_PLACEHOLDER) {
         if (!open || ++open.sources > 1) throw new Error("领域地图来源标记位于受管块之外或重复。");
       } else {
         const match = /^<!-- echoink-domain-map:(BEGIN|END) ([^\s]+) -->$/u.exec(line);
@@ -106,12 +111,15 @@ function managedBlocks(content: string): ManagedBlock[] {
   return blocks;
 }
 
-function chooseTarget(
+export function findMaintenanceDomainMap(
   domain: string,
   entries: readonly MaintenanceDomainMapEntry[],
   existing: readonly MaintenanceWikiDocument[],
   root: string
 ): string {
+  const owners = existing.filter(document => document.content.includes(markerPrefix) && readMaintenanceDomainBlocks(document.content).some(block => identity(block.domain) === identity(domain)));
+  if (owners.length > 1) throw new Error(`领域 ${domain} 存在多个领域区块，保留原文，请先选择地图。`);
+  if (owners.length) return owners[0].path;
   const filename = `${safeDomain(domain)}索引.md`;
   const named = existing.filter(document => identity(basename(document.path)) === identity(filename));
   if (named.length > 1) throw new Error(`领域 ${domain} 有多个同名索引，需明确目标。`);
@@ -163,7 +171,7 @@ export function planMaintenanceDomainMaps(input: MaintenanceDomainMapInput): Mai
   }
   const plans = [...domains.values()].sort(compare).map(domain => {
     const domainEntries = [...entries.values()].filter(entry => entry.domain === domain);
-    return { domain, entries: domainEntries, path: chooseTarget(domain, domainEntries, [...documents.values()], root) };
+    return { domain, entries: domainEntries, path: findMaintenanceDomainMap(domain, domainEntries, [...documents.values()], root) };
   });
   const targets = new Map<string, typeof plans>();
   for (const plan of plans) {
@@ -180,22 +188,24 @@ export function planMaintenanceDomainMaps(input: MaintenanceDomainMapInput): Mai
     const path = group[0].path;
     const document = documents.get(path);
     const before = document?.content ?? "";
-    const blocks = managedBlocks(before);
+    const blocks = readMaintenanceDomainBlocks(before);
     const eol = before.includes("\r\n") ? "\r\n" : "\n";
     const updates = group.map(plan => {
       const own = blocks.find(block => identity(block.domain) === identity(plan.domain));
       if (own && own.domain !== plan.domain) throw new Error(`领域地图名称存在字符规范或大小写歧义：${path}`);
       return { plan, own };
     });
-    const appended = updates.filter(update => !update.own);
-    const replaced = updates.filter(update => update.own).sort((a, b) => a.own!.start - b.own!.start);
+    const treeDomains = updates.filter(update => update.own?.mode === "tree").map(update => update.plan.domain);
+    const listUpdates = updates.filter(update => update.own?.mode !== "tree");
+    const appended = listUpdates.filter(update => !update.own);
+    const replaced = listUpdates.filter(update => update.own).sort((a, b) => a.own!.start - b.own!.start);
     // One page draft gets one provenance insertion, inside the last updated block
     // in actual document order. Existing provenance in updated blocks is replaced.
     const sourcesOwner = appended.at(-1) ?? replaced.at(-1)!;
     const render = (update: typeof updates[number]): string => {
       const { plan } = update;
       const token = encodeURIComponent(plan.domain);
-      const lines = [`<!-- echoink-domain-map:BEGIN ${token} -->`, `## ${markdownText(plan.domain)}领域地图`, ""];
+      const lines = [`<!-- echoink-domain-map:BEGIN ${token} -->`, maintenanceDomainMapModeMarker("list"), `## ${markdownText(plan.domain)}领域地图`, ""];
       for (const type of MAINTENANCE_DOMAIN_MAP_TYPES) {
         const items = plan.entries.filter(entry => entry.type === type && !targets.has(identity(entry.path)) && !knownMaps.has(entry.path))
           .sort((a, b) => compare(a.path, b.path));
@@ -212,7 +222,7 @@ export function planMaintenanceDomainMaps(input: MaintenanceDomainMapInput): Mai
     for (const update of appended) {
       content += (content ? (content.endsWith("\n\n") || content.endsWith("\r\n\r\n") ? "" : content.endsWith("\n") ? eol : eol + eol) : "") + render(update) + eol;
     }
-    if (content.split(MAINTENANCE_DOMAIN_MAP_SOURCES_PLACEHOLDER).length !== 2) {
+    if (listUpdates.length && content.split(MAINTENANCE_DOMAIN_MAP_SOURCES_PLACEHOLDER).length !== 2) {
       throw new Error(`其他领域仍有未完成的来源占位符，需一并更新其受管块：${path}`);
     }
     return {
@@ -220,6 +230,9 @@ export function planMaintenanceDomainMaps(input: MaintenanceDomainMapInput): Mai
       domain: group[0].domain,
       ...(group.length > 1 ? { domains: group.map(plan => plan.domain) } : {}),
       content,
+      ...(treeDomains.length ? { treeDomains } : {}),
+      domainCounts: Object.fromEntries(group.map(plan => [plan.domain, plan.entries.length])),
+      blockPatches: listUpdates.map(update => ({ domain: update.plan.domain, before: update.own ? before.slice(update.own.start, update.own.end) : null, after: render(update) })),
       expectedTarget: document ? { kind: "file", contentRevision: `sha256:${sha256Hex(before)}` } : { kind: "missing" }
     };
   });

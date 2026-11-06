@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "../../scripts/disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "../../scripts/desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdir, realpath } from "node:fs/promises";
@@ -12,7 +13,7 @@ if (!testRoot) throw new Error("Set ECHOINK_MEMORY_TEST_ROOT to the registered t
 const allowedRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const outputRoot = await realpath(testRoot);
 const relative = path.relative(allowedRoot, outputRoot);
-if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Memory test root must be a child of 90-任务临时");
+if (!isDisposableTestRoot(outputRoot)) throw new Error("Memory test root must be a child of 90-任务临时");
 if (await realpath(process.env.TMPDIR || "") !== outputRoot) throw new Error("TMPDIR must match ECHOINK_MEMORY_TEST_ROOT");
 const outputDir = path.join(outputRoot, "runtime-local-checks");
 const runtimeDependencyPlugin = { name: "runtime-test-dependencies", setup(build) {

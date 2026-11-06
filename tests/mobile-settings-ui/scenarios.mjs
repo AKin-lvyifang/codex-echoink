@@ -14,6 +14,7 @@ export async function runMobileSettingsScenarios(api, win) {
  for (const [tablet, width] of [[false,330],[false,390],[true,744],[true,1100]]) {
   api.Platform.isTablet = tablet;
   const memory = createHost(); memory.app.workspace.containerEl = win.document.body;
+  win.document.documentElement.style.setProperty('--echoink-companion-theme', '1');
   const store = new api.MobileStore(memory.adapter, "plugin/mobile", `settings-${tablet}`); await store.load();
   const provider = api.mobileProvider("deepseek"); Object.assign(provider,{apiKey:"synthetic-test-only",models:[api.mobileModel("deepseek-chat")],defaultModelId:"deepseek-chat"});
   const settings = api.loadMobileSettings({apiProviders:[provider],activeApiProviderId:provider.id,defaultModel:provider.defaultModelId});
@@ -21,7 +22,8 @@ export async function runMobileSettingsScenarios(api, win) {
   const runtime = new api.MobileRuntime(memory.app,store,()=>settings,request); await runtime.initialize();
   const plugin = new api.EchoInkMobilePlugin(memory.app,{id:'codex-echoink',version:'M7 test'});
   const syntheticProAccess={...api.createUnavailableAccountAdapter(),checkCapability:()=>true,requireCapability(){},subscribe:()=>()=>{}};
-  Object.assign(plugin,{store,runtime,settings,modelRequest:request,accountService:syntheticProAccess,registerEvent(){}}); let failSave=false; const saved=[];
+  const appearance=new api.EchoInkAppearance(memory.app,()=>settings.colorTheme,()=>syntheticProAccess); appearance.applyToDocument(win.document);
+  Object.assign(plugin,{store,runtime,settings,modelRequest:request,appearance,accountService:syntheticProAccess,registerEvent(){}}); let failSave=false; const saved=[];
   plugin.saveData = async value => { if(failSave) throw new Error('测试保存失败'); saved.push(structuredClone(value)); };
   plugin.services = new api.MobileServices(plugin,'plugin/mobile'); await plugin.services.initialize();
   const chat=win.document.createElement('main'),home=win.document.createElement('main'),central=win.document.createElement('main');
@@ -39,10 +41,10 @@ export async function runMobileSettingsScenarios(api, win) {
   };
   try {
    await plugin.open();
-   await test('six independent settings categories and native central reuse',async()=>{
+   await test('seven independent settings categories and native central reuse',async()=>{
     await plugin.showPage('settings'); await plugin.showPage('settings');
     const text=root.textContent;
-    for(const name of ['通用','模型','Agent','能力','模块','账号与会员']) assert.ok(text.includes(name),name);
+    for(const name of ['通用','模型','Agent','记忆','能力','模块','账号与会员']) assert.ok(text.includes(name),name);
     if(tablet) assert.equal(fixture.leaves.filter(leaf=>leaf.view.getViewType()==='echoink-ipad-settings-shell').length,1);
     assert.ok(!root.querySelector('.em-sidebar'),'old eight-group sidebar is not the formal settings root');
    });
@@ -51,6 +53,11 @@ export async function runMobileSettingsScenarios(api, win) {
     const toggle=[...root.querySelectorAll('[role="switch"]')].find(node=>visible(node)&&node.getAttribute('aria-label')==='启动时打开工作台'); assert.ok(toggle); assert.equal(toggle.type,'checkbox');
     toggle.checked=true;toggle.dispatchEvent(new win.Event('change',{bubbles:true})); await until(()=>settings.autoOpenHome===true && saved.at(-1)?.autoOpenHome===true,'start saved');
     failSave=true;toggle.checked=false;toggle.dispatchEvent(new win.Event('change',{bubbles:true})); await tick();await tick();await tick(); assert.equal(settings.autoOpenHome,true,'failed save restores value');assert.equal(toggle.checked,true,'failed save restores visible switch');failSave=false;
+    win.document.documentElement.style.removeProperty('--echoink-companion-theme'); plugin.applyAppearanceTheme(win.document); await tick();
+    const hostBefore=settings.colorTheme,hostSaves=saved.length; await click(root,'荧光笔记');
+    assert.equal(settings.colorTheme,hostBefore); assert.equal(saved.length,hostSaves); assert.equal(win.document.body.dataset.echoinkTheme,'host');
+    assert.equal(button(root,'荧光笔记').getAttribute('aria-disabled'),'true');
+    win.document.documentElement.style.setProperty('--echoink-companion-theme','1'); plugin.applyAppearanceTheme(win.document); await tick();
     for (const [label, value] of [['极简黑白','minimal'],['荧光笔记','highlighter'],['黄白宣言','manifesto']]) {
      await click(root,label); assert.equal(settings.colorTheme,value); assert.equal(win.document.body.dataset.echoinkTheme,value);
      assert.equal(button(root,label).getAttribute('aria-pressed'),'true');
@@ -85,32 +92,63 @@ export async function runMobileSettingsScenarios(api, win) {
     await openCategory('模块');const disabled=[...root.querySelectorAll('[role="switch"]')].find(n=>visible(n)&&n.getAttribute('aria-label')==='启用待办');assert.ok(disabled,'module switch');
     const count=store.state.sessions.length;disabled.checked=false;disabled.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>settings.mobileUi.moduleEnabled?.todos===false,'module disabled saved');assert.equal(store.state.sessions.length,count,'module toggle preserves tasks');
     disabled.checked=true;disabled.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>settings.mobileUi.moduleEnabled?.todos===true,'module reenabled saved');
-    await openCategory('Agent');const memorySwitch=[...root.querySelectorAll('[role="switch"]')].find(n=>visible(n)&&n.getAttribute('aria-label')==='长期记忆');assert.ok(memorySwitch);const memories=store.state.memories.length;memorySwitch.checked=false;memorySwitch.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>store.state.memoryEnabled===false,'memory disabled via real writer');assert.equal(store.state.memories.length,memories,'memory switch preserves records');memorySwitch.checked=true;memorySwitch.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>store.state.memoryEnabled===true,'memory reenabled');
+    await openCategory('记忆');const memorySwitch=[...root.querySelectorAll('[role="switch"]')].find(n=>visible(n)&&n.getAttribute('aria-label')==='长期记忆');assert.ok(memorySwitch);const memories=store.state.memories.length;memorySwitch.checked=false;memorySwitch.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>store.state.memoryEnabled===false,'memory disabled via real writer');assert.equal(store.state.memories.length,memories,'memory switch preserves records');memorySwitch.checked=true;memorySwitch.dispatchEvent(new win.Event('change',{bubbles:true}));await until(()=>store.state.memoryEnabled===true,'memory reenabled');
    });
    await test('module owners select inline and preserve version checks, failures and identity refresh',async()=>{
     const agents=plugin.services.agents,snapshot=await agents.snapshot(),name='负责复杂研究与资料归档工作的助理';
     await agents.createAgent({id:'research',name,avatar:{kind:'preset',presetId:'lin'},position:'合成测试负责人',styleId:'analysis',capabilityIds:['knowledge']},snapshot.version);
     await plugin.services.refreshAgentIdentity();await openCategory('Agent');
     const owner=()=>[...root.querySelectorAll('select[data-module-owner="knowledge-base"]')].find(visible);
-    await until(()=>owner()?.options.length===2&&!owner().matches(':disabled'),'fresh owner snapshot loaded');
-    assert.equal([...root.querySelectorAll('select[data-module-owner]')].filter(visible).length,6);
-    assert.equal(owner().closest('button'),null);assert.deepEqual([...owner().options].map(option=>option.textContent),['总助',name]);
+    await until(()=>owner()?.options.length===4&&!owner().matches(':disabled'),'fresh owner snapshot loaded');
+    const mainGroup=[...root.querySelectorAll('[data-agent-group="main"]')].find(visible),roleGroup=[...root.querySelectorAll('[data-agent-group="role"]')].find(visible);
+    assert.ok(mainGroup&&roleGroup,'both device settings render main/role edit entry groups');
+    assert.equal(mainGroup.querySelectorAll('button').length,1,'only the main Agent is in the main edit group');
+    assert.match(mainGroup.textContent,/总助/u);assert.match(roleGroup.textContent,/通才/u);assert.ok(roleGroup.textContent.includes(name));
+    assert.equal([...root.querySelectorAll('select[data-module-owner]')].filter(visible).length,7);
+    assert.equal(owner().closest('button'),null);assert.deepEqual([...owner().options].map(option=>option.textContent),[settings.agentRegistry.moduleOwners['knowledge-base'] ? '不指定' : '未指定','通才',name,'新建 Agent…']);
     const initialAvatar=owner().parentElement.querySelector('img')?.getAttribute('src'),setOwner=agents.setOwner.bind(agents),refresh=plugin.services.refreshAgentIdentity.bind(plugin.services),calls=[];let identityRefreshes=0;
     agents.setOwner=async(...args)=>{calls.push(args);return setOwner(...args);};plugin.services.refreshAgentIdentity=async()=>{identityRefreshes++;await refresh();};
     const saveData=plugin.saveData;let release;const pending=new Promise(resolve=>{release=resolve;});plugin.saveData=async value=>{await pending;await saveData(value);};
-    choose(win,owner(),'research');assert.equal(owner().matches(':disabled'),true,'saving disables owner selection');choose(win,owner(),'sol');release();
+    choose(win,owner(),'research');assert.equal(owner().matches(':disabled'),true,'saving disables owner selection');choose(win,owner(),'generalist');release();
     await until(()=>settings.agentRegistry.moduleOwners['knowledge-base']==='research'&&owner()?.value==='research'&&!owner().matches(':disabled'),'owner saved and redrawn');plugin.saveData=saveData;
     assert.equal(calls.length,1,'duplicate changes do not submit again');assert.equal(identityRefreshes,1,'saved owner refreshes identity');
     assert.notEqual(owner().parentElement.querySelector('img')?.getAttribute('src'),initialAvatar,'selected avatar follows saved owner');
     assert.equal(root.querySelector('[data-page-id*="settings-owner-"]'),null,'owner selection does not push a page');
-    failSave=true;choose(win,owner(),'sol');await until(()=>owner()?.value==='research'&&!owner().matches(':disabled'),'failed owner save restores selected owner');failSave=false;
+    failSave=true;choose(win,owner(),'generalist');await until(()=>owner()?.value==='research'&&!owner().matches(':disabled'),'failed owner save restores selected owner');failSave=false;
     assert.equal(settings.agentRegistry.moduleOwners['knowledge-base'],'research');assert.ok([...root.querySelectorAll('[role="alert"]')].some(node=>visible(node)&&node.textContent.trim()),'failed save remains visible');
-    const latest=await agents.snapshot();await agents.update(registry=>{registry.agents.find(agent=>agent.id==='research').name='更新后的真实负责人';registry.moduleOwners['knowledge-base']='sol';},latest.version);
-    choose(win,owner(),'sol');await until(()=>owner()?.value==='sol'&&[...owner().options].some(option=>option.textContent==='更新后的真实负责人')&&!owner().matches(':disabled'),'conflict refreshes owner and candidates');
-    assert.equal(settings.agentRegistry.moduleOwners['knowledge-base'],'sol','stale choice does not overwrite newer owner');assert.ok(root.textContent.includes('Agent 配置已变化'));
+    const latest=await agents.snapshot();await agents.update(registry=>{registry.agents.find(agent=>agent.id==='research').name='更新后的真实负责人';registry.moduleOwners['knowledge-base']='generalist';},latest.version);
+    choose(win,owner(),'generalist');await until(()=>owner()?.value==='generalist'&&[...owner().options].some(option=>option.textContent==='更新后的真实负责人')&&!owner().matches(':disabled'),'conflict refreshes owner and candidates');
+    assert.equal(settings.agentRegistry.moduleOwners['knowledge-base'],'generalist','stale choice does not overwrite newer owner');assert.ok(root.textContent.includes('Agent 配置已变化'));
     const retryVersion=(await agents.snapshot()).version;choose(win,owner(),'research');await until(()=>settings.agentRegistry.moduleOwners['knowledge-base']==='research'&&owner()?.value==='research'&&!owner().matches(':disabled'),'explicit choice after conflict uses refreshed version');
     assert.equal(calls.at(-1)[2],retryVersion,'retry uses the refreshed snapshot version');
     agents.setOwner=setOwner;plugin.services.refreshAgentIdentity=refresh;
+   });
+   await test('assistant editor has only identity/persona/approval and creates no task',async()=>{
+    await openCategory('Agent');const count=store.state.sessions.length,req=requests.length;await click(root,'总助');
+    const form=[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].find(visible);assert.ok(form);
+    await until(()=>form.querySelector('[aria-label="人格正文"]'),'assistant form loaded');
+    assert.equal(form.querySelector('[aria-label="职位"]'),null);assert.equal(form.querySelector('[aria-label="一句话简介"]'),null);
+    assert.equal(form.querySelector('[class$="agent-module-grid"]'),null);assert.equal(form.querySelector('[class$="agent-capabilities"]'),null);
+    assert.equal(form.querySelectorAll('input[type="radio"]').length,2,'shared desktop approval preference remains editable');
+    await click(root,'取消');assert.equal(store.state.sessions.length,count);assert.equal(requests.length,req);
+   });
+   await test('new-for-module prechecks and locks ability, returns without model, and deletion leaves module empty',async()=>{
+    await openCategory('Agent');const count=store.state.sessions.length,req=requests.length;
+    choose(win,select(root,'PDF 精读'),'__new_agent__');
+    await until(()=>[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].some(visible),'module creation opens');
+    const form=[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].find(visible);
+    await until(()=>form.querySelector('input[type="text"]'),'creation ready');
+    const moduleCheck=form.querySelector('[class$="agent-module-grid"] input[data-module-id="pdf-reading"]'),cap=form.querySelector('[class$="agent-capabilities"] input[aria-label="PDF 精读"]');
+    assert.equal(moduleCheck.checked,true);assert.equal(cap.checked,true);assert.equal(cap.disabled,true);assert.equal(button(root,'创建').disabled,true);
+    assert.equal(form.querySelector('[class$="agent-avatar-expanded"]').hidden,true,'avatars start collapsed');await click(root,'更换');assert.equal(form.querySelectorAll('[class$="avatar-picker"] button').length,15);
+    const name='模块验收员工'+width;field(win,form,'名字',name);field(win,form,'一句话简介','只写这一轮的验收资料');
+    field(win,form,'人格正文','𠮷'.repeat(4002));assert.equal([...form.querySelector('[aria-label="人格正文"]').value].length,4000);
+    await click(root,'创建');await until(()=>[...root.querySelectorAll('select[data-module-owner="pdf-reading"]')].some(n=>visible(n)&&n.selectedOptions[0]?.textContent===name),'creation returns to owners');
+    const employee=settings.agentRegistry.agents.find(a=>a.name===name);assert.ok(employee);assert.ok(employee.capabilityIds.includes('pdf-reading'));assert.equal([...employee.persona].length,4000);
+    assert.equal(settings.agentRegistry.moduleOwners['pdf-reading'],employee.id);assert.equal(store.state.sessions.length,count);assert.equal(requests.length,req);
+    await click(root,name);await until(()=>[...root.querySelectorAll('.ip-agent-form,.pd-agent-form')].some(visible),'new employee editor opens');await click(root,'删除 Agent');
+    assert.ok(settings.agentRegistry.agents.some(a=>a.id===employee.id),'first click only asks inline');await click(root,'删除并交通才');
+    await until(()=>!settings.agentRegistry.agents.some(a=>a.id===employee.id),'real removal saves');assert.equal(settings.agentRegistry.moduleOwners['pdf-reading'],'');assert.equal(store.state.sessions.length,count);assert.equal(requests.length,req);
    });
    await test('default model continues to open its selection page without repeated scope copy',async()=>{
     await openCategory('模型');
@@ -137,7 +175,7 @@ export async function runMobileSettingsScenarios(api, win) {
     settings.settingsLanguage='en';await plugin.saveSettings();await openCategory('General');
     for(const name of ['Minimal','Highlighter','Manifesto']) assert.ok(button(root,name));
    });
-  } finally { await fixture.dispose();await runtime.shutdown('plugin_disabled');runtime.dispose();await plugin.services.dispose();chat.remove();home.remove();central.remove(); }
+  } finally { appearance.dispose(); await fixture.dispose();await runtime.shutdown('plugin_disabled');runtime.dispose();await plugin.services.dispose();chat.remove();home.remove();central.remove(); }
  }
  console.log(`Mobile settings UI: ${passed} passed (DOM and Provider fixtures, not native devices)`);
 }

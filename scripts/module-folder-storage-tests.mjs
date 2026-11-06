@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -9,8 +10,7 @@ const configured = process.env.ECHOINK_MODULES_TEST_ROOT;
 if (!configured) throw new Error("Set ECHOINK_MODULES_TEST_ROOT to the registered P12 automatic-test root.");
 const temporaryVaults = await realpath(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"));
 const root = await realpath(configured);
-const relativeFixture = path.relative(temporaryVaults, root);
-if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(root)).isDirectory()) {
+if (!isDisposableTestRoot(root) || !(await stat(root)).isDirectory()) {
   throw new Error("Module folder fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
 }
 const run = await mkdtemp(path.join(root, "module-folder-storage-"));

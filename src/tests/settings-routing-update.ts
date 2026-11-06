@@ -9,7 +9,7 @@ import { renderCompactAbout } from "../settings/about-section";
 import { disposeOriginControls } from "../settings/origin-controls";
 import { installProviderBrowserHost } from "./provider-discovery-dom-host";
 
-assert.deepEqual(DESKTOP_SETTINGS_TABS, ["general", "models", "agent", "capabilities", "modules", "account"]);
+assert.deepEqual(DESKTOP_SETTINGS_TABS, ["general", "models", "agent", "memory", "capabilities", "modules", "account"]);
 for (const [legacy, options, expected] of [
   ["agents", {}, { tab: "models" }],
   ["providers", {}, { tab: "models" }],
@@ -23,7 +23,7 @@ for (const [legacy, options, expected] of [
   ["todos", {}, { tab: "modules", section: "todos" }],
   ["review", {}, { tab: "modules", section: "review" }],
   ["review", { focus: "review-archives" }, { tab: "agent", focus: "review-archives" }],
-  ["general", { focus: "general:memory" }, { tab: "agent", focus: "general:memory" }],
+  ["general", { focus: "general:memory" }, { tab: "memory", focus: "general:memory" }],
   ["general", { focus: "general:journal" }, { tab: "modules", section: "journal", focus: "general:journal" }],
   ["agent", {}, { tab: "agent" }],
   ["account", {}, { tab: "account" }]
@@ -40,6 +40,12 @@ for (const [query, focus] of [["生成模板", "knowledge:generation-templates"]
   assert.deepEqual(resolveDesktopSettingsSearchRoute("modules", query), { tab: "modules", focus });
 }
 console.log("PASS module search targets the template list, knowledge details and PDF form");
+for (const query of ["你的画像", "用户画像", "Your profile", "记忆修正", "Memory correction", "记忆管理", "Memory management", "打开记忆页", "Open memory page"]) {
+  assert.deepEqual(resolveDesktopSettingsSearchRoute("memory", query), { tab: "memory", focus: "agent:memory-page" });
+}
+const memoryDefinition = desktopSettingsCategoryDefinitions("zh-CN", () => () => {})[0].items.find(item => item.name === "记忆")!;
+for (const alias of ["你的画像", "Your profile", "记忆管理", "Memory management", "打开记忆页", "Open memory page"]) assert.ok(memoryDefinition.aliases?.includes(alias), `native search indexes ${alias}`);
+console.log("PASS profile and memory management search share the memory page route");
 const moduleDefinition = desktopSettingsCategoryDefinitions("zh-CN", () => () => {})[0].items.find(item => item.name === "模块")!;
 for (const alias of ["生成模板", "Generation templates", "Agent 产出物保存到", "存为笔记的回答", "Saved answers", "Agent 权限与维护", "目录管理"]) assert.ok(moduleDefinition.aliases?.includes(alias), `native search indexes ${alias}`);
 
@@ -142,4 +148,20 @@ export async function runCompactAboutTests(repo: string): Promise<void> {
     }
   } finally { Platform.isDesktopApp = previousDesktop; owner.require = previousRequire; }
   console.log("PASS compact About real Origin controls: icon pairs, original GitHub path, labels/tooltips, external callbacks, hidden logo, single update action and cleanup");
+}
+
+for (const focus of ["agent:memory-page", "general:memory", "general:memory:enabled", "general:memory:dream", "dream", "画像"]) {
+  assert.deepEqual(resolveDesktopSettingsRoute("agent", { focus }), { tab: "memory", focus });
+}
+for (const query of ["记忆", "memory", "做梦", "dream"]) {
+  assert.equal(resolveDesktopSettingsSearchRoute("memory", query)?.tab, "memory");
+}
+for (const focus of ["general:identity", "general:personality-template", "general:avatar", "review:archives"]) {
+  assert.equal(resolveDesktopSettingsRoute(focus.startsWith("review") ? "review" : "general", { focus }).tab, "agent");
+}
+
+for (const focus of ["general:memory:drawer", "explicit:general:memory:drawer"]) {
+  const expected = focus.replace("drawer", "enabled");
+  assert.deepEqual(resolveDesktopSettingsRoute("general", { focus }), { tab: "memory", focus: expected });
+  assert.deepEqual(normalizeDesktopSettingsRoute({ tab: "memory", focus }, "skills"), { tab: "memory", focus: expected });
 }

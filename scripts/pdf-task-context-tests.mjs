@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
@@ -8,8 +9,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const fixtureRoot = process.env.ECHOINK_PDF_TASK_TEST_ROOT ?? path.join(temporaryVaults, "工作台P10自动测试-20261019");
 const canonical = await realpath(fixtureRoot);
-const relativeFixture = path.relative(temporaryVaults, canonical);
-if (!relativeFixture || relativeFixture === ".." || relativeFixture.startsWith(`..${path.sep}`) || path.isAbsolute(relativeFixture) || !(await stat(canonical)).isDirectory()) {
+if (!isDisposableTestRoot(canonical) || !(await stat(canonical)).isDirectory()) {
   throw new Error("PDF task fixtures must use an existing directory inside EchoInk-TestVaults/90-任务临时");
 }
 const directory = await mkdtemp(path.join(canonical, "pdf-task-context-"));

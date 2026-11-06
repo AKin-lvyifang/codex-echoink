@@ -119,7 +119,10 @@ await test("Skill grants survive Agent editing through the production Registry w
   } finally { await f.release(); }
 });
 await test("module handoff only fills the Registry owner's unsent draft and conflicts never overwrite it", async () => {
-  const f = await fixture(), count = f.store.state.sessions.length, owner = f.services.modules.owner("todos");
+  const f = await fixture();
+  await assert.rejects(f.services.modules.handoff("todos", "no owner"), error => error.code === "module_owner_required");
+  f.settings.agentRegistry.moduleOwners.todos = "generalist";
+  const count = f.store.state.sessions.length, owner = f.services.modules.owner("todos");
   const first = await f.services.modules.handoff("todos", "synthetic unsent request"); assert.equal(first.agentId, owner.id); assert.equal(first.conflict, false); assert.equal(f.store.state.sessions.length, count);
   const draft = plain(f.store.state.newTaskDrafts[owner.id]); assert.equal((await f.services.modules.handoff("todos", "different request")).conflict, true); assert.deepEqual(plain(f.store.state.newTaskDrafts[owner.id]), draft);
   assert.equal((await f.services.modules.handoff("todos", "explicit replacement", true)).conflict, false); assert.equal(f.store.state.sessions.length, count); assert.equal(f.store.state.sessions.some(task => task.runs?.length), false); await f.release();

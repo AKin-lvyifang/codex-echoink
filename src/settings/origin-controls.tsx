@@ -214,18 +214,18 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
     popupElement = null;
   });
   const emptyValue = "__echoink_empty_selection__";
-  const renderItem = (item: OriginSelectOption) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>
-        {item.renderIcon ? <span className="echoink-origin-select-label">
-          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) item.renderIcon!(container); }} />
+  const renderLabel = (item: OriginSelectOption) => item.renderIcon ? <span className="echoink-origin-select-label">
+          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) { container.replaceChildren(); item.renderIcon!(container); } }} />
           <span className="echoink-origin-select-text">{item.label}</span>
-        </span> : item.label}
-      </SelectItem>;
+        </span> : item.label;
+  const renderItem = (item: OriginSelectOption) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>{renderLabel(item)}</SelectItem>;
+  const renderValue = () => { const selected = items.find(item => item.value === value); return selected ? renderLabel(selected) : undefined; };
   const render = () => island.render(<Select value={value || emptyValue} disabled={disabled} open={open} onOpenChange={setOpen} onValueChange={(next) => {
     value = next === emptyValue ? "" : next; render();
     const element = island.element();
     element.dispatchEvent(new (element.ownerDocument.defaultView!.Event)("change", { bubbles: true }));
   }}>
-    <SelectTrigger ref={island.ref} className="echoink-origin-control"><SelectValue /></SelectTrigger>
+    <SelectTrigger ref={island.ref} className="echoink-origin-control"><SelectValue>{renderValue()}</SelectValue></SelectTrigger>
     <SelectContent ref={setPopupElement} container={portalHost} className={`echoink-origin-control echoink-theme-overlay${parent.closest(".echoink-paper-guide-modal") ? " echoink-paper-guide-select-overlay" : ""}${parent.closest(".echoink-settings-demo,.echoink-settings-modal") && !parent.closest(".echoink-mobile,.echoink-mobile-modal") && !ownerDocument.body.classList.contains("is-mobile") ? " echoink-settings-overlay" : ""}`} position="popper" style={popupTheme}
       onFocusCapture={(event) => {
         const content = event.currentTarget;

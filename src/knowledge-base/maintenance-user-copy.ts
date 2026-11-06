@@ -23,7 +23,7 @@ export function maintenanceVisibleCopyIsSafe(text: string, question = false): bo
   return !INTERNAL_COPY.test(text) && (!question || !/\d+\s*\/\s*\d+/u.test(text));
 }
 export function maintenanceToolTitle(name: string | undefined, status?: string): string {
-  const title: Record<string, string> = { obsidian_cli: "检查笔记", note_read: "读取笔记", knowledge_read: "读取笔记", vault_search: "查找笔记", knowledge_search: "查找资料", knowledge_maintain: "整理知识库", note_create: "写入笔记", note_update: "更新笔记", metadata_update: "更新笔记信息" };
+  const title: Record<string, string> = { knowledge_system_read: "读取领域全文", knowledge_system_propose: "提交知识体系提案", obsidian_cli: "检查笔记", note_read: "读取笔记", knowledge_read: "读取笔记", vault_search: "查找笔记", knowledge_search: "查找资料", knowledge_maintain: "整理知识库", note_create: "写入笔记", note_update: "更新笔记", metadata_update: "更新笔记信息" };
   const known = title[name ?? ""];
   if (status === "failed") return known ? `${known}这一步没完成` : "这一步没完成";
   if (status === "cancelled" || status === "interrupted") return "这一步已停止";

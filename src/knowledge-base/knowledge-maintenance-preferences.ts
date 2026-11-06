@@ -200,7 +200,7 @@ function snapshotFromContent(
   content: string
 ): Readonly<KnowledgeMaintenancePreferenceSnapshot> {
   const normalized = normalizePreferenceContent(content);
-  const isDefault = normalized === ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
+  const isDefault = canonicalPreferenceContent(normalized) === ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
   return Object.freeze({
     profileVersion: ECHOINK_KNOWLEDGE_PREFERENCE_PROFILE_VERSION,
     state: isDefault
@@ -223,7 +223,7 @@ function legacyDefaultMeaning(content: string): string {
 }
 
 function isLegacyDefault(content: string): boolean {
-  return content === PREVIOUS_P2_DEFAULT || legacyDefaultMeaning(content) === legacyDefaultMeaning(ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
+  return canonicalPreferenceContent(content) === PREVIOUS_P2_DEFAULT || legacyDefaultMeaning(content) === legacyDefaultMeaning(ECHOINK_LEGACY_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES);
 }
 
 function hasSevenTypeTemplates(content: string): boolean {
@@ -262,19 +262,23 @@ function normalizePreferenceContent(value: unknown): string {
       "Knowledge maintenance preferences must be text."
     );
   }
-  const normalized = value.replace(/\r\n?/gu, "\n");
-  const bytes = Buffer.byteLength(normalized, "utf8");
+  const bytes = Buffer.byteLength(value, "utf8");
   if (
-    !normalized.trim()
+    !value.trim()
     || bytes > MAX_PREFERENCES_BYTES
-    || hasDisallowedControlCharacters(normalized)
+    || hasDisallowedControlCharacters(value)
   ) {
     throw new KnowledgeMaintenancePreferenceError(
       "invalid_content",
       "Knowledge maintenance preferences are empty or invalid."
     );
   }
-  return `${normalized.trimEnd()}\n`;
+  return value;
+}
+
+/** Presentation equivalence is used only for default recognition, never for saving user bytes. */
+function canonicalPreferenceContent(value: string): string {
+  return value.replace(/\r\n?/gu, "\n").trimEnd() + "\n";
 }
 
 function preferenceRevision(content: string): string {

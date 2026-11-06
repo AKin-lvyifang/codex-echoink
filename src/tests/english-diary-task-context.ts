@@ -62,7 +62,7 @@ async function draftScopeLifecycle(root: string): Promise<void> {
   assert.equal(queue.acceptPiUserEntry(acceptedSnapshot.sessionId, acceptedSnapshot.id), true);
   assert.equal(consumeAcceptedTaskDraft(workspace, "agent:sol", acceptedSnapshot), true);
   assert.equal(queue.hasQueuedItems(acceptedSnapshot.sessionId), false);
-  assert.deepEqual(workspace.newTaskDrafts.sol, { text: "", attachments: [] });
+  assert.deepEqual(workspace.newTaskDrafts.sol, { text: "", attachments: [], selectedMode: "agent" });
   assert.equal(workspace.newTaskDrafts.colleague.text, "另一位的旧草稿");
   assert.equal(workspace.replyDrafts["existing-task"].text, "旧任务的回复");
   console.log("PASS task drafts: prefill, avatar switching, saved reload, existing draft protection, queued snapshot and same-scope acceptance.");

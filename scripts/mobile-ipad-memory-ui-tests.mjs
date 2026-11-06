@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import esbuild from "esbuild";
@@ -6,8 +7,9 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("src/ui/ipad/agent-settings-pages.ts"));
 const dom = new JSDOM("<!doctype html><body><aside><textarea>right task draft</textarea></aside><main></main></body>", { pretendToBeVisual: true, url: "https://ipad-memory.invalid" });
+installMobileDomHost(dom.window);
 const notices = [], module = { exports: {} };
-vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, document: dom.window.document, window: dom.window,
+vm.runInNewContext(build.outputFiles[0].text, { module, Error, exports: module.exports, document: dom.window.document, window: dom.window,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, Node: dom.window.Node, AbortController, structuredClone, URL, setTimeout, clearTimeout, console, atob, btoa, TextEncoder, TextDecoder,
   require(id) { assert.equal(id, "obsidian"); return { setIcon: (node, icon) => { node.dataset.icon = icon; }, Notice: class { constructor(value) { notices.push(value); } } }; } });
 const tick = async () => { for (let index = 0; index < 5; index++) await new Promise(resolve => setTimeout(resolve, 0)); };
@@ -63,19 +65,19 @@ const ctx = { root, document: dom.window.document, host: { services: { memory: a
   async push(page) { const previous = stack.at(-1); if (previous?.canLeave && !await previous.canLeave()) { page.dispose?.(); return false; } if (previous) previous.panel.hidden = true; mount(page); return true; },
   async back() { const page = stack.at(-1); if (page?.canLeave && !await page.canLeave()) return false; stack.pop(); page.dispose?.(); page.panel.remove(); if (stack.at(-1)) stack.at(-1).panel.hidden = false; return true; } };
 const current = () => stack.at(-1), buttons = scope => [...(scope ?? current().panel).querySelectorAll("button")];
-const click = async (label, scope) => { const button = buttons(scope).find(node => node.textContent.trim() === label); assert.ok(button, `button exists: ${label}`); button.click(); await tick(); };
+const click = async (label, scope) => { const button = buttons(scope).find(node => node.textContent.trim() === label || node.getAttribute("aria-label") === label); assert.ok(button, `button exists: ${label}`); button.click(); await tick(); };
 const fill = (label, value, scope = current().content) => { const node = scope.querySelector(`[aria-label="${label}"]`); assert.ok(node, `input exists: ${label}`); node.value = value; node.dispatchEvent(new dom.window.Event("input", { bubbles: true })); return node; };
 const toggle = async (label, enabled) => { const input = current().content.querySelector(`[aria-label="${label}"]`); assert.ok(input); input.checked = enabled; input.dispatchEvent(new dom.window.Event("change")); await tick(); return input; };
 const profileRow = key => current().content.querySelector(`[data-profile-key="${key}"]`);
 const unhandled = [], collect = error => unhandled.push(error); process.on("unhandledRejection", collect);
 try {
   mount(module.exports.createAgentSettingsPage(ctx, async id => { edited.push(id); await ctx.push({ id: "agent-form", title: "Agent", content: dom.window.document.createElement("div") }); })); await tick();
-  const rootPage = current(); assert.deepEqual([...rootPage.content.querySelectorAll("h2")].map(node => node.textContent), ["我的 Agent", "模块负责人", "记忆", "会话"]);
-  const initialReads = profileReads; for (let index = 0; index < 5; index++) ctx.refresh(); await tick(); assert.equal(profileReads, initialReads, "unrelated workbench updates must not rescan profile files");
-  assert.match(rootPage.content.textContent, /你的画像2 项/); assert.match(rootPage.content.textContent, /已归档会话1/); assert.match(rootPage.content.textContent, /每天最多 1 次/); assert.match(rootPage.content.textContent, /完成 7 天后/);
-  assert.equal(rootPage.content.querySelectorAll(".pd-agent-owner-avatar").length, 6);
+  assert.deepEqual([...current().content.querySelectorAll("h2")].map(node => node.firstChild.textContent.trim()), ["主 Agent", "角色 Agent", "模块负责人"]); assert.equal(current().content.querySelectorAll(".pd-agent-owner-value-icon").length, 7); assert.ok(!current().content.textContent.includes("长期记忆"));
   await click("新建 Agent"); assert.equal(current().id, "agent-form"); assert.deepEqual(edited, [undefined]); await ctx.back();
-  const owner = buttons().find(node => node.textContent.trim() === "日记总助"); owner.click(); await tick(); await click("研究员"); assert.equal(writes.owners[0].agentId, "research"); assert.equal(writes.owners[0].version, "registry1");
+  const owner = current().content.querySelector('select[aria-label="日记"]'); assert.ok(owner); owner.value="research"; owner.dispatchEvent(new dom.window.Event("change")); await tick(); assert.equal(writes.owners[0].agentId, "research"); assert.equal(writes.owners[0].version, "registry1");
+  await ctx.back(); mount(module.exports.createAgentSettingsPage(ctx, async () => {}, "memory")); await tick(); const rootPage = current();
+  const initialReads = profileReads; for (let index = 0; index < 5; index++) ctx.refresh(); await tick(); assert.equal(profileReads, initialReads, "unrelated workbench updates must not rescan profile files");
+  assert.match(rootPage.content.textContent, /你的画像2 项/); assert.match(rootPage.content.textContent, /每天最多 1 次/);
   failSetting = true; const failedToggle = await toggle("长期记忆", true); assert.equal(failedToggle.checked, false); assert.equal(prefs.memoryEnabled, false); failSetting = false;
   await click("你的画像2 项"); assert.equal(current().content.querySelectorAll("[data-profile-key]").length, 24); assert.equal(current().content.querySelectorAll(".pd-agent-unfilled").length, 3);
   assert.match(profileRow("preference.language").textContent, /系统观察 · 仅供参考/); await click("确认", profileRow("preference.language")); assert.match(profileRow("preference.language").textContent, /你确认的/);
@@ -88,14 +90,15 @@ try {
   const leave = ctx.back(); await tick(); await click("继续编辑"); assert.equal(await leave, false); assert.equal(profileRow("identity.name").querySelector("textarea").value, "leave draft");
   await click("取消", profileRow("identity.name")); await ctx.back(); await tick(); assert.match(current().content.textContent, /你的画像1 项/);
   await click("记忆修正"); await click("导出"); assert.equal(writes.export, 1); await click("已导出Exports/memory.md"); assert.deepEqual(openedNotes, ["Exports/memory.md"]);
-  const recordButton = buttons().find(node => node.textContent.includes("原记忆")); recordButton.click(); await tick(); assert.match(current().content.textContent, /用户原始陈述/);
+  const recordButton = buttons().find(node => node.textContent.includes("原记忆")); recordButton.click(); await tick(); assert.match(current().content.textContent, /来源任务中保存的记录/);
   await click("修正"); fill("记忆内容", "本地修正草稿"); await click("预览修改"); assert.match(current().content.textContent, /修改前/); assert.match(current().content.textContent, /修改后/); assert.equal(writes.correction.length, 0);
   failCorrection = true; await click("确认修正"); assert.match(current().content.textContent, /本地修正草稿/); assert.match(current().content.textContent, /修正冲突/); failCorrection = false;
   await click("继续修改"); assert.equal(current().content.querySelector("textarea").value, "本地修正草稿"); await click("预览修改"); await click("确认修正"); assert.equal(writes.correction.length, 1); assert.equal(records[0].content, "本地修正草稿");
   await click("忘记"); assert.equal(writes.forgetting.length, 0); await click("确认忘记"); assert.equal(writes.forgetting.length, 1); assert.equal(current().id, "ipad-memory-list");
   current().content.querySelector(".pd-agent-forgotten").open = true; await click("恢复"); const confirmation = current().content.querySelector(".pd-agent-inline-confirm"); await click("恢复", confirmation); assert.deepEqual(writes.restoring, ["m1"]); assert.equal(records[0].source, originalRecord.source);
-  await ctx.back(); await tick(); await click("已归档会话1"); await click("历史任务2 条消息"); assert.match(current().content.textContent, /历史问题/); assert.match(current().content.textContent, /历史回答/); assert.equal(current().content.querySelector("textarea,input"), null);
+  await ctx.back(); await tick(); await ctx.push(module.exports.createAgentSettingsPage(ctx, async () => {}, "sessions")); await tick(); await click("已归档会话1"); await click("历史任务2 条消息"); assert.match(current().content.textContent, /历史问题/); assert.match(current().content.textContent, /历史回答/); assert.equal(current().content.querySelector("textarea,input"), null);
   await click("恢复会话"); await click("恢复", current().content.querySelector(".pd-agent-inline-confirm")); assert.deepEqual(writes.archived, ["a1"]); await ctx.back(); await tick();
+  await ctx.back(); await tick();
   await toggle("做梦", true); assert.ok(current().content.querySelector('[aria-label="每日最多次数"]')); await click("立即整理"); assert.equal(writes.dream, 1); assert.match(current().content.textContent, /正在整理/);
   await click("停止"); assert.ok(writes.cancelDream > 0); assert.match(current().content.textContent, /整理已中断/); assert.equal(buttons().find(node => node.textContent.trim() === "立即整理").disabled, true, "daily limit disables another attempt");
   dream.attemptsToday = 0; notify(); await tick(); await click("立即整理"); assert.equal(writes.dream, 2); await toggle("做梦", false); assert.equal(dream.phase, "interrupted"); assert.equal(prefs.dreamEnabled, false); await toggle("做梦", true);

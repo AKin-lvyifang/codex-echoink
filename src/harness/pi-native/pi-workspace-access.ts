@@ -24,8 +24,11 @@ export function normalizePiWorkspacePermission(value: unknown): PermissionMode {
 }
 
 const CONTENT_READ_TOOLS = new Set([
+  "knowledge_system_read", "knowledge_system_propose",
   "workspace_read", "todo_query", "pdf_reading_query", "vault_search", "note_read", "explore_concept", "knowledge_search", "knowledge_read",
-  "memory_search", "memory_read", "task_update", "user_question", "obsidian_context", "obsidian_cli", "obsidian_plugin_search", "finance_query", "finance_budget", "finance_bill"
+  "memory_search", "memory_read", "task_update", "user_question", "obsidian_context", "obsidian_cli", "obsidian_plugin_search", "finance_query", "finance_budget", "finance_bill",
+  // Company tools only route and report; dispatched work inherits this card's permission.
+  "company_roster", "task_dispatch", "task_message", "task_stop", "task_status", "project_propose", "project_accept", "report_to_router"
 ]);
 
 /** Commands describe intent. Only this turn's access and tool metadata grant capability. */

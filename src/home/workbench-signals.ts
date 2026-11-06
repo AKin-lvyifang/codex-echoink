@@ -1,3 +1,4 @@
+import { knowledgeSystemReminderText, type KnowledgeSystemReminder } from "../knowledge-base/knowledge-system-reminders";
 import type { AgentModuleId } from "../agents/types";
 import type { FinanceEntry, LifestyleData } from "../lifestyle/store-core";
 import { effectiveFinanceBudget } from "../lifestyle/finance-budget";
@@ -11,6 +12,7 @@ import type { MaintenanceActivity } from "../knowledge-base/maintenance-activity
 
 export interface WorkbenchSourceFile { path: string; fingerprint: string; enteredAt?: number }
 export interface WorkbenchFacts {
+  knowledgeSystems?: readonly KnowledgeSystemReminder[];
   now: number;
   modules: readonly AgentModuleId[];
   tasks: readonly { conversationId?: string; businessKey?: string; taskStatus?: string; pendingResponse?: unknown; status?: string }[];
@@ -114,6 +116,8 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
   }
   if (facts.isolated && facts.isolated.length >= 5) add(14, "knowledge-base", "isolated", facts.knowledgeScope, "network", english ? `${facts.isolated.length} notes have no resolved links` : `${facts.isolated.length} 篇笔记缺少关联`,
     "请检查这些知识成果和项目笔记，依据真实内容补充合适的关联，不添加无依据的链接。", facts.isolated);
+  for (const reminder of facts.knowledgeSystems ?? []) add(15, "knowledge-base", "knowledge-system", `${reminder.mapPath}:${reminder.domain}`, "network", knowledgeSystemReminderText(reminder, english),
+    `请读完「${reminder.domain}」领域全部知识与地图，为我提出两种知识体系框架并核对时序、上下位与框架级缺口，先讨论，不改地图。`, [reminder.mapPath, reminder.domain]);
   return signals;
 }
 

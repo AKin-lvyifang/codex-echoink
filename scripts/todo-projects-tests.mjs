@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -7,10 +8,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 if (!process.env.ECHOINK_TODO_TEST_ROOT) throw new Error("Explicit ECHOINK_TODO_TEST_ROOT required");
 const testRoot = await realpath(process.env.ECHOINK_TODO_TEST_ROOT);
-if (!testRoot.startsWith(allowed + path.sep)) throw new Error("Fixtures must stay in 90-任务临时");
+if (!isDisposableTestRoot(testRoot)) throw new Error("Fixtures must stay in 90-任务临时");
 const fixture = await mkdtemp(path.join(testRoot, "todo-projects-"));
 try {
   const output = path.join(fixture, "tests.mjs");

@@ -912,6 +912,7 @@ export function visiblePiConversationDiagnostics(
   return support.diagnostics
     .filter((diagnostic) => {
       if (diagnostic.code === "session_recovered_prefix") return false;
+      if (diagnostic.code === "runtime_interrupted" && support.catalog.taskStatus && support.catalog.taskStatus !== "interrupted") return false;
       if (
         diagnostic.code === "session_jsonl_malformed"
         || diagnostic.code === "session_jsonl_truncated"

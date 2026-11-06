@@ -1,3 +1,4 @@
+import { requireModuleOwner } from "../agents/registry";
 import { TFile, parseYaml, type App, type EventRef } from "obsidian";
 import { GENERAL_ASSISTANT_ID, type AgentModuleId } from "../agents/types";
 import type { TaskDraft } from "../agents/task-workspace";
@@ -421,8 +422,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
     await this.store.update(latest => {
       if (this.disposed || generation !== this.generation) throw new Error("这条提醒已更新，请刷新后再交给 Agent。");
       if (latest.sessions.some(task => !task.archivedAt && task.businessKey === current.key && (task.taskStatus === "running" || task.taskStatus === "waiting" || task.pendingResponse))) throw new Error("这件事已经交给 Agent。");
-      const registry = this.settings().agentRegistry, assigned = registry.moduleOwners[current.moduleId];
-      agentId = registry.agents.some(agent => agent.id === assigned) ? assigned : GENERAL_ASSISTANT_ID;
+      agentId = requireModuleOwner(this.settings().agentRegistry, current.moduleId).id;
       const previous = latest.newTaskDrafts[agentId], source = JSON.stringify(current.source);
       const same = previous?.text === current.prompt && parseMobileWorkbenchSource(previous.prefillSource)?.businessKey === current.key;
       const occupied = previous && (previous.text.trim() || previous.attachments.length || previous.noteMentions?.length || previous.annotations?.length || previous.selectedSkill);

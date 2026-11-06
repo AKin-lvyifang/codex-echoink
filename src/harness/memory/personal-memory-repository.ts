@@ -32,12 +32,12 @@ import {
   buildSearchIndexV3,
   indexChecksum,
   lexicalTokens,
-  scorePrimaryEntry,
   scoreSecondaryEntry,
   type BuildIndexCatalogInput,
   type SearchIndexV3,
   type SecondaryCatalogEntry
 } from "./search-index-v3";
+import { assertMemoryPinLimit, automaticMemoryQueryTokens, memoryRelevanceScorer, memoryTemporalContext, rankMemory } from "./memory-relevance";
 import {
   applyDreamProfileUpdate,
   emptyUserProfileState,
@@ -57,6 +57,8 @@ import {
 import {
   USER_MD_HARD_MAX_BYTES
 } from "./agent-self";
+import { MemoryActivityStore, MEMORY_ACTIVITY_PATH } from "./memory-activity-store";
+import { cognitiveAtomicWrite } from "./cognitive-file-utils";
 import { normalizeTextForDedupe } from "./cognitive-file-utils";
 import {
   invalidatedMemoryProductRunIds,
@@ -229,6 +231,7 @@ interface PersonalMemoryManifest {
 export interface PersonalMemoryTurnSnapshot {
   readonly revision: number;
   readonly scanned: number;
+  readonly core?: readonly import("./personal-memory-contracts").PersonalMemoryCoreCandidate[];
   readonly agent: string;
   readonly user: string | null;
   readonly memory: string | null;
@@ -238,8 +241,10 @@ export interface PersonalMemoryTurnSnapshot {
 
 export type PersonalMemoryTurnCatalogCandidate = Pick<PersonalMemorySearchItem,
   "id" | "kind" | "status" | "title" | "recallWhen" | "summary" | "date" | "basis" | "sourceSummary" | "scope" | "score"
-  | "contentOrigin" | "asOf" | "supersedes" | "supersededRecord" | "revision" | "file"
+  | "contentOrigin" | "asOf" | "supersedes" | "supersededRecord" | "revision" | "file" | "daysAgo" | "due" | "overdue" | "recallReason"
 > & Readonly<{
+  /** Runtime-only lifecycle signal for directory admission; never serialized or indexed. */
+  activity?: number;
   /**
    * 该一级记忆命中查询的全部二级事实（Recall PRD §12）：预算选择必须
    * 按「一级候选 + 这些二级事实」的最终注入形态计算 Token。
@@ -309,6 +314,18 @@ export class PersonalMemoryAccessError extends Error {
 
 export class PersonalMemoryRepository {
   readonly layout: PersonalMemoryLayout;
+  private activityStore?: MemoryActivityStore;
+  private activity(): MemoryActivityStore {
+    return this.activityStore ??= new MemoryActivityStore(this.vaultId, {
+      read: async () => { try { return await readFile(path.join(this.layout.root, MEMORY_ACTIVITY_PATH), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; } },
+      write: async (content) => { await this.assertManagedPathsSafe([path.join(this.layout.root, MEMORY_ACTIVITY_PATH)]); await cognitiveAtomicWrite(path.join(this.layout.root, MEMORY_ACTIVITY_PATH), content); }
+    });
+  }
+  async previewMemoryActivity(now: number) { return this.activity().peek(now); }
+  async readSecondaryForUserControl() { await this.initialize(); return structuredClone(this.secondaryCache); }
+  async memoryActivity(now = this.now()) { return this.activity().snapshot(now); }
+  async recordRecalledMemories(ids: readonly string[], turnId: string) { return this.activity().record(ids, turnId, this.now()); }
+  async restoreMemoryActivity(id: string) { return this.activity().restore(id, this.now()); }
   private readonly vaultPath: string;
   private readonly vaultId: string;
   private readonly now: () => number;
@@ -625,11 +642,17 @@ export class PersonalMemoryRepository {
   async prepareTurnSnapshot(
     input: Readonly<{
       memoryMode: "normal" | "no_memory";
+      preview?: boolean;
+      now?: number;
       query?: string;
       scope?: PersonalMemorySearchRequest["scope"];
       statuses?: PersonalMemorySearchRequest["statuses"];
       from?: PersonalMemorySearchRequest["from"];
       to?: PersonalMemorySearchRequest["to"];
+      /** Directory discovery only: keep eligible non-matching metadata without reading bodies. */
+      includeUnmatchedCandidates?: boolean;
+      /** Directory-selected IDs take priority; an explicit empty list suppresses dynamic recall. */
+      preferredCandidateIds?: readonly string[];
       selectCandidateIds?(
         candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]
       ): readonly string[];
@@ -654,7 +677,11 @@ export class PersonalMemoryRepository {
         index,
         input.selectCandidateIds
       );
-      return Object.freeze({ ...fixed, scanned: index.catalog.length, search });
+      const core = input.memoryMode === "normal" ? await Promise.all(manifest.records.filter(record => record.status === "current" && record.pinned).map(async metadata => {
+        const record = await this.readRecord(metadata);
+        return Object.freeze({ id: record.id, title: record.title, summary: Array.from(summarize(record.content)).slice(0, 80).join("") });
+      })) : [];
+      return Object.freeze({ ...fixed, core: Object.freeze(core), scanned: index.catalog.length, search });
     });
   }
 
@@ -776,7 +803,7 @@ export class PersonalMemoryRepository {
       await this.refreshPrimaryCachesBeforeWrite();
       if (request.operation === "supersede"
         || request.operation === "close"
-        || request.operation === "forget") {
+        || request.operation === "forget" || request.operation === "pin" || request.operation === "unpin") {
         await this.reconcilePrimaryTargetsBeforeMutation([request.targetId]);
       } else if (request.operation === "profile_update" && request.targetId) {
         await this.reconcilePrimaryTargetsBeforeMutation([request.targetId]);
@@ -784,6 +811,7 @@ export class PersonalMemoryRepository {
       const manifest = await this.readManifest();
       const records = await this.readAllRecords(manifest);
       if (request.operation === "create") {
+        if (request.pinned && !runtime.explicitlyAuthorized) throw new PersonalMemoryAccessError("invalid_request", "固定记忆必须由用户明确要求");
         validateWriteContent(
           request.kind,
           request.basis,
@@ -804,6 +832,10 @@ export class PersonalMemoryRepository {
         await this.assertFixedFilesMatchManifest(manifest);
       }
       switch (request.operation) {
+        case "pin":
+        case "unpin":
+          if (!runtime.explicitlyAuthorized) throw new PersonalMemoryAccessError("invalid_request", "固定或取消固定必须来自用户当轮明确要求");
+          return await this.setPinnedRecord(manifest, records, request.targetId, request.operation === "pin");
         case "create":
           return await this.createRecord(manifest, records, request, runtime);
         case "supersede":
@@ -864,6 +896,7 @@ export class PersonalMemoryRepository {
     const queryTokens = lexicalTokens(query);
     const browseAll = query.length === 0;
     const queryTokenSet = new Set(queryTokens);
+    const now = this.now();
     const secondaryBest = bestSecondaryScores(index, query, queryTokenSet);
     const normalizedStatuses = [...new Set(request.statuses ?? ["current"])].sort(compareText);
     const normalizedKinds = request.kinds
@@ -884,20 +917,24 @@ export class PersonalMemoryRepository {
     const offset = request.cursor
       ? decodeSearchCursor(request.cursor, manifest.revision, fingerprint)
       : 0;
-    const ranked = index.catalog
+    const eligible = index.catalog
       .filter((record) => statuses.has(record.status))
       .filter((record) => !kinds || kinds.has(record.kind))
       .filter((record) => !scope || record.scope?.toLocaleLowerCase() === scope)
       .filter((record) => !request.from || record.date >= request.from)
-      .filter((record) => !request.to || record.date <= request.to)
+      .filter((record) => !request.to || record.date <= request.to);
+    const activity = await this.memoryActivity(now);
+    const lifecycleRecords = new Map(manifest.records.map(record => [record.id, record]));
+    const scorePrimary = memoryRelevanceScorer(eligible, query);
+    const ranked = eligible
       .map((record) => {
-        const primaryScore = scorePrimaryEntry(record, query, queryTokenSet);
+        const primaryScore = scorePrimary(record);
         const secondary = secondaryBest.get(record.id);
         return {
           record,
           primaryScore,
           secondary,
-          score: primaryScore + (secondary?.score ?? 0)
+          ...rankMemory(primaryScore + (secondary?.score ?? 0), lifecycleRecords.get(record.id)!, activity, now, query, "search")
         };
       })
       .filter((entry) => browseAll || (queryTokens.length > 0 && entry.score > 0))
@@ -925,6 +962,7 @@ export class PersonalMemoryRepository {
         summary: summarize(full.content),
         date: record.date,
         ...searchItemIdentity(full),
+        ...memoryTemporalContext(full, now),
         score,
         ...(secondary ? { matchedSecondaryId: secondary.entry.id } : {})
       });
@@ -957,7 +995,12 @@ export class PersonalMemoryRepository {
   }
 
   private async prepareTurnSearchSnapshot(
-    request: Readonly<Pick<PersonalMemorySearchRequest, "query" | "scope" | "statuses" | "from" | "to">>,
+    request: Readonly<Pick<PersonalMemorySearchRequest, "query" | "scope" | "statuses" | "from" | "to"> & {
+      preview?: boolean;
+      now?: number;
+      includeUnmatchedCandidates?: boolean;
+      preferredCandidateIds?: readonly string[];
+    }>,
     manifest: PersonalMemoryManifest,
     index: Readonly<SearchIndex>,
     selectCandidateIds: ((
@@ -965,10 +1008,11 @@ export class PersonalMemoryRepository {
     ) => readonly string[]) | undefined
   ): Promise<Readonly<PersonalMemoryTurnSearchResult>> {
     const query = cleanOptional(request.query, "query", 2_000) ?? "";
-    const queryTokens = lexicalTokens(query);
+    const queryTokens = automaticMemoryQueryTokens(query);
     const browseAll = query.length === 0;
     const queryTokenSet = new Set(queryTokens);
-    const secondaryBest = bestSecondaryScores(index, query, queryTokenSet);
+    const now = request.now ?? this.now();
+    const secondaryBest = bestSecondaryScores(index, query, queryTokenSet, true);
     const secondaryMatches = groupSecondaryMatches(index, query, queryTokenSet);
     const metadataById = new Map(manifest.records.map((record) => [record.id, record]));
     const cachedRecordsById = new Map(this.recordsCache?.map((record) => [record.id, record]) ?? []);
@@ -1001,7 +1045,8 @@ export class PersonalMemoryRepository {
       if (!record) {
         throw new PersonalMemoryAccessError("invalid_request", "Personal Memory turn index contains an unavailable record");
       }
-      const { supersedes, ...identity } = searchItemIdentity(record);
+      const { supersedes, ...rest } = searchItemIdentity(record);
+      const identity = { ...rest, ...memoryTemporalContext(record, now) };
       // Resolve historical metadata only from this turn's manifest. A current
       // global record cannot expose a project history outside the turn scope.
       const previous = supersedes ? metadataById.get(supersedes) : undefined;
@@ -1024,30 +1069,47 @@ export class PersonalMemoryRepository {
     };
     const secondaryViewFor = (entry: SecondaryCatalogEntry) =>
       toSecondaryMatchView(entry, secondaryById.get(entry.id));
-    const statuses = new Set(request.statuses ?? ["current"]);
+    const directoryMode = request.includeUnmatchedCandidates === true || request.preferredCandidateIds !== undefined;
+    const statuses = new Set((request.statuses ?? ["current"]).filter(status => !directoryMode || status === "current"));
     // A project boundary keeps global preferences alongside this project's
     // records. Historical records remain opt-in through explicit statuses.
     const eligible = index.catalog
       .filter((record) => statuses.has(record.status))
-      .filter(withinBoundary);
-    const ranked = eligible
+      .filter(withinBoundary)
+      .filter(record => !directoryMode || metadataById.get(record.id)?.status === "current" && !forgottenIds.has(record.id))
+      .filter(record => !metadataById.get(record.id)?.pinned);
+    const activity = request.preview ? await this.previewMemoryActivity(now) : await this.memoryActivity(now);
+    const scorePrimary = memoryRelevanceScorer(eligible, query, "automatic", queryTokens);
+    const lifecycleRanked = eligible
       .map((record) => {
-        const primaryScore = scorePrimaryEntry(record, query, queryTokenSet);
+        const primaryScore = scorePrimary(record);
         const secondary = secondaryBest.get(record.id);
         return {
           record,
           primaryScore,
           secondary,
-          score: primaryScore + (secondary?.score ?? 0)
+          ...rankMemory(primaryScore + (secondary?.score ?? 0), metadataById.get(record.id)!, activity, now, query, "automatic")
         };
       })
-      .filter((entry) => browseAll || (queryTokens.length > 0 && entry.score > 0))
+      .filter(entry => entry.eligible && (!directoryMode || entry.layer !== "faded"));
+    const preferredOrder = new Map((request.preferredCandidateIds ?? []).map((id, index) => [id, index]));
+    const validPreferredIds = new Set(lifecycleRanked.filter(entry => preferredOrder.has(entry.record.id)).map(entry => entry.record.id));
+    const admit = (id: string, score: number) => {
+      if (request.preferredCandidateIds !== undefined && validPreferredIds.size === 0) return false;
+      return request.includeUnmatchedCandidates === true || validPreferredIds.has(id)
+        || (request.preferredCandidateIds === undefined && browseAll)
+        || (queryTokens.length > 0 && score > 0);
+    };
+    const preferredRank = (id: string) => validPreferredIds.has(id) ? preferredOrder.get(id)! : Number.MAX_SAFE_INTEGER;
+    const ranked = lifecycleRanked
+      .filter(entry => admit(entry.record.id, entry.score))
       .sort((left, right) =>
-        right.score - left.score
+        preferredRank(left.record.id) - preferredRank(right.record.id)
+        || right.score - left.score
         || right.record.date.localeCompare(left.record.date)
         || left.record.id.localeCompare(right.record.id)
       );
-    const catalogCandidates = Object.freeze(ranked.map(({ record, score }) => {
+    const catalogCandidates = Object.freeze(ranked.map(({ record, score, recallReason, activity }) => {
       const matches = secondaryMatches.get(record.id);
       return Object.freeze({
         id: record.id,
@@ -1057,7 +1119,9 @@ export class PersonalMemoryRepository {
         summary: record.summary,
         date: record.date,
         ...identityFor(record.id),
+        recallReason,
         score,
+        activity,
         ...(matches && matches.length > 0
           ? { secondaryMatches: Object.freeze(matches.map(secondaryViewFor)) }
           : {})
@@ -1083,17 +1147,18 @@ export class PersonalMemoryRepository {
     // a valid proxy because the token-budget selector can skip one oversized
     // record and still admit smaller records that follow it.
     const primaryOnlyCandidates = Object.freeze(eligible
-      .map((record) => ({
-        record,
-        primaryScore: scorePrimaryEntry(record, query, queryTokenSet)
-      }))
-      .filter(({ primaryScore }) => browseAll || (queryTokens.length > 0 && primaryScore > 0))
+      .map((record) => {
+        const lifecycle = rankMemory(scorePrimary(record), metadataById.get(record.id)!, activity, now, query, "automatic");
+        return { record, primaryScore: lifecycle.score, ...lifecycle };
+      })
+      .filter(entry => entry.eligible && (!directoryMode || entry.layer !== "faded") && admit(entry.record.id, entry.primaryScore))
       .sort((left, right) =>
-        right.primaryScore - left.primaryScore
+        preferredRank(left.record.id) - preferredRank(right.record.id)
+        || right.primaryScore - left.primaryScore
         || right.record.date.localeCompare(left.record.date)
         || left.record.id.localeCompare(right.record.id)
       )
-      .map(({ record, primaryScore }) => Object.freeze({
+      .map(({ record, primaryScore, recallReason, activity }) => Object.freeze({
         id: record.id,
         kind: record.kind,
         title: record.title,
@@ -1101,7 +1166,9 @@ export class PersonalMemoryRepository {
         summary: record.summary,
         date: record.date,
         ...identityFor(record.id),
-        score: primaryScore
+        recallReason,
+        score: primaryScore,
+        activity
       })));
     const primaryOnlyRequestedIds = selectCandidateIds
       ? [...selectCandidateIds(primaryOnlyCandidates)]
@@ -1138,6 +1205,7 @@ export class PersonalMemoryRepository {
         date: record.date,
         ...identityFor(id),
         score: rankedEntry.score,
+        recallReason: rankedEntry.recallReason,
         ...(decisiveSecondaryId.has(id) ? { matchedSecondaryId: decisiveSecondaryId.get(id)! } : {}),
         ...(matched.length > 0 ? { secondaryMatches: Object.freeze(matched.map(secondaryViewFor)) } : {})
       });
@@ -2091,6 +2159,26 @@ export class PersonalMemoryRepository {
       .sort(compareText));
   }
 
+  private async setPinnedRecord(manifest: PersonalMemoryManifest, records: PersonalMemoryRecord[], id: string, pinned: boolean): Promise<PersonalMemoryWriteResult> {
+    const previous = records.find(record => record.id === id && record.status === "current");
+    if (!previous) throw new PersonalMemoryAccessError("not_found", "当前记忆不存在");
+    const revision = manifest.revision + 1, record = Object.freeze({ ...previous, pinned, revision });
+    const all = records.map(item => item.id === id ? record : item);
+    assertMemoryPinLimit(all);
+    const next = cloneManifest(manifest); next.revision = revision; next.updatedAt = this.now(); next.records = all.map(recordMetadata);
+    const changes = await this.stateChanges(next, all, [{ relativePath: record.file, content: serializeRecord(record) }], { type: "cognitive_update", detail: pinned ? "memory-pinned" : "memory-unpinned", at: this.now(), revision, recordId: id });
+    await this.runTransaction("memory-pin", manifest.revision, revision, changes);
+    return { revision, record };
+  }
+  async setPinnedFromUserControl(id: string, pinned: boolean, expectedRevision: number): Promise<PersonalMemoryWriteResult> {
+    await this.initialize();
+    return this.withMutation(async () => {
+      await this.refreshPrimaryCachesBeforeWrite();
+      const manifest = await this.readManifest(); assertExpectedRevision(manifest, expectedRevision);
+      return this.setPinnedRecord(manifest, await this.readAllRecords(manifest), id, pinned);
+    });
+  }
+
   private async createRecord(
     manifest: PersonalMemoryManifest,
     records: PersonalMemoryRecord[],
@@ -2108,6 +2196,7 @@ export class PersonalMemoryRepository {
     next.updatedAt = this.now();
     next.records.push(recordMetadata(record));
     const allRecords = [...records, record];
+    assertMemoryPinLimit(allRecords);
     const changes = await this.stateChanges(next, allRecords, [{ relativePath: record.file, content: serializeRecord(record) }], {
       type: "created",
       revision: targetRevision,
@@ -2162,7 +2251,8 @@ export class PersonalMemoryRepository {
       kind: previous.kind,
       targetRevision,
       source,
-      supersedes: previous.id
+      supersedes: previous.id,
+      pinned: previous.pinned
     });
     const allRecords = records.map((record) => record.id === previous.id ? superseded : record).concat(replacement);
     const next = cloneManifest(manifest);
@@ -2381,6 +2471,7 @@ export class PersonalMemoryRepository {
           targetRevision,
           source,
           reason: "profile_update",
+          pinned: target?.pinned,
           ...(target ? { supersedes: target.id } : {})
         });
     if (!reusesExisting && manifest.records.some((item) => item.id === record.id)) {
@@ -2391,6 +2482,7 @@ export class PersonalMemoryRepository {
           ...target,
           status: "superseded" as const,
           reason: "profile_update",
+          pinned: target?.pinned,
           revision: targetRevision
         })
       : null;
@@ -2409,6 +2501,7 @@ export class PersonalMemoryRepository {
         .filter((entry) => entry.profileKey !== slot.profileKey))
     });
     let nextProfile = applyDreamProfileUpdate(explicitProfileBase, {
+      authority: "user",
       items: [{
         section: slot.section,
         profileKey: slot.profileKey,
@@ -2593,6 +2686,7 @@ export class PersonalMemoryRepository {
 
   private newRecord(input: Readonly<{
     kind: PersonalMemoryKind;
+    pinned?: boolean;
     title: string;
     content: string;
     recallWhen?: string;
@@ -2613,6 +2707,7 @@ export class PersonalMemoryRepository {
       id,
       kind: input.kind,
       status: "current",
+      ...(input.pinned !== undefined ? { pinned: input.pinned } : {}),
       date: isoDate(this.now()),
       source: input.source,
       basis: input.basis,
@@ -3191,6 +3286,7 @@ export class PersonalMemoryRepository {
     audit: Readonly<Record<string, unknown>>,
     secondaryForIndex?: readonly SecondaryMemoryRecord[]
   ): Promise<TransactionChange[]> {
+    assertMemoryPinLimit(records);
     const secondarySnapshot = secondaryForIndex ?? this.secondaryCache;
     await this.assertManagedPathsSafe([this.layout.audit]);
     const previousAudit = await readTextOrEmpty(this.layout.audit);
@@ -3927,12 +4023,13 @@ function recordRelativePath(kind: PersonalMemoryKind, id: string): string {
 function bestSecondaryScores(
   index: Readonly<SearchIndex>,
   query: string,
-  queryTokens: ReadonlySet<string>
+  queryTokens: ReadonlySet<string>,
+  requireQueryTokenMatch = false
 ): Map<string, { score: number; entry: SecondaryCatalogEntry }> {
   const best = new Map<string, { score: number; entry: SecondaryCatalogEntry }>();
   if (!query.trim()) return best;
   for (const entry of index.secondaryCatalog) {
-    const score = scoreSecondaryEntry(entry, query, queryTokens);
+    const score = scoreSecondaryEntry(entry, query, queryTokens, requireQueryTokenMatch);
     if (score <= 0) continue;
     const current = best.get(entry.parentId);
     if (!current || score > current.score) best.set(entry.parentId, { score, entry });
@@ -3948,7 +4045,7 @@ function groupSecondaryMatches(
   const matches = new Map<string, SecondaryCatalogEntry[]>();
   if (!query.trim()) return matches;
   for (const entry of index.secondaryCatalog) {
-    if (scoreSecondaryEntry(entry, query, queryTokens) <= 0) continue;
+    if (scoreSecondaryEntry(entry, query, queryTokens, true) <= 0) continue;
     const list = matches.get(entry.parentId) ?? [];
     list.push(entry);
     matches.set(entry.parentId, list);

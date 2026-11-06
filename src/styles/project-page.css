@@ -1,0 +1,239 @@
+/* One-person company: desktop project page and the workbench project card. Type scale = desktop home standards. */
+.echoink-project-page {
+  container: echoink-project / inline-size;
+  --pp-bg: var(--echoink-theme-bg, var(--background-primary));
+  --pp-text: var(--echoink-theme-text, var(--text-normal));
+  --pp-secondary: var(--echoink-theme-secondary, var(--text-muted));
+  --pp-muted: var(--echoink-theme-muted, var(--text-faint));
+  --pp-line: var(--echoink-theme-line, var(--background-modifier-border));
+  --pp-hover: var(--echoink-theme-hover, var(--background-modifier-hover));
+  --pp-warn: var(--echoink-theme-warn, var(--text-warning));
+  --pp-accent: var(--echoink-control-fill, var(--interactive-accent));
+  --pp-on-accent: var(--echoink-control-on-fill, var(--text-on-accent));
+  --pp-13: calc(var(--font-text-size, 16px) * .8125);
+  --pp-12: calc(var(--font-text-size, 16px) * .75);
+  --pp-11: calc(var(--font-text-size, 16px) * .6875);
+  padding: 0; overflow: auto; background: var(--pp-bg); color: var(--pp-text);
+  font-family: var(--font-interface); font-size: var(--pp-13); line-height: 1.55;
+}
+.echoink-project-page *, .echoink-project-page *::before, .echoink-project-page *::after { box-sizing: border-box; }
+.echoink-project-page .echoink-project-content { width: 100%; max-width: 920px; margin: 0 auto; padding: 28px 32px 40px; }
+.echoink-project-page h1 { margin: 0; font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.echoink-project-page h2 { margin: 0; font-size: var(--pp-13); font-weight: 600; line-height: 1.55; }
+.echoink-project-page b { font-weight: 600; }
+.echoink-project-page .echoink-project-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 22px; }
+.echoink-project-page .echoink-project-title { min-width: 0; }
+.echoink-project-page .echoink-project-folder { margin-top: 2px; color: var(--pp-muted); overflow-wrap: anywhere; }
+.echoink-project-page .echoink-project-empty { margin-top: 22px; padding: 28px; border: 1px dashed var(--pp-line); border-radius: 12px; color: var(--pp-muted); text-align: center; }
+
+/* Sections, shared rows and text */
+.echoink-project-page .echoink-project-section, .echoink-project-page .echoink-project-banner { margin: 0 0 26px; }
+.echoink-project-page .echoink-project-section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.echoink-project-page .echoink-project-count { color: var(--pp-muted); font-size: var(--pp-11); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.echoink-project-page .echoink-project-grow { flex: 1; min-width: 0; display: block; }
+.echoink-project-page .echoink-project-ellip { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.echoink-project-page .echoink-project-sub { display: flex; align-items: center; gap: 4px; color: var(--pp-secondary); font-size: var(--pp-12); }
+.echoink-project-page .echoink-project-sub.echoink-project-ellip { display: block; }
+.echoink-project-page .echoink-project-muted { color: var(--pp-muted); }
+.echoink-project-page .echoink-project-time { color: var(--pp-muted); font-size: var(--pp-12); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.echoink-project-page .echoink-project-kv { color: var(--pp-muted); font-size: var(--pp-11); }
+.echoink-project-page .echoink-project-btn-icon { display: inline-flex; flex: 0 0 auto; }
+.echoink-project-page .echoink-project-btn-icon svg { width: 13px; height: 13px; }
+.echoink-project-page .echoink-project-status { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: var(--pp-muted); font-size: var(--pp-11); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.echoink-project-page .echoink-project-status.is-wait { color: var(--pp-warn); }
+.echoink-project-page .echoink-project-status-icon { display: inline-flex; }
+.echoink-project-page .echoink-project-status svg { width: 13px; height: 13px; }
+.echoink-project-page .echoink-project-status.is-run svg { animation: var(--echoink-motion-animation, echoink-project-spin 1.2s linear infinite); }
+.echoink-project-page .echoink-project-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; background: var(--pp-hover); color: var(--pp-secondary); }
+.echoink-project-page .echoink-project-avatar.is-small { width: 20px; height: 20px; }
+.echoink-project-page .echoink-project-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.echoink-project-page .echoink-project-avatar svg { width: 14px; height: 14px; }
+.echoink-project-page .echoink-project-me { display: inline-grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; background: var(--pp-accent); color: var(--pp-on-accent); font-size: var(--pp-11); font-weight: 600; }
+.echoink-project-page .echoink-project-rows { border: 1px solid var(--pp-line); border-radius: 12px; overflow: clip; }
+.echoink-project-page .echoink-project-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 0; margin: 0; padding: 9px 14px;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pp-text);
+  font: inherit; text-align: left; white-space: normal; cursor: default; outline: none;
+}
+.echoink-project-page .echoink-project-rows > * + * { border-top: 1px solid var(--pp-line); }
+.echoink-project-page .echoink-project-row.is-click { cursor: pointer; }
+.echoink-project-page .echoink-project-row.is-click:is(:hover, :focus-visible), .echoink-project-page .echoink-project-row.is-selected { background: var(--pp-hover); outline: none; box-shadow: none; }
+.echoink-project-page .echoink-project-row:disabled { opacity: 1; color: var(--pp-secondary); }
+.echoink-project-page .echoink-project-lead { display: inline-grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; color: var(--pp-secondary); }
+.echoink-project-page .echoink-project-lead.is-wait { color: var(--pp-warn); }
+.echoink-project-page .echoink-project-lead svg { width: 16px; height: 16px; }
+.echoink-project-page .echoink-project-chevron { display: inline-flex; color: var(--pp-muted); }
+.echoink-project-page .echoink-project-chevron svg { width: 14px; height: 14px; }
+.echoink-project-page .echoink-project-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-project-page .echoink-project-role { color: var(--pp-secondary); font-size: var(--pp-12); }
+.echoink-project-page .echoink-project-card-title { font-size: var(--pp-13); font-weight: 600; line-height: 1.4; }
+.echoink-project-page .echoink-project-card { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--pp-line); border-radius: 12px; }
+.echoink-project-page .echoink-project-card + .echoink-project-card { margin-top: 10px; }
+.echoink-project-page .echoink-project-options { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.echoink-project-page .echoink-project-reply { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.echoink-project-page .echoink-project-reply textarea { flex: 1 0 100%; width: 100%; resize: vertical; font: inherit; box-shadow: none; outline: none; }
+.echoink-project-page .echoink-project-reply textarea:focus { background: var(--pp-hover); border-color: var(--pp-line); }
+
+/* Buttons: same geometry as the workbench (30 high, small 26, text button 12). */
+.echoink-project-page button.echoink-project-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: auto; height: auto; min-height: 30px; max-width: 100%; margin: 0; padding: 0 12px;
+  border: 1px solid var(--pp-line); border-radius: 8px; background: var(--pp-bg); color: var(--pp-text);
+  font: inherit; font-weight: 400; line-height: 1.55; white-space: normal; box-shadow: none; outline: none; cursor: pointer;
+}
+.echoink-project-page button.echoink-project-button.is-small { min-height: 26px; padding: 0 10px; font-size: var(--pp-12); }
+.echoink-project-page button.echoink-project-button.is-primary { background: var(--pp-accent); border-color: transparent; color: var(--pp-on-accent); }
+.echoink-project-page button.echoink-project-button.echoink-amicro-button:not(:disabled):is(:hover, :active, :focus-visible) { background: var(--pp-hover); color: var(--pp-text); border-color: var(--pp-line); outline: none; box-shadow: none; }
+.echoink-project-page button.echoink-project-button.echoink-amicro-button:where(.is-primary):not(:disabled):is(:hover, :active, :focus-visible) { background: color-mix(in srgb, var(--pp-accent) 90%, var(--pp-text)); color: var(--pp-on-accent); border-color: transparent; }
+.echoink-project-page button.echoink-project-button:disabled { opacity: .45; cursor: default; }
+.echoink-project-page button.echoink-project-text-btn {
+  display: inline-flex; align-items: center; gap: 4px; width: auto; height: auto; min-height: 0; margin: 0; padding: 3px 6px;
+  border: 0; border-radius: 6px; background: transparent; box-shadow: none; color: var(--pp-secondary); font: inherit; font-size: var(--pp-12); cursor: pointer; outline: none;
+}
+.echoink-project-page button.echoink-project-text-btn:is(:hover, :focus-visible) { background: var(--pp-hover); color: var(--pp-text); outline: none; box-shadow: none; }
+
+/* Done banner */
+.echoink-project-page .echoink-project-banner { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--pp-text); border-radius: 12px; }
+.echoink-project-page .echoink-project-banner-icon { display: inline-flex; }
+.echoink-project-page .echoink-project-banner-icon svg { width: 18px; height: 18px; }
+
+/* Members */
+.echoink-project-page .echoink-project-members { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.echoink-project-page .echoink-project-member { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--pp-line); border-radius: 12px; }
+@container echoink-project (max-width: 760px) { .echoink-project-page .echoink-project-members { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container echoink-project (max-width: 480px) {
+  .echoink-project-page .echoink-project-members { grid-template-columns: minmax(0, 1fr); }
+  .echoink-project-page .echoink-project-content { padding: 20px 16px 28px; }
+}
+
+/* Overview */
+.echoink-project-page .echoink-project-brief { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px 16px; margin: 0 0 16px; line-height: 1.6; }
+.echoink-project-page .echoink-project-brief dt { color: var(--pp-secondary); font-weight: 500; }
+.echoink-project-page .echoink-project-brief dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; overflow-wrap: anywhere; }
+.echoink-project-page .echoink-project-brief dd.is-goal { font-weight: 500; }
+.echoink-project-page .echoink-project-checks { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; }
+.echoink-project-page .echoink-project-checks li { display: flex; align-items: center; gap: 5px; }
+.echoink-project-page .echoink-project-check-icon { display: inline-flex; color: var(--pp-muted); }
+.echoink-project-page .echoink-project-check-icon svg { width: 14px; height: 14px; }
+.echoink-project-page .echoink-project-checks li.is-ok .echoink-project-check-icon { color: var(--pp-text); }
+.echoink-project-page .echoink-project-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--pp-line); border-radius: 12px; overflow: clip; }
+.echoink-project-page .echoink-project-tile {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0; width: auto; height: auto; margin: 0; padding: 12px 14px;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--pp-text); font: inherit; text-align: left; white-space: normal; outline: none;
+}
+.echoink-project-page .echoink-project-tile + .echoink-project-tile { border-left: 1px solid var(--pp-line); }
+/* Clickable tiles are buttons: beat Obsidian's button rule (centered, fixed height) so they lay out like the plain tile. */
+.echoink-project-page button.echoink-project-tile.echoink-project-tile { display: flex; align-items: stretch; justify-content: flex-start; height: auto; min-height: 0; padding: 12px 14px; }
+.echoink-project-page .echoink-project-tile.is-go { cursor: pointer; }
+.echoink-project-page .echoink-project-tile.is-go:is(:hover, :focus-visible) { background: var(--pp-hover); outline: none; box-shadow: none; }
+.echoink-project-page .echoink-project-tile-head { display: flex; align-items: center; justify-content: space-between; color: var(--pp-secondary); font-weight: 500; }
+.echoink-project-page .echoink-project-tile-head svg { color: var(--pp-muted); }
+.echoink-project-page .echoink-project-tile-number { display: flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; }
+.echoink-project-page .echoink-project-tile-number b { font-size: calc(var(--font-text-size, 16px) * 1.375); font-weight: 500; line-height: 1; }
+.echoink-project-page .echoink-project-tile-number span { color: var(--pp-muted); font-size: var(--pp-12); }
+.echoink-project-page .echoink-project-tile-caption { margin-top: auto; color: var(--pp-secondary); font-size: var(--pp-12); }
+.echoink-project-page .echoink-project-tile-caption b { color: var(--pp-text); }
+.echoink-project-page .echoink-project-segs { display: flex; gap: 3px; }
+.echoink-project-page .echoink-project-segs i { flex: 1; height: 4px; border-radius: 2px; background: var(--pp-hover); box-shadow: inset 0 0 0 1px var(--pp-line); }
+.echoink-project-page .echoink-project-segs i.is-done { background: var(--pp-text); box-shadow: none; }
+.echoink-project-page .echoink-project-segs i.is-run { background: repeating-linear-gradient(-45deg, var(--pp-text) 0 2px, transparent 2px 4px); box-shadow: inset 0 0 0 1px var(--pp-text); }
+.echoink-project-page .echoink-project-segs i.is-wait { background: var(--pp-warn); box-shadow: none; }
+@container echoink-project (max-width: 640px) {
+  .echoink-project-page .echoink-project-tiles { grid-template-columns: minmax(0, 1fr); }
+  .echoink-project-page .echoink-project-tile + .echoink-project-tile { border-left: 0; border-top: 1px solid var(--pp-line); }
+}
+
+/* Sticky tabs: solid background spans the pane; the project name shows only while stuck. */
+.echoink-project-page .echoink-project-tabs {
+  position: sticky; top: 0; z-index: 5; display: flex; align-items: flex-end; gap: 18px;
+  margin: 0 -32px 16px; padding: 8px 32px 0; border-bottom: 1px solid var(--pp-line); background: var(--pp-bg);
+}
+.echoink-project-page .echoink-project-stuck-title { display: none; max-width: 40%; margin-right: auto; padding-bottom: 6px; align-self: center; font-weight: 600; }
+.echoink-project-page .echoink-project-tabs.is-stuck .echoink-project-stuck-title { display: block; }
+.echoink-project-page button.echoink-project-tab {
+  display: flex; align-items: center; gap: 6px; width: auto; height: auto; min-height: 0; margin: 0 0 -1px; padding: 6px 0;
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none;
+  color: var(--pp-secondary); font: inherit; cursor: pointer; outline: none;
+}
+.echoink-project-page button.echoink-project-tab:is(:hover, :focus-visible) { background: var(--pp-hover); color: var(--pp-text); outline: none; box-shadow: none; }
+.echoink-project-page button.echoink-project-tab.is-selected { border-bottom-color: var(--pp-text); color: var(--pp-text); font-weight: 500; }
+.echoink-project-page .echoink-project-panel { min-height: var(--echoink-project-panel-min, 70vh); }
+/* The tab bar's bottom margin collapses once it sticks; the panel keeps its own 16px so content never touches the underline. */
+.echoink-project-page .echoink-project-tabs { margin-bottom: 0; }
+.echoink-project-page .echoink-project-panel { padding-top: 16px; }
+@container echoink-project (max-width: 480px) {
+  .echoink-project-page .echoink-project-tabs { margin: 0 -16px 16px; padding: 8px 16px 0; gap: 14px; overflow-x: auto; }
+}
+
+/* 记录 */
+.echoink-project-page .echoink-project-group { border: 1px solid var(--pp-line); border-radius: 12px; overflow: clip; }
+.echoink-project-page .echoink-project-feed { display: flex; flex-direction: column; gap: 14px; padding: 14px; }
+.echoink-project-page .echoink-project-day { align-self: center; color: var(--pp-muted); font-size: var(--pp-11); }
+.echoink-project-page .echoink-project-sys { display: flex; align-items: center; gap: 6px; max-width: 90%; align-self: center; color: var(--pp-muted); font-size: var(--pp-12); text-align: center; }
+.echoink-project-page .echoink-project-sys-icon { display: inline-flex; }
+.echoink-project-page .echoink-project-sys-icon svg { width: 13px; height: 13px; }
+.echoink-project-page .echoink-project-msg { display: flex; align-items: flex-start; gap: 10px; max-width: 86%; }
+.echoink-project-page .echoink-project-msg.is-me { align-self: flex-end; }
+.echoink-project-page .echoink-project-msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.echoink-project-page .echoink-project-msg.is-me .echoink-project-msg-body { align-items: flex-end; }
+.echoink-project-page .echoink-project-msg-name { display: flex; align-items: center; gap: 6px; }
+.echoink-project-page .echoink-project-bubble { line-height: 1.65; overflow-wrap: anywhere; }
+.echoink-project-page .echoink-project-msg.is-me .echoink-project-bubble { padding: 8px 12px; border-radius: 12px; background: var(--pp-hover); }
+.echoink-project-page .echoink-project-tag { padding: 0 6px; border: 1px solid var(--pp-line); border-radius: 999px; color: var(--pp-muted); font-size: var(--pp-11); white-space: nowrap; }
+.echoink-project-page .echoink-project-tag.is-on { border-color: var(--pp-text); color: var(--pp-text); }
+.echoink-project-page .echoink-project-files { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.echoink-project-page .echoink-project-foot { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--pp-line); color: var(--pp-muted); font-size: var(--pp-12); }
+.echoink-project-page .echoink-project-foot .echoink-project-text-btn { margin-left: auto; }
+
+/* 任务 */
+.echoink-project-page .echoink-project-wlist { display: flex; flex-direction: column; gap: 2px; padding: 4px 14px 10px 50px; }
+.echoink-project-page button.echoink-project-wrow {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: auto; min-height: 0; margin: 0; padding: 6px 8px;
+  border: 0; border-radius: 8px; background: transparent; box-shadow: none; color: var(--pp-text); font: inherit; font-size: var(--pp-12); text-align: left; cursor: pointer; outline: none;
+}
+.echoink-project-page button.echoink-project-wrow:is(:hover, :focus-visible) { background: var(--pp-hover); outline: none; box-shadow: none; }
+
+/* 里程碑 */
+.echoink-project-page .echoink-project-steps { display: flex; flex-direction: column; }
+.echoink-project-page .echoink-project-step { display: flex; gap: 12px; }
+.echoink-project-page .echoink-project-rail { display: flex; flex-direction: column; align-items: center; flex: 0 0 24px; }
+.echoink-project-page .echoink-project-node { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--pp-line); border-radius: 50%; background: var(--pp-bg); color: var(--pp-muted); font-size: var(--pp-11); font-variant-numeric: tabular-nums; }
+.echoink-project-page .echoink-project-node svg { width: 13px; height: 13px; }
+.echoink-project-page .echoink-project-step.is-done .echoink-project-node { border-color: var(--pp-accent); background: var(--pp-accent); color: var(--pp-on-accent); }
+.echoink-project-page .echoink-project-step.is-current .echoink-project-node { border: 1.5px solid var(--pp-text); color: var(--pp-text); font-weight: 600; }
+.echoink-project-page .echoink-project-rail i { flex: 1; width: 2px; min-height: 18px; background: var(--pp-line); }
+.echoink-project-page .echoink-project-rail i.is-on { background: var(--pp-text); }
+.echoink-project-page .echoink-project-step-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; padding-bottom: 18px; }
+.echoink-project-page .echoink-project-step-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.echoink-project-page .echoink-project-step.is-todo .echoink-project-step-head b { color: var(--pp-secondary); }
+.echoink-project-page .echoink-project-avatars { display: inline-flex; gap: 2px; }
+.echoink-project-page .echoink-project-handoff { display: flex; align-items: center; gap: 4px; color: var(--pp-secondary); font-size: var(--pp-12); }
+
+@keyframes echoink-project-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .echoink-project-page *, .echoink-workbench .wb-project-card * { --echoink-motion-animation: none; }
+}
+
+/* Workbench 「项目」 card: whole card is one button, like the demo's clickable project card. */
+.echoink-workbench button.wb-project-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 10px; width: 100%; height: auto; min-width: 0; margin: 0; padding: 12px 14px;
+  border: 1px solid var(--wb-line); border-radius: 12px; background: var(--wb-bg); box-shadow: none; color: var(--wb-text);
+  font: inherit; text-align: left; white-space: normal; cursor: pointer; outline: none;
+}
+.echoink-workbench button.wb-project-card:is(:hover, :focus-visible) { background: var(--wb-hover); outline: none; box-shadow: none; }
+.echoink-workbench .wb-project-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.echoink-workbench .wb-project-icon { display: inline-flex; flex: 0 0 auto; color: var(--wb-secondary); }
+.echoink-workbench .wb-project-icon svg { width: 16px; height: 16px; }
+.echoink-workbench .wb-project-name { flex: 1; min-width: 0; overflow: hidden; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.echoink-workbench .wb-project-status { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); white-space: nowrap; }
+.echoink-workbench .wb-project-status.is-wait { color: var(--wb-warn); }
+.echoink-workbench .wb-project-status-icon { display: inline-flex; }
+.echoink-workbench .wb-project-status svg { width: 12px; height: 12px; }
+.echoink-workbench .wb-project-bar { display: block; height: 4px; border-radius: 2px; background: var(--wb-hover); overflow: hidden; }
+.echoink-workbench .wb-project-bar i { display: block; width: var(--wb-project-progress, 0%); height: 100%; background: var(--wb-text); }
+.echoink-workbench .wb-project-kv { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--wb-muted); font-size: calc(var(--font-text-size, 16px) * .6875); font-variant-numeric: tabular-nums; }
+.echoink-workbench .wb-project-doing { display: flex; flex-direction: column; gap: 6px; }
+.echoink-workbench .wb-project-now { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--wb-secondary); font-size: calc(var(--font-text-size, 16px) * .75); }
+.echoink-workbench .wb-project-ellip { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.echoink-workbench .wb-project-card .echoink-project-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; overflow: hidden; background: var(--wb-hover); color: var(--wb-secondary); }
+.echoink-workbench .wb-project-card .echoink-project-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.echoink-workbench .wb-project-card .echoink-project-avatar svg { width: 12px; height: 12px; }

@@ -1,4 +1,4 @@
-import { Notice } from "obsidian";
+import { Notice, type Setting } from "obsidian";
 import type { CognitiveSystem } from "../harness/memory/cognitive-system";
 import type { DreamRunResult } from "../harness/memory/dream-engine";
 import { createOriginButton } from "./origin-controls";
@@ -39,21 +39,20 @@ export function renderManualDreamAction(
   host: ManualDreamActionHost,
   language: string,
   refresh: () => void
-): void {
+): Setting {
   const enabled = () => host.settings.memory.useLongTermMemory && host.settings.memory.dreamEnabled;
-  if (!enabled()) return;
   const zh = language !== "en";
   const row = applySettingsRow(new OriginSetting(container)
     .setName(zh ? "立即做梦" : "Dream now"));
   const button = createOriginButton(row.controlEl, {
-    text: zh ? "立即做梦" : "Dream now",
+    text: zh ? "开始" : "Start",
     attr: { "data-echoink-focus-key": "general:memory:dream-now" }
   });
   const syncButton = () => {
     const running = runningHosts.has(host);
-    button.disabled = running;
+    button.disabled = running || !enabled();
     button.setAttr("aria-busy", String(running));
-    button.setText(running ? (zh ? "整理中…" : "Consolidating…") : (zh ? "立即做梦" : "Dream now"));
+    button.setText(running ? (zh ? "整理中…" : "Consolidating…") : (zh ? "开始" : "Start"));
   };
   syncButton();
   button.onclick = () => {
@@ -77,4 +76,5 @@ export function renderManualDreamAction(
       }
     })();
   };
+  return row;
 }

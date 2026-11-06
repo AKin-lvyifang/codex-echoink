@@ -12,6 +12,9 @@ import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction, Mob
 export type MobilePermission = "read-only" | "workspace-write" | "full-access";
 /** Historical attribution and lifecycle; opening stored runs never starts execution. */
 export interface MobileTaskRun {
+  companyProgrammatic?: boolean;
+  companyApproval?: boolean;
+  memorySources?: { id: string; title: string; reason: string }[];
   id: string;
   startedAt: number;
   agentSnapshot?: AgentRunSnapshot;
@@ -85,7 +88,7 @@ function validInterruption(value: unknown): boolean {
     && (value.toolCallTextFailure === undefined || !!toolCallTextFailureMessage(value.toolCallTextFailure))
     && (value.providerSettingsId === undefined || nonempty(value.providerSettingsId) && value.providerSettingsId.length <= 500)
     && (value.modelId === undefined || nonempty(value.modelId) && value.modelId.length <= 500)
-    && ["app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog", "app_backgrounded"].includes(value.reason as string);
+    && ["app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog", "tool_loop_limit", "app_backgrounded"].includes(value.reason as string);
 }
 function validOperations(value: unknown, session: Record<string, unknown>, ids: Set<string>): boolean {
   if (!uniqueRecords(value)) return false;
@@ -99,7 +102,7 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
       || !time(operation.createdAt) || !time(operation.updatedAt) || operation.updatedAt < operation.createdAt
       || typeof operation.expectedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.expectedHash)
       || Object.keys(operation).some(key => !["id", "taskId", "runId", "toolCallId", "toolName", "semanticKey", "status", "createdAt", "updatedAt", "target", "expectedHash", "beforeHash", "requestedHash", "targetWasMissing", "beforeRevision", "completedRevision", "mcp", "memoryRepository", "finance"].includes(key))) return false;
-    if (operation.toolName !== "note_update" && (operation.beforeHash !== undefined || operation.requestedHash !== undefined)) return false;
+    if (operation.toolName !== "note_update" && (operation.requestedHash !== undefined || operation.beforeHash !== undefined && !(operation.toolName === "memory_write" && operation.memoryRepository === "canonical"))) return false;
     if (operation.toolName !== "mcp_write" && operation.mcp !== undefined) return false;
     if (operation.toolName !== "finance_write" && operation.finance !== undefined) return false;
     if (operation.memoryRepository !== undefined && (operation.toolName !== "memory_write" || operation.memoryRepository !== "canonical")) return false;
@@ -108,6 +111,7 @@ function validOperations(value: unknown, session: Record<string, unknown>, ids: 
       if (path.trim() !== path || path.startsWith("/") || /[\\:]/u.test(path) || [...path].some(char => char.charCodeAt(0) < 32) || path.split("/").some(part => !part || part.startsWith(".")) || !/\.md$/iu.test(path)
         || (operation.toolName === "note_create" ? operation.semanticKey !== `note_create:${path}` || operation.targetWasMissing !== true : typeof operation.beforeHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.beforeHash) || typeof operation.requestedHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.requestedHash) || operation.semanticKey !== `note_update:${path}:${operation.beforeHash}:${operation.requestedHash}` || operation.targetWasMissing !== undefined) || operation.beforeRevision !== undefined || operation.completedRevision !== undefined) return false;
     } else if (operation.toolName === "memory_write" && operation.memoryRepository === "canonical") {
+      if (operation.beforeHash !== undefined && (typeof operation.beforeHash !== "string" || !/^[a-f0-9]{64}$/u.test(operation.beforeHash) || operation.targetWasMissing !== false || operation.beforeRevision === undefined)) return false;
       if (typeof operation.targetWasMissing !== "boolean" || !/^memory_write:.+:[a-f0-9]{64}$/u.test(operation.semanticKey)
         || (operation.beforeRevision !== undefined && (!Number.isSafeInteger(operation.beforeRevision) || Number(operation.beforeRevision) < 1))
         || (operation.status === "completed" && (!Number.isSafeInteger(operation.completedRevision) || Number(operation.completedRevision) < 1))
@@ -158,7 +162,7 @@ function validMetadata(value: Record<string, unknown>): boolean {
 }
 function validRun(value: Record<string, unknown>): boolean {
   const snapshot = value.agentSnapshot;
-  return time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
+  return ["companyProgrammatic", "companyApproval"].every(key => value[key] === undefined || typeof value[key] === "boolean") && time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
     && (value.permission === undefined || permission(value.permission)) && (value.status === undefined || ["running", "waiting", "completed", "interrupted"].includes(value.status as string))
     && ["completedAt", "interruptedAt"].every(key => value[key] === undefined || time(value[key]))
     && (value.interruption === undefined || (value.status === "interrupted" && validInterruption(value.interruption) && value.interruptedAt === (value.interruption as Record<string, unknown>).at))
@@ -469,8 +473,8 @@ export class MobileStore {
   handoffAgentTasks(fromAgentId: string): Promise<void> {
     return this.update(draft => {
       if (!nonempty(fromAgentId) || fromAgentId === "sol") throw new Error("任务移交来源无效，总助任务不能移交。");
-      for (const session of draft.sessions) if (session.agentId === fromAgentId) session.agentId = "sol";
-      if (draft.page.kind === "list" && draft.page.agentId === fromAgentId) draft.page = { kind: "list", agentId: "sol" };
+      for (const session of draft.sessions) if (session.agentId === fromAgentId) session.agentId = "generalist";
+      if (draft.page.kind === "list" && draft.page.agentId === fromAgentId) draft.page = { kind: "list", agentId: "generalist" };
     });
   }
   setPermission(value: MobilePermission): Promise<void> { return this.update(draft => { draft.permission = value; }); }

@@ -1,0 +1,218 @@
+/* AnimateIcons lucide/brain-icon.tsx, duration=1: original paths and timing. */
+.echoink-animate-brain-group,
+.echoink-animate-brain-lobe-a,
+.echoink-animate-brain-lobe-b {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.echoink-animate-brain-spark-left,
+.echoink-animate-brain-spark-right {
+  opacity: 0;
+  stroke-dashoffset: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-group,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-group,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-group {
+    animation: echoink-brain-tilt 700ms ease-in-out, echoink-brain-breathe 700ms ease-in-out;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 0ms);
+  }
+
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spine,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spine,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spine {
+    animation: echoink-brain-spine 500ms ease-in-out 60ms both;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 60ms);
+  }
+
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-lobe-a {
+    animation: echoink-brain-draw 600ms ease-in-out 120ms both, echoink-brain-lobe-a 600ms ease-in-out 120ms both;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 120ms);
+  }
+
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-lobe-b {
+    animation: echoink-brain-draw 620ms ease-in-out 180ms both, echoink-brain-lobe-b 620ms ease-in-out 180ms both;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 180ms);
+  }
+
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spark-left {
+    animation: echoink-brain-spark 550ms ease-in-out 260ms both;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 260ms);
+  }
+
+  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
+  .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spark-right {
+    animation: echoink-brain-spark 550ms ease-in-out 340ms both;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 340ms);
+  }
+}
+
+@keyframes echoink-brain-tilt {
+  0%, 100% { rotate: 0deg; }
+  33.333% { rotate: -2.2deg; }
+  66.667% { rotate: 1.2deg; }
+}
+
+@keyframes echoink-brain-breathe {
+  0%, 100% { scale: 1; }
+  50% { scale: 1.015; }
+}
+
+@keyframes echoink-brain-spine {
+  from { stroke-dashoffset: 1; opacity: .55; }
+  to { stroke-dashoffset: 0; opacity: 1; }
+}
+
+@keyframes echoink-brain-draw {
+  from { stroke-dashoffset: 1; opacity: .6; }
+  to { stroke-dashoffset: 0; opacity: 1; }
+}
+
+@keyframes echoink-brain-lobe-a {
+  0% { scale: .98; }
+  50% { scale: 1.02; }
+  100% { scale: 1; }
+}
+
+@keyframes echoink-brain-lobe-b {
+  0% { scale: 1.02; }
+  50% { scale: .98; }
+  100% { scale: 1; }
+}
+
+@keyframes echoink-brain-spark {
+  0% { stroke-dashoffset: 1; opacity: 0; }
+  50% { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* Navigation variants ported from AnimateIcons / lucide-animated (MIT).
+   Preserve each host Lucide vector; only transform or redraw its existing layers. */
+.wb-header .echoink-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+[data-nav-icon], [data-nav-layer],
+.echoink-settings-desktop [data-animated-icon="feather"] svg,
+.echoink-settings-desktop [data-part="bot-eye"] {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .wb-modules button.is-nav-animating [data-nav-icon="book-open"] {
+    animation: echoink-nav-book 800ms ease-in-out;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="book-open"] [data-nav-layer="0"] {
+    stroke-dasharray: 1;
+    animation: echoink-nav-draw 600ms ease-in-out;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="wallet"] {
+    animation: echoink-nav-wallet 700ms ease-in-out;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="wallet"] [data-nav-layer="0"] {
+    animation: echoink-nav-flap 650ms ease-in-out 100ms;
+  }
+  .wb-modules button.is-nav-animating :is([data-nav-icon="file-text"], [data-nav-icon="list-todo"]) [data-nav-layer] {
+    transform-origin: left center;
+    animation: echoink-nav-write 500ms cubic-bezier(.16, 1, .3, 1) both;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="file-text"] [data-nav-layer]:nth-child(-n+2) {
+    animation: none;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="list-todo"] [data-part="layout-box"] {
+    animation-name: echoink-nav-check;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="languages"] [data-nav-layer] {
+    stroke-dasharray: 1;
+    animation: echoink-nav-draw 500ms ease-in-out both;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="library"] [data-nav-layer] {
+    animation: echoink-nav-book-spine 550ms cubic-bezier(.34, 1.4, .64, 1) both;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="sparkles"] [data-nav-layer] {
+    animation: echoink-nav-star 600ms cubic-bezier(.34, 1.4, .64, 1) both;
+  }
+  .wb-modules button.is-nav-animating [data-nav-icon="ellipsis"] [data-nav-layer] {
+    animation: echoink-nav-dot 450ms ease-in-out both;
+  }
+  .wb-modules button.is-nav-animating [data-nav-layer="1"] { animation-delay: 80ms; }
+  .wb-modules button.is-nav-animating [data-nav-layer="2"] { animation-delay: 160ms; }
+  .wb-modules button.is-nav-animating [data-nav-layer="3"] { animation-delay: 120ms; }
+  .wb-modules button.is-nav-animating [data-nav-layer="4"] { animation-delay: 200ms; }
+  .wb-modules button.is-nav-animating [data-nav-layer="5"] { animation-delay: 280ms; }
+  .echoink-settings-desktop .settings-motion-icon.is-animating [data-part="bot-eye"] {
+    animation: echoink-nav-blink 500ms ease-in-out;
+    animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 150ms);
+  }
+  .echoink-settings-desktop .settings-motion-icon.is-animating[data-animated-icon="feather"] svg {
+    animation: echoink-nav-feather 800ms ease-in-out;
+    animation-delay: var(--echoink-tab-icon-delay, 0ms);
+  }
+}
+@keyframes echoink-nav-book {
+  0%, 100% { transform: scale(1) rotate(0); }
+  35% { transform: scale(1.05) rotate(-2deg); }
+  70% { transform: scale(.97) rotate(2deg); }
+}
+@keyframes echoink-nav-draw {
+  from { stroke-dashoffset: 1; }
+  to { stroke-dashoffset: 0; }
+}
+@keyframes echoink-nav-wallet {
+  0%, 100% { transform: scale(1); }
+  40% { transform: scale(1.08); }
+  70% { transform: scale(.97); }
+}
+@keyframes echoink-nav-flap {
+  0%, 100% { transform: rotate(0); }
+  30% { transform: rotate(-6deg); }
+  65% { transform: rotate(-3deg); }
+}
+@keyframes echoink-nav-write {
+  from { transform: scaleX(0); opacity: 0; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+@keyframes echoink-nav-check {
+  0% { transform: scale(.6); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@keyframes echoink-nav-book-spine {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  40% { transform: translateY(-2px) rotate(-4deg); }
+  75% { transform: translateY(.5px) rotate(2deg); }
+}
+@keyframes echoink-nav-star {
+  0% { transform: scale(.4) rotate(-20deg); opacity: 0; }
+  65% { transform: scale(1.12) rotate(3deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); }
+}
+@keyframes echoink-nav-dot {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes echoink-nav-blink {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(.05); }
+}
+@keyframes echoink-nav-feather {
+  0%, 100% { transform: translate(0, 0) rotate(0); }
+  30% { transform: translate(2px, -3px) rotate(-8deg); }
+  55% { transform: translate(-2px, -2px) rotate(4deg); }
+  80% { transform: translate(1px, -1px) rotate(-3deg); }
+}

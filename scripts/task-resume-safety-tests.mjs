@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
@@ -7,10 +8,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 if (!process.env.ECHOINK_TASK_RESUME_TEST_ROOT) throw new Error("Explicit ECHOINK_TASK_RESUME_TEST_ROOT is required");
 const fixture = await realpath(process.env.ECHOINK_TASK_RESUME_TEST_ROOT);
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Task resume fixtures must stay in 90-任务临时");
+if (!isDisposableTestRoot(fixture)) throw new Error("Task resume fixtures must stay in 90-任务临时");
 const output = await mkdtemp(path.join(fixture, "run-task-resume-safety-"));
 try {
   await esbuild.build({ banner: desktopNodeTestBanner,

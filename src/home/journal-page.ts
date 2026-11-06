@@ -1,3 +1,4 @@
+import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
@@ -10,7 +11,7 @@ import { JournalTemplateModal } from "./journal-template-modal";
 import { journalMonthSelection, journalPageEntries, journalStats, journalSummary, type JournalStats } from "./journal-stats";
 import { renderPhotoCalendar } from "./photo-calendar";
 import { readNativeJournalSettings } from "./native-journal";
-import { prefillWorkbenchModule, workbenchModuleOwner } from "./module-navigation";
+import { prefillWorkbenchModule } from "./module-navigation";
 
 export const VIEW_TYPE_ECHOINK_JOURNAL = "echoink-journal";
 const parseDate = (value: string) => { const [year, month, day] = value.split("-").map(Number); return new Date(year, month - 1, day, 12); };
@@ -167,8 +168,8 @@ export class EchoInkJournalView extends ItemView {
     this.updateOwner();
   }
   private updateOwner(): void {
-    const name = workbenchModuleOwner(this.plugin, "journal").name;
-    this.field("owner").setText(this.t(`和 ${name} 聊今天`, `Talk about today with ${name}`));
+    const label = moduleOwnerLabel(this.plugin, "journal");
+    this.field("owner").setText(label);
   }
   private iconButton(parent: HTMLElement, name: string, label: string, action: () => void | Promise<unknown>): void {
     const button = this.button(parent, "", action, "is-icon"); button.setAttribute("aria-label", label); setIcon(button, name);

@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.9：开局一键设置" src="assets/releases/echoink-agent-2.8.9-release.png">
+    <img width="1024" alt="EchoInk 2.8.10：一人公司开工" src="assets/releases/echoink-agent-2.8.10-release.png">
   </a>
 </p>
 
@@ -21,7 +21,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9"><img src="https://img.shields.io/badge/version-2.8.9-0EA5E9?style=flat-square" alt="版本 2.8.9"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="版本 2.8.10"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
@@ -32,26 +32,26 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 | 你想做的事 | EchoInk 怎么帮你 |
 | --- | --- |
 | 和笔记聊天 | 和笔记对话；电脑端可带附件，也可用 @Agent 正文管家（PRO）提出修改 |
-| 把资料变成知识 | 知识库按用途分目录，从问题出发沿线索续读，围绕新资料增量整理，答案可追溯来源 |
-| 让 AI 记住你 | 长期记忆可查看、修正、导出、忘记和恢复；管理已有记忆无需连接模型 |
+| 把资料变成知识 | 增量整理、追溯来源；电脑端可梳理领域知识树、体检并预览修复 |
+| 让 AI 记住你 | 电脑端用记忆星图查看画像与来源、固定重要记忆；管理已有记忆无需连接模型 |
 | 记录每天 | 记录日记、管理待办；电脑端可开启日记自动整理，账单需 PRO |
-| 多个 Agent 分工 | 工作台向不同 Agent 派发任务、查看提醒；电脑端可聘请专家 Agent（PRO） |
+| 多个 Agent 分工 | 总助派活、员工执行；复杂任务先确认开工卡，问题与审批集中在「等你定」；专家聘请需 PRO |
 | 生成成品 | 电脑端从资料生成笔记、Canvas 或手绘图，也可使用 PDF 精读（PRO） |
 
 ## News
 
 | 版本 | 日期 | 更新 |
 | --- | --- | --- |
+| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | 一人公司、模块负责人、记忆星图与知识库体检 |
 | [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | 开局一键设置，新增手绘图、日记命名与专家聘请 |
 | [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | 电脑端可自动整理日记待办与账单，账单需 PRO |
 | [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | 工作台入口集中，新增 DeepSeek 搜索与运行记录导出 |
 | [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | 新增 @Agent 正文管家（PRO），修改确认后写回 |
 | [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | 新增三套外观与图片组，修复模型连接和记忆识别 |
-| [2.8.4](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.4) | 2026-10-23 | 修复知识整理、对话排版与工作台显示 |
 
 完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
 
-**请将各设备统一升级到 2.8.9。** 财务、英文日记、PDF 精读、@Agent 正文管家、专家聘请和 EchoInk MCP 服务需要有效 PRO；**PRO 不包含模型调用额度**，活动与价格以[官网](https://echoink.cn/plans)为准。**移动端仍为 Beta，本版未完成手机真机验收**，支持范围见下文。
+**请将各设备统一升级到 2.8.10。** 财务、英文日记、PDF 精读、@Agent 正文管家、专家聘请和 EchoInk MCP 服务需要有效 PRO；**PRO 不包含模型调用额度**，活动与价格以[官网](https://echoink.cn/plans)为准。**移动端仍为 Beta，本版新增与修复未经 iPhone/iPad 真机验证**，支持范围见下文。
 
 ## 快速开始
 
@@ -74,6 +74,7 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 | --- | --- | --- | --- |
 | Agent 对话 | 带笔记提问、继续或归档会话；电脑端支持附件 | ✅ | ✅ |
 | 知识库问答（Ask） | 沿资料线索续读，回答提供实际来源 | ✅ | ✅ |
+| 知识体系与体检 | 电脑端按领域梳理知识树、快查与深查，预览确认后修复；模型判断需核对，深查与梳理消耗模型额度 | ✅ | ✅ |
 | 知识库整理 | 围绕新增或变更资料增量整理，更新已有知识并保留手写内容 | ✅ | ✅ |
 | 从资料生成 | 电脑端从资料生成笔记、Canvas 或可编辑手绘图；手绘图需启用 Excalidraw 2.29 及以上及支持工具调用的模型 | ✅ | ✅ |
 | PDF 精读 · 提取 | 电脑端提取原文、生成译文与精读；可选 MinerU 增强解析 | ❌ | ✅ |
@@ -84,7 +85,8 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 
 | 功能 | 说明 | 基础版 | PRO 版 |
 | --- | --- | --- | --- |
-| 长期记忆 | 浏览、修正、导出、忘记、恢复；知识检索会排除私有记忆 | ✅ | ✅ |
+| 长期记忆 | 浏览、修正、导出、忘记、恢复与固定；淡出不删除，知识检索会排除私有记忆 | ✅ | ✅ |
+| 记忆星图 | 电脑端查看画像、记忆与来源，从「设置 → 记忆」打开；可修正、固定或恢复记忆 | ✅ | ✅ |
 | Skill（内置与自建） | 内置基础 Skill、自建 Skill 和基础复盘 | ✅ | ✅ |
 | 官方方法论 Skill 与知识复盘增强版 | 7 个官方方法论 Skill 与知识复盘增强版按需联网下载 | ❌ | ✅ |
 | EchoInk MCP 服务 | 电脑端向同机外部 Agent 提供获准的知识、画像与记忆；默认关闭、只读 | ❌ | ✅ |
@@ -103,7 +105,9 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 
 | 功能 | 说明 | 基础版 | PRO 版 |
 | --- | --- | --- | --- |
-| 多 Agent 任务 | 工作台管理不同 Agent 的任务；中断后由你选择继续。移动端“交给”只准备内容 | ✅ | ✅ |
+| 一人公司 | 电脑、iPhone 与 iPad 由总助派活，开工卡确认后推进项目；问题与审批集中在「等你定」；移动端为 Beta | ✅ | ✅ |
+| 模块负责人 | 在 Agent 设置指定各模块的角色 Agent；未指定时先选人再开始，付费模块仍沿用各自权益 | ✅ | ✅ |
+| 多 Agent 任务 | 查看员工任务与产出；中断后核对并继续，项目和员工会话暂不跨设备查看、接续 | ✅ | ✅ |
 | 专家聘请 | 电脑端浏览并聘请专家，从头像继续对话；解聘保留原对话 | ❌ | ✅ |
 
 ### 🎨 外观与平台
@@ -112,7 +116,7 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 | --- | --- |
 | 外观 | 极简黑白（Minimal）免费；荧光笔记（Highlighter）、黄白宣言（Manifesto）需有效 PRO；配套主题到 [echoink.cn/theme](https://echoink.cn/theme) 单独安装 |
 | 电脑端 | 提供上述桌面入口；Windows、Linux 原生环境验证仍未完成 |
-| 移动端 Beta | 移动 Beta 新增分别为 iPhone、iPad 设计的工作台、多 Agent 任务、六组设置和日记、待办、财务、知识库、英文日记页面；中断任务由你确认后继续，“交给”只准备内容。资料生成、生成模板设置与 PDF 精读仅在电脑端提供，任务不会跨设备同步。附件、CLI 和桌面后台知识任务尚未接通；Skills 只使用移动端已有工具，MCP 暂只保存配置。iPhone、Android 与部分 iPad 原生流程，以及 Windows、Linux 原生环境的验证仍未完成。 |
+| 移动端 Beta | iPhone、iPad 提供工作台、一人公司、模块负责人、设置和日记、待办、财务、知识库、英文日记页面；问题与审批从「等你定」处理。项目和员工会话暂不跨设备查看、接续，只在 App 前台推进；回到前台按实际中断情况核对后继续。回答与思考可按模型服务设置流式显示，受服务商支持限制。记忆星图、知识体系梳理、知识库体检、资料生成、生成模板设置与 PDF 精读仅在电脑端提供。附件、CLI 和桌面后台知识任务尚未接通；Skills 只使用移动端已有工具，MCP 暂只保存配置。本版新增与修复未经 iPhone/iPad 真机验证，Android 原生验证仍未完成。 |
 
 ## 隐私与数据
 

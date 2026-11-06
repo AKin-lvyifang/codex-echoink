@@ -20,7 +20,7 @@ function jsonPrefix(text) {
 }
 
 /** Parse only the current production serialization; never add missing identity. */
-export function parseDeliveryPayload(text) {
+export function parseDeliveryPayload(text, coreReceipt = []) {
   const items = [];
   const errors = [];
   if (text.startsWith('你是 EchoInk 的 Agent，在 Obsidian 移动端协助用户。')) {
@@ -59,6 +59,18 @@ export function parseDeliveryPayload(text) {
     if (match[9] !== '未声明') item.publishedAt = match[9];
     if (!original) errors.push(`Missing original-text marker for ${item.vaultRelativePath}`);
     items.push(item);
+  }
+  // Core injection intentionally contains only title/summary. Its IDs are
+  // audited against the real prepared injection receipt, never the gold set.
+  for (const match of text.matchAll(/<echoink_memory_core\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_core>/gu)) {
+    try {
+      const core = JSON.parse(match[1]);
+      for (const entry of core) {
+        const receipt = coreReceipt.find(item => item.title === entry.title && item.summary === entry.summary);
+        if (!receipt) throw new Error('Core item has no matching actual injection receipt');
+        items.push({ ...entry, id: receipt.id });
+      }
+    } catch (error) { errors.push(`echoink_memory_core: ${error.message}`); }
   }
   for (const [tag, extract] of [['echoink_memory_recall', value => value.candidates ?? []], ['echoink_memory_secondary', value => (value.secondaryFacts ?? []).map(entry => entry.fact)]]) {
     const expression = new RegExp(`<${tag}\\b[^>]*>\\n([\\s\\S]*?)\\n<\\/${tag}>`, 'gu');
@@ -135,7 +147,7 @@ export function judgeCandidate(expected, items) {
   return verdict(assertions);
 }
 
-export function judgeDelivery(expected, items, text, promptBoundary) {
+export function judgeDelivery(expected, items, text, promptBoundary, coreReceipt = []) {
   if (!expected || expected.applicable === false) return { status: 'not_applicable', assertions: [], reasons: [] };
   const assertions = [];
   const assert = (name, pass, actual) => assertions.push({ name, pass: Boolean(pass), actual });
@@ -146,7 +158,7 @@ export function judgeDelivery(expected, items, text, promptBoundary) {
     if (Object.keys(expected).every(key => ['applicable', 'boundary_contract'].includes(key))) return boundary;
     assertions.push(...boundary.assertions);
   }
-  const parsed = parseDeliveryPayload(text);
+  const parsed = parseDeliveryPayload(text, coreReceipt);
   const delivered = parsed.items;
   const paths = delivered.map(identity);
   const sidecarPaths = items.map(identity);

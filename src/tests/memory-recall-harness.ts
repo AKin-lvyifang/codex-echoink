@@ -53,8 +53,12 @@ import {
 import { noteMentionReferencesFromPiContext } from "../harness/pi-native/pi-note-mentions";
 import { createPiKnowledgeInlineExtension } from "../plugin/pi-production-runtime-composition";
 import { withPersonalMemoryFixture } from "./personal-memory-fixture";
+import { searchMemories } from "../mobile/tools";
+import { memoryTemporalContext } from "../harness/memory/memory-relevance";
 
 export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
+  await scenarioAutomaticQueryFiltering();
+  await scenarioSharedRelevanceAndTemporalHints();
   await scenarioRecallWhenIsNewWriteOldReadCompatible();
   await scenarioCompleteCatalogAndStablePagination();
   await scenarioRouteTokensOutrankContentNoise();
@@ -79,6 +83,80 @@ export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
   await scenarioPersonalMemoryIdentityOnlySystemPaths();
   await scenarioPersonalMemoryReadFailureDegradesLocally();
   console.log("PASS Memory Recall Harness contract scenarios");
+}
+
+async function scenarioAutomaticQueryFiltering(): Promise<void> {
+  await withPersonalMemoryFixture(async fixture => {
+    const runtime = fixture.runtime();
+    const create = async (title: string, content: string, pinned = false) => (await fixture.repository.write({
+      operation: "create", kind: "fact", title, content, recallWhen: title, basis: "explicit", pinned
+    }, { ...runtime, explicitlyAuthorized: true })).record!;
+    const core = await create("固定边界", "固定核心不受查询过滤影响", true);
+    await create("什么一下", "17 23 的原 的工 the");
+    const parent = await create("出行限制", "出门前要带备用眼镜");
+    const secondary = (id: string, matchTerms: string[]): SecondaryMemoryRecord => ({
+      schema: "echoink.memory-secondary.v1", id, parentId: parent.id, status: "current", disabledReason: null,
+      title: "关联线索", content: "出门前的关联提醒", recallWhen: "出门", matchTerms, relation: "context", reason: "测试召回准入",
+      supportLevel: "strong_inference", evidence: "父记录支持备用眼镜提醒", basis: "llm_inferred", sourceMemoryRevision: parent.revision,
+      confidence: 0.8, hitCount: 0, lastHitAt: null, lastDecayAt: null, createdAt: fixture.now(), updatedAt: fixture.now(),
+      revision: 1, file: `shared-user/secondary/${id}.md`
+    });
+    fixture.repository.setSecondaryRecords([secondary("secondary_noise", ["什么", "一下", "的原", "17", "23", "the"]), secondary("secondary_topic", ["北斗"])]);
+    await fixture.repository.ensureSecondaryIndexFresh();
+    const harness = new PersonalMemoryRecallHarness(fixture.repository);
+    const query = "什么 一下 17 乘 23 的原 the";
+    const filtered = await harness.prepareTurnContext({ ...runtime, query, tokenBudget: 5_000 });
+    assert.deepEqual(filtered.recall!.candidates, [], "全部被过滤时一级和二级都不能产生动态候选");
+    assert.equal(filtered.core?.[0]?.id, core.id);
+    assert.ok(filtered.user, "过滤动态候选不影响 USER");
+    const explicit = await fixture.repository.search({ query }, runtime);
+    assert.ok(explicit.items.some(item => item.id === parent.id), "显式搜索保留原有二级事实匹配");
+    const mixed = await harness.prepareTurnContext({ ...runtime, query: "北斗 什么 一下", tokenBudget: 5_000 });
+    assert.deepEqual(mixed.recall!.candidates.map(item => item.id), [parent.id], "有效二级主题仍可召回父记录");
+    assert.deepEqual(mixed.recall!.candidates[0]!.secondaryMatches?.map(item => item.id), ["secondary_topic"], "展示不能夹带被过滤的二级事实");
+  });
+  console.log("PASS automatic Memory query filtering: primary/secondary admission/display, core/USER and unchanged explicit search");
+}
+
+async function scenarioSharedRelevanceAndTemporalHints(): Promise<void> {
+  assert.deepEqual(memoryTemporalContext({ date: "2026-10-24", due: "2026-11-01" }, Date.parse("2026-11-03T12:00:00Z")),
+    { daysAgo: 10, due: "2026-11-01", overdue: true });
+  assert.equal(memoryTemporalContext({ date: "2026-11-03", due: "2026-11-03" }, Date.parse("2026-11-03T23:59:00Z")).overdue, false);
+  assert.equal(memoryTemporalContext({ date: "2026-11-03", due: "2026-11-03T11:00:00+08:00" }, Date.parse("2026-11-03T04:00:00Z")).overdue, true);
+  await withPersonalMemoryFixture(async fixture => {
+    const records = [];
+    for (const [index, definition] of [
+      { title: "北斗迁移项目", content: "北斗迁移必须先导出归档，再切换数据库。", recallWhen: "北斗迁移", due: "2026-01-01" },
+      { title: "项目工作记录", content: "今天讨论项目计划和工作安排，明天继续整理项目资料。".repeat(30), recallWhen: "讨论项目计划和工作时" },
+      { title: "日常会议安排", content: "今天会议讨论工作情况，明天查看计划，之后继续讨论。".repeat(15), recallWhen: "讨论今天的工作安排时" },
+      { title: "资料整理习惯", content: "资料、记录、情况、建议、安排、计划都需要定期检查。".repeat(20), recallWhen: "询问记录和资料时" }
+    ].entries()) {
+      records.push((await fixture.repository.write({ operation: "create", kind: "task", basis: "explicit", ...definition }, fixture.runtime({ userEntryId: `shared-relevance-${index}` }))).record!);
+    }
+    const runtime = fixture.runtime();
+    const query = "今天讨论一下北斗迁移项目的工作计划";
+    for (const text of [query, "北斗迁移", "海王星卫星", ""]) {
+      const desktop = await fixture.repository.search({ query: text, limit: 50 }, runtime);
+      assert.deepEqual(searchMemories(records, text, 50).map(item => item.id), desktop.items.map(item => item.id), "桌面显式搜索与手机共用同一词元、语料权重、门槛和排序");
+    }
+    const prepared = await new PersonalMemoryRecallHarness(fixture.repository).prepareTurnContext({ ...runtime, query, tokenBudget: 10_000 });
+    assert.deepEqual(prepared.recall!.candidates.map(item => item.id), [records[0]!.id], "常用词长文不能跟随明确主题进入自动召回");
+    const candidate = prepared.recall!.candidates[0]!;
+    assert.equal(candidate.due, "2026-01-01");
+    assert.equal(candidate.overdue, true);
+    assert.equal(candidate.daysAgo, 0);
+    assert.equal(candidate.file, records[0]!.file);
+    assert.ok(candidate.score > 0);
+    assert.ok(candidate.sourceSummary);
+    const { recallBlock } = serializeRecallBlocks({ candidates: prepared.recall!.candidates, secondaryFacts: [], exhaustive: true, hasMore: false, total: 1, injected: 1, remaining: 0 });
+    const injected = JSON.parse(recallBlock.split("\n")[1]!).candidates[0];
+    for (const field of ["file", "score", "sourceSummary"]) assert.equal(Object.hasOwn(injected, field), false);
+    assert.equal(injected.overdue, true);
+    const index = JSON.parse(await readFile(fixture.repository.layout.searchIndex, "utf8"));
+    assert.equal(index.schemaVersion, 3);
+    assert.equal(Object.hasOwn(index.catalog[0], "daysAgo"), false, "时间提示只从当前记录实时投影，不写派生索引字段");
+  });
+  console.log("PASS shared desktop/mobile relevance, noise floor, temporal hints and compact injection with intact internal identity");
 }
 
 async function scenarioCreateIsIdempotentAndBroadConflictsDoNotWrite(): Promise<void> {
@@ -118,7 +196,7 @@ async function scenarioHarnessScansPastFiftyByBudget(): Promise<void> {
         operation: "create",
         kind: "decision",
         title: `${query} ${"超长候选".repeat(24)} ${index}`.slice(0, 200),
-        content: "这批高分候选故意超过单轮注入预算。".repeat(30),
+        content: `${query}：这批高分候选故意超过单轮注入预算。`.repeat(30),
         recallWhen: `${query}，并检查第 ${index} 个高分干扰项。`,
         basis: "explicit"
       } as never, fixture.runtime({ userEntryId: `past-fifty-noise-${index}` }));
@@ -153,6 +231,9 @@ async function scenarioHarnessScansPastFiftyByBudget(): Promise<void> {
     };
 
     const runtime = fixture.runtime();
+    const firstPage = await fixture.repository.search({ query, limit: 50 }, runtime);
+    assert.equal(firstPage.items.some(item => item.id === target.record!.id), false, "预算内目标仍位于前 50 个高分长候选之后");
+    recordReads = 0;
     const prepared = await new PersonalMemoryRecallHarness(fixture.repository).prepareTurnContext({
       memoryMode: "normal",
       query,
@@ -163,7 +244,7 @@ async function scenarioHarnessScansPastFiftyByBudget(): Promise<void> {
       piSessionId: runtime.piSessionId,
       productRunId: runtime.productRunId
     });
-    assert.equal(prepared.recall?.total, 121);
+    assert.equal(prepared.recall?.total, 61, "最低相关门槛排除 60 条仅泛词重叠的无关历史，仍扫描全部 61 条相关候选");
     assert.equal(prepared.recall?.candidates.some((item) => item.id === target.record?.id), true);
     assert.equal(recordReads, prepared.recall?.injected, "只能读取预算实际选中的正文");
   });

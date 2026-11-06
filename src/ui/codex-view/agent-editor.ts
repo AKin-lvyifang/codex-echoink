@@ -1,8 +1,9 @@
+import { grantModuleCapabilities, getModuleOwner, moduleCapability } from "../../agents/registry";
 import { ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
-import type { AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
+import type { AgentEditorCreationOptions, AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
 import { setIcon } from "obsidian";
-import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId } from "../../agents/types";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, isUndeletableAgent, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { agentPositionDescription } from "../../agents/identity";
 import { AGENT_STYLES } from "../../agents/styles";
@@ -51,6 +52,8 @@ export class AgentEditorController {
   private error = "";
   private avatarError = "";
   private disposed = false;
+  private avatarExpanded = false;
+  private presetModules: readonly AgentModuleId[] = [];
   private generation = 0;
   private busy: "save" | "delete" | "avatar" | null = null;
   private onboardingSubmission: Promise<void> | null = null;
@@ -125,10 +128,12 @@ export class AgentEditorController {
     return copy[reason] ?? reason;
   }
 
-  open(agentId?: string): void {
+  open(agentId?: string, options: AgentEditorCreationOptions = {}): void {
+    this.presetModules = options.moduleIds ?? [];
+    this.avatarExpanded = false;
     this.generation++;
     this.editingId = agentId;
-    this.cacheKey = agentId ?? "new";
+    this.cacheKey = agentId ?? (this.presetModules.length ? `new:${this.presetModules.join(",")}` : "new");
     this.disposed = false;
     this.busy = null; this.onboardingSubmission = null; this.submittedWhileLoading = false; this.error = ""; this.avatarError = ""; this.deleteError = "";
     this.deleteCounts = null; this.deleteLoading = false;
@@ -136,12 +141,13 @@ export class AgentEditorController {
     const saved = formDrafts.get(this.host.draftCacheKey)?.get(this.cacheKey);
     this.draft = saved ? structuredClone(saved) : { agent: current ? structuredClone(current) : {
       id: `agent-${window.crypto.randomUUID()}`, name: "", avatar: { kind: "default" }, position: "", positionDescription: "", styleId: "execution", capabilityIds: []
-    }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) : [],
-    baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => this.host.settings.agentRegistry.moduleOwners[id] === current.id) } : undefined,
+    }, moduleIds: current ? AGENT_MODULE_IDS.filter(id => getModuleOwner(this.host.settings.agentRegistry, id)?.id === current.id) : [...this.presetModules],
+    baseline: current ? { agent: structuredClone(current), moduleIds: AGENT_MODULE_IDS.filter(id => getModuleOwner(this.host.settings.agentRegistry, id)?.id === current.id) } : undefined,
     presetId: "", dirty: false, revision: 0 };
+    this.syncRequiredCapabilities();
     this.persistDraft();
     this.loadingResources = false;
-    if (!isExpertAgent(this.draft.agent)) void this.reloadResources();
+    if (!isExpertAgent(this.draft.agent) && this.draft.agent.id !== GENERAL_ASSISTANT_ID) void this.reloadResources();
   }
 
   render(root: HTMLElement): void {
@@ -160,25 +166,27 @@ export class AgentEditorController {
     back.classList.add("echoink-agent-editor-back"); setIcon(back, "arrow-left");
     back.setAttribute("aria-label", this.host.backLabel ?? this.t("返回 Agent 任务", "Back to Agent tasks"));
     if (settingsPresentation) {
-      applySettingsBackButton(back, this.host.backLabel ?? this.t("返回 Agent 设置", "Back to Agent settings"));
+      applySettingsBackButton(back, "Agent");
+      back.setAttribute("aria-label", this.host.backLabel ?? this.t("返回 Agent 设置", "Back to Agent settings"));
       root.appendChild(header);
     }
-    const avatar = this.el(header, "img", "echoink-agent-editor-avatar-preview"); avatar.alt = ""; this.setAvatarImage(avatar);
+    const avatar = this.el(header, "span", "echoink-agent-editor-avatar-preview"); avatar.setAttribute("aria-hidden", "true"); this.renderAvatar(avatar);
     const heading = this.el(header, "div", "echoink-agent-editor-heading");
-    const title = this.el(heading, "h2", "echoink-agent-editor-title", expert || settingsPresentation && this.editingId ? this.draft.agent.name : this.editingId ? this.t("编辑 Agent", "Edit Agent") : this.t("新建 Agent", "New Agent"));
+    const title = this.el(heading, "h2", "echoink-agent-editor-title", this.editingId ? this.draft.agent.name : this.t("新建 Agent", "New Agent"));
     if (expert) {
       const lock = this.el(title, "span", "echoink-agent-editor-lock");
       lock.setAttribute("aria-label", this.t("只读", "Read only")); setIcon(lock, "lock");
     }
-    this.el(heading, "div", "echoink-agent-editor-subtitle", expert ? this.draft.agent.position : this.t("共用你的画像和记忆，只定身份和能做的事", "Shares your profile and memory; choose its identity and capabilities"));
+
     const body = this.el(root, "div", "echoink-agent-editor-body");
     const fields = this.el(body, "fieldset", "echoink-agent-editor-fields");
     if (!this.editingId) this.renderPresets(fields);
     this.renderIdentity(fields);
     this.renderPersona(fields);
-    this.renderResponsibilities(fields);
+    this.renderCompanyApproval(fields);
+    if (this.draft.agent.id !== GENERAL_ASSISTANT_ID) this.renderResponsibilities(fields);
     this.resourceArea = null;
-    if (!isExpertAgent(this.draft.agent)) {
+    if (!isExpertAgent(this.draft.agent) && this.draft.agent.id !== GENERAL_ASSISTANT_ID) {
       this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources echoink-agent-editor-major");
       this.renderResources();
     }
@@ -251,8 +259,25 @@ export class AgentEditorController {
     const preset = AGENT_PRESETS.find(item => item.presetId === presetId);
     if (!preset || !this.draft) return;
     const id = this.draft.agent.id;
-    this.draft = { agent: { ...structuredClone(preset.agent), id }, moduleIds: [...preset.moduleIds], presetId, dirty: false, revision: this.draft.revision + 1 };
-    this.persistDraft(); if (this.root) this.render(this.root);
+    this.draft = { agent: { ...structuredClone(preset.agent), id }, moduleIds: [...new Set([...preset.moduleIds, ...this.presetModules])], presetId, dirty: false, revision: this.draft.revision + 1 };
+    this.syncRequiredCapabilities(); this.persistDraft(); if (this.root) this.render(this.root);
+  }
+
+  private renderCompanyApproval(parent: HTMLElement): void {
+    const agent = this.draft!.agent;
+    if (agent.id !== GENERAL_ASSISTANT_ID) return;
+    const section = this.section(parent, this.t("员工审批", "Employee approvals"));
+    section.classList.add("echoink-agent-company-approval");
+    const choices = createOriginRadioGroup(section, agent.companyApprovalMode ?? "user", this.t("员工审批", "Employee approvals"), value => {
+      agent.companyApprovalMode = value === "assistant" ? "assistant" : "user";
+      this.changed();
+    });
+    for (const [value, label] of [["user", this.t("我来审批", "I approve")], ["assistant", this.t("总助审批", "Assistant approves")]] as const) {
+      const row = this.el(choices.element, "label", "echoink-agent-approval-choice");
+      choices.addItem(row, value, false).setAttribute("aria-label", label);
+      const copy = this.el(row, "span", "", label);
+      if (value === "assistant") this.el(copy, "div", "echoink-agent-editor-availability", this.t("删除仍由你来批", "You still approve deletions"));
+    }
   }
 
   private renderPresets(parent: HTMLElement): void {
@@ -283,7 +308,7 @@ export class AgentEditorController {
       for (const [field, label, value] of [
         ["name", this.t("名字", "Name"), this.draft!.agent.name],
         ["position", this.t("职位", "Role"), this.draft!.agent.position],
-        ["positionDescription", this.t("职位简介", "Role description"), agentPositionDescription(this.draft!.agent)]
+        ["positionDescription", this.t("一句话简介", "Short description"), agentPositionDescription(this.draft!.agent)]
       ]) {
         const row = this.el(section, "div", "echoink-agent-editor-section");
         this.el(row, "div", "echoink-agent-editor-label", label);
@@ -292,37 +317,43 @@ export class AgentEditorController {
       return;
     }
     const settingsPresentation = this.root?.classList.contains("is-settings");
-    const flatIdentity = settingsPresentation && !!this.root?.closest(".echoink-settings-aligned");
-    const section = flatIdentity ? parent : this.el(parent, "section", "echoink-agent-editor-identity");
+    const outer = this.section(parent, this.t("身份", "Identity"));
+    outer.classList.add("echoink-agent-editor-identity");
+    const section = this.el(outer, "div", "echoink-agent-editor-identity-group");
     const avatar = this.el(section, "div", "echoink-agent-editor-section echoink-agent-editor-avatar-field");
     this.el(avatar, "div", "echoink-agent-editor-label", this.t("头像", "Avatar"));
-    const nameField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
+    const nameField = this.el(section, "div", "echoink-agent-editor-identity-field");
     const nameId = `${this.instanceId}-name`;
     const label = this.el(nameField, "label", "echoink-agent-editor-label", this.t("名字", "Name")); label.htmlFor = nameId;
     this.nameInput = createOriginInput(nameField, { value: this.draft!.agent.name, attr: { id: nameId, autocomplete: "off", maxlength: "96", required: "true", placeholder: this.t("例如：小林", "e.g., Alex"), "aria-describedby": `${nameId}-error` } });
     this.nameInput.dataset.field = "name";
     this.nameError = this.el(nameField, "div", "echoink-agent-editor-error"); this.nameError.id = `${nameId}-error`; this.nameError.setAttribute("aria-live", "polite");
     this.nameInput.oninput = () => { this.draft!.agent.name = this.nameInput!.value; this.changed(); };
-    const grid = this.el(avatar, "div", "echoink-agent-editor-avatar-grid");
+    const summary = this.el(avatar, "div", "echoink-agent-editor-avatar-summary");
+    const currentImage = this.el(summary, "span", "echoink-agent-editor-avatar-preview"); currentImage.setAttribute("aria-hidden", "true"); this.renderAvatar(currentImage);
+    const change = this.button(summary, this.t("更换", "Change"), "secondary", () => { this.avatarExpanded = !this.avatarExpanded; details.hidden = !this.avatarExpanded; change.setAttribute("aria-expanded", String(this.avatarExpanded)); });
+    change.setAttribute("aria-expanded", String(this.avatarExpanded));
+    const details = this.el(avatar, "div", "echoink-agent-editor-avatar-details"); details.hidden = !this.avatarExpanded;
+    const grid = this.el(details, "div", "echoink-agent-editor-avatar-grid");
     const selected = this.draft!.agent.avatar;
-    const choices = [{ value: "default", label: this.t("默认头像", "Default avatar"), avatar: { kind: "default" as const } }, ...AGENT_AVATAR_PRESETS.map(preset => ({ value: `preset:${preset.id}`, label: this.t(preset.labelZh, preset.labelEn), avatar: { kind: "preset" as const, presetId: preset.id } })),
+    const choices = [...(this.isOnboardingCreation() ? [{ value: "default", label: this.t("默认头像", "Default avatar"), avatar: { kind: "default" as const } }] : []), ...AGENT_AVATAR_PRESETS.map(preset => ({ value: `preset:${preset.id}`, label: this.t(preset.labelZh, preset.labelEn), avatar: { kind: "preset" as const, presetId: preset.id } })),
       ...(selected.kind === "custom" ? [{ value: "custom", label: this.t("自定义头像", "Custom avatar"), avatar: selected }] : [])];
     const value = selected.kind === "preset" ? `preset:${selected.presetId}` : selected.kind;
     const radios = createOriginRadioGroup(grid, value, this.t("选择头像", "Choose an avatar"), value => {
       const choice = choices.find(choice => choice.value === value); if (!choice) return;
       this.draft!.agent.avatar = structuredClone(choice.avatar); this.avatarError = "";
-      const image = this.root?.querySelector<HTMLImageElement>(".echoink-agent-editor-avatar-preview"); if (image) this.setAvatarImage(image); this.changed();
+      this.root?.querySelectorAll<HTMLElement>(".echoink-agent-editor-avatar-preview").forEach(image => this.renderAvatar(image)); this.changed();
     });
     radios.element.classList.add("echoink-agent-editor-avatar-grid-inner");
     for (const choice of choices) {
       const tile = this.el(radios.element, "label", "echoink-agent-editor-avatar-option");
       const radio = radios.addItem(tile, choice.value, false); radio.setAttribute("aria-label", choice.label);
       radio.addEventListener("click", () => this.onboardingInteraction());
-      const picture = this.el(tile, "img"); picture.alt = "";
-      const url = resolveAgentAvatarUrl(choice.avatar) ?? resolveAgentAvatarUrl({ kind: "preset", presetId: "sol" }); if (url) picture.src = url;
+      const picture = this.el(tile, "span", "echoink-agent-editor-avatar-option-picture"); picture.setAttribute("aria-hidden", "true");
+      this.renderAvatar(picture, choice.avatar);
     }
-    const fileInput = this.el(avatar, "input"); fileInput.type = "file"; fileInput.accept = "image/svg+xml"; fileInput.hidden = true; fileInput.dataset.field = "avatar-file";
-    this.button(avatar, this.t("上传 SVG 头像", "Upload SVG avatar"), "secondary", () => fileInput.click());
+    const fileInput = this.el(details, "input"); fileInput.type = "file"; fileInput.accept = "image/svg+xml"; fileInput.hidden = true; fileInput.dataset.field = "avatar-file";
+    this.button(details, this.t("上传 SVG", "Upload SVG"), "secondary", () => fileInput.click());
     const avatarError = this.el(settingsPresentation ? avatar : section, "div", "echoink-agent-editor-error"); avatarError.setAttribute("role", "status");
     fileInput.onchange = () => {
       const file = fileInput.files?.[0]; if (!file || this.busy) return;
@@ -343,20 +374,24 @@ export class AgentEditorController {
     };
     avatarError.textContent = this.avatarError;
     // The avatar field precedes the name, while preserving its existing draft handlers.
-    if (!flatIdentity) section.prepend(avatar);
-    const positionField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
+    section.prepend(avatar);
+    if (this.draft!.agent.id === GENERAL_ASSISTANT_ID) return;
+    const positionField = this.el(section, "div", "echoink-agent-editor-identity-field");
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(positionField, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;
     const position = createOriginInput(positionField, { value: this.draft!.agent.position, attr: { id: positionId, placeholder: this.t("例如：选题编辑", "e.g., Topic Editor") } }); position.classList.add("echoink-agent-editor-position");
     position.dataset.field = "position"; position.oninput = () => { this.draft!.agent.position = position.value; this.changed(); };
-    const descriptionField = settingsPresentation ? this.el(section, "div", "echoink-agent-editor-identity-field") : section;
+    const descriptionField = this.el(section, "div", "echoink-agent-editor-identity-field");
     const descriptionId = `${this.instanceId}-position-description`;
-    const descriptionLabel = this.el(descriptionField, "label", "echoink-agent-editor-label", this.t("职位简介", "Role description")); descriptionLabel.htmlFor = descriptionId;
+    const descriptionLabel = this.el(descriptionField, "label", "echoink-agent-editor-label", this.t("一句话简介", "Short description")); descriptionLabel.htmlFor = descriptionId;
     const description = createOriginInput(descriptionField, { value: agentPositionDescription(this.draft!.agent), attr: { id: descriptionId, placeholder: this.t("一句话：负责什么", "In one sentence: what it handles") } });
     description.dataset.field = "positionDescription"; description.oninput = () => { this.draft!.agent.positionDescription = description.value; this.changed(); };
   }
-  private setAvatarImage(image: HTMLImageElement): void {
-    const url = resolveAgentAvatarUrl(this.draft!.agent.avatar) ?? resolveAgentAvatarUrl({ kind: "preset", presetId: "sol" }); if (url) image.src = url;
+  private renderAvatar(parent: HTMLElement, avatar = this.draft!.agent.avatar): void {
+    parent.replaceChildren();
+    const url = resolveAgentAvatarUrl(avatar);
+    if (url) { const image = this.el(parent, "img"); image.src = url; image.alt = ""; }
+    else setIcon(parent, "bot");
   }
 
   private renderResponsibilities(parent: HTMLElement): void {
@@ -369,16 +404,21 @@ export class AgentEditorController {
       check.checked = this.draft!.moduleIds.includes(id);
       const copy = this.el(row, "span", "echoink-agent-editor-choice-copy"); this.el(copy, "span", "", this.moduleName(id));
       this.ownership.set(id, this.el(copy, "span", "echoink-agent-editor-ownership"));
-      check.onchange = () => { this.draft!.moduleIds = check.checked ? [...new Set([...this.draft!.moduleIds, id])] : this.draft!.moduleIds.filter(value => value !== id); this.changed(); };
+      check.onchange = () => { this.draft!.moduleIds = check.checked ? [...new Set([...this.draft!.moduleIds, id])] : this.draft!.moduleIds.filter(value => value !== id); this.syncRequiredCapabilities(); this.changed(); };
     }
   }
+  private syncRequiredCapabilities(): void {
+    if (!this.draft || this.draft.agent.id === GENERAL_ASSISTANT_ID) return;
+    for (const id of this.draft.moduleIds) grantModuleCapabilities(this.draft.agent, id);
+  }
+  private requiredCapability(id: string): boolean { return this.draft!.moduleIds.some(module => moduleCapability(module) === id); }
   private selected(id: string): boolean {
     if (isExpertAgent(this.draft!.agent)) return true;
-    return this.draft!.agent.id === GENERAL_ASSISTANT_ID ? !this.draft!.agent.disabledCapabilityIds?.includes(id) : this.draft!.agent.capabilityIds?.includes(id) === true;
+    return usesDisabledCapabilityList(this.draft!.agent.id) ? !this.draft!.agent.disabledCapabilityIds?.includes(id) : this.draft!.agent.capabilityIds?.includes(id) === true;
   }
   private setCapability(id: string, enabled: boolean): void {
     const agent = this.draft!.agent;
-    const key = agent.id === GENERAL_ASSISTANT_ID ? "disabledCapabilityIds" : "capabilityIds";
+    const key = usesDisabledCapabilityList(agent.id) ? "disabledCapabilityIds" : "capabilityIds";
     const contains = key === "disabledCapabilityIds" ? !enabled : enabled;
     const ids = new Set(agent[key] ?? []); if (contains) ids.add(id); else ids.delete(id); agent[key] = [...ids];
   }
@@ -391,8 +431,9 @@ export class AgentEditorController {
     const reasons = [...new Set([availability?.available === false ? this.availabilityReason(availability.reason ?? this.t("当前不可用", "Currently unavailable")) : "", resource?.enabled === false ? this.t("资源未启用", "Resource disabled") : "", extraReason ?? ""].filter(Boolean))];
     if (reasons.length) {
       row.classList.add("is-unavailable"); const reason = reasons.join(this.t("；", "; "));
-      check.setAttribute("aria-description", reason); attachNativeTooltip(row, reason);
+      check.setAttribute("aria-description", reason);
     }
+    attachNativeTooltip(row, () => [...reasons, this.requiredCapability(id) ? this.t("负责这个模块，必须能用", "Required by this module") : ""].filter(Boolean).join(this.t("；", "; ")));
     check.onchange = () => { this.setCapability(id, check.checked); this.changed(); };
   }
   private renderResources(): void {
@@ -404,11 +445,12 @@ export class AgentEditorController {
     group.setAttribute("role", "group"); group.setAttribute("aria-labelledby", title.id);
     const builtIn = this.el(group, "section", "echoink-agent-editor-resource-section");
     this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("内置技能", "Built-in Skills"));
+    this.button(builtIn, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
     const base = this.el(builtIn, "div", "echoink-agent-editor-capabilities");
     for (const [id] of CAPABILITIES) this.capability(base, id, this.capabilityName(id));
     const customGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
     const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
-    const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新资源", "Refresh resources"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
+    const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
     const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : ""));
     if (custom.length) {
@@ -418,6 +460,7 @@ export class AgentEditorController {
     if (!custom.length && !this.loadingResources && !this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-empty", this.t("暂无自建 Skill", "No custom Skills"));
     const mcpGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
     this.el(mcpGroup, "h4", "echoink-agent-editor-resource-heading", "MCP");
+    this.button(mcpGroup, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
     const servers = this.resources.filter(resource => resource.kind === "mcp-server");
     const services = servers.length ? this.el(mcpGroup, "div", "echoink-agent-editor-services") : null;
     for (const resource of servers) {
@@ -460,7 +503,7 @@ export class AgentEditorController {
       if (this.disposed || generation !== this.generation) return;
       this.resourceError = error instanceof Error ? error.message : this.t("资源读取失败，请重试。", "Could not load resources. Please retry.");
     } finally {
-      if (!this.disposed && generation === this.generation) { this.loadingResources = false; this.submittedWhileLoading = false; this.renderResources(); }
+      if (!this.disposed && generation === this.generation) { this.loadingResources = false; this.submittedWhileLoading = false; this.renderResources(); this.refresh(); }
     }
   }
 
@@ -468,7 +511,8 @@ export class AgentEditorController {
     if (isExpertAgent(this.draft!.agent)) return;
     const section = this.section(parent, this.t("人格", "Persona"));
     section.classList.add("echoink-agent-editor-major", "echoink-agent-editor-persona-section");
-    const templates = this.el(section, "div", "echoink-agent-editor-persona-templates");
+    const frame = this.el(section, "div", "echoink-agent-editor-persona-frame");
+    const templates = this.el(frame, "div", "echoink-agent-editor-persona-templates");
     templates.setAttribute("role", "group"); templates.setAttribute("aria-label", this.t("人格模板", "Persona templates"));
     for (const style of AGENT_STYLES) {
       const name = this.t(style.name, STYLE_COPY_EN[style.id].name);
@@ -486,11 +530,11 @@ export class AgentEditorController {
       button.classList.toggle("is-selected", this.draft!.agent.styleId === style.id);
       button.setAttribute("aria-pressed", String(this.draft!.agent.styleId === style.id));
     }
-    const input = this.el(section, "textarea", "echoink-agent-editor-persona");
+    const input = this.el(frame, "textarea", "echoink-agent-editor-persona"); frame.prepend(input);
     input.dataset.field = "persona"; input.value = this.draft!.agent.persona ?? "";
     input.placeholder = this.t("写下它是谁、怎么想、怎么说话、什么事不做", "Who it is, how it thinks and speaks, and what it avoids");
     input.setAttribute("aria-label", this.t("人格正文", "Persona text"));
-    const counter = this.el(section, "div", "echoink-agent-editor-persona-count");
+    const counter = this.el(templates, "div", "echoink-agent-editor-persona-count");
     counter.id = `${this.instanceId}-persona-count`; input.setAttribute("aria-describedby", counter.id);
     const update = () => {
       const value = normalizeAgentPersona(input.value); if (input.value !== value) input.value = value;
@@ -506,21 +550,21 @@ export class AgentEditorController {
     const invalidName = !normalizeAgentDisplayName(this.draft.agent.name);
     if (this.nameError) this.nameError.textContent = invalidName && this.draft.dirty ? this.t("名字需为 1–24 个字符，不能包含换行或制表符。", "Use 1–24 characters without line breaks or tabs.") : "";
     this.nameInput?.setAttribute("aria-invalid", String(invalidName && this.draft.dirty));
-    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.submittedWhileLoading && this.loadingResources ? this.t("资源正在读取，请稍后再试。", "Resources are loading. Please try again shortly.") : this.busy === "save" ? this.isOnboardingCreation() ? this.t("正在创建…", "Creating…") : this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : "");
+    if (this.status) this.status.textContent = this.invalidAgent() ? this.t("这个 Agent 已不存在，请返回。", "This Agent no longer exists. Go back to the task list.") : this.error || (this.submittedWhileLoading && this.loadingResources ? this.t("资源正在读取，请稍后再试。", "Resources are loading. Please try again shortly.") : this.busy === "save" ? this.isOnboardingCreation() ? this.t("正在创建…", "Creating…") : this.t("正在保存…", "Saving…") : this.busy === "avatar" ? this.t("正在处理头像…", "Processing avatar…") : this.busy === "delete" ? this.t("正在停止任务并交通才…", "Stopping tasks and transferring them to the generalist…") : this.hasUnsavedChanges() ? this.t("有未保存的修改", "Unsaved changes") : "");
     const fields = this.root.querySelector("fieldset"); if (fields) fields.disabled = !!this.busy;
     this.root.setAttribute("aria-busy", String(!!this.busy));
     for (const button of Array.from(this.root.querySelectorAll<HTMLButtonElement>(".echoink-agent-editor-back,.echoink-agent-editor-header button,.echoink-agent-editor-footer button"))) button.disabled = !!this.busy;
     if (this.saveButton) { this.saveButton.disabled = !!this.busy || invalidName && !this.canUseOnboardingPreset() || this.invalidAgent() || this.loadingResources || !!this.deleteCounts; setAmicroButtonPending(this.saveButton, this.busy === "save"); }
     for (const [id, element] of this.ownership) {
       const selected = this.draft.moduleIds.includes(id);
-      const ownerId = this.host.settings.agentRegistry.moduleOwners[id];
-      const owner = this.host.settings.agentRegistry.agents.find(agent => agent.id === ownerId)?.name ?? this.t("原负责人", "Previous owner");
-      const target = this.draft.agent.name.trim() || this.t("当前 Agent", "Current Agent");
-      const moved = selected && ownerId !== this.draft.agent.id ? `${owner} → ${target}` : "";
+      const owner = getModuleOwner(this.host.settings.agentRegistry, id);
+      const moved = owner && owner.id !== this.draft.agent.id ? owner.name : "";
       const missing = selected && !this.selected(MODULE_CAPABILITY(id)) ? this.t(`缺少「${this.capabilityName(MODULE_CAPABILITY(id))}」能力`, `Missing “${this.capabilityName(MODULE_CAPABILITY(id))}” capability`) : "";
       element.textContent = [moved, missing].filter(Boolean).join(this.t("；", "; "));
     }
-    for (const [id, check] of this.capabilityChecks) check.checked = this.selected(id);
+    for (const [id, check] of this.capabilityChecks) {
+      check.checked = this.selected(id); check.disabled = !!this.busy || this.requiredCapability(id);
+    }
     for (const { check, ids } of this.mcpChecks) { const count = ids.filter(id => this.selected(id)).length; check.checked = !!ids.length && count === ids.length; check.indeterminate = count > 0 && count < ids.length; }
   }
   private async save(): Promise<void> {
@@ -544,7 +588,7 @@ export class AgentEditorController {
   private renderDelete(): void {
     const area = this.deleteArea; if (!area) return;
     disposeOriginControls(area); area.replaceChildren();
-    if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID) return;
+    if (!this.editingId || isUndeletableAgent(this.editingId)) return;
     if (this.draft && isExpertAgent(this.draft.agent)) {
       const dismiss = this.button(area, this.t("解聘", "Dismiss"), "danger", () => { void this.dismissExpert(); });
       dismiss.dataset.action = "dismiss-expert"; dismiss.disabled = !this.host.dismissExpert || !!this.busy;
@@ -559,12 +603,12 @@ export class AgentEditorController {
     const panel = this.el(area, "div", "echoink-agent-editor-confirm"); panel.setAttribute("role", "group"); panel.setAttribute("aria-label", this.t("确认删除 Agent", "Confirm Agent deletion"));
     const { total, running } = this.deleteCounts;
     const message = running === 0
-      ? this.t(`它名下有 ${total} 件事会交给总助。`, `Its ${total} ${total === 1 ? "task" : "tasks"} will be transferred to the general assistant.`)
-      : this.t(`它名下有 ${total} 件事（${running} 件正在进行）会交给总助。正在进行的会先停下，不会自动重新执行。`, `Its ${total} ${total === 1 ? "task" : "tasks"} (${running} running) will be transferred to the general assistant. Running tasks will be stopped first and will not restart automatically.`);
+      ? this.t(`它名下有 ${total} 件事会交给通才，负责的模块变为未指定。`, `Its ${total} ${total === 1 ? "task" : "tasks"} will be transferred to the generalist. Its modules will be unassigned.`)
+      : this.t(`它名下有 ${total} 件事（${running} 件正在进行）会交给通才，负责的模块变为未指定。正在进行的会先停下，不会自动重新执行。`, `Its ${total} ${total === 1 ? "task" : "tasks"} (${running} running) will be transferred to the generalist. Its modules will be unassigned. Running tasks will be stopped first and will not restart automatically.`);
     this.el(panel, "p", "", message);
     const actions = this.el(panel, "div", "echoink-agent-editor-actions");
     const cancel = this.button(actions, this.t("取消删除", "Cancel deletion"), "secondary", () => { this.deleteCounts = null; this.deleteError = ""; this.renderDelete(); this.refresh(); this.deleteArea?.querySelector<HTMLButtonElement>("button")?.focus(); });
-    const confirm = this.button(actions, this.busy === "delete" ? this.t("正在停止任务并交回总助…", "Stopping tasks and transferring them to the general assistant…") : this.t("删除并交回总助", "Delete and transfer to the general assistant"), "danger", () => { void this.delete(); });
+    const confirm = this.button(actions, this.busy === "delete" ? this.t("正在停止任务并交通才…", "Stopping tasks and transferring them to the generalist…") : this.t("删除并交通才", "Delete and transfer to the generalist"), "danger", () => { void this.delete(); });
     applyDeleteButton(confirm);
     confirm.dataset.action = "confirm-delete"; confirm.disabled = cancel.disabled = !!this.busy;
     panel.onkeydown = event => {
@@ -574,7 +618,7 @@ export class AgentEditorController {
     if (!this.busy) cancel.focus({ preventScroll: true });
   }
   private async requestDelete(): Promise<void> {
-    if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID || this.busy || this.deleteLoading) return;
+    if (!this.editingId || isUndeletableAgent(this.editingId) || this.busy || this.deleteLoading) return;
     const generation = this.generation; this.deleteLoading = true; this.deleteError = ""; this.renderDelete();
     try {
       const counts = await this.host.getDeleteCounts(this.editingId);
@@ -596,7 +640,7 @@ export class AgentEditorController {
     } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.refresh(); } }
   }
   private async delete(): Promise<void> {
-    if (!this.editingId || this.editingId === GENERAL_ASSISTANT_ID || !this.deleteCounts || this.busy) return;
+    if (!this.editingId || isUndeletableAgent(this.editingId) || !this.deleteCounts || this.busy) return;
     const generation = this.generation; this.busy = "delete"; this.deleteError = ""; this.renderDelete(); this.refresh();
     try {
       await this.host.deleteAgent(this.editingId);

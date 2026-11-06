@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { transform } from 'esbuild';
@@ -6,6 +7,8 @@ import { JSDOM } from 'jsdom';
 // Run production classes with a small host port; native acceptance is separate.
 const root = new URL('../', import.meta.url);
 const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true });
+globalThis.window = dom.window; globalThis.document = dom.window.document;
+installMobileDomHost(dom.window);
 const doc = dom.window.document;
 const proto = dom.window.HTMLElement.prototype;
 proto.setText = function (text) { this.textContent = text; };
@@ -22,12 +25,13 @@ async function production(relative, mocks = {}) {
   new Function('require', 'module', 'exports', code)(name => name === 'obsidian' ? obsidian : mocks[name] ?? {}, module, module.exports);
   return module.exports;
 }
+const ownedDom = await production('src/ui/owned-dom.ts');
 const visibility = { isHomeNotePath: () => true };
 const { HomeSearchService } = await production('src/home/home-search.ts', { './home-note-visibility': visibility });
 const i18n = await production('src/home/home-i18n.ts');
 const dateKey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const photoCalendar = await production('src/home/photo-calendar.ts', {
-  './home-workbench-model': { dateKey }, './home-i18n': i18n
+  './home-workbench-model': { dateKey }, './home-i18n': i18n, '../ui/owned-dom': ownedDom
 });
 const { EchoInkHomeView } = await production('src/home/home-view.ts', {
   './home-workbench-model': { dateKey }, './home-i18n': i18n, './home-note-visibility': visibility,
@@ -35,7 +39,7 @@ const { EchoInkHomeView } = await production('src/home/home-view.ts', {
   './photo-calendar': photoCalendar
 });
 const activityCore = await production('src/home/home-activity-core.ts');
-const { HomeActivityService } = await production('src/home/home-activity-service.ts', { './home-activity-core': activityCore });
+const { HomeActivityService } = await production('src/home/home-activity-service.ts', { './home-activity-core': activityCore, '../platform/desktop-filesystem': { getDesktopFsPromises: () => ({}) } });
 const { ForegroundView } = await production('src/ui/foreground-view.ts');
 const filters = await production('src/english-diary/expression-search.ts');
 const { EnglishExpressionBrowser } = await production('src/english-diary/expression-view.ts', { './expression-search': filters });

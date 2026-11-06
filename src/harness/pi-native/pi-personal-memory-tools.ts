@@ -25,6 +25,7 @@ import {
   USER_PROFILE_SLOTS,
   USER_PROFILE_ITEM_HARD_MAX_CHARS
 } from "../memory/user-profile-state";
+import { MEMORY_PIN_LIMIT_MESSAGE } from "../memory/memory-relevance";
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
 
 const { isDeepStrictEqual } = getDesktopUtil();
@@ -45,6 +46,7 @@ export type PiPersonalMemoryToolFailureStage =
 export type PiPersonalMemoryToolSafeErrorCode =
   | "personal_memory_vault_mismatch"
   | "personal_memory_no_memory"
+  | "personal_memory_pin_limit"
   | "personal_memory_invalid_request"
   | "personal_memory_current_turn_search_required"
   | "personal_memory_not_found"
@@ -61,6 +63,7 @@ export interface MemoryReadToolArguments {
   readonly includeHistorical?: boolean;
 }
 export type MemoryWriteRequestArguments =
+  | Readonly<{ operation: "pin" | "unpin"; targetId: string; evidenceQuote: string }>
   | Readonly<{
       operation: "create";
       kind: PersonalMemoryKind;
@@ -101,6 +104,8 @@ export interface MemoryWriteToolArguments {
   readonly request: MemoryWriteRequestArguments;
 }
 export type MemoryWriteToolOutcome =
+  | "pinned"
+  | "unpinned"
   | "created"
   | "updated"
   | "profile_updated"
@@ -228,11 +233,12 @@ const MEMORY_WRITE_REQUEST_SCHEMA = Type.Union([
   UPDATE_REQUEST_SCHEMA,
   PROFILE_UPDATE_REQUEST_SCHEMA,
   FORGET_REQUEST_SCHEMA,
+  ...(["pin", "unpin"] as const).map(operation => Type.Object({ operation: Type.Literal(operation), targetId: Type.String({ minLength: 3, maxLength: 96 }), evidenceQuote: Type.String({ minLength: 1, maxLength: 2_000, description: "逐字引用当前用户明确要求固定或取消固定的原话。" }) }, { additionalProperties: false })),
   Type.String({ maxLength: MEMORY_WRITE_REQUEST_JSON_MAX_CHARS })
 ]);
-const MEMORY_SEARCH_TOOL_DESCRIPTION = "搜索当前 Vault 的长期 Memory 摘要，默认只返回current当前记录。问到过去或变更原因时，可用statuses包含superseded查找已被替代的历史，按需用scope/from/to缩小范围。current与superseded分别表达当前和历史，supersedes指向被替代记录。相关摘要已足够时可直接使用；写入、修正或忘记前按需定位现有记录。";
+const MEMORY_SEARCH_TOOL_DESCRIPTION = "搜索当前 Vault 的长期 Memory 摘要，默认只返回current当前记录。问到过去或变更原因时，可用statuses包含superseded查找已被替代的历史，按需用scope/from/to缩小范围。current与superseded分别表达当前和历史，supersedes指向被替代记录。相关摘要已足够时可直接使用；写入、修正或忘记前按需定位现有记录。在普通对话中，涉及用户过去的偏好、决定、规矩或经历且已有内容不足时，先搜索再回答；可用场景和主题的不同说法检索，查笔记不能代替查长期记忆。";
 const MEMORY_READ_TOOL_DESCRIPTION = "按Memory ID读取正文；读取历史记录时传includeHistorical=true。已有摘要不足以回答当前问题时再读取相关记录，保留current/superseded身份与supersedes替代关系，不把历史内容当成当前状态。";
-const MEMORY_WRITE_TOOL_DESCRIPTION = "当用户内容具有跨轮价值且对象明确时，新增或更新长期 Memory、修正 USER 画像，或按用户当前原话忘记旧 Memory。选择一种 schema operation；普通文字不会保存，只根据本 Tool 的真实结果说明是否成功。";
+const MEMORY_WRITE_TOOL_DESCRIPTION = "当用户内容具有跨轮价值且对象明确时，新增或更新长期 Memory、修正 USER 画像，或按用户当前原话忘记旧 Memory。固定或取消固定只允许引用当前用户明确要求，使用 pin/unpin 和 evidenceQuote。选择一种 schema operation；普通文字不会保存，只根据本 Tool 的真实结果说明是否成功。";
 
 export const PI_PERSONAL_MEMORY_TOOL_SCHEMAS: Readonly<Record<PiPersonalMemoryToolId, TSchema>> = Object.freeze({
   memory_search: Type.Object({
@@ -267,6 +273,8 @@ export class PiPersonalMemoryToolSecurity
 implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = "memory_search";
   readonly toolNames = PI_PERSONAL_MEMORY_TOOL_IDS;
+  private readObserver?: (id: string, turnId: string) => Promise<unknown>;
+  setReadObserver(observer: (id: string, turnId: string) => Promise<unknown>): void { this.readObserver = observer; }
   private readonly calls = new Map<string, AuthorizedMemoryToolCall>();
   private readonly seenToolCallIds = new Set<string>();
   private readonly writeSessions = new Map<string, Readonly<{ revision: number }>>();
@@ -319,8 +327,8 @@ implements PiVaultAdditionalToolSecurityPort {
         const writeArguments = args as Readonly<MemoryWriteToolArguments>;
         const writeRequest = writeArguments.request;
         if (
-          writeRequest.operation === "forget"
-          && !currentUserEntry.text.includes(writeRequest.evidenceQuote)
+          ["forget", "pin", "unpin"].includes(writeRequest.operation)
+          && !currentUserEntry.text.includes((writeRequest as { evidenceQuote: string }).evidenceQuote)
         ) {
           return block("authorization_failed");
         }
@@ -338,7 +346,7 @@ implements PiVaultAdditionalToolSecurityPort {
         // Reserve the session for this sequential write. Only a trusted successful
         // result renews it; every execution failure therefore fails closed.
         this.writeSessions.delete(sessionKey);
-        if (writeRequest.operation === "forget") {
+        if (["forget", "pin", "unpin"].includes(writeRequest.operation)) {
           runtime = Object.freeze({ ...current, explicitlyAuthorized: true });
         }
         authorizedArguments = authorizedWriteArguments(
@@ -453,13 +461,18 @@ implements PiVaultAdditionalToolSecurityPort {
         this.writeSessions.set(sessionKey, Object.freeze({ revision: call.result.revision }));
       }
     }
-    return correctedResult(
+    const corrected = correctedResult(
       event.toolCallId,
       call.toolId,
       call.result,
       call.errorCode,
       call.errorCode ? "execution" : undefined
     );
+    if (!corrected.isError && !event.isError && call.toolId === "memory_read") {
+      const record = (call.result as { record?: { id: string } })?.record;
+      if (record) await this.readObserver?.(record.id, call.runtime.productRunId);
+    }
+    return corrected;
   }
 }
 
@@ -467,6 +480,7 @@ export function createPiPersonalMemoryToolDefinitions(input: Readonly<{
   repository: PersonalMemoryRepository;
   security: PiPersonalMemoryToolSecurity;
 }>): readonly ToolDefinition[] {
+  input.security.setReadObserver((id, turnId) => input.repository.recordRecalledMemories?.([id], turnId) ?? Promise.resolve());
   return Object.freeze(PI_PERSONAL_MEMORY_TOOL_IDS.map((toolId) => defineTool({
     name: toolId,
     label: toolLabel(toolId),
@@ -624,6 +638,10 @@ function normalizeWriteRequest(
       text: requireString(input.text, USER_PROFILE_ITEM_HARD_MAX_CHARS)
     });
   }
+  if (operation === "pin" || operation === "unpin") {
+    requireExactKeys(input, ["operation", "targetId", "evidenceQuote"]);
+    return Object.freeze({ operation, targetId: requireString(input.targetId, 96), evidenceQuote: requireString(input.evidenceQuote, 2_000) });
+  }
   if (operation === "forget") {
     requireExactKeys(input, ["operation", "targetId", "reason", "evidenceQuote"]);
     return Object.freeze({
@@ -680,6 +698,8 @@ function authorizedWriteArguments(
       expectedRevision
     });
   }
+  if (argumentsValue.operation === "pin" || argumentsValue.operation === "unpin") return Object.freeze({ operation: argumentsValue.operation, targetId: argumentsValue.targetId, expectedRevision });
+  if (argumentsValue.operation !== "forget") throw new Error("memory_write_operation_invalid");
   const { evidenceQuote: _evidenceQuote, ...rest } = argumentsValue;
   return Object.freeze({
     ...rest,
@@ -701,6 +721,8 @@ async function executeMemoryWrite(
     ? "already_present"
     : result.status === "possible_duplicate"
       ? "possible_duplicate"
+      : request.operation === "pin" || request.operation === "unpin"
+        ? request.operation === "pin" ? "pinned" : "unpinned"
       : request.operation === "create"
         ? "created"
         : request.operation === "supersede"
@@ -825,6 +847,7 @@ function memoryToolErrorMessage(code: PiPersonalMemoryToolSafeErrorCode): string
   switch (code) {
     case "personal_memory_no_memory":
       return "Memory Tool 未完成：长期记忆总开关已关闭。";
+    case "personal_memory_pin_limit": return MEMORY_PIN_LIMIT_MESSAGE;
     case "personal_memory_invalid_request":
       return "Memory Tool 未完成：参数无效。请修正 Tool 参数后再试。";
     case "personal_memory_current_turn_search_required":
@@ -889,7 +912,7 @@ function isCompletedWriteResult(
     && typeof result.recordId === "string"
     && result.recordId.length > 0
     && [
-      "created", "updated", "profile_updated", "forgotten",
+      "created", "updated", "profile_updated", "forgotten", "pinned", "unpinned",
       "already_present", "possible_duplicate"
     ].includes(result.outcome as MemoryWriteToolOutcome);
 }
@@ -952,6 +975,7 @@ function block(reason: string): Readonly<{ block: true; reason: string }> {
 }
 
 function safeErrorCode(error: unknown): PiPersonalMemoryToolSafeErrorCode {
+  if (error instanceof Error && error.message === MEMORY_PIN_LIMIT_MESSAGE) return "personal_memory_pin_limit";
   if (error instanceof PersonalMemoryAccessError) {
     return `personal_memory_${error.code}` as PiPersonalMemoryToolSafeErrorCode;
   }

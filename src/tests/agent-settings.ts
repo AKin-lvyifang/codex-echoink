@@ -1,3 +1,4 @@
+import { ModuleOwnerModal } from "../ui/module-owner-modal";
 import { installObsidianDom } from "./obsidian-dom";
 import { runAgentIdentityFieldsTests } from "./agent-identity-fields";
 import assert from "node:assert/strict";
@@ -62,43 +63,77 @@ export async function runAgentSettingsTests(): Promise<void> {
   const panel = new DesktopAgentSettings(host, { redraw: () => redraws++, restoreFocus: value => { focused = value; } });
   const root = container();
   try {
+    {
+      const modalSettings = structuredClone(settings);
+      let writes = 0, starts = 0, creations = 0, fail = true;
+      let release!: () => void;
+      const saving = new Promise<void>(done => { release = done; });
+      const plugin: any = { settings: modalSettings, app: {},
+        setAgentModuleOwner: async (module: AgentModuleId, id: string) => {
+          writes++; if (fail) throw new Error("负责人保存失败");
+          await saving; modalSettings.agentRegistry = setModuleOwner(modalSettings.agentRegistry, module, id);
+        },
+        openModuleAgentCreation: async (module: AgentModuleId) => { assert.equal(module, "journal"); creations++; }
+      };
+      const modal = new ModuleOwnerModal(plugin, "journal", async () => { starts++; }); modal.open(); await settle();
+      assert.equal(modal.titleEl.textContent, "日记还没有负责人");
+      assert.equal(modal.contentEl.querySelectorAll('[role="radio"]').length, 1, "assistant never appears as a candidate");
+      assert.equal(button(modal.contentEl, "交给 Ta").disabled, true);
+      (modal.contentEl.querySelector('[role="radio"]') as HTMLButtonElement).click(); await settle();
+      button(modal.contentEl, "交给 通才").click(); await settle();
+      assert.equal(starts, 0); assert.ok(modal.contentEl.textContent?.includes("负责人保存失败"));
+      assert.equal(modal.contentEl.querySelector('[role="radio"]')?.getAttribute("data-state"), "checked");
+      fail = false; const start = button(modal.contentEl, "交给 通才"); start.click(); start.click(); await settle();
+      assert.equal(starts, 0, "the task waits for durable assignment");
+      release(); await settle();
+      assert.equal(writes, 2); assert.equal(starts, 1, "repeated primary activation starts once");
+      assert.equal(modalSettings.agentRegistry.moduleOwners.journal, "generalist");
+      const create = new ModuleOwnerModal(plugin, "journal", async () => { starts++; }); create.open(); await settle();
+      button(create.contentEl, "新建 Agent").click(); await settle();
+      assert.equal(creations, 1); assert.equal(starts, 1, "creation does not resend the task");
+      console.log("PASS module-owner picker: only roles, disabled primary, failed save retains selection, durable single start and creation without resend");
+    }
     runAgentIdentityFieldsTests(document);
     panel.renderSummary(root);
+    await settle();
     assert.equal(root.textContent?.includes("聘请专家"), false, "expert hiring lives on the workbench avatar bar");
-    assert.equal(root.querySelectorAll(".echoink-agent-settings-row").length, 1); assert.equal(root.querySelectorAll(".echoink-agent-owner-row").length, 7);
-    assert.equal(root.querySelectorAll('[role="combobox"]').length, 7); assert.ok(root.textContent?.includes("内置")); assert.equal(saves, 0);
-    const moduleSummary = () => root.querySelector<HTMLElement>(".echoink-agent-settings-modules")!;
-    const summaryLabel = () => moduleSummary().firstChild?.textContent;
-    assert.equal(summaryLabel(), "负责 7 个模块");
+    assert.equal(root.querySelectorAll(".echoink-agent-settings-row").length, 2); assert.equal(root.querySelectorAll(".echoink-agent-owner-row").length, 7);
+    assert.equal(root.querySelectorAll('[role="combobox"]').length, 7);
+    assert.equal(root.querySelectorAll('.echoink-agent-owner-control .echoink-origin-select-icon').length, 7, "unassigned values have a neutral icon inside each control");
+    assert.equal(root.querySelectorAll('.echoink-agent-owner-control img').length, 0, "unassigned values do not borrow an Agent avatar");
+    assert.equal(root.querySelector('[data-agent-group="main"] .echoink-agent-settings-row')?.getAttribute('data-echoink-focus-key'), `agent:${GENERAL_ASSISTANT_ID}:edit`);
+    assert.ok(root.querySelector('[data-agent-group="role"]')?.textContent?.includes("角色 Agent"));
+    assert.equal(saves, 0);
+    assert.equal(root.querySelector(".echoink-agent-settings-modules"), null);
+    assert.ok(root.textContent?.includes("7 个未指定"));
     const builtInRow = root.querySelector<HTMLButtonElement>(".echoink-agent-settings-row")!;
-    builtInRow.focus();
-    assert.equal(displayedTooltipsForTests.get(builtInRow), "负责 日记、待办、财务、知识库、英文日记、PDF 精读、复盘", "focus requests the host-rendered ownership tooltip");
-    builtInRow.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.equal(root.querySelector('[role="tooltip"]'), null);
     builtInRow.click(); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true, "the ownership tooltip preserves row navigation");
     panel.requestLeave(() => {}); panel.renderSummary(root);
     settings.agentRegistry.agents.push({ id: "editor", name: "整理员", avatar: { kind: "preset", presetId: "nova" }, position: "知识编辑", positionDescription: "整理知识", styleId: "analysis", capabilityIds: ["knowledge"] });
     const originalOwners = { ...settings.agentRegistry.moduleOwners };
     for (const module of ["knowledge-base", "journal", "review"] as const) settings.agentRegistry.moduleOwners[module] = "editor";
     panel.renderSummary(root);
-    assert.equal(summaryLabel(), "负责 4 个模块");
-    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-title')?.textContent, "整理员（知识编辑）");
-    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-description')?.textContent, "整理知识");
-    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules')?.firstChild?.textContent, "负责 日记、知识库、复盘");
-    settings.settingsLanguage = "en"; panel.renderSummary(root); assert.equal(summaryLabel(), "Responsible for 4 modules");
+    assert.ok(root.textContent?.includes("4 个未指定"));
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-title')?.textContent, "整理员");
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-settings-navigation-description')?.textContent, "知识编辑");
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules'), null);
+    settings.settingsLanguage = "en"; panel.renderSummary(root); assert.ok(root.textContent?.includes("4 unassigned"));
     settings.settingsLanguage = "zh-CN"; settings.agentRegistry.moduleOwners = originalOwners;
     panel.renderSummary(root);
     assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules'), null);
     const owner = root.querySelector<OriginSelectElement>('[data-echoink-focus-key="agent:owner:journal"]')!;
     owner.value = "editor"; owner.dispatchEvent(new win.Event("change", { bubbles: true })); assert.equal(owner.disabled, true); await settle();
-    assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); assert.equal(settings.agentRegistry.moduleOwners.todos, GENERAL_ASSISTANT_ID);
+    assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); assert.equal(settings.agentRegistry.moduleOwners.todos, "");
+    owner.value = "editor"; await settle(); owner.value = "editor"; await settle();
+    assert.equal(owner.querySelectorAll('.echoink-origin-select-icon img').length, 1, "redrawing the selected avatar replaces its old image");
     panel.renderSummary(root);
-    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules')?.firstChild?.textContent, "负责 日记");
+    assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules'), null);
     failOwner = true; const todoOwner = root.querySelector<OriginSelectElement>('[data-echoink-focus-key="agent:owner:todos"]')!;
-    todoOwner.value = "editor"; todoOwner.dispatchEvent(new win.Event("change", { bubbles: true })); await settle(); assert.equal(todoOwner.value, GENERAL_ASSISTANT_ID); assert.ok(root.textContent?.includes("负责人未保存")); assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); failOwner = false;
+    todoOwner.value = "editor"; todoOwner.dispatchEvent(new win.Event("change", { bubbles: true })); await settle(); assert.equal(todoOwner.value, ""); assert.ok(root.textContent?.includes("负责人未保存")); assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); failOwner = false;
 
     panel.open(GENERAL_ASSISTANT_ID); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true); assert.equal(root.querySelector('[data-action="delete-agent"]'), null);
     assert.equal(root.querySelector('[aria-label="返回 Agent 设置"]') !== null, true);
+    assert.equal(root.querySelector('[aria-label="返回 Agent 设置"]')!.textContent, "Agent", "the visible return label matches the approved Demo");
     const settingsEditor = root.querySelector(".echoink-agent-settings-editor")!;
     assert.equal(settingsEditor.querySelector(".echoink-agent-editor-back")?.parentElement, settingsEditor, "settings return remains a separate navigation row");
     changeName(root, "设置里的总助"); const retained = nameField(root); panel.suspend(); disposeOriginControls(root); root.empty();
@@ -120,12 +155,12 @@ export async function runAgentSettingsTests(): Promise<void> {
     panel.open(); panel.renderDetail(root); await settle(); root.querySelector<HTMLButtonElement>('[data-preset="organizer"]')!.click(); await settle(); assert.equal(panel.hasDraft, true); assert.equal(nameField(root).value, "整理员");
     panel.requestLeave(() => {}); button(root, "放弃修改").click(); await settle();
 
-    panel.open("editor"); panel.renderDetail(root); await settle(); root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle(); assert.equal(countReads, 1); assert.ok(root.textContent?.includes("3 件事会交给总助")); assert.equal(root.textContent?.includes("0 件正在进行"), false); button(root, "取消删除").click();
+    panel.open("editor"); panel.renderDetail(root); await settle(); root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle(); assert.equal(countReads, 1); assert.ok(root.textContent?.includes("3 件事会交给通才")); assert.equal(root.textContent?.includes("0 件正在进行"), false); button(root, "取消删除").click();
     deletionCounts = { total: 4, running: 2 }; root.querySelector<HTMLButtonElement>('[data-action="delete-agent"]')!.click(); await settle(); assert.ok(root.textContent?.includes("2 件正在进行")); root.querySelector<HTMLButtonElement>('[data-action="confirm-delete"]')!.click(); await settle(); assert.equal(deletes, 1); assert.equal(panel.isDetail, false); assert.equal(openTestModals.length, 0);
 
     const conflictSettings = structuredClone(DEFAULT_SETTINGS); conflictSettings.agentRegistry = defaultAgentRegistry();
     const openingAgent = structuredClone(conflictSettings.agentRegistry.agents[0]);
-    const openingModules = Object.keys(conflictSettings.agentRegistry.moduleOwners) as AgentModuleId[];
+    const openingModules: AgentModuleId[] = [];
     const conflictBaselines: Array<AgentEditorSaveBaseline | undefined> = [];
     const conflictHost: DesktopAgentSettingsHost = { ...host, settings: conflictSettings, draftCacheKey: {},
       saveAgent: async (_agent, _modules, baseline) => { conflictBaselines.push(baseline ? structuredClone(baseline) : undefined); throw new Error("并发身份冲突"); } };

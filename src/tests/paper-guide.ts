@@ -1,3 +1,4 @@
+import type { KnowledgeMaintenancePreferenceSnapshot } from "../knowledge-base/knowledge-maintenance-preferences";
 import assert from "node:assert/strict";
 import { Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -28,6 +29,10 @@ function fixture() {
   let connection: "available" | "failed" = "failed";
   let saveFails = false;
   const plugin = { app: {}, settings,
+    getEchoInkKnowledgeMaintenancePreferenceState: async (): Promise<KnowledgeMaintenancePreferenceSnapshot> => ({
+      state: "custom", revision: "fixture", content: "已有自定义",
+      profileVersion: "echoink-knowledge-preference-profile-v1",
+    }),
     isEchoInkOnboardingRequested: () => requested,
     getKnowledgeSurfaceService: () => ({ previewOnboardingSetupPlan: async () => ({ marker: true }), applyOnboardingSetupPlan: async () => ({ configured: true }) }),
     async saveSettings() { if (saveFails) throw new Error("SAVE_FAILED"); saves++; },
@@ -85,6 +90,24 @@ export async function runPaperGuideTests(): Promise<void> {
     }
     assert.equal(await item.open(), undefined, state); item.controller.dispose();
   }
+  const preferencesOnly = fixture();
+  const readyBindings = emptyKnowledgeFolderBindingsForTests();
+  for (const [role, folder] of [["raw", "资料"], ["wiki", "知识"]] as const)
+    Object.assign(readyBindings.roles[role], { enabled: true, readPaths: [folder], writePath: folder });
+  preferencesOnly.plugin.settings.knowledgeBase.folderBindings = readyBindings;
+  const readyProvider = createApiProviderConfig();
+  readyProvider.apiKey = "fixture-key";
+  preferencesOnly.plugin.settings.apiProviders = [readyProvider];
+  activateApiProvider(preferencesOnly.plugin.settings, readyProvider);
+  preferencesOnly.plugin.getEchoInkKnowledgeMaintenancePreferenceState = async () => ({
+    state: "default", revision: "fixture", content: "默认偏好",
+    profileVersion: "echoink-knowledge-preference-profile-v1",
+  });
+  assert.equal(await preferencesOnly.open(), undefined, "Existing ready directories never trigger a purpose question");
+  preferencesOnly.plugin.settings.apiProviders = [];
+  assert.equal(await preferencesOnly.open(), undefined, "Missing models do not turn an existing library into a new user");
+  preferencesOnly.controller.dispose();
+
   const initialized = fixture(); initialized.plugin.settings.knowledgeBase.initialized = true;
   assert(await initialized.open(), "dismissed reminders do not imply configured directories"); initialized.controller.dispose();
   console.log("PASS setup controller: auto/manual truth, blank-key zero writes, single connection call, failure isolation, activation, dismissal rollback, manual navigation and false-prefill result");

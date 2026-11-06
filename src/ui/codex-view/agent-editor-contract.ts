@@ -7,6 +7,11 @@ export interface AgentEditorSaveBaseline {
   moduleIds: readonly AgentModuleId[];
 }
 
+export interface AgentEditorCreationOptions {
+  moduleIds?: readonly AgentModuleId[];
+  onReturn?: () => void;
+}
+
 /** The editor only edits its draft; the plugin owns durable Agent/task changes. */
 export interface AgentEditorHost {
   readonly settings: CodexForObsidianSettings;

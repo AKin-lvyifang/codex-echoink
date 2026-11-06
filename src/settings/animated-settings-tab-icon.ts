@@ -1,4 +1,5 @@
-import { ownedSvg } from "../ui/owned-dom";
+import { renderAnimateIcon } from "../ui/animate-icon";
+import { ownedEl, ownedSvg } from "../ui/owned-dom";
 /**
  * Native-DOM ports of the matching Animate Icons Lucide components.
  *
@@ -6,7 +7,7 @@ import { ownedSvg } from "../ui/owned-dom";
  * Local reference commit: e19861bd8e1e214105221040aefb27644fd1362f
  * License: MIT
  *
- * EchoInk does not ship React or Motion. These renderers preserve the source
+ * These native-DOM renderers do not require React or Motion and preserve the source
  * SVG layers and expose the same independently animated parts to styles.css.
  */
 
@@ -16,6 +17,7 @@ import { getIcon } from "obsidian";
 export const ANIMATED_SETTINGS_TAB_ICON_NAMES = [
   "settings",
   "bot",
+  "brain",
   "key-round",
   "layout-list",
   "book-open-check",
@@ -62,8 +64,13 @@ const ICON_RENDERERS: Record<
   settings: renderSettingsIcon,
   bot: (doc) => {
     const icon = getIcon("bot");
-    return icon ? doc.importNode(icon, true) : createIconSvg("bot", doc);
+    const svg = icon ? doc.importNode(icon, true) : createIconSvg("bot", doc);
+    for (const eye of Array.from(svg.querySelectorAll("path, line"))) {
+      if (/^M(?:9|15) 13/iu.test(eye.getAttribute("d") ?? "") || eye.tagName === "line") eye.setAttribute("data-part", "bot-eye");
+    }
+    return svg;
   },
+  brain: (doc) => renderAnimateIcon(ownedEl(doc, "span"), "brain"),
   "key-round": renderKeyRoundIcon,
   "layout-list": renderLayoutListIcon,
   "book-open-check": renderBookOpenCheckIcon,

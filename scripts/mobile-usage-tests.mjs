@@ -1,4 +1,4 @@
-import { disposableTestRoot } from "./disposable-test-root.mjs";
+import { disposableTestRoot, isDisposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
@@ -11,7 +11,9 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-usage/en
 assert.ok(!Object.keys(build.metafile.inputs).some(p => /node:fs|usage-store\.ts$/u.test(p) && !p.includes("mobile/")));
 const module = {exports:{}};
 const notices=[];
-vm.runInNewContext(build.outputFiles[0].text, {module,exports:module.exports,crypto:webcrypto,structuredClone,TextEncoder,TextDecoder,Uint8Array,AbortController,URL,URLSearchParams,atob,btoa,setTimeout,clearTimeout,console,require:id=>{assert.equal(id,"obsidian");return new Proxy({Notice:class{constructor(message){notices.push(message);}},TFile:class{},TFolder:class{}},{get:(target,name)=>name in target?target[name]:class{}});}});
+const browser = vm.createContext({module,exports:module.exports,crypto:webcrypto,structuredClone,TextEncoder,TextDecoder,Uint8Array,AbortController,URL,URLSearchParams,atob,btoa,setTimeout,clearTimeout,console,require:id=>{assert.equal(id,"obsidian");return new Proxy({Notice:class{constructor(message){notices.push(message);}},TFile:class{},TFolder:class{}},{get:(target,name)=>name in target?target[name]:class{}});}});
+browser.self=browser; browser.window=browser;
+vm.runInContext(build.outputFiles[0].text,browser);
 const {MobileUsageStore,USAGE_TOKEN_STANDARD,MobileStore,MobileRuntime,loadMobileSettings,mobileProvider,mobileModel,mobileGenerateText,prepareMobileTaskContext,MobileMemoryService,AccountService,MobileServices,MobileModelConfiguration,mobileStream,piModel,countTextTokens,estimateUsageInputTokens,estimateUsageOutputTokens}=module.exports;
 const files=new Map(),dirs=new Set();let fail=false;
 const adapter={exists:async p=>files.has(p)||dirs.has(p),read:async p=>{assert.ok(files.has(p));return files.get(p);},write:async(p,v)=>{files.set(p,v);},remove:async p=>{files.delete(p);},mkdir:async p=>{dirs.add(p);},rename:async(a,b)=>{if(fail&&a.endsWith('.tmp')){fail=false;throw Error('fixture disk failure');}assert.ok(files.has(a)&&!files.has(b));files.set(b,files.get(a));files.delete(a);},
@@ -150,7 +152,7 @@ console.log('PASS real lifestyle and model-save requests share numeric usage; fa
 console.log('PASS real AccountService reads local statistics when anonymous, signed in and signed out without clearing usage');
 if(process.env.ECHOINK_USAGE_TEST_ROOT){
   const registered=await fs.realpath(disposableTestRoot(path.join(homedir(),'EchoInk-TestVaults/90-任务临时/移动端改版-M10-20261019'))),root=await fs.realpath(process.env.ECHOINK_USAGE_TEST_ROOT);
-  assert.ok(root.startsWith(`${registered}${path.sep}`),'Mobile usage fixtures must stay inside the registered M10 disposable root');
+  assert.ok(isDisposableTestRoot(root),'Mobile usage fixtures must stay inside the registered M10 disposable root');
   const directory=await fs.mkdtemp(path.join(root,'mobile-usage-'));
   const resolve=relative=>{const absolute=path.resolve(directory,relative);assert.ok(absolute.startsWith(`${directory}${path.sep}`));return absolute;};
   const disk={exists:async relative=>{try{await fs.access(resolve(relative));return true;}catch(error){if(error.code==='ENOENT')return false;throw error;}},read:relative=>fs.readFile(resolve(relative),'utf8'),write:(relative,bytes)=>fs.writeFile(resolve(relative),bytes),mkdir:relative=>fs.mkdir(resolve(relative),{recursive:true}),remove:relative=>fs.unlink(resolve(relative)),rename:async(from,to)=>{if(await disk.exists(to))throw Error('non-overwriting disk adapter');await fs.rename(resolve(from),resolve(to));}};

@@ -48,6 +48,7 @@ export async function buildAdapter(sourceRoot, workRoot) {
     entryPoints: [path.join(here, 'production-adapter.ts')],
     absWorkingDir: sourceRoot, outfile: output, bundle: true, platform: 'node', target: 'node22', format: 'esm', metafile: true,
     loader: { '.md': 'text', '.svg': 'text', '.webp': 'dataurl' },
+    banner: { js: `import { createRequire as createEvalRequire } from 'node:module'; const require = createEvalRequire(${JSON.stringify(path.join(sourceRoot, 'package.json'))});` },
     external: ['@earendil-works/pi-agent-core', '@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'yaml', 'jsdom'],
     plugins: [{ name: 'explicit-production-checkout', setup(build) {
       build.onResolve({ filter: /^@production\// }, args => !bodySearchAvailable && args.path === '@production/knowledge-base/vault-body-search'
@@ -153,7 +154,7 @@ export async function runEvaluation(options) {
       result.actual = actual;
       result.candidate_ranking = actual.candidate_items.map((value, rank) => ({ rank: rank + 1, ...value }));
       result.candidate = applySetupLimitations(judgeCandidate(item.expected?.candidate, actual.candidate_items), actual.unsupported_setup);
-      result.delivery = applySetupLimitations(judgeDelivery(item.expected?.delivery, actual.delivery_items, actual.provider_text, actual.prompt_boundary), actual.unsupported_setup);
+      result.delivery = applySetupLimitations(judgeDelivery(item.expected?.delivery, actual.delivery_items, actual.provider_text, actual.prompt_boundary, actual.core_receipt), actual.unsupported_setup);
       if (item.engineering_assertions?.length) {
         result.engineering = { status: 'pending_review', assertions: item.engineering_assertions, reason: 'These trace assertions are preserved for review; this adapter does not claim to implement them.' };
         if (result.delivery.status === 'pass') result.delivery = { ...result.delivery, status: 'pending_review', reasons: [...result.delivery.reasons, result.engineering.reason] };

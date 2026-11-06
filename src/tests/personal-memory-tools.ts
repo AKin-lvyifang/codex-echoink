@@ -262,8 +262,8 @@ function assertOpenAiCompatibleMemoryToolSchemas(): void {
   const requestVariants = writeProperties.request.anyOf as ReadonlyArray<
     Readonly<Record<string, unknown>>
   >;
-  const operationVariants = requestVariants.slice(0, 4);
-  const jsonStringVariant = requestVariants[4]!;
+  const operationVariants = requestVariants.slice(0, 6);
+  const jsonStringVariant = requestVariants[6]!;
   const operationNames = operationVariants.map((variant) => {
     const properties = variant.properties as Readonly<Record<
       string,
@@ -275,16 +275,20 @@ function assertOpenAiCompatibleMemoryToolSchemas(): void {
     "create",
     "update",
     "profile_update",
-    "forget"
+    "forget",
+    "pin",
+    "unpin"
   ]);
   assert.deepEqual(operationVariants.map((variant) => variant.additionalProperties), [
-    false, false, false, false
+    false, false, false, false, false, false
   ]);
   assert.deepEqual(operationVariants.map((variant) => variant.required), [
     ["operation", "kind", "title", "content", "recallWhen"],
     ["operation", "targetId", "title", "content", "recallWhen", "reason"],
     ["operation", "profileKey", "text"],
-    ["operation", "targetId", "reason", "evidenceQuote"]
+    ["operation", "targetId", "reason", "evidenceQuote"],
+    ["operation", "targetId", "evidenceQuote"],
+    ["operation", "targetId", "evidenceQuote"]
   ]);
   assert.equal(jsonStringVariant.type, "string");
   assert.equal(jsonStringVariant.maxLength, 32_768);
@@ -327,6 +331,7 @@ function assertOpenAiCompatibleMemoryToolSchemas(): void {
   assert.doesNotMatch(String(schemas.memory_write.description ?? ""), /nextCursor|revision|outcome=/iu);
   assert.match(String(schemas.memory_search.description ?? ""), /默认只返回current.*statuses包含superseded.*scope\/from\/to.*定位现有记录/iu);
   assert.doesNotMatch(String(schemas.memory_search.description ?? ""), /nextCursor|revision|冲突/iu);
+  assert.match(String(schemas.memory_search.description ?? ""), /已有内容不足.*先搜索再回答.*场景和主题的不同说法/u);
   assert.equal(profileProperties.text.maxLength, 120);
 
   const createRequest = {

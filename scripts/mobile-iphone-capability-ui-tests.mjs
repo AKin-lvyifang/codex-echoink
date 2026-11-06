@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import esbuild from "esbuild";
@@ -6,12 +7,13 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("src/ui/iphone/capability-pages.ts"));
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://iphone-capabilities.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window;
 dom.window.HTMLElement.prototype.scrollIntoView = function () {};
 const notices = [], exported = { exports: {} };
 const icon = (parent, name) => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("data-icon", name); parent.replaceChildren(svg); };
 vm.runInNewContext(build.outputFiles[0].text, {
-  module: exported, exports: exported.exports, document, window: dom.window, Error, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
+  module: exported, exports: exported.exports, document, window: dom.window, Error, URL, URLSearchParams, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, SVGElement: dom.window.SVGElement,
   require: name => { assert.equal(name, "obsidian"); return { Notice: class { constructor(message) { notices.push(message); } }, setIcon: icon, getIcon: name => { const span = document.createElement("span"); icon(span, name); return span.firstChild; } }; }
 });
@@ -49,7 +51,7 @@ const shell = {
   async back() { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.pop().dispose?.(); document.body.replaceChildren(pages.at(-1).content, ...(pages.at(-1).footer ? [pages.at(-1).footer] : [])); return true; },
   async backTo(id) { while (pages.at(-1).id !== id) if (!await this.back()) return false; return true; }
 };
-const ctx = { document, shell, host: { services: { capabilities: service }, settings: () => ({ settingsLanguage: "zh", agentRegistry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "default" } }] } }), agents: { async snapshot() { return { registry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "preset", presetId: "nova" } }] } }; } }, renderMarkdown: (text, parent) => { parent.textContent = text; } }, error: error => { throw error; } };
+const ctx = { document, shell, host: { services: { capabilities: service }, settings: () => ({ settingsLanguage: "zh", apiProviders: [{ providerId: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "private-deepseek-key" }], agentRegistry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "default" } }] } }), agents: { async snapshot() { return { registry: { agents: [{ id: "assistant", name: "总助", avatar: { kind: "preset", presetId: "nova" } }] } }; } }, renderMarkdown: (text, parent) => { parent.textContent = text; } }, error: error => { throw error; } };
 const ui = new IPhoneCapabilityPages(ctx, async id => { calls.editAgent.push(id); await shell.push({ id: "agent-edit", content: document.createElement("div") }); });
 const body = () => pages.at(-1).content;
 const button = text => [...document.body.querySelectorAll("button")].find(item => item.textContent.trim() === text);
@@ -86,11 +88,13 @@ try {
   tavilyFailure = false; await click("保存"); assert.equal(calls.saveTavily[1].apiKey, "private-key");
   await click("联网搜索已填写 Key"); testPending = true; await click("测试连接"); await shell.back(); await tick(); assert.equal(activeSignal.aborted, true, "Leaving a clean testing page aborts its request");
   await click("联网搜索已填写 Key"); await click("测试连接");
-  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(activeSignal.aborted, true, "provider change aborts old test"); assert.equal(body().querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, true);
-  input("API Key", "private-deepseek-key"); testPending = false; await click("测试连接"); assert.equal(calls.test.at(-1).provider, "deepseek"); assert.equal(calls.test.at(-1).deepseekApiKey, "private-deepseek-key");
+  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(activeSignal.aborted, true, "provider change aborts old test"); assert.equal(body().querySelector('[aria-label="API Key"]').value, ""); assert.equal(body().querySelector('[aria-label="API Key"]').parentElement.hidden, true);
+  testPending = false; await tick();
+  assert.equal(body().querySelector('[aria-label="DeepSeek"]').checked,true,"DeepSeek remains selected");
+  assert.equal(button("测试连接").disabled,false,"the configured model key enables DeepSeek testing"); await click("测试连接"); assert.equal(calls.test.at(-1).provider, "deepseek"); assert.equal(calls.test.at(-1).deepseekApiKey, "");
   body().querySelector('[aria-label="Tavily"]').click(); await tick(); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-key");
-  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(body().querySelector('[aria-label="API Key"]').value, "private-deepseek-key");
-  await click("保存"); assert.equal(calls.saveTavily.at(-1).apiKey, "private-key"); assert.equal(calls.saveTavily.at(-1).deepseekApiKey, "private-deepseek-key");
+  body().querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(body().querySelector('[aria-label="API Key"]').value, "");
+  await click("保存"); assert.equal(calls.saveTavily.at(-1).apiKey, "private-key"); assert.equal(calls.saveTavily.at(-1).deepseekApiKey, "");
   while (pages.length > 1) { await shell.back(); }
   console.log("PASS iPhone capability pages: real counts, independent toggles, Skill drafts/conflicts/defaults, HTTP discovery/policy/save, stdio readonly, Tavily cancellation/secrets");
 } finally { for (const page of pages) page.dispose?.(); dom.window.close(); }

@@ -3,7 +3,7 @@ import { HomeWorkbenchDataService } from "../home/home-workbench-data";
 import { journalStats, journalSummary } from "../home/journal-stats";
 import { getTodoProjects } from "../home/todo-projects";
 import { readFinanceBill } from "../lifestyle/finance-domain";
-import { GENERAL_ASSISTANT_ID } from "../agents/types";
+import { requireModuleOwner } from "../agents/registry";
 import type { TaskDraft } from "../agents/task-workspace";
 import { newId } from "../core/new-id";
 import type { MobileModulePort, MobileModuleId, MobileJournalPort, MobileTodoPort, MobileFinancePort } from "./module-contracts";
@@ -105,10 +105,7 @@ export class MobileModuleService implements MobileModulePort {
   }
   private enabled(module: MobileModuleId): void { if (!mobileModuleEnabled(this.services.settings, module)) throw new Error("此模块已停用。"); }
   owner(module: MobileModuleId) {
-    const registry = this.services.settings.agentRegistry;
-    const owner = registry.agents.find(agent => agent.id === registry.moduleOwners[module]) ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID);
-    if (!owner) throw new Error("模块负责人不存在，请重新设置。");
-    return structuredClone(owner);
+    return structuredClone(requireModuleOwner(this.services.settings.agentRegistry, module));
   }
   async handoff(module: MobileModuleId, prompt: string, replaceDraft = false) {
     this.enabled(module); if (!prompt.trim()) throw new Error("交给 Agent 的内容不能为空。");

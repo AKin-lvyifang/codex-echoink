@@ -27,15 +27,19 @@ export interface KnowledgePageDirectory {
 }
 export interface KnowledgePageActivityDay { date: string; added: number; organized: number; total: number; }
 export interface KnowledgePageHost {
-  app: Pick<App, "vault">;
+  app: Pick<App, "vault"> & Partial<Pick<App, "metadataCache">>;
   settings: { knowledgeBase?: KnowledgeBaseSettings };
   settingsKnowledgeBindings?(): KnowledgeFolderBindings | null | undefined;
   getKnowledgeSurfaceService(): {
-    getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot>;
+    getHealthSnapshot(): KnowledgeBaseDashboardHealth;
+    checkup?: { quick(): Promise<{ issues: unknown[] }>; deep?: { snapshot(): Promise<{ findings: unknown[] }> } };
     getMaintenanceRecords?(): Promise<KnowledgeMaintenanceRecord[]>;
   } & Partial<MaintenanceUpgradeSurface> | null;
 }
 export interface KnowledgePageSnapshot {
+  mapDomains?: readonly import("./knowledge-map/data").KnowledgeMapDomain[];
+  systemReminders?: readonly import("../knowledge-base/knowledge-system-reminders").KnowledgeSystemReminder[];
+  pendingCount?: number | null;
   generatedAt: number;
   bindings: KnowledgeFolderBindings;
   dashboard: KnowledgeBaseDashboardSnapshot | null;
@@ -49,7 +53,7 @@ export interface KnowledgePageSnapshot {
   maintenanceRecords: KnowledgeMaintenanceRecord[];
   /** Absent on older hosts; unknown is never projected as zero work. */
   upgrade?: MaintenanceUpgradeSnapshot | null;
-  errors: Partial<Record<"health" | "activity" | "directories" | "links" | "sources" | "history" | "upgrade", string>>;
+  errors: Partial<Record<"health" | "activity" | "directories" | "links" | "sources" | "history" | "upgrade" | "system", string>>;
 }
 
 export interface PageFile { path: string; mtime: number; birthtime: number | null; }

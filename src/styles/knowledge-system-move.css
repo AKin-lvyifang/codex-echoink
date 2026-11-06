@@ -1,0 +1,10 @@
+.codex-knowledge-system-move { min-width: 0; }
+.codex-knowledge-system-move-option { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; cursor: pointer; }
+.codex-knowledge-system-move-option button[data-slot="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; min-height: 16px; padding: 0; border-radius: 4px; }
+.codex-knowledge-system-move-option button[data-slot="checkbox"] svg { width: 9px; height: 9px; }
+.codex-knowledge-system-review { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.codex-knowledge-system-message .codex-knowledge-system-review .codex-knowledge-system-preview { flex: none; overflow: visible; }
+.codex-knowledge-system-move-heading { font-weight: 500; margin-top: 12px; margin-bottom: 6px; }
+.codex-knowledge-system-move-list { max-height: 160px; overflow: auto; font-size: var(--font-ui-small); }
+.codex-knowledge-system-move-row { padding: 4px 0; overflow-wrap: anywhere; }
+.codex-knowledge-system-move-target { color: var(--text-muted); }

@@ -6,7 +6,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 const waitFor = async check => { const end = Date.now() + 4_000; while (!check()) { if (Date.now() > end) throw new Error("condition timed out"); await tick(); } };
 const userTexts = payload => (payload.messages ?? payload.input).filter(item => item.role === "user").map(item => typeof item.content === "string" ? item.content : item.content.filter(part => part.type === "text").map(part => part.text).join("\n"));
 
-export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSettings, mobileProvider, mobileModel, taskMessageDigest }) {
+export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSettings, mobileProvider, mobileModel, taskMessageDigest, mobileTools, searchMemories, MobileMemoryService }) {
   let passed = 0;
   const test = async (name, run) => { await run(); console.log(`ok ${++passed} - ${name}`); };
   const config = (options = {}) => {
@@ -18,6 +18,95 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const runtime = new MobileRuntime(host.app, store, () => settings, request, context, persistSettings, proAccess); if (initialize) await runtime.initialize();
     return { ...host, store, runtime, settings };
   };
+
+  await test("automatic memory and memory_search share relevance and deliver deadline context in the browser runtime", async () => {
+    const query = "今天讨论一下北斗迁移项目的工作计划";
+    const records = [
+      { id: "target", title: "北斗迁移项目", content: "北斗迁移必须先导出归档，再切换数据库。", recallWhen: "北斗迁移", due: "2026-01-01" },
+      { id: "noise", title: "项目工作记录", content: "今天讨论项目计划和工作安排，明天继续整理项目资料。".repeat(30), recallWhen: "讨论项目计划和工作时" },
+      { id: "meeting", title: "日常会议安排", content: "今天会议讨论工作情况，明天查看计划，之后继续讨论。".repeat(15), recallWhen: "讨论今天的工作安排时" },
+      { id: "notes", title: "资料整理习惯", content: "资料、记录、情况、建议、安排、计划都需要定期检查。".repeat(20), recallWhen: "询问记录和资料时" }
+    ].map(record => ({ schema: "echoink.memory.v1", kind: "task", status: "current", basis: "explicit", date: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), source: "fixture", revision: 1, file: `memory/${record.id}.md`, ...record }));
+    let system;
+    const state = await fixture(async request => { system = JSON.parse(request.body).messages[0].content; return answer("openai-completions", "ok"); });
+    state.store.bindCanonicalMemory(async () => records);
+    try {
+      assert.deepEqual(Array.from(searchMemories(records, query, 20, "automatic"), record => record.id), ["target"]);
+      const service = { recordsForRuntime: async () => records, memoryActivity: async () => ({ version: 1, vaultId: "fixture", initializedAt: new Date().toISOString(), records: {} }) };
+      const tool = mobileTools(state.app, state.store, () => "", undefined, undefined, undefined, undefined, undefined, service).find(tool => tool.name === "memory_search");
+      const result = await tool.execute("search-test", { query });
+      const found = JSON.parse(result.content[0].text);
+      assert.equal(found[0].id, "target"); assert.ok(found.length > 1, "显式搜索只保留绝对门槛，强标题命中不隐藏其他相关记录");
+      assert.equal(found[0].overdue, true); assert.equal(found[0].due, "2026-01-01"); assert.ok(found[0].daysAgo > 0);
+      await state.runtime.send(query);
+      const injected = JSON.parse(/相关记忆资料：(\[[^\n]*\])/u.exec(system)[1]);
+      assert.deepEqual(injected.map(record => record.id), ["target"]);
+      assert.equal(injected[0].overdue, true); assert.equal(injected[0].due, found[0].due); assert.equal(injected[0].daysAgo, found[0].daysAgo);
+      assert.equal(Object.hasOwn(injected[0], "file"), false);
+    } finally { state.runtime.dispose(); }
+  });
+
+  await test("mobile core is separate from the eight ordinary candidates; actual request/read receipts deduplicate activity", async () => {
+    let calls = 0, target, system, missing = false;
+    const state = await fixture(async request => {
+      const body = JSON.parse(request.body); system = body.messages[0].content;
+      if (calls++ % 2 === 0) return { status: 200, json: { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: `read-${calls}`, type: "function", function: { name: "memory_read", arguments: JSON.stringify({ id: missing ? "mem_missing" : target }) } }] }, finish_reason: "tool_calls" }] } };
+      return answer("openai-completions", "ok");
+    });
+    const memory = new MobileMemoryService({ adapter: state.adapter, store: state.store, settings: () => state.settings, saveSettings: async () => {}, request: async () => { throw new Error("No Dream inference"); }, changed() {}, isBusy: () => false });
+    await memory.initialize(); state.runtime.setMemory(() => memory); state.store.bindCanonicalMemory(() => memory.recordsForRuntime());
+    try {
+      const core = await memory.commitToolMemory(await memory.prepareToolMemory({ kind: "fact", title: "用药安全", content: "对青霉素过敏。".repeat(50), recallWhen: "用药时", basis: "explicit" }, "task", "core", "create"), () => {});
+      await memory.setPinned(core.id, true, (await memory.list()).revision);
+      for (let index = 0; index < 9; index++) await memory.commitToolMemory(await memory.prepareToolMemory({ kind: "fact", title: `北斗发布 ${index}`, content: `第 ${index} 项发布前核对`, recallWhen: "北斗发布", basis: "explicit" }, "task", `ordinary-${index}`, "create"), () => {});
+      const records = await memory.recordsForRuntime(), activity = await memory.memoryActivity();
+      target = searchMemories(records, "北斗发布", 8, "automatic", activity)[0].id;
+      await state.runtime.send("北斗发布");
+      const pinned = JSON.parse(/<echoink_memory_core>\n([^\n]+)\n<\/echoink_memory_core>/u.exec(system)[1]);
+      assert.deepEqual(Object.keys(pinned[0]).sort(), ["id", "summary", "title"]); assert.ok(pinned[0].summary.length <= 80);
+      const ordinary = JSON.parse(/相关记忆资料：(\[[^\n]*\])/u.exec(system)[1]);
+      assert.equal(ordinary.length, 8); assert.ok(!ordinary.some(record => record.id === core.id));
+      const after = await memory.memoryActivity(); assert.equal(after.records[target].recallCount, 1); assert.equal(after.records[core.id], undefined);
+      assert.equal(state.store.session.runs.at(-1).memorySources.length, 9);
+      const counts = JSON.stringify(after.records); missing = true;
+      await state.runtime.send("换个话题，聊月球");
+      assert.equal(JSON.stringify((await memory.memoryActivity()).records), counts, "失败的 memory_read 不计数，核心无关时不积累活跃度");
+    } finally { state.runtime.dispose(); }
+  });
+
+  await test("invalidated runs never inspect a late streaming response", async () => {
+    for (const invalidation of ["provider-removed", "stopped"]) {
+      const response = gate(); let fetches = 0, inspected = 0, requests = 0;
+      const state = await fixture(async () => { requests++; return answer("openai-completions", "unexpected fallback"); });
+      state.settings.apiProviders[0].mobileStreaming = true;
+      state.runtime.setStreamFetch(async () => { fetches++; return response.promise; });
+      try {
+        const submission = await state.runtime.submit("stream once", state.store.session.id);
+        const completion = submission.completion.catch(() => {});
+        await waitFor(() => fetches === 1);
+        if (invalidation === "stopped") await state.runtime.stopTask(submission.taskId);
+        else state.settings.apiProviders = [];
+        response.resolve({ status: 200, headers: { get() { inspected++; return "application/json"; } }, body: null,
+          async text() { inspected++; return JSON.stringify(answer("openai-completions", "late answer").json); } });
+        await completion; await tick();
+        assert.equal(inspected, 0, `${invalidation}: response headers/body must stay unread`);
+        assert.equal(requests, 0, "an invalid run must not retry via requestUrl");
+        assert.equal(state.store.session.taskStatus, "interrupted");
+        assert.equal(state.store.session.messages.some(message => message.role === "assistant" && message.content.some(block => block.type === "text" && block.text.includes("late answer"))), false);
+        assert.equal(state.runtime.stateFor(submission.taskId).live, undefined);
+      } finally { response.resolve({ status: 200, headers: { get: () => "application/json" }, body: null, text: async () => "{}" }); state.runtime.dispose(); }
+    }
+  });
+
+  await test("streaming enabled without a WebView fetch retains the buffered request", async () => {
+    let requests = 0;
+    const state = await fixture(async request => { requests++; assert.equal(JSON.parse(request.body).stream, false); return answer("openai-completions", "buffered answer"); });
+    state.settings.apiProviders[0].mobileStreaming = true;
+    try {
+      await state.runtime.send("fallback");
+      assert.equal(requests, 1); assert.equal(state.store.session.messages.at(-1).content[0].text, "buffered answer");
+    } finally { state.runtime.dispose(); }
+  });
 
   await test("throwing subscribers cannot strand a task or block other subscribers", async () => {
     const state = await fixture(); const seen = [];
@@ -317,6 +406,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     state.settings.agentRegistry.agents[0].name = "after rename";
     const replacement = mobileProvider("custom"); replacement.models = [mobileModel("replacement-model")]; replacement.defaultModelId = "replacement-model";
     state.settings.apiProviders.push(replacement); state.settings.activeApiProviderId = replacement.id; state.settings.defaultModel = "replacement-model";
+    state.settings.apiProviders[0].models.push(mobileModel("another-model")); state.settings.apiProviders[0].defaultModelId = "another-model";
     await state.store.patchSession(a, { notePath: "另一个引用.md", skillId: "not-the-admitted-skill" });
     contextGate.resolve(); const accepted = await submission; await accepted.completion;
     assert.equal(snapshot.id, a); assert.equal(snapshot.turn.agentSnapshot.name, "总助"); assert.equal(snapshot.turn.notePath, "笔记/来源.md");
@@ -365,8 +455,49 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
   await test("revocation while preparing rejects the old context and never contacts Provider", async () => {
     const contextGate = gate(); let started = false, calls = 0;
     const state = await fixture(async () => { calls++; return answer("openai-completions", "bad"); }, config(), async () => { started = true; await contextGate.promise; return "old memory"; });
-    const pending = state.runtime.send("request"); await waitFor(() => started); await state.store.setMemoryEnabled(false); contextGate.resolve();
-    await assert.rejects(pending, /权限|资源/u); assert.equal(calls, 0); assert.equal(state.store.session.queuePaused, true); state.runtime.dispose();
+    const pending = state.runtime.send("request"); const rejected = assert.rejects(pending, /权限|资源/u);
+    await waitFor(() => started); await state.store.setMemoryEnabled(false); contextGate.resolve();
+    await rejected; assert.equal(calls, 0); assert.equal(state.store.session.queuePaused, true);
+    assert.equal(state.runtime.busy, false); assert.equal(state.store.session.draft, "request");
+    assert.equal(state.store.session.taskStatus, "interrupted"); assert.match(state.runtime.stateFor(state.store.session.id).error, /权限|资源/u);
+    await state.store.setMemoryEnabled(true); await state.runtime.send("request");
+    assert.equal(calls, 1); assert.equal(state.store.session.taskStatus, "completed"); assert.equal(state.runtime.stateFor(state.store.session.id).error, "");
+    state.runtime.dispose();
+  });
+
+  await test("selected connection/model changes and effective web search key revocation still reject preparation", async () => {
+    for (const change of ["endpoint", "key", "model", "provider-removed", "search-key"]) {
+      const contextGate = gate(); let started = false, calls = 0;
+      const state = await fixture(async () => { calls++; return answer("openai-completions", "unexpected"); }, config(), async () => { started = true; await contextGate.promise; return ""; });
+      if (change === "search-key") {
+        const searchProvider = mobileProvider("deepseek"); searchProvider.apiKey = "synthetic-search-key";
+        state.settings.apiProviders.push(searchProvider); state.settings.tavily = { enabled: true, provider: "deepseek", apiKey: "" };
+      }
+      const rejected = assert.rejects(state.runtime.send("preserve input"), /变化|失效/u);
+      await waitFor(() => started);
+      if (change === "endpoint") state.settings.apiProviders[0].baseUrl = "https://changed.example/v1";
+      if (change === "key") state.settings.apiProviders[0].apiKey = "changed-synthetic-key";
+      if (change === "model") state.settings.apiProviders[0].models[0].toolCalling = false;
+      if (change === "provider-removed") state.settings.apiProviders.shift();
+      if (change === "search-key") state.settings.apiProviders[1].apiKey = "";
+      contextGate.resolve(); await rejected;
+      assert.equal(calls, 0, change); assert.equal(state.runtime.busy, false);
+      assert.equal(state.store.session.draft, "preserve input"); assert.equal(state.store.session.taskStatus, "interrupted");
+      state.runtime.dispose();
+    }
+  });
+
+  await test("revocation after admission interrupts durably, rejects completion and can resume", async () => {
+    const response = gate(); let calls = 0;
+    const state = await fixture(async () => { calls++; return calls === 1 ? response.promise : answer("openai-completions", "recovered"); });
+    const accepted = await state.runtime.submit("accepted request");
+    const rejected = assert.rejects(accepted.completion, /权限|资源/u); await waitFor(() => calls === 1);
+    await state.store.setMemoryEnabled(false); response.resolve(answer("openai-completions", "late answer")); await rejected;
+    assert.equal(state.runtime.busy, false); assert.equal(state.store.session.taskStatus, "interrupted"); assert.equal(state.store.session.queuePaused, true);
+    assert.equal(state.store.session.messages.filter(message => message.role === "user").length, 1);
+    assert.ok(!state.store.session.messages.some(message => message.role === "assistant" && message.content.some(part => part.text === "late answer")));
+    await state.store.setMemoryEnabled(true); await state.runtime.send("continue safely");
+    assert.equal(calls, 2); assert.equal(state.store.session.taskStatus, "completed"); state.runtime.dispose();
   });
 
   await test("long task history uses task-local budgeted summary, retains full source and never truncates tool pairs", async () => {
@@ -438,7 +569,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const task = await state.store.createSession("other"), submission = await state.runtime.submit("work", task.id);
     await state.runtime.stopAgent("other"); await submission.completion;
     await assert.rejects(state.runtime.submit("again", task.id), /停止接收/u); await state.store.handoffAgentTasks("other");
-    assert.equal(state.store.getSession(task.id).agentId, "sol"); assert.equal(state.store.getSession(task.id).runs[0].agentSnapshot.agentId, "other");
+    assert.equal(state.store.getSession(task.id).agentId, "generalist"); assert.equal(state.store.getSession(task.id).runs[0].agentSnapshot.agentId, "other");
     state.runtime.unblockAgent("other"); blocked.resolve(answer("openai-completions", "late")); state.runtime.dispose();
   });
 

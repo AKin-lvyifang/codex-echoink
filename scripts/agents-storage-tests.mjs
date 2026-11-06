@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync, execFileSync } from "node:child_process";
 import { mkdtemp, rm, realpath, readFile } from "node:fs/promises";
@@ -8,12 +9,11 @@ import esbuild from "esbuild";
 import ts from "typescript";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
-const vaultsRoot = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
 if (!process.env.ECHOINK_AGENTS_TEST_ROOT?.trim()) throw new Error("Set ECHOINK_AGENTS_TEST_ROOT to an existing task directory under ~/EchoInk-TestVaults/90-任务临时");
 const requestedRoot = path.resolve(process.env.ECHOINK_AGENTS_TEST_ROOT);
-if (!requestedRoot.startsWith(vaultsRoot + path.sep)) throw new Error("Agent fixtures must stay inside ~/EchoInk-TestVaults/90-任务临时");
+if (!isDisposableTestRoot(requestedRoot)) throw new Error("Agent fixtures must stay inside ~/EchoInk-TestVaults/90-任务临时");
 const fixtureRoot = await realpath(requestedRoot);
-if (!fixtureRoot.startsWith(vaultsRoot + path.sep)) throw new Error("Agent fixture symlink leaves temporary test Vaults");
+if (!isDisposableTestRoot(fixtureRoot)) throw new Error("Agent fixture symlink leaves temporary test Vaults");
 const runRoot = await mkdtemp(path.join(fixtureRoot, "run-"));
 try {
   const output = path.join(runRoot, "agents-storage-tests.mjs");
@@ -35,6 +35,7 @@ try {
       'settings; piLocalData; piRuntimeBundle = null;',
       'constructor(catalog, sessions) { this.piLocalData = { catalog, listConversations: statuses => catalog.list({ statuses }), setConversationStatus: (id, status) => catalog.status(id, status) }; this.settings = { sessions }; }',
       'async ensurePiLocalData() { return this.piLocalData; }',
+      'getKnowledgeSystemService() { return { prepareStatusChange: async () => {} }; }',
       'async cancelPiConversationActivation() {}',
       ...syncLanes.filter(Boolean).map(member => member.getText(mainSource)),
       ...syncMembers,

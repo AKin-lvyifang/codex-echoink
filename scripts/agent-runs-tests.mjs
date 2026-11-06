@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
@@ -8,10 +9,9 @@ import esbuild from "esbuild";
 import ts from "typescript";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 if (!process.env.ECHOINK_AGENTS_TEST_ROOT) throw new Error("Explicit ECHOINK_AGENTS_TEST_ROOT is required");
 const fixture = await realpath(process.env.ECHOINK_AGENTS_TEST_ROOT);
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Fixtures must stay in 90-任务临时");
+if (!isDisposableTestRoot(fixture)) throw new Error("Fixtures must stay in 90-任务临时");
 const runRoot = await mkdtemp(path.join(fixture, "run-agent-runs-"));
 try {
   const source = ts.createSourceFile("main.ts", await readFile(path.join(root, "src/main.ts"), "utf8"), ts.ScriptTarget.Latest, true);
@@ -30,7 +30,8 @@ try {
     'import { ConversationRunService } from "./src/plugin/conversation-run-service";',
     'import { consumeAcceptedTaskDraft } from "./src/agents/task-workspace";',
     'import { removeAgentDefinition } from "./src/agents/registry";',
-    'import { GENERAL_ASSISTANT_ID } from "./src/agents/types";',
+    'import { GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID } from "./src/agents/types";',
+    'import { isUndeletableAgent } from "./src/agents/types";',
     'import { applyConversationTaskMetadata, normalizeConversationTaskMetadata, patchConversationTaskMetadata } from "./src/agents/task-metadata";',
     'import { closeComposerParameterMenu } from "./src/ui/codex-view/menus";',
     'import { disposeContextPopover } from "./src/ui/codex-view/composer-controller";',
@@ -45,7 +46,8 @@ try {
     'constructor(plugin,detach){Object.assign(this,{plugin,runSubscriptionDispose:detach,viewLifecycleGeneration:0,viewLifecycleAbortController:new AbortController(),promptEnhancerRunId:"",taskPlanDock:{dispose(){}},interactionDock:{dispose(){}},messageListRenderer:{dispose(){}},clearHomeAttentionFrame(){},clearKnowledgeBaseRunProgressTimer(){},composerHost(){return {};}});}',
     ...viewMembers,
     '}',
-    'await runAgentRunTests(process.env.ECHOINK_AGENT_RUN_FIXTURE_ROOT, (catalog,runtime,settings)=>new ProductionHost(catalog,runtime,settings), (plugin,detach)=>new ProductionViewLifecycle(plugin,detach));'
+    'await runAgentRunTests(process.env.ECHOINK_AGENT_RUN_FIXTURE_ROOT, (catalog,runtime,settings)=>new ProductionHost(catalog,runtime,settings), (plugin,detach)=>new ProductionViewLifecycle(plugin,detach));',
+    'import {isExpertAgent} from "./src/agents/persona";',
   ].join("\n"), resolveDir: root, loader: "ts" }, bundle: true, format: "esm", platform: "node", target: "node22", outfile: output, logLevel: "silent", loader: { ".md": "text", ".svg": "text", ".txt": "text" }, plugins: [{ name: "agent-runs-local-host", setup(build) {
     build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, "src/tests/obsidian-shim.ts") }));
     build.onResolve({ filter: /^[^./]/ }, args => {

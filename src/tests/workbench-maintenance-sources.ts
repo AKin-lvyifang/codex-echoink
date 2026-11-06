@@ -20,12 +20,14 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
   const bindings = emptyKnowledgeFolderBindings(); bindings.configured = true;
   for (const role of ["raw", "wiki", "inbox"] as const) bindings.roles[role] = { enabled: true, readPaths: [role], writePath: role, allowedSubdirectories: [] };
   bindings.collectionTargets = { web: "raw", wechat: "raw/articles" };
-  const corrected = preferExistingBilingualKnowledgeDefaults(bindings, ["raw", "wiki", "inbox", ...Object.values(KNOWLEDGE_ROOT_NAMES)]);
+  const legacyDefaults = structuredClone(bindings); delete legacyDefaults.configured;
+  assert.equal(preferExistingBilingualKnowledgeDefaults(bindings, Object.values(KNOWLEDGE_ROOT_NAMES)), bindings, "confirmed bindings stay literal");
+  const corrected = preferExistingBilingualKnowledgeDefaults(legacyDefaults, ["raw", "wiki", "inbox", ...Object.values(KNOWLEDGE_ROOT_NAMES)]);
   assert.equal(corrected.roles.raw.writePath, KNOWLEDGE_ROOT_NAMES.raw);
   assert.deepEqual(corrected.roles.raw.readPaths, ["raw", KNOWLEDGE_ROOT_NAMES.raw]);
   assert.equal(corrected.collectionTargets?.web, KNOWLEDGE_ROOT_NAMES.raw);
   assert.equal(corrected.collectionTargets?.wechat, "raw/articles", "a custom collection destination remains literal");
-  assert.equal(corrected.configured, true);
+  assert.equal(corrected.configured, undefined);
   const custom = structuredClone(bindings); custom.roles.raw.readPaths = ["MySources"]; custom.roles.raw.writePath = "MySources";
   assert.equal(preferExistingBilingualKnowledgeDefaults(custom, [KNOWLEDGE_ROOT_NAMES.raw]).roles.raw.writePath, "MySources");
   for (const consent of [{ autoOrganizePaths: ["raw"] }, { allowedSubdirectories: ["approved"], allowedSubdirectoryRoots: ["raw"] }]) {
@@ -34,9 +36,12 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
   }
   const subfolders = structuredClone(bindings); subfolders.allowAgentSubfolders = true;
   assert.equal(preferExistingBilingualKnowledgeDefaults(subfolders, [KNOWLEDGE_ROOT_NAMES.wiki]).roles.wiki.writePath, "wiki");
-  assert.equal(knowledgeMayCreateCategoryDirectory(corrected, "raw/new-child"), false);
-  assert.equal(knowledgeMayCreateCategoryDirectory(corrected, `${KNOWLEDGE_ROOT_NAMES.raw}/new-child`), false);
-  assert.equal(knowledgeMayOrganizeMove(corrected, "raw/a.md", "raw/nested/a.md"), false);
+  assert.equal(knowledgeMayCreateCategoryDirectory(corrected, "raw/new-child"), true);
+  assert.equal(knowledgeMayCreateCategoryDirectory(corrected, `${KNOWLEDGE_ROOT_NAMES.raw}/new-child`), true);
+  assert.equal(knowledgeMayOrganizeMove(corrected, "raw/a.md", "raw/nested/a.md"), true);
+  const disabledOrganization = structuredClone(corrected); disabledOrganization.organization = { enabled: false, scope: "all", paths: [] };
+  assert.equal(knowledgeMayCreateCategoryDirectory(disabledOrganization, "raw/new-child"), false);
+  assert.equal(knowledgeMayOrganizeMove(disabledOrganization, "raw/a.md", "raw/nested/a.md"), false);
   for (const directory of [KNOWLEDGE_ROOT_NAMES.raw, `${KNOWLEDGE_ROOT_NAMES.raw}/Inbox`]) {
     const collision = structuredClone(bindings);
     collision.roles.inbox = { enabled: true, readPaths: [directory], writePath: directory, allowedSubdirectories: [], autoOrganizePaths: [directory] };

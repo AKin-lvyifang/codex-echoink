@@ -26,6 +26,7 @@ function handoffHost() {
   const workspace = defaultTaskWorkspace();
   const navigation = new TaskNavigationState(() => workspace);
   const calls: unknown[][] = [];
+  const picks: unknown[] = [];
   const forbidden = (name: string) => () => { throw new Error(`navigation invoked ${name}`); };
   const plugin: any = {
     settings: { agentRegistry: registry, taskWorkspace: workspace },
@@ -33,12 +34,13 @@ function handoffHost() {
       calls.push([agentId, text]); navigation.navigate({ kind: "list", agentId });
       return text === undefined || navigation.prefill(agentId, text);
     },
+    openModuleOwnerPicker: (module: string) => { picks.push(module); },
     createPiConversation: forbidden("create"), submitPiTurn: forbidden("send"),
     ensurePiRuntimeBundle: forbidden("Provider"), resumeTaskAndOpenDetail: forbidden("run")
   };
   plugin.getWorkbenchModuleOwner = (id: any) => workbenchModuleOwner(plugin, id);
   plugin.prefillWorkbenchModule = (id: any, text: string) => prefillWorkbenchModule(plugin, id, text);
-  return { plugin, registry, workspace, navigation, calls };
+  return { plugin, registry, workspace, navigation, calls, picks };
 }
 
 async function ownerAndDraftBoundary() {
@@ -54,16 +56,16 @@ async function ownerAndDraftBoundary() {
   const before = structuredClone(f.navigation.draft());
   assert.equal(await prefillWorkbenchModule(f.plugin, "finance", "新的财务问题"), false);
   assert.deepEqual(f.navigation.draft(), before);
-  f.registry.moduleOwners.finance = "sol";
+  f.registry.moduleOwners.finance = "generalist";
   assert.equal(await prefillWorkbenchModule(f.plugin, "finance", "新负责人"), true);
-  assert.equal(f.calls.at(-1)?.[0], "sol");
+  assert.equal(f.calls.at(-1)?.[0], "generalist");
   f.registry.moduleOwners.finance = "finance-owner";
   f.registry.agents = f.registry.agents.filter(agent => agent.id !== "finance-owner");
-  assert.equal(workbenchModuleOwner(f.plugin, "finance").id, "sol");
+  assert.equal(workbenchModuleOwner(f.plugin, "finance"), null);
   await prefillWorkbenchModule(f.plugin, "finance", "失效负责人");
-  assert.equal(f.calls.at(-1)?.[0], "sol");
+  assert.equal(f.calls.at(-1)?.[0], "generalist");
   assert.equal(f.workspace.replyDrafts && Object.keys(f.workspace.replyDrafts).length, 0);
-  console.log("PASS module handoff: latest registry, deleted-owner Sol fallback, real draft preservation, no execution");
+  console.log("PASS module handoff: latest registry, deleted-owner assignment prompt, real draft preservation, no execution");
 }
 
 async function financeHeader() {
@@ -103,7 +105,7 @@ async function financeHeader() {
     const delta = (2025 - year) * 12 + 2 - month;
     for (let i = 0; i < Math.abs(delta); i++) button(content, `[aria-label="${delta < 0 ? "上一个月" : "下一个月"}"]`).click();
     assert.equal(finance.getSelectedMonth(), "2025-02");
-    f.registry.moduleOwners.finance = "sol"; f.registry.agents[0].name = "最新总助";
+    f.registry.moduleOwners.finance = "generalist"; f.registry.agents.find(agent => agent.id === "generalist")!.name = "最新通才";
     let reject!: (error: Error) => void, attempts = 0;
     const actualPrefill = f.plugin.prefillWorkbenchModule;
     f.plugin.prefillWorkbenchModule = async (id: string, text: string) => {
@@ -112,7 +114,7 @@ async function financeHeader() {
     };
     const action = button(content, ".echoink-module-handoff");
     action.click();
-    assert.equal(action.textContent, "交给 最新总助");
+    assert.equal(action.textContent, "交给 最新通才");
     assert.equal(action.getAttribute("aria-busy"), "true");
     action.click(); assert.equal(attempts, 1, "pending navigation cannot be opened twice");
     reject(new Error("合成打开失败")); await tick();
@@ -120,10 +122,10 @@ async function financeHeader() {
     assert.match(openTestNoticeMessages.at(-1) ?? "", /合成打开失败/u);
     f.plugin.prefillWorkbenchModule = actualPrefill;
     action.click(); await tick();
-    assert.deepEqual(f.calls.at(-1), ["sol", "帮我看看 2025-02 的收支和预算"]);
+    assert.deepEqual(f.calls.at(-1), ["generalist", "帮我看看 2025-02 的收支和预算"]);
     assert.equal(f.navigation.draft().text, "帮我看看 2025-02 的收支和预算");
     f.registry.moduleOwners.finance = "deleted-owner";
-    action.click(); await tick(); assert.equal(f.calls.at(-1)?.[0], "sol");
+    action.click(); await tick(); assert.equal(f.calls.at(-1)?.[0], "generalist");
     (Platform as any).isDesktopApp = false;
     view.render();
     assert.equal(content.querySelector(".echoink-module-handoff"), null);

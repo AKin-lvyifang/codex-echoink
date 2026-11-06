@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -7,13 +8,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import esbuild from "esbuild";
 
 const repo = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 if (!process.env.ECHOINK_PROFILE_UI_TEST_ROOT) throw new Error("Explicit ECHOINK_PROFILE_UI_TEST_ROOT is required");
 const configured = path.resolve(process.env.ECHOINK_PROFILE_UI_TEST_ROOT);
-if (!configured.startsWith(allowed + path.sep)) throw new Error("Use disposable test Vaults");
+if (!isDisposableTestRoot(configured)) throw new Error("Use disposable test Vaults");
 await mkdir(configured, { recursive: true });
 const root = await realpath(configured);
-if (!root.startsWith(allowed + path.sep)) throw new Error("Fixture symlinks must stay in disposable test Vaults");
+if (!isDisposableTestRoot(root)) throw new Error("Fixture symlinks must stay in disposable test Vaults");
 const run = await mkdtemp(path.join(root, "run-"));
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 let dom;

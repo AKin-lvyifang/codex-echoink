@@ -2,6 +2,8 @@ import { GENERAL_ASSISTANT_ID } from "./types";
 import { normalizeAgentId } from "./registry";
 
 export type ConversationTaskStatus = "running" | "waiting" | "completed" | "interrupted";
+/** Router = a general assistant card that only dispatches; worker = a task the router dispatched. */
+export type ConversationCompanyRole = "router" | "worker";
 export interface TaskPendingResponse {
   runId: string;
   questionId: string;
@@ -14,10 +16,14 @@ export interface ConversationTaskMetadata {
   businessKey?: string;
   taskStatus?: ConversationTaskStatus;
   taskStage?: string;
+  resultSummary?: string;
   taskStartedAt?: number;
   taskCompletedAt?: number;
   taskInterruptedAt?: number;
   pendingResponse?: TaskPendingResponse;
+  companyRole?: ConversationCompanyRole;
+  /** Set on a router card once it is bound to a project, and on that project's workers. */
+  projectId?: string;
   unreadAnswerAt?: number;
   lastReadAt?: number;
   /** Catalog revision for metadata projections; unrelated to transcript/run timestamps. */
@@ -37,14 +43,15 @@ export function patchConversationTaskMetadata(current: ConversationTaskMetadata,
 }
 
 export const CONVERSATION_TASK_METADATA_KEYS = [
-  "agentId", "businessKey", "taskStatus", "taskStage", "taskStartedAt", "taskCompletedAt",
-  "taskInterruptedAt", "pendingResponse", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"
+  "agentId", "businessKey", "taskStatus", "taskStage", "resultSummary", "taskStartedAt", "taskCompletedAt",
+  "taskInterruptedAt", "pendingResponse", "companyRole", "projectId", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"
 ] as const;
 
 export function normalizeConversationTaskMetadata(value: unknown): ConversationTaskMetadata {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const result: ConversationTaskMetadata = { agentId: normalizeAgentId(raw.agentId) ?? GENERAL_ASSISTANT_ID };
-  for (const key of ["businessKey", "taskStage"] as const) {
+  if (raw.companyRole === "router" || raw.companyRole === "worker") result.companyRole = raw.companyRole;
+  for (const key of ["businessKey", "taskStage", "resultSummary", "projectId"] as const) {
     if (typeof raw[key] === "string" && raw[key].trim()) result[key] = raw[key].trim();
   }
   if (["running", "waiting", "completed", "interrupted"].includes(raw.taskStatus as string)) result.taskStatus = raw.taskStatus as ConversationTaskStatus;
@@ -96,5 +103,5 @@ export function applySavedTaskMetadataWithoutLosingEdits<T extends ConversationT
 
 /** Safe only after the caller has stopped active runs; preserves task/session/run identity. */
 export function handoffConversationTask<T extends ConversationTaskMetadata>(task: T, fromAgentId: string): T {
-  return task.agentId === fromAgentId ? { ...task, agentId: GENERAL_ASSISTANT_ID } : task;
+  return task.agentId === fromAgentId ? { ...task, agentId: "generalist" } : task;
 }

@@ -1,3 +1,4 @@
+import { knowledgePreferenceWizardHost } from "./knowledge-preference-wizard-host";
 import { Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { PaperGuideModal, type PaperGuideModelResult } from "../ui/paper-guide-modal";
@@ -6,7 +7,7 @@ import { activateApiProvider, apiProviderModelSupportsImage, createApiProviderCo
 import { getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
 import { settingsCopy } from "../settings/i18n";
 import { providerFailureDetailText } from "../harness/pi/provider-failure";
-import { onboardingSetupComplete } from "../settings/onboarding-setup-status";
+import { onboardingDirectoriesReady } from "../settings/onboarding-setup-status";
 
 /** Owns automatic/manual entry and delegates mutations to the existing services. */
 export class PaperGuideController {
@@ -29,6 +30,7 @@ export class PaperGuideController {
       if (!manual && win) await this.afterPaint(win);
       if (this.disposed || (!manual && (!this.canShow() || this.getHome() !== home || !home?.isConnected
         || home.getClientRects().length === 0 || home.ownerDocument.hidden || home.ownerDocument.querySelector(".modal-container")))) return;
+      const preferences = knowledgePreferenceWizardHost(this.plugin);
       this.modal = new PaperGuideModal(this.plugin.app, {
         language: this.plugin.settings.settingsLanguage,
         preview: async choices => {
@@ -42,6 +44,7 @@ export class PaperGuideController {
           return await service.applyOnboardingSetupPlan(plan, progress);
         },
         model: () => this.modelName(),
+        preferences,
         connect: (provider, key) => this.connect(provider, key),
         writeGuide: async (plan, created) => {
           const service = this.plugin.getKnowledgeSurfaceService();
@@ -78,7 +81,8 @@ export class PaperGuideController {
 
   private canShow(): boolean {
     return !this.disposed && !this.plugin.isEchoInkOnboardingRequested() && this.plugin.settings.setup.completedAt > 0
-      && this.plugin.settings.setup.paperGuideDismissedAt === 0 && !onboardingSetupComplete(this.plugin.settings);
+      && this.plugin.settings.setup.paperGuideDismissedAt === 0
+      && !onboardingDirectoriesReady(this.plugin.settings);
   }
 
   private afterPaint(win: Window): Promise<void> {

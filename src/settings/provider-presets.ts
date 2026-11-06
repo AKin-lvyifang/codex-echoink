@@ -78,6 +78,12 @@ export interface ApiProviderPreset {
   readonly authMode: ApiProviderAuthMode;
   readonly apiKeyRequired: boolean;
   readonly modelDiscovery: "supported" | "provider_dependent";
+  /**
+   * Default for mobile streaming. Mobile streams through the WebView fetch,
+   * so it only works when the endpoint answers CORS for capacitor:// and
+   * http://localhost. Users can override it per Provider.
+   */
+  readonly mobileStreaming?: boolean;
 }
 
 /**
@@ -162,6 +168,7 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       apiProtocol: "openai-completions",
       apiKeyRequired: true,
       modelDiscovery: "supported",
+      mobileStreaming: true,
       models: [
         model("kimi-k2.5", KIMI_K2_CONTEXT_WINDOW, KIMI_MAX_OUTPUT_RESERVE, true, true, true, undefined, KIMI_K2_CONTEXT_WINDOW),
         model("kimi-k2-thinking", KIMI_K2_CONTEXT_WINDOW, KIMI_MAX_OUTPUT_RESERVE, true, false, true, undefined, KIMI_K2_CONTEXT_WINDOW),
@@ -194,6 +201,7 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       apiProtocol: "openai-completions",
       apiKeyRequired: true,
       modelDiscovery: "supported",
+      mobileStreaming: true,
       models: [
         model("deepseek-v4-flash", 1_000_000, 384_000, true, false, true, "DeepSeek-V4 Flash"),
         model("deepseek-flash", 1_048_576, 393_216, true, true, true, "DeepSeek-V4.1-Flash"),
@@ -210,6 +218,7 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       apiProtocol: "openai-completions",
       apiKeyRequired: true,
       modelDiscovery: "supported",
+      mobileStreaming: true,
       models: []
     }),
     preset({

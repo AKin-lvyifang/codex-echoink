@@ -429,6 +429,7 @@ const CONTROLLED_INLINE_EVENTS = new Set([
   "input",
   "before_agent_start",
   "context",
+  "turn_end",
   "tool_call",
   "tool_result"
 ]);

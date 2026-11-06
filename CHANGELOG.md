@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.8.10 - 2026-11-06
+<!-- release-type: feat -->
+### 2.8.10 · 一人公司开工
+
+![EchoInk 2.8.10：一人公司开工](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.8.10/assets/releases/echoink-agent-2.8.10-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **总助可以带着角色 Agent 一起做项目。** 小事直接派给员工，多人配合的事先给你开工卡，列出分工、里程碑和验收标准，点「开工」后再执行。需要回答的问题与写入审批集中在「等你定」，项目页可以查看进度、员工记录与产出。一人公司在电脑、iPhone 和 iPad 提供入口；移动端仍为 Beta，项目和员工会话暂不跨设备查看、接续，手机只在 App 前台推进项目。
+- **每个模块有明确的负责人。** 在 Agent 设置中给日记、待办、财务等模块指定角色 Agent；无人负责时先选人，再启动任务。总助负责读取资料、派活和收汇报，内容交给员工执行。总助编辑页可选「我来审批」或「总助审批」，默认由你审批，删除始终需要你确认。负责人和一人公司本身不要求 PRO，财务、专家聘请等原有 PRO 限制仍然适用。
+- **电脑端可以梳理知识体系、给知识库做体检。** 按领域查看地图、选择知识树方案，确认后写入；新增知识可归入已有树，保留手写内容。体检分快查与深查，可检查链接、分类、重复或过时内容，再预览、确认适用的修复。深查和体系梳理需要调用你配置的模型，模型判断可能遗漏或误判，修改前请核对。
+- **电脑端新增记忆星图，记忆也有了活跃与淡出。** 从「设置 → 记忆」打开记忆页，查看画像、记忆及来源，修正内容或固定重要记忆。固定的记忆保留在核心，其他记忆按类型、时间和使用情况调整活跃度；淡出只退出自动召回，不会删除，仍可搜索、恢复。桌面与移动共用相关性和生命周期规则，桌面自动召回增加按当前问题挑选相关记忆；星图暂只在电脑端提供。
+- **手机和平板可以边收边显示回答与思考。** 在模型服务参数中设置「流式输出」；有思考内容时，先展开显示，正文开始后自动收起，也可手动开合。流式是否可用取决于服务商，连接被拦时可关闭流式，改为整段接收。本版修复 iOS 上 HTML 扩展名冲突可能导致插件加载失败的问题，并调整输入框对悬浮底栏和键盘的避让；这些改动未经 iPhone/iPad 真机验证。
+- **长时间循环调用工具会自动停止。** 到达上限时保留中断提示，可发送「继续」接着做。命令行未启用时会正确提示不可用，不再误报连错笔记库。记忆设置集中到独立分组，导航图标在点击时播放动效。
+
+#### 如何使用
+
+打开 EchoInk 设置中的 Agent，为需要使用的模块指定负责人，再回到总助交代任务。复杂任务先核对开工卡，确认后点「开工」；到工作台的「等你定」处理问题与审批。想调整员工审批方式，进入总助编辑页；选择总助审批后，拿不准的事项仍会交给你。
+
+电脑端从知识库页进入体系梳理或体检，先看建议与修复预览，再确认写入。从「设置 → 记忆」打开记忆页查看星图。记忆星图、知识库体检和体系梳理不要求 PRO；调用模型使用你自己的额度。手机流式输出在对应模型服务的参数中设置，不支持的服务可保留整段回答。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前完整备份 Vault、插件设置和数据，多设备请统一升级到 2.8.10。通过 Obsidian 社区插件检查更新，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) 下载 **main.js、manifest.json、styles.css**，只替换 `.obsidian/plugins/codex-echoink/` 中这三个文件，保留原有设置和数据，再重新启用插件。**移动端仍为 Beta，本版新增与修复未经 iPhone/iPad 真机验证**；支持范围见 [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.10/README_CN.md)。模型与搜索服务的费用由相应服务商另行收取。
+
+### English
+
+**2.8.10 · Start your one-person company**
+
+Type: New
+
+#### What's new
+
+- **Your assistant can coordinate role agents on projects.** Small jobs go directly to an employee; work involving several roles starts with a proposal showing assignments, milestones, and acceptance criteria. Execution begins only after you click Start. Questions and write approvals appear together under Pending decisions, while the project page shows progress, employee records, and outputs. The workflow is available on desktop, iPhone, and iPad. Mobile remains in Beta: projects and employee conversations cannot yet be viewed or resumed across devices, and mobile projects advance only while the app is in the foreground.
+- **Assign an owner to each module.** Choose role agents for Journal, To-dos, Finance, and other modules in Agent settings. If a module has no owner, choose one before starting its agent task. The assistant reads, delegates, and receives reports; employees carry out content work. In the assistant editor, choose manual approval or assistant approval. Manual is the default, and deletions always require your confirmation. Module ownership and the company workflow do not require PRO; existing PRO requirements for Finance, expert hiring, and other paid features still apply.
+- **Organize knowledge systems and run checkups on desktop.** View domain maps, choose a knowledge-tree proposal, and confirm before writing it. New knowledge can join existing trees while handwritten content stays intact. Quick and deep checkups inspect issues such as links, classification, duplicate content, or outdated material, with previews and confirmation for supported repairs. Deep checkups and system organization use your configured model. Model judgments can miss issues or be wrong; review proposed changes.
+- **A desktop memory constellation shows what is remembered.** Open the memory page from Settings → Memory to inspect your profile, memories, and sources, correct content, or pin important memories. Pinned memories stay at the core; others change activity according to type, time, and use. Faded memories leave automatic recall without being deleted and remain searchable and restorable. Desktop and mobile share relevance and lifecycle rules, and desktop automatic recall now selects memories for the current question. The constellation is desktop-only for now.
+- **Stream answers and reasoning on phones and tablets.** Set Streaming output in the model service parameters. Reasoning opens while it arrives and collapses when the answer begins; you can also toggle it yourself. Streaming depends on provider support. If the connection is blocked, turn streaming off to receive complete answers instead. This release also fixes an iOS HTML-extension conflict that could prevent plugin loading and adjusts the input area around floating navigation and the keyboard. These changes have not been verified on physical iPhone or iPad devices.
+- **Repeated tool calls now stop at a limit.** An interruption message remains, and you can send Continue to resume. A disabled command-line interface is correctly reported as unavailable instead of being mistaken for the wrong vault. Memory settings have their own group, and navigation icons animate when clicked.
+
+#### How to use
+
+Open Agent in EchoInk settings, assign owners to the modules you use, and give the assistant a task. For a complex task, review the proposal and click Start. Handle questions and approvals under Pending decisions on the workbench. Change employee approval mode in the assistant editor; uncertain decisions still return to you when assistant approval is enabled.
+
+On desktop, open system organization or checkups from Knowledge, review the suggestions and repair preview, and confirm changes. Open Settings → Memory for the constellation. Memory constellation, knowledge checkups, and system organization do not require PRO; model calls use your own credits. Configure mobile streaming in each model service's parameters, or keep complete answers for unsupported services.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your complete vault, plugin settings, and data before upgrading, and upgrade every device to 2.8.10. Check for updates in Obsidian's community plugins, or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10). Replace only those three files in `.obsidian/plugins/codex-echoink/`, keep existing settings and data, and re-enable the plugin. **Mobile remains in Beta; this version's additions and fixes have not been verified on physical iPhone or iPad devices.** See the [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.8.10/README.md) for supported features. Model and search providers bill their services separately.
+
 ## 2.8.9 - 2026-11-01
 <!-- release-type: feat -->
 ### 2.8.9 · 开局一键设置

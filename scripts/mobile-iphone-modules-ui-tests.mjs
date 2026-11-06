@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import fs from "node:fs/promises";
@@ -12,6 +13,7 @@ const built = await esbuild.build({ ...mobileBuildOptions("tests/mobile-modules/
 assert.ok(Object.keys(built.metafile.inputs).includes("src/lifestyle/finance-view.ts"), "finance mounts the original formal workspace");
 assert.equal(Object.keys(built.metafile.inputs).some(path => /(?:todo-edit-modal|mobile-ui)\.ts$/.test(path)), false, "the other iPhone modules own their DOM");
 const dom = new JSDOM("<!doctype html><body><main class='echoink-iphone'></main></body>", { pretendToBeVisual: true, url: "https://iphone-modules.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window, root = document.querySelector("main");
 const css = document.createElement("style"); css.textContent = await fs.readFile("src/ui/iphone/modules.css", "utf8"); document.head.append(css);
 dom.window.HTMLElement.prototype.scrollIntoView = function () {};

@@ -1,3 +1,4 @@
+import { assertMaintenanceWikiTags } from "./maintenance-tag-policy";
 import { isUnknownArray } from "../utils/unknown-array";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { isMap, isScalar, isSeq, parseDocument } from "yaml";
@@ -306,6 +307,13 @@ function findQuote(source: GroundingSource, quote: string): { start: number; end
   return null;
 }
 
+/** Reuse the maintenance evidence locator; callers keep the matched source bytes, never a normalized quote. */
+export function matchKnowledgeQuote(content: string, quote: string): { start: number; end: number; quote: string } | null {
+  const location = findQuote({ content, body: content, bodyStart: 0, revision: "" }, quote);
+  return location ? { start: location.start, end: location.end,
+    quote: content.slice(location.start, location.end) } : null;
+}
+
 interface QuoteFailure { unitIndex: number; unitId: string; sourcePath: unknown; quoteIndex: number; quote: unknown }
 interface UnitFailure { unitIndex: number; unitId: string; sourcePath?: unknown; field: string; message: string }
 const MAX_QUOTE_FAILURES = 12;
@@ -546,6 +554,7 @@ export function validateMaintenanceNewPage(content: string, units: readonly Main
   if (targetPath !== undefined && titlePolicy === MAINTENANCE_SHORT_TITLE_POLICY) assertMaintenanceShortTarget(targetPath);
   const unitAliases = checkedNewPageUnits(content, units);
   const { parsed, pair, field, plainKey, aliases } = newPageMetadata(content);
+  assertMaintenanceWikiTags(content);
   const errors: string[] = [];
   const fail = (fieldName: string, message: string) => errors.push(`field=${fieldName}: ${message}`);
   for (const name of ["类型", "aliases", "类型待确认"]) {

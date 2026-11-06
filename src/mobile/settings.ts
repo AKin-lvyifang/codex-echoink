@@ -49,6 +49,10 @@ export function supportedProvider(p: ApiProviderConfig): boolean {
   return p.authMode === "api-key" && !["openai-codex", "anthropic", "minimax", "ollama"].includes(p.providerId ?? "")
     && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");
 }
+/** Explicit per-Provider choice wins; otherwise the preset's verified default. */
+export function mobileStreamingEnabled(p: ApiProviderConfig): boolean {
+  return p.mobileStreaming ?? getApiProviderPreset(p.providerId ?? "custom").mobileStreaming ?? false;
+}
 export function loadMobileSettings(value: unknown): MobileSettings {
   const raw = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
   const saved = (raw?.mobileUi ?? {}) as Partial<MobileAppearance>;
@@ -67,7 +71,7 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     autoOpenHome: raw?.autoOpenHome === true,
-    agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
+    agentRegistry: normalizeAgentRegistry(raw?.agentRegistry, !!raw && Object.keys(raw).length > 0),
     tavily: { ...(raw?.tavily as object), ...normalizeTavilySettings(raw?.tavily) },
     mobileMemory: {
       ...savedMemory, dreamEnabled: savedMemory.dreamEnabled !== false,

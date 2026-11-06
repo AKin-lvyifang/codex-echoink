@@ -1,7 +1,10 @@
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
+import { MemoryPageView, MEMORY_PAGE_VIEW_TYPE } from "../home/memory/memory-page";
+import type { MemoryPageRequest } from "../home/memory/memory-page-types";
 import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
+import { PROJECT_PAGE_VIEW_TYPE } from "../home/project-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -90,6 +93,23 @@ export class EchoInkViewService {
     if (leaf.view instanceof TodoPageView) leaf.view.refreshIfSettingsChanged();
   }
 
+  async activateProjectPage(projectId: string): Promise<void> {
+    if (!Platform.isDesktopApp) return;
+    const workspace = this.plugin.app.workspace;
+    // One project tab: reuse it and swap the project via its view state.
+    const leaf = workspace.getLeavesOfType(PROJECT_PAGE_VIEW_TYPE)[0] ?? workspace.getLeaf("tab");
+    await leaf.setViewState({ type: PROJECT_PAGE_VIEW_TYPE, active: true, state: { projectId } });
+    workspace.setActiveLeaf(leaf, { focus: true });
+  }
+
+  async activateMemoryView(request: MemoryPageRequest = {}): Promise<void> {
+    if (!Platform.isDesktopApp) return;
+    let leaf = this.plugin.app.workspace.getLeavesOfType(MEMORY_PAGE_VIEW_TYPE)[0];
+    if (!leaf) { leaf = this.plugin.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: MEMORY_PAGE_VIEW_TYPE, active: true }); }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof MemoryPageView) leaf.view.openPage(request);
+  }
+
   async activateView(options: { focusInput?: boolean } = {}): Promise<void> {
     // When the shared conversation view is parked in the quick-chat popout,
     // bring it back to the sidebar first so the sidebar stays the single
@@ -127,6 +147,7 @@ export class EchoInkViewService {
   }
 
   refreshKnowledgeBaseSurfaces(): void {
+    for (const leaf of this.plugin.app.workspace.getLeavesOfType(MEMORY_PAGE_VIEW_TYPE)) if (leaf.view instanceof MemoryPageView) void leaf.view.refresh();
     this.getCodexView()?.refreshKnowledgeBaseDashboard();
     for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)]) {
       if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView || leaf.view instanceof EchoInkJournalView || leaf.view instanceof TodoPageView || leaf.view instanceof KnowledgePageView || leaf.view instanceof EnglishDiaryPageView || leaf.view instanceof PdfReadingPageView) {
@@ -136,6 +157,7 @@ export class EchoInkViewService {
   }
 
   async refreshLanguageSurfaces(): Promise<void> {
+    for (const leaf of this.plugin.app.workspace.getLeavesOfType(MEMORY_PAGE_VIEW_TYPE)) if (leaf.view instanceof MemoryPageView) leaf.view.refreshLanguage();
     const refreshes: Promise<void>[] = [];
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
       if (leaf.view instanceof CodexView) leaf.view.refreshLanguage();

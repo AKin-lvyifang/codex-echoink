@@ -1,5 +1,7 @@
+import type { ConversationTaskLifecycle } from "./conversation-task-lifecycle";
 import type { TaskInterruptionReason, TaskResumeContext } from "../agents/task-resume";
 import type { ConversationTaskMetadataPatch } from "../agents/task-metadata";
+import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import type CodexForObsidianPlugin from "../main";
 import { Notice, Platform } from "obsidian";
 import { getWorkbenchDataService } from "../home/workbench-data";
@@ -40,6 +42,8 @@ export class ConversationRunService {
   readonly turnQueue = new RuntimeTurnQueue();
   readonly pendingInteractions = new Map<string, Readonly<EchoInkTurnInteraction>>();
   private readonly subscribers = new Set<ConversationRunSubscriber>();
+  /** Told once each turn has fully settled and been saved; used by the company dispatcher. */
+  private readonly settledListeners = new Set<(id: string, outcome: QueuedTurnOutcome, turnStartedAt: number) => void>();
   private readonly resumeFlights = new Map<string, Promise<QueuedTurnOutcome>>();
   private readonly resumeControllers = new Map<string, AbortController>();
   private readonly resumeErrors = new Map<string, string>();
@@ -52,7 +56,28 @@ export class ConversationRunService {
   private disposed = false;
   private disposalFlight?: Promise<void>;
 
+  private taskLifecycle?: ConversationTaskLifecycle;
   constructor(private readonly plugin: CodexForObsidianPlugin) {}
+
+  /** Options of the latest turn per conversation, so dispatched work runs with the router card's model and permission. */
+  readonly lastTurnOptions = new Map<string, Readonly<QueuedTurnItem["turnOptions"]>>();
+  onTurnSettled(listener: (id: string, outcome: QueuedTurnOutcome, turnStartedAt: number) => void): () => void {
+    this.settledListeners.add(listener); return () => { this.settledListeners.delete(listener); };
+  }
+  isTurnActive(id: string): boolean { const state = this.runs.get(id); return !!(state?.flight || state?.running); }
+  setTaskLifecycle(lifecycle: ConversationTaskLifecycle): void {
+    this.taskLifecycle = lifecycle;
+  }
+  managesConversation(id: string): boolean {
+    return this.taskLifecycle?.ownsConversation(id) ?? false;
+  }
+  async detachTask(id: string): Promise<void> {
+    await this.taskLifecycle?.ready;
+    if (this.taskLifecycle?.ownsConversation(id)) {
+      await this.taskLifecycle.stop(id);
+      await this.taskLifecycle.detach(id);
+    }
+  }
 
   subscribe(subscriber: ConversationRunSubscriber): () => void {
     if (this.disposed) throw new Error("conversation_run_service_disposed");
@@ -121,6 +146,8 @@ export class ConversationRunService {
     this.resumeControllers.set(id, controller);
     this.resumeErrors.delete(id);
     const flight = Promise.resolve().then(async () => {
+      await this.taskLifecycle?.ready;
+      if (!(Platform.isDesktopApp && (this.session(id).agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID) && this.taskLifecycle?.ownsConversation(id) && await this.taskLifecycle.resume(id) === "restored") return "completed";
       const prepared = await this.plugin.prepareTaskResume(id, message, submitted, controller.signal);
       if (controller.signal.aborted) return "cancelled";
       if (this.disposed) throw new Error("插件已停用，本次没有继续。文字和附件已保留。");
@@ -180,13 +207,29 @@ export class ConversationRunService {
     if (state.flight || state.running) throw new Error("conversation_already_running");
     this.resumeErrors.delete(session.id);
     const frozen = cloneQueuedTurnItem(item);
+    this.lastTurnOptions.set(session.id, frozen.turnOptions);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
     const flight = Promise.resolve().then(async (): Promise<QueuedTurnOutcome> => {
       let outcome: QueuedTurnOutcome = "failed";
       try {
+        const scopedTask = this.taskLifecycle;
+        await scopedTask?.ready;
+        const router = Platform.isDesktopApp && (session.agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID;
+        if (router) {
+          await this.plugin.ensureCompanyService();
+          const current = await this.plugin.readPiConversationCatalogEntry(session.id);
+          if (current && current.companyRole !== "router") await this.plugin.setPiConversationTaskMetadata(session.id, { companyRole: "router" });
+          // Old module context is historical data; it cannot grant the router an execution role.
+          delete frozen.maintenanceScope; delete frozen.pdfTaskRequest; delete frozen.generationRequest;
+          delete frozen.englishDiarySourcePath;
+        }
+        if (!router && scopedTask?.ownsConversation(session.id)) await scopedTask.beginTurn(session.id);
         outcome = await startQueuedTurnItemSafely(context, frozen, source);
-        if (frozen.piUserEntryAccepted) {
+        const lifecycle = this.taskLifecycle;
+        if (frozen.piUserEntryAccepted && !router && lifecycle?.ownsConversation(session.id)) {
+          await lifecycle.settle(session.id, outcome);
+        } else if (frozen.piUserEntryAccepted) {
           const pending = this.pendingInteractions.get(session.id);
           const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
           const maintenance = this.plugin.getKnowledgeActivitySource()?.snapshot().maintenance.filter(activity => activity.originConversationId === session.id && (activity.status !== "completed" || (activity.completedAt ?? 0) >= state.turnStartedAt)).sort((a,b) => b.updatedAt - a.updatedAt)[0];
@@ -209,6 +252,7 @@ export class ConversationRunService {
       } finally {
         item.piUserEntryAccepted = frozen.piUserEntryAccepted;
         state.running = false; state.queueStartInProgress = false;
+        const settledTurnStartedAt = state.turnStartedAt;
         state.flight = undefined;
         state.context = undefined;
         this.resumeContexts.delete(session.id);
@@ -226,6 +270,9 @@ export class ConversationRunService {
         }
         await this.flushSave();
         this.notify(session.id);
+        if (frozen.piUserEntryAccepted && !this.disposed) for (const listener of this.settledListeners) {
+          try { listener(session.id, outcome, settledTurnStartedAt); } catch (error) { console.error("Turn settlement listener failed", error); }
+        }
         if (next === "continue" && !this.disposed && !this.blockedAgents.has(session.agentId ?? "sol")) {
           void this.startNextQueuedTurn(session.id).catch(error => console.error("Conversation queue failed", error));
         }
@@ -262,6 +309,7 @@ export class ConversationRunService {
     await this.plugin.abortPiConversation(id);
     if (flight) await flight;
     if (resumeFlight) await resumeFlight.catch(() => undefined);
+    if (this.taskLifecycle?.ownsConversation(id)) await this.taskLifecycle.stop(id);
     await this.flushSave();
   }
   dispose(reason: TaskInterruptionReason = "plugin_disabled"): Promise<void> {

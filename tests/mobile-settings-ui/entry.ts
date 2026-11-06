@@ -6,3 +6,5 @@ export { loadMobileSettings, mobileProvider, mobileModel } from "../../src/mobil
 export { mobileWorkspaceFixture } from "../mobile/workspace-fixture";
 export { Platform } from "obsidian";
 export { createUnavailableAccountAdapter } from "../../src/settings/account-membership-model";
+
+export { EchoInkAppearance } from "../../src/ui/appearance-theme";

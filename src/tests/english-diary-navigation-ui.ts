@@ -110,7 +110,10 @@ export async function runEnglishDiaryNavigationUiTests(): Promise<void> {
   assert.equal(view.expressions.getState().page, 2); assert.equal((root.querySelector(".echoink-expression-list") as HTMLElement).scrollTop, 91, "Detail return restores list page and scrolling");
   assert.equal(root.querySelectorAll(".echoink-expression-list-item").length, 20);
   plugin.settings.agentRegistry.moduleOwners["english-diary"] = "deleted-owner";
-  await view.reviewExpressions(); assert.equal(taskPrefills[0][0], GENERAL_ASSISTANT_ID); assert.ok(taskPrefills[0][1].includes("Expressions")); assert.ok(taskPrefills[0][1].includes("Legacy expressions")); assert.equal(taskPrefills[0][1].includes("Journal/"), false);
+  let ownerPrompts = 0; plugin.openModuleOwnerPicker = () => { ownerPrompts++; };
+  await view.reviewExpressions(); assert.equal(ownerPrompts, 1); assert.equal(taskPrefills.length, 0);
+  plugin.settings.agentRegistry.moduleOwners["english-diary"] = "english-owner";
+  await view.reviewExpressions(); assert.equal(taskPrefills[0][0], "english-owner"); assert.ok(taskPrefills[0][1].includes("Expressions")); assert.ok(taskPrefills[0][1].includes("Legacy expressions")); assert.equal(taskPrefills[0][1].includes("Journal/"), false);
   view.openPage("diary"); await view.prepareToday(); assert.ok(view.field("status").textContent.includes("今天的原稿还没写好")); assert.equal(openedToday, 0);
   findButton(view.field("status"), "先写今天的原稿").click(); await tick(); assert.equal(openedToday, 1);
   today = { ...today, hasContent: true }; await view.prepareToday(); assert.equal(todayPrefill, "Journal/today.md");

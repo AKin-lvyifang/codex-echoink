@@ -1,3 +1,4 @@
+import { getModuleOwner } from "../agents/registry";
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
@@ -95,7 +96,7 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
     }
     action.classList.toggle("mod-cta", preview);
     action.hidden = active;
-    action.setText(preview ? (english ? "Confirm updates" : "确认写入") : interrupted ? (english ? "Continue" : "继续") : (english ? "Start" : "开始"));
+    action.setText(!getModuleOwner(plugin.settings.agentRegistry, "knowledge-base") ? (english ? "Assign owner" : "指定负责人") : preview ? (english ? "Confirm updates" : "确认写入") : interrupted ? (english ? "Continue" : "继续") : (english ? "Start" : "开始"));
     action.disabled = pending;
     cancel.hidden = !(active || preview || interrupted); cancel.disabled = pending;
     details.hidden = !task || !(task.results.length || task.patches.length || task.error);
@@ -132,6 +133,7 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
     link.onclick = event => { event.preventDefault(); void plugin.app.workspace.openLinkText(path, "", true); };
   }
   action.onclick = () => void invoke(async () => {
+    if (!getModuleOwner(plugin.settings.agentRegistry, "knowledge-base")) { await plugin.openModuleOwnerSettings("knowledge-base"); return; }
     if (current?.phase === "awaiting-confirmation") await service.confirm();
     else if (current?.phase === "interrupted") await service.resume();
     else { taskId = undefined; await service.startAndApply(); }

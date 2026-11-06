@@ -9,6 +9,7 @@ import { freezeDataset, verifyDataset, canonicalJson } from './dataset.mjs';
 import { judgeCandidate, judgeDelivery } from './judge.mjs';
 import { buildAdapter, runEvaluation, CSV_COLUMNS, csvRow } from './cli.mjs';
 import { judgePromptBoundary } from './prompt-boundary.mjs';
+import { MEMORY_CASES } from './prepare-v14.mjs';
 
 process.env.PI_OFFLINE = '1';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -147,9 +148,11 @@ async function testMemoryRecallHistory() {
   await mkdir(path.join(historyDataset, '记忆'), { recursive: true });
   await writeFile(path.join(historyDataset, 'manifest.json'), JSON.stringify({ dataset_version: 'selftest-memory-history', fixed_date: '2026-10-16T12:00:00+08:00', settings: {} }));
   await writeFile(path.join(historyDataset, '记忆/seed.json'), JSON.stringify({ operations: [
-    { id: 'mem_context', request: { operation: 'create', kind: 'fact', title: '合成负责人', recallWhen: '询问负责人时', content: '合成负责人是林晓。', basis: 'explicit' } },
-    { id: 'mem_context_cedar', request: { operation: 'create', kind: 'fact', title: 'Cedar 负责人', recallWhen: '询问负责人时', content: '雪松迁移的负责人是林晓。', scope: 'project:cedar', basis: 'explicit' } },
-    { id: 'mem_context_harbor', request: { operation: 'create', kind: 'fact', title: 'Harbor 负责人', recallWhen: '询问负责人时', content: '海港工程的负责人是周航。', scope: 'project:harbor', basis: 'explicit' } }
+    // Give every scope the same explicit trigger: this test measures history
+    // forwarding and scope isolation, rather than weak-overlap eligibility.
+    { id: 'mem_context', request: { operation: 'create', kind: 'fact', title: '合成负责人', recallWhen: '询问负责人是谁时', content: '合成负责人是林晓。', basis: 'explicit' } },
+    { id: 'mem_context_cedar', request: { operation: 'create', kind: 'fact', title: 'Cedar 负责人', recallWhen: '询问负责人是谁时', content: '雪松迁移的负责人是林晓。', scope: 'project:cedar', basis: 'explicit' } },
+    { id: 'mem_context_harbor', request: { operation: 'create', kind: 'fact', title: 'Harbor 负责人', recallWhen: '询问负责人是谁时', content: '海港工程的负责人是周航。', scope: 'project:harbor', basis: 'explicit' } }
   ] }));
   const previous = history[2].content;
   const repeated = '它的负责人是谁？';
@@ -162,7 +165,7 @@ async function testMemoryRecallHistory() {
     { id: 'ASSISTANT_ONLY', query: repeated, history: [history[3]], previous: null, expected: repeated },
     { id: 'OPAQUE_STRINGS', query: repeated, history, opaque, previous: null, expected: `${repeated}\n${opaque[1]}` },
     { id: 'CURRENT_PROJECT', query: 'Project: harbor\n它的负责人是谁？', history, previous, scope: 'harbor', expected: 'Project: harbor\n它的负责人是谁？' },
-    { id: 'HISTORICAL_STATUSES', query: '合成负责人的历史', history, previous, expected: '合成负责人的历史', statuses: ['current', 'superseded'] },
+    { id: 'HISTORICAL_STATUSES', query: '负责人是谁的历史', history, previous, expected: '负责人是谁的历史', statuses: ['current', 'superseded'] },
     { id: 'HISTORY_BUDGET', query: repeated, history: [{ role: 'user', content: `最近用户前文-${'丙'.repeat(2500)}` }, history[3]], previous: `最近用户前文-${'丙'.repeat(2500)}`, budget: 80 }
   ];
   const cases = scenarios.map(scenario => ({
@@ -248,6 +251,35 @@ async function testMemoryCandidateError() {
     assert.ok(result.actual.calls.some(call => call.function === 'PersonalMemoryRepository.search' && call.outcome === 'threw' && /memory_search cursor is invalid/u.test(call.error)), 'Actual Repository failure remains in the call audit');
     console.log('PASS: candidate-search cursor error reaches CLI; forbidden-only candidate and delivery remain failed.');
   } finally { await retireRoot(errorWork); }
+}
+
+async function testMemoryLifecycleSetup() {
+  assert.equal(MEMORY_CASES.length, 30);
+  assert.equal(new Set(MEMORY_CASES.map(item => item[0])).size, 8);
+  const lifecycleWork = `${work}-lifecycle`;
+  await registerRoot(lifecycleWork, '固定状态、活动数据与时间推进的合成夹具');
+  try {
+    await mkdir(lifecycleWork);
+    const { evaluate } = await buildAdapter(root, lifecycleWork);
+    const activity = { version: 1, initializedAt: '2026-10-01T12:00:00Z', records: { mem_lifecycle: { recallCount: 2, lastRecalledAt: 1790856000000 } } };
+    await writeFile(path.join(lifecycleWork, 'seed.json'), JSON.stringify({ memory_activity: activity, operations: [{
+      id: 'mem_lifecycle', at: '2026-10-01T12:00:00Z', pinned: true,
+      request: { operation: 'create', kind: 'task', title: 'LIFECYCLE_TOKEN', recallWhen: 'LIFECYCLE_TOKEN', content: '合成任务', basis: 'explicit', due: '2026-10-03' }
+    }] }));
+    const vaultPath = path.join(lifecycleWork, 'vault');
+    await mkdir(vaultPath);
+    const actual = await evaluate({ vaultPath, statePath: path.join(lifecycleWork, 'index'), datasetPath: lifecycleWork,
+      manifest: { settings: {} }, runId, item: { case_id: 'LIFECYCLE_SETUP', domain: 'memory', query: 'LIFECYCLE_TOKEN',
+        setup: { memory_seed: 'seed.json', fixed_now: '2026-10-01T12:00:00Z', advance_days: 10 } } });
+    assert.deepEqual(actual.unsupported_setup, []);
+    assert.equal(actual.candidate_items[0].date, '2026-10-01');
+    assert.ok(actual.raw.evaluation_now >= Date.parse('2026-10-11T12:00:00Z'));
+    const record = actual.raw.seed_results[0].results[0].record;
+    assert.match(await readFile(path.join(vaultPath, '.echoink', record.file), 'utf8'), /\npinned: true\n/u);
+    const persistedActivity = JSON.parse(await readFile(path.join(vaultPath, '.echoink/shared-user/.runtime/memory-activity.json'), 'utf8'));
+    assert.deepEqual(persistedActivity, { ...activity, vaultId: `eval-${runId}` });
+    console.log('PASS: v1.4 has 30 cases in 8 categories; seed dates, pinned state, activity and clock advance survive real Repository/Recall execution.');
+  } finally { await retireRoot(lifecycleWork); }
 }
 
 try {
@@ -485,6 +517,7 @@ try {
   if (!process.argv.includes('--history-only') && !process.argv.includes('--candidate-error-only')) await testCurrentProjectScope();
   if (!process.argv.includes('--scope-only') && !process.argv.includes('--candidate-error-only')) await testMemoryRecallHistory();
   if (!process.argv.includes('--scope-only') && !process.argv.includes('--history-only')) await testMemoryCandidateError();
+  if (process.argv.length === 2) await testMemoryLifecycleSetup();
 } finally {
   for (const directory of [...registeredRoots].reverse()) await retireRoot(directory);
 }

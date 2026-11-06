@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import esbuild from "esbuild";
@@ -6,6 +7,7 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 
 const build = await esbuild.build(mobileBuildOptions("src/ui/ipad/capability-pages.ts"));
 const dom = new JSDOM("<!doctype html><body><aside><textarea>right pane draft</textarea></aside><main></main></body>", { pretendToBeVisual: true, url: "https://ipad-capabilities.invalid" });
+installMobileDomHost(dom.window);
 const notices = [], copied = [];
 Object.defineProperty(dom.window.navigator, "clipboard", { value: { writeText: async value => copied.push(value) } });
 const module = { exports: {} };
@@ -19,7 +21,7 @@ const skills = [
   { id: "obsidian-cli", name: "Obsidian CLI", builtin: true, enabled: true, mobileAvailable: false, contentPath: null, sourceLabel: "EchoInk 内置", description: "电脑命令", icon: "terminal", agents: [], content: "CLI instructions", version: "v1" }
 ];
 const desktop = { id: "desktop", name: "本地服务", description: "", enabled: true, transport: "stdio", readonly: true, status: "desktop-only", statusLabel: "只能在电脑上用", trusted: true, tools: [], toolPolicies: {}, version: "v1" };
-const settings = { settingsLanguage: "zh-CN", resources: { tick: 0 }, agentRegistry: { agents: [{ id: "general", name: "总助", avatar: { kind: "default" } }] } };
+const settings = { settingsLanguage: "zh-CN", apiProviders: [{ providerId: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "private-deepseek-key" }], resources: { tick: 0 }, agentRegistry: { agents: [{ id: "general", name: "总助", avatar: { kind: "default" } }] } };
 let failAgentSave = false;
 let tavily = { enabled: false, apiKey: "", version: "v1" }, failSave = false, failToggle = false, failMcpSave = false, failTavilySave = false, testFailure = "", pendingDiscovery = false, pendingTest = false, discoveryAborted = false, testAborted = false;
 const writes = { agents: [], skills: [], mcp: [], tavily: [] }, stack = [], editedAgents = [];
@@ -91,11 +93,11 @@ try {
   failTavilySave = true; await click("保存"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key"); assert.match(current().content.textContent, /\[redacted\]/); assert.ok(!current().content.textContent.includes("private-search-key"));
   failTavilySave = false; await click("保存"); assert.equal(current().id, "ipad-settings-caps"); assert.equal(tavily.enabled, true);
   await click("联网搜索已填写 Key"); pendingTest = true; await click("测试连接"); await click("停止"); assert.match(current().content.textContent, /测试已取消/); testAborted = false;
-  await click("测试连接"); current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(testAborted, true, "provider change aborts old test"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, true);
-  input("API Key", "private-deepseek-key"); pendingTest = false; await click("测试连接"); assert.match(current().content.textContent, /连接成功/);
+  await click("测试连接"); current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(testAborted, true, "provider change aborts old test"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, false); assert.equal(current().content.querySelector('[aria-label="API Key"]').parentElement.hidden, true);
+  pendingTest = false; await click("测试连接"); assert.match(current().content.textContent, /连接成功/);
   current().content.querySelector('[aria-label="Tavily"]').click(); await tick(); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key");
-  current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-deepseek-key");
-  await click("保存"); assert.equal(writes.tavily.at(-1).apiKey, "private-search-key"); assert.equal(writes.tavily.at(-1).deepseekApiKey, "private-deepseek-key");
+  current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "");
+  await click("保存"); assert.equal(writes.tavily.at(-1).apiKey, "private-search-key"); assert.equal(writes.tavily.at(-1).deepseekApiKey, "");
   await click("联网搜索已填写 Key"); pendingTest = true;
   await click("测试连接"); const tavilyPage = current(); tavilyPage.dispose(); await tick(); assert.equal(testAborted, true, "disposing aborts test");
   assert.equal(writes.tavily.length, 3); assert.equal(right.value, "right pane draft");

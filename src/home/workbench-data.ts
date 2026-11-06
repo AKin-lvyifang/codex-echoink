@@ -1,3 +1,4 @@
+import { loadKnowledgeSystemReminders } from "../knowledge-base/knowledge-system-reminders";
 import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
@@ -303,6 +304,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (modules.includes("knowledge-base")) {
       facts.raw = await attempt("来源状态读取失败", [], () => this.readPendingRaw(issues));
       if (bindings) {
+        facts.knowledgeSystems = await attempt("知识体系提醒读取失败", [], () => loadKnowledgeSystemReminders(this.plugin.app, bindings));
         const health = await attempt<KnowledgeLinkHealth | null>("笔记链接读取失败", null, () => this.loadKnowledgeLinkHealth(bindings));
         if (health?.state === "ready") facts.isolated = health.isolatedPaths;
         else if (health?.reason) issues.push(health.reason);

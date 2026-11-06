@@ -1,67 +1,42 @@
+import { getModuleOwner } from "../../agents/registry";
+import { AGENT_MODULE_NAMES, AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
+import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
+import { agentRoleGroups } from "../../agents/roster-groups";
 import { isAgentHired } from "../../agents/persona";
 import { formatMobileDateTime } from "../../mobile/date-display";
-import { Notice } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type { MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileMemorySettingsPort, MobileMemorySnapshot, MobileUserProfileSnapshot } from "../../mobile/memory-contracts";
 import type { MobileShellPage } from "../mobile/shell-types";
-import { IPHONE_MODULES, iphoneAvatar, iphoneElement as el } from "./workbench-elements";
+import { IPHONE_MODULES, iphoneAvatar, iphoneIcon, iphoneButton, iphoneElement as el } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
 import { settingsMessage, settingsText } from "./settings-language";
 import { pushSettingsPage, settingsBody, settingsButton, settingsError, settingsField, settingsGroup, settingsRow, settingsSelect, settingsSwitch } from "./settings-elements";
+
+const MOBILE_MODULE_ORDER: readonly AgentModuleId[] = ["knowledge-base", "journal", "review", "todos", "finance", "english-diary", "pdf-reading"];
 
 /** iPhone page state stays local; profile, Memory and Dream share the canonical service. */
 export class IPhoneAgentSettingsPages {
   private readonly refreshers = new Set<() => Promise<void>>();
   private readonly previousDisabled = new WeakMap<HTMLElement, boolean>();
-  constructor(private readonly ctx: IPhonePageContext, private readonly editAgent: (id?: string) => Promise<void>) {}
+  constructor(private readonly ctx: IPhonePageContext, private readonly editAgent: (id?: string, creation?: AgentEditorCreationOptions) => Promise<void>) {}
   private get service(): MobileMemorySettingsPort { return this.ctx.host.services.memory; }
   refresh(): void { for (const refresh of this.refreshers) void refresh(); }
 
-  async open(): Promise<void> {
-    const { ctx } = this, id = "iphone-settings-agent";
+  async open(section: "agent" | "memory" | "sessions" = "agent"): Promise<void> {
+    const { ctx } = this, id = `iphone-settings-${section}`;
     if (ctx.shell.hasPage(id)) { this.refresh(); await ctx.shell.backTo(id); return; }
     const body = this.body(); let disposed = false, busy = false, revision = 0, expanded = false, prefs = this.service.readSettings(), limitBase = prefs.dreamRunsPerDay, limit = String(limitBase), controller: AbortController | undefined;
     let dreamView: (() => void) | undefined;
+    const ownerFailures = new Map<AgentModuleId, unknown>();
     const guard = this.leaveGuard(body, () => busy, () => limit !== String(limitBase));
-    const stop = async () => { controller?.abort(); await this.service.cancelDream(); };
+    const stop = async () => { if (section !== "memory") return; controller?.abort(); await this.service.cancelDream(); };
     const render = async () => {
       if (disposed || busy) return;
       if (limit !== String(limitBase) && body.querySelector(".ip-agent-dream")) { dreamView?.(); return; }
       const current = ++revision;
       const [registry, profile, archives] = await Promise.allSettled([ctx.host.agents.snapshot(), this.service.readProfile(), this.service.listArchives()]);
       if (disposed || busy || current !== revision) return;
-      body.replaceChildren(); const agents = settingsGroup(ctx, body, "我的 Agent"), owners = settingsGroup(ctx, body, "模块负责人");
-      if (registry.status === "fulfilled") {
-        for (const agent of registry.value.registry.agents.filter(isAgentHired)) settingsRow(ctx, agents, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true, detail: agent.position || undefined, action: () => this.editAgent(agent.id) });
-        settingsRow(ctx, agents, this.text("聘请专家", "Hire an expert"), { icon: "sparkles", action: () => ctx.host.services.openExpertHall() });
-        settingsRow(ctx, agents, "新建 Agent", { icon: "user-plus", action: () => this.editAgent() });
-        let snapshot = registry.value;
-        const ownerError = settingsError(ctx, body);
-        const renderOwners = () => {
-          owners.replaceChildren();
-          for (const module of ["knowledge-base", "todos", "finance", "journal", "english-diary", "pdf-reading"].map(id => IPHONE_MODULES.find(module => module.id === id)!)) {
-            const owner = snapshot.registry.agents.find(agent => agent.id === snapshot.registry.moduleOwners[module.id]);
-            const select = settingsSelect(ctx, owners, module.name, snapshot.registry.agents.filter(isAgentHired).map(agent => [agent.id, agent.name] as const), owner?.id ?? "", value => {
-              if (busy || value === snapshot.registry.moduleOwners[module.id]) { select.value = snapshot.registry.moduleOwners[module.id]; return; }
-              busy = true; this.controls(body, true); body.setAttribute("aria-busy", "true"); ownerError.show();
-              void (async () => {
-                let saved = false;
-                try {
-                  snapshot = await ctx.host.agents.setOwner(module.id, value, snapshot.version); saved = true;
-                  try { await ctx.host.services.refreshAgentIdentity(); } catch (failure) { ctx.error(failure); }
-                } catch (failure) {
-                  try { snapshot = await ctx.host.agents.snapshot(); } catch (reloadFailure) { ctx.error(reloadFailure); }
-                  if (!disposed) ownerError.show(failure);
-                } finally {
-                  busy = false; this.controls(body, false); body.removeAttribute("aria-busy");
-                  if (!disposed) { renderOwners(); if (saved) this.refresh(); }
-                }
-              })();
-            }, owner ? iphoneAvatar(ctx.document, owner, "ip-avatar ip-agent-owner-avatar") : undefined);
-            select.dataset.moduleOwner = module.id;
-          }
-        }; renderOwners();
-      } else { settingsError(ctx, agents).show(registry.reason); agents.append(settingsButton(ctx, "重试", () => { void render(); })); }
-      const memory = settingsGroup(ctx, body, "记忆"); prefs = this.service.readSettings(); limitBase = prefs.dreamRunsPerDay; limit = String(limitBase);
+      body.replaceChildren();
       const persist = async (key: "memoryEnabled" | "dreamEnabled" | "autoArchive", value: boolean) => {
         if (busy) throw new Error(this.text("正在保存，请稍候。", "Saving. Please wait.")); busy = true;
         let saved = false;
@@ -71,6 +46,37 @@ export class IPhoneAgentSettingsPages {
           saved = true;
         } finally { busy = false; if (saved && !disposed) void render(); }
       };
+      if (section === "agent") {
+      const sections = new Map(agentRoleGroups([], ctx.host.settings().settingsLanguage === "en").map(group => { const section = settingsGroup(ctx, body, group.label); section.dataset.agentGroup = group.id; return [group.id, section] as const; }));
+      const agents = sections.get("role")!, owners = settingsGroup(ctx, body, "模块负责人");
+      if (registry.status === "fulfilled") {
+        const snapshot = registry.value, roster = snapshot.registry.agents.filter(isAgentHired);
+        for (const agent of roster) settingsRow(ctx, sections.get(agent.id === GENERAL_ASSISTANT_ID ? "main" : "role")!, agent.name, { leading: iphoneAvatar(ctx.document, agent), literal: true, literalDetail: true,
+          detail: agent.id === GENERAL_ASSISTANT_ID ? undefined : agent.position || agent.positionDescription || undefined,
+          value: agent.id === GENERAL_ASSISTANT_ID ? agent.companyApprovalMode === "assistant" ? "总助审批" : "我来审批" : undefined,
+          action: () => this.editAgent(agent.id) });
+        const create = iphoneButton(ctx.document, "", () => { void this.editAgent(undefined, { onReturn: () => this.refresh() }).catch(ctx.error); }, "is-text", "plus"); create.setAttribute("aria-label", "新建 Agent"); agents.previousElementSibling?.append(create);
+        const count = AGENT_MODULE_IDS.filter(module => !getModuleOwner(snapshot.registry, module)).length;
+        if (count) owners.previousElementSibling?.append(el(ctx.document, "span", "ip-agent-owner-count", `${count} 个未指定`));
+        for (const moduleId of MOBILE_MODULE_ORDER) {
+          const moduleName = AGENT_MODULE_NAMES[moduleId][0], owner = getModuleOwner(snapshot.registry, moduleId);
+          const icon = el(ctx.document, "span", "ip-agent-owner-value-icon"); if (owner) icon.append(iphoneAvatar(ctx.document, owner)); else setIcon(icon, "circle-dashed");
+          const select = settingsSelect(ctx, owners, moduleName, [["", owner ? "不指定" : "未指定"], ...roster.filter(agent => agent.id !== GENERAL_ASSISTANT_ID).map(agent => [agent.id, agent.name] as const), ["__new_agent__", "新建 Agent…"]], owner?.id ?? "", value => {
+            if (busy) return;
+            if (value === "__new_agent__") { select.value = owner?.id ?? ""; void this.editAgent(undefined, { moduleIds: [moduleId], onReturn: () => this.refresh() }).catch(ctx.error); return; }
+            busy = true; select.disabled = true; ownerFailures.delete(moduleId);
+            void ctx.host.agents.setOwner(moduleId, value, snapshot.version).then(() => ctx.host.services.refreshAgentIdentity()).catch(failure => { select.value = owner?.id ?? ""; ownerFailures.set(moduleId, failure); }).finally(() => { busy = false; if (!disposed) void render(); });
+          }, icon);
+          if (ownerFailures.has(moduleId)) settingsError(ctx, owners).show(ownerFailures.get(moduleId));
+          select.dataset.moduleOwner = moduleId; select.parentElement?.classList.add("ip-agent-owner-control");
+          if (select.parentElement) select.parentElement.dataset.ownerLabel = select.selectedOptions[0]?.textContent ?? "";
+          const row = select.closest<HTMLElement>(".ip-settings-row"); if (row) row.prepend(iphoneIcon(ctx.document, moduleId === "review" ? "chart-no-axes-combined" : IPHONE_MODULES.find(item => item.id === moduleId)!.icon));
+        }
+      } else settingsError(ctx, agents).show(registry.reason);
+        return;
+      }
+      if (section === "memory") {
+      const memory = settingsGroup(ctx, body, "记忆"); prefs = this.service.readSettings(); limitBase = prefs.dreamRunsPerDay; limit = String(limitBase);
       settingsSwitch(ctx, memory, "长期记忆", () => this.service.readSettings().memoryEnabled, value => persist("memoryEnabled", value));
       const dreamRow = el(ctx.document, "div", "ip-settings-row ip-agent-dream-row"), dreamLink = el(ctx.document, "button", "ip-agent-dream-link"); dreamLink.type = "button";
       const dreamLabels = el(ctx.document, "span", "ip-settings-label"); dreamLabels.append(settingsMessage(ctx, el(ctx.document, "span", "ip-settings-name"), "做梦"), el(ctx.document, "span", "ip-settings-detail", this.dailyLimit(prefs.dreamRunsPerDay)));
@@ -107,6 +113,8 @@ export class IPhoneAgentSettingsPages {
       settingsRow(ctx, memory, "你的画像", { value: profile.status === "fulfilled" ? this.text(`${profile.value.items.filter(item => item.status === "current").length} 项`, `${profile.value.items.filter(item => item.status === "current").length} items`) : undefined, literalValue: true, action: () => this.profile() });
       if (profile.status === "rejected") settingsError(ctx, memory).show(profile.reason);
       settingsRow(ctx, memory, "记忆修正", { action: () => this.memories() });
+        return;
+      }
       const sessions = settingsGroup(ctx, body, "会话"), archiveRow = el(ctx.document, "div", "ip-settings-row"), archiveLabel = el(ctx.document, "span", "ip-settings-label");
       archiveLabel.append(settingsMessage(ctx, el(ctx.document, "span", "ip-settings-name"), "自动归档"), settingsMessage(ctx, el(ctx.document, "span", "ip-settings-detail"), "完成 7 天后")); archiveRow.append(archiveLabel); sessions.append(archiveRow);
       settingsSwitch(ctx, sessions, "自动归档", () => this.service.readSettings().autoArchive, value => persist("autoArchive", value), undefined, archiveRow);
@@ -117,7 +125,7 @@ export class IPhoneAgentSettingsPages {
     const unsubscribe = this.service.subscribe(() => { if (!disposed) { dreamView?.(); void render(); } });
     const background = () => { if (ctx.document.hidden && (controller || this.service.dreamStatus().phase === "running")) void stop().catch(error => ctx.error(error)); };
     ctx.document.addEventListener("visibilitychange", background);
-    await pushSettingsPage(ctx, { id, title: "Agent", content: body, canLeave: async () => { if (!await guard.canLeave()) return false; if (controller || this.service.dreamStatus().phase === "running") await stop(); return true; }, dispose: () => { disposed = true; revision++; unsubscribe(); guard.dispose(); this.refreshers.delete(render); ctx.document.removeEventListener("visibilitychange", background); if (controller || this.service.dreamStatus().phase === "running") void stop().catch(error => ctx.error(error)); } });
+    await pushSettingsPage(ctx, { id, title: section === "agent" ? "Agent" : section === "memory" ? "记忆" : "会话", content: body, actions: section === "agent" ? iphoneButton(ctx.document, this.text("会话", "Conversations"), () => { void this.open("sessions").catch(ctx.error); }, "is-text") : undefined, canLeave: async () => { if (!await guard.canLeave()) return false; if (controller || this.service.dreamStatus().phase === "running") await stop(); return true; }, dispose: () => { disposed = true; revision++; unsubscribe(); guard.dispose(); this.refreshers.delete(render); ctx.document.removeEventListener("visibilitychange", background); if (controller || this.service.dreamStatus().phase === "running") void stop().catch(error => ctx.error(error)); } });
     if (!disposed) await render();
   }
 

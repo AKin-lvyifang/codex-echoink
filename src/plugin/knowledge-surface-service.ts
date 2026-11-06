@@ -1,3 +1,4 @@
+import { loadKnowledgeHealth } from "../knowledge-base/knowledge-health";
 import type { CaptureLinkFeedback } from "../ui/capture-link-modal";
 import type { OnboardingSetupChoices } from "../knowledge-base/onboarding-setup-choices";
 import { renderOnboardingGuide, type OnboardingGuideResult } from "../knowledge-base/onboarding-guide";
@@ -8,6 +9,7 @@ import { resolveEnglishStoragePaths } from "../english-diary/storage-paths";
 import { validateDirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
 import { createProductionKnowledgeLinkingService } from "./knowledge-linking-production";
 import { KnowledgeActivityService } from "./knowledge-activity-service";
+import { KnowledgeCheckupService } from "./knowledge-checkup-service";
 import { createProductionKnowledgeUpgradeService, type KnowledgeUpgradeService } from "./knowledge-upgrade-service";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, KNOWLEDGE_ROOT_ROLES, knowledgePathRole } from "../knowledge-base/root-paths";
 import { rebaseFolderSettingsPaths } from "../knowledge-base/folder-settings-paths";
@@ -28,7 +30,7 @@ import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 
-import { normalizePath, Notice, TFolder, type TFile } from "obsidian";
+import { normalizePath, Notice, TFolder, TFile } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { KnowledgeBaseCaptureService } from "../knowledge-base/capture";
 import {
@@ -86,6 +88,7 @@ export class EchoInkKnowledgeSurfaceService {
   readonly linking: ReturnType<typeof createProductionKnowledgeLinkingService>;
   readonly activity: KnowledgeActivityService;
   readonly upgrade: KnowledgeUpgradeService;
+  readonly checkup: KnowledgeCheckupService;
   private readonly captureService: KnowledgeBaseCaptureService;
   private readonly directoryHistory: InitializationDirectoryHistory;
   private restoring = false;
@@ -117,6 +120,7 @@ export class EchoInkKnowledgeSurfaceService {
     this.activity = new KnowledgeActivityService(this.linking, () => readPrivateMaintenanceRecords(path.join(pluginDataDir(plugin.getVaultPath(), plugin.getPluginDataDirName()), "pi-agent-product-v1", "knowledge")), () => plugin.readKnowledgeInitialActivities());
     void this.activity.ready.catch(error => console.error("EchoInk maintenance progress recovery failed", error));
     this.upgrade = createProductionKnowledgeUpgradeService(plugin);
+    this.checkup = new KnowledgeCheckupService(plugin);
     void this.linking.ready.catch(error => console.error("EchoInk knowledge linking recovery failed", error));
     this.captureService = new KnowledgeBaseCaptureService(plugin);
     const host = createKnowledgeInitializationHost(plugin, (identity) => { this.initializationInteraction = identity; });
@@ -424,6 +428,27 @@ export class EchoInkKnowledgeSurfaceService {
     await fsp.rmdir(absolute);
   }
 
+  /** The system-move plan owns complete link repair, including when native auto-update is off. */
+  async moveKnowledgeSystemNote(source: string, target: string): Promise<void> {
+    const file = this.plugin.app.vault.getAbstractFileByPath(source);
+    if (!(file instanceof TFile) || this.plugin.app.vault.getAbstractFileByPath(target)) {
+      throw new Error("搬家源或目标已变化，原文件保留。");
+    }
+    const key = `${source}→${target}`;
+    this.ownedRenames.add(key);
+    try {
+      await this.plugin.app.vault.rename(file, target);
+    } finally {
+      this.ownedRenames.delete(key);
+    }
+    await this.syncKnowledgeSystemMove(source, target);
+  }
+
+  async syncKnowledgeSystemMove(source: string, target: string): Promise<void> {
+    await this.renameSyncQueue;
+    await this.syncRenamedPaths(source, target, false);
+  }
+
   private async renameWithLinks(source: string, target: string, restoring = false): Promise<void> {
     if (restoring) {
       const reason = this.renameUnsafeReason(source);
@@ -528,6 +553,10 @@ export class EchoInkKnowledgeSurfaceService {
     }
   }
 
+  getHealthSnapshot() {
+    return loadKnowledgeHealth(this.plugin.app, this.plugin.settings.knowledgeBase);
+  }
+
   async getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> {
     const revision = this.structureRevision;
     const signature = JSON.stringify(this.plugin.settings.knowledgeBase);
@@ -537,7 +566,7 @@ export class EchoInkKnowledgeSurfaceService {
       && this.dashboardSnapshot.signature === signature
       && now - this.dashboardSnapshot.savedAt <= 5_000
     ) {
-      return this.dashboardSnapshot.value;
+      return { ...this.dashboardSnapshot.value, health: this.getHealthSnapshot() };
     }
     if (!this.dashboardFlight) {
       this.dashboardFlight = buildKnowledgeBaseDashboardSnapshot(
@@ -551,6 +580,7 @@ export class EchoInkKnowledgeSurfaceService {
       });
     }
     const snapshot = await this.dashboardFlight;
+    snapshot.health = this.getHealthSnapshot();
     return revision === this.structureRevision ? snapshot : await this.getDashboardSnapshot();
   }
 
@@ -573,7 +603,10 @@ export class EchoInkKnowledgeSurfaceService {
     if (source.signalId !== 7 || source.moduleId !== "knowledge-base") throw new Error("这条提醒不属于资料维护。");
     const pending = await privateMaintenanceSourceScope(this.plugin.getVaultPath(), { limit: Infinity, processedSources: this.plugin.settings.knowledgeBase.processedSources });
     const selected = new Set(source.objects);
-    const batches = splitKnowledgeMaintenanceSources(pending.sourcePaths.filter(relative => selected.has(relative)));
+    const retries = pending.retryGroups.map(group => group.sourcePaths.filter(relative => selected.has(relative))).filter(paths => paths.length);
+    const retryPaths = new Set(retries.flat());
+    const batches = [...retries.flatMap(paths => splitKnowledgeMaintenanceSources(paths)), ...splitKnowledgeMaintenanceSources(pending.sourcePaths.filter(relative => selected.has(relative) && !retryPaths.has(relative)))];
+    if (!batches.length && pending.deferredSourcePaths.some(relative => selected.has(relative))) throw new Error(`部分来源属性回写失败，请修正属性后重试：${pending.deferredSourcePaths.filter(relative => selected.has(relative)).join("、")}`);
     if (!batches.length) throw new Error("这批资料已处理或不再属于维护范围，请刷新工作台。");
     return Object.freeze(batches.map((paths, batchIndex) => Object.freeze({
       text: knowledgeMaintenanceBatchPrompt({ sourcePaths: paths, batchIndex, expectedBatches: batches.length, origin: "workbench", request }),
@@ -1165,11 +1198,11 @@ export class EchoInkKnowledgeSurfaceService {
   }
 
   getUpgradeSnapshot() { return this.upgrade.getUpgradeSnapshot(); }
-  previewUpgrade() { return this.upgrade.previewUpgrade(); }
+  previewUpgrade(paths?: readonly string[]) { return this.upgrade.previewUpgrade(paths); }
   confirmUpgrade(previewId: string) { return this.upgrade.confirmUpgrade(previewId); }
   stopUpgrade() { return this.upgrade.stopUpgrade(); }
   resumeUpgrade() { return this.upgrade.resumeUpgrade(); }
-  async unload(): Promise<void> { await this.upgrade.dispose(); this.activity.dispose(); await this.linking.dispose(); }
+  async unload(): Promise<void> { await this.checkup.deep.dispose(); await this.upgrade.dispose(); this.activity.dispose(); await this.linking.dispose(); }
 }
 
 export function createKnowledgeInitializationHost(

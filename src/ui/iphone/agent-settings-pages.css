@@ -35,3 +35,14 @@
 .echoink-iphone .ip-agent-export:empty { display: none; }
 .echoink-iphone .ip-agent-settings :is(summary,textarea):focus-visible { outline: none; box-shadow: none; }
 .echoink-iphone .ip-agent-settings summary:focus-visible { background: var(--background-modifier-hover); }
+
+.echoink-iphone .ip-agent-settings .ip-settings-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.echoink-iphone .ip-agent-owner-count { margin-left: auto; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * .75); font-weight: 400; }
+.echoink-iphone .ip-agent-settings .ip-settings-row { min-height: 54px; }
+/* The selected label sizes the native select; the option list keeps its own width. */
+.echoink-iphone .ip-agent-settings .ip-agent-owner-control { position: relative; display: inline-flex; align-items: center; gap: 4px; min-height: 44px; max-width: 60%; padding: 0 18px 0 6px; border: 1px solid var(--ip-line); border-radius: 9px; font-weight: 400; }
+.echoink-iphone .ip-agent-owner-control::after { content: attr(data-owner-label); visibility: hidden; min-width: 0; overflow: hidden; white-space: pre; font: inherit; font-size: max(16px, 1em); font-weight: 400; line-height: 1.5; }
+.echoink-iphone .ip-agent-settings .ip-agent-owner-control > select.ip-settings-select { position: absolute; inset: 0; width: 100%; min-height: 42px; padding: 0 0 0 30px; border: 0; border-radius: 8px; background-color: transparent; font-weight: 400; }
+.echoink-iphone .ip-agent-owner-value-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 20px; width: 20px; height: 20px; color: var(--ip-secondary); }
+.echoink-iphone .ip-agent-owner-value-icon .ip-avatar { width: 20px; height: 20px; }
+.echoink-iphone .ip-agent-owner-value-icon > svg { width: 18px; height: 18px; }

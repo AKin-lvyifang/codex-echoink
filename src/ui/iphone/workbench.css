@@ -175,3 +175,57 @@
   .echoink-iphone .ip-status.is-running svg,
   .echoink-iphone .ip-agent-badge.is-running svg { animation: none; }
 }
+
+/* Approved Agent forms: same fields in Settings and the device's task pane. */
+.echoink-iphone .ip-agent-form { container: ip-agent-form / inline-size; padding-top: 18px; }
+.echoink-iphone .ip-agent-form .ip-form-fields { display: flex; flex-direction: column; gap: 18px; }
+.echoink-iphone .ip-agent-group { min-width: 0; margin: 0; }
+.echoink-iphone .ip-agent-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * .8125); font-weight: 500; }
+.echoink-iphone .ip-agent-group-box { min-width: 0; padding: 0 12px; border: 1px solid var(--ip-line); border-radius: 12px; }
+.echoink-iphone .ip-agent-group-box.ip-agent-presets-box { padding: 0; border: 0; border-radius: 0; }
+.echoink-iphone .ip-agent-form .ip-form-field { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-form .ip-form-field:last-child { border-bottom: 0; }
+.echoink-iphone .ip-agent-form .ip-field-label { color: var(--ip-ink); font-size: calc(var(--ip-ui-font) * .875); font-weight: 400; }
+.echoink-iphone .ip-agent-avatar-row { display: flex; align-items: center; gap: 8px; min-height: 54px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-avatar-row .ip-avatar { width: 32px; height: 32px; }
+.echoink-iphone .ip-agent-avatar-preview { display: flex; align-items: center; }
+.echoink-iphone .ip-agent-avatar-expanded { padding: 8px 0; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-form button.ip-avatar-option { min-width: 44px; min-height: 44px; border-radius: 50%; }
+.echoink-iphone .ip-agent-form .ip-avatar-option > .ip-avatar { width: 32px; height: 32px; }
+.echoink-iphone .ip-agent-form .ip-persona-field { padding: 12px; }
+.echoink-iphone .ip-agent-form textarea.ip-persona-input { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 100px; padding: 10px; border: 1px solid var(--ip-line); border-radius: 9px; background: var(--ip-bg); color: var(--ip-ink); font-family: inherit; font-size: max(16px, 1em); line-height: 1.5; resize: vertical; }
+.echoink-iphone .ip-agent-form textarea.ip-persona-input:focus { border-color: var(--ip-secondary); outline: none; box-shadow: none; }
+.echoink-iphone .ip-persona-bottom { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
+.echoink-iphone .ip-agent-form .ip-persona-templates { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 12px; min-width: 0; }
+.echoink-iphone .ip-agent-form .ip-persona-count { flex: 0 0 auto; align-content: center; min-height: 44px; margin: 0; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * .8125); text-align: right; }
+.echoink-iphone .ip-agent-form button.ip-persona-template { padding: 0; }
+.echoink-iphone .ip-agent-form button.ip-persona-template .ip-button-visible { padding: 0; border: 0; }
+.echoink-iphone .ip-agent-form .ip-agent-module-grid, .echoink-iphone .ip-agent-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; padding: 8px 12px; }
+.echoink-iphone .ip-agent-capability-grid { padding: 0; }
+.echoink-iphone .ip-agent-form .ip-choice { gap: 7px; min-width: 0; min-height: 44px; padding: 6px 0; border: 0; font-size: calc(var(--ip-ui-font) * .875); }
+.echoink-iphone .ip-agent-form .ip-choice input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; accent-color: var(--ip-ink); }
+.echoink-iphone .ip-agent-form .ip-choice-hint { margin-left: 0; text-align: left; font-size: calc(var(--ip-ui-font) * .75); }
+.echoink-iphone .ip-agent-form .ip-choice.is-required { opacity: .6; }
+.echoink-iphone .ip-required-lock { display: inline-flex; flex: none; color: var(--ip-secondary); }
+.echoink-iphone .ip-required-lock svg { width: 14px; height: 14px; }
+.echoink-iphone .ip-agent-capabilities { padding: 0 12px; }
+.echoink-iphone .ip-agent-capability-section { padding: 12px 0; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-capability-section:last-child { border-bottom: 0; }
+.echoink-iphone .ip-agent-capability-section .ip-capability-group-label { margin: 0 0 8px; color: var(--ip-ink); font-size: calc(var(--ip-ui-font) * .8125); font-weight: 500; }
+.echoink-iphone .ip-agent-form .ip-form-empty { padding: 4px 0; }
+.echoink-iphone .ip-agent-approval { padding: 0; overflow: hidden; }
+.echoink-iphone .ip-agent-approval .ip-choice { min-height: 54px; padding: 10px 12px; gap: 12px; border-bottom: 1px solid var(--ip-line); }
+.echoink-iphone .ip-agent-approval .ip-choice:last-child { border-bottom: 0; }
+.echoink-iphone .ip-agent-approval .is-selected { background: var(--ip-soft); }
+.echoink-iphone .ip-agent-approval-note { display: block; margin-top: 3px; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * .8125); }
+.echoink-iphone .ip-agent-form .ip-danger-zone { margin: 0; padding: 0; border: 0; }
+.echoink-iphone .ip-agent-form .ip-danger-zone > button.is-danger .ip-button-visible { color: var(--text-error); background: transparent; border-color: transparent; }
+.echoink-iphone .ip-form-dirty { flex: 1 1 100px; min-width: 0; margin-right: auto; align-self: center; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * .75); }
+
+.echoink-iphone .ip-module-owner-options { display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-iphone .ip-module-owner-option { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border-radius: 9px; cursor: pointer; }
+.echoink-iphone .ip-module-owner-option.is-selected { background: var(--ip-soft); }
+.echoink-iphone .ip-module-owner-option input { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--ip-ink); }
+.echoink-iphone .ip-module-owner-option .ip-avatar { width: 28px; height: 28px; }
+.echoink-iphone .ip-module-owner-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; width: 100%; }
+.echoink-iphone .ip-module-owner-actions > button:first-child { margin-right: auto; }

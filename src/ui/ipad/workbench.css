@@ -188,3 +188,60 @@
   .echoink-ipad .pd-status.is-running svg,
   .echoink-ipad .pd-agent-badge.is-running svg { animation: none; }
 }
+
+/* Approved Agent forms: same fields in Settings and the device's task pane. */
+.echoink-ipad .pd-agent-form { container: pd-agent-form / inline-size; }
+.echoink-ipad .pd-agent-form-title-avatar { display: flex; align-items: center; flex: none; margin-left: 4px; }
+.echoink-ipad .pd-agent-form-title-avatar .pd-avatar { width: 28px; height: 28px; }
+.echoink-ipad .pd-agent-form-title-avatar + .echoink-ipad-headings { padding-left: 8px; }
+.echoink-ipad .pd-agent-form .pd-form-fields { display: flex; flex-direction: column; gap: 18px; }
+.echoink-ipad .pd-agent-group { min-width: 0; margin: 0; }
+.echoink-ipad .pd-agent-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 8px; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * .8125); font-weight: 500; }
+.echoink-ipad .pd-agent-group-box { min-width: 0; padding: 0 12px; border: 1px solid var(--pd-line); border-radius: 12px; }
+.echoink-ipad .pd-agent-group-box.pd-agent-presets-box { padding: 0; border: 0; border-radius: 0; }
+.echoink-ipad .pd-agent-form .pd-form-field { margin: 0; padding: 12px 0; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-agent-form .pd-form-field:last-child { border-bottom: 0; }
+.echoink-ipad .pd-agent-form .pd-field-label { color: var(--pd-ink); font-size: calc(var(--pd-ui-font) * .875); font-weight: 400; }
+.echoink-ipad .pd-agent-avatar-row { display: flex; align-items: center; gap: 8px; min-height: 54px; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-agent-avatar-row .pd-avatar { width: 32px; height: 32px; }
+.echoink-ipad .pd-agent-avatar-preview { display: flex; align-items: center; }
+.echoink-ipad .pd-agent-avatar-expanded { padding: 8px 0; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-agent-form button.pd-avatar-option { min-width: 44px; min-height: 44px; border-radius: 50%; }
+.echoink-ipad .pd-agent-form .pd-avatar-option > .pd-avatar { width: 32px; height: 32px; }
+.echoink-ipad .pd-agent-form .pd-persona-field { padding: 12px; }
+.echoink-ipad .pd-agent-form textarea.pd-persona-input { display: block; box-sizing: border-box; width: 100%; min-width: 0; min-height: 100px; padding: 10px; border: 1px solid var(--pd-line); border-radius: 9px; background: var(--pd-bg); color: var(--pd-ink); font-family: inherit; font-size: max(16px, 1em); line-height: 1.5; resize: vertical; }
+.echoink-ipad .pd-agent-form textarea.pd-persona-input:focus { border-color: var(--pd-secondary); outline: none; box-shadow: none; }
+.echoink-ipad .pd-persona-bottom { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
+.echoink-ipad .pd-agent-form .pd-persona-templates { display: flex; flex: 1 1 0; flex-wrap: wrap; gap: 0 12px; min-width: 0; }
+.echoink-ipad .pd-agent-form .pd-persona-count { flex: 0 0 auto; align-content: center; min-height: 44px; margin: 0; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * .8125); text-align: right; }
+.echoink-ipad .pd-agent-form button.pd-persona-template { padding: 0; }
+.echoink-ipad .pd-agent-form button.pd-persona-template .pd-button-visible { padding: 0; border: 0; }
+.echoink-ipad .pd-agent-form .pd-agent-module-grid, .echoink-ipad .pd-agent-capability-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; padding: 8px 12px; }
+.echoink-ipad .pd-agent-capability-grid { padding: 0; }
+.echoink-ipad .pd-agent-form .pd-choice { gap: 7px; min-width: 0; min-height: 44px; padding: 6px 0; border: 0; font-size: calc(var(--pd-ui-font) * .875); }
+.echoink-ipad .pd-agent-form .pd-choice input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; accent-color: var(--pd-ink); }
+.echoink-ipad .pd-agent-form .pd-choice-hint { margin-left: 0; text-align: left; font-size: calc(var(--pd-ui-font) * .75); }
+.echoink-ipad .pd-agent-form .pd-choice.is-required { opacity: .6; }
+.echoink-ipad .pd-required-lock { display: inline-flex; flex: none; color: var(--pd-secondary); }
+.echoink-ipad .pd-required-lock svg { width: 14px; height: 14px; }
+.echoink-ipad .pd-agent-capabilities { padding: 0 12px; }
+.echoink-ipad .pd-agent-capability-section { padding: 12px 0; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-agent-capability-section:last-child { border-bottom: 0; }
+.echoink-ipad .pd-agent-capability-section .pd-capability-group-label { margin: 0 0 8px; color: var(--pd-ink); font-size: calc(var(--pd-ui-font) * .8125); font-weight: 500; }
+.echoink-ipad .pd-agent-form .pd-form-empty { padding: 4px 0; }
+.echoink-ipad .pd-agent-approval { padding: 0; overflow: hidden; }
+.echoink-ipad .pd-agent-approval .pd-choice { min-height: 54px; padding: 10px 12px; gap: 12px; border-bottom: 1px solid var(--pd-line); }
+.echoink-ipad .pd-agent-approval .pd-choice:last-child { border-bottom: 0; }
+.echoink-ipad .pd-agent-approval .is-selected { background: var(--pd-soft); }
+.echoink-ipad .pd-agent-approval-note { display: block; margin-top: 3px; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * .8125); }
+.echoink-ipad .pd-agent-form .pd-danger-zone { margin: 0; padding: 0; border: 0; }
+.echoink-ipad .pd-agent-form .pd-danger-zone > button.is-danger .pd-button-visible { color: var(--text-error); background: transparent; border-color: transparent; }
+.echoink-ipad .pd-form-dirty { flex: 1 1 100px; min-width: 0; margin-right: auto; align-self: center; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * .75); }
+
+.echoink-ipad .pd-module-owner-options { display: flex; flex-direction: column; min-width: 0; margin: 0; padding: 0; border: 0; }
+.echoink-ipad .pd-module-owner-option { display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 10px 12px; border-radius: 9px; cursor: pointer; }
+.echoink-ipad .pd-module-owner-option.is-selected { background: var(--pd-soft); }
+.echoink-ipad .pd-module-owner-option input { flex: 0 0 20px; width: 20px; height: 20px; margin: 0; accent-color: var(--pd-ink); }
+.echoink-ipad .pd-module-owner-option .pd-avatar { width: 28px; height: 28px; }
+.echoink-ipad .pd-module-owner-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; width: 100%; }
+.echoink-ipad .pd-module-owner-actions > button:first-child { margin-right: auto; }

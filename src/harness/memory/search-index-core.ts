@@ -214,55 +214,12 @@ export interface PrimaryScoreInput {
   readonly recallWhen: string;
 }
 
-/** Primary-memory lexical score (no anchors; CJK bigram aware). */
-export function scorePrimaryEntry(
-  entry: PrimaryScoreInput,
-  query: string,
-  queryTokens: ReadonlySet<string>
-): number {
-  if (!query.trim() || queryTokens.size === 0) return 0;
-  const normalizedQuery = normalizeMatchText(query);
-  const hasHanPhrase = /\p{Script=Han}/u.test(normalizedQuery);
-  const routeTokenSet = new Set(entry.routeTokens);
-  const contentTokenSet = new Set(entry.contentTokens);
-  const titleLower = normalizeMatchText(entry.title);
-  const recallLower = normalizeMatchText(entry.recallWhen);
-
-  let score = 0;
-  if (hasHanPhrase && (titleLower.includes(normalizedQuery) || recallLower.includes(normalizedQuery))) {
-    score += 3.0;
-  } else if (hasHanPhrase
-    && normalizeMatchText(`${entry.title}\n${entry.recallWhen}`).includes(normalizedQuery)) {
-    score += 2.5;
-  }
-
-  let matchedRoute = 0;
-  let matchedContent = 0;
-  for (const token of queryTokens) {
-    if (routeTokenSet.has(token)) {
-      score += 1.0;
-      matchedRoute += 1;
-    }
-    if (contentTokenSet.has(token)) {
-      score += 0.45;
-      matchedContent += 1;
-    }
-  }
-  if (matchedRoute === 0 && matchedContent === 0) return 0;
-  // Coverage bonus: a full-phrase (all-token) match ranks above partial hits.
-  const coverage = matchedRoute / queryTokens.size;
-  score += coverage * 1.6;
-  if (hasHanPhrase && recallLower.length >= 4 && normalizedQuery.includes(recallLower)) {
-    score += 1.0;
-  }
-  return score;
-}
-
 /** Secondary-fact match score against a query (matchTerms are the bridge). */
 export function scoreSecondaryEntry(
   entry: SecondaryCatalogEntry,
   query: string,
-  queryTokens: ReadonlySet<string>
+  queryTokens: ReadonlySet<string>,
+  requireQueryTokenMatch = false
 ): number {
   if (!query.trim()) return 0;
   const normalizedQuery = normalizeMatchText(query);
@@ -272,7 +229,8 @@ export function scoreSecondaryEntry(
     const normalizedTerm = normalizeMatchText(term);
     if (!normalizedTerm) continue;
     const hasHanPhrase = /\p{Script=Han}/u.test(normalizedTerm);
-    if (hasHanPhrase && normalizedTerm.length >= 2 && normalizedQuery.includes(normalizedTerm)) {
+    if (hasHanPhrase && normalizedTerm.length >= 2 && normalizedQuery.includes(normalizedTerm)
+      && (!requireQueryTokenMatch || lexicalTokens(normalizedTerm).some(token => queryTokens.has(token)))) {
       matchTermScore += 2.4;
       continue;
     }

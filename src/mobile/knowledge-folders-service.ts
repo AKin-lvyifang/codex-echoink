@@ -97,10 +97,13 @@ export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort
         (this.services.app.vault.getRoot?.().children ?? []).map(file => file.path), input.moduleDirectories,
         this.services.settings.knowledgeBase.folderBindings);
       input.moduleDirectories = selection.directories;
+      let protectedSources: string[] = [];
+      try { protectedSources = await protectedPaths(this.services, baseline.inventory, input.moduleDirectories); }
+      catch (error) { preview.issues.push(detail(error)); }
       const plan = await previewKnowledgeDirectoryPlan({ baseRevision: this.services.settings.knowledgeBase.folderBindings?.revision ?? 0,
         baseline: this.services.settings.knowledgeBase.folderBindings, bindings: input.bindings, createPaths: input.createPaths, mode: input.mode,
         baseSettingsSignature: baseline.settings, moduleDirectories: input.moduleDirectories, files: baseline.inventory.files,
-        protectedPaths: await protectedPaths(this.services, baseline.inventory, input.moduleDirectories),
+        protectedPaths: protectedSources,
         sourcePaths: baseline.inventory.files.filter(file => /\.(?:md|markdown)$/iu.test(file.path)).map(file => file.path), kind: path => kind(adapter, path) });
       plan.moduleDirectoryModes = selection.modes; plan.issues.push(...selection.issues);
       prepared.plan = plan;

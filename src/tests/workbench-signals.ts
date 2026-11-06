@@ -4,6 +4,7 @@ import { EMPTY_LIFESTYLE_DATA, type FinanceEntry, type LifestyleData } from "../
 import { AGENT_MODULE_IDS } from "../agents/types";
 import type { ParsedTodoRecord } from "../home/todo-markdown";
 import type { PdfJob } from "../pdf-reading/types";
+import { parseWorkbenchTaskSource } from "../home/task-launcher";
 
 const financeData = (value: Partial<LifestyleData>): LifestyleData => ({ ...structuredClone(EMPTY_LIFESTYLE_DATA), ...value });
 const todo = (dueDate: string): ParsedTodoRecord => ({ id: dueDate, dueDate, title: "合成待办", done: false, people: "", categoryName: "", lineStart: 1, lineEnd: 1, extraMetaLines: [] });
@@ -93,5 +94,14 @@ export async function runWorkbenchSignalsTests(): Promise<void> {
   mixed.raw = mixed.raw.slice(0, 1);
   assert.equal(calculateWorkbenchSignals(mixed).find(item => item.id === 7)?.description, "1 篇资料待整理", "even a final remainder below the initial threshold is shown");
   mixed.raw = []; assert.ok(!ids(mixed).includes(7), "completed real work stays absent");
-  console.log("Workbench signal rules: 13 signals, transitions, strict thresholds, local dates, PRO/module eligibility and task suppression passed");
+  const systems = base();
+  systems.knowledgeSystems = [{ domain: "AI工程", mapPath: "wiki/共享index.md", mode: "list", count: 15, threshold: 15 }];
+  const systemSignal = calculateWorkbenchSignals(systems).find(signal => signal.id === 15)!;
+  assert.match(systemSignal.description, /AI工程已有 15 条/u);
+  assert.equal(parseWorkbenchTaskSource(JSON.stringify(systemSignal.source))?.signalId, 15, "new system reminder uses the real existing task handoff decoder");
+  systems.tasks = [{ conversationId: "system-task", taskStatus: "running", businessKey: systemSignal.key }];
+  assert.ok(!ids(systems).includes(15), "same-domain busy task suppresses duplicate system handoff");
+  systems.tasks = []; systems.modules = [];
+  assert.ok(!ids(systems).includes(15), "disabled knowledge module never emits its system reminder");
+  console.log("Workbench signal rules: 14 signals, transitions, strict thresholds, local dates, PRO/module eligibility and task suppression passed");
 }

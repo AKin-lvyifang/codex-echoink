@@ -10,36 +10,38 @@ export async function runInitializationRegressions(api, fixture, build) {
   const enableCustom = f => Object.assign(f.settings.englishDiary, { enabled: true, englishDirectoryMode: "custom", expressionDirectoryMode: "custom", englishDirectory: "old-english", expressionDirectory: "old-expressions" });
   const receipt = async (f, id) => JSON.parse(await f.read(`.obsidian/plugins/echoink/mobile/knowledge-folders-v1/${id}.json`)).payload;
 
-  await test("disabled modules ignore stale requests, retain every setting, and protect stored, role and historical files", async () => {
+  await test("omitted disabled modules retain every setting and protect stored, role and historical files", async () => {
     const f = await fixture({ "source.md": "SOURCE", "old-reviews/r.md": "REVIEW", "old-english/e.md": "ENGLISH", "old-expressions/x.md": "EXPRESSION", "mapped/英文日记/a.md": "ROLE", "historical/h.md": "HISTORY" });
     Object.assign(f.settings.review, { enabled: false, outputDir: "old-reviews" });
     Object.assign(f.settings.englishDiary, { enabled: false, englishDirectory: "old-english", expressionDirectory: "old-expressions", englishDirectoryMode: "role", legacyEnglishDirectories: ["outputs/.english-diary/diaries", "historical"] });
     const bindings = api.emptyKnowledgeFolderBindings(); Object.assign(bindings.roles.outputs, { enabled: false, readPaths: ["mapped"], writePath: "mapped" }); f.settings.knowledgeBase.folderBindings = bindings;
     const before = plain({ review: f.settings.review, english: f.settings.englishDiary });
     const request = build(); request.bindings.roles.outputs = structuredClone(bindings.roles.outputs);
-    request.moduleDirectories = { review: "missing-review", english: "/ignored-old-request", expressions: "missing-expression" };
+    request.moduleDirectories = {};
     f.reset(); const preview = await f.service.preview(request); assert.deepEqual(plain(preview.issues), []); assert.equal(f.calls.writes.length, 0);
     assert.ok(preview.moves.every(move => !/^(old-reviews|old-english|old-expressions|mapped|historical)\//u.test(move.from)));
     const result = await f.service.apply(preview.token); assert.equal(result.status, "completed", JSON.stringify(result));
     assert.deepEqual(plain({ review: f.settings.review, english: f.settings.englishDiary }), before);
     assert.ok(!JSON.stringify(await receipt(f, result.recordId)).includes(".english-diary"));
     assert.deepEqual(plain((await f.cold().read()).moduleDirectories), { journal: "journal" });
+    const explicit = build(); explicit.moduleDirectories = { review: "missing-review", english: "/unsafe-explicit-request" }; f.reset();
+    const invalid = await f.service.preview(explicit); assert.ok(invalid.issues.length); await assert.rejects(f.service.apply(invalid.token)); assert.deepEqual(f.calls.writes, []);
   });
 
-  await test("role paths follow draft Outputs and retain role mode and hidden compatibility lists", async () => {
+  await test("module paths stay independent of draft Outputs and retain mode and compatibility lists", async () => {
     const f = await fixture({}); Object.assign(f.settings.englishDiary, { enabled: true, englishDirectoryMode: "role", expressionDirectoryMode: "role", legacyEnglishDirectories: ["outputs/.english-diary/diaries"] });
     const before = plain(f.settings.englishDiary), request = build();
     Object.assign(request.bindings.roles.outputs, { enabled: true, readPaths: ["本次输出"], writePath: "本次输出" }); request.createPaths.push("本次输出");
-    request.moduleDirectories = { english: "outputs/英文日记", expressions: "outputs/英文日记/表达库" };
+    request.moduleDirectories = {}; request.createPaths.push(before.englishDirectory, before.expressionDirectory);
     const preview = await f.service.preview(request); assert.deepEqual(plain(preview.issues), []);
-    assert.ok(preview.create.includes("本次输出/英文日记/表达库"));
+    assert.ok(preview.create.includes(before.expressionDirectory)); assert.ok(!preview.create.includes("本次输出/英文日记"));
     const result = await f.service.apply(preview.token); assert.equal(result.status, "completed"); assert.deepEqual(plain(f.settings.englishDiary), before);
-    assert.equal((await f.service.read()).moduleDirectories.english, "本次输出/英文日记");
+    assert.equal((await f.service.read()).moduleDirectories.english, before.englishDirectory);
   });
 
-  await test("only enabled role locations require Outputs; custom locations remain independent", async () => {
+  await test("module-owned locations validate their own directories without requiring Outputs", async () => {
     const f = await fixture({}); f.settings.englishDiary.enabled = true;
-    const missing = await f.service.preview(existing(f)); assert.match(missing.issues.join("；"), /请先绑定输出目录/u); assert.doesNotMatch(missing.issues.join("；"), /原位置已失效/u);
+    const missing = await f.service.preview(existing(f)); assert.match(missing.issues.join("；"), /原位置已失效/u); assert.doesNotMatch(missing.issues.join("；"), /请先绑定输出目录/u);
     enableCustom(f); await mkdir(f, "old-english"); await mkdir(f, "old-expressions");
     const custom = await f.service.preview(existing(f)); assert.deepEqual(plain(custom.issues), []); assert.equal((await f.service.apply(custom.token)).status, "completed");
   });
@@ -48,7 +50,7 @@ export async function runInitializationRegressions(api, fixture, build) {
     const f = await fixture({}); enableCustom(f); await mkdir(f, "old-english"); await mkdir(f, "old-expressions");
     f.settings.englishDiary.legacyEnglishDirectories = ["outputs/.english-diary/diaries"];
     f.settings.englishDiary.legacyExpressionDirectories = [".echoink/english-diary/expressions"];
-    const request = build(); request.moduleDirectories = { english: "new-english", expressions: "new-expressions" };
+    const request = build(); request.moduleDirectories = { english: "new-english", expressions: "new-expressions" }; request.createPaths.push("new-english", "new-expressions");
     const preview = await f.service.preview(request); assert.deepEqual(plain(preview.issues), []);
     const result = await f.service.apply(preview.token); assert.equal(result.status, "completed");
     const record = await receipt(f, result.recordId); assert.equal(record.schema, 2);
@@ -64,7 +66,7 @@ export async function runInitializationRegressions(api, fixture, build) {
   await test("an already-known history entry is never removed during restore", async () => {
     const f = await fixture({}); enableCustom(f); await mkdir(f, "old-expressions");
     f.settings.englishDiary.legacyEnglishDirectories = ["old-english", "outputs/.english-diary/diaries"];
-    const request = build(); request.moduleDirectories = { english: "new-english" };
+    const request = build(); request.moduleDirectories = { english: "new-english" }; request.createPaths.push("new-english");
     const result = await f.service.apply((await f.service.preview(request)).token); assert.equal(result.status, "completed");
     const record = await receipt(f, result.recordId); assert.equal(record.after.legacyEnglish, undefined);
     const cold = f.cold(); assert.equal((await cold.apply((await cold.preview({ kind: "restore", recordId: result.recordId })).token)).status, "completed");
@@ -93,7 +95,7 @@ export async function runInitializationRegressions(api, fixture, build) {
 
   await test("absent history and mode options restore without producing a full-list receipt", async () => {
     const f = await fixture({}); enableCustom(f); delete f.settings.englishDiary.legacyEnglishDirectories; await mkdir(f, "old-expressions");
-    const request = build(); request.moduleDirectories = { english: "new-english" };
+    const request = build(); request.moduleDirectories = { english: "new-english" }; request.createPaths.push("new-english");
     const result = await f.service.apply((await f.service.preview(request)).token); assert.equal(result.status, "completed");
     const record = await receipt(f, result.recordId); assert.equal(record.before.legacyEnglish, null);
     const cold = f.cold(); assert.equal((await cold.apply((await cold.preview({ kind: "restore", recordId: result.recordId })).token)).status, "completed");
@@ -104,7 +106,7 @@ export async function runInitializationRegressions(api, fixture, build) {
     const f = await fixture({ "mapped/keep.md": "OUTPUT" });
     Object.assign(f.settings.englishDiary, { enabled: true, englishDirectoryMode: "role", expressionDirectoryMode: "role" });
     const bindings = api.emptyKnowledgeFolderBindings(); Object.assign(bindings.roles.outputs, { enabled: true, readPaths: ["mapped"], writePath: "mapped" }); f.settings.knowledgeBase.folderBindings = bindings;
-    const request = build(); request.bindings.roles.outputs = structuredClone(bindings.roles.outputs); request.moduleDirectories = { english: "new-custom-english" };
+    const request = build(); request.bindings.roles.outputs = structuredClone(bindings.roles.outputs); request.moduleDirectories = { english: "new-custom-english" }; request.createPaths.push("new-custom-english", f.settings.englishDiary.expressionDirectory);
     const result = await f.service.apply((await f.service.preview(request)).token); assert.equal(result.status, "completed");
     await f.write("new-custom-english/manual.md", "NEW USER CONTENT");
     const cold = f.cold(), preview = await cold.preview({ kind: "restore", recordId: result.recordId }); assert.deepEqual(plain(preview.issues), []);

@@ -8,8 +8,8 @@ interface ParentState {
 // polyfill. Owners can add/remove their children and native/Radix controls;
 // this document binding keeps the corresponding parent class in sync.
 export const CSS_PARENT_STATES: readonly ParentState[] = [
-  { className: "has-echoink-checked-control", targets: ".echoink-agent-editor-preset,.echoink-agent-editor-avatar-option,.echoink-agent-editor-style-card,.echoink-generation-output-segment", relation: "[data-state=checked]" },
-  { className: "has-echoink-visible-focus", targets: ".echoink-agent-editor-preset,.echoink-agent-editor-avatar-option,.echoink-agent-editor-style-card,.echoink-module-drawer-header,.echoink-generation-output-segment", relation: ":focus-visible" },
+  { className: "has-echoink-checked-control", targets: ".echoink-agent-editor-preset,.echoink-agent-editor-avatar-option,.echoink-agent-editor-style-card,.echoink-generation-output-segment,.echoink-agent-approval-choice,.echoink-module-owner-option", relation: "[data-state=checked]" },
+  { className: "has-echoink-visible-focus", targets: ".echoink-agent-editor-preset,.echoink-agent-editor-avatar-option,.echoink-agent-editor-style-card,.echoink-module-drawer-header,.echoink-generation-output-segment,.echoink-agent-approval-choice,.echoink-module-owner-option", relation: ":focus-visible" },
   { className: "has-echoink-host-status-bar", targets: "body", relation: ".status-bar" },
   { className: "has-echoink-dream-action", targets: ".setting-item", relation: '[data-echoink-focus-key="general:memory:dream-now"]' },
   { className: "has-echoink-message-tail", targets: ".codex-messages", relation: "> [data-message-tail]:not([hidden])" },
@@ -28,7 +28,6 @@ export const CSS_PARENT_STATES: readonly ParentState[] = [
   { className: "has-echoink-focused-input", targets: ".echoink-theme-choice", relation: "> input:focus-visible" },
   { className: "has-echoink-provider-help", targets: ".codex-provider-modal-label", relation: "> .echoink-provider-form-help" },
   { className: "has-echoink-mcp-help", targets: ".codex-mcp-server-label", relation: "> .echoink-mcp-form-help" },
-  { className: "has-echoink-dream-control", targets: ".setting-item", relation: '[data-echoink-focus-key="general:memory:dream"]' },
   { className: "has-echoink-profile-editor", targets: ".echoink-profile-row", relation: "> .echoink-profile-edit" },
   { className: "has-echoink-settings-switch", targets: ".setting-row", relation: "> .setting-controls > .settings-switch" },
   { className: "has-echoink-inline-confirm", targets: ".echoink-settings-compact-row", relation: "> .echoink-settings-inline-confirm" },

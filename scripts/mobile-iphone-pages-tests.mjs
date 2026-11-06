@@ -56,8 +56,8 @@ try {
   });
   await test("editing preserves custom avatar and unshown capabilities/owner", async () => {
     const fixtureState = fixture(); await fixtureState.form("organizer");
-    assert.equal(fixtureState.root.querySelectorAll(".ip-avatar-option").length, 16);
-    assert.equal(fixtureState.root.querySelector(".ip-avatar-option.is-selected").getAttribute("aria-label"), "头像 自定义头像");
+    assert.equal(fixtureState.root.querySelectorAll(".ip-avatar-option").length, 15);
+    assert.ok(fixtureState.root.querySelector(".ip-agent-avatar-preview img")?.getAttribute("src")?.startsWith("data:"), "current custom avatar remains visible without becoming a preset");
     input(fixtureState.root.querySelector("input[type=text]"), "资料整理"); button(fixtureState.root, "保存").click(); await flush();
     const saved = fixtureState.registry.agents.find(agent => agent.id === "organizer"); assert.equal(saved.name, "资料整理");
     assert.ok(saved.capabilityIds.includes("hidden-desktop-capability")); assert.equal(saved.avatar.kind, "custom");
@@ -85,8 +85,8 @@ try {
     assert.ok(fixtureState.registry.agents[0].disabledCapabilityIds.includes("hidden-desktop-capability")); assert.equal(fixtureState.removals, 0); fixtureState.dispose();
   });
   await test("custom Agent removal uses the handoff service after inline confirmation", async () => {
-    const fixtureState = fixture(); await fixtureState.form("organizer"); button(fixtureState.root, "删除这个 Agent").click();
-    assert.equal(fixtureState.removals, 0); button(fixtureState.root, "删除并交回总助").click(); await flush();
+    const fixtureState = fixture(); await fixtureState.form("organizer"); button(fixtureState.root, "删除 Agent").click();
+    assert.equal(fixtureState.removals, 0); button(fixtureState.root, "删除并交通才").click(); await flush();
     assert.equal(fixtureState.removals, 1); assert.equal(fixtureState.writes, 0); assert.equal(fixtureState.backs, 1); fixtureState.dispose();
   });
   console.log(`${passed} iPhone page scenarios passed`);

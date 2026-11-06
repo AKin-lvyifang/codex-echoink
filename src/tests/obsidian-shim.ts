@@ -214,6 +214,21 @@ export class Modal {
   onClose(): void {}
 }
 
+export class FuzzySuggestModal<T> extends Modal {
+  inputEl = document.createElement("input");
+  setPlaceholder(value: string): void { this.inputEl.placeholder = value; }
+  getItems(): T[] { return []; }
+  getItemText(item: T): string { return String(item); }
+  onChooseItem(_item: T, _event: MouseEvent | KeyboardEvent): void {}
+  onOpen(): void {
+    this.contentEl.append(this.inputEl);
+    for (const item of this.getItems()) {
+      const row = this.contentEl.createDiv({ cls: "suggestion-item", text: this.getItemText(item) });
+      row.onclick = event => { this.onChooseItem(item, event); this.close(); };
+    }
+  }
+}
+
 export class Setting {
   readonly settingEl: HTMLElement;
   readonly infoEl: HTMLElement;
@@ -386,6 +401,7 @@ export function normalizePath(value: string): string {
 }
 
 export const Platform = {
+  get isWin() { return process.platform === "win32"; },
   isDesktop: true,
   isDesktopApp: false
 };

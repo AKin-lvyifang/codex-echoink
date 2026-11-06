@@ -1,7 +1,7 @@
 import { mobileNoteUpdateTool } from "./note-update";
 import { boundKnowledgeSourceSpan, sliceKnowledgeSourceSpan, sourceSpanHasMore } from "../knowledge-base/source-span";
 import type { KnowledgeBodySearchPort } from "../knowledge-base/vault-body-search";
-import { tokenizeSearchText } from "../knowledge-base/search/tokenize";
+import { memoryRelevanceEntry, memoryRelevanceScorer, memoryTemporalContext, rankMemory, type MemoryActivityState, type MemoryRecallMode } from "../harness/memory/memory-relevance";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { App } from "obsidian";
@@ -28,14 +28,19 @@ export const memoryCategories = [
 export function checkedNotePath(value: string): string {
   return normalizeMobileNoteTarget(value);
 }
-export function searchMemories(records: readonly PersonalMemoryRecord[], query: string, limit = 20): PersonalMemoryRecord[] {
-  const text = query.trim().toLocaleLowerCase();
-  const fragments = tokenizeSearchText(text);
-  return records.filter(r => r.status === "current").map(record => {
-    const haystack = `${record.title}\n${record.content}\n${record.recallWhen}`.toLocaleLowerCase();
-    return { record, score: text ? fragments.reduce((s, term) => s + (haystack.includes(term) ? term.length : 0), 0) : 1 };
-  }).filter(r => r.score > 0).sort((a, b) => b.score - a.score).slice(0, limit).map(r => r.record);
+export function searchMemories(records: readonly PersonalMemoryRecord[], query: string, limit = 20, mode: MemoryRecallMode = "search", activity?: MemoryActivityState, now = Date.now()): PersonalMemoryRecord[] {
+  const current = records.filter(record => record.status === "current" && (mode === "search" || !record.pinned));
+  const entries = current.map(record => ({ record, entry: memoryRelevanceEntry(record) }));
+  const score = memoryRelevanceScorer(entries.map(item => item.entry), query, mode);
+  return entries.map(item => ({ record: item.record, ...rankMemory(query.trim() ? score(item.entry) : 0, item.record, activity ?? { version: 1, vaultId: "preview", initializedAt: new Date(now).toISOString(), records: {} }, now, query, mode) }))
+    .filter(item => item.eligible && (!query.trim() || item.score > 0)).sort((a, b) => b.score - a.score || b.record.date.localeCompare(a.record.date) || a.record.id.localeCompare(b.record.id))
+    .slice(0, limit).map(item => item.record);
 }
+export function memoryRuntimeView(record: PersonalMemoryRecord, now = Date.now()) {
+  return { id: record.id, kind: record.kind, title: record.title, content: record.content, basis: record.basis,
+    recallWhen: record.recallWhen, date: record.date, ...memoryTemporalContext(record, now) };
+}
+
 function checkStopped(signal?: AbortSignal) { if (signal?.aborted) throw new Error("已停止，未开始此操作。"); }
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: typeof details === "string" ? details : JSON.stringify(details) }], details });
 /** Product runtime must pass its durable run. Legacy standalone fixtures have no journal/resume guarantee. */
@@ -149,24 +154,28 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     const enabled = (name: string, signal?: AbortSignal) => { checkStopped(signal); policy.assertTool(name); };
     tools.push({
       name: "memory_search", label: "查找记忆", description: "检索用户记忆；query 为空时列出最近记忆。涉及用户经历、观点、决定或目标时先检索。", parameters: Type.Object({ query: Type.String() }),
-      async execute(_id, args: { query: string }, signal) { enabled("memory_search", signal); const records = memory ? await memory.recordsForRuntime() : store.state.memories; enabled("memory_search", signal); return result(searchMemories(records, args.query).map(r => ({ id: r.id, kind: r.kind, title: r.title, content: r.content, basis: r.basis, recallWhen: r.recallWhen }))); }
+      async execute(_id, args: { query: string }, signal) { enabled("memory_search", signal); const records = memory ? await memory.recordsForRuntime() : store.state.memories; enabled("memory_search", signal); const activity = memory ? await memory.memoryActivity() : undefined; enabled("memory_search", signal); return result(searchMemories(records, args.query, 20, "search", activity).map(record => memoryRuntimeView(record))); }
     }, {
       name: "memory_read", label: "读取记忆", description: "读取指定记忆的完整内容和来源。", parameters: Type.Object({ id: Type.String() }),
       async execute(_id, args: { id: string }, signal) { enabled("memory_read", signal); const record = memory ? (await memory.read(args.id)).record : store.state.memories.find(r => r.id === args.id); enabled("memory_read", signal); if (!record) throw new Error("记忆不存在。"); return result(record); }
     }, {
-      name: "memory_write", label: "保存记忆", description: "忠实保存用户明确陈述或当前对话中可观察的长期信息。禁止把引用、文档知识、假设、工具输出或模型猜测写成用户事实。先搜索避免重复；修正旧记忆时提供 targetId。不能删除记忆。", parameters: Type.Object({
-        kind: Type.Union(["fact", "view", "decision", "goal", "task", "open_loop", "episode"].map(k => Type.Literal(k))), title: Type.String({ minLength: 1 }), content: Type.String({ minLength: 1 }), recallWhen: Type.String(), basis: Type.Union([Type.Literal("explicit"), Type.Literal("observed")]), targetId: Type.Optional(Type.String())
+      name: "memory_write", label: "保存记忆", description: "忠实保存用户明确陈述或当前对话中可观察的长期信息。禁止把引用、文档知识、假设、工具输出或模型猜测写成用户事实。先搜索避免重复；修正旧记忆时提供 targetId。不能删除记忆。用户本轮明确要求固定或取消固定时，传operation=pin/unpin、targetId和逐字evidenceQuote；其余字段用于新增或修正。", parameters: Type.Object({
+        operation: Type.Optional(Type.Union([Type.Literal("pin"), Type.Literal("unpin")])), evidenceQuote: Type.Optional(Type.String()),
+        kind: Type.Optional(Type.Union(["fact", "view", "decision", "goal", "task", "open_loop", "episode"].map(k => Type.Literal(k)))), title: Type.Optional(Type.String({ minLength: 1 })), content: Type.Optional(Type.String({ minLength: 1 })), recallWhen: Type.Optional(Type.String()), basis: Type.Optional(Type.Union([Type.Literal("explicit"), Type.Literal("observed")])), targetId: Type.Optional(Type.String())
       }),
-      async execute(toolCallId, args: { targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
+      async execute(toolCallId, args: { operation?: "pin" | "unpin"; evidenceQuote?: string; targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
         enabled("memory_write", signal);
         await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
         enabled("memory_write", signal);
+        if (args.operation && (!args.targetId || !args.evidenceQuote?.trim() || !execution?.userText?.includes(args.evidenceQuote))) throw new Error("固定或取消固定必须引用用户本轮明确要求的原话。");
+        if (!args.operation && (!args.title?.trim() || !args.content?.trim() || !args.recallWhen?.trim() || !["explicit", "observed"].includes(args.basis) || !["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(args.kind))) throw new Error("新增或修正记忆需要有效的类型、标题、正文、触发场景和依据。");
         if (memory) {
-          const plan = await memory.prepareToolMemory(args, sessionId, execution?.runId ?? "", toolCallId);
-          const semanticKey = mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId), now = Date.now();
+          const plan = args.operation ? await memory.preparePin(args.targetId!, args.operation === "pin") : await memory.prepareToolMemory(args, sessionId, execution?.runId ?? "", toolCallId);
+          const semanticKey = args.operation ? mobileMemoryWriteKey(mobileMemoryWriteHash(plan.record), args.targetId) : mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId), now = Date.now();
           const operation: MobileWriteOperation = { id: newId(), taskId: sessionId, runId: execution?.runId ?? "", toolCallId, toolName: "memory_write", memoryRepository: "canonical",
-            semanticKey, status: "prepared", createdAt: now, updatedAt: now, target: plan.record.id, expectedHash: mobileMemoryWriteHash(plan.record), targetWasMissing: !plan.duplicate,
-            ...(plan.duplicate ? { beforeRevision: plan.record.revision } : {}) };
+            semanticKey, status: "prepared", createdAt: now, updatedAt: now, target: plan.record.id, expectedHash: mobileMemoryWriteHash(plan.record), targetWasMissing: !plan.duplicate && plan.mode !== "pin",
+            ...(plan.duplicate || plan.mode === "pin" ? { beforeRevision: plan.original?.revision ?? plan.record.revision } : {}),
+            ...(plan.mode === "pin" && plan.original ? { beforeHash: mobileMemoryWriteHash(plan.original) } : {}) };
           const writable = () => { enabled("memory_write", signal); if (execution) { const task = store.getSession(sessionId); if (!task) throw new Error("任务不存在。"); assertMobileWriteRun(task, execution); } };
           writable();
           if (execution) {
@@ -184,6 +193,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
             throw error;
           }
         }
+        if (args.operation) throw new Error("记忆服务尚未就绪，请重新打开插件。");
         const before = args.targetId ? store.state.memories.find(item => item.id === args.targetId) : undefined;
         const expectedBefore = before ? { revision: before.revision, hash: mobileMemoryWriteHash(before) } : undefined;
         const semanticKey = mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId);
@@ -203,7 +213,7 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
           const duplicate = latest.memories.find(r => r.content === args.content && r.kind === args.kind && r.status === "current");
           const target = duplicate?.id ?? old?.id ?? recordId;
           if (execution) assertMobileWriteNotReplayed(task, execution, "memory_write", toolCallId, semanticKey, target);
-          record = duplicate ?? { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? recordId, kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${sessionId}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: store.statePath };
+          record = duplicate ?? { schema: PERSONAL_MEMORY_SCHEMA, id: old?.id ?? recordId, pinned: old?.pinned, kind: args.kind, status: "current", date: new Date().toISOString(), source: `mobile:${sessionId}:${toolCallId}`, basis: args.basis, contentOrigin: args.basis === "explicit" ? "user_statement" : "current_instruction", title: args.title, content: args.content, recallWhen: args.recallWhen, revision: (old?.revision ?? 0) + 1, file: store.statePath };
           if (!duplicate) latest.memories = [record, ...latest.memories.filter(r => r.id !== record!.id)];
           if (execution) {
             const previous = duplicate ?? old, now = Date.now();

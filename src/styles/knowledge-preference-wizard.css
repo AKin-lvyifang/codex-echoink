@@ -1,0 +1,15 @@
+.knowledge-preference-wizard { display: flex; flex-direction: column; gap: 18px; width: 440px; max-width: 100%; min-width: 0; font-size: calc(var(--font-text-size, 16px) * .8125); }
+.echoink-paper-guide-modal .knowledge-preference-wizard,
+.echoink-paper-guide-modal .knowledge-preference-actions { width: 100%; }
+.echoink-paper-guide-modal .knowledge-preference-wizard [data-slot=radio-group-item]:focus:not(:focus-visible) { outline: none; box-shadow: none; }
+.knowledge-preference-purposes { display: flex; flex-direction: column; gap: 6px; }
+.knowledge-preference-purpose { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.knowledge-preference-purpose:hover, .knowledge-preference-purpose.is-selected { background: var(--background-modifier-hover); }
+.knowledge-preference-section { display: flex; flex-direction: column; gap: 8px; }
+.knowledge-preference-section h3 { margin: 0; font-size: inherit; font-weight: 600; }
+.knowledge-preference-section ul { margin-block: 0; padding-inline-start: 20px; }
+.knowledge-preference-actions { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 8px; }
+.knowledge-preference-error { color: var(--text-error); overflow-wrap: anywhere; }
+.knowledge-preference-wizard .echoink-origin-control[data-slot=radio-group-item] { --origin-accent: var(--echoink-control-fill, var(--interactive-accent)); }
+body .knowledge-preference-actions button.echoink-origin-control[data-slot=button].mod-cta { background: var(--echoink-control-fill, var(--interactive-accent)); color: var(--echoink-control-on-fill, var(--text-on-accent)); border-color: transparent; }
+.knowledge-preference-wizard .echoink-origin-control[data-slot=radio-group-item][data-state=checked] { color: var(--echoink-control-on-fill, var(--text-on-accent)); }

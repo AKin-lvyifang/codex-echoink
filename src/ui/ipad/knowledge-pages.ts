@@ -1,5 +1,5 @@
 import { attachNativeTooltip } from "../native-tooltip";
-import type { KnowledgePageSnapshot, KnowledgePageDirectory } from "../../home/knowledge-page-data";
+import type { KnowledgePageSnapshot, KnowledgePageDirectory } from "../../home/knowledge-page-core";
 import type { KnowledgeBaseMaintenanceHistoryEntry } from "../../settings/settings";
 import type { KnowledgeMaintenanceRecord } from "../../knowledge-base/maintenance-record";
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";

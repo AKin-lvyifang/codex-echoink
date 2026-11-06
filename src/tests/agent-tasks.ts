@@ -224,7 +224,7 @@ async function deleteApprovalPresentation(doc: Document): Promise<void> {
         let resolved = 0;
         const renderer: any = surface === "message" ? new CodexMessageListRenderer() : null;
         if (renderer) {
-          renderer.env = { settingsLanguage: "zh-CN", resolveApprovalDecision: () => binding, onScheduleMeasure: () => { resolved++; } };
+          renderer.env = { virtualListEl: mount, settingsLanguage: "zh-CN", resolveApprovalDecision: () => binding, onScheduleMeasure: () => { resolved++; } };
           renderer.renderApprovalCard(mount, { id: toolCallId, role: "tool", text: "", createdAt: Date.now(), approval: { status: "pending" } });
         } else {
           new InteractionDockController().render(mount, { sessionId: identity.conversationId,
@@ -819,11 +819,11 @@ async function handoffBoundary(f: any, doc: Document): Promise<void> {
   const before = structuredClone((await f.runtime.readProjection("C")).messages);
   await f.plugin.deleteAgent("colleague");
   const entry = (await f.catalog.get("C"))!;
-  assert.equal(entry.agentId, "sol"); assert.equal(Object.hasOwn(entry, "taskTransfers"), false);
+  assert.equal(entry.agentId, "generalist"); assert.equal(Object.hasOwn(entry, "taskTransfers"), false);
   assert.deepEqual((await f.runtime.readProjection("C")).messages, before);
-  const mount = doc.body.createDiv(); renderTaskDetailHeader(mount, f.settings.agentRegistry.agents[0], entry, () => undefined);
+  const mount = doc.body.createDiv(); renderTaskDetailHeader(mount, f.settings.agentRegistry.agents.find((agent: any) => agent.id === "generalist"), entry, () => undefined);
   assert.doesNotMatch(mount.textContent!, /转交给总助/);
-  renderTaskDetailHeader(mount, f.settings.agentRegistry.agents[0], { ...entry, taskTransfers: [{ fromAgentId: "old", fromName: "旧同事", at: 1 }] } as any, () => undefined);
+  renderTaskDetailHeader(mount, f.settings.agentRegistry.agents.find((agent: any) => agent.id === "generalist"), { ...entry, taskTransfers: [{ fromAgentId: "old", fromName: "旧同事", at: 1 }] } as any, () => undefined);
   assert.doesNotMatch(mount.textContent!, /转交给总助/, "old data cannot restore the removed display row");
   let animations = 0; mount.animate = (() => { animations++; return {} as Animation; }) as any;
   animateTaskDetailEntry(mount, 1); animateTaskDetailEntry(mount, 1); assert.equal(animations, 1);
@@ -832,7 +832,7 @@ async function handoffBoundary(f: any, doc: Document): Promise<void> {
   const title = `完整标题 ${"长".repeat(110)}`, summary = `${"😀".repeat(110)} 结尾全文`;
   const hintedEntry = { ...entry, title, unreadAnswerAt: 1 };
   let opened = "";
-  renderAgentTaskList(mount, f.settings.agentRegistry.agents[0], [hintedEntry], [], { onTask(id) { opened = id; }, onEdit() {}, summary: () => summary });
+  renderAgentTaskList(mount, f.settings.agentRegistry.agents.find((agent: any) => agent.id === "generalist"), [hintedEntry], [], { onTask(id) { opened = id; }, onEdit() {}, summary: () => summary });
   assert.equal(mount.querySelectorAll("[data-task-id]").length, 1);
   const card = mount.querySelector<HTMLButtonElement>("[data-task-id]")!;
   const hint = `${"😀".repeat(99)}…`;

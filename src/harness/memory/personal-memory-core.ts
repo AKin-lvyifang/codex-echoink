@@ -23,6 +23,7 @@ export function parseCanonicalMemoryManifest(raw: string): CanonicalMemoryManife
       || !["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(record.kind)
       || !["current", "superseded", "closed"].includes(record.status) || !["explicit", "observed", "inferred"].includes(record.basis)
       || !Number.isSafeInteger(record.revision) || record.revision < 1 || typeof record.title !== "string" || typeof record.source !== "string" || typeof record.date !== "string"
+      || record.pinned !== undefined && typeof record.pinned !== "boolean"
       || record.contentHash !== undefined && !/^[a-f0-9]{64}$/u.test(record.contentHash))
     || new Set(value.records.map(record => record.id)).size !== value.records.length
     || value.tombstones.some(row => !row || typeof row.recordId !== "string" || typeof row.backupFile !== "string"
@@ -47,11 +48,12 @@ const MAX_RECORD_CONTENT_CHARS = 24_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{3,96}$/u;
 export class CanonicalMemoryFormatError extends Error { constructor(readonly code: "invalid_request", message: string) { super(message); } }
 export function serializeCanonicalMemoryRecord(record: Readonly<PersonalMemoryRecord>, previousText?: string): string {
-  const fields: Array<readonly [string, string | number | undefined]> = [
+  const fields: Array<readonly [string, string | number | boolean | undefined]> = [
     ["schema", record.schema],
     ["id", record.id],
     ["kind", record.kind],
     ["status", record.status],
+    ["pinned", record.pinned],
     ["date", record.date],
     ["source", record.source],
     ["basis", record.basis],
@@ -97,6 +99,7 @@ export function parseCanonicalMemoryRecord(text: string, file: string): Personal
       throw new CanonicalMemoryFormatError("invalid_request", `Memory ${file} frontmatter value is invalid`);
     }
   }
+  if (fields.has("pinned") && typeof fields.get("pinned") !== "boolean") throw new CanonicalMemoryFormatError("invalid_request", `Memory ${file} pinned must be boolean`);
   const kind = fields.get("kind");
   const status = fields.get("status");
   const basis = fields.get("basis");
@@ -112,6 +115,7 @@ export function parseCanonicalMemoryRecord(text: string, file: string): Personal
     id: assertSafeId(requiredField(fields, "id")),
     kind,
     status,
+    ...(fields.has("pinned") ? { pinned: fields.get("pinned") as boolean } : {}),
     date: validateDate(requiredField(fields, "date"), "date"),
     source: cleanRequired(requiredField(fields, "source"), "source", 2_000),
     basis,
@@ -245,7 +249,7 @@ export function renderPersonalMemoryOverview(manifest: {revision:number}, record
 export function renderCanonicalMemoryExport(records: readonly PersonalMemoryRecord[], revision: number): string {
   const lines = ["# EchoInk Memory Export", "", `Revision: ${revision}`, ""];
   for (const record of [...records].sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))) {
-    lines.push(`## ${record.title}`, "", `- ID: ${record.id}`, `- Kind: ${record.kind}`, `- Status: ${record.status}`, `- Basis: ${record.basis}`, `- Date: ${record.date}`, `- Source: ${record.source}`, "", record.content, "");
+    lines.push(`## ${record.title}`, "", `- ID: ${record.id}`, `- Kind: ${record.kind}`, `- Status: ${record.status}`, `- Pinned: ${record.pinned === true}`, `- Basis: ${record.basis}`, `- Date: ${record.date}`, `- Source: ${record.source}`, "", record.content, "");
   }
   return `${lines.join("\n")}\n`;
 }

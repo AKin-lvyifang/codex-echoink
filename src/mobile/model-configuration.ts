@@ -2,8 +2,8 @@ import { requestUrl } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
 import { apiProviderModelsUrl, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
 import { parseProviderModelResponse } from "../settings/provider-model-discovery";
-import { mobileModel, mobileProvider, supportedProvider, type MobileSettings } from "./settings";
-import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
+import { mobileModel, mobileProvider, mobileStreamingEnabled, supportedProvider, type MobileSettings } from "./settings";
+import { mobileGenerateText, MOBILE_STREAM_BLOCKED, type MobileRequest, type MobileStreamFetch, type MobileUsageObserver } from "./transport";
 import { enableTargetToolCalling, type ToolCallRecoveryTarget } from "../agents/tool-call-recovery";
 
 export const MOBILE_MODEL_GROUPS: readonly { title: string; ids: readonly ApiProviderId[] }[] = [
@@ -55,7 +55,7 @@ export class MobileModelConfiguration {
   private readonly fetching = new Map<string, { key: string; promise: Promise<{ models: ApiProviderModelConfig[]; incomplete: boolean }> }>();
   private readonly saving = new WeakMap<ApiProviderConfig, Promise<void>>();
 
-  constructor(private readonly settings: () => MobileSettings, private readonly saveSettings: () => Promise<void>, private readonly request: MobileRequest = requestUrl, private readonly usage?: MobileUsageObserver) {
+  constructor(private readonly settings: () => MobileSettings, private readonly saveSettings: () => Promise<void>, private readonly request: MobileRequest = requestUrl, private readonly usage?: MobileUsageObserver, private readonly streamFetch?: MobileStreamFetch) {
     for (const provider of settings().apiProviders) this.baselines.set(provider.id, copy(provider));
   }
 
@@ -115,11 +115,20 @@ export class MobileModelConfiguration {
       draft.defaultModelId = model.id;
       await this.timed(async signal => {
         let requestFailure: Error | undefined;
+        // Test the path chat will use: a streaming service must pass over fetch too.
+        const fetchStream = mobileStreamingEnabled(draft) ? this.streamFetch : undefined;
+        const streamFetch: MobileStreamFetch | undefined = fetchStream && (async (url, init) => {
+          let response: Awaited<ReturnType<MobileStreamFetch>>;
+          try { response = await fetchStream(url, init); }
+          catch (error) { requestFailure = new Error(MOBILE_STREAM_BLOCKED, { cause: error }); throw requestFailure; }
+          try { checkResponse(response.status); } catch (error) { requestFailure = error as Error; throw error; }
+          return response;
+        });
         try {
           const text = await mobileGenerateText(draft, { ...model, reasoningEnabled: false }, async request => {
             try { return await this.checkedRequest(request); }
             catch (error) { requestFailure = error as Error; throw error; }
-          }, "Connection check. Reply with OK only.", "只回复 OK", 32, signal, this.usage, "connection-test");
+          }, "Connection check. Reply with OK only.", "只回复 OK", 32, signal, this.usage, "connection-test", streamFetch);
           if (!text.trim()) throw new Error("连接测试未返回有效内容，请检查模型。");
         } catch {
           throw requestFailure ?? new Error("连接测试失败，请检查接口与模型后重试。");

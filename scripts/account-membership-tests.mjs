@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { mkdir, rm, realpath, mkdtemp } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,12 +12,11 @@ const require = createRequire(import.meta.url);
 // Reuse an existing DOM runtime; this test adds no production dependency.
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || "jsdom");
 if (!process.env.ECHOINK_ACCOUNT_TEST_ROOT) throw new Error("Explicit ECHOINK_ACCOUNT_TEST_ROOT is required");
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const requested = path.resolve(process.env.ECHOINK_ACCOUNT_TEST_ROOT);
-if (!requested.startsWith(allowed + path.sep)) throw new Error("Use disposable test Vaults");
+if (!isDisposableTestRoot(requested)) throw new Error("Use disposable test Vaults");
 await mkdir(requested, { recursive: true });
 const fixture = await realpath(requested);
-if (!fixture.startsWith(allowed + path.sep)) throw new Error("Fixture symlink leaves disposable test Vaults");
+if (!isDisposableTestRoot(fixture)) throw new Error("Fixture symlink leaves disposable test Vaults");
 const directory = await mkdtemp(path.join(fixture, "account-membership-"));
 try {
   const entry = path.join(directory, "test.mjs");

@@ -7,7 +7,7 @@ import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro
 /** The interruption card is UI-only; it never becomes a session message. */
 export function renderTaskInterruption(
   container: HTMLElement,
-  input: { info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; explanation?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void; onReport?(): void | Promise<void> }
+  input: { explanationAlreadyVisible?: boolean; info?: TaskInterruptionInfo | null; error?: string; userCopy?: string; explanation?: string; buttonLabel?: string; pending: boolean; language: string; onResume(): void; onReport?(): void | Promise<void> }
 ): void {
   disposeOriginControls(container);
   container.replaceChildren();
@@ -16,7 +16,7 @@ export function renderTaskInterruption(
     container.createEl(tag, { cls: className, text: value });
   if (info?.failureMessage) text("div", "echoink-task-interruption-copy", info.failureMessage);
   else if (input.userCopy) text("div", "echoink-task-interruption-copy", input.userCopy);
-  else if (info) {
+  else if (info && !input.explanationAlreadyVisible) {
     const explanation = input.explanation ?? taskInterruptionExplanation(info, input.language);
     const time = new Date(info.at).toLocaleString(en ? "en-US" : "zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", ...(new Date(info.at).getFullYear() !== new Date().getFullYear() ? { year: "numeric" as const } : {}) });
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
@@ -25,6 +25,7 @@ export function renderTaskInterruption(
       plugin_disabled: ["插件关闭时中断", "interrupted when the plugin stopped"],
       run_failed: ["执行失败后中断", "interrupted after an error"],
       process_unknown: ["意外中断", "unexpectedly interrupted"],
+      tool_loop_limit: ["工具调用达到上限，已自动停止", "automatically stopped at the tool limit"],
       watchdog: ["等待超时后中断", "interrupted after a timeout"]
     };
     const reason = reasons[info.reason][en ? 1 : 0];
@@ -33,7 +34,7 @@ export function renderTaskInterruption(
       ? `${cause}. ${info.stage ? `Stopped at “${info.stage}”.` : "The last step was not recorded."} Everything already completed is preserved.`
       : `${cause}，${info.stage ? `停在「${info.stage}」。` : "没有保存具体步骤。"}已经完成的内容都保留着。`));
     if (info.detail && !explanation) text("div", "echoink-task-interruption-detail", info.detail);
-  } else if (!input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
+  } else if (!info && !input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (info?.uncertainOperations.length) {
     text("div", "echoink-task-interruption-warning", en ? "The result of this operation is uncertain. Check it before continuing." : "这个操作结果不确定，继续前请先核对");
     const list = ownedEl(container.ownerDocument, "ul"); list.className = "echoink-task-interruption-operations";

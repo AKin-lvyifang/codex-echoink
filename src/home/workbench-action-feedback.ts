@@ -1,3 +1,4 @@
+import { ModuleOwnerRequired } from "../agents/registry";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { ownedEl, ownedFragment } from "../ui/owned-dom";
@@ -8,6 +9,7 @@ export class WorkbenchSetupRequired extends Error {
 
 /** Every workbench action reports failure at its visible entry, including setup links. */
 export function showWorkbenchActionFailure(plugin: CodexForObsidianPlugin, error: unknown): void {
+  if (error instanceof ModuleOwnerRequired) { plugin.openModuleOwnerPicker(error.moduleId); return; }
   const english = plugin.settings.settingsLanguage === "en";
   const message = error instanceof Error ? error.message : String(error);
   if (!(error instanceof WorkbenchSetupRequired)) {

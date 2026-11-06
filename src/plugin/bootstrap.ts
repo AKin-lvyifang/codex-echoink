@@ -1,12 +1,14 @@
 import { openPathInElectron } from "../core/electron";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { EXPERT_HALL_VIEW_TYPE, ExpertHallView } from "../experts/view";
-import { WORKSPACE_PREVIEW_VIEW_TYPE, WorkspacePreviewView } from "../workspace/view";
+import { registerWorkspacePreviewExtension, WORKSPACE_PREVIEW_VIEW_TYPE, WorkspacePreviewView } from "../workspace/view";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
+import { MemoryPageView, MEMORY_PAGE_VIEW_TYPE } from "../home/memory/memory-page";
 import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
+import { ProjectPageView, PROJECT_PAGE_VIEW_TYPE } from "../home/project-page";
 import { EchoInkJournalView, VIEW_TYPE_ECHOINK_JOURNAL } from "../home/journal-page";
 import { Notice, Platform, TFile, TFolder, type WorkspaceLeaf } from "obsidian";
 import { getGenerationService } from "../generation/service";
@@ -41,7 +43,9 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     plugin.registerView(PDF_READING_PAGE_VIEW_TYPE, leaf => new PdfReadingPageView(leaf, plugin));
     plugin.registerView(ENGLISH_DIARY_PAGE_VIEW_TYPE, leaf => new EnglishDiaryPageView(leaf, plugin));
     plugin.registerView(KNOWLEDGE_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new KnowledgePageView(leaf, plugin));
+    plugin.registerView(MEMORY_PAGE_VIEW_TYPE, leaf => new MemoryPageView(leaf, plugin));
     plugin.registerView(TODO_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new TodoPageView(leaf, plugin));
+    plugin.registerView(PROJECT_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new ProjectPageView(leaf, plugin));
     plugin.registerView(VIEW_TYPE_ECHOINK_JOURNAL, (leaf: WorkspaceLeaf) => new EchoInkJournalView(leaf, plugin));
     // Restore historical layout leaves directly as the current workbench.
     // This alias has no navigation/command entry and starts no task.
@@ -53,7 +57,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
   plugin.registerView(WORKSPACE_PREVIEW_VIEW_TYPE, leaf => new WorkspacePreviewView(leaf, { service: plugin.getWorkspaceFiles(),
     openExternal: async path => { if (!await openPathInElectron(getDesktopPath().join(plugin.getVaultPath(), path))) throw new Error("无法在浏览器打开。"); },
     createButton: (parent, label) => createOriginButton(parent, { text: label }), disposeButtons: parent => disposeOriginControls(parent) }));
-  plugin.registerExtensions(["html"], WORKSPACE_PREVIEW_VIEW_TYPE);
+  registerWorkspacePreviewExtension(plugin);
   plugin.registerView(VIEW_TYPE_REVIEW_PREVIEW, (leaf: WorkspaceLeaf) => new ReviewPreviewView(leaf, plugin));
 
   const ribbonAnchor = plugin.addRibbonIcon("feather", Platform.isDesktopApp ? "打开 EchoInk 工作台和 Agent 侧栏" : "打开 EchoInk 首页和 Agent 侧栏", () => {
@@ -80,6 +84,8 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     name: "全局 AI 小窗：显示/收起",
     callback: () => void plugin.toggleQuickChatWindow()
   });
+  if (Platform.isDesktopApp) plugin.getKnowledgeSystemService();
+  plugin.addCommand({ id: "knowledge-system-organize", name: "梳理知识体系", checkCallback: checking => { if (!Platform.isDesktopApp) return false; if (!checking) void plugin.getKnowledgeSystemService().chooseDomain(); return true; } });
   plugin.addCommand({
     id: "new-codex-chat",
     name: "新建 Agent 会话",

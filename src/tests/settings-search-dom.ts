@@ -21,7 +21,6 @@ import { createOriginSelectHostFixture } from "./origin-obsidian-dom-shim";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsTab } from "../settings/desktop-settings-route";
 import { normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import type { AgentDefinition, AgentModuleId } from "../agents/types";
-import { profileSlotDefinition, type UserProfileControlSnapshot } from "../harness/memory/user-profile-state";
 import { EchoInkViewService } from "../plugin/view-service";
 
 const categories: SettingsTab[] = ["general", "layout", "providers", "resources", "knowledgeBase", "review", "todos", "account"];
@@ -104,8 +103,8 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   const journalFolders = new Set(["journal", "Notes", "Notes/Daily", "Notes/DesktopDaily"]);
   const folderFile = (path: string) => Object.assign(new TFolder(), { path, name: path.split("/").at(-1), children: [] });
   const registryListeners = new Set<() => void>();
-  let profile: UserProfileControlSnapshot = { revision: 0, items: [] };
-  const profileSaves: UserProfileControlSnapshot[] = [];
+  const memoryNavigation: string[] = [];
+  const memoryModelCalls: unknown[][] = [];
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.settingsLanguage = language;
   settings.settingsTab = "providers";
@@ -113,6 +112,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   const plugin = {
     getJournalFormatService: () => journalService ??= new JournalFormatService(plugin.app, { directory: ".obsidian/plugins/journal-test", settings: () => settings, model: () => null, generate: async () => { throw new Error("No model calls"); }, changed: () => {} }),
     app: Object.assign(new App(), {
+      setting: { close: () => { memoryNavigation.push("close"); } },
       internalPlugins: { plugins: { "daily-notes": { instance: { options: daily }, loadData: async () => daily,
         saveData: async (value: unknown) => { nativeSaves.push(value); } } } }
     }),
@@ -129,20 +129,14 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
     saveAgentDefinition: async (agent: AgentDefinition, modules: readonly AgentModuleId[]) => {
       const current = settings.agentRegistry;
       const next = normalizeAgentRegistry({ ...current, agents: current.agents.some(value => value.id === agent.id) ? current.agents.map(value => value.id === agent.id ? { ...agent, identityEdited: true } : value) : [...current.agents, { ...agent, identityEdited: true }] });
-      for (const module of Object.keys(current.moduleOwners) as AgentModuleId[]) next.moduleOwners[module] = modules.includes(module) ? agent.id : current.moduleOwners[module] === agent.id ? "sol" : current.moduleOwners[module];
+      for (const module of Object.keys(current.moduleOwners) as AgentModuleId[]) next.moduleOwners[module] = modules.includes(module) ? agent.id : current.moduleOwners[module] === agent.id ? "" : current.moduleOwners[module];
       settings.agentRegistry = next; await plugin.saveSettings(); registryListeners.forEach(listener => listener());
     },
     setAgentModuleOwner: async (module: AgentModuleId, agentId: string) => { settings.agentRegistry = setModuleOwner(settings.agentRegistry, module, agentId); await plugin.saveSettings(); registryListeners.forEach(listener => listener()); },
     getAgentDeleteCounts: async () => ({ total: 0, running: 0 }),
     deleteAgent: async (agentId: string) => { settings.agentRegistry = removeAgentDefinition(settings.agentRegistry, agentId); await plugin.saveSettings(); registryListeners.forEach(listener => listener()); },
-    readEchoInkUserProfile: async () => structuredClone(profile),
-    saveEchoInkUserProfile: async (input: { profileKey: string; text: string; expectedRevision: number }) => {
-      assert.equal(input.expectedRevision, profile.revision); const slot = profileSlotDefinition(input.profileKey); assert.ok(slot);
-      const revision = profile.revision + 1;
-      profile = { revision, items: [...profile.items.filter(item => item.profileKey !== input.profileKey), { id: `fixture-profile-${revision}`, profileKey: input.profileKey, section: slot.section, text: input.text, basis: "explicit_memory", status: "current", sourceMemoryIds: [`fixture-source-${revision}`], revision }] };
-      profileSaves.push(structuredClone(profile)); return { revision };
-    },
-    deleteEchoInkUserProfile: async (input: { profileKey: string; expectedRevision: number }) => { assert.equal(input.expectedRevision, profile.revision); profile = { revision: profile.revision + 1, items: profile.items.filter(item => item.profileKey !== input.profileKey) }; return { revision: profile.revision }; },
+    activateMemoryView: async () => { memoryNavigation.push("activate-memory"); },
+    generateEchoInkPersonalMemoryCorrection: async (...args: unknown[]) => { memoryModelCalls.push(args); throw new Error("No model calls"); },
     listPiConversations: async () => [],
     getKnowledgeSurfaceService: () => null,
     lifestyle: { label: () => "财务" },
@@ -171,7 +165,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   state.personalMemoryError = "No profile in this disposable fixture";
   state.knowledgePreferenceLoadError = "No saved preferences in this disposable fixture";
   state.resourceLoaded = { plugins: true, skills: true, mcp: true };
-  return { tab, plugin, state, saved, registrations, daily, nativeSaves, profileSaves };
+  return { tab, plugin, state, saved, registrations, daily, nativeSaves, memoryNavigation, memoryModelCalls };
 }
 
 /** Model only documented host calls; this does not simulate global search UI. */
@@ -589,8 +583,7 @@ export async function runSettingsSearchDomTests(primary: Window & typeof globalT
   Platform.isDesktopApp = true;
   try {
     await checkDesktopSettings(primary, scheduler, secondDocument);
-    await checkDesktopMemoryConflict(primary);
-    await checkDesktopMemoryPages(primary, scheduler);
+    await checkDesktopMemoryNavigation(primary, scheduler);
     await checkDesktopEnableSwitches(primary, scheduler);
     await checkDesktopInlineProModule(primary, scheduler);
     await checkDesktopSettingPolish(primary, scheduler);
@@ -639,7 +632,7 @@ async function checkSettingsEntryFocus(win: Window & typeof globalThis, schedule
       else {
         assert.ok(mount.definition.items[DESKTOP_SETTINGS_TABS.indexOf("modules")].aliases?.includes(entry));
         const search = win.document.createElement("input"); search.value = entry;
-        Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: search } } });
+        Object.assign(f.plugin.app, { setting: { ...f.plugin.app.setting, searchComponent: { inputEl: search } } });
         const nativeRow = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("modules")].setting.settingEl;
         nativeRow.tabIndex = -1; nativeRow.focus();
       }
@@ -701,7 +694,7 @@ async function checkCapabilitiesFromPlugins(win: Window & typeof globalThis, sch
     else {
       const search = win.document.createElement("input");
       search.value = language === "en" ? "Capabilities" : "能力";
-      Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: search } } });
+      Object.assign(f.plugin.app, { setting: { ...f.plugin.app.setting, searchComponent: { inputEl: search } } });
       const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("capabilities")].setting.settingEl;
       row.tabIndex = -1;
       row.focus();
@@ -749,7 +742,7 @@ async function checkDesktopSettings(
     const probes: [string, DesktopSettingsTab][] = [
       ["布局与外观", "general"], ["language", "general"], ["关于", "general"],
       ["providers", "models"], ["agents", "models"], ["大模型API", "models"],
-      ["Memory", "agent"], ["长期记忆", "agent"], ["archive", "agent"],
+      ["Memory", "memory"], ["长期记忆", "memory"], ["archive", "agent"],
       ["Skills", "capabilities"], ["MCP Server", "capabilities"], ["Tavily", "capabilities"],
       ["knowledge", "modules"], ["todo", "modules"], ["review", "modules"], ["journal", "modules"], ["PDF", "modules"],
       ["subscription", "account"], ["兑换码", "account"]
@@ -784,7 +777,7 @@ async function checkDesktopSettings(
     };
     const rows = mount.rows.map(row => row.setting.settingEl);
     const buttons = DESKTOP_SETTINGS_TABS.map(category => f.tab.containerEl.querySelector<HTMLButtonElement>(`button[data-settings-tab="${category}"]`)!);
-    assert.equal(buttons.filter(Boolean).length, 6);
+    assert.equal(buttons.filter(Boolean).length, 7);
     assert.equal(active(), "echoink-settings-tab-models", "legacy providers opens desktop Models");
     for (let i = 0; i < rows.length; i++) {
       assert.equal(rows[i].parentElement, mount.listEl);
@@ -819,7 +812,7 @@ async function checkDesktopSettings(
     await scheduler.flush();
     assert.equal(updates, 1);
     assert.equal(mount.definition.items[0].name, desktopSettingsTabLabel("general", f.plugin.settings.settingsLanguage));
-    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 6);
+    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 7);
     assert.equal(f.tab.containerEl.querySelectorAll(".codex-settings-body").length, 1);
     f.tab.containerEl.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.dispatchEvent(new primary.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
     await scheduler.flush();
@@ -836,7 +829,7 @@ async function checkDesktopSettings(
       ["resources", { resourceTab: "mcp" }, "capabilities"],
       ["resources", { resourceTab: "plugins" }, "modules"],
       ["knowledgeBase", {}, "modules"], ["todos", {}, "modules"], ["review", {}, "modules"],
-      ["general", { focus: "general:memory" }, "agent"], ["account", {}, "account"]
+      ["general", { focus: "general:memory" }, "memory"], ["account", {}, "account"]
     ] as const;
     for (const [oldTab, options, target] of routeCases) {
       f.tab.openDesktopRoute(resolveDesktopSettingsRoute(oldTab, options));
@@ -845,7 +838,7 @@ async function checkDesktopSettings(
       assert.equal(f.plugin.settings.settingsTab, legacyTab);
     }
     const searchInput = primary.document.createElement("input");
-    Object.assign(f.plugin.app, { setting: { searchComponent: { inputEl: searchInput } } });
+    Object.assign(f.plugin.app, { setting: { ...f.plugin.app.setting, searchComponent: { inputEl: searchInput } } });
     for (const [query, category, selector, child] of [
       ["Tavily", "capabilities", ".echoink-tavily-card", "tools"],
       ["DeepSeek", "capabilities", ".echoink-tavily-card", "tools"],
@@ -936,13 +929,13 @@ async function checkDesktopSettings(
     await scheduler.flush();
     assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="models:default"], [data-echoink-focus-key="knowledge:provider"]'), null, "Knowledge no longer duplicates the global model selector");
 
-    const openAgentSearchResult = async (query: string) => {
+    const openAgentSearchResult = async (query: string, tab: DesktopSettingsTab = "agent") => {
       await navigate("general");
       searchInput.value = query;
-      const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf("agent")].setting.settingEl;
+      const row = mount.rows[DESKTOP_SETTINGS_TABS.indexOf(tab)].setting.settingEl;
       row.tabIndex = -1; row.focus();
       await scheduler.flush();
-      assert.equal(active(), "echoink-settings-tab-agent", `host result row focus routes ${query}`);
+      assert.equal(active(), `echoink-settings-tab-${tab}`, `host result row focus routes ${query}`);
     };
     await openAgentSearchResult(currentLanguage === "en" ? "Agent identity" : "编辑身份");
     const agentName = f.tab.containerEl.querySelector<HTMLInputElement>('input[data-field="name"]')!;
@@ -955,35 +948,16 @@ async function checkDesktopSettings(
     assert.equal(f.tab.containerEl.querySelector('input[data-field="name"]'), null, "saved Agent returns to the settings summary");
     assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:sol:edit"]')?.textContent?.includes(editedName), "the summary reads the saved registry name");
 
-    const profileQuery = currentLanguage === "en" ? "Your profile" : "你的画像";
-    await openAgentSearchResult(profileQuery);
-    assert.equal(f.tab.containerEl.querySelectorAll("[data-profile-section]").length, 3);
-    assert.equal(f.tab.containerEl.querySelectorAll("[data-profile-key]").length, 24);
-    assert.equal(f.tab.containerEl.querySelector("textarea[data-profile-focus]"), null, "empty profile slots do not render 24 editors");
-    const identityEmpty = f.tab.containerEl.querySelector<HTMLDetailsElement>('[data-profile-section="identity"] details')!;
-    identityEmpty.open = true;
-    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="identity.name:edit"]')!.click();
-    const profileName = f.tab.containerEl.querySelector<HTMLTextAreaElement>('[data-profile-focus="identity.name:input"]')!;
-    assert.ok(profileName, "profile search reaches a real inline slot editor");
-    profileName.value = "Disposable profile name"; profileName.dispatchEvent(new primary.Event("input", { bubbles: true }));
-    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="identity.name:save"]')!.click();
-    await scheduler.flush();
-    assert.equal(f.profileSaves.length, 1);
-    assert.deepEqual(f.profileSaves[0].items.map(item => ({ key: item.profileKey, text: item.text, basis: item.basis })), [{ key: "identity.name", text: "Disposable profile name", basis: "explicit_memory" }]);
-    const savedProfileRow = () => f.tab.containerEl.querySelector('[data-profile-key="identity.name"]')!;
-    assert.equal(savedProfileRow().querySelector(".echoink-profile-value")?.textContent, "Disposable profile name");
-    assert.equal(savedProfileRow().querySelector(".echoink-profile-source")?.textContent, currentLanguage === "en" ? "Confirmed by you" : "你确认的");
-    assert.equal(f.tab.containerEl.querySelector('[data-profile-section="identity"] .echoink-profile-count')?.textContent, "1/6");
-    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="back"]')!.click();
-    await scheduler.flush();
-    assert.equal(f.tab.containerEl.querySelector(".echoink-user-profile-settings"), null);
-    await openAgentSearchResult(profileQuery);
-    assert.equal(savedProfileRow().querySelector(".echoink-profile-value")?.textContent, "Disposable profile name", "reopening the profile reads the saved snapshot");
-    f.tab.containerEl.querySelector<HTMLButtonElement>('[data-profile-focus="back"]')!.click();
-    await scheduler.flush();
+    for (const query of currentLanguage === "en" ? ["Your profile", "Memory management", "Memory correction", "Open memory page"] : ["你的画像", "记忆管理", "记忆修正", "打开记忆页"]) {
+      const before = f.memoryNavigation.length;
+      await openAgentSearchResult(query, "memory");
+      assert.deepEqual(f.memoryNavigation.slice(before), ["close", "activate-memory"], `${query} closes Settings and opens the shared memory page`);
+      assert.equal(f.tab.containerEl.querySelector("[data-profile-section], [data-profile-key], .echoink-memory-correction-page"), null);
+      assert.equal(f.memoryModelCalls.length, 0, "memory navigation never generates a correction preview");
+    }
     searchInput.value = "";
     await navigate("modules");
-    console.log(`PASS P13 settings search (${language}): host row opens live Agent/profile editors, saves and reads back registry/profile snapshots`);
+    console.log(`PASS settings search (${language}): live Agent editor saves; profile and memory queries open the single memory page without model calls`);
 
     f.state.settingsDetail = "knowledge-preferences";
     f.state.knowledgePreferenceEditor = { savedContent: "saved", draftContent: "edited" };
@@ -1003,12 +977,12 @@ async function checkDesktopSettings(
     assert.equal(f.state.settingsVisible, false);
     mount = mountDefinitions(f.tab);
     await scheduler.flush();
-    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 6);
+    assert.equal(f.tab.containerEl.querySelectorAll(".echoink-native-settings-row").length, 7);
     mount.cleanup();
     f.registrations.forEach(cleanup => cleanup());
     f.tab.containerEl.remove();
     keyboardHost.dispose();
-    console.log(`PASS P11 desktop (${language}): six categories, host search row focus/legacy routes, saves, language, grouped model/brand/selection, keyboard/focus, permissions and cleanup`);
+    console.log(`PASS P11 desktop (${language}): seven categories, host search row focus/legacy routes, saves, language, grouped model/brand/selection, keyboard/focus, permissions and cleanup`);
   }
   const secondary = secondDocument();
   try {
@@ -1027,123 +1001,88 @@ async function checkDesktopSettings(
   console.log("PASS P11 desktop: independent settings document owns controls, listeners and teardown");
 }
 
-async function checkDesktopMemoryConflict(win: Window & typeof globalThis) {
-  const f = fixture(win, "zh-CN"), state = f.state, plugin = f.plugin as any;
-  state.scheduleDisplay = () => {};
-  const old = { id: "memory-old", kind: "fact", status: "current", title: "Old", content: "Old content", recallWhen: "When asked", revision: 1 };
-  let disk: any = { revision: 1, records: [old], forgottenIds: [] };
-  state.personalMemoryState = disk;
-  const generated: any[] = [], saves: any[] = [];
-  plugin.getEchoInkPersonalMemoryState = async () => disk;
-  plugin.generateEchoInkPersonalMemoryCorrection = async (target: any) => { generated.push(target); return { title: "Corrected", content: "New correction", recallWhen: "When asked" }; };
-  plugin.applyEchoInkPersonalMemoryCorrection = async (input: any) => { saves.push(input); if (input.expectedRevision !== disk.revision) throw new Error("revision_conflict"); };
-  state.openDesktopMemoryCorrection(old);
-  const controller = state.desktopCorrection.controller as any;
-  let preview = await controller.actions.generate("Keep this draft");
-  const newer = { ...old, id: "memory-new", title: "Latest", content: "Updated elsewhere", revision: 2, supersedes: old.id };
-  disk = { revision: 2, records: [{ ...old, status: "superseded" }, newer], forgottenIds: [] };
-  await assert.rejects(controller.actions.save(preview, "Keep this draft"), /revision_conflict/);
-  assert.equal(state.desktopCorrection.id, newer.id);
-  assert.equal(state.personalMemoryState.records.find((r: any) => r.status === "current").id, newer.id);
-  preview = await controller.actions.generate("Keep this draft");
-  assert.equal(generated.at(-1).content, newer.content);
-  await controller.actions.save(preview, "Keep this draft");
-  assert.equal(saves.at(-1).targetId, newer.id); assert.equal(saves.at(-1).expectedRevision, 2);
-  disk = { revision: 3, records: [], forgottenIds: [newer.id] };
-  await assert.rejects(controller.actions.generate("Retained after forgetting"), /已失效/);
-  const host = win.document.createElement("div"); win.document.body.appendChild(host);
-  state.renderDesktopMemoryCorrection(host);
-  assert.ok(host.querySelector('.echoink-memory-correction-page'), "invalidated target retains its settings page so navigation can leave");
-  assert.match(host.textContent ?? "", /这条记忆已失效/);
-  state.desktopCorrection = null; controller.close(); host.remove(); f.tab.containerEl.remove();
-  console.log("PASS P13 correction conflict: superseded target refreshes, explicit regeneration freezes new ID/revision, forgotten target keeps accessible draft card");
-}
-
-async function checkDesktopMemoryPages(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
-  const f = fixture(win, "zh-CN"), state = f.state, plugin = f.plugin as any;
-  const old = { id: "page-memory", kind: "fact", status: "current", title: "会议时间", content: "上午开会", recallWhen: "安排会议", revision: 1, date: "2026-10-27" };
-  let disk: any = { revision: 1, records: [old], forgottenIds: [] };
-  let writes = 0, reopen = 0;
-  plugin.getEchoInkPersonalMemoryState = async () => disk;
-  plugin.generateEchoInkPersonalMemoryCorrection = async () => ({ title: "会议时间", content: "下午开会", recallWhen: "安排会议" });
-  plugin.applyEchoInkPersonalMemoryCorrection = async (input: any) => {
-    writes++; assert.equal(input.expectedRevision, disk.revision);
-    disk = { revision: 2, records: [{ ...old, status: "superseded" }, { ...old, id: "page-memory-new", status: "current", supersedes: old.id, revision: 2, content: input.content }], forgottenIds: [] };
-  };
-  state.personalMemoryState = disk;
-  const mount = mountDefinitions(f.tab);
-  const root = f.tab.containerEl;
-  Object.defineProperties(root, { scrollHeight: { configurable: true, value: 1600 }, clientHeight: { configurable: true, value: 500 } });
-  const button = (text: string) => {
-    const result = [...root.querySelectorAll<HTMLButtonElement>("button")].find(item => item.textContent === text && !item.closest("[hidden], .is-hidden"));
-    assert.ok(result, text); return result;
-  };
-  const sourceKey = "review:memory:facts:correct:page-memory";
-  const sourceButton = () => root.querySelector<HTMLButtonElement>(`[data-echoink-focus-key="${sourceKey}"]`)!;
-  const edit = async () => { sourceButton().focus(); sourceButton().click(); await scheduler.flush(); };
-  const type = (text: string) => { const input = root.querySelector<HTMLTextAreaElement>("textarea")!; input.value = text; input.dispatchEvent(new win.Event("input", { bubbles: true })); };
-  try {
-    await scheduler.flush();
-    f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
-    state.openSettingsDetail({ kind: "review-memory-category", category: "facts" }); await scheduler.flush();
-    root.scrollTop = 280;
-    await edit();
-    assert.equal(root.querySelector("h2")?.textContent, "修正记忆");
-    assert.equal(root.querySelector(".echoink-memory-record-list"), null, "correction replaces the category list");
-    assert.equal(root.scrollTop, 0, "the edit page starts at its heading");
-    assert.equal(openTestModals.length, 0);
-    type("改成下午，其余不变"); root.scrollTop = 120;
-    button("生成预览").click(); await scheduler.flush();
-    assert.equal(root.querySelector("h2")?.textContent, "预览修正"); assert.equal(root.scrollTop, 0);
-    assert.match(root.textContent!, /上午开会/); assert.match(root.textContent!, /下午开会/); assert.match(root.textContent!, /改成下午，其余不变/);
-    button("返回修改").click(); await scheduler.flush();
-    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
-    assert.equal(root.scrollTop, 120, "returning from preview restores the edit scroll");
-    root.querySelector<HTMLButtonElement>('button[data-settings-tab="general"]')!.click(); await scheduler.flush();
-    assert.ok(root.querySelector(".echoink-settings-inline-confirm"), "switching tabs asks before discarding");
-    button("继续编辑").click(); await scheduler.flush();
-    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
-    Object.assign(plugin.app, { setting: { open: () => { reopen++; }, openTabById: () => { mountDefinitions(f.tab); }, close: () => {} } });
-    f.tab.hide();
-    await new Promise(resolve => setTimeout(resolve, 5)); await scheduler.flush();
-    assert.equal(reopen, 1); assert.ok(root.querySelector(".echoink-settings-inline-confirm"), "native close remounts the same draft and asks");
-    button("继续编辑").click(); await scheduler.flush();
-    assert.equal(root.querySelector<HTMLTextAreaElement>("textarea")!.value, "改成下午，其余不变");
-    button("取消").click(); button("放弃修改").click(); await scheduler.flush();
-    assert.equal(root.querySelector(".echoink-memory-correction-page"), null);
-    assert.equal(win.document.activeElement, sourceButton()); assert.equal(root.scrollTop, 280);
-    await edit(); type("正式改为下午");
-    button("生成预览").click(); await scheduler.flush();
-    button("确认保存").click(); await scheduler.flush();
-    assert.equal(writes, 1); assert.equal(root.querySelector(".echoink-memory-correction-page"), null);
-    assert.match(root.querySelector(".echoink-memory-record-list")!.textContent!, /下午开会/);
-    assert.equal(win.document.activeElement?.getAttribute("data-echoink-focus-key"), "review:memory:facts:correct:page-memory-new", "saved replacement restores focus to its new version");
-    assert.equal(root.scrollTop, 280);
-  } finally { mount.cleanup(); f.registrations.forEach(cleanup => cleanup()); root.remove(); await scheduler.flush(); }
-  console.log("PASS desktop memory pages: edit/preview, draft/back, tab/close confirmation, saved replacement and original row scroll/focus");
+async function checkDesktopMemoryNavigation(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
+  for (const language of ["zh-CN", "en"] as const) {
+    const f = fixture(win, language), mount = mountDefinitions(f.tab);
+    try {
+      await scheduler.flush();
+      f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
+      assert.equal(f.tab.containerEl.querySelector(".echoink-memory-settings"), null, "Agent no longer contains memory settings");
+      f.tab.openDesktopRoute({ tab: "memory" }); await scheduler.flush();
+      assert.equal(f.tab.containerEl.querySelector('.echoink-memory-settings .echoink-settings-section-title'), null, "Memory does not duplicate its tab heading");
+      for (const [enabled, dreaming] of [[true, true], [true, false], [false, true]]) {
+        f.plugin.settings.memory.useLongTermMemory = enabled;
+        f.plugin.settings.memory.dreamEnabled = dreaming;
+        f.tab.display(); await scheduler.flush();
+        const section = f.tab.containerEl.querySelector<HTMLElement>(".echoink-memory-settings")!;
+        const groups = section.querySelectorAll(":scope > .echoink-settings-group");
+        assert.equal(groups.length, 2, "memory controls and browsing use separate ordinary groups");
+        const rows = groups[0].querySelectorAll<HTMLElement>(":scope > .setting-item");
+        assert.equal(rows.length, 4, "all four rows stay rendered in every enabled state");
+        assert.deepEqual(Array.from(rows).map(row => Boolean(row.inert)), [false, !enabled, !enabled || !dreaming, !enabled || !dreaming]);
+        assert.equal(section.querySelector(".echoink-module-drawer, [aria-expanded], [data-echoink-focus-key='general:memory:drawer']"), null);
+        assert.equal(section.querySelectorAll('[role="switch"]').length, 2, "both boolean settings use switches");
+        const start = section.querySelector<HTMLButtonElement>('[data-echoink-focus-key="general:memory:dream-now"]')!;
+        assert.equal(start.textContent, language === "en" ? "Start" : "开始");
+        assert.equal(start.disabled, !enabled || !dreaming);
+        const entries = f.tab.containerEl.querySelectorAll<HTMLButtonElement>('[data-echoink-focus-key="agent:memory-page"]');
+        assert.equal(entries.length, 1, "Settings retain one memory page entry whether long-term memory is enabled or disabled");
+        assert.match(entries[0].textContent ?? "", language === "en" ? /Open memory page/u : /打开记忆页/u);
+        assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="review:memory"], [data-echoink-focus-key="agent:profile"]'), null, "the old correction and profile rows are gone");
+        const before = f.memoryNavigation.length;
+        entries[0].click(); await scheduler.flush();
+        assert.deepEqual(f.memoryNavigation.slice(before), ["close", "activate-memory"], "the actual navigation row closes Settings before opening the memory page");
+        assert.equal(f.memoryModelCalls.length, 0);
+        assert.equal(f.saved.length, 0, "opening existing memory never changes configuration");
+        assert.equal(openTestModals.length, 0, "memory browsing does not open a settings Modal");
+      }
+    } finally { mount.cleanup(); f.tab.hide(); f.registrations.forEach(cleanup => cleanup()); f.tab.containerEl.remove(); await scheduler.flush(); }
+  }
+  console.log("PASS memory navigation: one bilingual entry, enabled/disabled, close then activate, no model calls or settings writes");
 }
 
 async function checkDesktopEnableSwitches(win: Window & typeof globalThis, scheduler: ReturnType<typeof prepareDocument>) {
   for (const language of ["zh-CN", "en"] as const) {
     const f = fixture(win, language), mount = mountDefinitions(f.tab);
-    f.tab.openDesktopRoute({tab:"agent"}); await scheduler.flush();
+    f.tab.openDesktopRoute({tab:"memory"}); await scheduler.flush();
     const initial = f.plugin.settings.memory.useLongTermMemory;
     const memory = f.tab.containerEl.querySelector<HTMLButtonElement>(`button[role="switch"][aria-label="${language === "en" ? "Use long-term memory" : "使用长期记忆"}"]`)!;
-    assert.ok(memory, "Agent owns the actual localized memory switch");
+    assert.ok(memory, "Memory owns the actual localized memory switch");
     assert.equal(memory.getAttribute("data-echoink-focus-key"), "general:memory:enabled");
     memory.click();
     await scheduler.flush();
     assert.equal(f.plugin.settings.memory.useLongTermMemory, !initial, "real click must reach the Radix switch handler");
     assert.equal((f.saved.at(-1) as typeof f.plugin.settings).memory.useLongTermMemory, !initial);
     assert.equal(f.saved.length, 1, "memory switch persists once through its original callback");
-    assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:profile"]'), "disabled memory keeps local profile management");
+    assert.ok(f.tab.containerEl.querySelector('[data-echoink-focus-key="agent:memory-page"]'), "disabled memory keeps the shared memory page entry");
+    f.plugin.settings.sessions = [{ id: "memory-layout-mode", defaultMemoryMode: "no_memory" } as typeof f.plugin.settings.sessions[number]];
+    const memorySwitch = () => f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="general:memory:enabled"]')!;
+    memorySwitch().click(); await scheduler.flush();
+    assert.equal(f.plugin.settings.memory.useLongTermMemory, initial);
+    assert.equal(f.plugin.settings.sessions[0].defaultMemoryMode, "normal", "enabling memory updates existing session modes");
+    const save = f.plugin.saveSettings;
+    f.plugin.saveSettings = async () => { throw new Error("synthetic memory settings save failure"); };
+    memorySwitch().click(); await scheduler.flush();
+    assert.equal(f.plugin.settings.memory.useLongTermMemory, initial, "failed memory toggle rolls back");
+    assert.equal(f.plugin.settings.sessions[0].defaultMemoryMode, "normal", "failed toggle restores session memory modes");
+    assert.equal(memorySwitch().disabled, false, "failure releases the pending switch");
+    const dreamSwitch = () => f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="general:memory:dream"]')!;
+    const dreaming = f.plugin.settings.memory.dreamEnabled, runs = f.plugin.settings.memory.dreamRunsPerDay;
+    dreamSwitch().click(); await scheduler.flush();
+    assert.equal(f.plugin.settings.memory.dreamEnabled, dreaming, "failed Dream toggle rolls back");
+    f.plugin.saveSettings = save;
+    dreamSwitch().click(); await scheduler.flush();
+    assert.equal(f.plugin.settings.memory.dreamEnabled, !dreaming);
+    assert.equal(f.plugin.settings.memory.dreamRunsPerDay, runs, "turning Dream off retains its run count");
+    dreamSwitch().click(); await scheduler.flush();
+    const beforeModuleSave = f.saved.length;
     f.tab.openDesktopRoute({tab:"modules"}); await scheduler.flush();
     const selection = f.plugin.settings.selectionAsk.enabled;
     f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="module:selection:enabled"]')!.click();
     await scheduler.flush();
     assert.equal(f.plugin.settings.selectionAsk.enabled, !selection, "module enable click must reach its original save path");
     assert.equal((f.saved.at(-1) as typeof f.plugin.settings).selectionAsk.enabled, !selection);
-    assert.equal(f.saved.length, 2, "module switch persists once without activating a sibling drawer");
+    assert.equal(f.saved.length, beforeModuleSave + 1, "module switch persists once without activating a sibling drawer");
     f.registrations.forEach(cleanup=>cleanup()); mount.cleanup(); f.tab.containerEl.remove();
     console.log(`PASS real Origin switch clicks (${language}): memory enable and module enable save; no sibling drawer activation`);
   }
@@ -1200,30 +1139,17 @@ async function checkDesktopSettingPolish(win: Window & typeof globalThis, schedu
       assert.deepEqual(selections, ["english-diary", "quick-record"]);
 
       f.tab.openDesktopRoute({ tab: "agent" }); await scheduler.flush();
+      assert.equal(f.tab.containerEl.querySelector('[data-echoink-focus-key="review:auto-archive"]'), null, "Agent home keeps its three groups");
+      const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
+      assert.equal(archive.textContent, en ? "Conversations" : "会话");
+      archive.click(); await scheduler.flush();
       const auto = f.tab.containerEl.querySelector<HTMLElement>('[data-echoink-focus-key="review:auto-archive"]')!.closest(".setting-item")!;
       assert.equal(auto.querySelector(".setting-item-description")!.textContent, en ? "How long conversations stay inactive before archiving" : "多久没更新的对话自动归档");
       const autoHelp = auto.querySelector<HTMLButtonElement>('.echoink-settings-help button')!;
       autoHelp.focus();
       assert.equal(displayedTooltipsForTests.get(autoHelp), en ? "Conversations in use or with pending drafts are skipped." : "跳过使用中或有待发送内容的对话");
       assert.equal(auto.querySelector(".echoink-settings-help-panel"), null);
-      const archive = f.tab.containerEl.querySelector<HTMLButtonElement>('[data-echoink-focus-key="review:archives"]')!;
-      assert.equal(archive.querySelector(".echoink-settings-navigation-description"), null, "archive navigation omits the redundant description");
-      const archiveName = accessibleName(archive);
-      const archiveHelp = archive.querySelector<HTMLElement>(".echoink-settings-navigation-help")!;
-      archiveHelp.focus();
-      assert.equal(displayedTooltipsForTests.get(archiveHelp), en ? "Deleted conversations cannot be restored in Settings." : "删除后无法在设置中恢复");
-      archiveHelp.click();
-      assert.equal(accessibleName(archive), archiveName, "native help preserves the navigation name");
-      assert.equal(archive.querySelector("button"), null, "navigation help does not nest a button inside its navigation button");
-      assert.equal(archive.tagName, "BUTTON"); assert.equal(archive.disabled, false);
-      const openedDetails: string[] = [];
-      const openDetail = f.state.openSettingsDetail;
-      f.state.openSettingsDetail = (detail: string) => { openedDetails.push(detail); };
-      try {
-        archive.click();
-        archive.dispatchEvent(new win.MouseEvent("click", { bubbles: true, detail: 0 }));
-        assert.deepEqual(openedDetails, ["review-archives", "review-archives"], "pointer and keyboard-style button activation preserve the archive navigation callback");
-      } finally { f.state.openSettingsDetail = openDetail; }
+      assert.ok(f.tab.containerEl.querySelector('input[data-echoink-focus-key="review:archives:search"]'), "Conversations retains archive search");
 
       // A full fail-closed adapter is supplied by production when the account service is absent.
       plugin.accountService = undefined;

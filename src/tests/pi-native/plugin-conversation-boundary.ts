@@ -1122,6 +1122,7 @@ Promise<void> {
       }],
       activeSessionId: "history-previous"
     },
+    getKnowledgeSystemService: () => ({ prepareStatusChange: async () => {} }),
     ensurePiLocalData: async () => localData,
     ensurePiProductionRuntime: async () => {
       events.push("runtime:start");
@@ -1150,6 +1151,7 @@ Promise<void> {
     return result;
   });
   await flushMicrotasks();
+  await new Promise<void>(resolve => setImmediate(resolve));
 
   assert.equal(
     archiveSettled,
@@ -1270,6 +1272,7 @@ async function localManagementAndMemoryStayProviderIndependent(): Promise<void> 
     piRuntimeFlight: null,
     piActivatedConversationId: "history-managed",
     settlePiRuntimeFlight: async () => undefined,
+    getKnowledgeSystemService: () => ({ prepareStatusChange: async () => {} }),
     ensurePiLocalData: async () => localData,
     ensurePiProductionRuntime: async () => {
       throw new Error("local management must not require the production runtime");
@@ -1301,6 +1304,13 @@ async function localManagementAndMemoryStayProviderIndependent(): Promise<void> 
     "history-managed:archived",
     "history-managed:deleted"
   ]);
+  host.getKnowledgeSystemService = () => ({ prepareStatusChange: async () => {
+    throw new Error("unfinished-move-delete-blocked");
+  } });
+  await assert.rejects(pluginPrototype.setPiConversationStatus.call(host, "history-managed", "deleted"),
+    /unfinished-move-delete-blocked/u);
+  assert.deepEqual(statusEvents, ["history-managed:archived", "history-managed:deleted"],
+    "The business removal guard runs before the catalog status can change");
   const personalMemoryState = await pluginPrototype.getEchoInkPersonalMemoryState.call(host);
   assert.deepEqual(personalMemoryState, {
     revision: 7,

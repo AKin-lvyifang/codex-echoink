@@ -1,3 +1,4 @@
+import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
 import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
 import { openFolderPicker } from "./knowledge-settings-pages";
 import { attachNativeTooltip } from "../native-tooltip";
@@ -28,7 +29,7 @@ import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
 import { el, settingsContent, settingsGroup, settingsRow, settingsSelect, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
 
-const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
+const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["memory", "brain", "记忆"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
 const aliases: Record<string, string> = { providers: "model", models: "model", basic: "general", layout: "general", resources: "caps", modules: "mods" };
 
 /** One central settings tab; the Agent pane and its input nodes remain untouched. */
@@ -43,7 +44,7 @@ export class IPadSettings {
     const categories = CATEGORIES.map(([id, icon, label]) => ({ id, icon, label: t({ host }, label), createPage: () => this.category(id) }));
     this.shell = new IPadSettingsShell(root, categories, { onError: error => this.error(error) });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
-      models: new MobileModelConfiguration(host.settings, host.saveSettings, host.modelRequest, host.services.usageObserver),
+      models: new MobileModelConfiguration(host.settings, host.saveSettings, host.modelRequest, host.services.usageObserver, host.modelFetch),
       error: error => this.error(error), refresh: () => this.refresh(),
       push: async page => { const moved = await this.shell.push(page); if (!moved) page.dispose?.(); return moved; }, back: () => this.shell.back() };
     this.unsubscribers.push(host.services.subscribeIdentity(() => this.refresh()), host.workbench.subscribe(() => this.refresh()));
@@ -54,7 +55,8 @@ export class IPadSettings {
     await this.host.agents.snapshot(); if (this.disposed) return;
     this.mounted = true; await this.shell.mount(category ? aliases[category] ?? category : undefined); this.refresh();
   }
-  async open(category?: string): Promise<void> {
+  async open(category?: string, creation?: AgentEditorCreationOptions): Promise<void> {
+    if (creation) { await this.open("agent"); await this.context.push(createAgentFormPage(this.agentContext(), undefined, creation)); return; }
     if (this.disposed) return;
     if (category === "english-diary-settings") {
       if (!this.mounted) await this.mount("mods");
@@ -94,6 +96,7 @@ export class IPadSettings {
     if (id === "general") return this.general();
     if (id === "model") return createModelPage(this.context);
     if (id === "agent") return this.agent();
+    if (id === "memory") return createAgentSettingsPage(this.context, (agent, creation) => this.context.push(createAgentFormPage(this.agentContext(), agent, creation)), "memory");
     if (id === "caps") return this.capabilities();
     if (id === "mods") return this.modules();
     return createAccountPage(this.context);
@@ -158,17 +161,17 @@ export class IPadSettings {
     return { root: this.root, host: this.host, document: this.root.ownerDocument,
       get shell() { const shell = activeShell(); if (!shell) throw new Error("设置页面尚未打开。"); return shell; },
       error: error => this.error(error), navigate: async route => {
-        if (route.kind === "agent-form") await this.context.push(createAgentFormPage(this.agentContext(), route.agentId));
+        if (route.kind === "agent-form") await this.context.push(createAgentFormPage(this.agentContext(), route.agentId, route.creation));
         else if (route.kind === "agent") { await this.shell.activePageShell?.backTo("ipad-settings-agent"); this.refresh(); }
       } };
   }
   private agent(): MobileShellPage {
-    return createAgentSettingsPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
+    return createAgentSettingsPage(this.context, (id, creation) => this.context.push(createAgentFormPage(this.agentContext(), id, { onReturn: () => this.refresh(), ...creation })));
   }
   private moduleContext(): IPadPageContext {
     const shell = this.shell.activePageShell; if (!shell) throw new Error("设置页面尚未打开。");
     return { root: this.root, document: this.root.ownerDocument, host: this.host, shell,
-      error: error => this.error(error), navigate: async route => { if (route.kind === "home") await shell.backTo("ipad-settings-mods"); else await this.host.openAgent(route); } };
+      error: error => this.error(error), navigate: async route => { if (route.kind === "home") await shell.backTo("ipad-settings-mods"); else if (route.kind === "project") await this.host.openProject?.(route.projectId); else await this.host.openAgent(route); } };
   }
   private capabilities(): MobileShellPage {
     return createCapabilityPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));

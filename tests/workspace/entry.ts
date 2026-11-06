@@ -3,7 +3,7 @@ import { JSDOM } from "jsdom";
 import { WorkspaceError, WorkspaceService, WORKSPACE_ROOT, WORKSPACE_MAX_BYTES, workspacePath, workspaceDependencyPath, workspaceRevision, type WorkspaceFilePort } from "../../src/workspace/service";
 import { buildWorkspacePreview, renderWorkspacePreview, WORKSPACE_PREVIEW_CSP, WORKSPACE_PREVIEW_SANDBOX } from "../../src/workspace/preview";
 import { createWorkspaceTools } from "../../src/workspace/tools";
-import { WorkspacePreviewView } from "../../src/workspace/view";
+import { registerWorkspacePreviewExtension, WorkspacePreviewView, WORKSPACE_PREVIEW_VIEW_TYPE } from "../../src/workspace/view";
 import { createDesktopWorkspacePathGuard } from "../../src/workspace/desktop-safety";
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -37,6 +37,22 @@ function fixture(initial: Record<string, string> = {}) {
 const failsWith = (code: WorkspaceError["code"]) => (error: unknown) => error instanceof WorkspaceError && error.code === code;
 let passed = 0;
 async function test(name: string, run: () => void | Promise<void>) { await run(); passed++; console.log(`ok ${name}`); }
+
+await test("HTML binding preserves existing owners and propagates unrelated startup errors", () => {
+  const bindings: unknown[] = [];
+  const registerExtensions = (extensions: string[], type: string) => { bindings.push([extensions, type]); };
+  registerWorkspacePreviewExtension({ app: {}, registerExtensions });
+  assert.deepEqual(bindings, [[["html"], WORKSPACE_PREVIEW_VIEW_TYPE]]);
+  registerWorkspacePreviewExtension({ app: { viewRegistry: { isExtensionRegistered: () => true } }, registerExtensions });
+  assert.equal(bindings.length, 1, "An existing HTML owner is never replaced");
+  const warn = console.warn;
+  try {
+    console.warn = () => {};
+    registerWorkspacePreviewExtension({ app: {}, registerExtensions() { throw new Error('Attempting to register an existing file extension "html"'); } });
+  } finally { console.warn = warn; }
+  const failure = new Error("view registry unavailable");
+  assert.throws(() => registerWorkspacePreviewExtension({ app: {}, registerExtensions() { throw failure; } }), error => error === failure);
+});
 
 await test("paths stay in fixed root and reject configuration/traversal aliases", () => {
   for (const path of ["/tmp/a.html", "../secret.md", ".obsidian/config.js", "a/../x.html", "a\\x.html", "https://x/a.js", "a/%2e%2e/x.md", "a//x.md", "a/.git/x.md", "a.md?key", "a. /x.md", "a.js\0", "file.json"])

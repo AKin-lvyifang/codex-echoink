@@ -1,3 +1,5 @@
+import { getModuleOwner } from "../../agents/registry";
+import { openModuleOwnerSheet } from "../mobile/module-owner-sheet";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import type { WorkbenchSignal, WorkbenchSnapshot } from "../../home/workbench-types";
@@ -7,6 +9,8 @@ import { formatMobileWorkbenchDate } from "../../mobile/workbench-format";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { shellIconButton } from "../mobile/shell-controls";
 import { createInlineQuestion } from "./composer";
+import { disposeCompanyTree } from "../mobile/company-ui";
+import { ipadCompanyHidden, renderIPadCompanyHome } from "./company-pages";
 import type { IPadPageContext } from "./workbench-contract";
 import { IPAD_MODULES, ipadAvatar, ipadButton, ipadClock, ipadDateGroup, ipadElement as el,
   ipadIcon, ipadStatus, ipadTaskProjection, ipadTasks, ipadTaskStatus, ipadTaskSummary,
@@ -37,7 +41,7 @@ function cardNavigation(ctx: IPadPageContext, card: HTMLElement, taskId: string)
 function interruptedAt(task: MobileSession): string {
   const at = task.interruption?.at ?? task.taskInterruptedAt;
   const reasons = { app_closed: "应用关闭时中断", user_stopped: "已停止", plugin_disabled: "插件关闭时中断", run_failed: "执行失败时中断",
-    process_unknown: "发现上次未正常结束", watchdog: "运行超时中断", app_backgrounded: "切到后台时中断" };
+    process_unknown: "发现上次未正常结束", tool_loop_limit: "工具调用达到上限，已自动停止", watchdog: "运行超时中断", app_backgrounded: "切到后台时中断" };
   const reason = task.interruption ? reasons[task.interruption.reason] : "已中断";
   return at === undefined ? "未记录中断时间" : `${formatMobileDateTime(at)} ${reason}`;
 }
@@ -67,7 +71,8 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   const todos = section(ctx, "今日待办"), todoRows = el(ctx.document, "div", "pd-rows"); todos.element.append(todoRows);
   todos.heading.append(ipadButton(ctx.document, "全部待办", () => { void ctx.host.openModule("todos").catch(error => ctx.error(error)); }, "is-text pd-section-more", "chevron-right"));
   const readError = el(ctx.document, "div", "pd-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
-  content.append(header, navigation, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
+  const companySlot = el(ctx.document, "div", "pd-company-slot");
+  content.append(header, navigation, companySlot, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, taskGroups[0].element);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "", factsFailure = "";
   let nextFactRefresh = Infinity;
@@ -118,9 +123,10 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
 
   const renderTasks = (force = false) => {
     if (disposed) return;
-    const tasks = ipadTasks(ctx.host.store.state.sessions), registry = ctx.host.settings().agentRegistry;
-    const next = ipadTaskProjection(tasks) + JSON.stringify([registry, ctx.host.store.state.page]);
+    const all = ipadTasks(ctx.host.store.state.sessions), tasks = all.filter(task => !ipadCompanyHidden(ctx, task)), registry = ctx.host.settings().agentRegistry;
+    const next = ipadTaskProjection(all) + JSON.stringify([registry, ctx.host.store.state.page, all.map(task => ctx.host.runtime.isCompanyApprovalJudging?.(task.id))]);
     if (!force && signature === next) return; signature = next;
+    renderIPadCompanyHome(ctx, companySlot);
     const active = tasks.filter(task => ipadTaskStatus(task) !== "completed");
     for (const [id, card] of cards) if (!active.some(task => task.id === id)) {
       card.question?.dispose(); card.element.remove(); cards.delete(id);
@@ -149,14 +155,21 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   };
 
   const signalRow = (signal: WorkbenchSignal): HTMLElement => {
-    const registry = ctx.host.settings().agentRegistry, owner = registry.agents.find(agent => agent.id === registry.moduleOwners[signal.moduleId]);
+    const registry = ctx.host.settings().agentRegistry, owner = getModuleOwner(registry, signal.moduleId);
     const signature = JSON.stringify([signal.icon, signal.description, signal.prompt, signal.source.objects, signal.source.versions, owner?.id, owner?.name]);
     const previous = signalCache.get(signal.key);
     if (previous?.signature === signature) { previous.signal = signal; return previous.element; }
     const row = el(ctx.document, "div", "pd-row pd-signal-row"), entry = { element: row, signature, signal };
     signalCache.set(signal.key, entry);
     row.append(ipadIcon(ctx.document, signal.icon), el(ctx.document, "div", "pd-grow", signal.description));
-    const action = ipadButton(ctx.document, `交给${owner?.name ?? registry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.name ?? "总助"}`, () => { void handoff(false); }); row.append(action);
+    const action = ipadButton(ctx.document, owner ? `交给 ${owner.name}` : "指定负责人", () => {
+      if (getModuleOwner(ctx.host.settings().agentRegistry, signal.moduleId)) { void handoff(false).catch(() => {}); return; }
+      openModuleOwnerSheet({ document: ctx.document, prefix: "pd", agents: ctx.host.agents, roster: ctx.host.settings().agentRegistry.agents, shell: ctx.shell,
+        avatar: agent => ipadAvatar(ctx.document, agent), button: (text, click, variant) => ipadButton(ctx.document, text, click, variant),
+        create: async () => { const creation = { moduleIds: [signal.moduleId], onReturn: () => { void ctx.host.openHome().catch(ctx.error); ctx.host.workbench.refreshTasks?.(); } };
+          if (ctx.host.openSettings) await ctx.host.openSettings("agent", creation); else await ctx.navigate({ kind: "agent-form", creation }); },
+        start: async () => { await handoff(false); }, error: ctx.error }, signal.moduleId);
+    }); row.append(action);
     const handoff = async (replace: boolean) => {
       action.disabled = true;
       try {
@@ -165,9 +178,13 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
           if (row.querySelector(".pd-confirm")) return;
           const confirm = el(ctx.document, "div", "pd-confirm", "已有未发送的内容，是否替换？"), choices = el(ctx.document, "div", "pd-confirm-actions");
           choices.append(ipadButton(ctx.document, "保留原稿", () => { confirm.remove(); void ctx.navigate({ kind: "agent", agentId: result.agentId }).catch(error => ctx.error(error)); }),
-            ipadButton(ctx.document, "替换草稿", () => { confirm.remove(); void handoff(true); }, "is-primary")); confirm.append(choices); row.append(confirm);
-        } else await ctx.navigate({ kind: "agent", agentId: result.agentId });
-      } catch (error) { if (!disposed) ctx.error(error); }
+            ipadButton(ctx.document, "替换草稿", () => { confirm.remove(); void handoff(true).catch(() => {}); }, "is-primary")); confirm.append(choices); row.append(confirm);
+        } else {
+          const submission = await ctx.host.runtime.sendNew(result.agentId, entry.signal.prompt);
+          void submission.completion.catch(failure => ctx.error(failure));
+          await ctx.navigate({ kind: "task", taskId: submission.taskId });
+        }
+      } catch (error) { if (!disposed) ctx.error(error); throw error; }
       finally { action.disabled = false; }
     };
     return row;
@@ -230,6 +247,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   const unsubscribeRuntime = ctx.host.runtime.subscribe(() => renderTasks());
   const unsubscribeFacts = ctx.host.workbench.subscribe(() => { renderTasks(); void loadFacts(); });
   const unsubscribeIdentity = ctx.host.services.subscribeIdentity(() => { renderTasks(); renderFacts(); });
+  const unsubscribeCompany = ctx.host.company?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
   let localDay = new Date().toDateString();
   const window = ctx.document.defaultView;
   const clock = window?.setInterval(() => {
@@ -244,7 +262,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   }, 1000);
   return { id: "ipad-home", title: "工作台", header: "content", content, dispose() {
     if (disposed) return; disposed = true; window?.clearInterval(clock);
-    unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity();
+    unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); disposeCompanyTree(companySlot);
     for (const card of cards.values()) card.question?.dispose(); cards.clear(); signalCache.clear(); todoCache.clear();
   } };
 }

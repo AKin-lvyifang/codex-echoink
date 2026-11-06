@@ -176,6 +176,7 @@ export class MobileSkillsService {
     const run = this.runs.get(taskId);
     if (run) for (const content of run.skills) { content.assertAvailable(); this.policy(run.agentId).assertSkill(content.id); }
   }
+  hasRunSkills(taskId: string): boolean { return !!this.runs.get(taskId)?.skills.length; }
   releaseRunSkills(taskId: string): void { this.runs.delete(taskId); }
   saveSkillAgents(id: string, agentIds: string[], version: string): Promise<MobileSkillSummary> {
     const selected = new Set(agentIds);

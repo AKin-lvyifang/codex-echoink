@@ -63,14 +63,14 @@ try {
     assert.ok(edges.length > 0, "production must contain Pi minimatch");
     for (const [name, input] of edges) {
       const edge = input.imports.find(item => item.original === "brace-expansion");
-      assert.ok(edge?.path.startsWith("node_modules/brace-expansion/"), name);
+      assert.ok(edge && realpathSync(path.resolve(root, edge.path)).startsWith(path.dirname(require.resolve("brace-expansion/package.json")) + path.sep), name);
     }
     const output = meta.outputs["dist/main.js"];
     assert.ok(output);
     const braceInputs = Object.entries(output.inputs).filter(([name, data]) => /\/brace-expansion\/(?:dist\/|index\.js)/.test(name) && data.bytesInOutput > 0);
     assert.ok(braceInputs.length > 0);
     for (const [name, data] of braceInputs) {
-      assert.ok(name.startsWith("node_modules/brace-expansion/"), `unexpected production implementation: ${name}`);
+      assert.ok(realpathSync(path.resolve(root, name)).startsWith(path.dirname(require.resolve("brace-expansion/package.json")) + path.sep), `unexpected production implementation: ${name}`);
       console.log(`Production implementation: ${name} (${fixedVersion}, ${data.bytesInOutput} bytes)`);
     }
     assert.equal(Object.keys(meta.inputs).some(name => name.includes("pi-coding-agent/node_modules/brace-expansion/")), false);

@@ -61,7 +61,7 @@ export async function runResourcePresentationDomTests(win: Window & typeof globa
       f.plugin.settings.resourceManagementTab = "skills";
       f.state.resourceSearchQuery.skills = "";
       const body = render();
-      assert.equal(body.querySelectorAll(".codex-resource-row").length, 16);
+      assert.equal(body.querySelectorAll(".codex-resource-row").length, BUILTIN_SKILLS.length);
       const review = body.querySelector('[data-resource-key="echoink-local:skill:knowledge-review"]')!;
       assert.equal(review.querySelector(".codex-resource-row-name")?.textContent, language === "en" ? "Knowledge Review" : "知识复盘");
       assert.equal(body.querySelector('[data-resource-key="echoink-local:skill:obsidian-markdown"] .codex-resource-row-name')?.textContent, "Obsidian Markdown");
@@ -102,7 +102,7 @@ export async function runResourcePresentationDomTests(win: Window & typeof globa
       snapshots[`${language}-plugins`] = f.tab.containerEl.innerHTML;
       for (const query of ["财务", "Finance"]) assert.deepEqual(filter(query).map(row => row.dataset.resourceKey), ["builtin-plugin:finance"]);
       for (const query of ["英文日记", "English Diary"]) assert.deepEqual(filter(query).map(row => row.dataset.resourceKey), ["echoink:english-diary"]);
-      console.log(`PASS ${language}: 16 Skill names, description, Obsidian name, initial/live bilingual search, detail and plugin rows`);
+      console.log(`PASS ${language}: ${BUILTIN_SKILLS.length} Skill names, description, Obsidian name, initial/live bilingual search, detail and plugin rows`);
     }
     assert.equal(JSON.stringify(resources), unchanged, "language and search do not mutate IDs, names, descriptions, settings or paths");
     const original = resources[0];
@@ -154,7 +154,7 @@ async function checkComposerSlashLifecycle(win: Window & typeof globalThis, reso
   try {
     type("/");
     await settle();
-    assert.equal(skillNames().length, 16, "first scan populates the slash menu");
+    assert.equal(skillNames().length, BUILTIN_SKILLS.length, "first scan populates the slash menu");
     type("/知识");
     assert.ok(skillNames().includes("知识复盘"), "partial Chinese queries retain the loaded Skills");
     type("/知识复盘");
@@ -164,14 +164,14 @@ async function checkComposerSlashLifecycle(win: Window & typeof globalThis, reso
     handleKnowledgeCommandMenuKeyDown(new win.KeyboardEvent("keydown", { key: "Escape" }), input, menu);
     assert.equal(menu.hasClass("is-visible"), false);
     type("/");
-    assert.equal(skillNames().length, 16, "reopening the menu retains all enabled Skills");
+    assert.equal(skillNames().length, BUILTIN_SKILLS.length, "reopening the menu retains all enabled Skills");
     plugin.settings.settingsLanguage = "en";
     type("/知识复盘");
     assert.deepEqual(skillNames(), ["Knowledge Review"], "language refresh retains the loaded Skills");
     const review = plugin.settings.resources.catalog.find(item => item.name === "knowledge-review")!;
     review.enabled = false;
     type("/");
-    assert.equal(skillNames().length, 15, "saved enablement changes immediately reach the composer");
+    assert.equal(skillNames().length, BUILTIN_SKILLS.length - 1, "saved enablement changes immediately reach the composer");
     review.enabled = true;
     type("/知识复盘");
     menu.querySelector<HTMLButtonElement>(".codex-command-skill")!.click();
@@ -186,7 +186,7 @@ async function checkComposerSlashLifecycle(win: Window & typeof globalThis, reso
     await settle();
     type("/");
     await settle();
-    assert.equal(skillNames().length, 16, "a failed initial scan can retry when the menu is used again");
+    assert.equal(skillNames().length, BUILTIN_SKILLS.length, "a failed initial scan can retry when the menu is used again");
     assert.equal(loads, 3);
     console.log("PASS composer slash lifecycle: loading, repeated input, Escape/reopen, language, enablement, selection and retry");
   } finally {

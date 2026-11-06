@@ -4,6 +4,7 @@ import { IPhoneShell } from "./shell";
 import { createAgentPage, createHomePage } from "./workbench-pages";
 import { createAgentFormPage } from "./agent-form";
 import { createTaskPage } from "./task-detail";
+import { createProjectPage } from "./company-pages";
 import type { IPhonePageContext, IPhoneRoute, IPhoneWorkbenchHost } from "./workbench-contract";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { AgentModuleId } from "../../agents/types";
@@ -61,7 +62,8 @@ export class IPhoneWorkbench {
       const page = route.kind === "home" ? createHomePage(this.context)
         : route.kind === "agent" ? createAgentPage(this.context, route.agentId)
         : route.kind === "task" ? createTaskPage(this.context, route.taskId)
-        : createAgentFormPage(this.context, route.agentId);
+        : route.kind === "project" ? createProjectPage(this.context, route.projectId)
+        : createAgentFormPage(this.context, route.agentId, route.creation);
       if (page.id === this.shell.activePageId) { page.dispose?.(); return; }
       const existing = this.shell.hasPage(page.id);
       const moved = existing ? await this.shell.backTo(page.id) : replace ? await this.shell.replace(page) : await this.shell.push(page);

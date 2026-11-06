@@ -1,20 +1,21 @@
 import { isUnknownArray } from "../utils/unknown-array";
-import { isMap, parseDocument } from "yaml";
+import { readMaintenanceFrontmatterProperty } from "./maintenance-source-frontmatter";
 import { throwMaintenanceDiagnostics } from "./maintenance-diagnostics";
 import { appendMaintenanceBlock, appendMaintenanceManagedBlock, createMaintenanceSectionSnapshot } from "./maintenance-section-patch";
 import type { MaintenanceWritingItem } from "./maintenance-p1-contract";
 import type { MaintenanceKnowledgeType, MaintenanceKnowledgeUnit, MaintenanceRelatedEntry, MaintenanceUnitCandidates } from "./maintenance-p2-contract";
 import { MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-knowledge-types";
+export const MAINTENANCE_RELATION_TYPES = ["上位", "下位", "原因", "结果", "对比", "应用", "方法"] as const;
+export const MAINTENANCE_REVERSE_RELATION = { 上位: "下位", 下位: "上位", 原因: "结果", 结果: "原因", 对比: "对比", 应用: "方法", 方法: "应用" } as const;
 import { assertMaintenanceShortTarget } from "./maintenance-title";
 
 /** Current unambiguous, valid visible properties win field by field. */
-export function maintenanceVisibleClassification(content: string): { type?: MaintenanceKnowledgeType; domain?: string } {
-  const frontmatter = content.match(/^\uFEFF?---[^\S\r\n]*\r?\n([\s\S]*?)^---[^\S\r\n]*(?:\r?\n|$)/mu)?.[1];
-  if (!frontmatter) return {};
-  const yaml = parseDocument(frontmatter, { uniqueKeys: true, strict: true });
-  if (yaml.errors.length || yaml.warnings.length || !isMap(yaml.contents)) return {};
-  const type = yaml.get("类型"), domain = yaml.get("领域");
-  return { ...(MAINTENANCE_KNOWLEDGE_TYPES.includes(type as never) ? { type: type as MaintenanceKnowledgeType } : {}), ...(typeof domain === "string" && domain.trim() ? { domain: domain.trim() } : {}) };
+export function maintenanceVisibleClassification(content: string): { type?: MaintenanceKnowledgeType; domain?: string; typePresent?: boolean; domainPresent?: boolean; issues?: string[] } {
+  const type = readMaintenanceFrontmatterProperty(content, "类型"), domain = readMaintenanceFrontmatterProperty(content, "领域");
+  const validType = !type.error && MAINTENANCE_KNOWLEDGE_TYPES.includes(type.value as never);
+  const validDomain = !domain.error && typeof domain.value === "string" && !!domain.value.trim();
+  const issues = [type.present && !validType ? "类型属性不兼容，保留原值" : "", domain.present && !validDomain ? "领域属性不兼容，保留原值" : ""].filter(Boolean);
+  return { typePresent: type.present, domainPresent: domain.present, issues, ...(validType ? { type: type.value as MaintenanceKnowledgeType } : {}), ...(validDomain ? { domain: (domain.value as string).trim() } : {}) };
 }
 
 export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[], units: readonly MaintenanceKnowledgeUnit[], candidates: readonly MaintenanceUnitCandidates[]): void {
@@ -46,8 +47,8 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
       if (fields.decision.kind === "uncertain" && (!fields.related?.length || (fields.decision.candidatePath && !fields.related.some(relation => relation.targetPath === fields.decision.candidatePath)))) throw new Error("不确定新建须声明相关条目及关系说明，程序会补互链。");
     }
     for (const relation of fields.related ?? []) if (!relation || typeof relation.targetPath !== "string" || relation.targetPath === item.targetPath || typeof relation.reason !== "string" || !relation.reason.trim() || /[\r\n[\]<>]/u.test(relation.reason)) throw new Error("相关条目需有效目标与单行关系说明，不能是自链或指令。");
-    for (const relation of fields.related ?? []) if (relation.reverseReason !== undefined && (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n[\]<>]/u.test(relation.reverseReason))) throw new Error("显式reverseReason须为非空单行关系说明，不能含[]<>；未提供时保持单向。");
-    if (fields.decision.kind === "uncertain" && fields.related?.some(relation => typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n[\]<>]/u.test(relation.reverseReason))) throw new Error("不确定条目的互链须分别声明reason/reverseReason，写清两个方向的关系。");
+    for (const relation of fields.related ?? []) if (typeof relation.reverseReason !== "string" || !relation.reverseReason.trim() || /[\r\n[\]<>]/u.test(relation.reverseReason)) throw new Error("所有相关条目必须声明reverseReason，须为非空单行关系说明，不能含[]<>。");
+    for (const relation of fields.related ?? []) if (!MAINTENANCE_RELATION_TYPES.includes(relation.type as never)) throw new Error("新相关条目必须声明上位/下位、原因/结果、对比、应用/方法之一。旧自由文本保留。");
   } catch(error) { errors.push(`writingPlan[${index}]: ${error instanceof Error ? error.message : String(error)}`); } }
   for (const unit of units) if (!used.has(unit.id)) errors.push(`知识点未安排：${unit.id}`);
   for (const candidate of candidates) for (const other of candidate.batchUnitIds) {
@@ -59,15 +60,17 @@ export function validateMaintenanceP2Plan(plan: readonly MaintenanceWritingItem[
 
 export function maintenancePlanRelations(plan: readonly MaintenanceWritingItem[]): Map<string, MaintenanceRelatedEntry[]> {
   const relations = new Map<string, MaintenanceRelatedEntry[]>();
-  const add = (from: string, to: string, reason: string) => {
+  const add = (from: string, to: string, reason: string, type?: MaintenanceRelatedEntry["type"]) => {
     const list = relations.get(from) ?? [];
-    if (!list.some(relation => relation.targetPath === to)) list.push({ targetPath: to, reason });
+    const prior = list.find(relation => relation.targetPath === to);
+    if (prior?.type && type && prior.type !== type) throw new Error("同一对条目的关系类型互相矛盾，请按反向规则统一后重试。");
+    if (!prior) list.push({ targetPath: to, reason, ...(type ? { type } : {}) });
     relations.set(from, list);
   };
   for (const item of plan) for (const relation of item.knowledge?.related ?? []) {
-    add(item.targetPath, relation.targetPath, relation.reason);
+    add(item.targetPath, relation.targetPath, relation.reason, relation.type);
     // Explicit reverse prose requests both directions, independently of merge judgment.
-    if (typeof relation.reverseReason === "string" && relation.reverseReason.trim()) add(relation.targetPath, item.targetPath, relation.reverseReason);
+    if (typeof relation.reverseReason === "string" && relation.reverseReason.trim()) add(relation.targetPath, item.targetPath, relation.reverseReason, relation.type ? MAINTENANCE_REVERSE_RELATION[relation.type] : undefined);
   }
   return relations;
 }
@@ -100,7 +103,7 @@ export function applyMaintenanceRelatedEntries(content: string, relations: reado
     if (!section || start < section.contentStart || end < start || end + END.length > section.end || text.indexOf(BEGIN, start + BEGIN.length) >= 0 || text.indexOf(END, end + END.length) >= 0) throw new Error("相关条目受管块不在独立相关区或标记损坏，保留当前内容。");
     for (const line of text.slice(start + BEGIN.length, end).split(/\r?\n/u)) {
       if (!line.trim()) continue;
-      const match = line.match(/^- \[\[([^\]|\r\n]+)(?:\|[^\]\r\n]*)?\]\] — (.+)$/u);
+      const match = line.match(/^- (?:(?:上位|下位|原因|结果|对比|应用|方法)：)?\[\[([^\]|\r\n]+)(?:\|[^\]\r\n]*)?\]\] — (.+)$/u);
       if (!match) throw new Error("相关条目受管块含无法识别的手写内容，保留当前内容。");
       retained.set(match[1], line);
     }
@@ -108,7 +111,7 @@ export function applyMaintenanceRelatedEntries(content: string, relations: reado
   };
   if (baseline !== undefined) readBlock(baseline);
   const range = readBlock(content);
-  for (const relation of relations) retained.set(relation.targetPath, `- [[${relation.targetPath}|${relation.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")}]] — ${relation.reason}`);
+  for (const relation of relations) retained.set(relation.targetPath, `- ${relation.type ? `${relation.type}：` : ""}[[${relation.targetPath}|${relation.targetPath.split("/").at(-1)!.replace(/\.(?:md|markdown)$/iu, "")}]] — ${relation.reason}`);
   const block = `${BEGIN}${eol}${[...retained].sort(([a],[b]) => a.localeCompare(b)).map(([,line]) => line).join(eol)}${eol}${END}`;
   if (range) return content.slice(0, range.start) + block + content.slice(range.end + END.length);
   if (!related) return appendMaintenanceManagedBlock(content, `## 相关条目${eol}${eol}${block}${eol}`,eol);

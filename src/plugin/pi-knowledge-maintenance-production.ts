@@ -1,3 +1,5 @@
+import type { MaintenanceTreeAnalysisRequest, MaintenanceTreeAnalysisResult } from "../knowledge-base/maintenance-tree-analysis";
+import { isGeneralKnowledgeWiki, knowledgeWikiProperties } from "../knowledge-base/knowledge-wiki-policy";
 import { MaintenanceActivityController } from "./maintenance-activity-controller";
 import type { KnowledgeActivityService } from "./knowledge-activity-service";
 import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
@@ -16,7 +18,7 @@ import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
 import { readKnowledgeLinkingDocument, buildKnowledgeLinkingTargets, deferKnowledgeLinkingNewLinks, validateKnowledgeLinkingNewLinks } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument } from "../knowledge-base/knowledge-linking-types";
 import { rebaseKnowledgePathRecords } from "../knowledge-base/root-paths-core";
-import { latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { knowledgeMaintenanceNoteFromReadback } from "../knowledge-base/knowledge-maintenance-result";
 import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { registerKnowledgePrivateRoot, knowledgePrivateRoot } from "../knowledge-base/root-paths";
@@ -88,6 +90,7 @@ export interface KnowledgeMaintenanceTerminalEvent {
 }
 
 export interface CreateProductionPiKnowledgeMaintenanceOptions {
+  readonly treePlacement?: (input: MaintenanceTreeAnalysisRequest) => Promise<import("../knowledge-base/maintenance-p2-contract").MaintenanceTreePlan>;
   readonly productRuns?: Pick<FileProductRunStore, "read" | "setMaintenanceActivity" | "list">;
   readonly activitySource?: KnowledgeActivityService;
   readonly notice?: (message: string) => void;
@@ -132,6 +135,7 @@ export class ProductionPiKnowledgeMaintenanceToolPort
 implements PiKnowledgeMaintenanceToolPort {
   readonly state: FilePhase3MaintenanceStateStore;
   private readonly p1: MaintenanceP1Workflow;
+  private readonly treePlacement: CreateProductionPiKnowledgeMaintenanceOptions["treePlacement"];
   readonly activity: MaintenanceActivityController;
   private readonly maintenanceIndex: Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">;
 
@@ -180,6 +184,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.maintenanceIndex = options.knowledgeAgentIndex?.scanLinkingDocuments && options.knowledgeAgentIndex?.search && options.knowledgeAgentIndex?.refresh
       ? options.knowledgeAgentIndex as Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">
       : new KnowledgeAgentIndex({ vaultPath: this.vaultRootPath, storageRootPath: this.privateKnowledgeRootPath });
+    this.treePlacement = options.treePlacement;
     this.automaticLinkingEnabled = options.automaticLinkingEnabled ?? (() => true);
     this.processedSources = options.processedSources;
     this.now = options.now ?? Date.now;
@@ -222,6 +227,22 @@ implements PiKnowledgeMaintenanceToolPort {
       preparePageContent: (item, content, baseline) => this.prepareP1PageContent(item, content, baseline),
       candidates: units => this.maintenanceCandidates(units),
       planMaps: entries => this.maintenanceMaps(entries),
+      validateTreeTargetDirectory: (target, domain) => this.validateTreeTargetDirectory(target, domain),
+      placeTree: async (job, input): Promise<MaintenanceTreeAnalysisResult> => {
+        if (!this.treePlacement) throw new Error("知识树归位模型暂未配置，成功页保留，可继续收尾。");
+        await this.maintenanceIndex.refresh();
+        const historical = await this.maintenanceHistoricalClassifications();
+        const docs = (await this.maintenanceWikiDocuments()).filter(doc => {
+          const visible = maintenanceVisibleClassification(doc.content);
+          return !doc.content.includes("<!-- echoink-domain-map:BEGIN") && (visible.domainPresent ? visible.domain : historical.get(doc.path)?.domain) === job.domain;
+        });
+        const entries = docs.map(doc => ({ path: doc.path, title: maintenancePageTitle(doc.content, doc.path), type: maintenanceVisibleClassification(doc.content).type ?? historical.get(doc.path)?.type ?? "概念" as const, domain: job.domain }));
+        const documents = docs.map(doc => ({ path: doc.path, content: doc.content, revision: doc.contentRevision }));
+        if (job.entries.some(entry => !documents.some(doc => doc.path === entry.path))) throw new Error("本批Wiki全文暂不可读，保留归位任务。");
+        const declined = job.declined ?? [];
+        const plan = await this.treePlacement({ job, documents, entries, declined, signal: input.signal, conversationId: input.conversationId, runId: `${input.productRunId}:placement:${job.domain}` });
+        return { plan, entries, declined, coverage: documents.map(doc => ({ path: doc.path, revision: doc.revision, characters: doc.content.length })) };
+      },
       refresh: async () => { await this.maintenanceIndex.refresh(); },
       templateNotice: async () => (await new KnowledgeMaintenancePreferenceRepository(this.privateKnowledgeRootPath).read()).templateNotice,
       commit: (input, item, content, fields) => this.commitP1Action(input, item, content, fields),
@@ -271,7 +292,7 @@ implements PiKnowledgeMaintenanceToolPort {
       }
     }
     if (!result.recordId && result.maintenanceResult?.status === "noop") await this.activity.noop(input.conversationId, input.productRunId);
-    if (result.recordId && result.maintenanceStage === "completed") await this.activity.complete(result.recordId, input.productRunId);
+    if (result.recordId && result.maintenanceResult) await this.activity.complete(result.recordId, input.productRunId);
     return result;
   }
 
@@ -280,7 +301,7 @@ implements PiKnowledgeMaintenanceToolPort {
 
   private async maintenanceWikiDocuments(): Promise<MaintenanceWikiDocument[]> {
     const documents: MaintenanceWikiDocument[] = [];
-    for await (const doc of this.maintenanceIndex.scanLinkingDocuments()) if (knowledgePathRole(this.vaultRootPath, doc.path) === "wiki") documents.push({ path: doc.path, title: doc.title, aliases: doc.aliases, contentRevision: doc.version, content: doc.content });
+    for await (const doc of this.maintenanceIndex.scanLinkingDocuments()) if (knowledgePathRole(this.vaultRootPath, doc.path) === "wiki" && isGeneralKnowledgeWiki(knowledgeWikiProperties(doc.content))) documents.push({ path: doc.path, title: doc.title, aliases: doc.aliases, contentRevision: doc.version, content: doc.content });
     return documents;
   }
   private async maintenanceCandidates(units: readonly MaintenanceKnowledgeUnit[]) {
@@ -296,10 +317,8 @@ implements PiKnowledgeMaintenanceToolPort {
       }
     });
   }
-  private async maintenanceMaps(entries: readonly MaintenanceDomainMapEntry[]) {
-    if (!entries.length) return [];
-    const existing = await this.maintenanceWikiDocuments(), domains = new Set(entries.map(entry => entry.domain));
-    const all = new Map<string, MaintenanceDomainMapEntry>(), historical = new Map<string, MaintenanceDomainMapEntry>();
+  private async maintenanceHistoricalClassifications(): Promise<Map<string, MaintenanceDomainMapEntry>> {
+    const historical = new Map<string, MaintenanceDomainMapEntry>();
     // Latest successful receipts fill missing fields; current visible attributes remain authoritative.
     for (const record of (await readPrivateMaintenanceRecords(this.privateKnowledgeRootPath, { vaultId: this.vaultId })).sort((a,b) => b.at - a.at)) if (record.p1?.p2) {
       for (const item of record.p1.writingPlan) {
@@ -307,14 +326,36 @@ implements PiKnowledgeMaintenanceToolPort {
         if (unit && typeof unit !== "string" && record.p1.committedPages[item.id] && !historical.has(item.targetPath)) historical.set(item.targetPath, { path: item.targetPath, title: unit.title, domain: item.knowledge?.domain ?? unit.domain, type: item.knowledge?.type ?? unit.type });
       }
     }
+    return historical;
+  }
+
+  private async validateTreeTargetDirectory(target: string, domain: string): Promise<void> {
+    const exists = async (directory: string) =>
+      (await lstat(path.join(this.vaultRootPath, directory)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      }))?.isDirectory() ?? false;
+    if (await exists(path.posix.dirname(target))) return;
+    const root = getKnowledgeFolderBindings(this.vaultRootPath)?.roles.wiki.writePath ?? "wiki";
+    const domainRoot = path.posix.join(root, domain);
+    const fallback = await exists(domainRoot) ? domainRoot : root;
+    throw new Error(`领域已有知识树，新页目标目录必须已存在；不能新建 ${path.posix.dirname(target)}。` +
+      `请改用已有目录；归不进去的条目保存到 ${fallback}，地图会判断归位。`);
+  }
+
+  private async maintenanceMaps(entries: readonly MaintenanceDomainMapEntry[]) {
+    if (!entries.length) return [];
+    const existing = await this.maintenanceWikiDocuments(), domains = new Set(entries.map(entry => entry.domain));
+    const all = new Map<string, MaintenanceDomainMapEntry>(), historical = await this.maintenanceHistoricalClassifications();
     for (const doc of existing) {
       if (doc.content.includes("<!-- echoink-domain-map:BEGIN")) continue;
       const visible = maintenanceVisibleClassification(doc.content), prior = historical.get(doc.path);
-      const type = visible.type ?? prior?.type, domain = visible.domain ?? prior?.domain;
+      const type = visible.typePresent ? visible.type : prior?.type, domain = visible.domainPresent ? visible.domain : prior?.domain;
       if (type && domain && domains.has(domain)) all.set(doc.path, { path: doc.path, title: maintenancePageTitle(doc.content,doc.path), type, domain });
     }
     for (const entry of entries) {
       const doc = existing.find(doc => doc.path === entry.path), visible = doc ? maintenanceVisibleClassification(doc.content) : {};
+      if (visible.issues?.length) throw new Error(`${entry.path}：${visible.issues.join("；")}`);
       all.set(entry.path, { ...entry, title: doc ? maintenancePageTitle(doc.content,doc.path) : entry.title, type: visible.type ?? entry.type, domain: visible.domain ?? entry.domain });
     }
     const wikiRoot = getKnowledgeFolderBindings(this.vaultRootPath)?.roles.wiki.writePath ?? "wiki";
@@ -421,14 +462,14 @@ implements PiKnowledgeMaintenanceToolPort {
       const details = entry.message.details as Record<string, unknown> | undefined;
       return details?.source === "echoink-knowledge-maintenance" && details.status === "completed" && parseKnowledgeMaintenanceResultEnvelope(details.maintenanceResult)?.status === "noop" && Array.isArray(details.processedSourcePaths) && selected.every(relative => (details.processedSourcePaths as unknown[]).includes(relative));
     });
-    const unfinished = records.find(record => record.p1 && record.p1.phase !== "completed" && record.sources.some(source => selected.includes(source.path)));
+    const unfinished = records.find(record => isP1Open(record) && record.sources.some(source => selected.includes(source.path)));
     if (noop && !unfinished) return { processedSourcePaths: selected, pendingSourcePaths: [], warnings: [] };
     const staged = unfinished?.originConversationId === request.conversationId ? unfinished : records.find(record => record.originConversationId === request.conversationId && record.p1 && record.sources.some(source => selected.includes(source.path)));
-    if (unfinished && staged?.p1?.phase === "completed") return { processedSourcePaths: [], pendingSourcePaths: selected, warnings: ["这些来源仍有历史未完成清单，请回到原会话继续。"] };
+    if (unfinished && staged?.p1 && !isP1Open(staged)) return { processedSourcePaths: [], pendingSourcePaths: selected, warnings: ["这些来源仍有历史未完成清单，请回到原会话继续。"] };
     if (staged?.p1) {
       const recorded = staged.sources.filter(source => source.status === "processed" && selected.includes(source.path)).map(source => source.path);
       const processedSourcePaths = staged.p1.phase === "completed" ? request.terminalState === "completed" ? await readProcessedMaintenanceSources(this.vaultRootPath, recorded, records, this.processedSources?.()) : [] : recorded;
-      return { processedSourcePaths, pendingSourcePaths: selected.filter(relative => !processedSourcePaths.includes(relative)), warnings: staged.p1.phase === "completed" ? [] : ["维护清单尚未完成，继续原清单；来源保持待处理。"] };
+      return { processedSourcePaths, pendingSourcePaths: selected.filter(relative => !processedSourcePaths.includes(relative)), warnings: !isP1Open(staged) ? staged.result.issues.map(issue => issue.message) : ["维护清单尚未完成，继续原清单；来源保持待处理。"] };
     }
     return { processedSourcePaths: [], pendingSourcePaths: selected, warnings: ["尚未通过拆解、汇总与收尾门禁，来源保持待处理。"] };
   }
@@ -989,6 +1030,26 @@ export async function readPrivateMaintenanceRecords(rootPath: string, options: R
   return records.sort((a, b) => b.at - a.at);
 }
 
+/** Only the current session's branch-owned ProductRuns can prove an old P1's ownership. */
+export async function readOpenMaintenanceSelection(vaultRoot: string, input: {
+  conversationId: string; branchProductRunIds: readonly string[];
+}): Promise<{ recordId: string; productRunId: string; sourcePaths: readonly string[]; folderBindingsRevision?: number } | null> {
+  const root = knowledgePrivateRoot(vaultRoot);
+  if (!root) return null;
+  const candidates = (await readPrivateMaintenanceRecords(root)).filter(record => isP1Open(record)
+    && record.originConversationId === input.conversationId
+    && input.branchProductRunIds.some(id => record.runId.startsWith(`${id}:`)));
+  if (candidates.length > 1) throw new Error("本会话有多个未完成整理任务，请选择原任务继续。");
+  const record = candidates[0];
+  return record ? { recordId: record.recordId, productRunId: input.branchProductRunIds.find(id => record.runId.startsWith(`${id}:`))!, sourcePaths: record.sources.map(source => source.path), folderBindingsRevision: record.p1!.folderBindingsRevision } : null;
+}
+
+/** Pre-model guard: a new conversation cannot turn saved failures into a new writing job. */
+export async function assertMaintenanceRetrySelection(vaultRoot: string, input: { conversationId: string; sourcePaths: readonly string[] }): Promise<void> {
+  const root = knowledgePrivateRoot(vaultRoot);
+  if (root) maintenanceP1RetryRecord(await readPrivateMaintenanceRecords(root), input.conversationId, input.sourcePaths);
+}
+
 /** Same source-state precedence as scanning, restricted to the supplied paths. */
 async function readProcessedMaintenanceSources(vaultRoot: string, paths: readonly string[], records: readonly KnowledgeMaintenanceRecord[], previous?: Readonly<Record<string, { fingerprint?: string }>>): Promise<string[]> {
   const registry = await readRawDigestRegistry(vaultRoot, true);
@@ -1004,7 +1065,7 @@ async function readProcessedMaintenanceSources(vaultRoot: string, paths: readonl
 }
 
 export async function privateMaintenanceSourceScope(vaultRoot: string, options: Readonly<{
-  limit?: number; processedSources?: Readonly<Record<string, { fingerprint?: string }>>; readMaintenanceHistory?: boolean;
+  includeDeferredFailures?: boolean; limit?: number; processedSources?: Readonly<Record<string, { fingerprint?: string }>>; readMaintenanceHistory?: boolean;
 }> = {}) {
   const bindings = getKnowledgeFolderBindings(vaultRoot);
   const roots = bindings ? [...bindings.roles.raw.readPaths, ...bindings.roles.inbox.readPaths] : [resolveKnowledgePath(vaultRoot, "raw"), resolveKnowledgePath(vaultRoot, "inbox")];
@@ -1028,9 +1089,30 @@ export async function privateMaintenanceSourceScope(vaultRoot: string, options: 
   for (const root of new Set(roots)) await walk(root);
   const privateRoot = knowledgePrivateRoot(vaultRoot);
   const sorted = [...candidates].sort();
-  const processed = new Set(await readProcessedMaintenanceSources(vaultRoot, sorted, privateRoot && options.readMaintenanceHistory !== false ? await readPrivateMaintenanceRecords(privateRoot) : [], options.processedSources));
-  const sourcePaths = sorted.filter(relative => !processed.has(relative));
-  return { folderBindingsRevision: bindings?.revision ?? 0, sourcePaths: sourcePaths.slice(0, options.limit ?? 20) };
+  const records = privateRoot && options.readMaintenanceHistory !== false ? await readPrivateMaintenanceRecords(privateRoot) : [];
+  const processed = new Set(await readProcessedMaintenanceSources(vaultRoot, sorted, records, options.processedSources));
+  const deferredSourcePaths: string[] = [];
+  if (!options.includeDeferredFailures) {
+    const latest = new Map<string, KnowledgeMaintenanceRecord>();
+    for (const record of records) for (const source of record.sources) if (!latest.has(source.path)) latest.set(source.path, record);
+    for (const relative of sorted) {
+      const record = latest.get(relative), failure = record?.p1?.sourceFrontmatterFailures?.[relative];
+      if (!record || !hasP1PartialSettlement(record) || !failure) continue;
+      const file = await readImmutableFileIfPresent(vaultRoot, relative);
+      if (file && failure.contentRevision === `sha256:${file.sha256}`) deferredSourcePaths.push(relative);
+    }
+  }
+  const deferred = new Set(deferredSourcePaths);
+  const sourcePaths = sorted.filter(relative => !processed.has(relative) && !deferred.has(relative));
+  const selected = sourcePaths.slice(0, options.limit ?? 20);
+  const retryGroups = new Map<string, { recordId: string; sourcePaths: string[] }>();
+  for (const relative of selected) {
+    const latest = records.find(record => record.sources.some(source => source.path === relative));
+    if (!latest || !hasP1PartialSettlement(latest) || !latest.p1!.sourceFrontmatterFailures?.[relative]) continue;
+    const group = retryGroups.get(latest.recordId) ?? { recordId: latest.recordId, sourcePaths: [] };
+    group.sourcePaths.push(relative); retryGroups.set(latest.recordId, group);
+  }
+  return { folderBindingsRevision: bindings?.revision ?? 0, sourcePaths: selected, deferredSourcePaths, retryGroups: [...retryGroups.values()] };
 }
 
 class PrivateMaintenanceTrackerPort implements Phase3MaintenanceTrackerPort {

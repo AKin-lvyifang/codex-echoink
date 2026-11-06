@@ -245,7 +245,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     await f.write(source,"# 留白原文\n新增事实应放到对应小节。\n");await f.write(target,before);await f.write(related,"# 关联页\n明确相关的已有条目。\n");
     const unit=await f.unit("eof",source,"保留留白");unit.aliases=["New"];
     f.ok(await f.decompose([source],[unit]));const current=await f.observe(target);await f.observe(related);
-    const item=f.item("eof",target,[source],[unit.id],current);item.knowledge!.related=[{targetPath:related,reason:"已有条目提供事实的使用场景"}];
+    const item=f.item("eof",target,[source],[unit.id],current);item.knowledge!.related=[{targetPath:related,type:"应用",reason:"已有条目提供事实的使用场景",reverseReason:"保留留白提供本页场景所需的事实"}];
     f.ok(await f.call({stage:"plan",writingPlan:[item]},[source]));
     const listed=await f.call({stage:"sections",targetPath:target},[source]);const snapshot=JSON.parse(listed.message).snapshot;
     const region=snapshot.regions.find((region:{title:string})=>region.title==="可补充");
@@ -403,7 +403,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     const unit = await f.unit("uncertain","raw/uncertain.md","工具协议"); unit.aliases = ["协议"];
     f.ok(await f.decompose(["raw/uncertain.md"],[unit])); await f.observe(old);
     const item = f.item("uncertain","wiki/工具协议.md",["raw/uncertain.md"],[unit.id]);
-    item.knowledge = {...item.knowledge!,decision:{kind:"uncertain",reason:"概念粒度可能不同，保留独立条目待确认",candidatePath:old},related:[{targetPath:old,reason:"协议是工具协议的上位概念",reverseReason:"工具协议是协议在模型工具场景中的专门形式"}]};
+    item.knowledge = {...item.knowledge!,decision:{kind:"uncertain",reason:"概念粒度可能不同，保留独立条目待确认",candidatePath:old},related:[{targetPath:old,type:"上位",reason:"协议是工具协议的上位概念",reverseReason:"工具协议是协议在模型工具场景中的专门形式"}]};
     f.ok(await f.call({stage:"plan",writingPlan:[item]},["raw/uncertain.md"]));
     f.ok(await f.call({stage:"write",pageId:item.id,content:page(unit.title,"概念",["协议"])},["raw/uncertain.md"]));
     assert.match(await f.read(item.targetPath), /\[\[wiki\/协议.md\|协议\]\] — 协议是工具协议的上位概念/u, "controlled related links survive the old body-link defer");
@@ -423,7 +423,7 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     await f.write(old,"# 协议\n参与者共同遵循的交互约定。\n\n## 手写\n用户原有内容。  \n");await f.write(a,originalA);await f.write(b,originalB);
     const ua=await f.unit("relation-a",a,"工具协议"),ub=await f.unit("relation-b",b,"排队延迟");ua.aliases=["协议"];
     f.ok(await f.decompose([a,b],[ua,ub]));await f.observe(old);
-    const ia=f.item("relation-a",primaryA,[a],[ua.id]);ia.knowledge={...ia.knowledge!,decision:{kind:"uncertain",reason:"保留专门工具场景，待确认概念粒度",candidatePath:old},related:[{targetPath:old,reason:"协议是工具协议的上位概念",reverseReason:"工具协议是协议在模型工具场景中的专门形式"}]};
+    const ia=f.item("relation-a",primaryA,[a],[ua.id]);ia.knowledge={...ia.knowledge!,decision:{kind:"uncertain",reason:"保留专门工具场景，待确认概念粒度",candidatePath:old},related:[{targetPath:old,type:"上位",reason:"协议是工具协议的上位概念",reverseReason:"工具协议是协议在模型工具场景中的专门形式"}]};
     f.ok(await f.call({stage:"plan",writingPlan:[ia,f.item("relation-b",primaryB,[b],[ub.id])]},[a,b]));
     f.ok(await f.call({stage:"write",pageId:ia.id,content:page(ua.title,"概念",["协议"])},[a,b]));
     assert.equal(await f.read(a),originalA,"a primary page alone cannot finalize Raw while its relation dependency is pending");
@@ -438,19 +438,19 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     for(const map of maps){assert.ok(!(await f.read(a)).includes(`[[${map}]]`));assert.ok(!(await f.read(b)).includes(`[[${map}]]`));}
     assert.ok((await f.read(old)).includes(`[[${a}|关系原文A]]`));assert.equal(canonicalRawMarkdownForDigest(await f.read(a)),canonicalRawMarkdownForDigest(originalA));assert.equal(canonicalRawMarkdownForDigest(await f.read(b)),canonicalRawMarkdownForDigest(originalB));
   });
-  await scenario("new-explicit-reverse-reason-and-one-way-preservation", async f => {
+  await scenario("new-required-bidirectional-relations-and-recovery", async f => {
     const source="raw/learning-ledger.md",target="wiki/学习账本.md",archive="wiki/学习档案.md",oneWay="wiki/学习记录.md";
     const before="\uFEFF---\r\n类型: 概念\r\n领域: 学习方法\r\naliases: [User archive]\r\ncustom: 0021 # preserve\r\n---\r\n# 学习档案\r\n用户写的完整导语。  \r\n\r\n## 手写正文\r\n保留这些段落与空白。  \r\n\r\n## 相关条目\r\n用户手写的关系说明。\r\n";
     const oneWayBefore="# 学习记录\n用户的现有示例，只作正向参照。\n",rawBefore="# 学习账本原始材料\n学习账本与学习档案的边界尚未厘清，学习记录只作为字段示例。\n";
     await f.write(archive,before);await f.write(oneWay,oneWayBefore);await f.write(source,rawBefore);
     const unit=await f.unit("ledger",source,"学习账本","工具 / 产品");unit.domain="学习方法";unit.typePendingConfirmation=true;
-    f.ok(await f.decompose([source],[unit]));await f.observe(archive);
-    const item=f.item("ledger",target,[source],[unit.id]);item.knowledge={...item.knowledge!,decision:{kind:"new",reason:"现有学习档案不是同一对象，依据不足不能判同一点，因此新建并明确保留关系。"},related:[{targetPath:archive,reason:"两者边界尚未厘清，只保留参照关系。",reverseReason:"学习账本可能是学习档案的一种记录，也可能独立，关系待确认。"},{targetPath:oneWay,reason:"可相互参照的自然语言说明仍不构成反向写入指令。"}]};
+    f.ok(await f.decompose([source],[unit]));await f.observe(archive);await f.observe(oneWay);
+    const item=f.item("ledger",target,[source],[unit.id]);item.knowledge={...item.knowledge!,decision:{kind:"new",reason:"现有学习档案不是同一对象，依据不足不能判同一点，因此新建并明确保留关系。"},related:[{targetPath:archive,type:"对比",reason:"两者边界尚未厘清，只保留参照关系。",reverseReason:"学习账本可能是学习档案的一种记录，也可能独立，关系待确认。"},{targetPath:oneWay,type:"方法",reason:"学习记录提供学习账本的记录字段示例。",reverseReason:"学习账本按学习记录的字段组织记录。"}]};
     for(const reverseReason of ["","  ","一行\n另一行","[非法]","<非法>"]){const invalid=structuredClone(item);invalid.knowledge!.related![0].reverseReason=reverseReason;const result=await f.call({stage:"plan",writingPlan:[invalid]},[source]);assert.equal(result.status,"failed");assert.match(result.message,/reverseReason/u);}
-    const missing=structuredClone(item);missing.knowledge!.decision={kind:"uncertain",candidatePath:archive,reason:"不确定时仍强制完整双向说明"};delete missing.knowledge!.related![0].reverseReason;const rejected=await f.call({stage:"plan",writingPlan:[missing]},[source]);assert.equal(rejected.status,"failed");assert.match(rejected.message,/reverseReason/u);assert.deepEqual(f.writes,[]);
+    const missing=structuredClone(item);missing.knowledge!.decision={kind:"new",reason:"任何判断均须完整双向说明"};delete missing.knowledge!.related![0].reverseReason;const rejected=await f.call({stage:"plan",writingPlan:[missing]},[source]);assert.equal(rejected.status,"failed");assert.match(rejected.message,/reverseReason/u);assert.deepEqual(f.writes,[]);
     f.ok(await f.call({stage:"plan",writingPlan:[item]},[source]));
     const planned=(await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.p2!.finalization;
-    assert.deepEqual(planned.filter(draft=>draft.kind==="relationship").map(draft=>draft.targetPath),[archive],"new + explicit reverseReason schedules a reverse write; ordinary related stays one-way");
+    assert.deepEqual(planned.filter(draft=>draft.kind==="relationship").map(draft=>draft.targetPath),[archive,oneWay],"every related entry schedules a reverse write");
     f.fail(archive);const first=await f.call({stage:"write",pageId:item.id,content:page(unit.title,unit.type).replace("aliases:","类型待确认: true\naliases:")},[source]);
     assert.equal(first.status,"failed");assert.equal(await f.read(source),rawBefore);assert.equal(await f.read(archive),before);assert.equal(await f.read(oneWay),oneWayBefore);
     const primary=await f.read(target),primaryWrites=f.writes.filter(path=>path===target).length;
@@ -458,10 +458,10 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     f.fail(null);await f.restart();f.ok(await f.call({stage:"resume"},[source]));
     assert.equal(await f.read(target),primary);assert.equal(f.writes.filter(path=>path===target).length,primaryWrites);
     const after=await f.read(archive);assert.ok(after.startsWith(before),"existing attributes and all handwritten content remain byte exact");assert.ok(after.includes(`[[${target}|学习账本]]`));assert.ok(after.includes(item.knowledge.related![0].reverseReason!));assert.equal(after.split(`[[${target}|`).length-1,1);
-    assert.equal(await f.read(oneWay),oneWayBefore);assert.equal(f.writes.includes(oneWay),false,"missing reverseReason never writes a reverse link");
+    assert.ok((await f.read(oneWay)).startsWith(oneWayBefore));assert.ok((await f.read(oneWay)).includes(`[[${target}|学习账本]]`));
     const record=(await readPrivateMaintenanceRecords(f.privateRoot))[0],maps=record.p1!.p2!.finalization.filter(draft=>draft.kind==="map").map(draft=>draft.targetPath);
-    assert.deepEqual(record.sources[0].evidencePaths,[target,archive]);for(const path of [target,archive])assert.ok((await f.read(source)).includes(`[[${path}]]`));
-    assert.ok(!(await f.read(source)).includes(`[[${oneWay}]]`));for(const map of maps)assert.ok(!(await f.read(source)).includes(`[[${map}]]`));
+    assert.deepEqual(record.sources[0].evidencePaths,[target,archive,oneWay]);for(const path of [target,archive,oneWay])assert.ok((await f.read(source)).includes(`[[${path}]]`));
+    assert.ok((await f.read(source)).includes(`[[${oneWay}]]`));for(const map of maps)assert.ok(!(await f.read(source)).includes(`[[${map}]]`));
     const writes=[...f.writes],contents=await Promise.all([source,target,archive,oneWay,...maps].map(path=>f.read(path)));f.ok(await f.call({stage:"resume"},[source]));assert.deepEqual(f.writes,writes);assert.deepEqual(await Promise.all([source,target,archive,oneWay,...maps].map(path=>f.read(path))),contents,"completed resume adds no duplicate relation or source links");
   });
   await scenario("managed-map-failure-cold-resume-and-cas", async f => {
@@ -475,14 +475,19 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     f.fail(null); await f.restart(); f.ok(await f.call({stage:"resume"},["raw/map.md"]));
     assert.equal(await f.read("wiki/页面身份.md"),content); assert.equal(f.writes.filter(name=>name === "wiki/页面身份.md").length,count);
     assert.ok((await f.read(mapPath)).startsWith(handwritten)); assert.match(await f.read(mapPath),/页面身份/u);
-    // New batch locks current map version; a handwritten edit wins over a stale generated draft.
+    // A local map patch preserves handwritten bytes outside its own domain block.
     f.conversation("map-concurrent"); await f.write("raw/concurrent.md","# 并发原文\n修改地图前须校验版本。\n");
     const other = await f.unit("concurrent","raw/concurrent.md","并发校验"); f.ok(await f.decompose(["raw/concurrent.md"],[other]));
     f.ok(await f.call({stage:"plan",writingPlan:[f.item("concurrent","wiki/并发校验.md",["raw/concurrent.md"],[other.id])]},["raw/concurrent.md"]));
     const edited = (await f.read(mapPath)) + "用户在规划后新增的手写内容。\n"; await f.write(mapPath,edited);
     const conflict = await f.call({stage:"write",pageId:"concurrent",content:page(other.title)},["raw/concurrent.md"]);
-    assert.equal(conflict.status,"failed"); assert.match(conflict.message,/并发冲突/u); assert.equal(await f.read(mapPath),edited);
-    assert.equal(isMaintenanceSourceProcessed(await f.read("raw/concurrent.md")),false);
+    f.ok(conflict); assert.ok((await f.read(mapPath)).includes("用户在规划后新增的手写内容。")); assert.ok((await f.read(mapPath)).includes("并发校验"));
+    assert.equal(isMaintenanceSourceProcessed(await f.read("raw/concurrent.md")),true);
+    f.conversation("map-owned-concurrent"); await f.write("raw/owned.md","# 领域内并发\n领域区块内的用户编辑不能覆盖。\n");
+    const owned = await f.unit("owned","raw/owned.md","区块冲突"); f.ok(await f.decompose(["raw/owned.md"],[owned]));
+    f.ok(await f.call({stage:"plan",writingPlan:[f.item("owned","wiki/区块冲突.md",["raw/owned.md"],[owned.id])]},["raw/owned.md"]));
+    const ownedEdit=(await f.read(mapPath)).replace("### 概念","### 用户分组");await f.write(mapPath,ownedEdit);
+    const blocked=await f.call({stage:"write",pageId:"owned",content:page(owned.title)},["raw/owned.md"]);assert.equal(blocked.status,"failed");assert.match(blocked.message,/并发冲突/u);assert.equal(await f.read(mapPath),ownedEdit);
   });
   await fs.writeFile(path.join(root,"p2-report.json"),JSON.stringify(report,null,2));
   console.log(`P2 production maintenance: PASS (${report.length} scenarios; seven types, quotes, aggregation, real note_read, 20+1, mutual relations, maps/CAS/cold resume)`);

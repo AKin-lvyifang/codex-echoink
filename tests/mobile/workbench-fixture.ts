@@ -1,15 +1,33 @@
+import { emptyKnowledgeFolderBindings } from "../../src/knowledge-base/folder-bindings";
 import { mobileModel } from "../../src/mobile/settings";
 
 /** Browser-only synthetic Provider. Tasks are admitted through the production runtime. */
 export async function seedWorkbenchFixture(f: any): Promise<void> {
   f.settings.apiProviders = [{ id: "fixture", providerId: "deepseek", runtimeProviderId: "deepseek", apiProtocol: "openai-completions", authMode: "api-key", name: "DeepSeek（测试）", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-only", defaultModelId: "fixture-model", models: [{ ...mobileModel("fixture-model"), displayName: "DeepSeek 测试模型" }] }];
   f.settings.activeApiProviderId = "fixture"; f.settings.defaultModel = "fixture-model";
+  if (f.moduleOwnerPreview) {
+    f.settings.knowledgeBase.folderBindings ??= emptyKnowledgeFolderBindings();
+    for (const [role, path] of [["journal", "journal"], ["inbox", "Inbox"], ["raw", "Raw"], ["wiki", "Wiki"]]) {
+      await f.host.app.vault.createFolder(path);
+      Object.assign(f.settings.knowledgeBase.folderBindings.roles[role], { enabled: true, readPaths: [path], writePath: path, native: role === "journal" });
+    }
+    f.settings.journalDirectory = "journal";
+  }
   await f.plugin.saveSettings();
   const snapshot = await f.services.agents.snapshot();
   await f.services.agents.update((registry: any) => {
     const agents = [["organizer", "整理员", "整理 Inbox、写 Wiki、补双链", "nova"], ["finance", "记账员", "整理账目与分类", "rio"], ["research", "研究员", "查资料、做对比", "lin"], ["journal", "日记陪伴", "记录今天", "aya"], ["review", "复盘", "回顾决定与行动", "han"]];
     for (const [id, name, position, presetId] of agents) if (!registry.agents.some((agent: any) => agent.id === id)) registry.agents.push({ id, name, position, avatar: { kind: "preset", presetId }, styleId: "execution", capabilityIds: ["knowledge", "todos", "memory", "note_create"] });
     registry.moduleOwners["knowledge-base"] = "organizer";
+    if (f.moduleOwnerPreview) {
+      registry.agents = registry.agents.filter((agent: any) => ["sol", "generalist", "organizer", "finance"].includes(agent.id));
+      const writer = registry.agents.find((agent: any) => agent.id === "organizer"), bookkeeper = registry.agents.find((agent: any) => agent.id === "finance");
+      Object.assign(writer, { name: "小林", position: "选题编辑", positionDescription: "找选题、整理剪藏", avatar: { kind: "preset", presetId: "lin" }, persona: "", capabilityIds: [...new Set([...writer.capabilityIds, "knowledge", "web-search"])] });
+      Object.assign(bookkeeper, { name: "阿雅", position: "记账员", positionDescription: "记账、看月度开支", avatar: { kind: "preset", presetId: "aya" }, capabilityIds: [...new Set([...bookkeeper.capabilityIds, "finance", "todos"])] });
+      for (const module of Object.keys(registry.moduleOwners)) registry.moduleOwners[module] = "";
+      registry.moduleOwners["knowledge-base"] = writer.id; registry.moduleOwners.todos = "generalist"; registry.moduleOwners.finance = bookkeeper.id;
+    }
+
   }, snapshot.version);
   await f.services.refreshAgentIdentity();
   f.m6Requests = [];
@@ -23,9 +41,9 @@ export async function seedWorkbenchFixture(f: any): Promise<void> {
     if (prompt.includes("长文")) return answer("测试长文与宽内容。\n\n" + "阅读区域应保持可用，长文本自然换行。".repeat(25) + "\n\n```ts\nconst fixture = '" + "wide_".repeat(70) + "';\n```\n\n| 工作项 | 状态 | 说明 |\n| --- | --- | --- |\n| 测试宽表格 | 完成 | " + "宽表内容".repeat(30) + " |\n");
     return answer("测试提供商已完成整理。\n\n- 记录一个结论\n- 保留下一步行动");
   };
-  const interrupted = await f.runtime.sendNew("research", "测试：中断后继续核对资料");
+  const interrupted = await f.runtime.sendNew(f.moduleOwnerPreview ? "generalist" : "research", "测试：中断后继续核对资料");
   await f.runtime.shutdown("app_backgrounded"); await f.runtime.foreground();
-  const completed = await f.runtime.sendNew("review", "测试：完成本次资料整理"); await completed.completion;
+  const completed = await f.runtime.sendNew(f.moduleOwnerPreview ? "generalist" : "review", "测试：完成本次资料整理"); await completed.completion;
   const historical = await f.runtime.sendNew("organizer", "测试：历史整理结果（受控日期）"); await historical.completion;
   // A controlled past date tests date grouping. The message/run still comes from the real runtime.
   await f.store.updateSession(historical.taskId, (task: any) => { task.taskCompletedAt = Date.now() - 10 * 86400000; });

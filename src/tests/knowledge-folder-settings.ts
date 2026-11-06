@@ -286,6 +286,13 @@ export async function runKnowledgeFolderSettingsTests(): Promise<void> {
     }, { async load() { return savedTask; }, async save(task) { savedTask = structuredClone(task); history.set(task.id, structuredClone(task)); }, async loadTask(id) { return history.get(id) ?? null; } });
     (manager as any).linking = linking;
     await linking.start(); await linking.waitForIdle();
+    let ownerSettings = "";
+    (plugin as any).openModuleOwnerSettings = async (module: string) => { ownerSettings = module; };
+    const closeUnassigned = renderKnowledgeLinkingSection(host, plugin);
+    button("指定负责人").click(); await flush();
+    assert.equal(ownerSettings, "knowledge-base"); assert.equal(linkingWrites, 0, "unassigned linking routes to owner settings without applying writes");
+    closeUnassigned(); host.empty();
+    settings.agentRegistry.moduleOwners["knowledge-base"] = "generalist";
     let closeLinking = renderKnowledgeLinkingSection(host, plugin, undefined, true);
     await flush();
     assert.equal(host.querySelector(".echoink-knowledge-linking-located"), host.querySelector('[data-echoink-focus-key="knowledge:linking"]')?.closest(".setting-item"), "deep link highlights the actual linking row");

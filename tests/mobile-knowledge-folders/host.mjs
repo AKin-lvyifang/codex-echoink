@@ -32,8 +32,18 @@ export async function folderFixture(api, root, seed = {}) {
       if (entry.isDirectory()) { folders.push(item); visit(item); } else files.push(item);
     } }; visit(""); return { files, folders };
   };
-  const file = relative => { if (!existsSync(full(relative))) return null; const info = statSync(full(relative)); return { path: relative, name: path.posix.basename(relative), basename: path.posix.basename(relative).replace(/\.md$/u, ""),
-    extension: path.posix.extname(relative).slice(1), stat: { size: info.size, mtime: info.mtimeMs, ctime: info.ctimeMs } }; };
+  const file = relative => {
+    if (!existsSync(full(relative))) return null;
+    const info = statSync(full(relative));
+    const folder = info.isDirectory();
+    const item = api.TFolder ? Object.create((folder ? api.TFolder : api.TFile).prototype) : {};
+    return Object.assign(item, {
+      path: relative, name: path.posix.basename(relative),
+      basename: path.posix.basename(relative).replace(/\.md$/u, ""),
+      ...(folder ? { children: [] } : { extension: path.posix.extname(relative).slice(1) }),
+      stat: { size: info.size, mtime: info.mtimeMs, ctime: info.ctimeMs }
+    });
+  };
   const references = relative => {
     const text = readFileSync(full(relative), "utf8"), links = [], embeds = [];
     const pattern = /!?\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]|!?\[[^\]\n]*\]\((?:<[^>]+>|[^\s)]+)(?:\s+"[^"]*")?\)/gu;

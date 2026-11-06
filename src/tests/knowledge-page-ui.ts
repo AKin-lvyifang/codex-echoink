@@ -38,12 +38,24 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   const files = new Map<string, any>();
   const folders = new Map(["Sources", "Wiki", "OtherWiki", "Projects"].map(path => [path, Object.assign(new TFolder(), { path })]));
   for (let index = 0; index < 25; index++) { const path = `Wiki/note-${index}.md`; files.set(path, Object.assign(new TFile(), { path })); }
-  const explorer = { view: { revealInFolder: async (folder: any) => { revealed = folder.path; } } };
+  const explorer = { loadIfDeferred: async () => {}, view: { revealInFolder: async (folder: any) => { revealed = folder.path; } } };
   const app: any = { vault: { ...eventHost, getAbstractFileByPath: (path: string) => files.get(path) ?? folders.get(path) }, metadataCache: { ...eventHost }, workspace: { getLeavesOfType: () => [explorer], revealLeaf: async () => {}, getLeaf: () => ({ openFile: async (file: any) => { opened = file.path; } }) }, scope: {}, keymap: { pushScope() { scopesPushed++; }, popScope() { scopesPopped++; } } };
   const prefills: Array<[string, string]> = [];
   const plugin: any = { app, settings: { settingsLanguage: "zh-CN", knowledgeBase: {}, agentRegistry: { agents: [{ id: "general-assistant", name: "总助" }, { id: "keeper", name: "整理员" }], moduleOwners: { "knowledge-base": "keeper" } } },
     getKnowledgeSurfaceService: () => null, activateHomeView: async () => { home++; }, openEchoInkKnowledgeSettings: async () => { settings++; }, openAgentTaskList: async (id: string, text: string) => { prefills.push([id, text]); return true; } };
-  const snapshot: any = { generatedAt: Date.now(), bindings: {}, dashboard: null, health: { assessment: "uninitialized", score: 0 }, weekly: { added: 2, organized: 1, unknownCreatedAtCount: 0 },
+  plugin.getKnowledgeActivitySource = () => undefined;
+  const systemTasks: any[] = [];
+  const systemActions: string[] = [];
+  const systemListeners = new Set<() => void>();
+  plugin.getKnowledgeSystemService = () => ({
+    ready: Promise.resolve(), list: () => systemTasks,
+    subscribe: (listener: () => void) => { systemListeners.add(listener); return () => systemListeners.delete(listener); },
+    launch: async (domain: string) => { systemActions.push(`launch:${domain}`); },
+    deferReminder: async (reminder: any) => { systemActions.push(`defer:${reminder.domain}`); },
+    rejectGap: async (_map: string, domain: string, gap: string) => { systemActions.push(`reject:${domain}:${gap}`); },
+    acceptPlacement: async (_map: string, domain: string, entry: string, branch: string) => { systemActions.push(`place:${domain}:${entry}:${branch}`); },
+  });
+  const snapshot: any = { generatedAt: Date.now(), bindings: {roles:{wiki:{enabled:true},inbox:{writePath:null}}}, dashboard: null, health: { assessment: "uninitialized", status:"unknown", score: 0 }, weekly: { added: 2, organized: 1, unknownCreatedAtCount: 0 },
     activityDays: [{ date: "2026-10-18", added: 2, organized: 1, total: 3 }],
     directories: [
       { role: "raw", state: "ready", count: 3, unit: "份", latestMtime: 1, roots: [{ path: "Sources", state: "ready", count: 3 }] },
@@ -58,33 +70,94 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   Object.assign(view, { app, contentEl: root, containerEl: root, closed: false });
   view.renderShell(); await view.refresh();
   assert.equal(view.getViewType(), KNOWLEDGE_PAGE_VIEW_TYPE);
-  assert.equal(root.querySelectorAll(".knowledge-metric").length, 3);
+  assert.equal(root.querySelectorAll(".knowledge-metric").length, 5);
   assert.equal(root.querySelector(".knowledge-metric-number strong")!.textContent, "—", "Uninitialized health never displays a fake zero");
-  assert.equal(root.querySelectorAll(".knowledge-directory-row").length, 4);
+  assert.equal(root.querySelectorAll(".knowledge-directory-row").length, 0);
+  assert.deepEqual(
+    Array.from(view.field("overview").children).slice(0, 8).map((element: any) => element.dataset.knowledge),
+    ["header", "reminders", "upgrade", "locations", "metrics", "activity", "map", "recent"],
+    "Overview and concentrated reminders precede the fixed-height map",
+  );
+  const treeDomain = { domain: "A", count: 2, mode: "tree", mapPath: "Wiki/index.md", title: "A：研究", indexing: false,
+    groups: [{ title: "研究", entries: [{ title: "笔记", path: "Wiki/note-0.md", children: [] }] }], gaps: ["缺少复盘框架"] };
+  const listDomain = { ...treeDomain, domain: "B", mode: "list", title: "B", count: 15 };
+  const reminder = { domain: "B", mapPath: "Wiki/index.md", mode: "list", count: 15, threshold: 15 };
+  next = { ...snapshot, mapDomains: [treeDomain, listDomain], systemReminders: [reminder] };
+  await view.refresh();
+  assert.equal(root.querySelectorAll(".knowledge-map-domain").length, 2);
+  (root.querySelector(".knowledge-map-gap button") as HTMLButtonElement).click();
+  await tick();
+  assert.deepEqual(systemActions, ["reject:A:缺少复盘框架"]);
+  next = { ...next, mapDomains: [{ ...treeDomain, groups: [...treeDomain.groups, {
+    title: "待归位", entries: [
+      { title: "待确认", path: "Wiki/note-1.md", children: [], suggestedBranch: "研究" },
+      { title: "无建议", path: "Wiki/note-2.md", children: [] },
+    ],
+  }] }, listDomain] };
+  await view.refresh();
+  const placements = root.querySelectorAll(".knowledge-map-pending > button:last-child");
+  const accept = Array.from(placements).find(button => button.textContent === "放入 研究") as HTMLButtonElement;
+  assert.ok(accept);
+  assert.equal(Array.from(root.querySelectorAll(".knowledge-map-pending button")).filter(button => button.textContent?.startsWith("放入 ")).length, 1);
+  accept.click();
+  await tick();
+  assert.equal(systemActions.at(-1), "place:A:Wiki/note-1.md:研究");
+  systemActions.length = 0;
+  next = { ...snapshot, mapDomains: [treeDomain, listDomain], systemReminders: [reminder] };
+  await view.refresh();
+  (root.querySelector(".knowledge-map-branch") as HTMLButtonElement).click();
+  assert.equal((root.querySelector(".knowledge-map-children") as HTMLElement).hidden, true);
+  (root.querySelector(".knowledge-map-entry") as HTMLButtonElement).click(); await tick();
+  assert.equal(opened, "Wiki/note-0.md");
+  (root.querySelector('[data-domain="B"]') as HTMLButtonElement).click();
+  assert.equal(root.querySelector(".knowledge-map-detail h3")!.textContent, "B");
+  (root.querySelector('[data-knowledge-action="organize"]') as HTMLButtonElement).click(); await tick();
+  assert.deepEqual(systemActions, ["launch:B"]);
+  const later = Array.from(root.querySelectorAll(".knowledge-map-reminder button")).find(button => button.textContent === "先放着") as HTMLButtonElement;
+  later.click(); await tick();
+  assert.deepEqual(systemActions, ["launch:B", "defer:B"]);
+  systemTasks.push({ domain: "B", phase: "awaiting-confirmation" });
+  view.mapPanel.refreshActions();
+  assert.match(root.querySelector('[data-knowledge-action="organize"]')!.textContent!, /等你确认/u);
+  assert.equal(root.querySelectorAll(".knowledge-map-reminders .knowledge-map-reminder").length, 0);
+  systemTasks[0].phase = "completed";
+  await view.refresh();
+  assert.equal(root.querySelector('[data-knowledge-action="organize"]')!.getAttribute("aria-label"), "梳理体系", "Task completion refreshes actions even when map data is unchanged");
+  systemTasks.length = 0;
+  next = {
+    ...snapshot,
+    health: { assessment: "uninitialized", status: "unknown", score: 0 },
+    directories: snapshot.directories.map((directory: any) =>
+      directory.role === "wiki" ? { ...directory, count: 0 } : directory),
+  };
+  await view.refresh();
+  assert.equal(root.querySelector(".knowledge-metric-number strong")!.textContent, "—", "An empty Wiki does not show a perfect health score");
+  next = snapshot; await view.refresh();
   assert.equal(view.field("upgrade").hidden, true, "Old hosts retain unknown upgrade state without inventing zero work");
   assert.equal(root.querySelectorAll(".echoink-activity-heatmap").length, 1);
   assert.ok(root.querySelector('[data-date="2026-10-18"]')!.getAttribute("aria-label")!.includes("新增2篇 · 整理1次"));
-  const single = root.querySelector(".knowledge-directory-row") as HTMLButtonElement; single.click(); await tick(); assert.equal(revealed, "Sources");
-  (root.querySelectorAll(".knowledge-directory-row")[1] as HTMLButtonElement).click(); await tick(); assert.equal(root.querySelectorAll(".knowledge-root-row").length, 2); assert.equal(revealed, "Sources");
-  (root.querySelectorAll(".knowledge-root-row")[1] as HTMLButtonElement).click(); await tick(); assert.equal(revealed, "OtherWiki");
-  (root.querySelectorAll(".knowledge-directory-row")[3] as HTMLButtonElement).click(); await tick(); assert.equal(settings, 1);
+  const inbox = root.querySelectorAll(".knowledge-metric")[4] as HTMLButtonElement;
+  inbox.click(); await tick(); assert.equal(settings, 1, "Unconfigured inbox opens settings");
+  assert.ok(!root.querySelector('[data-knowledge="directories"]'));
+  assert.ok(!root.querySelector('[data-knowledge="issues"]'));
   const range = root.querySelector(".activity-range-trigger") as HTMLButtonElement; range.click();
   const draft = root.querySelector(".activity-range-start") as HTMLInputElement; draft.value = "2020"; draft.focus();
   next = { ...snapshot, activityDays: [{ date: "2026-10-18", added: 3, organized: 1, total: 4 }] };
   await view.refresh(); assert.equal(root.querySelector(".activity-range-start"), draft); assert.equal(draft.value, "2020", "Refresh preserves an unapplied range");
-  view.issue = "isolated"; view.renderSecondary(); assert.equal(view.field("secondary").classList.contains("echoink-settings-demo"), false); assert.equal(scopesPushed, 1); assert.equal(scopesPopped, 1, "Hidden overview releases the editor keyboard scope"); assert.equal(root.querySelectorAll(".knowledge-object-row").length, 20);
-  view.issuePage = 2; view.renderSecondary(); assert.equal(root.querySelectorAll(".knowledge-object-row").length, 5);
-  (root.querySelector(".knowledge-object-row button") as HTMLButtonElement).click(); await tick(); assert.equal(opened, "Wiki/note-20.md");
-  view.openPage("overview"); assert.equal(scopesPushed, 2, "Returning restores the open editor scope"); assert.equal(root.querySelector(".activity-range-start"), draft); assert.equal(draft.value, "2020");
+  view.openPage("history");
+  assert.equal(scopesPopped, 1, "Hidden overview releases the editor keyboard scope");
+  view.openPage("overview");
+  assert.equal(scopesPushed, 2, "Returning restores the open editor scope");
+  assert.equal(root.querySelector(".activity-range-start"), draft);
   draft.blur(); (root.querySelector(".activity-range-cancel") as HTMLButtonElement).click(); await tick();
-  plugin.settings.agentRegistry.moduleOwners["knowledge-base"] = "general-assistant";
-  await view.handoffIssue("sources"); assert.equal(prefills[0][0], "general-assistant"); assert.ok(prefills[0][1].includes("Sources/missing.md")); assert.ok(prefills[0][1].includes("Wiki/note-0.md"));
-  next = { ...snapshot, links: { state: "ready", candidatePaths: [], isolatedPaths: [] } };
-  await view.handoffIssue("isolated"); assert.equal(prefills.length, 1, "Resolved issues cannot hand off a stale object range");
-  next = { ...snapshot, links: { state: "unknown", candidatePaths: [], isolatedPaths: [] }, sources: { state: "unknown", missing: [], unknownCount: 25 } };
-  await view.refresh(); assert.ok(view.field("issues").textContent.includes("链接还在解析")); assert.equal(view.field("issues").textContent.includes("暂时没有可处理"), false);
-  await assert.rejects(view.handoffIssue("isolated")); assert.equal(prefills.length, 1);
-  next = snapshot; await view.refresh(); view.contentEl.scrollTop = 135; view.openPage("history"); assert.equal(view.field("secondary").classList.contains("echoink-settings-demo"), true); view.openPage("health"); assert.equal(view.field("secondary").classList.contains("knowledge-legacy"), true); view.openPage("overview"); assert.equal(view.contentEl.scrollTop, 135);
+  plugin.getKnowledgeSurfaceService = () => ({ getHealthSnapshot: () => snapshot.health, checkup: { deep: { subscribe: () => () => {}, snapshot: async () => ({status:"idle",findings:[]}) }, quick: async () => ({ issues: [], candidates: [], loading: false, bodyReads: 0, elapsedMs: 1 }) }, upgrade: { getUpgradeSnapshot: async () => ({ status: "ready", counts: { wikiCount: 0 } }) } });
+  view.contentEl.scrollTop = 135; view.openPage("history"); assert.equal(view.field("secondary").classList.contains("echoink-settings-demo"), true); view.openPage("health"); assert.equal(view.field("secondary").classList.contains("knowledge-legacy"), false); view.openPage("overview"); assert.equal(view.contentEl.scrollTop, 135);
+  view.openPage("health");
+  next = { ...snapshot, health: { assessment: "local-structure", status: "healthy", score: 91 } };
+  view.openPage("overview"); await tick();
+  assert.equal(root.querySelector(".knowledge-metric-number strong")!.textContent, "91",
+    "Returning from checkup reloads health instead of retaining the old overview score");
+  next = snapshot; await view.refresh();
   const counts = { sourceCount: 2, sourceStatusCount: 1, sourceLinkCount: 2, backlinkCount: 2, wikiCount: 3 };
   const reingestMessage = "可选：重新提炼。这页在上次整理后改过，看不出改的是排版还是内容。原文不动；想更新的话，可以让 Agent 重新整理这页。";
   const reviewMessage = "来源“同名资料”有 2 篇同名资料，分不清是哪一篇，原链接先保留。";
@@ -185,12 +258,12 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   const stale = view.refresh();
   (globalThis as any).__p8Load = async () => ({ ...snapshot, weekly: { ...snapshot.weekly, added: 9 } }); await view.refresh();
   finish(snapshot); await stale; assert.equal(view.snapshot.weekly.added, 9, "Late responses cannot overwrite new data");
-  view.subscribe(); assert.equal(subscriptions, 7); assert.equal(activityListeners.size, 1);
+  view.subscribe(); assert.equal(subscriptions, 7); assert.equal(activityListeners.size, 1); assert.equal(systemListeners.size, 1);
   upgrade = { status: "running", counts, recordId: "upgrade-record", taskId: "upgrade-task", preview };
   activitySnapshot = { primary: upgradeActivity, other: null, maintenance: [upgradeActivity] };
   for (const listener of activityListeners) listener(activitySnapshot);
   await tick(); assert.match(view.field("upgrade").textContent, /查看升级/u);
-  view.unsubscribe(); assert.equal(releases, 7); assert.equal(activityListeners.size, 0);
+  view.unsubscribe(); assert.equal(releases, 7); assert.equal(activityListeners.size, 0); assert.equal(systemListeners.size, 0);
   const historicalUpgrade = { schemaVersion: 1, recordId: "upgrade-history", runId: "upgrade-history-run", originConversationId: "upgrade-history-task", at: Date.now(), date: "2026-10-22", summary: "升级旧知识", sources: [],
     result: { schema: "echoink.knowledge-maintenance-result.v1", status: "noop", notes: [], issues: [], assessments: [], systemPaths: [] },
     upgrade: { version: 1, phase: "completed", rootsRegistered: true, classifications: {}, skipped: {},
@@ -200,10 +273,10 @@ export async function runKnowledgePageUiTests(): Promise<void> {
       writes: { source: { operationId: "source", path: "Sources/旧资料.md", role: "source", expectedVersion: "before", content: "after", done: true }, wiki: { operationId: "wiki", path: "Wiki/知识条目.md", role: "wiki", expectedVersion: "before", content: "after", done: true } } } };
   view.snapshot = { ...view.snapshot, maintenanceRecords: [historicalUpgrade], maintenanceHistory: [{ recordId: historicalUpgrade.recordId, runId: historicalUpgrade.runId, at: historicalUpgrade.at, date: historicalUpgrade.date, mode: "maintain", status: "success", resultStatus: "noop", reportPath: "" }] };
   view.renderRecent();
-  assert.match(view.field("recent").textContent, /旧知识升级.*已完成.*已补好 1 篇资料状态、1 条链接.*1 页 Wiki/u);
+  assert.match(view.field("recent").textContent, /旧知识升级.*已完成.*1 篇资料状态.*1 条链接.*1 页 Wiki/u);
   assert.doesNotMatch(view.field("recent").textContent, /无需新增|已检查/u);
   (view.field("recent").querySelector(".knowledge-recent-row") as HTMLButtonElement).click();
-  assert.match(view.field("secondary").textContent, /旧知识升级详情.*已补好 1 篇资料状态、1 条链接.*1 页 Wiki/u);
+  assert.match(view.field("secondary").textContent, /旧知识升级详情.*1 篇资料状态.*1 条链接.*1 页 Wiki/u);
   assert.doesNotMatch(view.field("secondary").textContent, /本轮没有新增或更新|本轮没有选中来源/u);
   view.foreground = { isActive: () => false, dispose() {} };
   let loads = 0; (globalThis as any).__p8Load = async () => { loads++; return snapshot; }; await view.refresh(); assert.equal(loads, 0, "Hidden pages do not scan");

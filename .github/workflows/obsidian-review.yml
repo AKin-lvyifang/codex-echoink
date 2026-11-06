@@ -27,9 +27,6 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Prepare isolated test Vault
-        run: node scripts/prepare-ci-test-vault.mjs
-
       - name: Install dependencies
         run: npm ci
 

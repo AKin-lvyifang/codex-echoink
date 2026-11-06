@@ -11,10 +11,12 @@ import {
   markAIElementsQuestion
 } from "./smooth-chat-ui";
 import { conversationUiText } from "./ui-i18n";
+import { disposeCompanyCompactTooltips, renderCompanyCompactQuestion, type CompanyCompactIdentity } from "./company-compact-interaction";
 
 export interface InteractionDockRenderInput {
   readonly sessionId: string;
   readonly language?: SettingsLanguage;
+  readonly companyCompact?: Readonly<CompanyCompactIdentity>;
   readonly question?: Readonly<{
     binding: Readonly<PiTurnInteractionDecisionBinding>;
     onResolved(): void;
@@ -53,7 +55,9 @@ export class InteractionDockController {
     container: HTMLElement,
     input: Readonly<InteractionDockRenderInput>
   ): void {
+    if (this.lastRender?.input.companyCompact) disposeCompanyCompactTooltips(this.lastRender.container);
     this.lastRender = { container, input };
+    if (input.companyCompact) container.addClass("is-company-compact"); else container.removeClass("is-company-compact");
     const question = input.question?.binding.interaction;
     if (question?.kind === "question" && question.status === "pending") {
       this.renderQuestion(container, input, input.question!.binding, question, input.language ?? "zh-CN");
@@ -67,6 +71,7 @@ export class InteractionDockController {
   }
 
   dispose(): void {
+    if (this.lastRender?.input.companyCompact) disposeCompanyCompactTooltips(this.lastRender.container);
     this.questionDrafts.clear();
     this.lastRender = null;
     this.activeSurfaceKey = "";
@@ -84,8 +89,12 @@ export class InteractionDockController {
     const index = clampQuestionIndex(state.activeIndex, interaction.questions.length);
     state.activeIndex = index;
     const question = interaction.questions[index];
+    const hasOptions = question.options.length > 0;
     const firstPresentation = this.activeSurfaceKey !== key;
     this.activeSurfaceKey = key;
+    if (input.companyCompact) {
+      this.renderCompactQuestion(container, input, binding, interaction, language, key, state, firstPresentation); return;
+    }
 
     container.empty();
     container.addClass("is-visible");
@@ -153,11 +162,12 @@ export class InteractionDockController {
       : question.selection === "multiple"
         ? conversationUiText(language, "可选择多项。", "Select one or more options.")
         : conversationUiText(language, "请选择一项。", "Select one option.");
-    fieldset.createDiv({
+    if (hasOptions) fieldset.createDiv({
       cls: "codex-interaction-instruction",
       text: instruction
     });
     const options = fieldset.createDiv({ cls: "codex-interaction-options" });
+    options.hidden = !hasOptions;
     const selected = state.selectedByQuestion.get(question.questionId)!;
     let firstControl: HTMLInputElement | null = null;
     for (const option of question.options) {
@@ -213,7 +223,9 @@ export class InteractionDockController {
       const supplementGroup = fieldset.createDiv({ cls: "codex-interaction-supplement" });
       supplementGroup.createEl("label", {
         cls: "codex-interaction-supplement-label",
-        text: conversationUiText(language, "补充说明（可选）", "Additional details (optional)"),
+        text: hasOptions
+          ? conversationUiText(language, "补充说明（可选）", "Additional details (optional)")
+          : conversationUiText(language, "你的回答", "Your answer"),
         attr: { for: supplementId }
       });
       supplement = supplementGroup.createEl("textarea", {
@@ -244,7 +256,9 @@ export class InteractionDockController {
     });
     if (state.invalidQuestionId === question.questionId) {
       fieldset.setAttribute("aria-invalid", "true");
-      error.textContent = question.allowSupplement
+      error.textContent = !hasOptions
+        ? conversationUiText(language, "填写回答后继续。", "Enter an answer to continue.")
+        : question.allowSupplement
         ? conversationUiText(language, "请选择至少一项，或填写补充说明后继续。", "Select at least one option or add details to continue.")
         : question.selection === "multiple"
           ? conversationUiText(language, "请至少选择一项后继续。", "Select at least one option to continue.")
@@ -274,51 +288,87 @@ export class InteractionDockController {
       attr: { type: "button" }
     });
     primary.disabled = state.submitting;
-    primary.onclick = () => {
-      if (state.submitting) return;
-      if (!questionHasAnswer(state, question)) {
-        state.invalidQuestionId = question.questionId;
-        this.rerender();
-        window.setTimeout(() => {
-          const refreshed = container.querySelector<HTMLInputElement>(
-            ".codex-interaction-option-control"
-          ) ?? container.querySelector<HTMLTextAreaElement>(
-            ".codex-interaction-supplement-input"
-          );
-          refreshed?.focus();
-        }, 0);
-        return;
-      }
-      if (index + 1 < interaction.questions.length) {
-        state.activeIndex += 1;
-        state.invalidQuestionId = null;
-        this.rerenderAndFocusQuestion();
-        return;
-      }
-      const answers = interaction.questions.map((item) => questionAnswer(state, item));
-      state.submitting = true;
-      this.rerender();
-      let accepted = false;
-      try {
-        accepted = binding.submit(answers);
-      } catch {
-        accepted = false;
-      }
-      if (accepted) {
-        this.questionDrafts.delete(key);
-        this.hide(container);
-        input.question?.onResolved();
-        input.onScheduleMeasure();
-        return;
-      }
-      state.submitting = false;
-      input.onStale();
-      this.rerender();
-    };
+    primary.onclick = () => this.completeQuestion(container, input, binding, interaction, key, state);
 
     if (firstPresentation) {
-      window.setTimeout(() => firstControl?.focus(), 0);
+      window.setTimeout(() => (firstControl ?? supplement)?.focus(), 0);
     }
+    input.onScheduleMeasure();
+  }
+
+  private completeQuestion(container: HTMLElement, input: Readonly<InteractionDockRenderInput>, binding: Readonly<PiTurnInteractionDecisionBinding>,
+    interaction: Readonly<EchoInkQuestionInteraction>, key: string, state: QuestionDraft): void {
+    const index = clampQuestionIndex(state.activeIndex, interaction.questions.length);
+    const question = interaction.questions[index];
+    if (state.submitting) return;
+    if (!questionHasAnswer(state, question)) {
+      state.invalidQuestionId = question.questionId;
+      this.rerender();
+      window.setTimeout(() => {
+        const refreshed = container.querySelector<HTMLInputElement>(
+          ".codex-interaction-option-control"
+        ) ?? container.querySelector<HTMLTextAreaElement>(
+          ".codex-interaction-supplement-input"
+        );
+        refreshed?.focus();
+      }, 0);
+      return;
+    }
+    if (index + 1 < interaction.questions.length) {
+      state.activeIndex += 1;
+      state.invalidQuestionId = null;
+      this.rerenderAndFocusQuestion();
+      return;
+    }
+    const answers = interaction.questions.map((item) => questionAnswer(state, item));
+    state.submitting = true;
+    this.rerender();
+    let accepted = false;
+    try {
+      accepted = binding.submit(answers);
+    } catch {
+      accepted = false;
+    }
+    if (accepted) {
+      this.questionDrafts.delete(key);
+      this.hide(container);
+      input.question?.onResolved();
+      input.onScheduleMeasure();
+      return;
+    }
+    state.submitting = false;
+    input.onStale();
+    this.rerender();
+  }
+
+  private renderCompactQuestion(container: HTMLElement, input: Readonly<InteractionDockRenderInput>, binding: Readonly<PiTurnInteractionDecisionBinding>,
+    interaction: Readonly<EchoInkQuestionInteraction>, language: SettingsLanguage, key: string, state: QuestionDraft, firstPresentation: boolean): void {
+    const question = interaction.questions[state.activeIndex];
+    container.empty(); container.addClass("is-visible", "is-question"); container.removeClass("is-confirmation");
+    container.dataset.interactionId = interaction.interactionId;
+    const card = container.createDiv({ cls: "codex-interaction-card codex-interaction-question-card", attr: { role: "region", "aria-busy": String(state.submitting) } });
+    markAIElementsQuestion(card);
+    const controls = renderCompanyCompactQuestion(card, input.companyCompact!, question, language);
+    let first: HTMLButtonElement | HTMLTextAreaElement | undefined = controls.input;
+    for (const option of question.options) {
+      const button = controls.choices.createEl("button", { cls: "echoink-company-compact-choice", text: option.label,
+        attr: { type: "button", "data-option-id": option.optionId } });
+      button.disabled = state.submitting; first ??= button;
+      button.onclick = () => {
+        if (state.submitting) return;
+        const selected = state.selectedByQuestion.get(question.questionId)!;
+        selected.clear(); selected.add(option.optionId);
+        this.completeQuestion(container, input, binding, interaction, key, state);
+      };
+    }
+    if (controls.input && controls.submit) {
+      controls.input.value = state.supplementByQuestion.get(question.questionId) ?? "";
+      controls.input.disabled = controls.submit.disabled = state.submitting;
+      controls.input.oninput = () => { state.supplementByQuestion.set(question.questionId, controls.input!.value); state.invalidQuestionId = null; controls.error.setText(""); };
+      controls.submit.onclick = () => this.completeQuestion(container, input, binding, interaction, key, state);
+    }
+    if (state.invalidQuestionId === question.questionId) controls.error.setText(conversationUiText(language, "填写回答后继续。", "Enter an answer to continue."));
+    if (firstPresentation) window.setTimeout(() => first?.focus(), 0);
     input.onScheduleMeasure();
   }
 
@@ -345,6 +395,7 @@ export class InteractionDockController {
       preview: binding.preview,
       ...(binding.deleteAction === true ? { deleteAction: true } : {}),
       controlled: true,
+      ...(input.companyCompact ? { companyCompact: input.companyCompact } : {}),
       language
     });
     if (!elements.approveButton || !elements.rejectButton) return;
@@ -415,6 +466,7 @@ export class InteractionDockController {
   }
 
   private hide(container: HTMLElement): void {
+    if (this.lastRender?.input.companyCompact) disposeCompanyCompactTooltips(container);
     container.empty();
     container.removeClass("is-visible");
     container.removeClass("is-question");

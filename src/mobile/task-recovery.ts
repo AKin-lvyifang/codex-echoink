@@ -21,8 +21,8 @@ export function normalizeMobileNoteTarget(value: string): string {
   return path;
 }
 export const mobileNoteWriteKey = (path: string): string => `note_create:${path}`;
-export function mobileMemoryWriteHash(value: Readonly<{ kind: string; title: string; content: string; recallWhen: string; basis: string }>): string {
-  return sha256Hex(JSON.stringify({ kind: value.kind, title: value.title, content: value.content, recallWhen: value.recallWhen, basis: value.basis }));
+export function mobileMemoryWriteHash(value: Readonly<{ kind: string; title: string; content: string; recallWhen: string; basis: string; pinned?: boolean }>): string {
+  return sha256Hex(JSON.stringify({ kind: value.kind, title: value.title, content: value.content, recallWhen: value.recallWhen, basis: value.basis, ...(value.pinned !== undefined ? { pinned: value.pinned } : {}) }));
 }
 export const mobileMemoryWriteKey = (hash: string, targetId?: string): string => `memory_write:${targetId ?? "new"}:${hash}`;
 export const mobileNoteUpdateKey = (path: string, beforeHash: string, requestedHash: string): string => `note_update:${path}:${beforeHash}:${requestedHash}`;
@@ -81,7 +81,7 @@ export function assertMobileResumeMemoryObservations(snapshot: MobileResumeSnaps
     && memoryVersion(records, observation.target.slice("memory_write:".length)) !== observation.version) throw changed();
 }
 /** Accepted runs append exactly one user turn; queued, unaccepted runs have no message boundary. */
-function messageRunIds(task: MobileSession): Map<number, string> {
+export function messageRunIds(task: MobileSession): Map<number, string> {
   const pending = new Set((task.queue ?? []).map(turn => turn.id));
   const runs = (task.runs ?? []).filter(run => !pending.has(run.id));
   const boundaries = task.messages.flatMap((message, index) => message.role === "user" ? [{ index, timestamp: message.timestamp }] : []);
@@ -98,6 +98,13 @@ function messageRunIds(task: MobileSession): Map<number, string> {
 }
 function legacyWrites(task: MobileSession): LegacyWrite[] {
   const facts: (LegacyWrite & { receipt?: boolean })[] = [], runIds = messageRunIds(task);
+  const unstarted = new Set(task.messages.flatMap(message => {
+    if (message.role !== "toolResult" || !message.isError) return [];
+    const details = object(message.details);
+    if (details.writeNotStarted !== true || typeof details.runId !== "string" || !task.runs?.some(run => run.id === details.runId)
+      || task.operations?.some(operation => operation.runId === details.runId && operation.toolCallId === message.toolCallId)) return [];
+    return [`${details.runId}\0${message.toolName}\0${message.toolCallId}`];
+  }));
   for (const [messageIndex, message] of task.messages.entries()) {
     const item = object(message);
     if (item.role === "assistant" && Array.isArray(item.content)) for (const [blockIndex, raw] of item.content.entries()) {
@@ -106,6 +113,7 @@ function legacyWrites(task: MobileSession): LegacyWrite[] {
       if (block.type !== "toolCall" || (block.name !== "note_create" && block.name !== "note_update" && block.name !== "memory_write" && !financeTool)) continue;
       if (financeTool) { try { if (financeToolEffect(financeTool, normalizeFinanceToolRequest(financeTool, block.arguments)) === "read") continue; } catch { if (financeTool === "finance_query") continue; } }
       const callId = typeof block.id === "string" && block.id ? block.id : `unidentified-${messageIndex}-${blockIndex}`;
+      if (unstarted.has(`${runIds.get(messageIndex)}\0${String(block.name)}\0${callId}`)) continue;
       const key = `${messageIndex}:${blockIndex}:${String(block.name)}:${callId}`;
       const args = object(block.arguments), fact: LegacyWrite = { id: `legacy-${sha256Hex(key).slice(0, 24)}`, toolCallId: callId, toolName: financeTool ? "finance_write" : block.name as WriteTool, ...(financeTool ? { financeTool } : {}),
         ...(runIds.has(messageIndex) ? { runId: runIds.get(messageIndex) } : {}) };
@@ -125,6 +133,7 @@ function legacyWrites(task: MobileSession): LegacyWrite[] {
     if (item.role === "toolResult" && (item.toolName === "note_create" || item.toolName === "note_update" || item.toolName === "memory_write" || financeTool)) {
       const callId = typeof item.toolCallId === "string" && item.toolCallId ? item.toolCallId : `unidentified-result-${messageIndex}`;
       const details = object(item.details);
+      if (unstarted.has(`${runIds.get(messageIndex)}\0${String(item.toolName)}\0${callId}`)) continue;
       if (financeTool && (financeTool === "finance_query" || details.command === "finance_budget.get" || details.command === "finance_bill.list")) continue;
       const writeTool: WriteTool = financeTool ? "finance_write" : item.toolName as WriteTool;
       let target: string | undefined;
@@ -169,6 +178,17 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
     if (exact || followed) verifiedNotes.add(operation.id);
     if (exact && operation.status !== "completed") { operation.status = "completed"; completed.add(operation.id); }
   }
+  const memoryVersions = new Map<string, string>(), verifiedMemories = new Set<string>();
+  for (let index = operations.length - 1; index >= 0; index--) {
+    const operation = operations[index];
+    if (operation.toolName !== "memory_write" || operation.memoryRepository !== "canonical" || operation.status !== "completed") continue;
+    const key = observationTarget(operation.toolName, operation.target);
+    const version = memoryVersions.get(key) ?? await currentVersion(app, store, key); memoryVersions.set(key, version);
+    const exact = version === `revision:${operation.completedRevision}:sha256:${operation.expectedHash}`;
+    const followed = operations.slice(index + 1).some(next => next.toolName === "memory_write" && next.memoryRepository === "canonical" && next.target === operation.target
+      && next.status === "completed" && next.beforeHash === operation.expectedHash && next.beforeRevision === operation.completedRevision && verifiedMemories.has(next.id));
+    if (exact || followed) verifiedMemories.add(operation.id);
+  }
   const financeObservations = new Map<string, MobileFinanceObservation>(), verifiedFinance = new Set<string>();
   for (let index = operations.length - 1; index >= 0; index--) {
     const operation = operations[index];
@@ -197,13 +217,15 @@ export async function inspectMobileTaskResume(app: App, store: MobileStore, task
         label: "外部 MCP 写入结果尚未核实；只能基于现状继续，不能重放旧写入。" });
       continue;
     }
-    const key = observationTarget(operation.toolName, operation.target), version = await currentVersion(app, store, key);
+    const key = observationTarget(operation.toolName, operation.target), version = memoryVersions.get(key) ?? await currentVersion(app, store, key);
     stopped(signal); observations.set(key, version);
     if (operation.toolName === "note_create" || operation.toolName === "note_update") {
       if (verifiedNotes.has(operation.id)) {
         if (operation.status !== "completed") { operation.status = "completed"; completed.add(operation.id); }
       } else issues.push({ operationId: operation.id, target: operation.target, status: version === "missing" || version === "unreadable" ? "unknown" : "conflict",
         label: version === "missing" ? "原写入目标当前不存在，不能据此推断从未写入。" : version === "unreadable" ? "原写入目标暂时无法读取。" : "当前笔记与原写入内容不同。" });
+    } else if (verifiedMemories.has(operation.id)) {
+      // A verified later pin/unpin is the successor of this completed effect.
     } else if (operation.memoryRepository === "canonical" && operation.targetWasMissing === true
       && version.endsWith(`:sha256:${operation.expectedHash}`) && /^revision:[1-9][0-9]*:/u.test(version)) {
       if (operation.status !== "completed") { operation.status = "completed"; operation.completedRevision = Number(version.split(":")[1]); completed.add(operation.id); }

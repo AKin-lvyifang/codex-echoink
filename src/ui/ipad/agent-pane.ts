@@ -1,3 +1,4 @@
+import { agentRoleGroups } from "../../agents/roster-groups";
 import { isAgentHired } from "../../agents/persona";
 import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { runErrors } from "../../run-reports/recent-errors";
@@ -33,7 +34,7 @@ export class IPadAgentPane {
     this.pane = el(root.ownerDocument, "div", "pd-agent-shell"); root.append(this.strip, this.pane);
     this.shell = new IPadShell(this.pane, { onError: error => this.error(error) });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
-      navigate: (route, replace) => route.kind === "home" ? host.openHome() : this.navigate(route, replace), error: error => this.error(error) };
+      navigate: (route, replace) => route.kind === "home" ? host.openHome() : route.kind === "project" ? host.openProject?.(route.projectId) ?? Promise.resolve() : this.navigate(route, replace), error: error => this.error(error) };
     const Observer = root.ownerDocument.defaultView?.MutationObserver;
     if (Observer) {
       this.observer = new Observer(() => {
@@ -89,7 +90,7 @@ export class IPadAgentPane {
           if (!task || task.archivedAt) throw new Error("任务已不存在。");
           if (!await this.showAgent(task.agentId)) return;
         } else if (route.agentId && !await this.showAgent(route.agentId)) return;
-        const page = route.kind === "task" ? createTaskPage(this.context, route.taskId) : createAgentFormPage(this.context, route.agentId);
+        const page = route.kind === "task" ? createTaskPage(this.context, route.taskId) : createAgentFormPage(this.context, route.agentId, route.creation);
         // A task always retains its owning list underneath it, including deep links.
         const replaceForm = route.kind === "agent-form" && replace && this.shell.activePageId?.startsWith("ipad-agent-form-");
         const moved = replaceForm ? await this.shell.replace(page) : await this.shell.push(page);
@@ -136,7 +137,13 @@ export class IPadAgentPane {
     for (const task of tasks) this.projections.set(task.id, ipadTaskProjection([task]));
     const scroll = this.strip.scrollLeft, focused = (this.root.ownerDocument.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-agent-id]")?.dataset.agentId;
     this.strip.replaceChildren();
-    for (const agent of registry.agents.filter(isAgentHired)) {
+    const groups = new Map(agentRoleGroups(registry.agents.filter(isAgentHired), this.host.settings().settingsLanguage === "en").map(group => {
+      const section = el(this.root.ownerDocument, "div", "pd-agent-group"); section.dataset.agentGroup = group.id;
+      section.append(el(this.root.ownerDocument, "div", "pd-agent-group-label", group.label));
+      const items = el(this.root.ownerDocument, "div", "pd-agent-group-items"); section.append(items); this.strip.append(section);
+      return [group.id, items] as const;
+    }));
+    for (const agent of agentRoleGroups(registry.agents.filter(isAgentHired)).flatMap(group => group.agents)) {
       const mine = tasks.filter(task => task.agentId === agent.id), waiting = mine.filter(task => ipadTaskStatus(task) === "waiting").length;
       const interrupted = mine.some(task => ipadTaskStatus(task) === "interrupted"), running = mine.some(task => ipadTaskStatus(task) === "running"), unread = mine.some(ipadTaskUnread);
       const button = el(this.root.ownerDocument, "button", `pd-agent-avatar${this.currentAgent() === agent.id ? " is-selected" : ""}`); button.type = "button"; button.dataset.agentId = agent.id;
@@ -147,7 +154,7 @@ export class IPadAgentPane {
         const badge = el(this.root.ownerDocument, "span", `pd-agent-badge is-${kind}`); badge.setAttribute("aria-hidden", "true");
         if (waiting) badge.textContent = `${waiting}`; else if (interrupted) badge.textContent = "!"; else if (running) badge.append(ipadIcon(this.root.ownerDocument, "loader-circle")); button.append(badge);
       }
-      button.addEventListener("click", () => { void this.navigate({ kind: "agent", agentId: agent.id }).catch(error => this.error(error)); }); this.strip.append(button);
+      button.addEventListener("click", () => { void this.navigate({ kind: "agent", agentId: agent.id }).catch(error => this.error(error)); }); groups.get(agent.id === GENERAL_ASSISTANT_ID ? "main" : "role")!.append(button);
     }
     const add = el(this.root.ownerDocument, "button", "pd-agent-add"); add.type = "button"; add.setAttribute("aria-label", "新建 Agent"); add.append(ipadIcon(this.root.ownerDocument, "user-plus"));
     add.addEventListener("click", () => {
@@ -155,7 +162,7 @@ export class IPadAgentPane {
       this.shell.openSheet({ title: "添加 Agent", content: mobileAgentCreationChoice(this.root.ownerDocument, {
         create: () => this.navigate({ kind: "agent-form" }), hire: () => this.host.services.openExpertHall(), close: () => this.shell.closeSheet(), error: error => this.error(error)
       }) });
-    }); this.strip.append(add);
+    }); groups.get("role")!.append(add);
     this.strip.scrollLeft = scroll;
     if (focused) Array.from(this.strip.querySelectorAll<HTMLElement>("[data-agent-id]")).find(node => node.dataset.agentId === focused)?.focus({ preventScroll: true });
   }

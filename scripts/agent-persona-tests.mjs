@@ -46,12 +46,12 @@ try {
     const registry = api.defaultAgentRegistry(); registry.agents.push({ id: "writer", name: "写作者", avatar: { kind: "default" }, position: "写作", positionDescription: "写文章", styleId: "creative", capabilityIds: ["knowledge", "custom-tool"], persona: "正文😀" }, plain(expert));
     registry.moduleOwners.journal = "writer"; registry.moduleOwners.todos = expert.id;
     const normalized = api.normalizeAgentRegistry(registry);
-    assert.deepEqual(plain(normalized.agents[1]), registry.agents[1]); assert.deepEqual(plain(normalized.agents[2]), expert);
+    assert.deepEqual(plain(normalized.agents.find(a => a.id === "writer")), { ...registry.agents.find(a => a.id === "writer"), capabilityIds: ["knowledge", "custom-tool", "journal"] }); assert.deepEqual(plain(normalized.agents.find(a => a.id === expert.id)), expert);
     assert.equal(normalized.moduleOwners.journal, "writer"); assert.equal(normalized.moduleOwners.todos, expert.id);
     assert.equal(api.normalizeAgentRegistry(api.defaultAgentRegistry()).agents[0].persona, undefined);
-    const dirty = plain(expert); dirty.persona = "private body must never enter an editor"; registry.agents[2] = dirty;
-    assert.equal(api.normalizeAgentRegistry(registry).agents[2].persona, undefined);
-    dirty.id = "wrong-fixed-identity"; const invalid = api.normalizeAgentRegistry(registry).agents[2];
+    const dirty = plain(expert); dirty.persona = "private body must never enter an editor"; registry.agents[registry.agents.findIndex(a => a.id === expert.id)] = dirty;
+    assert.equal(api.normalizeAgentRegistry(registry).agents.find(a => a.kind === "expert").persona, undefined);
+    dirty.id = "wrong-fixed-identity"; const invalid = api.normalizeAgentRegistry(registry).agents.find(a => a.kind === "expert");
     assert.equal(api.isExpertAgent(invalid), true); assert.equal(api.isAgentHired(invalid), false, "a malformed fixed identity remains locked and unavailable");
   });
   await test("4000 Unicode places and template recognition preserve selected fallback semantics", () => {
@@ -69,10 +69,10 @@ try {
       const raw = plain(expert); raw.expert.disclosure = disclosure;
       const registry = api.defaultAgentRegistry(); registry.agents.push(raw);
       const normalized = api.normalizeAgentRegistry(registry);
-      assert.equal(normalized.agents[1].expert.disclosure, disclosure.trim());
+      assert.equal(normalized.agents.find(a => a.id === expert.id).expert.disclosure, disclosure.trim());
       const { service } = fixture(normalized);
       const state = await service.snapshot();
-      assert.equal(state.registry.agents[1].expert.disclosure, disclosure.trim());
+      assert.equal(state.registry.agents.find(a => a.id === expert.id).expert.disclosure, disclosure.trim());
       assert.equal(JSON.stringify(state.registry).includes("persona"), false);
     }
     for (const disclosure of [undefined, null, "", " \n\t　 ", "😀".repeat(81), 123, false, { text: "开场" }, ["开场"]]) {
@@ -94,7 +94,7 @@ try {
     await assert.rejects(service.removeAgent(expert.id, state.version), /dismissal_flow/u);
     state = await service.setOwner("journal", expert.id, state.version);
     state = await service.updateExpert(registry => { registry.agents.find(agent => agent.id === expert.id).expert.hired = false; }, state.version);
-    assert.equal(state.registry.moduleOwners.journal, "sol"); assert.equal(state.registry.agents.find(agent => agent.id === expert.id).expert.lastConversationId, "conversation-1");
+    assert.equal(state.registry.moduleOwners.journal, ""); assert.equal(state.registry.agents.find(agent => agent.id === expert.id).expert.lastConversationId, "conversation-1");
     await assert.rejects(service.setOwner("journal", expert.id, state.version), /agent_module_owner_invalid/u);
     await assert.rejects(service.updateExpert(registry => { registry.agents = registry.agents.filter(agent => agent.id !== expert.id); }, state.version), /history_required/u);
     await assert.rejects(service.updateExpert(registry => { registry.agents[0].name = "改总助"; }, state.version), /cannot_edit_custom_agent/u);

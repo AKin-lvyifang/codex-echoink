@@ -1,4 +1,5 @@
-import type { KnowledgeMaintenanceRecord } from "./maintenance-record";
+import { knowledgeSystemReminderText } from "./knowledge-system-reminders";
+import { isP1Open, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { KnowledgeLinkingTask } from "./knowledge-linking-types";
 import { maintenanceFailureText } from "./maintenance-user-copy";
 
@@ -34,6 +35,8 @@ export interface MaintenanceActivityStep {
 export interface MaintenanceActivity {
   kind: "maintenance";
   taskKind?: "upgrade";
+  checkup?: true;
+  followupCount?: number;
   upgradeCounts?: Readonly<import("./maintenance-upgrade-contract").MaintenanceUpgradeActivityCounts>;
   id: string;
   originConversationId: string;
@@ -98,9 +101,9 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
     const sourceDone = done.filter(write => write.role === "source");
     const counts = { sourceTotal: upgrade.plan.counts.sourceStatusCount, sourceCompleted: sourceDone.filter(write => upgrade.plan.sourceItems.find(item => item.path === write.path)?.addStatus !== undefined).length,
       linkTotal: upgrade.plan.counts.backlinkCount, linksCompleted: sourceDone.reduce((sum, write) => sum + (upgrade.plan.sourceItems.find(item => item.path === write.path)?.addTargetPaths?.length ?? 0), 0),
-      wikiTotal: upgrade.plan.wikiItems.length, wikiCompleted: done.filter(write => write.role === "wiki").length };
+      wikiTotal: upgrade.plan.wikiItems.length + (upgrade.plan.noteRepairs?.length ?? 0), wikiCompleted: done.filter(write => write.role === "wiki").length };
     const completed = upgrade.phase === "completed", stage = progress?.stage ?? "scan", index = MAINTENANCE_ACTIVITY_STAGES.indexOf(stage);
-    return { kind: "maintenance", taskKind: "upgrade", id: record.recordId, originConversationId: record.originConversationId,
+    return { kind: "maintenance", taskKind: "upgrade", ...(upgrade.plan.purpose === "checkup" ? { checkup: true as const, followupCount: upgrade.plan.followups?.length ?? 0 } : {}), id: record.recordId, originConversationId: record.originConversationId,
       sourceCount: upgrade.plan.counts.sourceCount, sourcePaths: upgrade.plan.sourceItems.map(item => item.path), upgradeCounts: counts,
       batch: { index: 1, total: 1 }, stage, status: completed ? "completed" : progress?.status ?? "interrupted",
       steps: MAINTENANCE_ACTIVITY_STAGES.map((step, i) => ({ stage: step,
@@ -114,7 +117,7 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
   if (!record.p1 || !record.originConversationId) return null;
   const state = record.p1, progress = record.progress;
   const stage = progress?.stage ?? maintenanceRecordStage(record);
-  const completed = state.phase === "completed";
+  const completed = state.phase === "completed", settled = !isP1Open(record);
   // Historical start timestamps cannot stand in for actual completion time.
   if (completed && progress?.completedAt === undefined) return null;
   const index = MAINTENANCE_ACTIVITY_STAGES.indexOf(stage);
@@ -128,9 +131,9 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
     total: step === "decompose" ? record.sources.length : step === "write" ? pageTotal
       : step === "finalize" ? (pageTotal === null ? null : record.sources.length + (state.p2?.finalization.length ?? 0))
       : null,
-    state: completed || i < index ? "completed" : i === index ? "running" : "pending"
+    state: completed || i < index ? "completed" : i === index && !settled ? "running" : "pending"
   }));
-  const status = completed ? "completed" : progress?.status ?? "interrupted";
+  const status = completed && record.result.status !== "partial" ? "completed" : settled ? "partial" : progress?.status ?? "interrupted";
   const current = steps[index];
   const elapsed = progress?.elapsedMs[stage] ?? 0;
   const etaMs = status === "running" && current.completed >= 2 && current.total !== null && current.total > current.completed && elapsed > 0
@@ -138,7 +141,7 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
   return { kind: "maintenance", id: record.recordId, originConversationId: record.originConversationId, stage, status, steps,
     sourceCount: record.sources.length, sourcePaths: record.sources.map(source => source.path), pageCounts: maintenancePageCounts(record), batch: progress?.batch ?? { index: 1, total: 1 }, ...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
     activeElapsedMs: Object.values(progress?.elapsedMs ?? {}).reduce((sum, value) => sum + value, 0), etaMs,
-    failures: progress?.failures ?? [], updatedAt: progress?.updatedAt ?? record.at,
+    failures: [...(progress?.failures ?? []), ...record.result.issues.filter(issue => issue.code === "source_frontmatter_unsafe").map(issue => ({ key: issue.path ?? issue.code, message: issue.message, at: record.at }))], updatedAt: progress?.updatedAt ?? record.at,
     ...(progress?.completedAt ? { completedAt: progress.completedAt } : {}) };
 }
 
@@ -194,16 +197,25 @@ export function maintenanceTaskStateLabel(activity: Pick<MaintenanceActivity, "s
   return (english ? { running: "In progress", waiting: "Waiting for you", interrupted: "Not finished", completed: "Completed" }
     : { running: "进行中", waiting: "等你回应", interrupted: "没做完", completed: "已完成" })[maintenanceTaskStatus(activity)];
 }
-export function maintenanceTaskTitle(activity: Pick<MaintenanceActivity, "sourceCount" | "taskKind">, english = false): string {
+export function maintenanceTaskTitle(activity: Pick<MaintenanceActivity, "sourceCount" | "taskKind" | "checkup">, english = false): string {
+  if (activity.checkup) return english ? "Repair knowledge" : "体检修复";
   if (activity.taskKind === "upgrade") return english ? "Upgrade existing knowledge" : "升级旧知识";
   if (activity.sourceCount === null) return english ? "Organize knowledge" : "整理知识库";
   return english ? `Organize knowledge (${activity.sourceCount} sources)` : `整理知识库（${activity.sourceCount} 篇资料）`;
 }
-export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "sourceCount" | "pageCounts"> & Partial<Pick<MaintenanceActivity, "upgradeCounts">>, english = false): string {
+export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "sourceCount" | "pageCounts"> & Partial<Pick<MaintenanceActivity, "upgradeCounts" | "checkup" | "followupCount">>, english = false): string {
+  if (activity.checkup) {
+    const count = activity.upgradeCounts?.wikiCompleted ?? 0;
+    if (!count && activity.followupCount) return english ? `${activity.followupCount} items to continue` : `${activity.followupCount} 项待继续`;
+    return english ? `Updated ${count} knowledge notes` : `已更新 ${count} 篇知识笔记`;
+  }
   if (activity.upgradeCounts) {
     const counts = activity.upgradeCounts;
-    return english ? `Added status for ${counts.sourceCompleted} sources, added ${counts.linksCompleted} links and types for ${counts.wikiCompleted} Wiki pages`
-      : `已补好 ${counts.sourceCompleted} 篇资料状态、${counts.linksCompleted} 条链接，为 ${counts.wikiCompleted} 页 Wiki 补好类型`;
+    return [
+      counts.sourceCompleted ? english ? `Added status for ${counts.sourceCompleted} sources` : `已补好 ${counts.sourceCompleted} 篇资料状态` : "",
+      counts.linksCompleted ? english ? `Added ${counts.linksCompleted} links` : `已补好 ${counts.linksCompleted} 条链接` : "",
+      counts.wikiCompleted ? english ? `Added types for ${counts.wikiCompleted} Wiki pages` : `为 ${counts.wikiCompleted} 页 Wiki 补好类型` : "",
+    ].filter(Boolean).join(english ? "; " : "，") || (english ? "No additions needed" : "没有需要补写的内容");
   }
   const { sourceCount, pageCounts } = activity;
   if (sourceCount === null || !pageCounts) return english ? "Organizing completed." : "这次整理已完成。";
@@ -227,11 +239,23 @@ export function maintenanceStepText(step: Readonly<MaintenanceActivityStep>, eng
 }
 export function maintenanceReceiptForRecord(record: Readonly<KnowledgeMaintenanceRecord>): MaintenanceUserReceipt {
   const state = record.p1!, pageCounts = maintenancePageCounts(record), sourceCount = new Set(record.sources.map(source => source.path)).size;
-  const text = state.phase === "completed" ? maintenanceCompletionText({ sourceCount, pageCounts })
+  const text = state.phase === "completed" && record.result.status !== "partial" ? maintenanceCompletionText({ sourceCount, pageCounts })
+    : !isP1Open(record) ? maintenancePartialCompletionText(record)
     : state.phase === "decompose" ? maintenanceStepText({ stage: "decompose", completed: new Set(state.decompositions.map(d => d.sourcePath)).size, total: sourceCount, state: "running" })
     : state.phase === "write" ? maintenanceStepText({ stage: "write", completed: pageCounts.written, total: new Set(state.writingPlan.map(item => item.targetPath)).size, state: "running" })
     : state.phase === "finalize" ? "正在补链接和领域地图" : "正在汇总知识，核对已有内容。";
-  return { version: 1, text, sourceCount, pageCounts };
+  const reminders = state.phase === "completed" ? state.p2?.finalization.filter(item => !!state.p2?.committedFinalization[item.id]).flatMap(item => item.reminders ?? []) ?? [] : [];
+  const unique = [...new Map(reminders.map(item => [`${item.domain}:${item.mode}`, item])).values()];
+  const reminderText = unique.length === 1 ? knowledgeSystemReminderText(unique[0]) : unique.length ? `${unique[0].domain}等 ${unique.length} 个领域可以梳理体系。` : "";
+  const placements = state.phase === "completed" ? state.p2?.treeJobs?.filter(job =>
+    state.p2?.finalization.some(item => item.domains?.includes(job.domain) && state.p2?.committedFinalization[item.id]))
+    .flatMap(job => job.plan?.placements ?? []) ?? [] : [];
+  const pending = placements.filter(item => item.branch === "待归位").length;
+  const placed = placements.length - pending;
+  const placementText = [placed ? `${placed} 篇放进分支` : "", pending ? `${pending} 篇待归位` : ""]
+    .filter(Boolean).join("，");
+  return { version: 1, text: text + (placementText ? `，${placementText}。` : "") +
+    (reminderText ? ` ${reminderText}` : ""), sourceCount, pageCounts };
 }
 export function maintenanceActivityText(activity: Readonly<MaintenanceActivity>, english = false): string {
   if (activity.status === "completed") return maintenanceCompletionText(activity, english);
@@ -252,4 +276,10 @@ export function maintenanceStatusBarText(activity: Readonly<MaintenanceActivity>
     ? ` ${step.completed}/${step.total}${english ? activity.stage === "decompose" ? " sources" : " pages" : activity.stage === "decompose" ? " 篇" : " 页"}` : "";
   const stage = activity.stage === "finalize" ? english ? "Adding links and maps" : "补链接和领域地图" : maintenanceStageLabel(activity.stage, english);
   return `EchoInk ${english ? "Organize knowledge" : "整理知识"}：${maintenanceTaskStateLabel(activity, english)} · ${stage}${count}`;
+}
+
+export function maintenancePartialCompletionText(record: Readonly<KnowledgeMaintenanceRecord>): string {
+  const count = Object.keys(record.p1?.sourceFrontmatterFailures ?? {}).length;
+  return count ? `已写好 ${maintenancePageCounts(record).written} 页知识笔记，${count} 篇来源的属性回写失败。修正属性后可重试。`
+    : `已写好 ${maintenancePageCounts(record).written} 页知识笔记，仍有 ${record.result.issues.length} 项未完成，请查看错误详情。`;
 }

@@ -1,3 +1,4 @@
+import { settingsForDataSave } from "../plugin/settings-store";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -24,8 +25,8 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
       settings.apiProviders = []; settings.activeApiProviderId = "";
     }
     const file = path.join(root, `transaction-settings-${++fixtureSequence}.json`);
-    await writeFile(file, JSON.stringify(settings));
-    const before = structuredClone(settings);
+    await writeFile(file, JSON.stringify(settingsForDataSave(settings)));
+    const before = structuredClone(settings), beforeDisk = JSON.parse(await readFile(file, "utf8"));
     const attempts: Array<{ settings: CodexForObsidianSettings; requested: boolean }> = [];
     const commits: CodexForObsidianSettings[] = [], notifications: CodexForObsidianSettings[] = [];
     let saveGate: ReturnType<typeof deferred> | null = null, entered: ReturnType<typeof deferred> | null = null, fail = false;
@@ -62,7 +63,7 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
       }
     });
     plugin.onAgentRegistryChanged(() => { notifications.push(structuredClone(plugin.settings)); });
-    return { plugin, before, attempts, commits, notifications, runService,
+    return { plugin, before, beforeDisk, attempts, commits, notifications, runService,
       failSave(value: boolean) { fail = value; },
       pauseSave() { saveGate = deferred(); entered = deferred(); return { entered: entered.promise, release: () => { saveGate?.resolve(); } }; },
       async disk() { return JSON.parse(await readFile(file, "utf8")) as CodexForObsidianSettings; },
@@ -90,10 +91,10 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
     assert.ok(captured.settings.setup.completedAt > 0); assert.equal(captured.settings.setup.lastCheckedAt, captured.settings.setup.completedAt);
     assert.equal(captured.settings.setup.tutorialStep, "sidebar"); assert.equal(captured.settings.setup.paperGuideDismissedAt, 0);
     assert.equal(captured.settings.setup.dismissedVersion, ECHOINK_ONBOARDING_VERSION); assert.equal(captured.requested, false);
-    assert.deepEqual(await f.disk(), f.before, "disk remains at its old snapshot while the one write is pending");
+    assert.deepEqual(await f.disk(), f.beforeDisk, "disk remains at its old snapshot while the one write is pending");
     gate.release(); await saving;
     assert.equal(f.commits.length, 1); assert.equal(f.notifications.length, 1);
-    assert.deepEqual(await f.disk(), captured.settings); assert.equal(f.plugin.isEchoInkOnboardingRequested(), false);
+    assert.deepEqual(await f.disk(), JSON.parse(JSON.stringify(captured.settings))); assert.equal(f.plugin.isEchoInkOnboardingRequested(), false);
     assert.deepEqual(f.plugin.settings.agentRegistry.agents.find((item: AgentDefinition) => item.id === "manual-same-name"), f.before.agentRegistry.agents.find(item => item.id === "manual-same-name"), "same display names are not merged");
     for (const id of AGENT_MODULE_IDS.filter(id => id !== "knowledge-base")) assert.equal(captured.settings.agentRegistry.moduleOwners[id], f.before.agentRegistry.moduleOwners[id]);
     f.assertNoExecution();
@@ -122,7 +123,7 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
     await assert.rejects(f.plugin.saveOnboardingAgentDefinition(agent, organizer.moduleIds), /synthetic-settings-write-rejected/);
     assert.equal(f.attempts.length, 1); assert.equal(f.commits.length, 0); assert.equal(f.notifications.length, 0);
     assert.equal(f.plugin.settings.agentRegistry, originalRegistry);
-    assert.deepEqual(f.plugin.settings, f.before); assert.deepEqual(await f.disk(), f.before);
+    assert.deepEqual(JSON.parse(JSON.stringify(f.plugin.settings)), JSON.parse(JSON.stringify(f.before))); assert.deepEqual(await f.disk(), f.beforeDisk);
     assert.equal(f.plugin.isEchoInkOnboardingRequested(), true);
     f.failSave(false); await f.plugin.saveOnboardingAgentDefinition(agent, organizer.moduleIds);
     assert.equal(f.attempts.length, 2); assert.equal(f.commits.length, 1);
@@ -144,7 +145,7 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
     const persisted = await f.disk();
     await f.plugin.saveOnboardingAgentDefinition({ ...agent, name: "重入不覆盖原定义" }, ["finance"]);
     assert.equal(f.attempts.length, 1); assert.deepEqual(await f.disk(), persisted);
-    assert.deepEqual(f.plugin.settings, persisted); f.assertNoExecution();
+    assert.deepEqual(JSON.parse(JSON.stringify(f.plugin.settings)), JSON.parse(JSON.stringify(persisted))); f.assertNoExecution();
     console.log("PASS parallel same-ID submissions and later reentry result in one durable write and cannot overwrite the saved definition or module owners");
   }
   {
@@ -169,7 +170,7 @@ export async function runOnboardingAgentTransactionTests(root: string): Promise<
       const f = await fixture(); f.plugin.settings.setup.onboardingAgentId = createdId;
       const before = structuredClone(f.plugin.settings);
       await assert.rejects(f.plugin.advanceEchoInkOnboarding("colleague"), /请先创建|Create your colleague first/);
-      assert.deepEqual(f.plugin.settings, before); assert.equal(f.plugin.isEchoInkOnboardingRequested(), true);
+      assert.deepEqual(JSON.parse(JSON.stringify(f.plugin.settings)), JSON.parse(JSON.stringify(before))); assert.equal(f.plugin.isEchoInkOnboardingRequested(), true);
       assert.equal(f.attempts.length, 0); f.assertNoExecution();
     }
     const ordinary = await fixture(), agent = colleague("ordinary-creation");

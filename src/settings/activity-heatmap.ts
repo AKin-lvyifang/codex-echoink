@@ -11,6 +11,7 @@ interface ActivityHeatmapOptions {
   legend?: readonly { level: string; label: string }[];
   emptyLevel?: string;
   summary?: (days: readonly ActivityHeatmapDay[]) => string;
+  summaryInFooter?: boolean;
   zh: boolean;
   stateKey: string;
   app?: Pick<App, "keymap" | "scope">;
@@ -144,7 +145,9 @@ export function renderActivityHeatmap(parent: HTMLElement, heading: HTMLElement,
     }
     focused ??= cells[0];
     focused.tabIndex = 0;
-    info.setText(focused.getAttribute("aria-label") ?? "");
+    const summary = options.summaryInFooter ? options.summary?.(days) : undefined;
+    info.setText(summary ?? focused.getAttribute("aria-label") ?? "");
+    if (summary) calendar.onmouseleave = () => info.setText(summary);
     const initial = focused;
     const scrollKey = `${stateKey}Scroll${mode}${start}To${end}`;
     scroll.onscroll = () => { if (scroll.isConnected) state.dataset[scrollKey] = String(scroll.scrollLeft); };

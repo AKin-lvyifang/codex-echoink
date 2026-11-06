@@ -194,7 +194,7 @@ export async function readNativeJournalContext(
   const target = app.vault.getAbstractFileByPath(targetPath);
   if (target && !(target instanceof TFile)) throw new Error("当天日记路径已被文件夹占用。");
   const templateFile = app.vault.getAbstractFileByPath(settings.template);
-  const source = options.readTemplate
+  const source = !settings.template ? null : options.readTemplate
     ? await options.readTemplate(settings.template)
     : templateFile instanceof TFile ? await app.vault.read(templateFile) : null;
   if (source === null && settings.template && settings.template !== `${settings.templatesFolder}/此刻速记.md`) {

@@ -121,8 +121,10 @@ await withFakeClock(async clock => {
   const questionResult = tool.execute("call-question", input);
   await Promise.resolve();
   assert.equal(state.turnWatchdog, null);
-  assert.equal(clock.timerCount(), 0, "service owner also stops its timer while waiting");
+  assert.equal(state.turnWatchdog, null, "service owner stops its watchdog while waiting");
+  assert.equal(clock.timerCount(), 1, "the deferred local save remains scheduled");
   clock.advance(360_000);
+  assert.equal(clock.timerCount(), 0, "waiting does not poll after the local save finishes");
   assert.equal(stops, 0);
   const binding = broker.bindingFor({ conversationId: session.id, piSessionId: "pi-question", productRunId: "run-question", interactionId: interaction.interactionId });
   assert.ok(binding);

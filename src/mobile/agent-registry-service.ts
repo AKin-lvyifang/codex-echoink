@@ -146,12 +146,13 @@ export class MobileAgentRegistryService {
     if (versionOf(normalized) !== version) await this.persist(normalized);
     return this.current();
   }
-  createAgent(agent: AgentDefinition, version: string): Promise<MobileAgentRegistrySnapshot> {
-    const input = clone(agent);
+  createAgent(agent: AgentDefinition, version: string, moduleIds: readonly AgentModuleId[] = []): Promise<MobileAgentRegistrySnapshot> {
+    const input = clone(agent), modules = [...moduleIds];
     return this.update(draft => {
       validateAgent(input);
       if (draft.agents.some(item => item.id === input.id)) throw new Error("agent_already_exists");
       draft.agents.push(input);
+      for (const module of modules) Object.assign(draft, setModuleOwner(draft, module, input.id));
     }, version);
   }
   patchAgent(agentId: string, patch: Partial<Omit<AgentDefinition, "id">>, version: string): Promise<MobileAgentRegistrySnapshot> {
@@ -167,7 +168,7 @@ export class MobileAgentRegistryService {
     }, version);
   }
   setOwner(moduleId: AgentModuleId, agentId: string, version: string): Promise<MobileAgentRegistrySnapshot> {
-    return this.update(draft => { draft.moduleOwners = setModuleOwner(draft, moduleId, agentId).moduleOwners; }, version);
+    return this.update(draft => { Object.assign(draft, setModuleOwner(draft, moduleId, agentId)); }, version);
   }
   /** Caller must first stop/settle runs and await store.handoffAgentTasks(agentId). */
   removeAgent(agentId: string, version: string): Promise<MobileAgentRegistrySnapshot> {

@@ -1,3 +1,4 @@
+import { installCompanyFixture } from "./company-fixture";
 import previewManifest from "../../manifest.json";
 import { seedEnglishFixture, syntheticEnglishRequest } from "./english-fixture";
 import { seedKnowledgePageFixture } from "./knowledge-page-fixture";
@@ -174,8 +175,10 @@ if (params.has("tablet")) {
   document.querySelector("#fixture-sidebar-toggle")!.addEventListener("click", () => { document.body.classList.toggle("fixture-sidebar-open"); });
   document.querySelector(".fixture-backdrop")!.addEventListener("click", () => { document.body.classList.remove("fixture-sidebar-open"); });
 }
-const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture };
-if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
+const workbenchFixture = { store, settings, runtime, host, requests, plugin, services, workspaceFixture, moduleOwnerPreview: params.has("moduleowner") };
+if (params.has("company")) await installCompanyFixture(workbenchFixture);
+else if (params.has("workbench")) await seedWorkbenchFixture(workbenchFixture);
+
 if (params.has("modulefixture")) await seedMobileModuleFixture(host, settings, services);
 if (params.has("financepreview")) {
   settings.lifestyle.finance.enabled = true;
@@ -193,7 +196,10 @@ if (params.has("desktop") && params.has("account")) {
   const element = document.querySelector<HTMLElement>("#home")!; const view = new EchoInkHomeView({ app: host.app, contentEl: element, containerEl: element } as any, services);
   element.hidden = false; root.hidden = true; await view.onOpen(); desktopDispose = () => view.onClose();
 } else {
-  if (params.has("financepreview") && !params.has("finance")) {
+  if (params.has("company")) {
+    if (Platform.isTablet) { await plugin.ipadNavigation!.openHome(); await plugin.openIPadAgent({ kind: "agent", agentId: "sol" }); await plugin.ipadNavigation!.openHome(); }
+    else await plugin.openIPhoneRoute({ kind: "home" });
+  } else if (params.has("financepreview") && !params.has("finance")) {
     if (Platform.isTablet) { await plugin.ipadNavigation!.openHome(); await plugin.openIPadAgent({ kind: "agent", agentId: "finance" }); await plugin.ipadNavigation!.openHome(); if (innerWidth <= 960) document.body.classList.remove("fixture-sidebar-open"); }
     else await plugin.openIPhoneRoute({ kind: "home" });
   } else if (params.has("legacy")) await plugin.navigation.open(); else await plugin.open();
@@ -206,7 +212,7 @@ if (params.has("long")) {
   if (action) action.append("：记录今天的重要决定与下一步行动");
 }
 document.querySelector("#fixture-home-tab")!.addEventListener("click", () => {
-  if (params.has("financepreview")) void (Platform.isTablet ? plugin.ipadNavigation!.openHome() : plugin.openIPhoneRoute({ kind: "home" }));
+  if (params.has("financepreview") || params.has("company")) void (Platform.isTablet ? plugin.ipadNavigation!.openHome() : plugin.openIPhoneRoute({ kind: "home" }));
   else void plugin.navigation.openHome();
 });
 document.querySelector("#fixture-close-settings")!.addEventListener("click", () => { void workspaceFixture.closeSettings(); });

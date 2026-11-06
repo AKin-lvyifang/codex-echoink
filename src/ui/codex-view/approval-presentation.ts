@@ -14,6 +14,20 @@ export interface ApprovalPresentation {
   readonly english: boolean;
 }
 
+/** Program-owned compact heading; no model-generated card title or approval state. */
+export function companyApprovalSummary(presentation: ApprovalPresentation): { verb: string; target: string; folder: string } {
+  const verbs: Record<string, string> = { "新建文件": "新建", "修改文件": "修改", "修改文件属性": "修改属性", "移动文件": "移动", "删除文件": "删除",
+    "Create a file": "Create", "Update a file": "Update", "Update file properties": "Update properties", "Move a file": "Move", "Delete a file": "Delete" };
+  const destinations = presentation.destination.filter(field => !["服务", "操作", "Service", "Operation"].includes(field.label));
+  const path = destinations[0]?.value ?? "";
+  const name = (value: string) => value.replace(/\\/gu, "/").split("/").pop() || value;
+  const moving = presentation.action === "移动文件" || presentation.action === "Move a file";
+  const target = moving ? destinations.map(field => name(field.value)).join(" → ") : path ? name(path)
+    : presentation.destination.find(field => field.label === "操作" || field.label === "Operation")?.value ?? "";
+  return { verb: verbs[presentation.action] ?? presentation.action, target,
+    folder: path.replace(/\\/gu, "/").includes("/") ? path.replace(/\\/gu, "/").replace(/\/[^/]*$/u, "") : "" };
+}
+
 type JsonObject = Record<string, unknown>;
 
 /** A display projection only. The original strings remain the approval binding's input. */
@@ -141,7 +155,7 @@ export function formatApprovalPresentation(input: Readonly<{
       if (!same) add(destination, targetPaths.length ? text(`预览位置 · ${pathLabel(field.label, false)}`, `Preview location · ${pathLabel(field.label, true)}`) : pathLabel(field.label, english), field.value);
       consumedPreview.add(field.label);
     }
-    if (!targetObject && target !== undefined && !Array.isArray(target)) {
+    if (!targetObject && target !== undefined && !Array.isArray(target) && !destination.some(field => field.value === displayScalar(target, english))) {
       add(destination, text("目标", "Target"), target);
     }
     if (operation === "note_delete" || operation === "delete") {
@@ -150,7 +164,11 @@ export function formatApprovalPresentation(input: Readonly<{
     renderContentFields(previewObject, changes, consumedPreview, english);
     const change = objectValue(previewObject?.change);
     if (change) {
-      const consumedChange = new Set<string>();
+      const consumedChange = new Set<string>(["kind", "added", "removed", "truncated"]);
+      for (const field of pathFields(change)) {
+        if (!destination.some(candidate => candidate.value === field.value)) add(destination, pathLabel(field.label, english), field.value);
+        consumedChange.add(field.label);
+      }
       const diff = typeof change.diff === "string" ? splitUnifiedDiff(change.diff) : null;
       if (diff && !consumedPreview.has("content") && !consumedPreview.has("after")) {
         if (change.kind !== "add") add(changes, text("修改前（变更片段）", "Before (changed excerpt)"), diff.before);
@@ -165,6 +183,10 @@ export function formatApprovalPresentation(input: Readonly<{
     }
   }
 
+  // Transport/version metadata stays in the existing, collapsed originals below.
+  if (!mcp) for (const key of ["byteLength", "contentSha256", "expectedVersion", "expectedContentRevision", "atomicVersionCheck", "recoverableTrashOnly"]) {
+    consumedTarget.add(key); consumedPreview.add(key);
+  }
   if (targetObject) changes.push(...flattenFields(targetObject, "", consumedTarget, english));
   if (Array.isArray(target)) changes.push(...flattenFields({ target }, "", new Set(), english));
   if (previewObject) changes.push(...flattenFields(previewObject, "", consumedPreview, english));
@@ -182,12 +204,13 @@ export function formatApprovalPresentation(input: Readonly<{
 }
 
 /** Render all supplied text as text, including file content and tool-provided strings. */
-export function renderApprovalPresentation(container: HTMLElement, presentation: ApprovalPresentation): HTMLElement {
+export function renderApprovalPresentation(container: HTMLElement, presentation: ApprovalPresentation, options: { companyCompact?: boolean } = {}): HTMLElement {
   const text = (zh: string, en: string) => presentation.english ? en : zh;
+  const noticesToShow = options.companyCompact ? presentation.notices.filter(notice => notice !== "将删除以上文件。" && notice !== "The file above will be deleted.") : presentation.notices;
   // Decision-relevant warnings remain beside the header, outside the scrolling details.
-  if (presentation.notices.length) {
+  if (noticesToShow.length) {
     const notices = container.createDiv({ cls: "codex-approval-notices", attr: { role: "note", "aria-label": text("操作提醒", "Operation warnings") } });
-    for (const notice of presentation.notices) notices.createDiv({ cls: "codex-approval-notice", text: notice });
+    for (const notice of noticesToShow) notices.createDiv({ cls: "codex-approval-notice", text: notice });
   }
   const body = container.createDiv({ cls: "codex-approval-presentation", attr: { tabindex: "0", "aria-label": text("操作详情", "Operation details") } });
   const section = (label: string) => {
@@ -195,7 +218,7 @@ export function renderApprovalPresentation(container: HTMLElement, presentation:
     root.createDiv({ cls: "codex-smooth-ai-approval-label", text: label });
     return root;
   };
-  section(text("将做什么", "What will happen")).createDiv({ cls: "codex-approval-action", text: presentation.action });
+  if (!options.companyCompact) section(text("将做什么", "What will happen")).createDiv({ cls: "codex-approval-action", text: presentation.action });
   const fields = (parent: HTMLElement, values: readonly ApprovalPresentationField[]) => {
     for (const field of values) {
       const row = parent.createDiv({ cls: "codex-approval-field" });
@@ -206,8 +229,8 @@ export function renderApprovalPresentation(container: HTMLElement, presentation:
   if (presentation.destination.length) fields(section(text("写到哪里 / 提交到哪里", "Where it goes")), presentation.destination);
   if (presentation.changes.length) fields(section(text("新增或改了什么", "What is added or changed")), presentation.changes);
   if (presentation.technicalDetails.length) {
-    const details = body.createEl("details", { cls: "codex-approval-technical-details" });
-    details.createEl("summary", { text: text("技术详情", "Technical details") });
+    const details = body.createEl(options.companyCompact ? "div" : "details", { cls: "codex-approval-technical-details" });
+    if (!options.companyCompact) details.createEl("summary", { text: text("技术详情", "Technical details") });
     fields(details, presentation.technicalDetails);
   }
   return body;
@@ -273,6 +296,7 @@ function flattenFields(value: JsonObject, prefix: string, consumed: ReadonlySet<
   const knownLabels: Record<string, string> = {
     "arguments.title": english ? "Title" : "标题",
     "arguments.content": english ? "Content" : "内容",
+    "change.diff": english ? "Content changes" : "内容差异",
     "change.added": english ? "Added lines" : "新增行数",
     "change.removed": english ? "Removed lines" : "移除行数"
   };

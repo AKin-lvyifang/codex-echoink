@@ -4,6 +4,18 @@ import { renderWorkspacePreview, type WorkspacePreviewController, type Workspace
 import { ownedDiv } from "../ui/owned-dom";
 
 export const WORKSPACE_PREVIEW_VIEW_TYPE = "echoink-workspace-preview";
+/** Bind .html to the preview only when nobody else owns it. Newer Obsidian builds and other plugins may already
+ * register "html", and Obsidian throws on duplicates, which would abort the whole plugin load. EchoInk opens its
+ * own previews by view type, so losing the binding only affects double-clicking .html files in the file list. */
+export function registerWorkspacePreviewExtension(plugin: { app: unknown; registerExtensions(extensions: string[], viewType: string): void }): void {
+  const registry = (plugin.app as { viewRegistry?: { isExtensionRegistered?(extension: string): boolean } }).viewRegistry;
+  if (registry?.isExtensionRegistered?.("html")) return;
+  try { plugin.registerExtensions(["html"], WORKSPACE_PREVIEW_VIEW_TYPE); }
+  catch (error: unknown) {
+    if (!error || typeof error !== "object" || !("message" in error) || error.message !== 'Attempting to register an existing file extension "html"') throw error;
+    console.warn("[EchoInk] .html already handled elsewhere; keeping the existing handler.", error);
+  }
+}
 export interface WorkspacePreviewViewHost extends WorkspacePreviewRenderOptions {
   service: WorkspaceService;
   /** Supply only on desktop. The host owns external browser integration. */

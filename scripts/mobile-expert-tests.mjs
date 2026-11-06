@@ -152,7 +152,7 @@ try {
   await test("download failure leaves no identity; next use adopts updated package version without exposing private body", async () => {
     const f = await fixture();
     try {
-      f.downloadFail(true); await assert.rejects(f.services.hireExpert("synthetic"), /download failed/u); assert.equal(f.settings.agentRegistry.agents.length, 1);
+      f.downloadFail(true); await assert.rejects(f.services.hireExpert("synthetic"), /download failed/u); assert.deepEqual(JSON.parse(JSON.stringify(f.settings.agentRegistry.agents.map(agent => agent.id))), ["sol", "generalist"]);
       f.downloadFail(false); await f.services.hireExpert("synthetic"); await f.services.openExpert("expert-synthetic"); const id = f.opens.at(-1).id;
       f.version("draft-2"); const submission = await f.runtime.submit("update package", id); await submission.completion;
       assert.equal(f.settings.agentRegistry.agents.find(agent => agent.id === "expert-synthetic").expert.packageVersion, "draft-2");

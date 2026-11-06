@@ -3,6 +3,8 @@ export interface MobileShellPage {
   id: string;
   title: string;
   subtitle?: string;
+  /** Optional identity shown beside the title (for example, an Agent avatar). */
+  titleLeading?: HTMLElement;
   content: HTMLElement;
   footer?: HTMLElement;
   actions?: HTMLElement;

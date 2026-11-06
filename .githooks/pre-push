@@ -1,3 +1,5 @@
 #!/bin/sh
 
-node scripts/pre-push-check.mjs
+updates="$(cat)"
+printf '%s\n' "$updates" | sh scripts/public-push-guard.sh "$1" "$2" || exit 1
+printf '%s\n' "$updates" | node scripts/pre-push-check.mjs

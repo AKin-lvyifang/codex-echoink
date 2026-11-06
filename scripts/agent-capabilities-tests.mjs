@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
@@ -7,10 +8,9 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
 if (!process.env.ECHOINK_AGENT_CAPABILITIES_TEST_ROOT?.trim()) throw new Error("Set ECHOINK_AGENT_CAPABILITIES_TEST_ROOT to an existing task directory under ~/EchoInk-TestVaults/90-任务临时");
 const requested = await realpath(path.resolve(process.env.ECHOINK_AGENT_CAPABILITIES_TEST_ROOT));
-if (!requested.startsWith(allowed + path.sep)) throw new Error("Capability fixtures must stay inside ~/EchoInk-TestVaults/90-任务临时");
+if (!isDisposableTestRoot(requested)) throw new Error("Capability fixtures must stay inside ~/EchoInk-TestVaults/90-任务临时");
 const run = await mkdtemp(path.join(requested, "capabilities-run-"));
 try {
   const outfile = path.join(run, "agent-capabilities-tests.mjs");

@@ -2,6 +2,8 @@ import { showConversationContentLocationNotice } from "../conversation-content-n
 import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
 import { ownedFragment, ownedEl } from "../owned-dom";
 import { disposeOriginControls } from "../../settings/origin-controls";
+import { renderAnimateIcon } from "../animate-icon";
+import type { MemoryReceipt } from "../../home/memory/memory-page-types";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
 import { drawingApprovalPresentation } from "../../excalidraw/presentation";
@@ -180,6 +182,7 @@ export interface MessageListRenderInput {
     status: "available" | "changed" | "missing";
     content?: string;
   }>>;
+  onOpenMemoryReceipt?: (receipt: MemoryReceipt) => Promise<void>;
   onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onAnswerDirectoryReady?: (directory: string) => Promise<void>;
   onOpenOutputLocationSettings?: (kind: "answer" | "generation") => void | Promise<void>;
@@ -193,6 +196,8 @@ export interface MessageListRenderInput {
   onModifyTaskPlan?: (planId: string, title: string) => void;
   onMissingPlanAction?: (message: ChatMessage, action: "retry" | "disable") => Promise<void>;
   planActionsDisabled?: boolean;
+  /** Company worker interactions are handled by the shared workbench/project surface. */
+  hideApprovalCards?: boolean;
   resolveApprovalDecision?: (
     message: Readonly<ChatMessage>
   ) => MessageApprovalDecisionBinding | null;
@@ -425,6 +430,8 @@ export class CodexMessageListRenderer {
   private readonly answerMarkdown = new AnswerMarkdownRenderer();
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
+  private revealedMessageId: string | null = null;
+  private revealedMessageAt = 0;
   private currentRows: MessageRenderRow[] = [];
   private failedAttachmentResourceUris = new Set<string>();
   private viewportResizeObserver: ResizeObserver | null = null;
@@ -464,6 +471,7 @@ export class CodexMessageListRenderer {
       this.cancelAllDisclosureAutoFolds();
       this.virtualSessionId = env.sessionId;
       this.virtualRowHeights.clear();
+      this.revealedMessageId = null;
       this.openTurnProcesses.clear();
       this.answerReadingTail = null;
       this.failedAttachmentResourceUris.clear();
@@ -521,6 +529,7 @@ export class CodexMessageListRenderer {
       messagesEl.scrollTop = previousScrollTop;
       this.restoreReadingAnchor(readingAnchor);
     }
+    this.markRevealedMessage();
   }
 
   measureVisibleVirtualRows(messagesEl: HTMLElement, virtualListEl: HTMLElement, forceBottom = false, options: { rerender?: boolean } = {}): boolean {
@@ -691,12 +700,51 @@ export class CodexMessageListRenderer {
     return null;
   }
 
+  /** Reveal the real message through the same virtual-row offsets as ordinary scrolling. */
+  revealMessage(messageId: string): boolean {
+    const env = this.requireEnv();
+    const row = this.currentRows.find(row => (row.kind === "assistantTurn" ? row.turn.messages
+      : row.kind === "turnProcess" ? [...row.turn.processMessages, row.turn.finalAnswer] : [row.message])
+      .some(message => message.id === messageId));
+    if (!row) return false;
+    env.virtualListEl.querySelectorAll(".codex-memory-source-target").forEach(target => target.removeClass("codex-memory-source-target"));
+    this.revealedMessageId = messageId;
+    this.revealedMessageAt = Date.now();
+    env.messagesEl.scrollTop = this.rowTopForRowId(row.id) ?? 0;
+    this.render({ ...env, options: { preserveScroll: true, forceBottom: false, fromScroll: true } });
+    this.env?.virtualListEl.querySelector<HTMLElement>(".codex-memory-source-target")?.focus({ preventScroll: true });
+    return true;
+  }
+
+  private markRevealedMessage(): HTMLElement | undefined {
+    if (!this.revealedMessageId || !this.env) return;
+    if (Date.now() - this.revealedMessageAt >= 2_000) {
+      this.revealedMessageId = null;
+      return;
+    }
+    const element = Array.from(this.env.virtualListEl.querySelectorAll<HTMLElement>("[data-message-id]")).find(element => element.dataset.messageId === this.revealedMessageId);
+    if (element && !element.classList.contains("codex-memory-source-target")) {
+      element.addClass("codex-memory-source-target");
+      element.tabIndex = -1;
+      element.style.setProperty("--memory-source-hint-delay", `${this.revealedMessageAt - Date.now()}ms`);
+      element.onanimationend = event => {
+        if (event.target !== element || event.animationName !== "echoink-memory-source-hint") return;
+        element.removeClass("codex-memory-source-target");
+        element.onanimationend = null;
+        element.style.removeProperty("--memory-source-hint-delay");
+        this.revealedMessageId = null;
+      };
+    }
+    return element;
+  }
+
   private virtualRowHeightFor(rowId: string): number {
     const measured = this.virtualRowHeights.get(rowId);
     return measured && measured > 0 ? measured : VIRTUAL_ROW_ESTIMATE_PX;
   }
 
   resetVirtualWindow(): void {
+    this.revealedMessageId = null;
     this.cancelAllDisclosureAutoFolds();
     this.virtualSessionId = "";
     this.virtualRowHeights.clear();
@@ -2171,14 +2219,7 @@ export class CodexMessageListRenderer {
 
   private renderAnswerSources(container: HTMLElement, turn: AgentTurnView): void {
     const usage = mergeKnowledgeUsageMessageData(turn.messages);
-    // Memory snapshots repeat the same recall across phases. Only current /
-    // completed describe actual injection; total is a candidate count.
-    const usedMemoryCount = Math.max(0, ...turn.messages.flatMap((message) =>
-      (message.reasoningSummary?.activities ?? []).filter((activity) => activity.kind === "memory")
-        .map((activity) => activity.completed ?? activity.current)
-        .filter((count): count is number => typeof count === "number" && Number.isFinite(count) && count >= 0)));
-    const referencedMemoryCount = new Set(usage.personalMemorySources.map((source) => source.id.trim()).filter(Boolean)).size;
-    const missingMemoryCount = Math.max(0, usedMemoryCount - referencedMemoryCount);
+    const receiptSources = [...new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? []).map(source => [source.id, source])).values()];
     const citations = turn.messages.flatMap((message) => message.citations?.citations ?? []);
     const summary = citations.length ? {
       status: turn.messages.find((message) => message.citations)?.citations?.status ?? "strong",
@@ -2186,13 +2227,21 @@ export class CodexMessageListRenderer {
       citations
     } : undefined;
     const verificationSkipped = turn.messages.find(message => message.knowledgeVerificationSkipped)?.knowledgeVerificationSkipped;
-    const signature = JSON.stringify([usage.references, usage.personalMemorySources, usage.askSourceAttribution, summary, usedMemoryCount, missingMemoryCount, verificationSkipped]);
+    const question = this.requireEnv().messages.slice(0, turn.anchorIndex).reverse().find(message => message.role === "user")?.text;
+    const signature = JSON.stringify([usage.references, usage.askSourceAttribution, summary, verificationSkipped, receiptSources, question]);
     const previous = container.querySelector<HTMLElement>(".codex-answer-sources");
     if (previous?.dataset.signature === signature) return;
     previous?.remove();
     const host = container.createDiv({ cls: "codex-answer-sources" });
     host.dataset.signature = signature;
-    this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, producedPaths: [] }, summary, missingMemoryCount, true);
+    if (receiptSources.length) {
+      const env = this.requireEnv();
+      const button = host.createEl("button", { cls: "codex-memory-receipt", attr: { type: "button", "aria-label": conversationUiText(env.settingsLanguage, `用了 ${receiptSources.length} 条记忆`, `Used ${receiptSources.length} memories`) } });
+      renderAnimateIcon(button.createSpan({ attr: { "aria-hidden": "true" } }), "brain");
+      button.createSpan({ text: conversationUiText(env.settingsLanguage, `用了 ${receiptSources.length} 条记忆`, `Used ${receiptSources.length} memories`) });
+      button.onclick = () => { void env.onOpenMemoryReceipt?.({ conversationId: env.sessionId, messageId: turn.finalAnswer?.id, question, sources: receiptSources }).catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+    }
+    this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, personalMemorySources: [], producedPaths: [] }, summary, 0, true);
     this.renderKnowledgeVerificationNote(host, verificationSkipped);
     const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
     if (footer) container.insertBefore(host, footer);
@@ -3373,6 +3422,7 @@ export class CodexMessageListRenderer {
 
   private renderApprovalCard(container: HTMLElement, message: ChatMessage): void {
     const env = this.requireEnv();
+    if (env.hideApprovalCards) return;
     const binding = env.resolveApprovalDecision?.(message) ?? null;
     const state = approvalStateForMessage(message)
       ?? (binding ? "waiting_approval" : null);

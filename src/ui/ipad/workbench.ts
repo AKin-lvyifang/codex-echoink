@@ -5,6 +5,7 @@ import { HomeSearchService } from "../../home/home-search";
 import { isHomeNotePath } from "../../home/home-note-visibility";
 import { IPadShell } from "./shell";
 import { createHomePage } from "./workbench-pages";
+import { createIPadProjectPage } from "./company-pages";
 import type { IPadPageContext, IPadRoute, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadElement as el } from "./workbench-elements";
 import { mobileModuleEnabled } from "../../mobile/module-settings";
@@ -36,11 +37,18 @@ export class IPadWorkbench {
 
   navigate(route: IPadRoute, _replace = false): Promise<void> {
     return this.enqueue(async () => {
+      if (route.kind === "project") {
+        const id = `project:${route.projectId}`;
+        if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
+        const page = createIPadProjectPage(this.context, route.projectId); if (!await this.shell.push(page)) page.dispose?.(); return;
+      }
       if (route.kind !== "home") { await this.host.openAgent(route); return; }
       if (this.shell.hasPage("ipad-home")) await this.shell.backTo("ipad-home");
       else this.shell.mount(createHomePage(this.context));
     });
   }
+
+  openProject(projectId: string): Promise<void> { return this.navigate({ kind: "project", projectId }); }
 
   openModule(module: AgentModuleId): Promise<void> {
     return this.enqueue(async () => {

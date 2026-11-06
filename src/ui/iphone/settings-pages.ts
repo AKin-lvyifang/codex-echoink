@@ -1,3 +1,4 @@
+import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
 import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
 import { openFolderPicker } from "./knowledge-settings-pages";
 import license from "../../../LICENSE";
@@ -23,7 +24,7 @@ import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import { pushSettingsPage, settingsBody, settingsBrand, settingsError, settingsGroup, settingsRow, settingsSelect, settingsSwitch } from "./settings-elements";
 
 export const IPHONE_SETTINGS_CATEGORIES = [
-  ["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"],
+  ["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["memory", "brain", "记忆"],
   ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]
 ] as const;
 type Category = typeof IPHONE_SETTINGS_CATEGORIES[number][0];
@@ -38,7 +39,7 @@ export class IPhoneSettingsPages {
   constructor(private readonly ctx: IPhonePageContext, private readonly legacy: (route: MobileSettingsRoute) => Promise<void>) {
     this.models = new IPhoneModelPages(ctx, () => this.refresh());
     this.capabilityPages = new IPhoneCapabilityPages(ctx, id => this.agentForm(id));
-    this.agentPages = new IPhoneAgentSettingsPages(ctx, id => this.agentForm(id));
+    this.agentPages = new IPhoneAgentSettingsPages(ctx, (id, creation) => this.agentForm(id, creation));
     this.accountPages = new IPhoneAccountPages(ctx);
   }
   refresh(): void { for (const render of this.refreshers) render(); refreshSettingsLanguage(this.ctx); this.capabilityPages.refresh(); this.agentPages.refresh(); this.accountPages.refresh(); }
@@ -52,6 +53,7 @@ export class IPhoneSettingsPages {
     if (category === "model") return this.models.open();
     if (category === "caps") return this.capabilityPages.open();
     if (category === "agent") return this.agentPages.open();
+    if (category === "memory") return this.agentPages.open("memory");
     if (category === "account") return this.accountPages.open();
     const title = IPHONE_SETTINGS_CATEGORIES.find(item => item[0] === category)?.[2] ?? "设置";
     const id = `iphone-settings-${category ?? "root"}`;
@@ -115,8 +117,8 @@ export class IPhoneSettingsPages {
     }
     await pushSettingsPage(ctx, { id: "iphone-settings-about", title: "关于 EchoInk", content: body });
   }
-  private async agentForm(agentId?: string): Promise<void> {
-    const page = createAgentFormPage(this.ctx, agentId), dispose = page.dispose;
+  private async agentForm(agentId?: string, creation?: AgentEditorCreationOptions): Promise<void> {
+    const page = createAgentFormPage(this.ctx, agentId, { onReturn: () => this.refresh(), ...creation }), dispose = page.dispose;
     page.dispose = () => { dispose?.(); this.refresh(); }; await pushSettingsPage(this.ctx, page);
   }
   private async review(): Promise<void> {

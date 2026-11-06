@@ -15,4 +15,11 @@ const context = vm.createContext({ module, exports: module.exports, crypto: webc
   } });
 context.self = context;
 vm.runInContext(build.outputFiles[0].text, context, { filename: "mobile-tasks-browser.cjs" });
-await taskScenarios(module.exports);
+const unhandled = [];
+const collect = error => unhandled.push(error);
+process.on("unhandledRejection", collect);
+try {
+  await taskScenarios(module.exports);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(unhandled.length, 0, `Unhandled task failures: ${unhandled.map(String).join("; ")}`);
+} finally { process.off("unhandledRejection", collect); }

@@ -958,6 +958,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
     const submittedAt = Date.now();
     const workbenchSource = freezeWorkbenchTaskSource(item.prefillSource);
     handle = await view.plugin.submitPiChat({
+      ...(item.turnOptions.companyProgrammatic ? { companyProgrammatic: true } : {}),
+      ...(item.turnOptions.companyProgrammatic && item.turnOptions.companyApprovalKey ? { companyApprovalKey: item.turnOptions.companyApprovalKey } : {}),
       ...(workbenchSource ? { workbenchSource } : {}),
       ...(item.turnOptions.drawingRequested ? { drawingRequested: true } : {}),
       ...(item.generationRequest ? { generationRequest: item.generationRequest } : {}),

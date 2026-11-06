@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import fs from "node:fs/promises";
@@ -8,6 +9,7 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-knowledge-page/ipad-entry.ts"), metafile: true });
 assert.equal(Object.keys(build.metafile.inputs).some(path => /(?:home\/knowledge-page(?:-data)?|knowledge-base\/(?:initializer|source-health))\.ts$/u.test(path)), false, "The mobile reader never bundles desktop IO or ItemView");
 const dom = new JSDOM("<!doctype html><body><aside><textarea>Retained Agent draft</textarea></aside><main class='echoink-ipad'><article id='base'></article></main></body>", { pretendToBeVisual: true, url: "https://ipad-knowledge-page.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window, root = document.querySelector("main"), right = document.querySelector("aside textarea"), module = { exports: {} };
 const css = document.createElement("style"); css.textContent = await fs.readFile("src/ui/ipad/knowledge-pages.css", "utf8"); document.head.append(css);
 dom.window.HTMLElement.prototype.scrollIntoView = function () {};

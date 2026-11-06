@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import { disposableTestOutputRoot } from "./disposable-test-root.mjs";
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.join(disposableTestOutputRoot(path.join(root, ".tmp")), "home-photo-calendar-tests.mjs");
 await mkdir(path.dirname(output), { recursive: true });
 await esbuild.build({ banner: desktopNodeTestBanner,
-  stdin: { contents: 'export { EchoInkHomeView } from "./src/home/home-view"; export { homeWorkspaceMarkup } from "./src/home/home-workspace-template";',
+  stdin: { contents: 'export { TFolder } from "obsidian"; export { EchoInkHomeView } from "./src/home/home-view"; export { homeWorkspaceMarkup } from "./src/home/home-workspace-template";',
     resolveDir: root, loader: 'ts' },
   bundle: true, platform: 'node', target: 'node22', format: 'esm', outfile: output,
   loader: { '.md': 'text', '.svg': 'text', '.webp': 'dataurl' },
@@ -21,17 +22,18 @@ await esbuild.build({ banner: desktopNodeTestBanner,
     build.onResolve({ filter: /^obsidian$/ }, () => ({ path: path.join(root, 'src/tests/obsidian-shim.ts') }));
   } }]
 });
-const { EchoInkHomeView, homeWorkspaceMarkup } = await import(pathToFileURL(output).href);
+const { EchoInkHomeView, homeWorkspaceMarkup, TFolder } = await import(pathToFileURL(output).href);
 {
   const dom = new JSDOM(`<body class="theme-light" data-echoink-theme="green"><div class="echoink-home-workspace">${homeWorkspaceMarkup('en')}</div></body>`);
   globalThis.document = dom.window.document;
+  installMobileDomHost(dom.window);
   const proto = dom.window.HTMLElement.prototype;
   proto.empty = function () { this.replaceChildren(); };
   proto.setText = function (text) { this.textContent = text; };
   const view = Object.create(EchoInkHomeView.prototype);
   view.contentEl = document.querySelector('.echoink-home-workspace');
-  view.app = { vault: { getRoot: () => ({ children: [{ path: 'Daily' }] }) }, internalPlugins: { plugins: {
-    'daily-notes': { instance: { options: { folder: 'Daily', format: 'YYYY-MM-DD' } } }
+  view.app = { vault: { getRoot: () => ({ children: [{ path: 'Daily' }] }), getAbstractFileByPath: path => path === "Daily" ? Object.assign(new TFolder(), { path }) : null }, internalPlugins: { plugins: {
+    'daily-notes': { enabled: true, instance: { options: { folder: 'Daily', format: 'YYYY-MM-DD' } } }
   } } };
   view.plugin = { settings: { settingsLanguage: 'en', journalDirectory: 'old-journal' }, homeActivity: { snapshot: () => ({ events: [] }) } };
   view.dataService = { existingJournalForDate: () => ({}) };

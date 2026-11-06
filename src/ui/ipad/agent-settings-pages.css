@@ -54,3 +54,14 @@
 .echoink-ipad.pd-settings button.pd-agent-dream-link:disabled { opacity: 1; cursor: default; }
 .echoink-ipad.pd-settings button.pd-agent-dream-link::after { content: none; }
 .echoink-ipad.pd-settings .pd-agent-dream[hidden] { display: none; }
+
+.echoink-ipad .pd-agent-settings .pd-settings-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.echoink-ipad .pd-agent-owner-count { margin-left: auto; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * .75); font-weight: 400; }
+.echoink-ipad .pd-agent-settings .pd-settings-row { min-height: 54px; }
+/* The selected label sizes the native select; the option list keeps its own width. */
+.echoink-ipad .pd-agent-settings .pd-agent-owner-control { position: relative; display: inline-flex; align-items: center; gap: 4px; min-height: 44px; max-width: 60%; padding: 0 18px 0 6px; border: 1px solid var(--pd-line); border-radius: 9px; font-weight: 400; }
+.echoink-ipad .pd-agent-owner-control::after { content: attr(data-owner-label); visibility: hidden; min-width: 0; overflow: hidden; white-space: pre; font: inherit; font-size: max(16px, 1em); font-weight: 400; line-height: 1.5; }
+.echoink-ipad .pd-agent-settings .pd-agent-owner-control > select.pd-settings-select { position: absolute; inset: 0; width: 100%; min-height: 42px; padding: 0 0 0 30px; border: 0; border-radius: 8px; background-color: transparent; font-weight: 400; }
+.echoink-ipad .pd-agent-owner-value-icon { display: flex; align-items: center; justify-content: center; flex: 0 0 20px; width: 20px; height: 20px; color: var(--pd-secondary); }
+.echoink-ipad .pd-agent-owner-value-icon .pd-avatar { width: 20px; height: 20px; }
+.echoink-ipad .pd-agent-owner-value-icon > svg { width: 18px; height: 18px; }

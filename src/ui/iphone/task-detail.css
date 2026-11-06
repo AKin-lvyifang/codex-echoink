@@ -10,6 +10,10 @@
 .echoink-iphone .ip-task-tool summary::-webkit-details-marker { display: none; }
 .echoink-iphone .ip-task-tool-body { max-height: 320px; overflow: auto; padding: 8px 10px; border: 1px solid var(--background-modifier-border); border-radius: 8px; }
 .echoink-iphone .ip-tool-input { max-width: 100%; overflow: auto; white-space: pre; }
+.echoink-iphone .ip-task-reasoning-body { line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-iphone .ip-task-streaming { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin-top: 12px; }
+.echoink-iphone .ip-task-streaming[hidden], .echoink-iphone .ip-task-live[hidden] { display: none; }
+.echoink-iphone .ip-task-answer-live { white-space: pre-wrap; }
 .echoink-iphone .ip-tool-failed, .echoink-iphone .ip-task-error, .echoink-iphone .ip-composer-error, .echoink-iphone .ip-question-error { color: var(--text-error); }
 .echoink-iphone .ip-task-error:empty { display: none; }
 .echoink-iphone .ip-task-tail:not(:empty), .echoink-iphone .ip-task-detail > .ip-inline-question:not([hidden]) { margin-top: 12px; }

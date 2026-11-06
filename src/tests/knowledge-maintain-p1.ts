@@ -1,3 +1,4 @@
+import { runRDa4ae1MaintenanceTests } from "./r-da4ae1-maintenance";
 import { fixtureKnowledgeUnit } from "./maintenance-staged-fixture";
 import type { MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
 import { KnowledgeLinkingService } from "../plugin/knowledge-linking-service";
@@ -27,6 +28,7 @@ const original = "---\n# Keep this comment\ntags: [fixture]\naliases: [native]\n
 const newPage = "---\n类型: 概念\naliases: [Spaced repetition]\n---\n# 间隔复习\n间隔复习是分散时间进行复习的方法。\n\n## 方法\n逐步延长间隔。\n\n## 相关条目\n\n";
 
 export async function runKnowledgeMaintainP1Tests(root: string): Promise<void> {
+  await runRDa4ae1MaintenanceTests(path.join(root, "r-da4ae1"));
   const report: unknown[] = [];
   async function scenario(name: string, run: (f: Awaited<ReturnType<typeof fixture>>) => Promise<void>) {
     const f = await fixture(path.join(root, name));

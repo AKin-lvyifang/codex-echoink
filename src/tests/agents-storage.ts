@@ -19,7 +19,7 @@ import { createPiConversation, PiNativeConversationRuntime } from "../harness/pi
 import { assertPiSessionPreAssistantDurable, openDurablePiSession } from "../harness/pi-native/pi-session-durability";
 import { archiveSession, refreshPiConversationShells, restoreArchivedConversation } from "../ui/codex-view/session-controller";
 import { ConversationAutoArchive } from "../plugin/conversation-auto-archive";
-import { pluginDataDir } from "../plugin/plugin-data-paths";
+import { pluginDataDir, preparePluginDataRoot } from "../plugin/plugin-data-paths";
 import { FileConversationCatalog as LegacyFileConversationCatalog } from "legacy-catalog-v1";
 import { openTestNoticeMessages } from "./obsidian-shim";
 
@@ -125,6 +125,7 @@ async function catalogBackupBoundaries(root: string): Promise<void> {
 
 async function migrationFailureRetry(root: string): Promise<void> {
   const vaultRoot = path.join(root, "unreadable-identity");
+  await mkdir(vaultRoot, { recursive: true }); await preparePluginDataRoot(vaultRoot, { id: "codex-echoink" }, ".obsidian");
   const memoryRoot = path.join(pluginDataDir(vaultRoot, "codex-echoink"), "pi-agent-product-v1", ".echoink");
   const metadataPath = path.join(memoryRoot, "agents/echoink/agent-self-meta.json");
   await legacyFile(memoryRoot, "agent-identity.json", { ...defaultAgentIdentityState(), displayName: "恢复后身份", avatar: { kind: "preset", presetId: "aya" } });
@@ -213,7 +214,7 @@ async function capabilityStorageRoundtrip(root: string): Promise<void> {
   await store.loadSettings();
   const upgraded = plugin.settings.agentRegistry.agents[0];
   assert.deepEqual(upgraded.disabledCapabilityIds, [], "Old assistant allowlists become unrestricted at Agent scope");
-  assert.equal(Object.hasOwn(upgraded, "capabilityIds"), false);
+  assert.deepEqual(upgraded.capabilityIds, legacyAssistant.capabilityIds, "legacy allowlist metadata is preserved; assistant authority uses exclusions");
   upgraded.disabledCapabilityIds = ["mcp:disabled-server", " vault-skill:disabled ", "mcp:disabled-server", ""];
   await store.saveSettings(true);
   await store.loadSettings();
@@ -242,6 +243,7 @@ async function reviewRegressions(root: string, createHost: CreateMetadataSyncHos
 async function productionMigrationRoot(root: string): Promise<void> {
   for (const pluginDirectory of ["custom-echoink", ".custom-config/plugins/custom-echoink"]) {
     const vaultRoot = path.join(root, "production-migration", pluginDirectory.includes("/") ? "nested-config" : "plugin-name");
+    await mkdir(vaultRoot, { recursive: true }); await preparePluginDataRoot(vaultRoot, { id: "custom-echoink", dir: pluginDirectory.includes("/") ? pluginDirectory : undefined }, ".custom-config");
     const activeRoot = path.join(pluginDataDir(vaultRoot, pluginDirectory), "pi-agent-product-v1", ".echoink");
     await legacyFile(activeRoot, "agent-self-meta.json", { schema: "echoink.agent-self-meta.v1", templateId: "creative" });
     await legacyFile(activeRoot, "agent-identity.json", { ...defaultAgentIdentityState(), revision: 2, displayName: "正式身份", avatar: { kind: "preset", presetId: "lin" } });
@@ -356,7 +358,7 @@ async function migrationCases(root: string): Promise<void> {
     await legacyFile(storage, "agent-identity.json", { ...defaultAgentIdentityState(), revision: 3, displayName: "自定义助手", avatar: { kind: "preset", presetId: "aya" } });
     const before = await snapshot(storage);
     const migrated = await migrateLegacyAgentRegistry(defaultAgentRegistry(), storage);
-    assert.equal(migrated.agents.length, 1);
+    assert.equal(migrated.agents.length, 2);
     assert.equal(migrated.agents[0].id, "sol");
     assert.equal(migrated.agents[0].styleId, styleId);
     assert.equal(migrated.agents[0].name, "自定义助手");
@@ -395,12 +397,13 @@ async function migrationCases(root: string): Promise<void> {
   assert.equal(markdownAgent.name, "总助", "Markdown identity text is never used as a custom name");
   assert.deepEqual(await snapshot(markdownRoot), markdownBefore);
   const empty = await migrateLegacyAgentRegistry(defaultAgentRegistry(), path.join(root, "new-install", ".echoink"));
-  assert.equal(empty.agents.length, 1);
+  assert.equal(empty.agents.length, 2);
   assert.equal(empty.agents[0].name, "总助");
 
   // Exercise the real settings load/save entry, including its once-only marker.
   const vaultRoot = path.join(root, "settings-startup");
   await mkdir(vaultRoot, { recursive: true });
+  await preparePluginDataRoot(vaultRoot, { id: "codex-echoink" }, ".obsidian");
   const activeMemoryRoot = path.join(pluginDataDir(vaultRoot, "codex-echoink"), "pi-agent-product-v1", ".echoink");
   await legacyFile(activeMemoryRoot, "agent-self-meta.json", { schema: "echoink.agent-self-meta.v1", templateId: "creative" });
   let persisted: unknown = { ...structuredClone(DEFAULT_SETTINGS), agentRegistry: undefined };
@@ -493,21 +496,21 @@ async function storageRoundtrip(root: string): Promise<void> {
 
 function draftAndRegistryCases(): void {
   const registry = defaultAgentRegistry();
-  assert.equal(registry.agents.length, 1);
+  assert.equal(registry.agents.length, 2);
   assert.equal(AGENT_PRESETS.length, 5);
-  assert.ok(AGENT_MODULE_IDS.every(id => registry.moduleOwners[id] === "sol"));
+  assert.ok(AGENT_MODULE_IDS.every(id => registry.moduleOwners[id] === ""));
   assert.throws(() => removeAgentDefinition(registry, "sol"), /cannot_be_deleted/);
   const agent = { ...structuredClone(AGENT_PRESETS[0].agent), id: "my-organizer" };
   const withAgent = normalizeAgentRegistry({ ...registry, agents: [...registry.agents, agent] });
   const assigned = setModuleOwner(withAgent, "knowledge-base", agent.id);
   assert.equal(assigned.moduleOwners["knowledge-base"], agent.id);
-  assert.equal(registry.moduleOwners["knowledge-base"], "sol");
+  assert.equal(registry.moduleOwners["knowledge-base"], "");
   const removed = removeAgentDefinition(assigned, agent.id);
-  assert.equal(removed.agents.length, 1);
-  assert.equal(removed.moduleOwners["knowledge-base"], "sol");
+  assert.equal(removed.agents.length, 2);
+  assert.equal(removed.moduleOwners["knowledge-base"], "");
   const task = { id: "same-task", piSessionId: "same-session", agentId: agent.id, businessKey: "same-business" };
-  assert.deepEqual(handoffConversationTask(task, agent.id), { ...task, agentId: "sol" });
-  assert.equal(normalizeAgentRegistry({ ...registry, moduleOwners: { finance: "missing-agent" } }).moduleOwners.finance, "sol");
+  assert.deepEqual(handoffConversationTask(task, agent.id), { ...task, agentId: "generalist" });
+  assert.equal(normalizeAgentRegistry({ ...registry, moduleOwners: { finance: "missing-agent" } }).moduleOwners.finance, "");
   const workspace = defaultTaskWorkspace();
   const draft = { text: "整理我的资料", attachments: [{ type: "file" as const, name: "note.md", path: "Inbox/note.md" }], prefillSource: "knowledge:inbox" };
   const first = prefillNewTask(workspace, agent.id, draft);

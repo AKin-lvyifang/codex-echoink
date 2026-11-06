@@ -1,3 +1,6 @@
+import type { KnowledgeMaintenancePreferenceSnapshot } from "../knowledge-base/knowledge-maintenance-preferences";
+import { KnowledgePreferenceWizard } from "./knowledge-preference-wizard";
+import type { KnowledgePreferenceWizardHost } from "../knowledge-base/knowledge-preference-wizard";
 import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginCheck, createOriginInput, createOriginSelect, disposeOriginControls } from "../settings/origin-controls";
 import { createKnowledgeFolderPicker, type KnowledgeFolderPicker } from "../settings/knowledge-folder-picker";
@@ -14,6 +17,7 @@ export interface PaperGuideModelResult { available: boolean; message: string }
 export type PaperGuideProgress = (step: "folders" | "bindings", completed: number, total: number) => void;
 export interface PaperGuideModalOptions {
   language: "zh-CN" | "en";
+  preferences: KnowledgePreferenceWizardHost;
   preview(choices?: OnboardingSetupChoices): Promise<OnboardingSetupPlan>;
   apply(plan: OnboardingSetupPlan, progress: PaperGuideProgress): Promise<KnowledgeDirectoryApplyResult>;
   model(): string | null;
@@ -26,11 +30,13 @@ export interface PaperGuideModalOptions {
   onDismiss(): Promise<void>;
   onClosed(): void;
 }
-type View = "choose" | "guided" | "confirm" | "running" | "done" | "connect";
+type View = "choose" | "guided" | "confirm" | "running" | "done" | "connect" | "preferences";
 
 /** One native modal; only explicit confirmation writes folders or provider settings. */
 export class PaperGuideModal extends Modal {
   private view: View = "choose";
+  private preferenceWizard: KnowledgePreferenceWizard | null = null;
+  private preferenceVisited = false;
   private plan: OnboardingSetupPlan | null = null;
   private result: KnowledgeDirectoryApplyResult | null = null;
   private busy = false;
@@ -67,9 +73,10 @@ export class PaperGuideModal extends Modal {
     if (this.busy || this.closed || this.disposed) return;
     void this.navigate();
   }
-  dispose(): void { this.disposed = true; this.key = ""; super.close(); }
+  dispose(): void { this.preferenceWizard?.dispose(); this.disposed = true; this.key = ""; super.close(); }
   onClose(): void {
     if (this.closed) return;
+    this.preferenceWizard?.dispose();
     this.closed = true; this.key = "";
     this.pickers.splice(0).forEach(picker => picker.dispose());
     disposeOriginControls(this.contentEl); this.contentEl.empty(); this.options.onClosed();
@@ -84,6 +91,7 @@ export class PaperGuideModal extends Modal {
     const failed = Boolean(this.modelError || this.guideError);
     this.setTitle(this.label(this.view === "choose" ? "你想怎么开始？" : this.view === "confirm" ? "确认后我会做这些" : this.view === "running" ? "正在设置…" : this.view === "connect" ? "连接模型" : failed ? "目录已设置完成" : "设置好了",
       this.view === "choose" ? "How would you like to start?" : this.view === "confirm" ? "Review your setup" : this.view === "running" ? "Setting up…" : this.view === "connect" ? "Connect a model" : failed ? "Directories are ready" : "All set"));
+    if (this.view === "preferences" && this.preferenceWizard) this.setTitle(this.preferenceWizard.title);
     if (this.view === "guided") this.setTitle(this.label(["哪些算资料？", "东西放哪？", "AI 能做什么？"][this.guidedStep], ["Which folders are sources?", "Where should things go?", "What can AI do?"][this.guidedStep]));
     if (this.view === "choose") {
       const mascot = this.titleEl.createSpan({ cls: "echoink-paper-guide-mascot", attr: { "aria-hidden": "true" } });
@@ -92,7 +100,8 @@ export class PaperGuideModal extends Modal {
     }
     this.body = this.contentEl.createDiv({ cls: "echoink-setup-body" });
     this.footer = this.contentEl.createDiv({ cls: "echoink-setup-footer" });
-    if (this.view === "choose") this.renderChoices();
+    if (this.view === "preferences") this.preferenceWizard?.render(this.body, this.app, this.footer);
+    else if (this.view === "choose") this.renderChoices();
     else if (this.view === "guided") this.renderGuided();
     else if (this.view === "confirm") this.renderConfirmation();
     else if (this.view === "running") this.renderProgress();
@@ -130,7 +139,7 @@ export class PaperGuideModal extends Modal {
     const choices = this.body.createDiv({ cls: "echoink-paper-guide-choices" });
     for (const [id, icon, title, description] of [
       ["auto", "zap", this.label("全自动", "Automatic"), this.label("我是新手，一键设好就能用", "Set things up for me")],
-      ["guided", "sliders-horizontal", this.label("半自动", "Guided"), this.label("回答三个问题，其余交给 EchoInk", "Answer three questions; EchoInk handles the rest")],
+      ["guided", "sliders-horizontal", this.label("半自动", "Guided"), this.label("选好资料和存放位置，其余交给 EchoInk", "Choose sources and locations; EchoInk handles the rest")],
       ["manual", "wrench", this.label("手动", "Manual"), this.label("我喜欢 DIY，自己一项项设置", "Configure each setting myself")]
     ]) {
       const button = createOriginButton(choices, { cls: "echoink-paper-guide-choice", attr: { "data-setup-choice": id } });
@@ -150,6 +159,7 @@ export class PaperGuideModal extends Modal {
     try {
       this.plan = await this.options.preview(guided && this.choices ? this.choices : undefined);
       this.fromGuided = guided;
+      if (!guided) await this.offerPreferences();
       if (guided) { this.choices = this.plan.choices ?? defaultOnboardingChoices(this.plan); this.guidedStep = 0; this.view = "guided"; }
     }
     catch (error) { this.error = this.errorText(error); }
@@ -216,9 +226,30 @@ export class PaperGuideModal extends Modal {
       const plan = await this.options.preview(this.choices); this.plan = plan; this.choices = plan.choices ?? this.choices;
       if (plan.directoryPlan.issues.length) this.error = plan.directoryPlan.issues.join("；");
       else if (this.guidedStep === 1) this.guidedStep = 2;
-      else this.view = "confirm";
+      else { this.view = "confirm"; await this.offerPreferences(); }
     } catch (error) { this.error = this.errorText(error); }
     finally { this.busy = false; this.render(); }
+  }
+
+  private async offerPreferences(): Promise<void> {
+    if (this.preferenceVisited) return;
+    this.preferenceVisited = true;
+    const baseline = await this.options.preferences.read();
+    if (baseline.state === "custom" || this.closed || this.disposed) return;
+    this.showPreferences(baseline);
+  }
+
+  private showPreferences(baseline: Readonly<KnowledgeMaintenancePreferenceSnapshot>): void {
+    this.preferenceWizard = new KnowledgePreferenceWizard(this.options.preferences, baseline, {
+      language: this.options.language,
+      changed: () => { this.busy = this.preferenceWizard?.saving ?? false; this.render(); },
+      done: () => {
+        this.preferenceWizard?.dispose(); this.preferenceWizard = null;
+        this.busy = false;
+        this.view = "confirm"; this.render();
+      },
+    });
+    this.view = "preferences";
   }
 
   private renderConfirmation(): void {
@@ -371,7 +402,9 @@ export class PaperGuideModal extends Modal {
   }
   private setBusyState(): void {
     this.modalEl.setAttribute("aria-busy", String(this.busy));
-    for (const control of Array.from(this.contentEl.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input"))) control.disabled = this.busy || control.dataset.setupDisabled === "true";
+    for (const control of Array.from(this.contentEl.querySelectorAll<HTMLButtonElement | HTMLInputElement>("button, input"))) {
+      if (!control.closest(".knowledge-preference-wizard, .knowledge-preference-actions")) control.disabled = this.busy || control.dataset.setupDisabled === "true";
+    }
     this.modalEl.querySelector(".modal-close-button")?.setAttribute("aria-disabled", String(this.busy));
   }
   private async navigate(afterClose?: () => Promise<void>): Promise<void> {

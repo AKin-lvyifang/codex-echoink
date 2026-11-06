@@ -140,6 +140,10 @@ async function localControlsAndValidation(): Promise<void> {
   console.log("PASS local controls without Provider/runtime Memory; validation and single-slot deletion");
 }
 
+async function expectDreamCommit(system: CognitiveSystem): Promise<void> {
+  const outcome = await system.engine.runOnce(); assert.equal(outcome.committed, true, JSON.stringify(outcome));
+}
+
 async function observedConfirmationAndWholeSlotDeletion(): Promise<void> {
   await withFixture("observed", async (fixture) => {
     assert.equal(USER_OBSERVED_MIN_SOURCES, 2);
@@ -151,9 +155,9 @@ async function observedConfirmationAndWholeSlotDeletion(): Promise<void> {
     }
     const system = await createSystem(fixture, fixture.repository, async (request) =>
       request.systemPrompt.includes("本次只输出 Agent current-self") ? "no_change" : JSON.stringify({
-        secondaryFacts: [], userProfileItems: [{ section: "preference", profileKey: "preference.format", text: "先看结论再看依据" }]
+        userProfileItems: [{ section: "preference", profileKey: "preference.format", text: "先看结论再看依据" }]
       }));
-    assert.equal((await system.engine.runOnce()).committed, true);
+    const outcome = await system.engine.runOnce(); assert.equal(outcome.committed, true, JSON.stringify(outcome));
     const observed = (await fixture.repository.readUserProfileControlSnapshot()).items[0]!;
     assert.equal(observed.basis, "observed_memory");
     assert.equal(observed.sourceMemoryIds.length, 2);
@@ -185,32 +189,33 @@ async function deletionSurvivesReloadAndDreamReplay(): Promise<void> {
     let memoryCalls = 0;
     let experienceCalls = 0;
     const system = await createSystem(fixture, reopened, async (request) => {
-      if (!request.systemPrompt.includes("本次只输出 Agent current-self")) {
+      if ((JSON.parse(request.userPrompt) as { memory?: unknown }).memory) {
         memoryCalls += 1;
         const input = JSON.parse(request.userPrompt) as { memory: { content: string } };
-        return JSON.stringify({ secondaryFacts: [], userProfileItems: input.memory.content === targetText
+        return JSON.stringify({ userProfileItems: input.memory.content === targetText
           ? [{ section: "preference", profileKey: "preference.tone", text: targetText }] : [] });
       }
       const input = JSON.parse(request.userPrompt) as { sources: Array<{ sourceId: string; userText?: string; content?: string }> };
       const sources = input.sources.filter((source) => source.userText === targetText || source.content === targetText);
       if (sources.some((source) => source.userText)) experienceCalls += 1;
+      if (sources.some((source) => source.content)) memoryCalls += 1;
       return JSON.stringify({ userProfileItems: sources.length ? [{
         section: "preference", profileKey: "preference.tone", text: targetText, basis: "explicit",
         sources: sources.map((source) => ({ sourceId: source.sourceId, evidenceQuote: targetText }))
       }] : [] });
     });
-    assert.equal((await system.engine.runOnce()).committed, true);
+    await expectDreamCommit(system);
     assert.ok(memoryCalls > 0 && experienceCalls > 0, "old Memory and old Experience really reached both Dream routes");
     assert.equal((await reopened.readUserProfileControlSnapshot()).items.some((item) => item.profileKey === "preference.tone"), false);
     assert.equal((await new UserProfileStateStore(reopened.layout.root).read())?.deletionBarriers?.length, 1);
     targetText = "我偏好温和简洁的语气";
     await reopened.write({ operation: "create", kind: "fact", title: "新语气偏好", content: targetText, basis: "explicit", contentOrigin: "user_statement" }, fixture.runtime({ productRunId: "p13-new-memory" }));
-    assert.equal((await system.engine.runOnce()).committed, true);
+    await expectDreamCommit(system);
     assert.equal((await reopened.readUserProfileControlSnapshot()).items.find((item) => item.profileKey === "preference.tone")?.text, targetText, "new Memory revision may refill the deleted slot");
     await remove(reopened, "preference.tone");
     targetText = "我偏好平静自然的语气";
     await inbox.append(experience(fixture, 2, targetText), fixture.now());
-    assert.equal((await system.engine.runOnce()).committed, true);
+    await expectDreamCommit(system);
     assert.equal((await reopened.readUserProfileControlSnapshot()).items.find((item) => item.profileKey === "preference.tone")?.text, targetText, "genuinely later Experience may refill the slot");
     await remove(reopened, "identity.role");
     await save(reopened, "preference.tone", oldText);
@@ -249,7 +254,7 @@ async function inFlightDreamCannotRestoreDeletedSlot(): Promise<void> {
         entered();
         await resume;
       }
-      return JSON.stringify({ secondaryFacts: [], userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "我偏好直接清晰的语气" }] });
+      return JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "我偏好直接清晰的语气" }] });
     });
     if (pauseAt === "profile-read") {
       const readProfile = system.profileStore.read.bind(system.profileStore);
@@ -337,12 +342,12 @@ async function snapshotIncludesAllSlotsBeforeProjectionBudget(): Promise<void> {
     for (const slot of USER_PROFILE_SLOTS) await save(fixture.repository, slot.profileKey, `${slot.labelZh}${"内容".repeat(45)}`);
     const snapshot = await fixture.repository.readUserProfileControlSnapshot();
     assert.equal(snapshot.items.length, USER_PROFILE_SLOTS.length);
-    assert.equal(new Set(snapshot.items.map((item) => item.profileKey)).size, 24);
+    assert.equal(new Set(snapshot.items.map((item) => item.profileKey)).size, 26);
     const user = await readFile(fixture.repository.layout.user, "utf8");
     assert.ok(user.length <= 2_000);
     assert.ok(snapshot.items.some((item) => !user.includes(item.text)), "control snapshot includes valid slots beyond the text projection budget");
   });
-  console.log("PASS all 24 structured slots remain manageable beyond USER.md projection budget");
+  console.log("PASS all 26 structured slots remain manageable beyond USER.md projection budget");
 }
 
 export async function runUserProfileControlScenarios(): Promise<void> {

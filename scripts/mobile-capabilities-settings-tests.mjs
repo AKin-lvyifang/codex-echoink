@@ -10,10 +10,12 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-capabilities-settings/entry.ts"), metafile: true });
 assert.ok(!Object.keys(build.metafile.inputs).some(file => /mcp-broker|skill-runtime\.ts|pi-ai\/dist\/providers\//u.test(file)));
 const module = { exports: {} };
-vm.runInNewContext(build.outputFiles[0].text, { module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController,
+const browser = vm.createContext({ module, exports: module.exports, URL, TextEncoder, TextDecoder, AbortController,
   structuredClone, crypto: webcrypto, setTimeout, clearTimeout, require: name => { assert.equal(name, "obsidian"); return {
     requestUrl: () => { throw new Error("Unexpected third-party request"); }, Notice: class {}, TFile: class {}, TFolder: class {}
   }; } });
+browser.self=browser; browser.window=browser;
+vm.runInContext(build.outputFiles[0].text,browser);
 const { MobileCapabilitiesService, MobileCapabilityPolicy, MobileHttpMcpClient, MobileRuntime, MobileStore, loadMobileSettings, mobileModel, mobileProvider,
   inspectMobileTaskResume, inspectMobileMcpTools, skillIcon, mobileMcpToolName } = module.exports;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -58,14 +60,14 @@ await test("Skill Agent rows retain configured grants while global/runtime avail
   f.settings.agentRegistry.agents.push({ ...plain(sol), id: "journal-granted", name: "Journal", capabilityIds: ["journal"] },
     { ...plain(sol), id: "journal-not-granted", name: "Other", capabilityIds: ["knowledge"] });
   const granted = snapshot => plain(snapshot.agents.filter(agent => agent.allowed).map(agent => agent.id));
-  const before = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(before), ["sol", "journal-granted"]);
+  const before = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(before), ["sol", "generalist", "journal-granted"]);
   await f.service.setSkillEnabled("daily-journal", false);
   const disabled = await f.service.readSkill("daily-journal"); assert.deepEqual(granted(disabled), granted(before));
   assert.throws(() => f.policy("journal-granted").assertSkill("daily-journal"));
-  sol.disabledCapabilityIds = ["journal"]; assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["journal-granted"]);
+  sol.disabledCapabilityIds = ["journal"]; assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted"]);
   await f.service.setSkillEnabled("daily-journal", true);
   f.settings.mobileUi.moduleEnabled = { journal: false };
-  assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["journal-granted"]);
+  assert.deepEqual(granted(await f.service.readSkill("daily-journal")), ["generalist", "journal-granted"]);
   assert.throws(() => f.policy("journal-granted").assertSkill("daily-journal"));
   const desktopOnly = await f.service.readSkill("obsidian-cli"); assert.equal(desktopOnly.mobileAvailable, false); assert.equal(desktopOnly.agents.find(agent => agent.id === "sol").allowed, true);
   assert.throws(() => f.policy().assertSkill("obsidian-cli"));
@@ -78,12 +80,13 @@ await test("Skill Agent selection uses independent grants, preserves other permi
   fail = false; const saved = await f.service.saveSkillAgents(before.id, ["other"], before.agentsVersion);
   assert.deepEqual(plain(saved.agents.filter(agent => agent.allowed).map(agent => agent.id)), ["other"]);
   assert.throws(() => f.policy("sol").assertSkill(before.id)); f.policy("other").assertSkill(before.id);
-  assert.equal(f.settings.agentRegistry.agents[1].capabilityIds.includes("todos"), false, "allowing a Skill does not grant its whole module");
+  const other = f.settings.agentRegistry.agents.find(agent => agent.id === "other");
+  assert.equal(other.capabilityIds.includes("todos"), false, "allowing a Skill does not grant its whole module");
   f.settings.mobileUi.moduleEnabled = { todos: false }; assert.throws(() => f.policy("other").assertSkill(before.id)); f.settings.mobileUi.moduleEnabled = {};
-  assert.ok(f.settings.agentRegistry.agents[1].capabilityIds.includes("unshown-future-capability"));
+  assert.ok(other.capabilityIds.includes("unshown-future-capability"));
   await assert.rejects(f.service.saveSkillAgents(before.id, ["sol"], before.agentsVersion), /其他位置修改/);
   const normalized = loadMobileSettings(plain(f.settings)); assert.ok(normalized.agentRegistry.agents[0].disabledCapabilityIds.includes("skill:todo-operations"));
-  assert.ok(normalized.agentRegistry.agents[1].capabilityIds.includes("skill:todo-operations"));
+  assert.ok(normalized.agentRegistry.agents.find(agent => agent.id === "other").capabilityIds.includes("skill:todo-operations"));
 });
 await test("Skill external edit conflict, failed atomic install restores original, retry retains custom metadata", async () => {
   const f = fixture(); const path = "Skills/custom/SKILL.md";
@@ -116,7 +119,9 @@ await test("Skill reads and saves an interrupted replacement from its preserved 
   await f.service.saveSkill("daily-journal", "Updated user instruction", snapshot.version); assert.equal(f.files.get(path), "Updated user instruction"); assert.equal(f.files.has(recovery), false);
 });
 await test("targeted setting rollback preserves drafts and unrelated fields", async () => {
-  const f = fixture(undefined, async settings => { settings.unrelated = "kept"; throw new Error("synthetic-secret"); });
+  let failSave = false;
+  const f = fixture(undefined, async settings => { if (failSave) { settings.unrelated = "kept"; throw new Error("synthetic-secret"); } });
+  await f.service.initializeSkills(); failSave = true;
   await assert.rejects(f.service.setSkillEnabled("daily-journal", false), /保存失败/u); assert.equal((await f.service.readSkill("daily-journal")).enabled, true); assert.equal(f.settings.unrelated, "kept");
   const draft = f.service.readTavily(); draft.apiKey = "synthetic-tavily-key"; draft.enabled = true;
   await assert.rejects(f.service.saveTavily(draft), error => /保存失败/u.test(error.message) && !error.message.includes(draft.apiKey));
@@ -242,7 +247,7 @@ try {
   });
   await test("real MobileStore commits MCP intent, cold-loads unknown facts, and runtime resume blocks replay", async () => {
     const f = fixture(transport, undefined, true); await f.store.load();
-    const id = await connected(f), taskId = f.store.session.id, policy = f.policy(), app = { vault: { adapter: f.adapter } };
+    const id = await connected(f), taskId = f.store.session.id, policy = f.policy(), app = { vault: { adapter: f.adapter, getAbstractFileByPath: () => null, getMarkdownFiles: () => [] } };
     const turn = { id: "durable-run", agentSnapshot: policy.snapshot(), permission: "workspace-write", notePath: "" };
     const run = { taskId, turn, policy, signature: policy.signature(), provider: f.provider, model: f.provider.models[0], controller: new AbortController() };
     await f.store.updateSession(taskId, task => { task.runs = [{ id: turn.id, status: "running", startedAt: Date.now() }]; task.taskStatus = "running"; });
@@ -281,7 +286,7 @@ try {
     };
     for (const secret of ['synthetic-quote-"-token', "synthetic-backslash-\\-token", 'synthetic-both-"-\\-token']) {
       const f = fixture(transport, undefined, true); await f.store.load(); const id = await connected(f, secret), taskId = f.store.session.id, policy = f.policy();
-      const app = { vault: { adapter: f.adapter } }, runtime = new MobileRuntime(app, f.store, () => f.settings, transport);
+      const app = { vault: { adapter: f.adapter, getAbstractFileByPath: () => null, getMarkdownFiles: () => [] } }, runtime = new MobileRuntime(app, f.store, () => f.settings, transport);
       const run = { taskId, turn: { id: "redaction-run", agentSnapshot: policy.snapshot(), permission: "workspace-write", notePath: "" }, policy,
         signature: policy.signature(), provider: f.provider, model: f.provider.models[0], controller: new AbortController() };
       const read = f.service.runtimeTools(policy, input => runtime.invokeRemoteTool(run, input, {})).find(tool => tool.name === mobileMcpToolName(id, "read_item"));

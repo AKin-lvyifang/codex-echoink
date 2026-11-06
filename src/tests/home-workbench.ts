@@ -387,6 +387,14 @@ async function assertNativeGraphBehavior(): Promise<void> {
     }]);
     assert.deepEqual(local.revealed, [localLeaf]);
     assert.deepEqual(openTestNoticeMessages, []);
+    assert.equal(await openObsidianLocalGraphLeaf(local.app, "wiki/index.md"), true);
+    assert.equal(local.getLeafCalls(), 1, "Repeated clicks reveal the same centered graph");
+    assert.deepEqual(localLeaf.setViewStates, ["localgraph"], "Reuse preserves the graph's own filters");
+    const otherLeaf = createGraphLeaf("empty");
+    const otherCenter = createLocalGraphApp(otherLeaf, { existing: [localLeaf] });
+    assert.equal(await openObsidianLocalGraphLeaf(otherCenter.app, "other/index.md"), true);
+    assert.equal(otherCenter.getLeafCalls(), 1, "Same basename in another folder needs its own center");
+    assert.deepEqual(otherLeaf.getViewState().state, { file: "other/index.md" });
 
     openTestNoticeMessages.length = 0;
     const missingLeaf = createGraphLeaf("empty");
@@ -651,6 +659,8 @@ function createFolderGraphLeaf(behavior: "accept" | "reject" | "ignore" = "accep
 }
 
 interface GraphLeafMock {
+  pinned: boolean;
+  setPinned(value: boolean): void;
   view?: { dataEngine?: unknown };
   detached: boolean;
   detach(): void;
@@ -669,6 +679,8 @@ function createGraphLeaf(
   const setViewStates: string[] = [];
   const viewStates: Array<{ type: string; active?: boolean; state?: Record<string, unknown> }> = [];
   return {
+    pinned: false,
+    setPinned(value): void { this.pinned = value; },
     detached: false,
     detach(): void { this.detached = true; },
     setViewStates,
@@ -679,7 +691,9 @@ function createGraphLeaf(
       if (behavior === "reject") throw new Error("setViewState rejected");
       if (behavior === "accept" || behavior === "wrong-file") {
         currentType = state.type;
-        currentState = behavior === "wrong-file" ? { file: "wrong/index.md" } : { ...(state.state ?? {}) };
+        currentState = behavior === "wrong-file" ? { file: "wrong/index.md" }
+          : state.type === "localgraph" && !this.pinned ? { file: "wiki/last-active.md" }
+          : { ...(state.state ?? {}) };
       }
     },
     getViewState: () => ({ type: currentType, state: currentState })
@@ -720,7 +734,7 @@ function createGraphApp(existing: GraphLeafMock[], created: GraphLeafMock | Grap
 
 function createLocalGraphApp(
   created: GraphLeafMock,
-  options: { indexExists?: boolean; rejectReveal?: boolean } = {}
+  options: { indexExists?: boolean; rejectReveal?: boolean; existing?: GraphLeafMock[] } = {}
 ): {
   app: App;
   revealed: GraphLeafMock[];
@@ -734,6 +748,8 @@ function createLocalGraphApp(
         getAbstractFileByPath: (path: string) => options.indexExists === false ? null : new TFile(path)
       },
       workspace: {
+        getLeavesOfType: (type: string) => [...(options.existing ?? []), created]
+          .filter(leaf => leaf.getViewState().type === type),
         getLeaf: (mode: string) => {
           assert.equal(mode, "tab");
           getLeafCallCount += 1;

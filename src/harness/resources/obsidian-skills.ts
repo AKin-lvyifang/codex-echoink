@@ -45,7 +45,7 @@ function adapted(id: BuiltinSkillDefinition["id"], title: string, description: s
 export const OBSIDIAN_BUILTIN_SKILLS: readonly BuiltinSkillDefinition[] = Object.freeze([
   adapted("obsidian-cli", "Obsidian CLI", "在当前 Vault 查找与读取资料、打开标签页与 Base、保存原生日记、查看或恢复本地历史、搜索与管理插件时启用；自然语言和 /obsidian-cli 使用同一能力。", `## 官方 CLI 与当前 Vault
 
-obsidian_cli 使用官方公开 CLI 二进制，通过异步参数数组调用，运行目录固定当前 Vault，并用官方 vault 路径信息核对。不使用内部 app.cli.handlers，不运行 shell 或任意程序，不接受其他 Vault。官方安装器须 1.12.7 以上，并在 Settings → General 启用 Command line interface。插件本身不安装或升级 Obsidian。
+obsidian_cli 使用官方公开 CLI 二进制，通过异步参数数组调用，运行目录固定当前 Vault，并用官方 vault 路径信息核对。不使用内部 app.cli.handlers，不运行 shell 或任意程序，不接受其他 Vault。官方安装器须 1.12.7 以上，并在 Settings → General → Advanced 启用 Command line interface。插件本身不安装或升级 Obsidian。
 
 先用 {"command":"version"} 检查可用性。结果 unavailable/unsupported 时明确说明缺口；现有 vault_search、note_read、note_create、note_update 和 metadata_update 仍可使用。CLI read 没有 expectedVersion；已有文件的原生更新仍须先 note_read 取得版本。
 
@@ -86,7 +86,7 @@ obsidian_plugin_search 使用 Obsidian 官方社区插件目录，示例 {"query
 
 纯查询不新增确认。只读和 Plan 只能查询；界面操作不能绕过当前工作区权限。daily 可能新建日记，按写入处理。日记、Base 记录、历史恢复和插件副作用复用批准票据与结果回执，并在执行后核对目标；确认后目标改变则停止。
 
-只在实际回读验证后报告完成。empty 是无结果；unavailable 是入口缺失；unsupported 是当前版本不支持；failed/cancelled/truncated/uncertain 分别说明失败、取消、截断或未能确认结果。执行开始后的失败、取消、超时或未能回读属于不确定结果；不要重试，先查询目标。恢复中断的动作只记录结果不确定，不重新执行。CLI 没有原生 expectedVersion 的原子保证，不作等价承诺。
+只在实际回读验证后报告完成。empty 是无结果；unavailable 是 CLI 不可用，要把 reason 中的开启步骤告诉用户；unsupported 是当前版本不支持；failed/cancelled/truncated/uncertain 分别说明失败、取消、截断或未能确认结果。执行开始后的失败、取消、超时或未能回读属于不确定结果；不要重试，先查询目标。恢复中断的动作只记录结果不确定，不重新执行。CLI 没有原生 expectedVersion 的原子保证，不作等价承诺。
 
 官方文档：https://help.obsidian.md/cli
 官方目录：https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json`),

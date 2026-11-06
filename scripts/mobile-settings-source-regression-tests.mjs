@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
@@ -21,6 +22,7 @@ export {loadMobileSettings} from './src/mobile/settings';
 export {normalizeAgentRegistry} from './src/agents/registry';
 ` } });
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://settings-regression.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window, module = { exports: {} };
 // Install host methods in the fixture's own realm before any viewport is constructed.
 // Repeating this at fixture boundaries also prevents earlier scenarios leaking prototype changes.

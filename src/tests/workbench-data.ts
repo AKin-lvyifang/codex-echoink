@@ -38,7 +38,14 @@ async function fixture(root: string) {
   app.vault.on = vaultEvents.on; app.vault.offref = vaultEvents.offref;
   app.metadataCache.on = cacheEvents.on; app.metadataCache.offref = cacheEvents.offref;
   let cacheReady = false;
-  app.metadataCache.getFileCache = () => cacheReady ? {} : null;
+  app.metadataCache.getFileCache = (file: TFile) => cacheReady ? {
+    links: Object.keys(app.metadataCache.resolvedLinks[file.path] ?? {}).map(link => ({
+      link, original: `[[${link}]]`,
+      position: { start: { offset: 0, line: 0, col: 0 }, end: { offset: 1, line: 0, col: 1 } },
+    })),
+  } : null;
+  app.metadataCache.getFirstLinkpathDest = (link: string) =>
+    app.vault.getAbstractFileByPath(link) as TFile | null;
   app.metadataCache.getFirstLinkpathDest = (link: string, source: string) => app.vault.getAbstractFileByPath(link)
     ?? app.vault.getAbstractFileByPath(path.posix.join(path.posix.dirname(source), link));
   const nativeCreate = app.vault.create.bind(app.vault);
@@ -121,7 +128,9 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   assert.ok(!snapshot.signals.some(signal => signal.id === 14), "unresolved metadata cannot manufacture isolated notes");
   f.resolveLinks(); snapshot = await service.load(now); assert.ok(snapshot.signals.some(signal => signal.id === 14));
   f.resolveLinks({ "outside.md": { "wiki/1.md": 1 }, "wiki/2.md": { "outside.md": 1 } });
-  assert.ok(!(await service.load(now)).signals.some(signal => signal.id === 14), "full-Vault edges in either direction count");
+  assert.ok((await service.load(now)).signals.some(signal => signal.id === 14), "outside links do not reduce Wiki isolation");
+  f.resolveLinks({ "wiki/1.md": { "wiki/2.md": 1 } });
+  assert.ok(!(await service.load(now)).signals.some(signal => signal.id === 14), "Wiki-to-Wiki connections reduce the isolated-page signal below its threshold");
   f.resolveLinks({ "wiki/1.md": { "wiki/1.md": 1, "assets/photo.png": 1, "https://example.com": 1 } });
   assert.ok((await service.load(now)).signals.some(signal => signal.id === 14), "self-links, assets and URLs do not connect Markdown notes");
   f.invalidateLinks(); assert.ok(!(await service.load(now)).signals.some(signal => signal.id === 14));
@@ -366,5 +375,5 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
   stopMixedRefresh(); mixedService.dispose();
   assert.equal(mixed.maintenanceSubscriptions(), 0, "data disposal releases the shared maintenance subscription");
   mixed.unregister();
-  console.log("Workbench real data: disk-backed Todo/Finance/Raw/Review/English, journal templates/images/unknowns, Inbox observation/partial success/reload, full-Vault links and zero Provider calls passed");
+  console.log("Workbench real data: disk-backed Todo/Finance/Raw/Review/English, journal templates/images/unknowns, Inbox observation/partial success/reload, Wiki-only isolation and zero Provider calls passed");
 }

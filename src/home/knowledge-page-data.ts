@@ -1,18 +1,26 @@
+import { loadKnowledgeMapData } from "./knowledge-map/data";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 
 import { classifyKnowledgePath, emptyKnowledgeFolderBindings, normalizeKnowledgeDirectory, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
-import type { KnowledgeLinkHealth } from "../knowledge-base/link-health";
-import { knowledgePagePathStat, loadKnowledgeSourceHealth, type KnowledgeSourceHealth } from "../knowledge-base/source-health";
+import { knowledgePagePathStat } from "../knowledge-base/source-health";
 import { mergeKnowledgeMaintenanceHistory } from "../knowledge-base/maintenance-history-core";
-import { aggregateKnowledgePageActivity, type KnowledgePageDirectory, type KnowledgePageDirectoryRole, type KnowledgePageDirectoryRoot, type PageFile, type KnowledgePageHost, type KnowledgePageSnapshot } from "./knowledge-page-core";
+import {
+  aggregateKnowledgePageActivity,
+  type KnowledgePageDirectory,
+  type KnowledgePageDirectoryRole,
+  type KnowledgePageDirectoryRoot,
+  type PageFile,
+  type KnowledgePageHost,
+  type KnowledgePageSnapshot as SharedKnowledgePageSnapshot,
+} from "./knowledge-page-core";
 
 const fsp = getDesktopFsPromises();
 const path = getDesktopPath();
 export * from "./knowledge-page-core";
+export type KnowledgePageSnapshot = Omit<SharedKnowledgePageSnapshot, "dashboard" | "links" | "sources">;
 
 interface DirectoryScan { directory: KnowledgePageDirectory; files: PageFile[]; }
-const RAW_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".pdf", ".docx", ".png", ".jpg", ".jpeg", ".webp", ".gif"]);
 const markdown = (file: string): boolean => /\.(?:md|markdown)$/iu.test(file);
 const yieldFrame = (): Promise<void> => new Promise(resolve => window.setTimeout(resolve, 0));
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -36,6 +44,7 @@ async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, ro
       root.state = (error as NodeJS.ErrnoException).code === "ENOENT" || message(error).includes("合法") ? "invalid" : "unavailable";
       root.error = root.state === "invalid" ? "位置已失效" : message(error); continue;
     }
+    if (role !== "wiki" && role !== "inbox") continue;
     root.count = 0;
     const pending = [rootPath];
     while (pending.length) {
@@ -48,15 +57,13 @@ async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, ro
           if (entry.isSymbolicLink()) { root.state = "partial"; root.error = "部分位置包含符号链接，尚未读取"; continue; }
           if (entry.isDirectory()) {
             pending.push(relative);
-            if (role === "projects" && current === rootPath) { root.count++; counted.add(relative); }
-          } else if (entry.isFile() && (role === "projects" || classifyKnowledgePath(bindings, relative) === role)
-            && (role === "projects" || (role === "raw" ? RAW_EXTENSIONS.has(path.extname(relative).toLowerCase()) : markdown(relative)))) {
+          } else if (entry.isFile() && classifyKnowledgePath(bindings, relative) === role && markdown(relative)) {
             try {
               const stat = await fsp.lstat(path.join(vaultPath, relative));
               if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("文件位置已变化");
               root.latestMtime = Math.max(root.latestMtime, stat.mtimeMs);
               files.set(relative, { path: relative, mtime: stat.mtimeMs, birthtime: Number.isFinite(stat.birthtimeMs) && stat.birthtimeMs > 0 ? stat.birthtimeMs : null });
-              if (role !== "projects") { root.count++; counted.add(relative); }
+              root.count++; counted.add(relative);
             } catch (error) { root.state = "partial"; root.error = message(error); }
           }
           if (++batch % 100 === 0) await yieldFrame();
@@ -70,26 +77,28 @@ async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, ro
 }
 
 /** No model, write, timer subscription, index rebuild or synthetic fallback is involved. */
-export async function loadKnowledgePageData(host: KnowledgePageHost, loadLinks: (bindings: KnowledgeFolderBindings) => Promise<KnowledgeLinkHealth>, now = Date.now()): Promise<KnowledgePageSnapshot> {
+export async function loadKnowledgePageData(host: KnowledgePageHost, now = Date.now()): Promise<KnowledgePageSnapshot> {
   const bindings = structuredClone(host.settingsKnowledgeBindings?.() ?? host.settings.knowledgeBase?.folderBindings ?? emptyKnowledgeFolderBindings());
   const errors: KnowledgePageSnapshot["errors"] = {};
   let service: ReturnType<KnowledgePageHost["getKnowledgeSurfaceService"]> = null;
   try { service = host.getKnowledgeSurfaceService(); } catch (error) { errors.health = message(error); errors.history = message(error); errors.upgrade = message(error); }
-  const [dashboardResult, recordsResult, linksResult, upgradeResult] = await Promise.allSettled([
-    Promise.resolve().then(() => { if (!service) throw new Error("知识库状态暂时读不到"); return service.getDashboardSnapshot(); }),
+  const [healthResult, recordsResult, upgradeResult, checkupResult] = await Promise.allSettled([
+    Promise.resolve().then(() => { if (!service) throw new Error("知识库状态暂时读不到"); return service.getHealthSnapshot(); }),
     Promise.resolve().then(() => { if (!service?.getMaintenanceRecords) throw new Error("维护记录暂时读不到"); return service.getMaintenanceRecords(); }),
-    Promise.resolve().then(() => loadLinks(bindings)),
-    Promise.resolve().then(() => service?.getUpgradeSnapshot?.() ?? null)
+    Promise.resolve().then(() => service?.getUpgradeSnapshot?.() ?? null),
+    Promise.resolve().then(async () => {
+      if (!service?.checkup) return null;
+      const [quick, deep] = await Promise.all([service.checkup.quick(), service.checkup.deep?.snapshot()]);
+      return quick.issues.length + (deep?.findings.length ?? 0);
+    })
   ]);
   const upgrade = upgradeResult.status === "fulfilled" ? upgradeResult.value : null;
   if (upgradeResult.status === "rejected") errors.upgrade = message(upgradeResult.reason);
-  const dashboard = dashboardResult.status === "fulfilled" ? dashboardResult.value : null;
-  if (dashboardResult.status === "rejected") errors.health = message(dashboardResult.reason);
+  const health = healthResult.status === "fulfilled" ? healthResult.value : null;
+  if (healthResult.status === "rejected") errors.health = message(healthResult.reason);
   const maintenanceRecords = recordsResult.status === "fulfilled" ? recordsResult.value : [];
   if (recordsResult.status === "rejected") errors.history = message(recordsResult.reason);
   const maintenanceHistory = mergeKnowledgeMaintenanceHistory(host.settings.knowledgeBase?.maintenanceHistory ?? [], maintenanceRecords);
-  const links: KnowledgeLinkHealth = linksResult.status === "fulfilled" ? linksResult.value : { state: "unknown", candidatePaths: [], isolatedPaths: [], reason: message(linksResult.reason) };
-  if (linksResult.status === "rejected") errors.links = message(linksResult.reason);
   let vaultPath = "";
   try {
     const adapter = host.app.vault.adapter as typeof host.app.vault.adapter & { getBasePath?(): string };
@@ -111,9 +120,22 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, loadLinks: 
     errors.activity = [errors.activity, "维护活动记录尚未更新"].filter(Boolean).join("；");
   }
   if (scans.some(scan => ["partial", "unavailable"].includes(scan.directory.state))) errors.directories ??= "部分目录尚未读完，请重试";
-  let sources: KnowledgeSourceHealth = { state: "unknown", missing: [], unknownCount: wiki.files.length, checkedCount: 0 };
-  try { if (vaultPath) sources = await loadKnowledgeSourceHealth(vaultPath, bindings, wiki.files.map(file => file.path)); }
-  catch (error) { errors.sources = message(error); }
-  if (wiki.directory.state === "partial" || wiki.directory.state === "unavailable") { sources.state = "partial"; errors.sources = "部分知识成果尚未读取"; }
-  return { generatedAt: now, bindings, dashboard, health: dashboard?.health ?? null, ...activity, directories: scans.map(scan => scan.directory), links, sources, maintenanceHistory, maintenanceRecords, upgrade, errors };
+  const map = await loadKnowledgeMapData(host.app, bindings).catch((error: unknown) => {
+    errors.system = message(error);
+    return { domains: [], reminders: [] };
+  });
+  return {
+    mapDomains: map.domains,
+    systemReminders: map.reminders,
+    generatedAt: now,
+    bindings,
+    health,
+    pendingCount: checkupResult.status === "fulfilled" ? checkupResult.value : null,
+    ...activity,
+    directories: scans.map(scan => scan.directory),
+    maintenanceHistory,
+    maintenanceRecords,
+    upgrade,
+    errors,
+  };
 }

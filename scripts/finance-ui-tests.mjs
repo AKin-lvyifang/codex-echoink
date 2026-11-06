@@ -1,3 +1,6 @@
+import { parse as parseCss } from "postcss";
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
@@ -13,7 +16,7 @@ if (requestedTestRoot !== undefined) {
   if (!requestedTestRoot.trim()) throw new Error("ECHOINK_FINANCE_UI_TEST_ROOT must not be empty");
   const allowed = await realpath(path.join(os.homedir(), "EchoInk-TestVaults", "90-任务临时"));
   taskTestRoot = await realpath(path.resolve(requestedTestRoot));
-  if (!taskTestRoot.startsWith(allowed + path.sep)) throw new Error("Finance UI fixtures must stay in 90-任务临时");
+  if (!isDisposableTestRoot(taskTestRoot)) throw new Error("Finance UI fixtures must stay in 90-任务临时");
 }
 const require = createRequire(import.meta.url);
 const { JSDOM } = require(process.env.ECHOINK_JSDOM_PATH || "jsdom");
@@ -100,7 +103,7 @@ try {
   // Independent bundles reuse a version-specific class, not the old number-flow tag.
   const reload = path.join(directory,"reload.mjs"); await esbuild.build({ banner: desktopNodeTestBanner, entryPoints:[path.join(root,"src/lifestyle/finance-number.ts")],bundle:true,platform:"node",format:"esm",outfile:reload });
   const reloadApi = await import(pathToFileURL(reload).href); const reloaded = new reloadApi.FinanceNumbers(); const reloadedParent = win.document.body.createEl("strong"); reloaded.mount(reloadedParent,"reloaded",100); await flush(); visibility(reloadedParent,true); frame(); frame(); assert.equal(reloadedParent.querySelector(tag).constructor,flow.constructor); assert.equal(digits(reloadedParent.querySelector(tag)),"100"); reloaded.release(); reloadedParent.remove();
-  const popup = new JSDOM("<!doctype html><body></body>",{ pretendToBeVisual:true }); const properties = []; popup.window.CSS = { registerProperty:property => properties.push(property) }; popup.window.matchMedia = () => media; popup.window.IntersectionObserver = win.IntersectionObserver; popup.window.requestAnimationFrame = win.requestAnimationFrame; popup.window.cancelAnimationFrame = win.cancelAnimationFrame; popup.window.Element.prototype.animate = win.Element.prototype.animate; popup.window.ShadowRoot.prototype.getAnimations = win.ShadowRoot.prototype.getAnimations; Object.assign(popup.window.Element.prototype,{ createSpan(options) { return create.call(this,"span",options); }, setText(text) { this.textContent = text; } });
+  const popup = new JSDOM("<!doctype html><body></body>",{ pretendToBeVisual:true }); const properties = []; installMobileDomHost(popup.window); popup.window.CSS = { registerProperty:property => properties.push(property) }; popup.window.matchMedia = () => media; popup.window.IntersectionObserver = win.IntersectionObserver; popup.window.requestAnimationFrame = win.requestAnimationFrame; popup.window.cancelAnimationFrame = win.cancelAnimationFrame; popup.window.Element.prototype.animate = win.Element.prototype.animate; popup.window.ShadowRoot.prototype.getAnimations = win.ShadowRoot.prototype.getAnimations; Object.assign(popup.window.Element.prototype,{ createSpan(options) { return create.call(this,"span",options); }, setText(text) { this.textContent = text; } });
   const popupParent = popup.window.document.createElement("strong"); popup.window.document.body.appendChild(popupParent); const popupNumbers = new api.FinanceNumbers(); popupNumbers.mount(popupParent,"popup",123); await flush(); visibility(popupParent,true); frame(); frame(); assert.equal(properties.length,1); assert.equal(properties[0].name,"--_number-flow-scale-x"); assert.equal(digits(popupParent.querySelector(tag)),"123"); assert.ok(popupParent.querySelector(tag).shadowRoot.querySelector("style")); popupNumbers.release(); popup.window.close();
   numbers.release(); assert.equal(numbers.activeNodes,0); assert.equal(observed.size,0); assert.equal(mediaListeners.size,0); assert.equal(frames.size,0); assert.equal(flow.shadowRoot.getAnimations().length,0); for (const animation of [...animations]) animation.finish(); assert.equal(animations.size,0); parent.remove();
   // Both callers use the same keyboard/hover/selection controller.
@@ -111,7 +114,7 @@ try {
   try {
     sector.dispatchEvent(new win.MouseEvent("mouseenter")); assert.ok(sector.classList.contains("is-hovered"));
     sector.dispatchEvent(new win.Event("focus"));
-    assert.equal(api.displayedTooltipsForTests.get(sector), "餐饮 · ¥ 3.00 · 30.0%", "the shared donut sends the complete reading to the host");
+    assert.equal(api.displayedTooltipsForTests.get(win.document.body.querySelector("[data-echoink-tooltip-anchor]")), "餐饮 · ¥ 3.00 · 30.0%", "the shared donut sends the complete reading to the host");
     assert.equal(chart.querySelector('[role="tooltip"]'), null, "the donut has no custom floating layer");
     assert.match(chart.querySelector('.echoink-finance-donut-center').textContent, /餐饮.*¥ 3\.00.*30\.0%/u);
     sector.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); assert.equal(category, "餐饮"); assert.equal(sector.getAttribute("aria-pressed"), "true");
@@ -171,7 +174,12 @@ try {
   failSave = true; action("保存预算"); await flush(); assert.equal(budgetWrites,1); assert.equal(total().value,"5000.03"); assert.ok(modalRoot().querySelector('[role="alert"]').textContent.includes("保存失败")); assert.deepEqual(data,snapshot); failSave = false; action("保存预算"); await flush(); assert.equal(budgetWrites,2); assert.equal(api.openTestModals.length,0); assert.equal(data.financeDefaultBudget.totalCents,400001); assert.deepEqual(data.budgets.map(budget => budget.month),["2026-12"]); assert.equal(data.budgets[0].totalCents,500003);
   workspace.detach(); assert.equal(host.querySelector("[data-slot=pagination]"), null); hostViewport.remove(); frame();
   for (const animation of [...animations]) animation.finish(); assert.equal(resizeObservers.size, 0); assert.equal(observed.size, 0); assert.equal(mediaListeners.size, 0);
-  const css = await readFile(path.join(root,"styles.css"),"utf8"); assert.ok(css.includes(".echoink-finance-ledger-metrics{position:sticky")); assert.ok(css.includes("select,textarea,[data-slot=select-trigger]")); assert.ok(css.includes("outline:none!important;box-shadow:none!important;background:var(--background-modifier-hover)!important")); assert.ok(!css.includes(".echoink-finance-ledger-metrics .echoink-finance-card>small{font-size:10px}"));
+  const css = await readFile(path.join(root,"styles.css"),"utf8"); assert.ok(css.includes(".echoink-finance-ledger-metrics{position:sticky")); assert.ok(css.includes("select,textarea,[data-slot=select-trigger]")); let neutralFocus = false;
+  parseCss(css).walkRules(rule => {
+    if (!rule.selector.includes(".echoink-finance-dialog") || !rule.selector.includes(":focus-visible")) return;
+    const values = new Map(rule.nodes.filter(node => node.type === "decl").map(node => [node.prop, node.value]));
+    if (values.get("outline") === "none" && values.get("box-shadow") === "none" && values.get("background")?.startsWith("var(--background-modifier-hover")) neutralFocus = true;
+  }); assert.ok(neutralFocus,"finance fields retain the current neutral focus style"); assert.ok(!css.includes(".echoink-finance-ledger-metrics .echoink-finance-card>small{font-size:10px}"));
   if (process.argv.includes("--preview")) {
     const stage = win.document.body.createDiv({ cls: "echoink-lifestyle-view", attr: { id: "bill-plan-preview" } }); stage.createDiv({ attr: { id: "bill-plan-preview-stage" } }).createDiv({ attr: { id: "bill-plan-workspace" } });
     for (const id of ["bill-preview-close", "bill-preview-theme", "bill-preview-palette"]) stage.createEl("button", { attr: { id } }); stage.createEl("input", { attr: { id: "bill-preview-fail", type: "checkbox" } });

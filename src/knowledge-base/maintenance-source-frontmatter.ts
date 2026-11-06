@@ -3,6 +3,11 @@ import type { Node, Pair } from "yaml";
 import type { MaintenanceSourceFields } from "./maintenance-p1-contract";
 import type { MaintenanceCanonicalSourceStatus } from "./maintenance-upgrade-contract";
 
+/** Only unsafe existing source metadata; internal/generated-patch failures stay fatal. */
+export class SourceFrontmatterUnsafeError extends Error {
+  constructor(message: string) { super(message); this.name = "SourceFrontmatterUnsafeError"; }
+}
+
 const MANAGED_KEYS = ["提炼状态", "摘要", "提炼到"] as const;
 type ManagedKey = typeof MANAGED_KEYS[number];
 
@@ -25,7 +30,7 @@ function frontmatterSlice(markdown: string): FrontmatterSlice | null {
   const bom = markdown.startsWith("\uFEFF") ? 1 : 0;
   const opening = /^---[ \t]*(\r\n|\n|\r|$)/u.exec(markdown.slice(bom));
   if (!opening) return null;
-  if (!opening[1]) throw new Error("Source frontmatter is not closed.");
+  if (!opening[1]) throw new SourceFrontmatterUnsafeError("Source frontmatter is not closed.");
   const start = bom + opening[0].length;
   let cursor = start;
   while (cursor < markdown.length) {
@@ -40,7 +45,7 @@ function frontmatterSlice(markdown: string): FrontmatterSlice | null {
     if (!match) break;
     cursor = end + match[0].length;
   }
-  throw new Error("Source frontmatter is not closed.");
+  throw new SourceFrontmatterUnsafeError("Source frontmatter is not closed.");
 }
 
 function parseSourceFrontmatter(markdown: string) {
@@ -49,7 +54,7 @@ function parseSourceFrontmatter(markdown: string) {
   const document = parseDocument(slice.source, { keepSourceTokens: true, uniqueKeys: true, strict: true });
   if (document.errors.length || document.warnings.length
     || (document.contents && !isMap(document.contents))) {
-    throw new Error("Source frontmatter must be an unambiguous YAML mapping.");
+    throw new SourceFrontmatterUnsafeError("Source frontmatter must be an unambiguous YAML mapping.");
   }
   return { ...slice, document };
 }
@@ -95,19 +100,19 @@ export function readMaintenanceFrontmatterProperty(markdown: string, key: string
 }
 
 /** Insert absent keys only. Original YAML, comments, delimiters and body are exact slices. */
-export function appendMissingMaintenanceFrontmatterProperties(markdown: string, fields: Readonly<Record<string, string | boolean | readonly string[]>>): string {
+export function appendMissingMaintenanceFrontmatterProperties(markdown: string, fields: Readonly<Record<string, string | boolean | number | readonly string[]>>): string {
   const parsed = parseSourceFrontmatter(markdown);
   const pairs = Object.entries(fields);
   if (!pairs.length) return markdown;
   if (parsed && isMap(parsed.document.contents) && (parsed.document.contents.flow
     || parsed.document.contents.items.some(pair => !isScalar(pair.key) || pair.key.anchor || pair.key.tag))) {
-    throw new Error("文件头不能安全追加属性，保留原文件。");
+    throw new SourceFrontmatterUnsafeError("文件头不能安全追加属性，保留原文件。");
   }
   const missing = pairs.filter(([key]) => !parsed || !isMap(parsed.document.contents)
     || !parsed.document.contents.items.some(pair => isScalar(pair.key) && pair.key.value === key));
   if (!missing.length) return markdown;
   const newline = parsed?.newline ?? /\r\n|\n|\r/u.exec(markdown)?.[0] ?? "\n";
-  const lines = missing.map(([key, value]) => `${key}: ${JSON.stringify(value)}${newline}`).join("");
+  const lines = missing.map(([key, value]) => `${/^[\p{L}_][\p{L}\p{N}_ -]*$/u.test(key) ? key : JSON.stringify(key)}: ${JSON.stringify(value)}${newline}`).join("");
   if (parsed) return markdown.slice(0, parsed.close) + lines + markdown.slice(parsed.close);
   const bom = markdown.startsWith("\uFEFF") ? 1 : 0;
   return markdown.slice(0, bom) + `---${newline}${lines}---${newline}` + markdown.slice(bom);
@@ -132,7 +137,7 @@ export function patchMaintenanceUpgradeSourceFrontmatter(markdown: string, field
 function managedPairValue(pair: Pair, key: ManagedKey): string | null | string[] {
   const node = pair.value;
   if (isScalar(pair.key) && (pair.key.anchor || pair.key.tag)) {
-    throw new Error(`Managed source key ${key} is anchored or tagged.`);
+    throw new SourceFrontmatterUnsafeError(`Managed source key ${key} is anchored or tagged.`);
   }
   if (isScalar(node) && !node.anchor && !node.tag && node.value === null) return null;
   if (key !== "提炼到" && isScalar(node) && !node.anchor && !node.tag && typeof node.value === "string") {
@@ -142,16 +147,16 @@ function managedPairValue(pair: Pair, key: ManagedKey): string | null | string[]
     return node.items.map((item) => {
       if (!isScalar(item) || item.anchor || item.tag || typeof item.value !== "string"
         || (item.type !== "QUOTE_DOUBLE" && item.type !== "QUOTE_SINGLE")) {
-        throw new Error("Source targets must be quoted wiki links in a YAML list.");
+        throw new SourceFrontmatterUnsafeError("Source targets must be quoted wiki links in a YAML list.");
       }
       const match = /^\[\[(.+)\]\]$/u.exec(item.value);
       if (!match || !isMaintenanceSourceTargetPath(match[1])) {
-        throw new Error("Source target is not a safe wiki link.");
+        throw new SourceFrontmatterUnsafeError("Source target is not a safe wiki link.");
       }
       return match[1];
     });
   }
-  throw new Error(`Managed source field ${key} has an unsupported value.`);
+  throw new SourceFrontmatterUnsafeError(`Managed source field ${key} has an unsupported value.`);
 }
 
 function sameValue(left: string | null | string[], right: string | string[]): boolean {
@@ -176,7 +181,7 @@ function commentsWithin(token: unknown, start: number, end: number): { offset: n
 }
 
 function replacementValue(source: string, node: Node, encoded: string, newline: string): string {
-  if (!node.range) throw new Error("Managed source field has no safe source range.");
+  if (!node.range) throw new SourceFrontmatterUnsafeError("Managed source field has no safe source range.");
   const [start, end] = node.range;
   const raw = source.slice(start, end);
   const lastNewline = /(?:\r\n|\n|\r)$/u.exec(raw)?.[0] ?? "";
@@ -184,11 +189,11 @@ function replacementValue(source: string, node: Node, encoded: string, newline: 
   let replacement = encoded;
   if (isScalar(node) && (node.type === "BLOCK_LITERAL" || node.type === "BLOCK_FOLDED")) {
     // A block header's comment belongs to the property, not to its old text.
-    if (comments.length > 1) throw new Error("Managed block scalar has ambiguous comments.");
+    if (comments.length > 1) throw new SourceFrontmatterUnsafeError("Managed block scalar has ambiguous comments.");
     if (comments.length) {
       const header = node.srcToken;
       const headerEnd = header?.type === "block-scalar" ? header.props[0] : undefined;
-      if (!headerEnd || headerEnd.type !== "block-scalar-header") throw new Error("Managed block header has no safe range.");
+      if (!headerEnd || headerEnd.type !== "block-scalar-header") throw new SourceFrontmatterUnsafeError("Managed block header has no safe range.");
       const spacingStart = headerEnd.offset + headerEnd.source.length;
       replacement += source.slice(spacingStart, comments[0].offset) + comments[0].source;
     }
@@ -232,14 +237,14 @@ export function patchMaintenanceSourceFrontmatter(markdown: string, fields: Main
   }
   const { source, document, newline } = parsed;
   if (isMap(document.contents) && document.contents.flow) {
-    throw new Error("Flow-style source frontmatter cannot be patched safely.");
+    throw new SourceFrontmatterUnsafeError("Flow-style source frontmatter cannot be patched safely.");
   }
   const edits: { start: number; end: number; content: string }[] = [];
   const missing = new Set<ManagedKey>(MANAGED_KEYS);
   if (isMap(document.contents)) {
     for (const pair of document.contents.items) {
       if (!isScalar(pair.key) || typeof pair.key.value !== "string") {
-        throw new Error("Source frontmatter has a complex key.");
+        throw new SourceFrontmatterUnsafeError("Source frontmatter has a complex key.");
       }
       const key = pair.key.value as ManagedKey;
       if (!missing.has(key)) continue;
@@ -249,7 +254,7 @@ export function patchMaintenanceSourceFrontmatter(markdown: string, fields: Main
       const keyStart = pair.key.range?.[0];
       const lineStart = keyStart === undefined ? -1 : Math.max(source.lastIndexOf("\n", keyStart - 1), source.lastIndexOf("\r", keyStart - 1)) + 1;
       if (keyStart === undefined || keyStart !== lineStart || !node || !node.range) {
-        throw new Error("Managed source field has no unambiguous top-level range.");
+        throw new SourceFrontmatterUnsafeError("Managed source field has no unambiguous top-level range.");
       }
       if (!sameValue(current, desired[key])) {
         edits.push({ start: node.range[0], end: node.range[1], content: replacementValue(source, node, encoded[key], newline) });
@@ -265,13 +270,76 @@ export function patchMaintenanceSourceFrontmatter(markdown: string, fields: Main
     updated += [...missing].map((key) => `${key}: ${encoded[key]}${newline}`).join("");
   }
   const result = markdown.slice(0, parsed.start) + updated + markdown.slice(parsed.close);
-  const verified = parseSourceFrontmatter(result);
+  let verified: ReturnType<typeof parseSourceFrontmatter>;
+  try { verified = parseSourceFrontmatter(result); }
+  catch { throw new Error("Source frontmatter patch could not be verified."); }
   if (!verified || !isMap(verified.document.contents)) throw new Error("Source frontmatter patch could not be verified.");
   for (const key of MANAGED_KEYS) {
     const pair = verified.document.contents.items.find((item) => isScalar(item.key) && item.key.value === key);
-    if (!pair || !sameValue(managedPairValue(pair, key), desired[key])) {
+    let matches = false;
+    try { matches = !!pair && sameValue(managedPairValue(pair, key), desired[key]); }
+    catch { throw new Error("Source frontmatter patch could not be verified."); }
+    if (!matches) {
       throw new Error("Source frontmatter patch did not preserve the requested values.");
     }
+  }
+  return result;
+}
+
+
+export type KnowledgePropertyValue = string | boolean | number | readonly string[];
+
+/** Explicit, confirmed fields only. null removes a field; incompatible values are never coerced. */
+export function patchKnowledgeProperties(
+  markdown: string,
+  fields: Readonly<Record<string, KnowledgePropertyValue | null>>,
+  convertLists: readonly string[] = [],
+): string {
+  const parsed = parseSourceFrontmatter(markdown);
+  const additions: Record<string, KnowledgePropertyValue> = {};
+  const edits: { start: number; end: number; content: string }[] = [];
+  const mapping = parsed?.document.contents;
+  if (mapping && (!isMap(mapping) || mapping.flow || mapping.items.some(pair => !isScalar(pair.key) || pair.key.anchor || pair.key.tag))) {
+    throw new SourceFrontmatterUnsafeError("属性不是明确的普通映射，保留原文件。");
+  }
+  for (const [key, value] of Object.entries(fields)) {
+    if (!key.trim() || /[\r\n]/u.test(key) || key !== key.trim()) throw new Error("属性名无效。");
+    if (value !== null && typeof value !== "string" && typeof value !== "boolean" && !(typeof value === "number" && Number.isFinite(value)) && !(Array.isArray(value) && value.every(item => typeof item === "string"))) throw new Error("属性值必须是文本、数字、布尔值或文本列表。");
+    const pair = isMap(mapping) ? mapping.items.find(pair => isScalar(pair.key) && pair.key.value === key) : undefined;
+    if (!pair) { if (value !== null) additions[key] = value; continue; }
+    const current = readMaintenanceFrontmatterProperty(markdown, key);
+    if (current.error || current.value === null || current.value === undefined || !["string", "boolean", "number"].includes(typeof current.value) && !Array.isArray(current.value)
+      || Array.isArray(current.value) && !current.value.every(item => typeof item === "string")
+      || value !== null && (Array.isArray(value) !== Array.isArray(current.value) || typeof value !== typeof current.value)
+        && !(convertLists.includes(key) && typeof current.value === "string" && Array.isArray(value))) {
+      throw new SourceFrontmatterUnsafeError(`${key}属性类型不兼容，保留原值。`);
+    }
+    if (JSON.stringify(current.value) === JSON.stringify(value)) continue;
+    const node = pair.value;
+    if (!parsed || !node?.range || !isScalar(pair.key) || !pair.key.range) throw new SourceFrontmatterUnsafeError("属性缺少明确范围。");
+    const keyStart = pair.key.range[0];
+    const lineStart = Math.max(parsed.source.lastIndexOf("\n", keyStart - 1), parsed.source.lastIndexOf("\r", keyStart - 1)) + 1;
+    if (keyStart !== lineStart) throw new SourceFrontmatterUnsafeError("属性不是独立的顶层字段。");
+    if (value === null) {
+      // Remove only the selected pair, leaving comments outside its CST range intact.
+      let end = node.range[2];
+      if (!/[\r\n]$/u.test(parsed.source.slice(lineStart, end))) {
+        const eol = /^(?:\r\n|\n|\r)/u.exec(parsed.source.slice(end));
+        end += eol?.[0].length ?? 0;
+      }
+      edits.push({ start: lineStart, end, content: "" });
+    } else edits.push({ start: node.range[0], end: node.range[1], content: replacementValue(parsed.source, node, JSON.stringify(value), parsed.newline) });
+  }
+  let result = markdown;
+  if (parsed) {
+    let source = parsed.source;
+    for (const edit of edits.sort((a,b) => b.start - a.start)) source = source.slice(0, edit.start) + edit.content + source.slice(edit.end);
+    result = markdown.slice(0, parsed.start) + source + markdown.slice(parsed.close);
+  }
+  result = appendMissingMaintenanceFrontmatterProperties(result, additions);
+  for (const [key, value] of Object.entries(fields)) {
+    const actual = readMaintenanceFrontmatterProperty(result, key);
+    if (value === null ? actual.present : actual.error || !actual.present || JSON.stringify(actual.value) !== JSON.stringify(value)) throw new Error("属性更新回读校验失败。");
   }
   return result;
 }

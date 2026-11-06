@@ -33,6 +33,8 @@ export const USER_PROFILE_SLOTS: readonly UserProfileSlotDefinition[] = Object.f
   Object.freeze({ section: "identity", profileKey: "identity.role", labelZh: "职业与角色", importance: 92 }),
   Object.freeze({ section: "identity", profileKey: "identity.organization", labelZh: "组织与团队", importance: 88 }),
   Object.freeze({ section: "identity", profileKey: "identity.location_timezone", labelZh: "地区与时区", importance: 84 }),
+  Object.freeze({ section: "identity", profileKey: "identity.family", labelZh: "家庭", importance: 90 }),
+  Object.freeze({ section: "identity", profileKey: "identity.health_safety", labelZh: "健康与安全", importance: 98 }),
   Object.freeze({ section: "identity", profileKey: "identity.background", labelZh: "长期背景", importance: 80 }),
 
   Object.freeze({ section: "preference", profileKey: "preference.language", labelZh: "语言", importance: 78 }),
@@ -70,7 +72,7 @@ export function isUserProfileKey(value: unknown): value is string {
  * 做梦 Prompt 携带的已有 profileKey 目录上限（Round 6 修复七）：
  * Prompt 只给「section:key」目录供模型复用稳定主题，绝不允许无界增长。
  */
-export const PROFILE_KEY_PROMPT_CAP = 24 as const;
+export const PROFILE_KEY_PROMPT_CAP = 26 as const;
 
 export interface ProfileKeyCatalogEntry {
   readonly section: UserProfileSection;
@@ -105,6 +107,7 @@ export interface UserProfileItem {
   readonly basis: UserProfileItemBasis;
   readonly status: "current" | "superseded";
   readonly sourceMemoryIds: readonly string[];
+  readonly userEdited?: boolean;
   readonly revision: number;
   readonly updatedAt?: number;
 }
@@ -246,6 +249,7 @@ export function userProfileStateJson(state: UserProfileState): string {
 }
 
 export interface DreamProfileInput {
+  readonly authority?: "user" | "dream";
   readonly items: readonly Readonly<{
     section: UserProfileSection;
     text: string;
@@ -282,6 +286,7 @@ export function applyDreamProfileUpdate(
     const key = incoming.profileKey?.trim() ?? "";
     const slot = profileSlotDefinition(key);
     if (!slot || slot.section !== incoming.section) continue;
+    if (input.authority !== "user" && previous.items.some(item => item.profileKey === key && item.status === "current" && item.userEdited)) continue;
     const barrier = previous.deletionBarriers?.find((entry) => entry.profileKey === key);
     if (barrier) {
       const evidence = incoming.sourceEvidence;
@@ -315,6 +320,7 @@ export function applyDreamProfileUpdate(
         : [incoming.sourceMemoryId];
       items[existingIndex] = Object.freeze({
         ...existing,
+        ...(input.authority === "user" ? { userEdited: true } : {}),
         section: slot.section,
         profileKey: slot.profileKey,
         // Each closed slot has at most one observed candidate. Only the same
@@ -332,6 +338,7 @@ export function applyDreamProfileUpdate(
     }
     items.push(Object.freeze({
       id: newCognitiveId("profile"),
+      ...(input.authority === "user" ? { userEdited: true } : {}),
       section: slot.section,
       profileKey: slot.profileKey,
       text,
@@ -530,7 +537,7 @@ export function revokeReprocessedProfileSources(
   const revision = previous.revision + 1;
   const items: UserProfileItem[] = [];
   for (const item of previous.items) {
-    if (item.status !== "current"
+    if (item.userEdited || item.status !== "current"
       || !item.sourceMemoryIds.some((id) => reprocessedIds.has(id))) {
       items.push(item);
       continue;
@@ -610,6 +617,7 @@ export function parseUserProfileState(raw: Record<string, unknown>): UserProfile
           if (!text || text.length > USER_PROFILE_ITEM_HARD_MAX_CHARS) return null;
           return Object.freeze({
           id: typeof item.id === "string" ? item.id : newCognitiveId("profile"),
+          ...(item.userEdited === true ? { userEdited: true } : {}),
           section: slot.section,
           profileKey: slot.profileKey,
           text,

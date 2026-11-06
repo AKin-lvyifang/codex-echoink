@@ -22,7 +22,7 @@ export interface LifestylePluginHost {
   generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal): Promise<string>;
   openLifestyleSettings(kind: LifestyleKind): Promise<void>;
   activateHomeView?(options?: { keepRightSidebar?: boolean }): Promise<void>;
-  getWorkbenchModuleOwner?(moduleId: AgentModuleId): AgentDefinition;
+  getWorkbenchModuleOwner?(moduleId: AgentModuleId): AgentDefinition | null;
   prefillWorkbenchModule?(moduleId: AgentModuleId, text: string): Promise<boolean>;
   saveFinanceCsv?(name: string, content: string): Promise<string>;
 }

@@ -1,3 +1,4 @@
+import { getModuleOwner, requireModuleOwner } from "../agents/registry";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { Notice } from "obsidian";
@@ -36,7 +37,8 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
     if (origin?.originConversationId) {
       const entry = await plugin.readPiConversationCatalogEntry(origin.originConversationId);
       if (!entry || entry.status === "deleted") throw new Error("agent_capability_linking_origin_missing");
-      const agentId = entry.agentId ?? "sol";
+      const originId = entry.agentId ?? "sol";
+      const agentId = originId === "sol" ? requireModuleOwner(plugin.settings.agentRegistry, "knowledge-base").id : originId;
       if (write && plugin.getConversationRunService().isAgentBlocked(agentId)) throw new Error("agent_removal_in_progress");
       return agentId;
     }
@@ -44,6 +46,7 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
     throw new Error("agent_capability_linking_origin_unknown");
   };
   const assertOrigin = async (origin: Readonly<KnowledgeLinkingOrigin> | undefined, effect: "read" | "write", relativePath?: string) => {
+    requireModuleOwner(plugin.settings.agentRegistry, "knowledge-base");
     const agentId = await originAgent(origin, effect === "write");
     if (effect === "write" && plugin.settings.defaultPermission === "read-only") throw new Error("agent_capability_read_only:knowledge");
     if (agentId === null) return; // Current explicit local user confirmation, not an automatic fallback.
@@ -61,8 +64,9 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
   };
   return {
     vaultRootPath: root,
-    automaticEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false,
+    automaticEnabled: () => plugin.settings.knowledgeBase.autoLinkEnabled !== false && !!getModuleOwner(plugin.settings.agentRegistry, "knowledge-base"),
     prepareManual: () => {
+      requireModuleOwner(plugin.settings.agentRegistry, "knowledge-base");
       try { resolveKnowledgeMaintenanceSubmitSnapshot(plugin.settings); }
       catch { throw new Error(plugin.settings.settingsLanguage === "en" ? "Configure an available model in Models first." : "请先到「模型」配置可用模型，再开始补全知识关联。"); }
     },
@@ -95,7 +99,10 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
       if (input.signal.aborted) return [];
       await assertOrigin(input, "read");
       if (session && session.taskId !== input.taskId) await release();
-      const agentId = await originAgent(input) ?? plugin.settings.agentRegistry.moduleOwners["knowledge-base"];
+      const owner = getModuleOwner(plugin.settings.agentRegistry, "knowledge-base");
+      if (!owner) return [];
+      const origin = await originAgent(input);
+      const agentId = !origin || origin === "sol" ? owner.id : origin;
       if (session && (await plugin.readPiConversationCatalogEntry(session.conversationId))?.agentId !== agentId) await release();
       if (!session) {
         if (plugin.getConversationRunService().isAgentBlocked(agentId)) throw new Error("agent_removal_in_progress");

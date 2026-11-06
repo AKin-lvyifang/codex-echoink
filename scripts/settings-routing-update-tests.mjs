@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner } from "./desktop-node-test-host.mjs";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -11,8 +12,7 @@ const { JSDOM } = createRequire(import.meta.url)("jsdom");
 const configuredRoot = process.env.ECHOINK_SETTINGS_TEST_ROOT;
 if (!configuredRoot) throw new Error("Set ECHOINK_SETTINGS_TEST_ROOT to a newly registered directory under ~/EchoInk-TestVaults/90-任务临时");
 const root = await realpath(configuredRoot);
-const allowed = await realpath(path.join(homedir(), "EchoInk-TestVaults/90-任务临时"));
-if (!root.startsWith(allowed + path.sep)) throw new Error("Settings test root must be inside 90-任务临时");
+if (!isDisposableTestRoot(root)) throw new Error("Settings test root must be inside 90-任务临时");
 const output = path.join(root, "routing-update");
 await mkdir(output, { recursive: true });
 let dom;

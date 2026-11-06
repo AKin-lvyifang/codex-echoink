@@ -5,6 +5,7 @@ import * as fsSync from 'node:fs';
 import { parse as parseYaml } from 'yaml';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { TFile } from 'obsidian';
 import { KnowledgeAgentIndex } from '@production/knowledge-base/knowledge-agent-index';
 import { KnowledgeRetriever } from '@production/knowledge-base/query';
 import { VaultBodySearch } from '@production/knowledge-base/vault-body-search';
@@ -163,7 +164,35 @@ export async function evaluateProduction(input) {
       await observe('PersonalMemoryRepository.initialize', {}, () => repository.initialize());
       const seedResults = [];
       for (const seed of seeds) {
-        seedResults.push(await writeMemorySeed(repository, seed, runtime, operation => { nextId = operation.id; }, observe));
+        seedResults.push(await writeMemorySeed(repository, seed, runtime, operation => {
+          nextId = operation.id;
+          if (operation.at !== undefined) {
+            timestamp = Date.parse(operation.at);
+            if (!Number.isFinite(timestamp)) throw new Error('Invalid memory seed operation.at');
+          }
+        }, observe));
+        // Frozen host state, never a substitute for production lifecycle logic.
+        // Older checkouts may ignore pinned/activity; their observed failure is
+        // precisely what the baseline must retain.
+        for (const result of seedResults.at(-1).results) {
+          const operation = seed.operations.find(operation => operation.id === result.record?.id);
+          if (operation?.pinned === undefined) continue;
+          if (typeof operation.pinned !== 'boolean') throw new Error('Invalid memory seed pinned');
+          const file = inside(repository.layout.root, result.record.file);
+          const markdown = await fs.readFile(file, 'utf8');
+          await fs.writeFile(file, markdown.replace(/\n---\n/u, `\npinned: ${operation.pinned}\n---\n`));
+          await repository.handleExternalChange({ event: "change", relativePath: result.record.file });
+        }
+        if (seed.memory_activity) {
+          await fs.writeFile(path.join(repository.layout.runtime, 'memory-activity.json'), JSON.stringify({
+            ...seed.memory_activity, vaultId: runtime.vaultId
+          }));
+        }
+      }
+      if (setup.fixed_now !== undefined) timestamp = Date.parse(setup.fixed_now);
+      if (setup.advance_days !== undefined) {
+        if (!Number.isFinite(setup.advance_days) || setup.advance_days < 0) throw new Error('Invalid advance_days');
+        timestamp += setup.advance_days * 86_400_000;
       }
       async function collectCandidates(query) {
         if (typeof query !== 'string') throw new Error('Production Recall did not supply a candidate query');
@@ -199,6 +228,9 @@ export async function evaluateProduction(input) {
             try { return (prepared = await observe('PersonalMemoryRecallHarness.prepareTurnContext', request, () => harness.prepareTurnContext(request))); }
             finally { captureRecallQuery = false; }
           }
+        },
+        onPersonalMemorySourcesInjected: async receipt => {
+          if (typeof repository.recordRecalledMemories === "function") await repository.recordRecalledMemories(receipt.sources.filter(source => source.reason !== "pinned").slice(0, 3).filter(source => source.reason === "title_or_trigger").map(source => source.id), receipt.productRunId);
         },
         personalMemoryRecallTokenBudget: setup.memory_token_budget ?? 1200,
         personalMemoryAvailable: true
@@ -239,11 +271,18 @@ export async function evaluateProduction(input) {
       // Decode the production serialization, not a reconstructed recall payload.
       const block = text.match(/<echoink_memory_recall\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_recall>/u);
       const secondaryBlock = text.match(/<echoink_memory_secondary\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_secondary>/u);
-      const delivered = [...(block ? JSON.parse(block[1]).candidates : []), ...(secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts.map(entry => entry.fact) : [])];
+      const coreReceipt = prepared?.core ?? [];
+      const coreBlock = text.match(/<echoink_memory_core\b[^>]*>\n([\s\S]*?)\n<\/echoink_memory_core>/u);
+      const coreDelivered = coreBlock ? JSON.parse(coreBlock[1]).map(entry => {
+        const receipt = coreReceipt.find(item => item.title === entry.title && item.summary === entry.summary);
+        if (!receipt) throw new Error("Core injection has no actual receipt");
+        return { ...entry, id: receipt.id };
+      }) : [];
+      const delivered = [...coreDelivered, ...(block ? JSON.parse(block[1]).candidates : []), ...(secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts.map(entry => entry.fact) : [])];
       if (repeatObservations) repeatObservations.delivered_secondary_facts = secondaryBlock ? JSON.parse(secondaryBlock[1]).secondaryFacts : [];
       return {
-        candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered,
-        provider_text: text, calls, raw: { fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
+        candidate_items: scopedCandidates ?? pages.flatMap(value => value.items), delivery_items: delivered, core_receipt: coreReceipt,
+        provider_text: text, calls, raw: { evaluation_now: timestamp, fixture_validation: { status: 'valid', secondary_ids: validatedSecondaryIds, method: 'serializeSecondaryRecord (calls normalizeAssociationClueFields); provider fields unchanged' }, seed_results: seedResults, repository_search: pages, prepared_turn: prepared, before_agent_start: before, context, repeat_recall: repeatEvidence, repeat_observations: repeatObservations, secondary_hit_write_errors: hitWriteErrors },
         host_adapters: ['synthetic Vault and runtime IDs', 'deterministic Repository idFactory/now', 'Repository secondaryRecordsProvider from frozen synthetic SecondaryMemoryRecord records', 'Pi event registration host only; production handler and serialization unchanged'],
         effective_configuration: { declared_project: setup.project ?? null, projectId: projectId ?? null, frozen_history: frozenHistory, recent_conversation: recentConversation, ...historyAudit, history_applied_to_memory_preflight: true, history_roles_preserved_in_audit: true, current_query: item.query, candidate_query: candidateQuery, candidate_query_source: 'observed_production_prepareTurnSnapshot' },
         unsupported_setup: unsupportedSetup(setup).filter(issue => issue.key !== 'history')
@@ -351,7 +390,7 @@ export async function evaluateProduction(input) {
 }
 
 function unsupportedSetup(setup) {
-  const known = new Set(['folder_bindings', 'memory_seed', 'memory_search', 'memory_token_budget', 'recent_conversation', 'mutations', 'explicit_paths', 'include_unrefined', 'preflight_mode', 'isolation', 'restore', 'reload_plugin', 'project', 'fixed_now', 'timezone', 'query_terms_only_in_aliases', 'query_terms_only_in_tags', 'preserve_settings', 'model_must_derive_date_range', 'active_path', 'opened_paths', 'settings_override', 'read_failures', 'link_seeds', 'repeat_query_count']);
+  const known = new Set(['folder_bindings', 'memory_seed', 'memory_search', 'memory_token_budget', 'recent_conversation', 'mutations', 'explicit_paths', 'include_unrefined', 'preflight_mode', 'isolation', 'restore', 'reload_plugin', 'project', 'fixed_now', 'timezone', 'query_terms_only_in_aliases', 'query_terms_only_in_tags', 'preserve_settings', 'model_must_derive_date_range', 'active_path', 'opened_paths', 'settings_override', 'read_failures', 'link_seeds', 'repeat_query_count', 'advance_days']);
   return Object.entries(setup).filter(([key, value]) => !known.has(key) && value !== undefined && value !== null && value !== false && (!Array.isArray(value) || value.length)).map(([key, value]) => {
     const productionDoesNotConsume = ['opened_paths', 'history'].includes(key);
     return { key, value, blocks_standard_setup: !productionDoesNotConsume,
@@ -366,7 +405,7 @@ function syntheticVaultHost(root, openedPaths, activePath, readFailures) {
   const failedReads = new Set(readFailures), readFailureEvents = [];
   const file = relative => {
     const stat = fsSync.statSync(inside(root, relative));
-    return { path: relative, basename: path.basename(relative, path.extname(relative)), extension: path.extname(relative).slice(1), stat: { mtime: stat.mtimeMs, ctime: stat.ctimeMs, size: stat.size } };
+    return Object.assign(new TFile(relative), { basename: path.basename(relative, path.extname(relative)), extension: path.extname(relative).slice(1), stat: { mtime: stat.mtimeMs, ctime: stat.ctimeMs, size: stat.size } });
   };
   const files = () => {
     const result = [];

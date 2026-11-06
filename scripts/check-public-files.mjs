@@ -2,8 +2,14 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { internalReason } from "./public-boundary.mjs";
 
+// 默认/--staged：检查私有仓库的提交。内部资料（docs/、AGENTS.md 等）允许存在，只查密钥；其余文件按公开标准全查。
+// --tree <rev>：检查准备推到公开仓库的快照，出现任何内部资料都拒绝。
 const stagedOnly = process.argv.includes("--staged");
+const treeIndex = process.argv.indexOf("--tree");
+const treeRev = treeIndex >= 0 ? process.argv[treeIndex + 1] : null;
+if (treeIndex >= 0 && !treeRev) throw new Error("--tree needs a commit or tree id");
 
 function trackedFiles() {
   const output = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" });
@@ -24,35 +30,6 @@ function stagedFiles() {
     .map((file) => file.replace(/\\/g, "/"));
 }
 
-const rules = [
-  {
-    reason: "private local collaboration or memory state",
-    matches: (file) =>
-      /(?:^|\/)(?:AGENT|AGENTS|USER|MEMORY|CONTEXT)\.md$/i.test(file)
-      || file.startsWith(".codex-memory/")
-      || file.startsWith(".omx/")
-  },
-  {
-    reason: "private project documentation",
-    matches: (file) => file.startsWith("docs/")
-  },
-  {
-    reason: "private experiment material",
-    matches: (file) => file.startsWith("experiments/")
-  },
-  {
-    reason: "private Agent Evals material",
-    matches: (file) =>
-      /^scripts\/agent-evals-.*\.mjs$/i.test(file)
-      || file.startsWith("src/tests/agent-evals/")
-      || file.startsWith("src/tests/fixtures/agent-evals-v1/")
-  },
-  {
-    reason: "internal prototype source or artifact",
-    matches: (file) => /(?:^|\/)prototypes?\//i.test(file)
-  }
-];
-
 const hardCodedSecretPattern =
   /\b(?:OPENAI|ANTHROPIC|DEEPSEEK|GITHUB|GH|HERMES|OPENCODE)[A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET)\b\s*[:=]\s*['"](?!\$\{\{)[^'"\n]{8,}['"]/i;
 
@@ -62,6 +39,17 @@ if (!hardCodedSecretPattern.test("GH_" + "TOKEN = '" + "abcdefgh'")) {
 if (hardCodedSecretPattern.test('GH_TOKEN: "${{ github.token }}"')) {
   throw new Error("Public repository guard must allow GitHub Actions secret expressions.");
 }
+
+const secretRules = [
+  {
+    reason: "raw Authorization bearer token",
+    pattern: /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i
+  },
+  {
+    reason: "hard-coded secret or API key assignment",
+    pattern: hardCodedSecretPattern
+  }
+];
 
 const contentRules = [
   {
@@ -76,43 +64,44 @@ const contentRules = [
     reason: "private vault path or name",
     pattern: new RegExp("AKin-" + "note-management")
   },
-  {
-    reason: "raw Authorization bearer token",
-    pattern: /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]{8,}/i
-  },
-  {
-    reason: "hard-coded secret or API key assignment",
-    pattern: hardCodedSecretPattern
-  }
+  ...secretRules
 ];
 
+function treeFiles(rev) {
+  const output = execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", rev], { encoding: "utf8" });
+  return output.split("\0").filter(Boolean);
+}
+
 function readTextFile(file) {
-  const buffer = stagedOnly
-    ? execFileSync("git", ["show", `:${file}`], { maxBuffer: 64 * 1024 * 1024 })
-    : readFileSync(file);
+  const buffer = treeRev
+    ? execFileSync("git", ["show", `${treeRev}:${file}`], { maxBuffer: 64 * 1024 * 1024 })
+    : stagedOnly
+      ? execFileSync("git", ["show", `:${file}`], { maxBuffer: 64 * 1024 * 1024 })
+      : readFileSync(file);
   if (buffer.includes(0)) return null;
   return buffer.toString("utf8");
 }
 
-const files = stagedOnly ? stagedFiles() : trackedFiles();
+const files = treeRev ? treeFiles(treeRev) : stagedOnly ? stagedFiles() : trackedFiles();
+const scope = treeRev ? `public snapshot ${treeRev}` : stagedOnly ? "staged changes" : "tracked files";
 const blocked = [];
 
 for (const file of files) {
-  const rule = rules.find((candidate) => candidate.matches(file));
-  if (rule) blocked.push({ file, reason: rule.reason });
+  const internal = internalReason(file);
+  if (internal && treeRev) blocked.push({ file, reason: internal });
 
   const text = readTextFile(file);
   if (!text) continue;
-  const contentRule = contentRules.find((candidate) => candidate.pattern.test(text));
+  const contentRule = (internal ? secretRules : contentRules).find((candidate) => candidate.pattern.test(text));
   if (contentRule) blocked.push({ file, reason: contentRule.reason });
 }
 
 if (blocked.length > 0) {
-  console.error(`Public repository guard failed for ${stagedOnly ? "staged changes" : "tracked files"}.`);
+  console.error(`Public repository guard failed for ${scope}.`);
   for (const item of blocked) {
     console.error(`- ${item.file} (${item.reason})`);
   }
   process.exit(1);
 }
 
-console.log(`Public repository guard passed: ${files.length} ${stagedOnly ? "staged" : "tracked"} file(s) checked.`);
+console.log(`Public repository guard passed: ${files.length} file(s) checked in ${scope}.`);

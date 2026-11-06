@@ -1,5 +1,5 @@
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import type { Api, AssistantMessage, Context, Message, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Message, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { RequestUrlParam } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
@@ -9,7 +9,21 @@ import { observeUsageStream, type ObserveUsageOptions, type UsageSource } from "
 import { countTextTokens, estimateTokenValue } from "../harness/usage/token-estimator";
 
 export type MobileRequest = (request: RequestUrlParam) => Promise<{ status: number; json: unknown }>;
+/** WebView fetch subset: requestUrl buffers the whole body, so streaming needs fetch. */
+export type MobileStreamFetch = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<MobileStreamResponse>;
+export interface MobileStreamResponse {
+  readonly status: number;
+  readonly headers: { get(name: string): string | null };
+  readonly body: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(): Promise<void> } } | null;
+  text(): Promise<string>;
+}
 export type MobileUsageObserver = Pick<ObserveUsageOptions, "recordUsage" | "onRecordError">;
+export const MOBILE_STREAM_BLOCKED = "流式请求没有连上。此服务可能不允许手机直接流式访问，可在模型服务的「参数」里关闭「流式输出」后重试。";
+/** Undefined where the WebView has no fetch (test hosts); callers then keep requestUrl. */
+export function webviewFetch(): MobileStreamFetch | undefined {
+  const fetch = typeof window === "undefined" ? undefined : window.fetch?.bind(window);
+  return fetch ? (url, init) => fetch(url, init) : undefined;
+}
 type StoredAssistant = AssistantMessage & { mobileReasoning?: string; mobileResponseItems?: unknown[] };
 type MobilePiModel = Model<Api> & { mobileReasoningLevel: ModelThinkingLevel };
 const textContent = (message: Message) => typeof message.content === "string" ? message.content : message.content.filter(c => c.type === "text").map(c => c.text).join("\n");
@@ -131,14 +145,14 @@ function transcript(context: Context, responses: boolean): unknown[] {
   }
   return result;
 }
-export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context, reasoning?: ModelThinkingLevel): RequestUrlParam {
+export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context, reasoning?: ModelThinkingLevel, stream = false): RequestUrlParam {
   const responses = provider.apiProtocol === "openai-responses";
   const tools = context.tools?.map(tool => responses
     ? { type: "function", name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }
     : { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } });
   const body: Record<string, unknown> = responses
-    ? { model: model.id, stream: false, store: false, instructions: context.systemPrompt, input: transcript(context, true), max_output_tokens: model.maxTokens, include: ["reasoning.encrypted_content"], ...(tools?.length ? { tools } : {}) }
-    : { model: model.id, stream: false, messages: [{ role: "system", content: context.systemPrompt }, ...transcript(context, false)], max_completion_tokens: model.maxTokens, ...(tools?.length ? { tools } : {}) };
+    ? { model: model.id, stream, store: false, instructions: context.systemPrompt, input: transcript(context, true), max_output_tokens: model.maxTokens, include: ["reasoning.encrypted_content"], ...(tools?.length ? { tools } : {}) }
+    : { model: model.id, stream, messages: [{ role: "system", content: context.systemPrompt }, ...transcript(context, false)], max_completion_tokens: model.maxTokens, ...(tools?.length ? { tools } : {}) };
   // Compatible endpoints generally use max_tokens; OpenAI reasoning models use
   // max_completion_tokens. Keep the protocol independent of a provider catalog.
   if (!responses && !/api\.openai\.com$/u.test(new URL(provider.baseUrl).hostname)) {
@@ -159,16 +173,22 @@ function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
     pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
   });
 }
-export function mobileStream(provider: ApiProviderConfig, request: MobileRequest, observer?: MobileUsageObserver, source: UsageSource = "conversation"): StreamFn {
+/** With streamFetch the answer streams; the stored message keeps the buffered shape either way. */
+export function mobileStream(provider: ApiProviderConfig, request: MobileRequest, observer?: MobileUsageObserver, source: UsageSource = "conversation", streamFetch?: MobileStreamFetch): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
     let outputTokens = 0;
     const message: StoredAssistant = { role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: usage(null, false), stopReason: "stop", timestamp: Date.now() };
+    // A separate partial: late chunks after Stop can never touch the stored message.
+    const live = streamFetch ? new LiveAssistant(stream, { ...message, content: [] }, options?.signal) : undefined;
     void (async () => {
       try {
         if (options?.signal?.aborted) throw new Error("已停止");
-        stream.push({ type: "start", partial: message });
-        const response = await abortable(request(buildMobileRequest(provider, model, context, options?.reasoning)), options?.signal);
+        stream.push({ type: "start", partial: live?.partial ?? message });
+        const built = buildMobileRequest(provider, model, context, options?.reasoning, !!live);
+        const response = await abortable(live && streamFetch
+          ? streamedResponse(streamFetch, built, provider.apiProtocol === "openai-responses", live, options?.signal)
+          : request(built), options?.signal);
         if (options?.signal?.aborted) throw new Error("已停止");
         const data = record(response.json);
         const responses = provider.apiProtocol === "openai-responses";
@@ -213,6 +233,8 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
         if (message.content.some(c => c.type === "toolCall")) message.stopReason = "toolUse";
         stream.push({ type: "done", reason: message.stopReason as "stop" | "length" | "toolUse", message });
       } catch (error) {
+        // Partial streamed output still counts toward usage.
+        if (observer && live && !outputTokens) outputTokens = live.tokens();
         message.content = [];
         message.stopReason = options?.signal?.aborted ? "aborted" : "error";
         const detail = error instanceof Error ? error.message : String(error);
@@ -225,11 +247,157 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
   };
 }
 
+/** Streams SSE into `live` and rebuilds the buffered JSON shape for the shared parser. */
+async function streamedResponse(streamFetch: MobileStreamFetch, built: RequestUrlParam, responses: boolean, live: LiveAssistant, signal?: AbortSignal): Promise<{ status: number; json: unknown }> {
+  let response: MobileStreamResponse;
+  try {
+    response = await streamFetch(built.url, { method: "POST", headers: { ...built.headers, "Content-Type": "application/json" }, body: typeof built.body === "string" ? built.body : "", signal });
+  } catch (error) {
+    if (signal?.aborted) throw new Error("已停止");
+    // WebView rejects without detail when CORS or the network blocks the call.
+    throw new Error(MOBILE_STREAM_BLOCKED, { cause: error });
+  }
+  if (!/^text\/event-stream/iu.test(response.headers.get("content-type") ?? "")) {
+    // Errors (401, 429 …) and endpoints that ignore `stream` answer plain JSON.
+    const text = await response.text();
+    try { return { status: response.status, json: JSON.parse(text) as unknown }; } catch { return { status: response.status, json: {} }; }
+  }
+  const sse = responses ? new ResponsesStream(live) : new ChatStream(live);
+  const decoder = new TextDecoder(); let buffer = "";
+  const reader = response.body?.getReader();
+  if (!reader) buffer = drainSse(await response.text() + "\n\n", data => sse.push(data));
+  else try {
+    let received = false;
+    for (;;) {
+      if (signal?.aborted) throw new Error("已停止");
+      let chunk: { done: boolean; value?: Uint8Array };
+      try { chunk = await reader.read(); }
+      catch (error) {
+        if (signal?.aborted) throw new Error("已停止");
+        throw new Error(received ? "回答传输中断，请重试。" : MOBILE_STREAM_BLOCKED, { cause: error });
+      }
+      if (chunk.done) break;
+      received = true;
+      buffer = drainSse(buffer + decoder.decode(chunk.value, { stream: true }), data => sse.push(data));
+    }
+  } finally { void reader.cancel().catch(() => undefined); }
+  drainSse(buffer + decoder.decode() + "\n\n", data => sse.push(data));
+  live.close();
+  return { status: response.status, json: sse.result() };
+}
+/** Emits each complete SSE `data:` payload and returns the unfinished tail. */
+function drainSse(buffer: string, emit: (data: string) => void): string {
+  const blocks = buffer.split(/\r?\n\r?\n/u), rest = blocks.pop() ?? "";
+  for (const block of blocks) {
+    const data = block.split(/\r?\n/u).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /u, "")).join("\n");
+    if (data) emit(data);
+  }
+  return rest;
+}
+function streamChunk(data: string): Record<string, unknown> {
+  try { return record(JSON.parse(data)); } catch { throw new Error("Provider 返回了无法解析的流式数据。"); }
+}
+function streamFailure(value: unknown): Error {
+  const message = record(value).message;
+  return new Error(`Provider 请求失败：${typeof message === "string" && message || "流式回答返回错误"}`);
+}
+/** Chat Completions deltas → the same object a `stream:false` call returns. */
+class ChatStream {
+  private readonly data: Record<string, unknown> = {};
+  private text = ""; private reasoning?: string; private refusal = ""; private finish = ""; private done = false;
+  private readonly calls = new Map<number, { id: string; name: string; args: string }>();
+  constructor(private readonly live: LiveAssistant) {}
+  push(raw: string): void {
+    if (raw === "[DONE]") { this.done = true; return; }
+    const chunk = streamChunk(raw);
+    if (chunk.error) throw streamFailure(chunk.error);
+    for (const key of ["id", "model"] as const) if (typeof chunk[key] === "string") this.data[key] ??= chunk[key];
+    if (chunk.usage && typeof chunk.usage === "object") this.data.usage = chunk.usage;
+    const choice = records(chunk.choices)[0];
+    if (!choice) return;
+    // Kimi reports usage on the final choice instead of the chunk.
+    if (choice.usage && typeof choice.usage === "object") this.data.usage = choice.usage;
+    if (typeof choice.finish_reason === "string" && choice.finish_reason) this.finish = choice.finish_reason;
+    const delta = record(choice.delta);
+    if (typeof delta.reasoning_content === "string") { this.reasoning = (this.reasoning ?? "") + delta.reasoning_content; this.live.thinking(delta.reasoning_content); }
+    if (typeof delta.content === "string") { this.text += delta.content; this.live.text(delta.content); }
+    if (typeof delta.refusal === "string") { this.refusal += delta.refusal; this.live.text(delta.refusal); }
+    for (const call of records(delta.tool_calls)) {
+      const index = Number.isSafeInteger(call.index) ? Number(call.index) : 0, fn = record(call.function);
+      const state = this.calls.get(index) ?? { id: "", name: "", args: "" }; this.calls.set(index, state);
+      if (typeof call.id === "string" && call.id) state.id = call.id;
+      if (typeof fn.name === "string") state.name += fn.name;
+      if (typeof fn.arguments === "string") state.args += fn.arguments;
+    }
+  }
+  result(): Record<string, unknown> {
+    if (!this.finish && !this.done) throw new Error("回答传输中断，请重试。");
+    const toolCalls = [...this.calls].sort(([a], [b]) => a - b).map(([, call]) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.args || "{}" } }));
+    const message: Record<string, unknown> = { role: "assistant", content: this.text, ...(this.reasoning !== undefined ? { reasoning_content: this.reasoning } : {}), ...(this.refusal ? { refusal: this.refusal } : {}), ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
+    return { ...this.data, choices: [{ message, finish_reason: this.finish || "stop" }] };
+  }
+}
+/** Responses events; the terminal event already carries the full response object. */
+class ResponsesStream {
+  private final?: Record<string, unknown>;
+  constructor(private readonly live: LiveAssistant) {}
+  push(raw: string): void {
+    if (raw === "[DONE]") return;
+    const event = streamChunk(raw), type = event.type;
+    if (type === "error") throw streamFailure(event);
+    if ((type === "response.output_text.delta" || type === "response.refusal.delta") && typeof event.delta === "string") this.live.text(event.delta);
+    else if ((type === "response.reasoning_summary_text.delta" || type === "response.reasoning_text.delta") && typeof event.delta === "string") this.live.thinking(event.delta);
+    else if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") this.final = record(event.response);
+  }
+  result(): Record<string, unknown> {
+    if (!this.final) throw new Error("回答传输中断，请重试。");
+    return this.final;
+  }
+}
+/** Live-only partial for the UI; the stored message is rebuilt by the shared parser. */
+class LiveAssistant {
+  private active?: { kind: "thinking" | "text"; index: number };
+  constructor(private readonly stream: AssistantMessageEventStream, readonly partial: AssistantMessage, private readonly signal?: AbortSignal) {}
+  thinking(delta: string): void {
+    if (!delta || this.signal?.aborted) return;
+    if (this.active?.kind !== "thinking") { this.close(); this.active = { kind: "thinking", index: this.partial.content.length }; this.partial.content.push({ type: "thinking", thinking: "" }); this.stream.push({ type: "thinking_start", contentIndex: this.active.index, partial: this.partial }); }
+    const index = this.active.index, block = this.partial.content[index];
+    if (block?.type === "thinking") block.thinking += delta;
+    this.stream.push({ type: "thinking_delta", contentIndex: index, delta, partial: this.partial });
+  }
+  text(delta: string): void {
+    if (!delta || this.signal?.aborted) return;
+    if (this.active?.kind !== "text") { this.close(); this.active = { kind: "text", index: this.partial.content.length }; this.partial.content.push({ type: "text", text: "" }); this.stream.push({ type: "text_start", contentIndex: this.active.index, partial: this.partial }); }
+    const index = this.active.index, block = this.partial.content[index];
+    if (block?.type === "text") block.text += delta;
+    this.stream.push({ type: "text_delta", contentIndex: index, delta, partial: this.partial });
+  }
+  close(): void {
+    const active = this.active; this.active = undefined;
+    const block = active && this.partial.content[active.index];
+    if (!active || !block || this.signal?.aborted) return;
+    if (block.type === "thinking") this.stream.push({ type: "thinking_end", contentIndex: active.index, content: block.thinking, partial: this.partial });
+    else if (block.type === "text") this.stream.push({ type: "text_end", contentIndex: active.index, content: block.text, partial: this.partial });
+  }
+  tokens(): number {
+    return this.partial.content.reduce((total, block) => total + (block.type === "text" ? countTextTokens(block.text) : block.type === "thinking" ? countTextTokens(block.thinking) : 0), 0);
+  }
+}
+/** Reasoning text the UI may show for a stored or live assistant message. */
+export function visibleReasoning(message: AssistantMessage): string {
+  const stored = message as StoredAssistant;
+  if (typeof stored.mobileReasoning === "string") return stored.mobileReasoning.trim();
+  const items = records(stored.mobileResponseItems).flatMap(item => [...records(item.summary), ...records(item.content)])
+    .flatMap(part => typeof part.text === "string" ? [part.text] : []);
+  if (items.length) return items.join("\n\n").trim();
+  return message.content.flatMap(block => block.type === "thinking" ? [block.thinking] : []).join("\n\n").trim();
+}
+
 /** Independent one-shot inference: no conversation state or tools are involved. */
 export async function mobileGenerateText(provider: ApiProviderConfig, model: ApiProviderModelConfig, request: MobileRequest,
-  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal, observer?: MobileUsageObserver, source: UsageSource = "background"): Promise<string> {
+  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal, observer?: MobileUsageObserver, source: UsageSource = "background", streamFetch?: MobileStreamFetch): Promise<string> {
   const selected = { ...piModel(provider, model), maxTokens: Math.min(model.maxOutputTokens, maxTokens) };
-  const stream = await mobileStream(provider, request, observer, source)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
+  const stream = await mobileStream(provider, request, observer, source, streamFetch)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
   const result = await stream.result();
   if (signal.aborted || result.stopReason === "aborted") throw new Error("已停止");
   if (result.stopReason === "error") throw new Error(result.errorMessage || "模型请求失败");

@@ -1,3 +1,4 @@
+import { knowledgeMaintenanceBatchPrompt } from "../../knowledge-base/initializer";
 import { runOutputContinuationProjectionTests } from "./output-continuation-projection";
 import { runPiKnowledgeResilienceTests } from "./knowledge-resilience";
 import { resolveAnswerMarkdown } from "../../ui/codex-view/answer-copy";
@@ -213,13 +214,13 @@ export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
       await fixture.runtime.createConversation({ conversationId, title: "记忆来源", cwd: fixture.root });
       await fixture.runtime.activateConversation(conversationId);
       const run = await fixture.submit({ conversationId, text: "问题", memoryMode, submittedAt: 1 });
-      const sources = [{ id: "mem_first", title: "第一条", revision: 2, content: "BODY_MUST_STAY_IN_REPOSITORY" },
-        { id: "mem_second", title: "第二条", revision: 3 }];
+      const sources = [{ id: "mem_first", title: "第一条", revision: 2, reason: "pinned", content: "BODY_MUST_STAY_IN_REPOSITORY" },
+        { id: "mem_second", title: "第二条", revision: 3, reason: "title_or_trigger" }];
       await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
       await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
       fixture.latestSession().finishSuccessful("回答完成"); await run.result;
       const warm = await fixture.runtime.readProjection(conversationId);
-      const expected = memoryMode === "normal" ? sources.map(({ id, title, revision }) => ({ id, title, revision })) : undefined;
+      const expected = memoryMode === "normal" ? sources.map(({ id, title, revision, reason }) => ({ id, title, revision, reason })) : undefined;
       assert.deepEqual(warm.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
       await fixture.runtime.releaseConversation(conversationId);
       const cold = await fixture.runtime.readProjection(conversationId);
@@ -370,7 +371,77 @@ async function assertWorkRecordMetadataSurvivesRuntimePrivacyFiltering(): Promis
   } });
 }
 
+/** Real runtime/session persistence with the official controlled-provider fixture. */
+export async function runRDa4ae1MaintenanceRuntimeTests(): Promise<void> {
+  const knowledge = maintenanceKnowledgeFixture();
+  let owner = "", open = false, selectionReads = 0;
+  knowledge.pendingMaintenanceSourcePaths = async paths => paths;
+  knowledge.resolveMaintenanceScope = async request => ({ mode: "batch", sourcePaths: [request.includes("other") ? "raw/other.md" : "raw/original.md"] });
+  knowledge.openMaintenanceSelection = async input => {
+    selectionReads++;
+    return open && input.conversationId === "r-da4ae1" && input.branchProductRunIds.includes(owner)
+      ? { recordId: `maintenance-${"f".repeat(32)}`, productRunId: owner, sourcePaths: ["raw/original.md"] } : null;
+  };
+  await withFixture([], async fixture => {
+    await createAndActivateMaintenanceConversation(fixture, "r-da4ae1");
+    const submit = (text: string, paths?: string[], extra: Partial<PiChatSubmitRequest> = {}) => fixture.submit({ conversationId: "r-da4ae1", text, submittedAt: Date.now(),
+      ...(paths ? { maintenanceScope: { mode: "batch" as const, sourcePaths: paths } } : {}), ...extra });
+    const finish = async (handle: Awaited<ReturnType<typeof submit>>) => { fixture.latestSession().finishSuccessful("Synthetic durable pause"); await handle.result; };
+    const first = await submit(knowledgeMaintenanceBatchPrompt({ sourcePaths: ["raw/original.md"], batchIndex: 0, expectedBatches: 2 }), ["raw/original.md"]); owner = first.productRunId; await finish(first); open = true;
+    const userIds = () => fixture.latestSession().sessionManager.getBranch().filter(entry => entry.type === "message" && entry.message.role === "user").map(entry => entry.id);
+    const before = userIds();
+    await assert.rejects(submit("/maintain queued second", ["raw/other.md"]), error => error instanceof PiNativeConversationRuntimeError && error.message.includes("原批整理尚未结束") && !(error as any).piUserEntryAccepted);
+    assert.deepEqual(userIds(), before, "suppliedScope refusal precedes user-message persistence");
+    await assert.rejects(submit("/maintain other"), /原批整理尚未结束/u);
+    assert.deepEqual(userIds(), before, "explicit new selection is rejected instead of replaced");
+    // Simulate an old runtime which already persisted the wrong second batch.
+    open = false;
+    const second = await submit(knowledgeMaintenanceBatchPrompt({ sourcePaths: ["raw/other.md"], batchIndex: 1, expectedBatches: 2 }), ["raw/other.md"]); await finish(second);
+    open = true;
+    await fixture.runtime.releaseConversation("r-da4ae1"); await fixture.runtime.activateConversation("r-da4ae1");
+    const active = (fixture.runtime as any).active.get("r-da4ae1");
+    const recovery = { productRunId: second.productRunId, request: knowledgeMaintenanceBatchPrompt({ sourcePaths: ["raw/other.md"], batchIndex: 1, expectedBatches: 2 }).replace(/^\/maintain\s+/u, ""), scope: { mode: "batch", sourcePaths: ["raw/other.md"] } };
+    const selection = await (fixture.runtime as any).resolveMaintenanceSelection(active, { productRunId: "generic-retry", commandKind: "chat",
+      resumeContext: { safety: { interruptedRunId: second.productRunId, maintenanceContext: recovery } } }, "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。");
+    assert.deepEqual(selection.scope.sourcePaths, ["raw/original.md"], "generic resume repairs agreeing saved/recovery pollution before comparing them");
+    const followed = await submit("继续");
+    assert.deepEqual((await fixture.currentMaintenanceCommand()).scope, { mode: "batch", sourcePaths: ["raw/original.md"] });
+    await finish(followed);
+    // Existing topic boundary semantics must also apply to the trusted-record path.
+    for (const topic of ["/ask another task", "/dream", "/skill:synthetic other task", "换个话题，聊旅行"]) {
+      const leaf = fixture.latestSession().sessionManager.getLeafId();
+      fixture.latestSession().sessionManager.appendMessage({ role: "user", content: topic, timestamp: Date.now() });
+      await assert.rejects((fixture.runtime as any).resolveMaintenanceSelection(active, { productRunId: "topic-retry", commandKind: "chat" }, "继续"), /请说明要维护哪些资料/u);
+      await assert.rejects((fixture.runtime as any).resolveMaintenanceSelection(active, { productRunId: "other-task-retry", commandKind: "chat", resumeContext: { safety: { interruptedRunId: "unrelated-task" } } }, "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), /请说明要维护哪些资料/u);
+      fixture.latestSession().sessionManager.branch(leaf!);
+    }
+    const priorLeaf = fixture.latestSession().sessionManager.getLeafId();
+    const advice = await submit("请整理 raw/other.md，先分析建议，不要执行。", undefined, { permission: "read-only" }); await finish(advice);
+    await assert.rejects(submit("/maintain 继续"), /原批整理尚未结束/u);
+    await assert.rejects((fixture.runtime as any).resolveMaintenanceSelection(active, { productRunId: "advice-resume", commandKind: "chat", resumeContext: { safety: {
+      interruptedRunId: advice.productRunId, maintenanceContext: { productRunId: advice.productRunId, request: "请整理 raw/other.md，先分析建议，不要执行。", scope: { mode: "batch", sourcePaths: ["raw/other.md"] } }
+    } } }, "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), /原批整理尚未结束/u);
+    fixture.latestSession().sessionManager.branch(priorLeaf!);
+    // Other conversations and branches cannot prove the owning run.
+    const other = await fixture.submit({ conversationId: "r-da4ae1-other", text: "/maintain unrelated", maintenanceScope: { mode: "batch", sourcePaths: ["raw/other.md"] }, submittedAt: 9 });
+    await finish(other);
+    assert.ok(selectionReads > 0);
+    await fixture.runtime.releaseConversation("r-da4ae1"); await fixture.runtime.activateConversation("r-da4ae1");
+    const ownSession = fixture.latestSession();
+    const ownerRun = (await fixture.productRuns.read(owner))!;
+    const ownerEntry = ownSession.sessionManager.getBranch().find(entry => entry.id === ownerRun.userEntryId)!;
+    assert.ok(ownerEntry.parentId);
+    ownSession.sessionManager.branch(ownerEntry.parentId);
+    const branchRun = await submit("/maintain another branch", ["raw/other.md"]); await finish(branchRun);
+    // A genuinely settled original permits a later batch exactly once.
+    open = false;
+    const next = await submit("/maintain next batch", ["raw/other.md"]); await finish(next);
+  }, { knowledge });
+  console.log("R-DA4AE1 runtime: PASS (preacceptance scope guard, legacy second-batch repair, generic resume, topics, conversation/branch ownership)");
+}
+
 export async function runKnowledgeMaintenanceRuntimeTests(): Promise<void> {
+  await runRDa4ae1MaintenanceRuntimeTests();
   assertPersistedMaintenanceSourceVersions();
   await assertInitializationHostUsesRealMaintenanceRuntime();
   await assertMaintenanceScopeEntryContracts();

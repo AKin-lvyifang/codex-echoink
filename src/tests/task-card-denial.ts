@@ -51,7 +51,7 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       f.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
       await assert.rejects(runtime.retrieveAsk({ vaultId: "agent-runs", conversationId: "A", piSessionId: "s", productRunId: "denied", question: "test", explicitPaths: [], includeUnrefined: false }), error => {
         assert.equal(knownAgentCapabilityDenial(error)?.reason, cause);
-        assert.match(agentCapabilityErrorText(error, f.settings.settingsLanguage)!, en ? /Knowledge.*disabled/ : /知识库.*关闭/u); return true;
+        assert.match(agentCapabilityErrorText(error, f.settings.settingsLanguage)!, cause === "agent_disabled" ? (en ? /Knowledge.*disabled/ : /知识库能力.*关闭/u) : (en ? /Knowledge.*unavailable/ : /知识库.*不可用.*检查目录配置/u)); return true;
       });
     }
     f.settings.knowledgeBase.folderBindings = bindings; agent.capabilityIds = granted;
@@ -67,7 +67,7 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       renderTaskInterruption(mount, { info: { ...info, uncertainOperations: [{ id: "pending-write", label: "核对原操作" }] }, pending: false, language: f.settings.settingsLanguage, onResume() {} });
       assert.match(mount.querySelector(".echoink-task-interruption-operations")!.textContent!, /核对原操作/u);
       assert.doesNotMatch(mount.textContent!, /agent_capability_|意外中断|unexpected.*interrupt/iu);
-      assert.match(mount.textContent!, en ? /Knowledge.*disabled/ : /知识库.*关闭/u);
+      assert.match(mount.textContent!, en ? /Knowledge.*disabled/ : /知识库能力.*关闭/u);
     }
     agent.capabilityIds = granted;
     const reopened = await f.plugin.readTaskInterruption("C");

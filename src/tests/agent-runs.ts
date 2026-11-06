@@ -350,7 +350,7 @@ async function deletionStopsBeforeHandoff(f: Fixture): Promise<void> {
   f.service.turnQueue.enqueue(f.item("delete-task", "MUST-NOT-AUTO-RERUN"));
   const update = f.catalog.updateTaskMetadata.bind(f.catalog);
   f.catalog.updateTaskMetadata = async (...args) => {
-    if (args[0] === "delete-task" && args[1].agentId === "sol") throw new Error("injected_handoff_save_failure");
+    if (args[0] === "delete-task" && args[1].agentId === "generalist") throw new Error("injected_handoff_save_failure");
     return await update(...args);
   };
   const linkingStopped = deferred(); const releaseLinking = deferred();
@@ -376,13 +376,13 @@ async function deletionStopsBeforeHandoff(f: Fixture): Promise<void> {
   await f.plugin.deleteAgent("colleague");
   assert.equal(await flight, "cancelled");
   const after = (await f.catalog.get("delete-task"))!;
-  assert.equal(after.agentId, "sol"); assert.equal(after.piSessionId, entryBefore.piSessionId);
+  assert.equal(after.agentId, "generalist"); assert.equal(after.piSessionId, entryBefore.piSessionId);
   assert.equal(Object.hasOwn(after, "taskTransfers"), false, "handoff stores only the new owner");
   assert.equal(JSON.stringify((await f.runtime.readProjection("delete-task")).messages).includes("taskTransfers"), false);
   f.gates.delete("delete-task");
   assert.equal(await f.service.run(f.item("delete-task", "resume original task after handoff")), "completed");
   assert.equal(f.requests.get("delete-task")!.at(-1)!.includes("taskTransfers"), false, "Catalog display events never enter the actual model request");
-  assert.equal((await f.catalog.get("late-colleague-judge"))!.agentId, "sol", "Handoff must include internal Conversations created by the just-drained business write");
+  assert.equal((await f.catalog.get("late-colleague-judge"))!.agentId, "generalist", "Handoff must include internal Conversations created by the just-drained business write");
   assert.equal(f.settings.agentRegistry.agents.some(agent => agent.id === "colleague"), false);
   assert.equal(f.service.turnQueue.isSessionQueuePaused("delete-task"), true);
   const runs = await f.productRuns.list("delete-task");

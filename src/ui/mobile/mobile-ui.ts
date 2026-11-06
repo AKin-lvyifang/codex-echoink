@@ -1,3 +1,4 @@
+import { TOOL_ROUND_STOP_MESSAGE } from "../../agents/tool-round-budget";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import { setIcon, type App } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -464,10 +465,10 @@ export class MobileUI {
     const state = this.host.runtime.stateFor(taskId);
     if (!state.interruption || (state.busy && !state.resuming)) return;
     const interruption = state.interruption;
-    const reasons = { app_backgrounded: "应用进入后台时中断", app_closed: "关闭 Obsidian 时中断", user_stopped: "已手动停止", plugin_disabled: "插件停用时中断", run_failed: "执行失败后中断", process_unknown: "中断原因未确认", watchdog: "等待超时后中断" };
+    const reasons = { app_backgrounded: "应用进入后台时中断", app_closed: "关闭 Obsidian 时中断", user_stopped: "已手动停止", plugin_disabled: "插件停用时中断", run_failed: "执行失败后中断", process_unknown: "中断原因未确认", tool_loop_limit: "工具调用达到上限，已自动停止", watchdog: "等待超时后中断" };
     const stages: Record<string, string> = { preparing: "准备上下文", context: "准备上下文", search: "检索资料", searching: "检索资料", summary: "整理历史", summarizing: "整理历史", model: "等待模型", tool: "执行工具", saving: "保存结果", question: "等待回应" };
     const group = el(body, "section", "em-task-interruption"); group.setAttribute("aria-label", "任务中断记录");
-    el(group, "strong", "", "已中断"); el(group, "p", "em-task-interruption-reason", reasons[interruption.reason]);
+    el(group, "strong", "", "已中断"); el(group, "p", "em-task-interruption-reason", interruption.reason === "tool_loop_limit" ? TOOL_ROUND_STOP_MESSAGE : reasons[interruption.reason]);
     const at = el(group, "time", "em-task-interruption-time", formatMobileDateTime(interruption.at)); at.dateTime = new Date(interruption.at).toISOString();
     el(group, "p", "em-task-interruption-stage", `停在：${stages[interruption.stage] ?? (/[\u4e00-\u9fff]/u.test(interruption.stage) ? interruption.stage : "阶段未确认")}`);
     this.button(group, "从这里继续", () => {
@@ -778,7 +779,9 @@ export class MobileUI {
           close();
           if (draft.providerId === preset.id) return;
           const replacement = mobileProvider(preset.id);
-          this.providerDraft = { ...draft, ...replacement, id: draft.id, apiKey: draft.providerId === replacement.providerId ? draft.apiKey : "" };
+          // The streaming choice belonged to the previous service.
+          const kept = { ...draft }; delete kept.mobileStreaming;
+          this.providerDraft = { ...kept, ...replacement, id: draft.id, apiKey: draft.providerId === replacement.providerId ? draft.apiKey : "" };
           body.replaceChildren(); this.provider(body); body.scrollTop = scroll;
           body.querySelector<HTMLElement>(".em-provider-trigger")?.focus({ preventScroll: true });
         });

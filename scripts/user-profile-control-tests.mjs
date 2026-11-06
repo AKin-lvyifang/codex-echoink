@@ -1,3 +1,4 @@
+import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import { desktopNodeTestBanner, desktopNodeTestAliases } from "./desktop-node-test-host.mjs";
 import { spawnSync } from "node:child_process";
 import { lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
@@ -8,12 +9,11 @@ import esbuild from "esbuild";
 
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const configuredRoot = process.env.ECHOINK_USER_PROFILE_TEST_ROOT;
-const authorizedParent = path.join(homedir(), "EchoInk-TestVaults", "90-任务临时");
 if (!configuredRoot || !path.isAbsolute(configuredRoot)) {
   throw new Error("Set ECHOINK_USER_PROFILE_TEST_ROOT to an explicit disposable test directory");
 }
 const testRoot = path.resolve(configuredRoot);
-if (!testRoot.startsWith(`${authorizedParent}${path.sep}`) || path.basename(testRoot) !== "runtime") {
+if (!isDisposableTestRoot(testRoot) || path.basename(testRoot) !== "runtime") {
   throw new Error("Profile control test root must be a runtime subdirectory under EchoInk-TestVaults/90-任务临时");
 }
 if (!(await lstat(path.dirname(testRoot))).isDirectory()) throw new Error("Registered test parent is missing");

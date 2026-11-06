@@ -3783,10 +3783,11 @@ async function workbenchSignalDispatch(): Promise<void> {
       view.sessionHost = () => ({ plugin }); view.ensureChatWorkspaceSelected = async () => true; view.currentTurnOptions = () => options;
       const source = { version: 1 as const, signalId: 9 as const, moduleId: "review" as const, businessKey: "review-week", objects: ["2026-10-26"], prompt: "完成本周复盘", capturedAt: 1 };
       const signal: WorkbenchSignal = { id: 9, key: source.businessKey, moduleId: "review", icon: "calendar-check", description: "本周还没有完成复盘", prompt: source.prompt, source };
-      const first = view.startWorkbenchSignalTask("sol", signal), duplicate = view.startWorkbenchSignalTask("sol", signal);
+      settings.agentRegistry.moduleOwners.review = "generalist";
+      const first = view.startWorkbenchSignalTask("generalist", signal), duplicate = view.startWorkbenchSignalTask("generalist", signal);
       assert.equal(first, duplicate, "repeat clicks share one launch until acceptance");
       await waitFor(() => started.length === 1);
-      assert.equal(created.length, 1); assert.equal(created[0].agentId, "sol"); assert.equal(created[0].cwd, "/fixture");
+      assert.equal(created.length, 1); assert.equal(created[0].agentId, "generalist"); assert.equal(created[0].cwd, "/fixture");
       assert.notEqual(started[0].sessionId, oldId); assert.equal(started[0].text, signal.prompt);
       assert.deepEqual(JSON.parse(started[0].prefillSource), source);
       assert.deepEqual(queue.itemsForSession(oldId), originalQueue); assert.equal(oldRun.running, state === "running");
@@ -3794,10 +3795,10 @@ async function workbenchSignalDispatch(): Promise<void> {
       assert.equal(view.composerTransfers.size, 0, "isolated dispatch must never transfer the original Composer");
       acceptance.resolve("running"); const id = await first; assert.equal(await duplicate, id); assert.deepEqual(opened, [id]);
       options.model = "missing";
-      await assert.rejects(view.startWorkbenchSignalTask("sol", signal), (error: unknown) => error instanceof WorkbenchSetupRequired && error.target === "models");
+      await assert.rejects(view.startWorkbenchSignalTask("generalist", signal), (error: unknown) => error instanceof WorkbenchSetupRequired && error.target === "models");
       assert.equal(created.length, 1, "missing prerequisites cannot leave an empty task");
       options.model = "queue-image-model"; rejected = true;
-      await assert.rejects(view.startWorkbenchSignalTask("sol", signal), /执行器未受理/);
+      await assert.rejects(view.startWorkbenchSignalTask("generalist", signal), /执行器未受理/);
       assert.deepEqual(deleted, [created[1].conversationId]); assert.equal(settings.sessions.length, 2, "rejected tasks are cleaned up");
       assert.equal(settings.activeSessionId, id, "failed launch returns to the previous conversation");
       await view.openTaskDetail(oldId); assert.equal(view.inputEl.value, original.draft.text);

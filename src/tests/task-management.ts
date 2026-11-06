@@ -82,7 +82,7 @@ export async function runTaskManagementTests(): Promise<void> {
   let listener: (task: any) => void = () => {};
   const linking = { ready: Promise.resolve(), subscribe(fn: typeof listener) { listener = fn; fn(null); return () => {}; } };
   const record: any = { schemaVersion: 1, recordId: "legacy", originConversationId: "already-deleted", runId: "old-run", at: 1, date: "2026-10-28", sources: [],
-    progress: newMaintenanceProgress(10, "plan"), p1: { version: 1, phase: "plan", decompositions: [], committedPages: {}, finalizedSources: [], writingPlan: [] } };
+    result: { status: "partial", issues: [] }, progress: newMaintenanceProgress(10, "plan"), p1: { version: 1, phase: "plan", decompositions: [], committedPages: {}, finalizedSources: [], writingPlan: [] } };
   const service = new KnowledgeActivityService(linking, async () => [record]); await service.ready;
   assert.equal(service.snapshot().primary, null); assert.equal(service.snapshot().maintenance.length, 1, "Restart hides stale progress while retaining history");
   for (const status of ["running", "waiting", "interrupted", "failed", "partial"] as const) {
@@ -94,7 +94,7 @@ export async function runTaskManagementTests(): Promise<void> {
     listener({ id: "link", phase, updatedAt: 11 });
     assert.equal(!!service.snapshot().primary, phase === "judging" || phase === "awaiting-confirmation");
   }
-  service.update({ ...record, p1: { ...record.p1, phase: "completed" }, progress: { ...record.progress, status: "completed", completedAt: 20 } }, true);
+  service.update({ ...record, result: { ...record.result, status: "completed" }, p1: { ...record.p1, phase: "completed" }, progress: { ...record.progress, status: "completed", completedAt: 20 } }, true);
   assert.equal(service.snapshot().primary?.status, "completed"); service.settle(record.recordId); assert.equal(service.snapshot().primary, null);
   service.dispose();
   console.log("Task management PASS: unloaded/local-only archive/delete, no model/session creation, writer-aware stop, inline routing, navigation switches, persistent progress restore/handoff");

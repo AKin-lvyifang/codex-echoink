@@ -75,6 +75,7 @@ export interface MobileTaskInteraction {
   kind: "question" | "confirmation";
   status: "pending" | "answered" | "cancelled";
   questions: EchoInkQuestionPrompt[];
+  approval?: { target: string; preview: string; deleteAction: boolean; toolCallId?: string };
   answers?: EchoInkQuestionAnswer[];
   createdAt: number;
 }
@@ -96,6 +97,8 @@ export interface MobileTaskViewState {
   interruption?: MobileTaskInterruption;
   resuming?: boolean;
   resumeReview?: MobileResumeSnapshot;
+  /** The answer still streaming in; it leaves once the message is saved. */
+  live?: { reasoning: string; text: string };
 }
 
 export interface MobileTaskSubmission {

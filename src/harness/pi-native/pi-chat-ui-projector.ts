@@ -1,3 +1,4 @@
+import { TOOL_ROUND_STOP_MESSAGE } from "../../agents/tool-round-budget";
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
 import { maintenanceFailureText, maintenancePageLabel, maintenanceToolTitle, maintenanceUserReceiptFromResult } from "../../knowledge-base/maintenance-user-copy";
 import { savedAnswerNotePaths } from "./pi-answer-save";
@@ -204,6 +205,7 @@ export type PiChatUiRunState =
 
 /** Optional ProductRun identities let a durable rebuild retain UI turn groups. */
 export interface PiChatUiRunIdentity {
+  readonly interruptionReason?: "tool_loop_limit";
   readonly toolCallTextFailure?: string;
   readonly productRunId: string;
   readonly userEntryId: string;
@@ -478,6 +480,9 @@ export class PiChatUiProjector {
     applyToolProductStates(view, input);
     projectSavedAnswerNotes(view.messages, input.entries, piSessionId);
     projectInjectedMemorySources(view.messages, input.entries, piSessionId);
+    for (const run of input.runIdentities ?? []) {
+      if (run.interruptionReason === "tool_loop_limit") projectToolRoundStop(view, scope, run.productRunId, run.updatedAt ?? updatedAt);
+    }
     this.applyReliableToolTimes(view);
     return view;
   }
@@ -605,6 +610,7 @@ export class PiChatUiProjector {
         break;
       case "product_run_settled":
         this.projectProductSettlement(view, scope, event.terminalState, event.occurredAt);
+        if (event.interruptionReason === "tool_loop_limit") projectToolRoundStop(view, scope, event.productRunId, event.occurredAt);
         if (toolCallTextFailureMessage(event.toolCallTextFailure)) upsertToolCallTextFailure(view.messages, scope, event.productRunId, event.toolCallTextFailure!, event.occurredAt);
         break;
     }
@@ -2693,6 +2699,7 @@ function exactPiToolDisplayTitle(toolName: string): string | undefined {
   const titles: Readonly<Record<string, string>> = {
     explore_concept: "查概念", web_search: "联网搜索", knowledge_search: "检索知识库",
     vault_search: "检索笔记", knowledge_read: "读取笔记", note_read: "读取笔记",
+    knowledge_system_read: "读取领域全文", knowledge_system_propose: "提交知识体系提案",
     knowledge_maintain: "整理知识关联", memory_search: "查看个人记忆",
     memory_read: "读取个人记忆", memory_write: "写入个人记忆",
     note_create: "创建笔记", note_update: "修改笔记", metadata_update: "修改笔记属性",
@@ -3863,4 +3870,23 @@ function consumePdfAttachmentCard(messages: ChatMessage[], result: unknown, conv
   if (!receipt || conversationId && receipt.conversationId !== conversationId) return;
   const message = messages.find(m => m.role === "user" && piEntryIdFromProjectedMessageId(m.id) === receipt.userEntryId);
   if (message?.attachments) message.attachments = message.attachments.filter(a => a.path !== `pdf-attachment:${receipt.attachmentId}`);
+}
+
+/** A recorded product stop takes precedence over an incidental aborted transport error. */
+function projectToolRoundStop(view: PiChatUiViewModel, scope: string, runId: string, at: number): void {
+  view.messages = view.messages.filter(message => {
+    if (message.runId !== runId || message.role === "tool" || message.itemType !== "error") return true;
+    if (message.role === "assistant" && message.details) {
+      message.title = "回答已自动停止"; message.details = TOOL_ROUND_STOP_MESSAGE; message.status = "interrupted";
+      return true;
+    }
+    return false;
+  });
+  let insertAt = 0;
+  for (let index = 0; index < view.messages.length; index++) {
+    if (view.messages[index].runId === runId) insertAt = index + 1;
+  }
+  view.messages.splice(insertAt, 0, { id: terminalMessageId(scope, runId), role: "system", itemType: "error",
+    title: "回答已自动停止", text: TOOL_ROUND_STOP_MESSAGE, status: "interrupted", runId, turnId: runId,
+    createdAt: at, completedAt: at });
 }

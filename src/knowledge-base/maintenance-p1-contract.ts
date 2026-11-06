@@ -84,4 +84,8 @@ export interface MaintenanceP1State {
   drafts: Record<string, { content: string; toolCallId: string }>;
   committedPages: Record<string, { path: string; contentRevision: string }>;
   finalizedSources: string[];
+  /** Full-file revisions, separate from body-only sourceFingerprints. */
+  sourceFrontmatterFailures?: Record<string, { contentRevision: string }>;
+  /** Valid only together with all durable page/source checkpoints and issues. */
+  settlement?: { version: 1; status: "partial" };
 }

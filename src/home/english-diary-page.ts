@@ -1,3 +1,4 @@
+import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, type EventRef, type WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, disposeOriginControls } from "../settings/origin-controls";
@@ -188,8 +189,8 @@ export class EnglishDiaryPageView extends ItemView {
     header.querySelector(".is-icon")?.setAttribute("aria-label", this.t("返回工作台", "Back to workbench"));
     const owner = workbenchModuleOwner(this.plugin, "english-diary");
     const review = this.field("owner") as HTMLButtonElement;
-    review.setText(this.t(`交给 ${owner.name} 复习表达`, `Ask ${owner.name} to review expressions`));
-    review.disabled = !this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled;
+    review.setText(moduleOwnerLabel(this.plugin, "english-diary"));
+    review.disabled = !!owner && (!this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled);
     this.reviewTooltip = attachNativeTooltip(review, !this.snapshot?.expressions.length ? this.t("还没有可复习的表达", "No expressions to review yet") : "");
     const reason = this.field("review-reason");
     reason.setText(this.snapshot && !this.snapshot.expressions.length && !this.snapshot.errors.expressions ? this.t("还没有可复习的表达", "No expressions to review yet") : "");
@@ -273,13 +274,15 @@ export class EnglishDiaryPageView extends ItemView {
     this.syncActive();
   }
   private syncActive(): void { setActivityHeatmapsActive(this.contentEl, this.active()); this.expressions?.setActive(this.active() && this.page === "expressions"); }
-  private async reviewExpressions(): Promise<void> {
-    if (!this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled) return;
+  private async reviewExpressions(startNow = false): Promise<void> {
     const owner = workbenchModuleOwner(this.plugin, "english-diary");
+    if (!owner) { this.plugin.openModuleOwnerPicker("english-diary", () => this.reviewExpressions(true)); return; }
+    if (!this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled) return;
     const settings = this.plugin.settings.englishDiary;
     const paths = [...new Set([settings.expressionDirectory, ...(settings.legacyExpressionDirectories ?? [])].filter(Boolean))];
     if (!paths.length) throw new Error(this.t("表达库位置尚未配置", "Expression library location is not configured"));
     const text = this.t("用最近收录的表达考考我。只读取以下表达库范围，不读取原始日记，也不生成或改写英文日记：", "Quiz me on recently saved expressions. Read only these expression library locations; do not read original diaries or generate or rewrite English diaries:") + "\n" + paths.map(path => `- ${path}`).join("\n");
+    if (startNow) { await this.plugin.startModulePromptTask("english-diary", text); return; }
     const opened = await this.plugin.openAgentTaskList(owner.id, text);
     if (!opened) new Notice(this.t("已打开任务列表，原有草稿已保留", "Task list opened; the existing draft was kept"));
   }

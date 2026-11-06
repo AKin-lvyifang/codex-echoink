@@ -1,7 +1,7 @@
 import { parseJournalDate } from "../home/journal-format";
 import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import type { App } from "obsidian";
-import { checkAgentSkill, checkAgentTarget, checkAgentTool, checkAgentCapability, resolveAgentRunSnapshot,
+import { checkAgentSkill, checkAgentTarget, checkAgentTool, checkAgentCapability, resolveAgentRunSnapshot, COMPANY_ROUTER_TOOLS, COMPANY_WORKER_TOOLS,
   type AgentCapabilityContext, type AgentCapabilityDecision, type AgentCapabilityToolAdapters } from "../agents/capability-core";
 import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "../agents/types";
 import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -9,6 +9,7 @@ import { knowledgeSearchPathKind, VaultBodySearch, type KnowledgeBodySearchPort 
 import { FINANCE_BILINGUAL_ROOT, FINANCE_DEFAULT_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
 import { PRO_CAPABILITIES, type CapabilityAccess } from "../membership/types";
 import { sha256Hex } from "../utils/sha256";
+import { webSearchApiKey } from "../tools/web-search-settings";
 import { BUILTIN_SKILLS, isRemoteOnlySkill } from "../harness/resources/builtin-skills";
 import type { EchoInkResource } from "../resources/types";
 import { loadMobileSettings, type MobileSettings } from "./settings";
@@ -17,7 +18,9 @@ import { mobileMcpAdmitted, mobileMcpToolName } from "./remote-tools";
 import type { MobilePermission, MobileStore } from "./store";
 import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, type PiFinanceToolId } from "../harness/pi-native/finance-tool-policy";
 
-const MOBILE_TOOLS = new Set(["task_update", "user_question", "vault_search", "note_read", "note_create", "note_update", "memory_search", "memory_read", "memory_write", "web_search", "workspace_read", "workspace_create", "workspace_update", ...PI_FINANCE_TOOL_IDS]);
+const MOBILE_TOOLS = new Set(["task_update", "user_question", "approval_decide", "vault_search", "note_read", "note_create", "note_update", "memory_search", "memory_read", "memory_write", "web_search", "workspace_read", "workspace_create", "workspace_update", ...PI_FINANCE_TOOL_IDS,
+  // Company tools: capability-core still decides who may hold them (router vs worker).
+  ...COMPANY_ROUTER_TOOLS, ...COMPANY_WORKER_TOOLS]);
 const scopedPolicies = new WeakMap<KnowledgeBodySearchPort, MobileCapabilityPolicy>();
 export function isScopedMobileBodySearch(port: KnowledgeBodySearchPort, policy: MobileCapabilityPolicy): boolean { return scopedPolicies.get(port) === policy; }
 const toolAdapters: AgentCapabilityToolAdapters = {
@@ -53,7 +56,8 @@ const denialMessages: Record<AgentCapabilityDecision["reason"], string> = {
   scope_required: "操作范围尚未明确，请指定已授权的笔记。",
   unknown_resource: "此 Skill 或资源不存在或尚未接通。",
   unknown_tool: "此工具尚未接通，无法执行。",
-  invalid_target: "目标不在当前允许范围内，请重新选择。"
+  invalid_target: "目标不在当前允许范围内，请重新选择。",
+  router_only: "总助只负责派活，这件事要交给员工去做。"
 };
 /** Local UI receives useful copy; diagnostic consumers retain the exact shared failure code. */
 export function requireMobileAgentCapability(result: AgentCapabilityDecision): void {
@@ -80,6 +84,8 @@ export interface MobileCapabilityPolicyOptions {
   /** Frozen at run admission; subsequent permission increases do not widen this run. */
   readonly permission?: MobilePermission;
   readonly proAccess?: () => CapabilityAccess | undefined;
+  /** Router cards only dispatch; workers report back. Unset keeps the classic assistant. */
+  readonly companyRole?: "router" | "worker";
 }
 
 /** Current Agent grants intersect with run-frozen and live workspace permission. */
@@ -97,7 +103,7 @@ export class MobileCapabilityPolicy {
       memory: { useLongTermMemory: this.options.store.memoryEnabled },
       lifestyle: { finance: { enabled: s.lifestyle.finance.enabled } }, pdfReading: { enabled: false }, englishDiary: { enabled: s.englishDiary.enabled },
       tavily: s.tavily, apiProviders: s.apiProviders, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
-    }, agentId: this.options.agentId, resources: currentResources(s), proAccess: this.options.proAccess?.(),
+    }, agentId: this.options.agentId, ...(this.options.companyRole ? { companyRole: this.options.companyRole } : {}), resources: currentResources(s), proAccess: this.options.proAccess?.(),
     access: { permission: this.permission === "read-only" || this.options.store.permission === "read-only" ? "read-only" : "workspace-write",
       mode: "agent", memoryMode: this.options.store.memoryEnabled ? "default" : "no_memory" },
     moduleEnabled: { knowledge: mobileModuleEnabled(s, "knowledge-base"), journal: mobileModuleEnabled(s, "journal"),
@@ -140,6 +146,7 @@ export class MobileCapabilityPolicy {
       return;
     }
     const context = this.inputs();
+    if (name === "approval_decide") { requireMobileAgentCapability(context.companyRole === "router" && context.agentId === GENERAL_ASSISTANT_ID ? checkAgentCapability(context, "conversation") : denied(name, "agent_disabled")); return; }
     if (name === "finance_record" && !args) { requireMobileAgentCapability(checkAgentCapability(context, "finance", "write")); return; }
     if (name === "vault_search") {
       // The scoped search port checks every candidate before any content is read.
@@ -167,13 +174,13 @@ export class MobileCapabilityPolicy {
     requireMobileAgentCapability(checkAgentTarget(context, path, "read", false, { ordinaryRead: true }));
     if (knowledgeSearchPathKind(path, ordinaryReadBindings(this.options.settings().knowledgeBase.folderBindings), [], this.native()) === null) requireMobileAgentCapability(denied(path, "invalid_target"));
   }
-  /** No credentials or prose: only effective authority and current path/resource ownership. */
+  /** Digest of effective authority and path/resource ownership; credentials never leave the digest. */
   signature(): string {
     const input = this.inputs(), pro = input.proAccess;
-    const { agentRegistry, ...modules } = input.settings;
+    const { agentRegistry, apiProviders, ...modules } = input.settings;
     const agent = agentRegistry.agents.find(item => item.id === input.agentId);
     return sha256Hex(JSON.stringify([modules, agent ? { id: agent.id, capabilityIds: agent.capabilityIds, disabledCapabilityIds: agent.disabledCapabilityIds } : null,
-      this.native(), input.access, input.modulePaths, input.moduleEnabled, this.options.settings().resources.mcpConnections,
+      webSearchApiKey(input.settings.tavily, apiProviders), this.native(), input.access, input.modulePaths, input.moduleEnabled, this.options.settings().resources.mcpConnections,
       input.agentId, input.resources.map(resource => [resource.id, resource.kind, resource.enabled, resource.metadata?.resourceId]),
       PRO_CAPABILITIES.map(capability => pro?.checkCapability(capability) === true)]));
   }

@@ -6,7 +6,7 @@ import type { CapabilityAccess } from "../membership/types";
 import { isExpertAgent, isAgentHired } from "./persona";
 import { AGENT_STYLES } from "./styles";
 import { agentPositionDescription } from "./identity";
-import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentRegistry, type AgentRunSnapshot } from "./types";
+import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList, type AgentDefinition, type AgentRegistry, type AgentRunSnapshot } from "./types";
 
 export const AGENT_MODULE_CAPABILITIES = ["journal", "todos", "finance", "knowledge", "english-diary", "pdf-reading", "review"] as const;
 export type AgentModuleCapability = typeof AGENT_MODULE_CAPABILITIES[number];
@@ -43,6 +43,8 @@ export interface AgentCapabilityContext {
   readonly knowledgeRoles?: readonly string[];
   readonly moduleEnabled?: Partial<Record<AgentModuleCapability, boolean>>;
   readonly isRootJournalPath?: (value: string) => boolean;
+  /** A router card only dispatches; a worker reports back. Unset keeps the classic behavior. */
+  readonly companyRole?: "router" | "worker";
   readonly relativeTarget: (value: string) => string | null;
   readonly resolvePath: (value: string) => string;
   readonly toolAdapters: AgentCapabilityToolAdapters;
@@ -50,7 +52,7 @@ export interface AgentCapabilityContext {
 export interface AgentCapabilityDecision {
   readonly allowed: boolean;
   readonly capabilityId: string;
-  readonly reason: "allowed" | "agent_missing" | "agent_disabled" | "module_disabled" | "pro_required" | "read_only" | "memory_disabled" | "resource_disabled" | "scope_required" | "unknown_resource" | "unknown_tool" | "invalid_target";
+  readonly reason: "allowed" | "agent_missing" | "agent_disabled" | "module_disabled" | "pro_required" | "read_only" | "memory_disabled" | "resource_disabled" | "scope_required" | "unknown_resource" | "unknown_tool" | "invalid_target" | "router_only";
 }
 export interface AgentMcpCapabilityTarget { readonly resourceId: string; readonly toolName: string; readonly readOnly: boolean; readonly externalOnly?: boolean; readonly executable?: boolean; readonly inputSchema?: Readonly<Record<string, unknown>> }
 const BASE_SKILLS = new Set(["clarify-real-question", "two-layer-explanation", "deep-understanding", "evidence-freshness-audit", "multi-lens-problem-solving", "minimum-real-world-experiment", "self-discovery-life-design"]);
@@ -60,10 +62,15 @@ const MODULE_SKILLS: Readonly<Record<string, AgentModuleCapability>> = {
   "finance-bill-import": "finance", "finance-analysis": "finance", "finance-operations": "finance", "todo-operations": "todos"
 };
 const BASE_TOOLS = new Set(["task_update", "user_question"]);
+/** Router-card tools. Writes and networking remain the workers' job. */
+export const COMPANY_ROUTER_TOOLS = new Set(["company_roster", "task_dispatch", "task_message", "task_stop", "task_status", "project_propose", "project_accept"]);
+export const COMPANY_WORKER_TOOLS = new Set(["report_to_router"]);
+/** Read-only context helps the router understand requests and assign work. */
+const ROUTER_READ_TOOLS = new Set(["user_question", "task_update", "note_read", "memory_search", "memory_read", "knowledge_search", "knowledge_read", "explore_concept"]);
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
 const VAULT_TOOLS = new Set(["vault_search", "note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete"]);
 const ORDINARY_READ_CLI_COMMANDS = new Set(["read", "search", "search:context", "file", "files", "folder", "folders", "outline", "wordcount"]);
-const KNOWLEDGE_TOOLS = new Set(["explore_concept", "knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
+const KNOWLEDGE_TOOLS = new Set(["knowledge_system_read", "knowledge_system_propose", "explore_concept", "knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
 const PATH_FIELDS = new Set(["path", "paths", "relativepath", "relativepaths", "vaultrelativepath", "vaultpath", "scopepath", "sourcepath", "sourcepaths", "targetpath", "targetpaths", "destinationpath", "folder", "directory", "dailypath", "recordpath", "file", "files", "filepath", "filepaths", "fileuri", "fileurl"]);
 export function isAgentCapabilityPathField(key: string): boolean { return PATH_FIELDS.has(key.replaceAll("_", "").replaceAll("-", "").toLowerCase()); }
 
@@ -81,7 +88,7 @@ export function resolveAgentRunSnapshot(settings: Pick<AgentCapabilitySettings, 
   if (!agent || !isAgentHired(agent)) throw new Error("agent_capability_agent_missing");
   return Object.freeze({ agentId: agent.id, name: agent.name, position: agent.position, positionDescription: agentPositionDescription(agent), styleId: agent.styleId,
     ...(isExpertAgent(agent) ? { expertId: agent.expert.expertId, expertPackageVersion: agent.expert.packageVersion } : agent.persona ? { persona: agent.persona } : {}),
-    ...(agent.id === GENERAL_ASSISTANT_ID ? { disabledCapabilityIds: Object.freeze([...(agent.disabledCapabilityIds ?? [])]),
+    ...(usesDisabledCapabilityList(agent.id) ? { disabledCapabilityIds: Object.freeze([...(agent.disabledCapabilityIds ?? [])]),
       ...(agent.capabilityIds ? { capabilityIds: Object.freeze([...agent.capabilityIds]) } : {}) }
       : { capabilityIds: Object.freeze([...(agent.capabilityIds ?? [])]), ...(agent.disabledCapabilityIds ? { disabledCapabilityIds: Object.freeze([...agent.disabledCapabilityIds]) } : {}) }) });
 }
@@ -96,7 +103,7 @@ function currentAgent(context: AgentCapabilityContext): AgentDefinition | undefi
 /** Agent grants only; module switches, PRO and workspace access still apply per action. */
 function hasAllModuleCapabilities(context: AgentCapabilityContext): boolean {
   const agent = currentAgent(context);
-  return !!agent && (isExpertAgent(agent) || AGENT_MODULE_CAPABILITIES.every(capability => agent.id === GENERAL_ASSISTANT_ID
+  return !!agent && (isExpertAgent(agent) || AGENT_MODULE_CAPABILITIES.every(capability => usesDisabledCapabilityList(agent.id)
     ? !agent.disabledCapabilityIds?.includes(capability)
     : agent.capabilityIds?.includes(capability)));
 }
@@ -106,7 +113,7 @@ export function checkAgentCapability(context: AgentCapabilityContext, capability
   if (isExpertAgent(agent) && !hasProPluginAccess(context.proAccess ?? unavailableCapabilityAccess)) return decision(capabilityId, "pro_required");
   // These are explicit product fundamentals, not an unknown-ID allow-all rule.
   const fundamental = capabilityId === "conversation" || capabilityId === "memory";
-  if (!fundamental && !isExpertAgent(agent) && (agent.id === GENERAL_ASSISTANT_ID ? agent.disabledCapabilityIds?.includes(capabilityId) : !agent.capabilityIds?.includes(capabilityId))) return decision(capabilityId, "agent_disabled");
+  if (!fundamental && !isExpertAgent(agent) && !(context.companyRole === "router" && agent.id === GENERAL_ASSISTANT_ID && effect === "read") && (usesDisabledCapabilityList(agent.id) ? agent.disabledCapabilityIds?.includes(capabilityId) : !agent.capabilityIds?.includes(capabilityId))) return decision(capabilityId, "agent_disabled");
   if (effect === "write" && (!context.access || context.access.permission === "read-only" || context.access.mode === "plan")) return decision(capabilityId, "read_only");
   const s = context.settings;
   if (capabilityId === "memory" && (s.memory.useLongTermMemory === false || context.access?.memoryMode === "no_memory")) return decision(capabilityId, "memory_disabled");
@@ -218,6 +225,11 @@ function declaredMcpTargets(schema: unknown, args: unknown): string[] {
   return result;
 }
 export function checkAgentTool(context: AgentCapabilityContext, toolName: string, args?: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, mcp?: AgentMcpCapabilityTarget): AgentCapabilityDecision {
+  if (context.companyRole === "router" && context.agentId !== GENERAL_ASSISTANT_ID) return decision(toolName, "agent_disabled");
+  if (COMPANY_ROUTER_TOOLS.has(toolName)) return context.companyRole === "router" && context.agentId === GENERAL_ASSISTANT_ID ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
+  if (COMPANY_WORKER_TOOLS.has(toolName)) return context.companyRole === "worker" ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
+  // Structure, not prompting, keeps the router from doing the work itself.
+  if (context.companyRole === "router" && (mcp || !ROUTER_READ_TOOLS.has(toolName))) return decision(toolName, "router_only");
   if (BASE_TOOLS.has(toolName)) return checkAgentCapability(context, "conversation");
   if (MEMORY_TOOLS.has(toolName)) return checkAgentCapability(context, "memory", toolName === "memory_write" ? "write" : "read");
   if (mcp) {

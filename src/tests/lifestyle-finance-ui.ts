@@ -71,6 +71,7 @@ export class ElementNode {
   }
   createDiv(options?: Parameters<ElementNode["createEl"]>[1]): ElementNode { return this.createEl("div", options); }
   createSpan(options?: Parameters<ElementNode["createEl"]>[1]): ElementNode { return this.createEl("span", options); }
+  get lastElementChild(): ElementNode | null { return this.children.at(-1) ?? null; }
   get firstChild(): ElementNode | null { return this.children[0] ?? null; }
   insertBefore(child: ElementNode, before: ElementNode | null): ElementNode { child.remove(); child.parentElement = this; const at = before ? this.children.indexOf(before) : -1; if (at < 0) this.children.push(child); else this.children.splice(at, 0, child); return child; }
   appendChild(child: ElementNode): ElementNode { child.parentElement = this; this.children.push(child); return child; }

@@ -1,3 +1,4 @@
+import { Platform } from "obsidian";
 import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import { getDesktopPath } from "../../platform/desktop-paths";
@@ -5,7 +6,8 @@ import { getDesktopPath } from "../../platform/desktop-paths";
 const { createHash, randomUUID } = getDesktopCrypto();
 
 
-const { mkdir, open, readFile, rename, unlink } = getDesktopFsPromises();
+const fs = getDesktopFsPromises();
+const { mkdir, open, readFile, unlink } = fs;
 const path = getDesktopPath();
 
 export const PI_NATIVE_FILE_SCHEMA_VERSION = 1 as const;
@@ -151,7 +153,22 @@ export async function atomicWriteJsonFile<T>(
     } finally {
       await handle.close();
     }
-    await rename(temporaryPath, filePath);
+    // Windows scanners/sync clients can briefly hold the destination open.
+    // Retry publication only: the durable, closed temporary file is reused.
+    const retryDelays = [25, 75, 150] as const;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await fs.rename(temporaryPath, filePath);
+        break;
+      } catch (error) {
+        if (
+          !Platform.isWin
+          || (!isNodeErrorWithCode(error, "EPERM") && !isNodeErrorWithCode(error, "EBUSY"))
+          || attempt >= retryDelays.length
+        ) throw error;
+        await new Promise<void>((resolve) => window.setTimeout(resolve, retryDelays[attempt]));
+      }
+    }
     temporaryExists = false;
     await syncDirectory(parentPath);
 

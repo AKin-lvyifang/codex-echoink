@@ -1,3 +1,4 @@
+import { isKnowledgeMap } from "./knowledge-wiki-policy";
 import { maintenancePageTitle, MAINTENANCE_KNOWLEDGE_TYPES } from "./maintenance-page-metadata";
 import { appendMissingMaintenanceFrontmatterProperties, isMaintenanceSourceTargetPath, patchMaintenanceUpgradeSourceFrontmatter, readMaintenanceFrontmatterProperty, readMaintenanceSourceStateProperty } from "./maintenance-source-frontmatter";
 import { isMaintenanceCanonicalSourceStatus, resolveMaintenanceSourceState } from "./maintenance-source-state";
@@ -63,15 +64,19 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
   }
 
   for (const wiki of wikis) {
-    const type = readMaintenanceFrontmatterProperty(wiki.content, "类型");
-    if (type.error) issue(wiki, UNREADABLE_PROPERTIES_MESSAGE, "unavailable");
-    else if (!type.present) {
-      try {
-        appendMissingMaintenanceFrontmatterProperties(wiki.content, { 类型: "" });
-        plan.wikiItems.push({ path: wiki.path, title: fileTitle(wiki), revision: wiki.revision, content: wiki.content });
-      } catch { issue(wiki, UNREADABLE_PROPERTIES_MESSAGE, "unavailable"); }
+    if (!isKnowledgeMap(wiki.path, wiki.content)) {
+      const type = readMaintenanceFrontmatterProperty(wiki.content, "类型");
+      if (type.error) issue(wiki, UNREADABLE_PROPERTIES_MESSAGE, "unavailable");
+      else if (!type.present) {
+        try {
+          appendMissingMaintenanceFrontmatterProperties(wiki.content, { 类型: "" });
+          plan.wikiItems.push({ path: wiki.path, title: fileTitle(wiki), revision: wiki.revision, content: wiki.content });
+        } catch { issue(wiki, UNREADABLE_PROPERTIES_MESSAGE, "unavailable"); }
+      }
+      else if (!MAINTENANCE_KNOWLEDGE_TYPES.some(value => value === type.value)) issue(wiki, "这页的“类型”不在七种知识类型里，先保留，请你核对。");
+      else if (readMaintenanceFrontmatterProperty(wiki.content, "类型待确认").value === true)
+        plan.wikiItems.push({ path: wiki.path, title: fileTitle(wiki), revision: wiki.revision, content: wiki.content, confirmType: type.value as import("./maintenance-p2-contract").MaintenanceKnowledgeType });
     }
-    else if (!MAINTENANCE_KNOWLEDGE_TYPES.some(value => value === type.value)) issue(wiki, "这页的“类型”不在七种知识类型里，先保留，请你核对。");
 
     const regions = createMaintenanceSectionSnapshot(wiki.content).regions;
     const inSources = (offset: number) => regions.some(region => region.kind === "sources" && offset >= region.start && offset < region.end);
@@ -195,7 +200,7 @@ export function previewMaintenanceUpgradePlan(plan: MaintenanceUpgradePlan): Mai
         ...(item.addStatus ? [`提炼状态：${item.addStatus}`] : []),
         ...(item.addTargetPaths ? [`提炼到：${item.addTargetPaths.length} 页`] : [])
       ] })),
-      ...plan.wikiItems.map(item => ({ path: item.path, title: item.title, properties: ["类型"], description: "确认后让 Agent 从七种知识类型中选择；拿不准时标上“类型待确认”。" }))
+      ...plan.wikiItems.map(item => ({ path: item.path, title: item.title, properties: item.confirmType ? [`确认类型「${item.confirmType}」`] : ["类型"], description: item.confirmType ? "保留已有类型，取消待确认标记。" : "确认后让 Agent 从七种知识类型中选择；拿不准时标上“类型待确认”。" }))
     ]
   };
 }

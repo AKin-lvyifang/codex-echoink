@@ -67,6 +67,12 @@ export async function runWorkbenchLauncherTests(root?: string): Promise<void> {
   visible = false;
   assert.equal(await launchWorkbenchSignal(plugin, signal, data), false);
   assert.equal(opened.length, 2, "a stale row does not open another draft");
+  visible = true; registry.moduleOwners.todos = "";
+  let pickCount = 0; (plugin as any).openModuleOwnerPicker = () => { pickCount++; };
+  assert.equal(await launchWorkbenchSignal(plugin, signal, data), false);
+  assert.equal(pickCount, 1); assert.equal(opened.length, 2, "unassigned modules create no conversation");
+  registry.moduleOwners.todos = "planner"; visible = false;
+  registry.moduleOwners["knowledge-base"] = "generalist";
   const knowledge = { ...current, moduleId: "knowledge-base" as const, id: 7 as const };
   const bindings = emptyKnowledgeFolderBindings();
   const knowledgePlugin = { ...plugin, settings: { ...plugin.settings, knowledgeBase: { folderBindings: bindings } },

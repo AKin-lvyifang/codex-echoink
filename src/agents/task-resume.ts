@@ -2,7 +2,7 @@ import type { TaskResumeSafetySnapshot } from "../plugin/task-resume-safety";
 import type { ToolCallFailureInfo } from "./tool-call-recovery";
 
 export const TASK_INTERRUPTION_REASONS = [
-  "app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog"
+  "app_closed", "user_stopped", "plugin_disabled", "run_failed", "process_unknown", "watchdog", "tool_loop_limit"
 ] as const;
 export type TaskInterruptionReason = typeof TASK_INTERRUPTION_REASONS[number];
 

@@ -3,6 +3,8 @@ import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { buildKnowledgeLinkingTargets, scanKnowledgeLinkingMentions, buildKnowledgeLinkingPatch, selectKnowledgeLinkingMentions } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkingProposal, KnowledgeLinkingTarget, KnowledgeLinkingTask, KnowledgeLinkingOrigin } from "../knowledge-base/knowledge-linking-types";
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
+import { rebaseKnowledgeLinkingMove } from "../knowledge-base/knowledge-linking-state";
+import type { KnowledgeSystemMoveFile } from "../knowledge-base/knowledge-system-move";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 
@@ -35,8 +37,13 @@ export class KnowledgeLinkingService {
   private handoffStops = 0;
   private readonly blockedOrigins = new Set<string>();
   private automaticQueue: NonNullable<KnowledgeLinkingTask["queuedAutomatic"]> = [];
+  private moving = false;
   readonly ready: Promise<void>;
-  constructor(private readonly host: KnowledgeLinkingHost, private readonly store: Pick<KnowledgeLinkingStateStore, "load" | "save"> & Partial<Pick<KnowledgeLinkingStateStore, "loadTask" | "saveRecord">>) {
+  constructor(
+    private readonly host: KnowledgeLinkingHost,
+    private readonly store: Pick<KnowledgeLinkingStateStore, "load" | "save"> &
+      Partial<Pick<KnowledgeLinkingStateStore, "loadTask" | "saveRecord" | "invalidateMoves">>,
+  ) {
     this.ready = this.restore();
   }
   snapshot(): KnowledgeLinkingTask | null { return this.task ? structuredClone(this.task) : null; }
@@ -47,6 +54,7 @@ export class KnowledgeLinkingService {
   }
   private async restore(): Promise<void> {
     this.task = await this.store.load();
+    this.moving = this.task?.pausedForMove === true;
     if (this.task) this.restoreOrigin(this.task);
     this.automaticQueue = this.task?.queuedAutomatic ?? [];
     for (const queued of this.automaticQueue) this.restoreOrigin(queued);
@@ -72,6 +80,7 @@ export class KnowledgeLinkingService {
   }
   private async startScoped(mode: "manual" | "automatic", targetPaths?: string[], queuedId?: string, sourcePaths?: string[], originConversationId?: string, applyImmediately = false): Promise<KnowledgeLinkingTask> {
     await this.ready;
+    if (this.moving) throw new Error("知识体系正在搬家，完成后再补全关联。");
     if (this.disposed) throw new Error("知识关联服务已关闭。");
     if (mode === "automatic" && this.host.automaticEnabled?.() === false) throw new Error("自动补链已关闭，待处理关联保留。");
     const origin: KnowledgeLinkingOrigin = originConversationId
@@ -131,6 +140,7 @@ export class KnowledgeLinkingService {
   }
   async resume(taskId?: string): Promise<void> {
     await this.ready;
+    if (this.moving) throw new Error("知识体系正在搬家，完成后再继续关联。");
     if (this.handoffStops) throw new Error("知识关联正在等待归属转交。");
     if (this.disposed || this.flight) return;
     if (taskId && this.task?.id !== taskId) {
@@ -208,6 +218,39 @@ export class KnowledgeLinkingService {
     if (this.task) { this.task.phase = "cancelled"; await this.persist(); this.notify(); }
     this.advanceQueue();
   }
+  async pauseForKnowledgeMove(): Promise<void> {
+    await this.ready;
+    this.moving = true;
+    await this.starts;
+    this.controller?.abort();
+    await this.flight;
+    await this.host.release?.();
+    if (this.task) {
+      this.task.pausedForMove = true;
+      if (!["completed", "partial", "cancelled"].includes(this.task.phase)) {
+        this.task.phase = "interrupted";
+        this.task.proposals = [];
+        this.task.patches = [];
+        this.task.writeConfirmed = false;
+        this.task.error = "正在搬家，完成后重新扫描关联。";
+      }
+      await this.persist();
+    }
+  }
+  async rescanAfterKnowledgeMove(files: readonly KnowledgeSystemMoveFile[]): Promise<void> {
+    await this.ready;
+    await this.store.invalidateMoves?.(files);
+    if (this.task) {
+      this.task = rebaseKnowledgeLinkingMove(this.task, files);
+      this.automaticQueue = this.task.queuedAutomatic ?? [];
+      this.moving = false;
+      await this.persist();
+      if (!["completed", "partial", "cancelled", "queued"].includes(this.task.phase)) {
+        await this.regenerate();
+      }
+    } else this.moving = false;
+    this.advanceQueue();
+  }
   async dismiss(): Promise<void> { await this.ready; if (this.task && !running(this.task)) { this.task.dismissed = true; await this.persist(); } }
   async dispose(): Promise<void> {
     this.disposed = true; this.controller?.abort(); await this.flight; await this.host.release?.();
@@ -231,7 +274,7 @@ export class KnowledgeLinkingService {
     return { schemaVersion: 1, id: queued.id, ...this.originOf(queued), ...(queued.pausedForHandoff ? { pausedForHandoff: true } : {}), mode: "automatic", phase: queued.pausedForHandoff ? "interrupted" : "queued", bindingSignature: this.host.bindingSignature(), createdAt: queued.at, updatedAt: queued.at, processed: 0, total: null, proposals: [], patches: [], results: [], targetPaths: queued.paths, ...(queued.sourcePaths ? { sourcePaths: queued.sourcePaths } : {}) };
   }
   private advanceQueue(): void {
-    if (this.disposed || this.host.automaticEnabled?.() === false || this.handoffStops || this.flight || running(this.task) || !this.automaticQueue.length) return;
+    if (this.disposed || this.moving || this.host.automaticEnabled?.() === false || this.handoffStops || this.flight || running(this.task) || !this.automaticQueue.length) return;
     const index = this.automaticQueue.findIndex(item => !item.pausedForHandoff && !(item.originConversationId && this.blockedOrigins.has(item.originConversationId)));
     if (index < 0) return;
     const queued = this.automaticQueue.splice(index, 1)[0];

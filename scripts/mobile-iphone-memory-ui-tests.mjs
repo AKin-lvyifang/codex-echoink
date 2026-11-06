@@ -1,3 +1,4 @@
+import { installMobileDomHost } from "./mobile-dom-test-host.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import esbuild from "esbuild";
@@ -6,10 +7,11 @@ import { mobileBuildOptions } from "./mobile-build.mjs";
 
 const built = await esbuild.build(mobileBuildOptions("src/ui/iphone/agent-settings-pages.ts"));
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://iphone-memory.invalid" });
+installMobileDomHost(dom.window);
 const { document, Event } = dom.window; dom.window.HTMLElement.prototype.scrollIntoView = function () {};
 const notices = [], compiled = { exports: {} }, icon = (parent, name) => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("data-icon", name); parent.replaceChildren(svg); };
 vm.runInNewContext(built.outputFiles[0].text, {
-  module: compiled, exports: compiled.exports, document, window: dom.window, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
+  module: compiled, Error, exports: compiled.exports, document, window: dom.window, console, structuredClone, AbortController, setTimeout, clearTimeout, atob, btoa, TextEncoder, TextDecoder,
   HTMLElement: dom.window.HTMLElement, Element: dom.window.Element, SVGElement: dom.window.SVGElement,
   require: name => { assert.equal(name, "obsidian"); return { Notice: class { constructor(message) { notices.push(message); } }, setIcon: icon, getIcon: name => { const parent = document.createElement("span"); icon(parent, name); return parent.firstChild; } }; }
 });
@@ -58,20 +60,22 @@ const shell = {
   async back() { if (pages.at(-1).canLeave && !await pages.at(-1).canLeave()) return false; pages.pop().dispose?.(); document.body.replaceChildren(pages.at(-1).content); return true; },
   async backTo(id) { while (pages.at(-1).id !== id) if (!await this.back()) return false; return true; }
 };
-const ctx = { document, shell, host: { services: { memory: service }, settings: () => ({ settingsLanguage: "zh-CN" }), agents: { async snapshot() { return { registry: clone(registry), version: registryVersion }; }, async setOwner(module, agentId, version) { calls.owner.push({ module, agentId, version }); assert.equal(version, registryVersion); registry.moduleOwners[module] = agentId; registryVersion = "registry-v2"; return this.snapshot(); } }, renderMarkdown: (text, parent) => { parent.textContent = text; }, openNote: async path => { calls.openNote.push(path); } }, error: error => { throw error; } };
+const ctx = { document, shell, host: { services: { memory: service, async refreshAgentIdentity() {} }, settings: () => ({ settingsLanguage: "zh-CN" }), agents: { async snapshot() { return { registry: clone(registry), version: registryVersion }; }, async setOwner(module, agentId, version) { calls.owner.push({ module, agentId, version }); assert.equal(version, registryVersion); registry.moduleOwners[module] = agentId; registryVersion = "registry-v2"; return this.snapshot(); } }, renderMarkdown: (text, parent) => { parent.textContent = text; }, openNote: async path => { calls.openNote.push(path); } }, error: error => { throw error; } };
 const ui = new IPhoneAgentSettingsPages(ctx, async id => { calls.edit.push(id); await shell.push({ id: "agent-edit", content: document.createElement("div"), dispose: () => ui.refresh() }); });
 const body = () => pages.at(-1).content;
-const buttons = text => [...body().querySelectorAll("button")].filter(button => button.textContent.trim() === text);
+const buttons = text => [...body().querySelectorAll("button")].filter(button => button.textContent.trim() === text || button.getAttribute("aria-label") === text || button.querySelector(".ip-settings-name")?.textContent === text);
 const click = async (text, index = 0) => { const button = buttons(text)[index]; assert.ok(button, `Button ${text} exists`); assert.equal(button.disabled, false, `Button ${text} is enabled`); button.click(); await tick(); };
 const input = (label, value) => { const node = body().querySelector(`[aria-label="${label}"]`); assert.ok(node, `Input ${label} exists`); node.value = value; node.dispatchEvent(new Event("input", { bubbles: true })); return node; };
 const toggle = async label => { const node = body().querySelector(`input[aria-label="${label}"]`); assert.ok(node, `Switch ${label} exists`); node.checked = !node.checked; node.dispatchEvent(new Event("change", { bubbles: true })); await tick(); };
 const slotRow = key => body().querySelector(`[data-profile-key="${key}"]`);
 const clickIn = async (parent, text) => { const node = [...parent.querySelectorAll("button")].find(button => button.textContent === text); assert.ok(node, `${text} exists in row`); node.click(); await tick(); };
 try {
-  await ui.open(); assert.deepEqual([...body().querySelectorAll(":scope > h2")].map(node => node.textContent), ["我的 Agent", "模块负责人", "记忆", "会话"]); assert.match(body().textContent, /你的画像1 项/); assert.match(body().textContent, /已归档会话1/); assert.match(body().textContent, /每天最多 1 次|完成 7 天后/); assert.equal(body().querySelectorAll(".ip-agent-owner-avatar").length, 6);
-  await click("总助统筹"); assert.equal(calls.edit[0], "sol"); await shell.back(); await tick();
+  await ui.open(); assert.deepEqual([...body().querySelectorAll(":scope > h2")].map(node => node.firstChild.textContent.trim()), ["主 Agent", "角色 Agent", "模块负责人"]); assert.equal(body().querySelectorAll(".ip-agent-owner-value-icon").length, 7); assert.ok(!body().textContent.includes("长期记忆"));
+
+  await click("总助"); assert.equal(calls.edit[0], "sol"); await shell.back(); await tick();
   await click("新建 Agent"); assert.equal(calls.edit[1], undefined); await shell.back(); await tick();
-  const ownerLink = [...body().querySelectorAll("button")].find(button => button.querySelector(".ip-settings-name")?.textContent === "日记" && button.querySelector(".ip-agent-owner-avatar")); ownerLink.click(); await tick(); await click("日记助手"); assert.equal(calls.owner[0].agentId, "journal"); assert.equal(shell.activePageId, "iphone-settings-agent");
+  const ownerSelect = body().querySelector('select[aria-label="日记"]'); assert.ok(ownerSelect); ownerSelect.value="journal"; ownerSelect.dispatchEvent(new Event("change")); await tick(); assert.equal(calls.owner[0].agentId, "journal"); assert.equal(shell.activePageId, "iphone-settings-agent");
+  await ui.open("memory"); assert.match(body().textContent, /你的画像1 项/);
   await click("你的画像1 项"); assert.equal(body().querySelectorAll("[data-profile-key]").length, 24); assert.deepEqual([...body().querySelectorAll(":scope > h2")].map(node => node.textContent), ["身份", "偏好", "协作"]); assert.equal(body().querySelectorAll("details.ip-agent-missing").length, 3); assert.match(slotRow("identity.name").textContent, /系统观察 · 仅供参考/);
   await clickIn(slotRow("identity.name"), "确认"); assert.equal(calls.confirmProfile.length, 1); assert.match(slotRow("identity.name").textContent, /你确认的/); assert.equal(prefs.memoryEnabled, false, "Local profile management works with Memory disabled and no Provider");
   await clickIn(slotRow("identity.name"), "编辑"); input("姓名与称呼", "保留的画像草稿"); profileConflict = true; await click("保存"); assert.equal(body().querySelector("textarea").value, "保留的画像草稿"); assert.match(body().textContent, /内容已变化/);
@@ -85,13 +89,14 @@ try {
   await click("返回修改"); canonicalRevision++; await click("重新读取"); assert.equal(body().querySelector("textarea").value, "修正后的真实文字"); await click("预览修正"); correctionConflict = false; await click("确认修正"); assert.match(body().textContent, /修正后的真实文字/); assert.equal(body().querySelector("textarea"), null);
   await click("忘记"); assert.equal(calls.forget.length, 0); await clickIn(body().querySelector(".ip-settings-confirm"), "忘记"); assert.equal(calls.forget.length, 1); assert.equal(shell.activePageId, "iphone-settings-memories"); await tick(); assert.match(body().textContent, /还没有记忆/);
   body().querySelector("details.ip-agent-forgotten").open = true; await click("恢复"); assert.equal(calls.restore.length, 0); await clickIn(body().querySelector(".ip-settings-confirm"), "恢复"); assert.equal(calls.restore.length, 1); assert.equal(records[0].source, "原来的来源");
-  await shell.back(); await tick(); await click("已归档会话1"); body().querySelector("button.ip-settings-row").click(); await tick();
+  await shell.back(); await tick(); await ui.open("sessions"); await click("已归档会话1"); body().querySelector("button.ip-settings-row").click(); await tick();
   assert.match(body().textContent, /已记录的历史回答/); assert.equal(body().querySelector("textarea,input"), null, "Archived history has no composer"); await click("恢复会话"); await clickIn(body().querySelector(".ip-settings-confirm"), "恢复"); assert.deepEqual(calls.restoreArchive, ["archive-a"]); assert.equal(shell.activePageId, "iphone-settings-archives"); await shell.back(); await tick();
+  await shell.back(); await tick();
   settingsFailure = true; await toggle("长期记忆"); assert.equal(prefs.memoryEnabled, false); assert.equal(body().querySelector('[aria-label="长期记忆"]').checked, false); assert.match(body().textContent, /设置保存失败/);
   settingsFailure = false; await toggle("长期记忆"); assert.equal(prefs.memoryEnabled, true); await toggle("启用做梦"); assert.equal(prefs.dreamEnabled, true); assert.equal(body().querySelector(".ip-agent-dream").hidden, false);
   input("每天最多整理次数", "3"); prefs = { ...prefs, version: "external-settings" }; emit(); await tick(); await click("保存"); assert.match(body().textContent, /内容已变化/); assert.equal(body().querySelector('[aria-label="每天最多整理次数"]').value, "3"); await click("重新读取"); await click("保存"); assert.equal(prefs.dreamRunsPerDay, 3);
   await click("立即整理"); assert.equal(calls.runDream, 1); assert.match(body().textContent, /正在整理/); await click("停止"); assert.equal(dream.phase, "interrupted"); assert.ok(calls.cancelDream > 0);
-  await click("立即整理"); await shell.back(); await tick(); assert.equal(dream.phase, "interrupted"); assert.equal(listeners.size, 0, "Closing the Agent settings releases subscriptions");
+  await click("立即整理"); await shell.back(); await tick(); assert.equal(dream.phase, "interrupted"); await shell.back(); await tick(); assert.equal(listeners.size, 0, "Closing Settings releases subscriptions");
   assert.equal(document.querySelector(".modal-container"), null);
-  console.log("PASS iPhone Agent/Memory UI: four groups, owner avatars, 24 slots, source confirmation/deletion, conflicts retain drafts, local correction preview, forget/restore/export, read-only archives, Dream cancellation and settings versions");
+  console.log("PASS iPhone Agent/Memory UI: separate Agent/Memory/Conversation pages, seven owner icons, 24 slots, source confirmation/deletion, conflicts retain drafts, local correction preview, forget/restore/export, read-only archives, Dream cancellation and settings versions");
 } finally { for (const page of pages) page.dispose?.(); dom.window.close(); }

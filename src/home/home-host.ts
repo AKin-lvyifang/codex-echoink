@@ -1,6 +1,6 @@
 import type { App, EventRef } from "obsidian";
 import type { CodexForObsidianSettings } from "../settings/settings";
-import type { KnowledgeBaseDashboardSnapshot } from "../knowledge-base/dashboard";
+import type { KnowledgeBaseDashboardHealth } from "../knowledge-base/dashboard";
 import type { CapabilityAccess } from "../membership/types";
 import type { HomeActivityCore } from "./home-activity-core";
 import type { EchoInkTodoStore } from "./todo-store";
@@ -28,7 +28,7 @@ export interface HomeHost extends TodoHost {
     openLibrary?(expressionId?: string): Promise<unknown>;
   } | null;
   lifestyle: { open(kind: "finance"): Promise<unknown> };
-  getKnowledgeSurfaceService(): { getDashboardSnapshot(): Promise<KnowledgeBaseDashboardSnapshot> } | null;
+  getKnowledgeSurfaceService(): { getHealthSnapshot(): KnowledgeBaseDashboardHealth } | null;
   openEchoInkKnowledgeSettings(): Promise<void>;
   openEchoInkGeneralSettings(): Promise<void>;
   requireAvailableEchoInkSkill(id: string): Promise<unknown>;

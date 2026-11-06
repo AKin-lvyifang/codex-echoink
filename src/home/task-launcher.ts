@@ -1,12 +1,13 @@
+import { getModuleOwner } from "../agents/registry";
 import { Notice, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID } from "../agents/types";
+import { AGENT_MODULE_IDS } from "../agents/types";
 import type { PiConversationCatalogEntry } from "../harness/pi-native/contracts";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchTaskSource } from "./workbench-types";
 import { getWorkbenchDataService } from "./workbench-data";
 import { WorkbenchSetupRequired } from "./workbench-action-feedback";
 
-const SIGNAL_IDS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14]);
+const SIGNAL_IDS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]);
 
 /** Decode local draft intent without treating it as permission to perform any action. */
 export function parseWorkbenchTaskSource(value: unknown): WorkbenchTaskSource | null {
@@ -36,9 +37,9 @@ export async function launchWorkbenchSignal(
     new Notice(plugin.settings.settingsLanguage === "en" ? "This reminder has changed." : "这条提醒已更新。");
     return false;
   }
-  const registry = plugin.settings.agentRegistry;
-  const assigned = registry.moduleOwners[current.moduleId];
-  const owner = registry.agents.some(agent => agent.id === assigned) ? assigned : GENERAL_ASSISTANT_ID;
+  const owner = getModuleOwner(plugin.settings.agentRegistry, current.moduleId);
+  if (!owner) { plugin.openModuleOwnerPicker(current.moduleId, () => launchWorkbenchSignal(plugin, signal, data)); return false; }
+  if (current.id === 15) { await plugin.startKnowledgeSystem(current.source.objects[1]); return true; }
   if (current.moduleId === "knowledge-base") {
     const roles = plugin.settings.knowledgeBase.folderBindings?.roles;
     const exists = (path: string) => plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder;
@@ -47,7 +48,7 @@ export async function launchWorkbenchSignal(
     if (!outcomes || current.id !== 14 && !sources) throw new WorkbenchSetupRequired(
       plugin.settings.settingsLanguage === "en" ? "Set up knowledge folders first." : "先设置知识库目录。", "knowledge");
   }
-  const taskId = await plugin.startWorkbenchSignalTask(owner, current);
+  const taskId = await plugin.startWorkbenchSignalTask(owner.id, current);
   if (!taskId) throw new Error(plugin.settings.settingsLanguage === "en" ? "The task was not accepted. Please try again." : "任务尚未受理，请重试。");
   return true;
 }

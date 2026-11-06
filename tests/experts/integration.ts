@@ -1,3 +1,4 @@
+import packageInfo from "../../package.json";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -19,6 +20,7 @@ import { hireExpert } from "../../src/agents/expert-lifecycle";
 const backend = process.env.ECHOINK_EXPERT_BACKEND_ROOT;
 if (!backend || process.env.NODE_ENV === "production") throw new Error("An explicit local backend checkout is required.");
 const backendRequire = createRequire(path.join(backend, "package.json"));
+const { expertCatalog: expectedCatalog } = await import(pathToFileURL(path.join(backend, "src/experts-content.ts")).href);
 const { fixture } = await import(pathToFileURL(path.join(backend, "test/helpers.ts")).href);
 const { serve } = await import(pathToFileURL(backendRequire.resolve("@hono/node-server")).href);
 const port = await new Promise<number>((resolve, reject) => {
@@ -76,10 +78,10 @@ try {
     return { service, transport, calls, deliveries, state: () => saved };
   };
   const pro = await makeAccount();
-  const content = new ExpertContentService({ files: expertFixtureFiles(cache), cacheRoot: ".isolated/plugins/echoink/expert-cache", account: () => pro.service, pluginVersion: "2.8.8", platform: "desktop" });
+  const content = new ExpertContentService({ files: expertFixtureFiles(cache), cacheRoot: ".isolated/plugins/echoink/expert-cache", account: () => pro.service, pluginVersion: packageInfo.version, platform: "desktop" });
   let catalog = await content.publicCatalog();
-  await test("anonymous catalog supplies nine dynamic public cards and no account credentials", () => {
-    assert.equal(catalog.experts.length, 9);
+  await test("anonymous catalog supplies the current dynamic public cards and no account credentials", () => {
+    assert.deepEqual(catalog.experts.map(item => item.id).sort(), expectedCatalog.experts.map(item => item.id).sort());
     assert.ok(pro.calls.filter(call => call.path === "/api/experts/catalog").every(call => !call.credential));
     assert.ok(!JSON.stringify(catalog).includes('"persona"'));
   });
@@ -109,14 +111,15 @@ try {
       assert.equal(response.status, 200); assert.equal(response.headers.get("content-type"), "image/webp");
       const avatar = Buffer.from(await response.arrayBuffer()), embedded = Buffer.from(pack.avatar.dataUrl.split(",")[1], "base64");
       assert.ok(avatar.equals(embedded), "public and offline avatar equivalence");
-      assert.ok(pack.licenseTexts().length >= 2 && pack.licenseTexts().every(license => license.text.includes("THE SOFTWARE IS PROVIDED")), "complete bundled licenses");
+      assert.deepEqual(pack.licenseTexts(), JSON.parse(delivery.content).licenses, "complete bundled licenses match the verified package bytes");
+      assert.ok(pack.licenseTexts().every(license => license.name.trim() && license.source.trim() && license.text.trim()), "license notices retain their full text");
       assert.ok(!JSON.stringify(pack).includes('"persona"'), "public resolved handle hides package body");
       console.log(`PACKAGE id=${metadata.id} version=${pack.version} bytes=${bytes} sha256=${delivery.sha256} offlineSeconds=${delivery.maxOfflineSeconds} avatarBytes=${avatar.length}`);
     }
   });
   await test("same version returns notModified through real HTTP without renewing signed issue time", async () => {
     const metadata = catalog.experts[0], original = pro.deliveries.find(delivery => delivery.id === metadata.id)!;
-    const result = await pro.service.getExpertPackage(metadata.id, { pluginVersion: "2.8.8", platform: "desktop", knownVersion: metadata.version });
+    const result = await pro.service.getExpertPackage(metadata.id, { pluginVersion: packageInfo.version, platform: "desktop", knownVersion: metadata.version });
     assert.ok("notModified" in result && result.notModified);
     const fresh = await content.resolve(metadata.id);
     assert.equal(fresh.revision, packs.get(metadata.id)!.revision);
@@ -136,8 +139,8 @@ try {
   await free.service.actions.signIn!({ email: "expert-free@example.test", method: "password", credential: localPassword });
   await test("free account is refused locally and by the actual HTTP package endpoint", async () => {
     const id = catalog.experts[0].id;
-    await assert.rejects(free.service.getExpertPackage(id, { pluginVersion: "2.8.8", platform: "desktop" }), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
-    await assert.rejects(free.transport(`/api/experts/${id}/package`, "POST", { deviceId: "unbound-free-fixture", lease: "none", pluginVersion: "2.8.8", platform: "desktop" }, free.state().token), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
+    await assert.rejects(free.service.getExpertPackage(id, { pluginVersion: packageInfo.version, platform: "desktop" }), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
+    await assert.rejects(free.transport(`/api/experts/${id}/package`, "POST", { deviceId: "unbound-free-fixture", lease: "none", pluginVersion: packageInfo.version, platform: "desktop" }, free.state().token), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
     assert.equal(free.calls.at(-1)!.status, 403);
   });
   await test("real online device removal denies cached packages and invalidates an active package handle", async () => {

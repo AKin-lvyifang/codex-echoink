@@ -82,6 +82,7 @@ function taskSummaryContent(entry: TaskEntry, session?: Pick<StoredSession, "mes
     const latest = [...messages].reverse().find(message => message.assistantTurn?.processNodes?.length)?.assistantTurn?.processNodes?.at(-1);
     return (entry.taskStage || latest?.title)?.replace(/\s+/gu, " ").trim() || taskStateLabel(entry, language);
   }
+  if (entry.resultSummary) return entry.resultSummary;
   const answer = [...messages].reverse().find(message => message.text.trim() && message.role === "assistant");
   return answer?.text || taskStateLabel(entry, language);
 }

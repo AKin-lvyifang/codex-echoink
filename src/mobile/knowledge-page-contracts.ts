@@ -1,4 +1,4 @@
-import type { KnowledgePageSnapshot } from "../home/knowledge-page-data";
+import type { KnowledgePageSnapshot } from "../home/knowledge-page-core";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 
 export interface MobileKnowledgePagePort {

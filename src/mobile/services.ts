@@ -1,3 +1,4 @@
+import { isUndeletableAgent } from "../agents/types";
 import { JournalFormatService } from "../home/journal-format-service";
 import { loadNativeJournalSettings } from "../home/native-journal";
 import type { MobileEnglishDiaryPort } from "./english-diary-contracts";
@@ -192,7 +193,7 @@ export class MobileServices implements HomeHost {
     this.identityListeners.forEach(listener => listener()); this.host.runtime.onChange(); return profile;
   }
   async removeAgent(agentId: string, version: string): Promise<void> {
-    if (agentId === "sol") throw new Error("总助不能删除。");
+    if (isUndeletableAgent(agentId)) throw new Error("总助和通才不能删除。");
     const before = await this.profileProtocol.snapshot();
     if (isExpertAgent(before.registry.agents.find(agent => agent.id === agentId))) throw new Error("专家请使用解聘，聊天记录会保留。");
     if (before.version !== version) throw new Error("Agent 配置已变化，请重新读取后再编辑。");
