@@ -6,13 +6,14 @@
 
 <h1 align="center">EchoInk Agent</h1>
 
-<p align="center">Your notes, with an AI companion. Built for Obsidian.</p>
+<p align="center">An AI companion that lives in your Obsidian vault.<br>It chats with your notes, keeps them organized, and remembers what matters — in memory you can read and edit.</p>
+
+<p align="center"><a href="https://obsidian.md/plugins?id=codex-echoink"><b>Install in Obsidian</b></a></p>
 
 <p align="center">
-  <a href="https://echoink.cn">Official website</a> ·
-  <a href="https://echoink.cn/install">Download &amp; installation</a> ·
+  <a href="https://echoink.cn">Website</a> ·
   <a href="https://echoink.cn/features">Features</a> ·
-  <a href="#news">News</a> ·
+  <a href="https://echoink.cn/plans">Plans</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#explore">Explore</a> ·
   <a href="#privacy-and-data">Privacy</a> ·
@@ -20,40 +21,36 @@
 </p>
 
 <p align="center">
+  <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Downloads from Obsidian community plugins"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="Desktop and Mobile Beta">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="Version 2.8.10"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
 
-EchoInk is a personal knowledge agent that lives in Obsidian. Chat with your notes, organize knowledge, keep visible and editable long-term memory, and record everyday life. Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
+Your notes stay in your vault; connect your own supported model service for AI features. Normal installation does not require Codex CLI.
 
 ## Core features
 
 | What you want to do | How EchoInk helps |
 | --- | --- |
-| Chat with your notes | Chat with notes; on desktop, add attachments or propose edits with @Agent in notes (PRO) |
-| Turn sources into knowledge | Maintain knowledge and trace sources; organize domain trees, run checkups, and preview repairs on desktop |
-| Let AI remember you | Inspect profile and sources and pin important memories in the desktop constellation; managing existing memory needs no model connection |
-| Record everyday life | Keep journals and manage to-dos; on desktop, enable automatic journal organization, with PRO required for finances |
-| Share work across agents | The assistant delegates and employees execute; review project proposals, then handle questions and approvals in Pending decisions; expert hiring requires PRO |
-| Create outputs | Generate notes, Canvas layouts, or drawings from sources on desktop, or use PDF reading (PRO) |
+| Chat with your notes | Ask anything about your vault; answers cite the notes they actually used |
+| Turn sources into knowledge | Organize new material into a knowledge base, with checkups and previewed repairs |
+| Let AI remember you | Long-term memory you can browse, correct, pin, or forget |
+| Record everyday life | Write your day once; EchoInk can turn journal entries into to-dos and finance records |
+| Run a small AI team | An assistant plans and delegates, role agents do the work, and you approve the decisions |
+| Create outputs | Generate notes, Canvas layouts, and drawings from the material you already have |
 
-## News
-
-| Version | Date | Update |
-| --- | --- | --- |
-| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | One-person company, module owners, memory constellation, and knowledge checkups |
-| [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | One-click setup, drawings, journal naming, and expert hiring |
-| [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | Automatic journal-to-task and finance organization on desktop; finances require PRO |
-| [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | Grouped workbench entries, DeepSeek search, and run-record export |
-| [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | @Agent in notes (PRO), with proposed edits written back after confirmation |
-| [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | Three appearances and image galleries; model-connection and memory-identity fixes |
-
-See the [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) for the full history.
-
-**Upgrade every device to 2.8.10.** Finance, English Diary, PDF reading, @Agent in notes, expert hiring, and the EchoInk MCP server require active PRO. **PRO does not include model credits.** See the [website](https://echoink.cn/plans) for current offers and prices. **Mobile remains in Beta; this version's additions and fixes have not been verified on physical iPhone or iPad devices.** Supported features are listed below.
+Some features are desktop-only or require PRO. [Explore](#explore) lists the conditions for each one.
 
 ## Quick start
+
+1. **Install.** [Open EchoInk in Obsidian](https://obsidian.md/plugins?id=codex-echoink), or search for EchoInk in Community plugins. Requires Obsidian 1.11.4 or later.
+2. **Set up.** On desktop, open setup from the workbench and choose Automatic, Guided, or Manual. Existing notes stay in place.
+3. **Connect a model.** Bring your own model API key, or connect later.
+4. **Start.** Open the workbench to begin a conversation.
+
+<details>
+<summary>Detailed steps, manual install, upgrade, and rollback</summary>
 
 | Step | Action | Instructions |
 | --- | --- | --- |
@@ -66,7 +63,26 @@ See the [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/AKin-lvyifan
 
 The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or update the plugin independently on each device through the official download or Community Plugins; do not rely on Sync Standard to transfer this file.
 
+</details>
+
 ## Explore
+
+| Feature | Basic | PRO |
+| --- | --- | --- |
+| Agent conversations, knowledge Q&A, knowledge systems, checkups, and maintenance | ✅ | ✅ |
+| Generate from sources, web search | ✅ | ✅ |
+| Long-term memory, memory constellation, built-in and custom Skills | ✅ | ✅ |
+| Workbench, journal, to-dos | ✅ | ✅ |
+| One-person company, module owners, multi-agent tasks | ✅ | ✅ |
+| @Agent in notes, PDF reading and extraction | ❌ | ✅ |
+| Finance, English diary | ❌ | ✅ |
+| Expert hiring, official methodology Skills, enhanced knowledge review, EchoInk MCP server | ❌ | ✅ |
+| Highlighter and Manifesto appearances | ❌ | ✅ |
+
+PRO does not include model credits. See the [website](https://echoink.cn/plans) for current offers and prices. Mobile is in Beta; desktop and mobile conditions are in the full list below.
+
+<details>
+<summary>Full feature list, desktop and mobile support</summary>
 
 ### 💬 Conversations and knowledge
 
@@ -118,7 +134,33 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 | Desktop | Provides the desktop entries described above; validation in native Windows and Linux environments remains incomplete |
 | Mobile Beta | iPhone and iPad provide the workbench, company workflow, module owners, settings, and Journal, To-dos, Finance, Knowledge, and English Diary pages. Handle questions and approvals in Pending decisions. Projects and employee conversations cannot yet be viewed or resumed across devices; projects advance only in the foreground, with interrupted work checked before resuming. Stream answers and reasoning per model service where supported. Memory constellation, knowledge system organization, knowledge checkups, source generation, generation-template settings, and PDF reading are desktop-only. Attachments, CLI, and desktop background knowledge tasks are not connected; Skills use existing mobile tools, and MCP currently saves configuration only. This version's additions and fixes have not been verified on physical iPhone or iPad devices; native Android validation remains incomplete. |
 
+</details>
+
+## News
+
+| Version | Date | Update |
+| --- | --- | --- |
+| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | One-person company, module owners, memory constellation, and knowledge checkups |
+| [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | One-click setup, drawings, journal naming, and expert hiring |
+| [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | Automatic journal-to-task and finance organization on desktop; finances require PRO |
+| [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | Grouped workbench entries, DeepSeek search, and run-record export |
+| [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | @Agent in notes (PRO), with proposed edits written back after confirmation |
+| [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | Three appearances and image galleries; model-connection and memory-identity fixes |
+
+See the [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases) for the full history.
+
+**Upgrade every device to 2.8.10.** Finance, English Diary, PDF reading, @Agent in notes, expert hiring, and the EchoInk MCP server require active PRO. **PRO does not include model credits.** See the [website](https://echoink.cn/plans) for current offers and prices. **Mobile remains in Beta; this version's additions and fixes have not been verified on physical iPhone or iPad devices.** Supported features are listed below.
+
 ## Privacy and data
+
+**At a glance** — the full disclosures follow below.
+
+- Your notes, conversations, knowledge, memory, journals, and financial records are stored locally. EchoInk does not upload your entire vault by default.
+- AI requests go to the model service you select, with the content needed for that request.
+- echoink.cn is contacted for account and PRO authorization, PRO Skill and expert downloads, optional weather, workbench check-in, and problem reports you choose to upload. PRO requires an EchoInk account; ordinary chat and Knowledge do not.
+- Web search and MinerU PDF parsing are optional third-party services with their own accounts and billing. Web search is off by default.
+- On desktop, conversations can use a local workspace outside the vault according to the permission mode you select, and MCP connections run the local commands you configure.
+- The plugin has no client usage telemetry.
 
 ### Where data is stored
 

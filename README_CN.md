@@ -6,13 +6,14 @@
 
 <h1 align="center">EchoInk Agent</h1>
 
-<p align="center">你的笔记，有了 AI 搭档。住在 Obsidian 里。</p>
+<p align="center">你的笔记，有了 AI 搭档。住在 Obsidian 里。<br>和笔记对话、帮你整理知识，并用看得见、改得了的记忆记住重要的事。</p>
+
+<p align="center"><a href="https://obsidian.md/plugins?id=codex-echoink"><b>在 Obsidian 中安装</b></a></p>
 
 <p align="center">
   <a href="https://echoink.cn">官方网站</a> ·
-  <a href="https://echoink.cn/install">下载与安装</a> ·
   <a href="https://echoink.cn/features">功能介绍</a> ·
-  <a href="#news">News</a> ·
+  <a href="https://echoink.cn/plans">订阅方案</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#探索">探索</a> ·
   <a href="#隐私与数据">隐私与数据</a> ·
@@ -20,40 +21,36 @@
 </p>
 
 <p align="center">
+  <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Obsidian 社区插件下载量"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="版本 2.8.10"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
-EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理知识、保留可查看和修正的长期记忆，也记录自己的日常。笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
+笔记留在你的 Vault，AI 功能连接你自己的模型服务；正常安装无需 Codex CLI。
 
 ## 核心功能
 
 | 你想做的事 | EchoInk 怎么帮你 |
 | --- | --- |
-| 和笔记聊天 | 和笔记对话；电脑端可带附件，也可用 @Agent 正文管家（PRO）提出修改 |
-| 把资料变成知识 | 增量整理、追溯来源；电脑端可梳理领域知识树、体检并预览修复 |
-| 让 AI 记住你 | 电脑端用记忆星图查看画像与来源、固定重要记忆；管理已有记忆无需连接模型 |
-| 记录每天 | 记录日记、管理待办；电脑端可开启日记自动整理，账单需 PRO |
-| 多个 Agent 分工 | 总助派活、员工执行；复杂任务先确认开工卡，问题与审批集中在「等你定」；专家聘请需 PRO |
-| 生成成品 | 电脑端从资料生成笔记、Canvas 或手绘图，也可使用 PDF 精读（PRO） |
+| 和笔记聊天 | 就整个笔记库提问，回答附上实际用到的来源 |
+| 把资料变成知识 | 把新资料整理进知识库，可体检并预览修复 |
+| 让 AI 记住你 | 长期记忆可浏览、修正、固定或忘记 |
+| 记录每天 | 日记写一次，EchoInk 可整理出待办和账单 |
+| 多个 Agent 分工 | 总助规划派活、角色 Agent 执行，关键决定由你确认 |
+| 生成成品 | 从已有资料生成笔记、Canvas 和手绘图 |
 
-## News
-
-| 版本 | 日期 | 更新 |
-| --- | --- | --- |
-| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | 一人公司、模块负责人、记忆星图与知识库体检 |
-| [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | 开局一键设置，新增手绘图、日记命名与专家聘请 |
-| [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | 电脑端可自动整理日记待办与账单，账单需 PRO |
-| [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | 工作台入口集中，新增 DeepSeek 搜索与运行记录导出 |
-| [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | 新增 @Agent 正文管家（PRO），修改确认后写回 |
-| [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | 新增三套外观与图片组，修复模型连接和记忆识别 |
-
-完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
-
-**请将各设备统一升级到 2.8.10。** 财务、英文日记、PDF 精读、@Agent 正文管家、专家聘请和 EchoInk MCP 服务需要有效 PRO；**PRO 不包含模型调用额度**，活动与价格以[官网](https://echoink.cn/plans)为准。**移动端仍为 Beta，本版新增与修复未经 iPhone/iPad 真机验证**，支持范围见下文。
+部分功能仅电脑端提供或需要 PRO，各项条件见[探索](#探索)。
 
 ## 快速开始
+
+1. **安装**：[在 Obsidian 中打开 EchoInk](https://obsidian.md/plugins?id=codex-echoink)，或在社区插件中搜索 EchoInk。需要 Obsidian 1.11.4 及以上。
+2. **开局设置**：电脑端从工作台打开引导，选择「全自动」「半自动」或「手动」；已有笔记留在原位。
+3. **连接模型**：自备模型 API Key，也可稍后连接。
+4. **开始用**：打开工作台开始对话。
+
+<details>
+<summary>详细步骤、手动安装、升级与回退</summary>
 
 | 步骤 | 做什么 | 说明 |
 | --- | --- | --- |
@@ -66,7 +63,26 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 
 插件文件超过 Obsidian Sync Standard 的单文件 5 MB 限制。请在各设备上通过官方下载或社区插件分别安装、更新，不要依赖 Sync Standard 传输该文件。
 
+</details>
+
 ## 探索
+
+| 功能 | 基础版 | PRO 版 |
+| --- | --- | --- |
+| Agent 对话、知识库问答、知识体系与体检、知识库整理 | ✅ | ✅ |
+| 从资料生成、联网搜索 | ✅ | ✅ |
+| 长期记忆、记忆星图、内置与自建 Skill | ✅ | ✅ |
+| 工作台、日记、待办 | ✅ | ✅ |
+| 一人公司、模块负责人、多 Agent 任务 | ✅ | ✅ |
+| @Agent 正文管家、PDF 精读 · 提取 | ❌ | ✅ |
+| 财务、英文日记 | ❌ | ✅ |
+| 专家聘请、官方方法论 Skill、知识复盘增强版、EchoInk MCP 服务 | ❌ | ✅ |
+| 荧光笔记（Highlighter）、黄白宣言（Manifesto）外观 | ❌ | ✅ |
+
+PRO 不包含模型调用额度，活动与价格以[官网](https://echoink.cn/plans)为准。移动端为 Beta，电脑端与移动端的条件见下方完整清单。
+
+<details>
+<summary>完整功能清单、电脑端与移动端支持</summary>
 
 ### 💬 对话与知识
 
@@ -118,7 +134,33 @@ EchoInk 是住在 Obsidian 里的个人知识 Agent。和笔记对话、整理�
 | 电脑端 | 提供上述桌面入口；Windows、Linux 原生环境验证仍未完成 |
 | 移动端 Beta | iPhone、iPad 提供工作台、一人公司、模块负责人、设置和日记、待办、财务、知识库、英文日记页面；问题与审批从「等你定」处理。项目和员工会话暂不跨设备查看、接续，只在 App 前台推进；回到前台按实际中断情况核对后继续。回答与思考可按模型服务设置流式显示，受服务商支持限制。记忆星图、知识体系梳理、知识库体检、资料生成、生成模板设置与 PDF 精读仅在电脑端提供。附件、CLI 和桌面后台知识任务尚未接通；Skills 只使用移动端已有工具，MCP 暂只保存配置。本版新增与修复未经 iPhone/iPad 真机验证，Android 原生验证仍未完成。 |
 
+</details>
+
+## News
+
+| 版本 | 日期 | 更新 |
+| --- | --- | --- |
+| [2.8.10](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10) | 2026-11-06 | 一人公司、模块负责人、记忆星图与知识库体检 |
+| [2.8.9](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.9) | 2026-11-01 | 开局一键设置，新增手绘图、日记命名与专家聘请 |
+| [2.8.8](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.8) | 2026-10-29 | 电脑端可自动整理日记待办与账单，账单需 PRO |
+| [2.8.7](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.7) | 2026-10-28 | 工作台入口集中，新增 DeepSeek 搜索与运行记录导出 |
+| [2.8.6](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.6) | 2026-10-27 | 新增 @Agent 正文管家（PRO），修改确认后写回 |
+| [2.8.5](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.5) | 2026-10-26 | 新增三套外观与图片组，修复模型连接和记忆识别 |
+
+完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
+
+**请将各设备统一升级到 2.8.10。** 财务、英文日记、PDF 精读、@Agent 正文管家、专家聘请和 EchoInk MCP 服务需要有效 PRO；**PRO 不包含模型调用额度**，活动与价格以[官网](https://echoink.cn/plans)为准。**移动端仍为 Beta，本版新增与修复未经 iPhone/iPad 真机验证**，支持范围见下文。
+
 ## 隐私与数据
+
+**一眼看懂**，完整披露见下文。
+
+- 对话、笔记、知识、记忆、日记和财务记录保存在本地；插件不会默认上传整个 Vault。
+- AI 请求发给你选择的模型服务，只带该请求所需的内容。
+- 账号与 PRO 授权、PRO Skill 与专家内容下载、可选的天气、工作台签到，以及你主动上报的问题报告会联网到 echoink.cn。PRO 需要 EchoInk 账号，普通对话和知识库不需要。
+- 联网搜索和 MinerU PDF 增强解析是可选的第三方服务，账号与费用另计；联网搜索默认关闭。
+- 桌面对话可按你选择的权限使用 Vault 外的本地工作区，MCP 会运行你配置的本机命令。
+- 插件不采集客户端使用遥测。
 
 ### 数据存在哪里
 
