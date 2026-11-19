@@ -20,8 +20,8 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Obsidian 社区插件下载量"></a>
-  <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-7C3AED?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="版本 2.8.10"></a>
+  <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
 
