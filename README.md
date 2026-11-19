@@ -35,6 +35,7 @@
 | 📅 **Journal, to-dos, and finances** | Write your day once. EchoInk can turn journal entries into tasks and records. |
 | 🤖 **A small AI team** | An assistant plans and delegates, role agents do the work, and you approve the decisions. |
 | ✏️ **Create from your sources** | Generate notes, Canvas layouts, and drawings from the material you already have. |
+| 🔌 **Your notes as context for other agents** | A local MCP server lets the agents you already use read the knowledge and memory you authorize. |
 
 Your notes stay in your vault. Bring your own model API key, or use the built-in models with AI credits.
 
