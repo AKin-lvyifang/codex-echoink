@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import type CodexForObsidianPlugin from "../main";
 import { Notice } from "obsidian";
 import type { PiAgentApprovalDecisionBinding } from "../plugin/pi-agent-approval-broker";
@@ -66,7 +67,7 @@ export function companyDecisionBinding(plugin: CodexForObsidianPlugin, dispatch:
     submitting.set(plugin, flights); flights.add(key);
     refreshCompanyInteraction(plugin, dispatch);
     void service.message(dispatch.routerConversationId, dispatch.id, answer).catch(error => {
-      new Notice(error instanceof Error ? error.message : String(error));
+      new Notice(failureText(error, ["回答未能发送给总助。", "The answer could not be sent to the general assistant."], NEXT.retryLater, plugin.settings.settingsLanguage));
     }).finally(() => { flights.delete(key); refreshCompanyInteraction(plugin, dispatch); });
     return true;
   } };

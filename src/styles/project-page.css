@@ -237,3 +237,53 @@
 .echoink-workbench .wb-project-card .echoink-project-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%; overflow: hidden; background: var(--wb-hover); color: var(--wb-secondary); }
 .echoink-workbench .wb-project-card .echoink-project-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .echoink-workbench .wb-project-card .echoink-project-avatar svg { width: 12px; height: 12px; }
+
+/* Remote (another device) project page: device line, answer choices and request status */
+.echoink-project-page .echoink-project-device { display: inline-flex; align-items: center; gap: 4px; }
+.echoink-project-page .echoink-project-remote-choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.echoink-project-page .echoink-project-remote-reply { display: flex; flex: 1 1 100%; gap: 8px; min-width: 0; }
+.echoink-project-page .echoink-project-remote-reply input { flex: 1 1 auto; min-width: 0; }
+.echoink-project-page .echoink-project-request-status.is-adopted { color: var(--pp-ink, inherit); }
+.echoink-project-page .echoink-project-request-status.is-offline { color: var(--pp-warn, inherit); }
+.echoink-workbench .wb-project-card.is-remote .wb-project-device { margin-left: auto; }
+
+/* Another device's conversation, read-only, in a modal: reads like the chat panel (user bubble, plain answer, folded steps). */
+.modal.echoink-remote-conversation-modal {
+  --background-primary: var(--echoink-theme-bg, var(--color-base-00));
+  --background-modifier-border: var(--echoink-theme-line, var(--color-base-30));
+  --background-modifier-hover: var(--echoink-theme-hover, var(--color-base-20));
+  --text-normal: var(--echoink-theme-text, var(--color-base-100));
+  --text-muted: var(--echoink-theme-secondary, var(--color-base-70));
+  --text-faint: var(--echoink-theme-muted, var(--color-base-50));
+  width: min(620px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: min(760px, calc(100vh - 64px));
+  padding: 0; background: var(--background-primary); color: var(--text-normal); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden;
+}
+.echoink-remote-conversation-modal .modal-content { display: flex; flex-direction: column; min-height: 0; flex: 1; margin: 0; overflow: hidden; }
+.echoink-remote-conversation-modal .modal-close-button { top: 16px; right: 16px; }
+.echoink-remote-conversation-head { padding: 20px 56px 14px 22px; border-bottom: 1px solid var(--background-modifier-border); }
+.echoink-remote-conversation-head h2 { margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; }
+.echoink-remote-conversation-where { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+.echoink-remote-conversation-where-icon { display: inline-flex; }
+.echoink-remote-conversation-where svg, .echoink-remote-conversation-note svg { width: 13px; height: 13px; }
+.echoink-remote-conversation-note { display: flex; align-items: center; gap: 6px; margin: 12px 22px 0; padding: 7px 10px; border-radius: 8px; background: var(--echoink-theme-active, var(--background-modifier-hover)); color: var(--text-muted); font-size: 12px; }
+.echoink-remote-conversation-note span { display: inline-flex; }
+.echoink-remote-conversation-messages { flex: 1; min-height: 160px; overflow-y: auto; padding: 16px 22px 20px; display: flex; flex-direction: column; gap: 14px; }
+.echoink-remote-conversation-state { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-muted); text-align: center; }
+.echoink-remote-conversation-earlier { align-self: center; height: auto; padding: 3px 10px; border: 1px solid var(--background-modifier-border); border-radius: 999px; background: none; box-shadow: none; color: var(--text-faint); font-size: 12px; cursor: pointer; }
+.echoink-remote-conversation-earlier:is(:hover, :focus-visible) { background: var(--background-modifier-hover); color: var(--text-normal); outline: none; box-shadow: none; }
+.echoink-remote-msg { overflow-wrap: anywhere; }
+.echoink-remote-msg.is-user { align-self: flex-end; max-width: 82%; padding: 8px 12px; border-radius: 14px 14px 4px 14px; background: var(--background-modifier-hover); white-space: pre-wrap; }
+.echoink-remote-msg.is-assistant { line-height: 1.7; }
+.echoink-remote-msg.is-assistant > :first-child { margin-top: 0; }
+.echoink-remote-msg.is-assistant > :last-child { margin-bottom: 0; }
+.echoink-remote-steps { align-self: flex-start; color: var(--text-faint); font-size: 12px; }
+.echoink-remote-steps summary { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px 2px 2px; border-radius: 6px; list-style: none; cursor: pointer; }
+.echoink-remote-steps summary::-webkit-details-marker { display: none; }
+.echoink-remote-steps summary:is(:hover, :focus-visible) { color: var(--text-normal); outline: none; box-shadow: none; }
+.echoink-remote-steps summary span { display: inline-flex; }
+.echoink-remote-steps summary svg { width: 12px; height: 12px; }
+.echoink-remote-steps-chevron svg { transition: transform 0.15s ease; }
+.echoink-remote-steps[open] .echoink-remote-steps-chevron svg { transform: rotate(90deg); }
+.echoink-remote-steps ul { margin: 4px 0 0 8px; padding: 0 0 0 10px; border-left: 1px solid var(--background-modifier-border); list-style: none; }
+.echoink-remote-steps li { padding: 2px 0; }
+.echoink-remote-conversation-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--background-modifier-border); }

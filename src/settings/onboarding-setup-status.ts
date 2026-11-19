@@ -8,8 +8,11 @@ export function onboardingDirectoriesReady(settings: Pick<CodexForObsidianSettin
     && [bindings.roles.wiki, bindings.roles.projects].some(role => role.enabled && role.readPaths.length)
     && !knowledgeFolderIssues(bindings, DESKTOP_KNOWLEDGE_ROOT_ROLES).length);
 }
-export function onboardingSetupComplete(settings: CodexForObsidianSettings): boolean {
-  if (!onboardingDirectoriesReady(settings) || !settings.apiProviders?.length) return false;
+export function onboardingModelReady(settings: CodexForObsidianSettings): boolean {
+  if (!settings.apiProviders?.length) return false;
   const active = getActiveApiProviderModel(settings);
   return Boolean(active && !validateApiProvider(active.provider).length);
+}
+export function onboardingSetupComplete(settings: CodexForObsidianSettings): boolean {
+  return onboardingDirectoriesReady(settings) && onboardingModelReady(settings);
 }

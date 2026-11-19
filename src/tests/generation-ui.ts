@@ -86,7 +86,7 @@ export async function runGenerationUiTests(): Promise<void> {
   assert.equal(plugin.settings.generationTemplates[0].instructions, defaultGenerationTemplates()[0].instructions);
   assert.equal(host.querySelector<HTMLTextAreaElement>("textarea")!.value, defaultGenerationTemplates()[0].instructions);
   field("写作要求", "保存失败仍保留草稿"); plugin.failSave = true; button("保存").click(); await flush();
-  assert.match(host.textContent!, /保存失败：测试保存失败/);
+  assert.match(host.textContent!, /测试保存失败/); assert.doesNotMatch(host.textContent!, /保存失败：/);
   assert.equal(host.querySelector<HTMLTextAreaElement>("textarea")!.value, "保存失败仍保留草稿");
   assert.equal(plugin.settings.generationTemplates[0].instructions, defaultGenerationTemplates()[0].instructions, "failed settings persistence rolls back the unsaved record");
   disposeOriginControls(host); host.remove();

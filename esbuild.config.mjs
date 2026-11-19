@@ -13,6 +13,7 @@ import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./script
 import { piDesktopProviderTransportPlugin } from "./scripts/pi-desktop-provider-transport.mjs";
 import { piCodexDesktopTransportPlugin } from "./scripts/pi-codex-desktop-transport.mjs";
 import { piOpenAICodexOAuthPlugin } from "./scripts/pi-codex-oauth-compat.mjs";
+import { usageTokenWorkerPlugin } from "./scripts/usage-token-worker.mjs";
 
 const buildMode = process.argv[2];
 const isPiImageBundleProbe = buildMode === "pi-image-bundle-probe";
@@ -646,6 +647,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   metafile: isProd,
   treeShaking: true,
   plugins: [
+    usageTokenWorkerPlugin,
     workbenchSvgTextPlugin(),
     ...(!isPiImageBundleProbe ? [profileModulesPlugin()] : []),
     financeBrandsPlugin(true),

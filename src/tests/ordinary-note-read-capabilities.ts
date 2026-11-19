@@ -94,7 +94,7 @@ export async function runOrdinaryNoteReadCapabilityTests(root: string): Promise<
     assert.equal(checkAgentTool(context(), "obsidian_cli", input).allowed, true, command);
   }
   for (const command of ["open", "base:query", "history:read"]) {
-    assert.equal(checkAgentTool(context(), "obsidian_cli", { command, path: "旅行/日本.md" }).reason, "module_disabled", command);
+    assert.equal(checkAgentTool(context(), "obsidian_cli", { command, path: "旅行/日本.md" }).allowed, true, `${command}: reading a scoped note is open`);
   }
   assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search:open", query: "日本" }).reason, "module_disabled");
   assert.equal(checkAgentTool(context(), "obsidian_cli").allowed, true, "CLI discovery remains conversation-based");
@@ -103,83 +103,44 @@ export async function runOrdinaryNoteReadCapabilityTests(root: string): Promise<
     assert.equal(checkAgentTool(context(), name, { path: "旅行/日本.md" }).reason, "module_disabled", name);
   }
   assert.equal(checkAgentSkill(context(), "obsidian-markdown").reason, "module_disabled");
-  assert.equal(checkAgentTool(context(), "local-read", { path: "旅行/日本.md" }, undefined, { resourceId: "local-mcp", toolName: "read", readOnly: true }).reason, "module_disabled");
-  assert.equal(checkAgentTool(context(), "diagram_create", { sourcePaths: ["旅行/日本.md"] }).reason, "module_disabled");
-  assert.equal(checkAgentTool(context(), "english_diary_generate", { sourcePath: "旅行/日本.md" }).reason, "module_disabled");
+  // Reading sources and writing ordinary folders no longer hinge on the Knowledge switch.
+  assert.equal(checkAgentTool(context(), "local-read", { path: "旅行/日本.md" }, undefined, { resourceId: "local-mcp", toolName: "read", readOnly: true }).allowed, true);
+  assert.equal(checkAgentTool(context(), "diagram_create", { sourcePaths: ["旅行/日本.md"] }).allowed, true);
+  assert.equal(checkAgentTool(context(), "english_diary_generate", { sourcePath: "旅行/日本.md" }).allowed, true);
   for (const name of ["note_create", "note_update", "metadata_update", "note_move", "note_delete"]) {
-    assert.equal(checkAgentTool(context(), name, { relativePath: "旅行/日本.md", sourcePath: "旅行/日本.md", targetPath: "输出/草稿.md" }).reason, "module_disabled", name);
+    assert.equal(checkAgentTool(context(), name, { relativePath: "旅行/日本.md", sourcePath: "旅行/日本.md", targetPath: "输出/草稿.md" }).allowed, true, name);
   }
   assert.match(await dispatch("note_read", { relativePath: "旅行/日本.md" }), /ORDINARY_READ_JAPAN/u);
   assert.equal(checkAgentTool({ ...context(), access: { ...access, permission: "read-only" } }, "note_read", { relativePath: "旅行/日本.md" }).allowed, true);
   assert.equal(checkAgentTool({ ...context(), access: { ...access, permission: "read-only" } }, "note_create", { relativePath: "输出/生成.md" }).reason, "read_only");
-  await assert.rejects(tools.find(tool => tool.name === "note_create")!.execute("generation-write", { relativePath: "输出/生成.md", content: text }, undefined, undefined), /module_disabled:knowledge/u);
-  await assert.rejects(readFile(path.join(root, "输出/生成.md")), /ENOENT/u);
 
   agentId = "knowledge-reader";
   for (const name of ["vault_search", "note_read"]) assert.equal(checkAgentTool(context(), name).allowed, true, "ordinary tools remain visible to a Knowledge-only Agent");
-  assert.equal(checkAgentTool(context(), "vault_search", { query: text }).reason, "scope_required");
-  assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: text }).reason, "scope_required");
+  assert.equal(checkAgentTool(context(), "vault_search", { query: text }).allowed, true, "whole-vault search is a read");
+  assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: text }).allowed, true);
   assert.match(await dispatch("vault_search", { query: "日本", scopePath: "旅行" }), /旅行\/日本.md/u);
-  assert.match(await dispatch("note_read", { relativePath: "旅行/日本.md" }), /ORDINARY_READ_JAPAN/u);
-  assert.equal(checkAgentTool(context(), "note_read", { relativePath: "Daily/今日.md" }).reason, "agent_disabled");
+  assert.match(await dispatch("note_read", { relativePath: "Daily/今日.md" }), /ORDINARY_READ_JAPAN/u, "reading another module's notes needs no grant");
   agentId = "journal-reader";
-  assert.match(await dispatch("note_read", { relativePath: "Daily/今日.md" }), /ORDINARY_READ_JAPAN/u);
-  assert.equal(checkAgentTool(context(), "note_read", { relativePath: "旅行/日本.md" }).reason, "agent_disabled");
+  assert.match(await dispatch("note_read", { relativePath: "旅行/日本.md" }), /ORDINARY_READ_JAPAN/u);
   agentId = "sol";
-  sol.disabledCapabilityIds = ["journal"];
-  assert.equal(checkAgentTool(context(), "note_read", { relativePath: "Daily/今日.md" }).reason, "agent_disabled");
-  sol.disabledCapabilityIds = ["knowledge"];
-  assert.equal(checkAgentTool(context(), "note_read", { relativePath: "旅行/日本.md" }).reason, "agent_disabled");
+  sol.disabledCapabilityIds = ["journal", "knowledge"];
+  assert.equal(checkAgentTool(context(), "note_read", { relativePath: "Daily/今日.md" }).allowed, true);
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: "Daily/今日.md" }).reason, "agent_disabled", "writing a module folder still needs that module");
   sol.disabledCapabilityIds = [];
 
-  for (const role of ["wiki", "journal"] as const) for (const source of ["readPaths", "writePath"] as const) {
-    bindings.roles[role][source] = (source === "readPaths" ? ["关闭"] : "关闭") as never;
-    for (const input of [{ command: "search", query: text }, { command: "files" }]) assert.equal(checkAgentTool(context(), "obsidian_cli", input).reason, "scope_required");
-    assert.equal(checkAgentTool(context(), "vault_search", { query: text }).reason, "scope_required");
-    const callsBefore = official.calls.length;
-    for (const input of [{ command: "search", query: text }, { command: "files" }]) {
-      assert.ok((await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: `closed-${++sequence}`, input } as never))?.block);
-    }
-    assert.equal(official.calls.length, callsBefore, "unscoped denied CLI requests never reach target preparation or transport");
-    assert.ok((await events.get("tool_call")!({ toolName: "vault_search", toolCallId: `closed-${++sequence}`, input: { query: text } }, {}))?.block);
-    assert.equal(checkAgentTool(context(), "vault_search", { query: text, scopePath: "关闭" }).reason, "module_disabled");
-    assert.equal(checkAgentTool(context(), "note_read", { relativePath: "关闭/保密.md" }).reason, "module_disabled");
-    assert.match(await dispatch("vault_search", { query: "日本", scopePath: "旅行" }), /旅行\/日本.md/u);
-    assert.equal(checkAgentTool(context(), "obsidian_cli", { command: "search", query: text, path: "旅行" }).allowed, true);
-    bindings.roles[role].readPaths = []; bindings.roles[role].writePath = null;
-  }
-  bindings.roles.wiki.readPaths = ["旅行/关闭"];
-  assert.equal(checkAgentTool(context(), "vault_search", { query: text, scopePath: "旅行" }).reason, "module_disabled", "broad scopes still inspect nested disabled roots");
+  bindings.roles.wiki.enabled = false; bindings.roles.wiki.readPaths = ["关闭"];
+  assert.equal(checkAgentTool(context(), "vault_search", { query: text }).allowed, true, "a switched-off Knowledge folder does not block reading");
+  assert.match(await dispatch("note_read", { relativePath: "关闭/保密.md" }), /ORDINARY_READ_JAPAN/u);
   bindings.roles.wiki.readPaths = [];
   for (const relativePath of ["../外部.md", ".obsidian/secret.md", path.join(root, "..", "外部.md")]) assert.equal(checkAgentTool(context(), "note_read", { relativePath }).reason, "invalid_target");
-
-  // These are the same two checks used by dispatch and the executor, with live settings between them.
-  const pendingId = `read-revocation-${++sequence}`, input = { relativePath: "旅行/日本.md" };
-  assert.equal(await events.get("tool_call")!({ toolName: "note_read", toolCallId: pendingId, input }, {}), undefined);
-  sol.disabledCapabilityIds = ["knowledge"];
-  await assert.rejects(tools.find(tool => tool.name === "note_read")!.execute(pendingId, input, undefined, undefined), /agent_disabled:knowledge/u);
-  sol.disabledCapabilityIds = [];
-  assert.match(await dispatch("note_read", input), /ORDINARY_READ_JAPAN/u, "the same session can retry after restoring current permissions");
-  const cliId = `cli-revocation-${++sequence}`, cliInput = { command: "read", path: input.relativePath };
-  assert.equal(await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: cliId, input: cliInput } as never), undefined);
-  sol.disabledCapabilityIds = ["knowledge"];
-  await assert.rejects(cli.execute(cliId, cliInput, undefined, undefined), /agent_disabled:knowledge/u);
-  sol.disabledCapabilityIds = [];
-  const prepare = native.prepare!.bind(native);
-  native.prepare = async (...args) => { const result = await prepare(...args); sol.disabledCapabilityIds = ["journal"]; return result; };
-  try {
-    assert.ok((await cliSecurity.handleToolCall({ toolName: "obsidian_cli", toolCallId: "resolved-revoked", input: { command: "read", file: "今日" } } as never))?.block,
-      "resolved CLI target rechecks a permission revoked during preparation");
-  } finally { native.prepare = prepare; sol.disabledCapabilityIds = []; }
-  assert.ok(!official.calls.some(call => call[0] === "read" && call.includes("path=Daily/今日.md")));
   const knowledge = createProductionPiKnowledgeRuntime({ vaultRootPath: root, knowledgePreferences: {} as never, usage: {} as never,
     isConversationKnowledgeAllowed: async () => checkAgentCapability(context(), "knowledge").allowed,
     conversationKnowledgeDecision: async () => checkAgentCapability(context(), "knowledge") });
   const request = { ...identity, question: text, explicitPaths: [], includeUnrefined: false };
   assert.equal((await knowledge.retrieveChat!(request)).status, "no_evidence");
   await assert.rejects(knowledge.retrieveAsk(request), /module_disabled:knowledge/u);
-  assert.equal(agentCapabilityDenialText("module_disabled", "knowledge", "zh"), "知识库当前不可用，请前往设置 → 知识库检查目录配置。");
+  assert.equal(agentCapabilityDenialText("module_disabled", "knowledge", "zh"), "知识库当前不可用。请在 设置 → 知识库 中检查目录配置。");
   assert.match(agentCapabilityDenialText("module_disabled", "knowledge", "en"), /Settings → Knowledge/u);
-  assert.equal(agentCapabilityDenialText("module_disabled", "journal", "zh"), "日记已关闭，请开启后再继续。");
+  assert.equal(agentCapabilityDenialText("module_disabled", "journal", "zh"), "日记已关闭。请开启后继续。");
   console.log("PASS ordinary note reads: real Vault/CLI dispatch, migration, visibility, scoped denials, live revocation and dedicated Knowledge isolation");
 }

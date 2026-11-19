@@ -1,10 +1,12 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { IPhoneShell } from "./shell";
 import { createAgentPage, createHomePage } from "./workbench-pages";
 import { createAgentFormPage } from "./agent-form";
 import { createTaskPage } from "./task-detail";
-import { createProjectPage } from "./company-pages";
+import { createProjectPage, createRemoteConversationPage } from "./company-pages";
 import type { IPhonePageContext, IPhoneRoute, IPhoneWorkbenchHost } from "./workbench-contract";
 import type { MobileSettingsRoute } from "../mobile/settings-pages";
 import type { AgentModuleId } from "../../agents/types";
@@ -62,7 +64,8 @@ export class IPhoneWorkbench {
       const page = route.kind === "home" ? createHomePage(this.context)
         : route.kind === "agent" ? createAgentPage(this.context, route.agentId)
         : route.kind === "task" ? createTaskPage(this.context, route.taskId)
-        : route.kind === "project" ? createProjectPage(this.context, route.projectId)
+        : route.kind === "project" ? createProjectPage(this.context, route.projectId, route.deviceId)
+        : route.kind === "remote-conversation" ? createRemoteConversationPage(this.context, route.deviceId, route.conversationId)
         : createAgentFormPage(this.context, route.agentId, route.creation);
       if (page.id === this.shell.activePageId) { page.dispose?.(); return; }
       const existing = this.shell.hasPage(page.id);
@@ -112,6 +115,6 @@ export class IPhoneWorkbench {
     if (module === "finance") return openIPhoneFinance(this.context);
     if (module === "english-diary") return openIPhoneEnglishDiary(this.context);
   }
-  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage)); }
   dispose(): void { this.closed = true; this.shell.dispose(); }
 }

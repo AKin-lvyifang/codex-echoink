@@ -43,4 +43,55 @@
 .echoink-mobile :is(.em-task-resume-button,.em-task-resume-confirm)::before,
 .echoink-mobile :is(.em-task-resume-button,.em-task-resume-confirm):hover::before { background:var(--em-green); }
 .echoink-mobile .em-task-resume-confirm { white-space:normal; line-height:1.5; }
+
+
+/* MEMORY-01: native disclosure, quiet copy and device-sized touch targets. */
+.echoink-mobile .echoink-memory-receipt,
+.echoink-mobile .echoink-memory-correction { color: var(--text-normal); }
+.echoink-mobile .echoink-memory-receipt > summary,
+.echoink-mobile .echoink-memory-correction > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: .8em;
+  line-height: 1.6;
+}
+.echoink-mobile .echoink-memory-receipt-icon,
+.echoink-mobile .echoink-memory-receipt-icon svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  animation: none;
+  transform: none;
+}
+.echoink-mobile .echoink-memory-receipt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--background-secondary);
+  font-size: .8em;
+  line-height: 1.6;
+}
+.echoink-mobile .echoink-memory-source-reason { color: var(--text-muted); }
+.echoink-mobile .echoink-memory-source,
+.echoink-mobile .echoink-memory-correction-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.echoink-mobile .echoink-memory-source { gap: 2px; }
+.echoink-mobile .echoink-memory-correction { border-top: 1px solid var(--background-modifier-border); }
+.echoink-mobile .echoink-memory-version,
+.echoink-mobile .echoink-memory-original { white-space: pre-wrap; line-height: 1.8; }
+.echoink-mobile .echoink-memory-correction-actions { display: flex; justify-content: flex-end; }
+.echoink-mobile .echoink-memory-disclosure-icon svg { width: 14px; height: 14px; }
+.echoink-mobile .echoink-memory-correction-body > .echoink-memory-source-reason,
+.echoink-mobile .echoink-memory-original > .echoink-memory-source-reason { font-size: .8em; line-height: 1.6; }
 /* ECHOINK_MOBILE_TASK_INTERACTIONS_END */

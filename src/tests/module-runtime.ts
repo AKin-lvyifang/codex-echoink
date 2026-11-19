@@ -329,18 +329,18 @@ async function chatRecall(root: string): Promise<void> {
         await fs.writeFile(path.join(root, relative), bodies.get(relative)!);
       }
       if (role !== "assets" && role !== "templates") assert.ok((await chat(token)).references.some(reference => reference.vaultRelativePath === relative), `${role} can be retrieved without becoming a maintenance source`);
-      await assert.rejects(() => runtime.resolveMaintenanceScope!(token), /没有找到/u, `${role} query cannot become a source`);
+      await assert.rejects(() => runtime.resolveMaintenanceScope!(token), /未找到可准确匹配的资料笔记/u, `${role} query cannot become a source`);
       await assert.rejects(() => runtime.resolveMaintenanceScope!(relative), /指定来源不在当前资料目录/u, `${role} explicit path cannot become a source`);
     }
     bindings.roles.raw.enabled = false;
-    await assert.rejects(() => runtime.resolveMaintenanceScope!("RAW_ONLY_TOKEN"), /没有找到/u, "revoked Raw must stop being a maintenance candidate");
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("RAW_ONLY_TOKEN"), /未找到可准确匹配的资料笔记/u, "revoked Raw must stop being a maintenance candidate");
     await assert.rejects(() => runtime.resolveMaintenanceScope!("资料/来源.md"), /指定来源不在当前资料目录/u);
     bindings.roles.raw.enabled = true;
     bindings.roles.inbox.searchEnabled = false;
     assert.equal((await chat("INBOX_ONLY_TOKEN")).references.length, 0);
     bindings.roles.inbox.searchEnabled = true; bindings.roles.inbox.enabled = false;
     assert.equal((await chat("INBOX_ONLY_TOKEN")).references.length, 0);
-    await assert.rejects(() => runtime.resolveMaintenanceScope!("INBOX_ONLY_TOKEN"), /没有找到/u, "revoked Inbox must stop being a maintenance candidate");
+    await assert.rejects(() => runtime.resolveMaintenanceScope!("INBOX_ONLY_TOKEN"), /未找到可准确匹配的资料笔记/u, "revoked Inbox must stop being a maintenance candidate");
     await assert.rejects(() => runtime.resolveMaintenanceScope!("收件箱/想法.md"), /指定来源不在当前资料目录/u);
     bindings.inboxRecallExclusions = ["收件箱"];
     bindings.roles.inbox.readPaths = []; bindings.roles.inbox.writePath = null;
@@ -453,12 +453,12 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     const fixtureFile = path.join(root, "input.md"); await fs.writeFile(fixtureFile, "imported content");
     const imported = () => capture.captureExternalFiles([{ type: "file", path: fixtureFile, name: "input.md" }]);
     assert((await imported())[0].startsWith("旧资料/"));
-    await assert.rejects(collectText("manual capture before editing"), /收藏只支持网页和公众号链接/u);
+    await assert.rejects(collectText("manual capture before editing"), /收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。/u);
     bindings.collectionTargets!.files = "网页资料";
     bindings.collectionTargets!.answer = "公众号资料";
     bindings.collectionTargets!.generation = "网页资料";
     assert((await imported())[0].startsWith("网页资料/"));
-    await assert.rejects(collectText("manual capture after editing"), /收藏只支持网页和公众号链接/u);
+    await assert.rejects(collectText("manual capture after editing"), /收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。/u);
     const reloaded = normalizeSettingsData({ knowledgeBase: { folderBindings: bindings } });
     assert.deepEqual(reloaded.settings.knowledgeBase.folderBindings?.collectionTargets, knowledgeCollectionTargets(bindings));
     assert.equal(reloaded.changed, true);
@@ -467,7 +467,7 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     assert.equal(removed.collectionTargets!.generation, "网页资料", "source removal retains the independent generation destination");
     for (const kind of knowledgeCollectionKinds(removed)) assert(Object.hasOwn(removed.collectionTargets!, kind));
     const retained = bindings; bindings = removed;
-    await assert.rejects(collectText("manual after source removal"), /收藏只支持网页和公众号链接/u);
+    await assert.rejects(collectText("manual after source removal"), /收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。/u);
     bindings.collectionTargets!.files = "公众号资料";
     await assert.rejects(imported, /重新选择/u);
     bindings = retained;
@@ -532,7 +532,7 @@ export async function runKnowledgeCollectionTargetTests(root: string): Promise<v
     assert.equal(knowledgeCollectionLabel("fileText", bindings), "拖入或附加的文档（Markdown、TXT）");
     const legacyText = (await imported())[0]; assert(legacyText.startsWith("旧资料/articles/文件收藏/"));
     assert((await capture.captureExternalFiles([{ type: "image", name: "input.png", path: image }]))[0].startsWith("旧资料/attachments/"));
-    await assert.rejects(collectText("legacy manual text"), /收藏只支持网页和公众号链接/u);
+    await assert.rejects(collectText("legacy manual text"), /收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。/u);
     assert.deepEqual(normalizeKnowledgeFolderBindings(bindings)!.collectionTargets, bindings.collectionTargets, "legacy child destinations are materialized only once");
 
   } finally { restore(); release(); }
@@ -565,9 +565,9 @@ async function directoryExecution(root: string, stateRoot: string): Promise<void
   const createArgs = { relativePath: "知识/新分类/笔记.md", content: "正式写入" };
   bindings.organization = { enabled: false, scope: "all", paths: [] };
   try {
-    await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
+    await assert.rejects(() => authorize("note_create", createArgs), /vault_organization_disabled/u);
     bindings.organization!.enabled = false;
-    await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
+    await assert.rejects(() => authorize("note_create", createArgs), /vault_organization_disabled/u);
     bindings.organization!.enabled = true;
     assert(knowledgeMayCreateCategoryDirectory(bindings, "知识/新分类"));
     assert(knowledgeMayCreateCategoryDirectory(bindings, "项目/新分类"));
@@ -578,10 +578,10 @@ async function directoryExecution(root: string, stateRoot: string): Promise<void
     await fs.writeFile(path.join(root, "知识/原文.md"), "原文");
     assert(!knowledgeMayOrganizeMove(bindings, "资料/原文.md", "知识/新分类/原文.md"));
     access = { ...access, permission: "read-only" };
-    await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
-    await assert.rejects(() => authorize("note_delete", { relativePath: "知识/原文.md", expectedVersion: "unused" }), /tool_policy_blocked/u);
+    await assert.rejects(() => authorize("note_create", createArgs), /vault_write_read_only/u);
+    await assert.rejects(() => authorize("note_delete", { relativePath: "知识/原文.md", expectedVersion: "unused" }), /vault_write_read_only/u);
     access = { ...access, permission: "workspace-write", mode: "plan" };
-    await assert.rejects(() => authorize("note_create", createArgs), /tool_policy_blocked/u);
+    await assert.rejects(() => authorize("note_create", createArgs), /vault_write_plan_only/u);
     access = { ...access, mode: "agent" };
     allowed = false;
     await assert.rejects(() => authorize("note_create", createArgs), /approval_denied/u);

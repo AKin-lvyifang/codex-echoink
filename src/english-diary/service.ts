@@ -14,7 +14,7 @@ const MAX_SOURCE_LENGTH = 60_000;
 
 function fail(code: string, message: string): never { throw new DiaryServiceError(code, message); }
 function assertActive(signal?: AbortSignal): void {
-  if (signal?.aborted) fail("english_diary_cancelled", "已取消，本次结果不会发布。");
+  if (signal?.aborted) fail("english_diary_cancelled", "已取消，本次结果未保存。");
 }
 
 export class EnglishDiaryService implements EnglishDiaryApi {
@@ -46,7 +46,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     const owner = options.owner ?? "workspace";
     const existing = this.active.get(path);
     if (existing) return existing.owner === owner ? existing.promise
-      : Promise.reject(new DiaryServiceError("english_diary_busy", "这篇日记正在另一处生成，请完成后再试。"));
+      : Promise.reject(new DiaryServiceError("english_diary_busy", "这篇日记正在生成英文。请等待生成结束后重试。"));
     const controller = new AbortController();
     const cancel = () => controller.abort();
     if (options.signal?.aborted) controller.abort();
@@ -74,7 +74,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
       assertActive(signal);
       return await this.repository.restore(record);
     }
-    if (!source.content.trim()) fail("english_diary_empty", "请先写下日记内容。");
+    if (!source.content.trim()) fail("english_diary_empty", "日记内容为空。请先写下日记内容。");
     const sourceUnchanged = async () => {
       if (signal.aborted) return false;
       await options.assertCanPublish?.();
@@ -85,14 +85,14 @@ export class EnglishDiaryService implements EnglishDiaryApi {
       assertActive(signal);
       const unchanged = await sourceUnchanged();
       assertActive(signal);
-      if (!unchanged) fail("english_diary_source_changed", "原稿已变化，已保留此前结果，请确认新原稿后再更新。");
+      if (!unchanged) fail("english_diary_source_changed", "原稿已被修改，已保留此前结果。请确认新原稿后再更新。");
     };
     this.assertOverwrite(record, options);
     const blocks = splitDiaryBlocks(source.content);
     const privacy = normalizePrivacy(blocks, sourceHash, options.privacy ?? record.privacy);
     const permitted = new Set(privacy.rules.filter((rule) => rule.mode !== "exclude").map((rule) => rule.blockId));
     if (blocks.filter((block) => permitted.has(block.id)).reduce((length, block) => length + block.text.length, 0) > MAX_SOURCE_LENGTH) {
-      fail("english_diary_content_too_long", "允许发送的内容较长，请缩小本次处理范围后再生成；不会自动截断。");
+      fail("english_diary_content_too_long", "日记内容超出单次处理上限。请缩小本次处理范围后再生成。");
     }
     record = { ...record, privacy };
     await assertSource();
@@ -124,7 +124,7 @@ export class EnglishDiaryService implements EnglishDiaryApi {
       await assertSource();
       parsed = parseDiaryGeneration(output, source.content, blocks, privacy);
     } else {
-      parsed = { english: source.content, alignments: [], expressions: [], warnings: ["本篇没有允许改写的段落，已保留原文；未调用模型。"] };
+      parsed = { english: source.content, alignments: [], expressions: [], warnings: ["本篇没有可改写的段落，已保留原文。"] };
     }
     await assertSource();
     const result: DiaryResult = {
@@ -139,16 +139,16 @@ export class EnglishDiaryService implements EnglishDiaryApi {
 
   private assertOverwrite(record: DiaryRecord, options: GenerateDiaryOptions): void {
     if (options.overwriteModified && (options.expectedEnglishFingerprint === undefined || options.expectedEnglishFingerprint !== record.observedFileFingerprint)) {
-      fail("english_diary_overwrite_required", "英文稿在确认后又发生变化，请重新查看并确认替换。");
+      fail("english_diary_overwrite_required", "确认后英文稿又被修改。请重新查看并确认替换。");
     }
-    if (record.englishModified && !options.overwriteModified) fail("english_diary_overwrite_required", "英文稿有手工修改，请确认替换后再更新。");
+    if (record.englishModified && !options.overwriteModified) fail("english_diary_overwrite_required", "英文稿有手动修改。请确认替换后再更新。");
   }
 
   async savePrivacy(path: string, privacy: DiaryPrivacy): Promise<void> {
     requireProPlugin(this.access);
     this.cancel(path);
     const source = await this.readSource(path), sourceHash = fingerprint(source.content);
-    if (privacy.sourceFingerprint !== sourceHash) fail("english_diary_privacy_review_required", "原稿已变化，请重新确认发送范围。");
+    if (privacy.sourceFingerprint !== sourceHash) fail("english_diary_privacy_review_required", "原稿已被修改。请重新确认发送范围。");
     const normalized = normalizePrivacy(splitDiaryBlocks(source.content), sourceHash, privacy);
     await this.repository.savePrivacy(await this.repository.get(source), normalized);
   }
@@ -159,8 +159,8 @@ export class EnglishDiaryService implements EnglishDiaryApi {
     if (running) await running.promise.catch(() => undefined);
     const record = await this.load(path);
     if (record.pending) return await this.generate(path);
-    if (!record.result) fail("english_diary_result_missing", "没有可恢复的成功结果，请先生成英文。");
-    if (record.englishModified) fail("english_diary_overwrite_required", "英文稿有手工修改，不能直接恢复覆盖。");
+    if (!record.result) fail("english_diary_result_missing", "没有可恢复的英文结果。请先生成英文。");
+    if (record.englishModified) fail("english_diary_overwrite_required", "英文稿有手动修改，未能恢复。请先处理该修改后重试。");
     return await this.repository.restore(record);
   }
 

@@ -8,7 +8,7 @@ import {
   type SessionManager
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Context, Message, Model } from "@earendil-works/pi-ai";
-import { estimateTokenValue, ESTIMATED_IMAGE_TOKENS } from "../usage/token-estimator";
+import { estimateTokenValue, estimateTokenValueAsync, tokenEstimateKey, ESTIMATED_IMAGE_TOKENS } from "../usage/token-estimator";
 import {
   calculatePiEffectiveInputBudget,
   PiContextBudgetError,
@@ -233,11 +233,22 @@ export class PiContextLedgerRecorder {
     this.personalMemoryAccess = Object.freeze({ ...access });
   }
 
-  recordProviderRequest(
-    context: Readonly<Context>,
-    execution: Readonly<PiContextLedgerExecutionIdentity>,
-    additionalInputTokens = 0
-  ): PiContextLedger | null {
+  recordProviderRequest(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens = 0): PiContextLedger | null {
+    const input = this.providerLedgerInput(context, execution, additionalInputTokens);
+    return input ? this.persistLedger(buildPiContextLedger(input)) : null;
+  }
+
+  async recordProviderRequestAsync(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens = 0): Promise<PiContextLedger | null> {
+    const input = this.providerLedgerInput(context, execution, additionalInputTokens);
+    return input ? this.persistLedger(input.tokenCounter ? buildPiContextLedger(input) : await buildPiContextLedgerAsync(input)) : null;
+  }
+
+  private persistLedger(ledger: PiContextLedger): PiContextLedger {
+    this.options.sessionManager.appendCustomEntry(PI_CONTEXT_LEDGER_CUSTOM_TYPE, ledger);
+    return ledger;
+  }
+
+  private providerLedgerInput(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens: number): BuildPiContextLedgerInput | null {
     if (execution.conversationId !== this.options.conversationId) {
       return null;
     }
@@ -246,7 +257,7 @@ export class PiContextLedgerRecorder {
       ? "agent"
       : "summarization";
     this.requestSequence += 1;
-    const ledger = buildPiContextLedger({
+    return {
       conversationId: this.options.conversationId,
       piSessionId: this.options.piSessionId,
       productRunId: execution.runId,
@@ -281,12 +292,7 @@ export class PiContextLedgerRecorder {
         ? { systemSkillFragment: this.systemSkillFragment }
         : {}),
       ...(this.tokenCounter ? { tokenCounter: this.tokenCounter } : {})
-    });
-    this.options.sessionManager.appendCustomEntry(
-      PI_CONTEXT_LEDGER_CUSTOM_TYPE,
-      ledger
-    );
-    return ledger;
+    };
   }
 }
 
@@ -389,7 +395,7 @@ export function buildPiContextLedger(
   );
   const diagnostics = [
     ...(accuracy === "estimated"
-      ? ["按 EchoInk 通用 Token 标准估算输入内容；不等同于服务商账单。"]
+      ? ["按 EchoInk 通用 Token 标准估算输入内容；不等同于模型服务的账单。"]
       : []),
     ...(overBudgetTokens > 0
       ? ["本轮输入估算已超过 effectiveInputBudget，Pi 将按同一边界触发原生 Compaction。"]
@@ -427,6 +433,23 @@ export function buildPiContextLedger(
     personalMemory,
     diagnostics
   });
+}
+
+/** Discover the pure ledger's exact counting inputs, then measure them off-thread.
+ * The prepared counter is request-local; concurrent requests cannot overwrite it. */
+export async function buildPiContextLedgerAsync(input: Readonly<BuildPiContextLedgerInput>): Promise<PiContextLedger> {
+  if (input.tokenCounter) return buildPiContextLedger(input);
+  const values = new Map<string, unknown>();
+  buildPiContextLedger({ ...input, tokenCounter: value => {
+    values.set(tokenEstimateKey(value), value); return { tokens: 0, accuracy: "estimated" };
+  } });
+  const measured = new Map(await Promise.all([...values].map(async ([key, value]) =>
+    [key, { tokens: await estimateTokenValueAsync(value), accuracy: "estimated" as const }] as const)));
+  return buildPiContextLedger({ ...input, tokenCounter: value => {
+    const measurement = measured.get(tokenEstimateKey(value));
+    if (!measurement) throw new Error("context_token_measurement_missing");
+    return measurement;
+  } });
 }
 
 export function estimatePiContextTokens(

@@ -1,3 +1,4 @@
+import { runReportLoginTests } from "./run-report-login";
 import { installObsidianDom } from "./obsidian-dom";
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { taskInterruptionExplanation } from "../agents/task-interruption-copy";
@@ -25,10 +26,10 @@ export async function runReportTests(document: Document): Promise<void> {
   let passed = 0;
   const test = async (name: string, run: () => void | Promise<void>) => { await run(); passed++; console.log(`OK run reports: ${name}`); };
   await test("persisted interruption facts select localized copy without inventing retry attempts", () => {
-    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "zh"), "Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。");
-    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "en"), "The agent made no progress for 5 minutes and was stopped. Tap Continue to retry.");
-    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "zh")!, /重试 3 次.*Provider 服务暂时不可用/u);
-    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "en")!, /3 retries.*temporarily unavailable/u);
+    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "zh"), "Agent 已连续 5 分钟无进展，任务已停止。请点击“继续”重试。");
+    assert.equal(taskInterruptionExplanation({ reason: "watchdog" }, "en"), "The agent made no progress for 5 minutes, so the task was stopped. Click Continue to try again.");
+    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "zh")!, /重试 3 次.*模型服务暂时不可用/u);
+    assert.match(taskInterruptionExplanation({ reason: "run_failed", retryAttempts: 3, detail: "provider_service_failed" }, "en")!, /3 times.*temporarily unavailable/u);
     assert.doesNotMatch(taskInterruptionExplanation({ reason: "run_failed", detail: "provider_service_failed" }, "zh")!, /重试 3 次/u);
     assert.equal(taskInterruptionExplanation({ reason: "process_unknown" }, "zh"), undefined);
   });
@@ -126,7 +127,7 @@ export async function runReportTests(document: Document): Promise<void> {
     input.value = "工具执行后断开连接"; input.dispatchEvent(new document.defaultView!.Event("input"));
     const details = form.content.querySelector("details")!; details.open = true; details.dispatchEvent(new document.defaultView!.Event("toggle"));
     const preview = form.content.querySelector("pre")!.textContent; submit.click(); submit.click(); await new Promise(resolve => setTimeout(resolve, 0));
-    assert.equal(calls, 1); assert.equal(input.value, "工具执行后断开连接"); assert.match(form.footer.textContent!, /NETWORK_OFFLINE/u);
+    assert.equal(calls, 1); assert.equal(input.value, "工具执行后断开连接"); assert.match(form.footer.textContent!, /运行报告未能处理。请稍后重试，或改为导出文件。/u); assert.doesNotMatch(form.footer.textContent!, /NETWORK_OFFLINE/u);
     form.footer.querySelector("button")!.click(); await new Promise(resolve => setTimeout(resolve, 0)); assert.equal(exported, preview);
     form.dispose(); form.content.remove(); form.footer.remove();
   });
@@ -135,5 +136,6 @@ export async function runReportTests(document: Document): Promise<void> {
     const form = createRunReportForm({ document, snapshot, button: (parent, text, action) => { const button = document.createElement("button"); button.textContent = text; button.onclick = action; parent.append(button); return button; }, upload: async () => { throw new Error("must not upload"); }, export: async () => {} });
     assert.match(form.footer.textContent!, /8 MiB/u); assert.equal(form.footer.querySelector("button")!.hidden, false); assert.equal(form.footer.querySelectorAll("button")[1].disabled, true); form.dispose();
   });
+  await runReportLoginTests(document, test);
   console.log(`Run report tests: ${passed} passed`);
 }

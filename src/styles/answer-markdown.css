@@ -30,6 +30,18 @@
   margin-top: 0;
 }
 
+/* Streaming blocks share the same paragraph rhythm as one native document.
+   Only the document's first block suppresses its leading margin. */
+.echoink-chat-surface .echoink-answer-markdown-block:not(:first-child) .echoink-answer-markdown > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 14px;
+}
+.echoink-chat-surface .echoink-answer-markdown-block:not(:first-child) .echoink-answer-markdown > :is(ul, ol):first-child {
+  margin-top: 5px;
+}
+.echoink-chat-surface .echoink-answer-markdown-block:not(:first-child) .echoink-answer-markdown > :is(pre, blockquote, .callout):first-child {
+  margin-top: 8px;
+}
+
 .echoink-chat-surface .echoink-answer-markdown p {
   margin: 0 0 10px;
   font-size: inherit;
@@ -130,4 +142,7 @@
 
 .echoink-chat-surface .echoink-answer-markdown img {
   max-width: 100%;
+}
+.codex-assistant-turn-reasoning-node .codex-ai-elements-reasoning-content {
+  overflow-anchor: none;
 }

@@ -255,6 +255,19 @@ export function classifyKnowledgePath(config: KnowledgeFolderBindings, value: st
   // Retiring a nested purpose must not widen an ancestor Raw/Wiki recall scope.
   return owner && roleScope.includes(owner) ? owner : null;
 }
+
+/** Exact shared Knowledge roots are ambiguous; nested roots and legacy multi-read scopes are not. */
+export function knowledgeFolderConflicts(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): { path: string; roles: KnowledgeRootRole[] }[] {
+  const owners = new Map<string, KnowledgeRootRole[]>();
+  for (const role of roleScope.filter(role => ["raw", "wiki", "projects", "inbox"].includes(role))) {
+    if (!config.roles[role].enabled) continue;
+    for (const directory of new Set(config.roles[role].readPaths)) {
+      owners.set(directory, [...(owners.get(directory) ?? []), role]);
+    }
+  }
+  return [...owners].filter(([, roles]) => roles.length > 1).map(([path, roles]) => ({ path, roles }));
+}
+
 export function knowledgeFolderIssues(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string[] {
   const issues: string[] = [];
   const labels: Record<KnowledgeRootRole, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", outputs: "输出", inbox: "收件箱", journal: "日记", work: "工作", archive: "归档", templates: "模板", assets: "附件" };
@@ -266,9 +279,7 @@ export function knowledgeFolderIssues(config: KnowledgeFolderBindings, roleScope
     if (role !== "raw" && binding.readPaths.length > 1 && !binding.compatibilityReadScopes) issues.push(`${labels[role]}：只能选择一个位置`);
     if (binding.writePath && !binding.readPaths.includes(binding.writePath)) issues.push(`${labels[role]}：默认保存位置不在读取范围中`);
   }
-  for (const role of ["wiki", "projects"] as const) if (config.roles[role].enabled && config.roles.raw.enabled) {
-    for (const directory of config.roles[role].readPaths) if (config.roles.raw.readPaths.includes(directory)) issues.push(`资料来源与${labels[role]}不能使用同一路径：${directory}`);
-  }
+  for (const conflict of knowledgeFolderConflicts(config, roleScope)) issues.push(`${conflict.roles.map(role => labels[role]).join("与")}不能使用同一路径：${conflict.path}`);
   return issues;
 }
 /** Upgrade only from observed folders; never create or infer missing default roots. */
@@ -381,6 +392,10 @@ export function knowledgeMaintenanceFolderIssues(config: KnowledgeFolderBindings
 /** A consumption view only. Never persist it over the complete shared roles. */
 export function projectedKnowledgeFolderRoles(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): Partial<KnowledgeFolderBindings["roles"]> {
   return Object.fromEntries(roleScope.map(role => [role, config.roles[role]]));
+}
+
+export function knowledgeFolderBindingPrompt(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {
+  return `真实绑定：${JSON.stringify(projectedKnowledgeFolderRoles(config, roleScope))}`;
 }
 
 export function knowledgeFolderOrganizationPrompt(config: KnowledgeFolderBindings, roleScope: readonly KnowledgeRootRole[] = KNOWLEDGE_ROOT_ROLES): string {

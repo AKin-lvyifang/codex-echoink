@@ -43,7 +43,7 @@ try {
     ...members,
     '}',
     'class ProductionViewLifecycle {',
-    'constructor(plugin,detach){Object.assign(this,{plugin,runSubscriptionDispose:detach,viewLifecycleGeneration:0,viewLifecycleAbortController:new AbortController(),promptEnhancerRunId:"",taskPlanDock:{dispose(){}},interactionDock:{dispose(){}},messageListRenderer:{dispose(){}},clearHomeAttentionFrame(){},clearKnowledgeBaseRunProgressTimer(){},composerHost(){return {};}});}',
+    'constructor(plugin,detach){Object.assign(this,{plugin,runSubscriptionDispose:detach,viewLifecycleGeneration:0,viewLifecycleAbortController:new AbortController(),promptEnhancerRunId:"",taskPlanDock:{dispose(){}},interactionDock:{dispose(){}},messageListRenderer:{dispose(){}},messageScrollFollow:{reset(){}},clearHomeAttentionFrame(){},clearKnowledgeBaseRunProgressTimer(){},composerHost(){return {};}});}',
     ...viewMembers,
     '}',
     'await runAgentRunTests(process.env.ECHOINK_AGENT_RUN_FIXTURE_ROOT, (catalog,runtime,settings)=>new ProductionHost(catalog,runtime,settings), (plugin,detach)=>new ProductionViewLifecycle(plugin,detach));',

@@ -165,7 +165,7 @@ export function buildMaintenanceUpgradePlan(input: MaintenanceUpgradePlanInput):
     }) : [];
     const existingTargetPaths = declaredTargetPaths.filter(targetPath => wikiPaths.has(targetPath));
     for (const targetPath of declaredTargetPaths.filter(targetPath => !wikiPaths.has(targetPath))) {
-      issue(file, `“提炼到”里的 Wiki 页面“${targetPath}”找不到了，原链接先保留，请你核对。`);
+      issue(file, `“提炼到”指向的 Wiki 页面“${targetPath}”已不存在，原链接已保留。请核对该链接。`);
     }
     if (resolution.state === "digested" && !existingTargetPaths.length && !inferred.length) {
       issue(file, "看不出这篇资料整理到了哪页 Wiki，先不补链接，仍算已提炼。");

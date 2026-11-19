@@ -199,7 +199,7 @@ export async function runPhase3KnowledgeRetrieverTests(): Promise<void> {
     assert.deepEqual(await productionRuntime.resolveMaintenanceScope!("RAW_SCOPE_TOKEN"), {
       mode: "query", candidatePaths: ["raw/source.md"]
     });
-    await assert.rejects(productionRuntime.resolveMaintenanceScope!("NO_MATCH_ZZXXQQ"), /不会回退到全局维护/u);
+    await assert.rejects(productionRuntime.resolveMaintenanceScope!("NO_MATCH_ZZXXQQ"), /未扩大维护范围/u);
     const productionChat = await productionRuntime.retrieveChat!({
       vaultId: "vault-production-chat",
       conversationId: "conversation-production-chat",

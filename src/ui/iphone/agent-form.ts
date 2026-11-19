@@ -1,5 +1,7 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { Notice, setIcon } from "obsidian";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { getModuleOwner, grantModuleCapabilities, moduleCapability, setModuleOwner } from "../../agents/registry";
 import { createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
@@ -31,7 +33,7 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
   const selected = (id: string) => usesDisabledCapabilityList(draft!.id) ? !draft!.disabledCapabilityIds?.includes(id) : !!draft!.capabilityIds?.includes(id);
   const signature = () => draft ? JSON.stringify({ ...draft, capabilityIds: [...(draft.capabilityIds ?? [])].sort(), disabledCapabilityIds: [...(draft.disabledCapabilityIds ?? [])].sort(), modules: [...modules].sort() }) : "";
   const changed = () => { error.hidden = true; };
-  const showError = (failure: unknown) => { error.textContent = failure instanceof Error ? failure.message : String(failure); error.hidden = false; };
+  const showError = (failure: unknown) => { error.textContent = settingsErrorText(failure, SETTINGS_FALLBACK.mobileSettings, ctx.host.settings().settingsLanguage); error.hidden = false; };
   const setBusy = (value: boolean) => { busy = value; fields.disabled = value; save.disabled = value || !draft; cancel.disabled = value; save.querySelector(".ip-button-visible > span:last-child")!.textContent = value ? "正在保存…" : agentId ? "保存" : "创建"; };
   const cancel = iphoneButton(ctx.document, "取消", () => { void ctx.shell.back(); });
   const save = iphoneButton(ctx.document, agentId ? "保存" : "创建", () => { void persist(); }, "is-primary"); save.disabled = true; actbar.append(cancel, save);

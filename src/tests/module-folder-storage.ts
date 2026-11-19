@@ -119,7 +119,7 @@ async function assertImmediateBindingSave(root: string) {
     plugin.saveSettings = async () => { if (failOnce) { failOnce = false; throw new Error("fixture save unavailable"); } };
     const failed = structuredClone(previous);
     failed.collectionTargets!.web = "来源乙";
-    await assert.rejects(service.saveDirectoryBindings(failed), /绑定未保存.*fixture save unavailable/u);
+    await assert.rejects(service.saveDirectoryBindings(failed), (error: unknown) => error instanceof Error && error.message.startsWith("目录绑定未能保存：设置文件暂时无法写入。") && !error.message.includes("fixture save unavailable"));
     assert.equal(plugin.settings.knowledgeBase.folderBindings, previous, "failed saves restore the exact previous binding object");
     plugin.saveSettings = async () => {};
     const disabled = structuredClone(previous);
@@ -197,7 +197,7 @@ async function assertRollbackRetainsNewUserContent(root: string) {
       }
     };
     const plan = await fixture.service.previewDirectoryPlan(sourceBindings(), ["来源甲", "来源乙", "知识成果"], { mode: "build", wikiChanged: true });
-    await assert.rejects(fixture.service.applyDirectoryPlan(plan), /fixture save failed/u);
+    await assert.rejects(fixture.service.applyDirectoryPlan(plan), (error: unknown) => error instanceof Error && error.message.startsWith("目录方案未能应用：") && !error.message.includes("fixture save failed"));
     assert.equal(await fs.readFile(path.join(root, "课程/资料.md"), "utf8"), "ORIGINAL SOURCE");
     assert.equal(await fs.readFile(path.join(root, "来源乙/用户后来写入.md"), "utf8"), "USER CONTENT", "rollback must retain user files written after preview");
     assert.equal(knowledgeFolderBindingsSignature(fixture.plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(original));
@@ -300,7 +300,7 @@ async function assertPersistentOptionalModuleRestore(root: string) {
     plugin.settings.englishDiary.englishDirectoryMode = "role";
     let failOnce = true;
     plugin.saveSettings = async () => { if (failOnce) { failOnce = false; throw new Error("fixture restore settings unavailable"); } };
-    await assert.rejects(service.restoreOriginalDirectories(), /restore settings unavailable/u);
+    await assert.rejects(service.restoreOriginalDirectories(), (error: unknown) => error instanceof Error && /未能复原：设置或文件暂时无法写入/u.test(error.message) && !error.message.includes("restore settings unavailable"));
     assert((await fs.stat(path.join(root, "新PDF"))).isDirectory(), "failed settings restoration stops before removing empty module folders");
     await service.restoreOriginalDirectories();
     assert.equal(plugin.settings.journalDirectory, originalJournal);
@@ -373,7 +373,7 @@ async function assertModuleDirectoryFailureRecovery(root: string) {
     const plan = await service.previewDirectoryPlan(sourceBindings(), ["来源甲", "来源乙", "知识成果", ...Object.values(moduleDirectories)], { mode: "build", moduleDirectories });
     let failOnce = true;
     plugin.saveSettings = async () => { if (failOnce && plugin.settings.knowledgeBase.folderBindings.configured) { failOnce = false; throw new Error("module settings save failed"); } };
-    await assert.rejects(service.applyDirectoryPlan(plan), /module settings save failed/u);
+    await assert.rejects(service.applyDirectoryPlan(plan), (error: unknown) => error instanceof Error && error.message.startsWith("目录方案未能应用：") && !error.message.includes("module settings save failed"));
     assert.deepEqual(records["daily-notes"].instance.options, native, "native in-memory options roll back");
     assert.deepEqual(await records["daily-notes"].loadData(), native, "native persisted options roll back");
     assert.equal(plugin.settings.journalDirectory, original.journalDirectory);

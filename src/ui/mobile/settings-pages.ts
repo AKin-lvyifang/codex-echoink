@@ -1,4 +1,6 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { formatMobileDateTime } from "../../mobile/date-display";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { defaultAgentIdentityState } from "../../harness/memory/agent-identity-model";
 import { AgentIdentityModal } from "../agent-identity-modal";
 import { resolveAgentAvatarUrl } from "../agent-avatar-presets";
@@ -15,6 +17,9 @@ import type { MobileServices } from "../../mobile/services";
 import { SETTINGS_TAB_ICONS } from "../../settings/settings-tab-icons";
 import type { AnimatedSettingsTabIconName } from "../../settings/animated-settings-tab-icon";
 import { mountAccountMembership } from "../../settings/account-membership";
+import { getDecisionClient } from "../../membership/decision-client";
+import { SMART_JUDGMENT_HELP, smartJudgmentView } from "../../settings/smart-judgment-view";
+import { attachNativeTooltip } from "../native-tooltip";
 import { MOBILE_ACTIVATION_NOTICE } from "../../membership/mobile-storage";
 import { membershipWebsiteLink } from "../../membership/website-links";
 import license from "../../../LICENSE";
@@ -45,7 +50,7 @@ export class MobileSettingsPages {
   readonly categories: { page: MobileSettingsPage | "providers"; title: string; icon: AnimatedSettingsTabIconName }[] = [
     { page: "basic", title: "基础设置", icon: SETTINGS_TAB_ICONS.general },
     { page: "layout", title: "布局与外观", icon: SETTINGS_TAB_ICONS.layout },
-    { page: "providers", title: "API Provider", icon: SETTINGS_TAB_ICONS.providers },
+    { page: "providers", title: "模型服务", icon: SETTINGS_TAB_ICONS.providers },
     { page: "resources", title: "Skills & MCP", icon: SETTINGS_TAB_ICONS.resources },
     { page: "knowledge", title: "知识库管理", icon: SETTINGS_TAB_ICONS.knowledgeBase },
     { page: "review", title: "复盘", icon: SETTINGS_TAB_ICONS.review },
@@ -93,6 +98,48 @@ export class MobileSettingsPages {
     const input = node(label, "input", "em-switch"); input.type = "checkbox"; input.checked = checked; input.setAttribute("role", "switch"); input.setAttribute("aria-label", title);
     input.addEventListener("change", () => { void this.ui.act(() => update(input.checked)); }); return input;
   }
+  /** 「账号与会员」里的「智能判断」分组：规则与桌面相同（共用 smartJudgmentView），样式用手机设置分组。 */
+  private smartJudgment(parent: HTMLElement): () => void {
+    const client = getDecisionClient();
+    if (!client) return () => {};
+    const wrap = node(parent, "div", "em-smart-judgment");
+    this.heading(wrap, "智能判断");
+    const group = this.group(wrap);
+    const row = node(group, "div", "em-row");
+    const copy = node(row, "span", "em-row-label");
+    const name = node(copy, "strong", "", "开启智能判断");
+    const help = node(name, "button", "em-smart-judgment-help"); help.type = "button"; help.setAttribute("aria-label", "智能判断说明");
+    setIcon(help, "circle-alert");
+    const tooltip = attachNativeTooltip(help, SMART_JUDGMENT_HELP.zh, { preserveLabel: false, touch: "notice" });
+    const status = node(copy, "small", "");
+    const upgrade = this.ui.button(row, "升级 PRO", () => parent.closest(".em-settings-page")?.querySelector<HTMLElement>(".membership-section")?.scrollIntoView({ block: "start", behavior: "smooth" }), undefined, "em-smart-judgment-upgrade");
+    const input = node(row, "input", "em-switch"); input.type = "checkbox"; input.setAttribute("role", "switch"); input.setAttribute("aria-label", "开启智能判断");
+    input.addEventListener("change", () => { void this.ui.act(() => client.setEnabled(input.checked)); });
+    const usage = node(group, "div", "em-row");
+    const usageCopy = node(usage, "span", "em-row-label"); node(usageCopy, "strong", "", "本月次数");
+    const usageText = node(usageCopy, "small", "");
+    const meter = node(usage, "div", "em-smart-judgment-meter"); meter.setAttribute("role", "progressbar"); meter.setAttribute("aria-label", "本月智能判断次数");
+    meter.setAttribute("aria-valuemin", "0"); meter.setAttribute("aria-valuemax", "100");
+    const fill = node(meter, "i");
+    const render = () => {
+      const view = smartJudgmentView(client, true);
+      wrap.hidden = view.hidden;
+      upgrade.hidden = !view.free;
+      input.checked = view.on; input.disabled = view.free;
+      status.textContent = view.status; status.classList.toggle("is-warning", view.warning);
+      usage.hidden = !view.usage;
+      if (!view.usage) return;
+      usageText.textContent = view.usage.text; usageText.classList.toggle("is-warning", view.usage.warning);
+      meter.hidden = view.usage.percent === null;
+      meter.classList.toggle("is-warning", view.usage.warning);
+      meter.setAttribute("aria-valuenow", String(view.usage.percent ?? 0));
+      fill.style.width = `${view.usage.percent ?? 0}%`;
+    };
+    render();
+    const unsubscribe = client.subscribe(render);
+    void client.refreshStatus({ maxAgeMs: 30_000 });
+    return () => { unsubscribe(); tooltip.dispose(); wrap.remove(); };
+  }
   basicEntries(body: HTMLElement, memory: HTMLElement) {
     this.ui.row(memory, "离线记忆整理（做梦）", "", "moon", () => this.ui.sheet("做梦与成长", part => {
       this.help(part, "移动端尚未接通记忆整理引擎。已有记忆可查看、修正与忘记；配置与资料已保留。");
@@ -127,7 +174,8 @@ export class MobileSettingsPages {
       case "account": {
         const account = this.host.accountService;
         if (!account) { this.help(body, "账号服务尚未初始化，请稍后重试。"); break; }
-        this.accountPage = mountAccountMembership(body, { app: this.host.app, viewModel: account.read(), actions: account.actions, read: () => account.read(), subscribe: listener => account.subscribe(listener), language: "zh-CN", openProviders: () => this.ui.go("providers"), activationNotice: MOBILE_ACTIVATION_NOTICE });
+        this.accountPage = mountAccountMembership(body, { app: this.host.app, viewModel: account.read(), actions: account.actions, read: () => account.read(), subscribe: listener => account.subscribe(listener), language: "zh-CN", openProviders: () => this.ui.go("providers"), activationNotice: MOBILE_ACTIVATION_NOTICE,
+          mountSmartJudgment: parent => this.smartJudgment(parent) });
         break;
       }
       case "layout": this.layout(body); break;
@@ -331,7 +379,7 @@ export class MobileSettingsPages {
           for (const note of record.result.notes) this.ui.row(part, note.title, note.path, "file-text", () => this.host.openNote(note.path));
           for (const assessment of record.result.assessments) this.help(part, `${assessment.claim} · ${assessment.status} · ${assessment.verification}`);
           if (record.result.issues.length) { this.heading(part, "问题"); for (const issue of record.result.issues) this.help(part, `${issue.path ? `${issue.path}：` : ""}${issue.message}`); }
-        }).catch(error => { if (part.isConnected) { loading.className = "em-error"; loading.textContent = error instanceof Error ? error.message : String(error); } });
+        }).catch(error => { if (part.isConnected) { loading.className = "em-error"; loading.textContent = settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage); } });
       } else if (log.reportPath) this.ui.button(part, "打开历史报告", () => this.host.openNote(log.reportPath), "file-text");
       if (log.errorCode) this.help(part, log.errorCode);
     }));
@@ -368,7 +416,7 @@ export class MobileSettingsPages {
           draft.migrationIssues = draft.migrationIssues.filter(issue => !issue.startsWith(`${kind}：`));
           await this.services.saveKnowledgeBindings(draft, revision);
           this.ui.go("knowledge");
-        } catch (failure) { error.hidden = false; error.textContent = failure instanceof Error ? failure.message : String(failure); }
+        } catch (failure) { error.hidden = false; error.textContent = settingsErrorText(failure, SETTINGS_FALLBACK.mobileSettings, this.host.settings().settingsLanguage); }
         finally { busy = false; part.removeAttribute("aria-busy"); sync(); }
       }, "check", "em-primary em-wide-action");
       const sync = () => { toggle.disabled = busy; select.disabled = busy || !binding.enabled; add.disabled = busy || !binding.enabled; unbind.disabled = busy; save.disabled = busy; save.querySelector("span:last-child")!.textContent = busy ? "保存中…" : "保存"; paths.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = busy || !binding.enabled; }); };

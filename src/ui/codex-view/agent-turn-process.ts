@@ -5,6 +5,7 @@ import {
   type ConversationCopy
 } from "../../settings/i18n";
 import { knowledgeUsageMessageData } from "../../knowledge-base/usage";
+import { preparationActivity, THINKING_NODE_ID, type PreparationUpdate, uniqueNotePaths } from "../../types/composer-submission";
 import {
   echoInkProviderReasoningSegments,
   type EchoInkAssistantTurnStatus,
@@ -348,6 +349,7 @@ function buildProcessNodes(
   explicitNodes: readonly Readonly<EchoInkTurnProcessNode>[],
   copy: ConversationCopy
 ): Readonly<EchoInkTurnProcessNode>[] {
+  const readNotes = uniqueNotePaths(messages.flatMap(message => knowledgeUsageMessageData(message).references.map(reference => reference.vaultRelativePath))).length;
   const explicitTurn = latestExplicitTurn(messages);
   const reasoningSegments = explicitTurn ? echoInkProviderReasoningSegments(explicitTurn) : [];
   const nodes: EchoInkTurnProcessNode[] = explicitNodes
@@ -359,7 +361,7 @@ function buildProcessNodes(
       const readableText = segment?.text ?? (source?.itemType === "reasoning" && !source.reasoningSummary ? source.text : "");
       return shouldDisplayReasoning(segment ?? node, readableText);
     })
-    .map((node) => ({ ...node }));
+    .map((node) => ({ ...node, nodeId: reasoningSegments[0] && node.nodeId === `provider-reasoning:${reasoningSegments[0].reasoningId}` ? THINKING_NODE_ID : node.nodeId }));
   const nodeIds = new Set(nodes.map((node) => node.nodeId));
   const representedMessageIds = new Set(nodes.flatMap((node) =>
     node.sourceMessageId ? [node.sourceMessageId] : []
@@ -386,7 +388,7 @@ function buildProcessNodes(
           activity.kind === "tool"
           && representedToolActivityIds.has(activity.id)
         ) continue;
-        const node = nodeForReasoningActivity(message, activity, copy);
+        const node = nodeForReasoningActivity(message, activity.notesRead === undefined && activity.kind === "knowledge" ? { ...activity, notesRead: readNotes } : activity, copy);
         if (!node) continue;
         if (!nodeIds.has(node.nodeId)) {
           nodes.push(node);
@@ -415,7 +417,7 @@ function buildProcessNodes(
     ? echoInkProviderReasoningSegments(explicitTurn)
     : []) {
     if (!shouldDisplayReasoning(reasoning, reasoning.text)) continue;
-    const nodeId = `provider-reasoning:${reasoning.reasoningId}`;
+    const nodeId = reasoning.reasoningId === reasoningSegments[0]?.reasoningId ? THINKING_NODE_ID : `provider-reasoning:${reasoning.reasoningId}`;
     if (!nodeIds.has(nodeId)) {
       nodes.push({
         nodeId,
@@ -432,6 +434,19 @@ function buildProcessNodes(
         ...(reasoning.completedAt === undefined ? {} : { completedAt: reasoning.completedAt })
       });
       nodeIds.add(nodeId);
+    }
+  }
+
+  if (!reasoningSegments.length && !nodeIds.has(THINKING_NODE_ID) && messages.some(message => message.reasoningSummary?.activities.some(activity => activity.kind === "provider"))) {
+    const activePreparation = nodes.some(node => node.status === "running" && ["process-activity:knowledge:retrieval", "process-activity:memory:recall", "process-activity:preparation:judgment"].includes(node.nodeId));
+    if (!activePreparation) {
+      const summaries = messages.flatMap(message => message.reasoningSummary ? [message.reasoningSummary] : []);
+      const settled = summaries.some(summary => summary.terminalAt !== undefined || summary.status !== "running");
+      const start = Math.max(0, ...summaries.map(summary => summary.startedAt),
+        ...nodes.filter(node => node.nodeId.startsWith("process-activity:")).map(node => node.updatedAt));
+      nodes.push({ nodeId: THINKING_NODE_ID, kind: "reasoning", status: settled || responseHasStarted ? "completed" : "running",
+        title: settled || responseHasStarted ? copy.process.publicReasoningCompleted : copy.process.publicReasoningRunning,
+        startedAt: start, updatedAt: start });
     }
   }
 
@@ -533,16 +548,13 @@ function nodeForReasoningActivity(
   activity: Readonly<EchoInkReasoningActivity>,
   copy: ConversationCopy
 ): EchoInkTurnProcessNode | null {
-  const elapsed = Math.max(0, activity.updatedAt - activity.startedAt);
-  if (activity.kind === "provider"
-    && (activity.status === "completed" || (activity.status === "active" && elapsed <= 5_000))) return null;
-  if (activity.kind === "memory" && activity.status === "completed"
-    && !(activity.completed ?? activity.current ?? 0)) return null;
+  if (activity.kind === "provider" && (activity.status === "active" || activity.status === "completed")) return null;
   const kind = reasoningActivityNodeKind(activity.kind);
   const maintenanceTool = message.title === "整理知识库" && activity.kind === "tool";
   const summary = maintenanceTool ? "" : reasoningActivitySummary(activity, copy);
   return {
-    nodeId: `process-activity:${message.id}:${activity.id}`,
+    nodeId: activity.kind === "provider" ? THINKING_NODE_ID : ["knowledge:retrieval", "memory:recall", "preparation:judgment"].includes(activity.id)
+      ? `process-activity:${activity.id}` : `process-activity:${message.id}:${activity.id}`,
     kind,
     status: reasoningActivityNodeStatus(activity.status),
     title: maintenanceTool ? maintenanceToolTitle(activity.name, activity.status) : reasoningActivityTitle(activity, copy),
@@ -678,11 +690,13 @@ function reasoningActivitySummary(
   activity: Readonly<EchoInkReasoningActivity>,
   copy: ConversationCopy
 ): string {
+  if (activity.kind === "judgment") return copy.process.judgmentResult(activity, activity.status === "active");
   if (activity.kind === "knowledge") {
-    if (activity.status === "active") return copy.process.searching;
-    if (activity.total === undefined) return activity.completed === undefined && activity.current === undefined
+    if (activity.status === "active") return activity.stage === "selecting_knowledge"
+      ? copy.process.activityStage("selecting_knowledge") : copy.process.searching;
+    if (activity.notesRead === undefined && activity.total === undefined) return activity.completed === undefined && activity.current === undefined
       ? copy.process.activityStage("completed") : copy.process.activityCompleted(activity.completed ?? activity.current ?? 0);
-    return copy.process.knowledgeResult(activity.total ?? 0, activity.completed ?? activity.current ?? 0);
+    return copy.process.knowledgeResult(0, activity.notesRead ?? 0);
   }
   if (activity.kind === "memory") {
     if (activity.status === "active") return copy.process.memoryChecking;
@@ -822,4 +836,21 @@ function finiteTimestamp(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : undefined;
+}
+
+export function buildPreparationProcessNodes(stages: readonly Readonly<PreparationUpdate>[], language: SettingsLanguage): Readonly<EchoInkTurnProcessNode>[] {
+  const copy = conversationCopy(language);
+  const ordered = ["judgment", "knowledge", "memory"];
+  const source: ChatMessage = { id: "preparation", role: "assistant", text: "", createdAt: 0 };
+  const nodes = ordered.flatMap(stage => {
+    const update = stages.find(value => value.stage === stage);
+    const activity = update && preparationActivity(update);
+    const node = activity && nodeForReasoningActivity(source, activity, copy);
+    return node ? [node] : [];
+  });
+  if (stages.some(stage => stage.readyForModel) && !nodes.some(node => node.status === "running")) {
+    const at = Math.max(0, ...stages.map(stage => stage.updatedAt ?? stage.startedAt ?? 0));
+    nodes.push({ nodeId: THINKING_NODE_ID, kind: "reasoning", status: "running", title: copy.process.publicReasoningRunning, startedAt: at, updatedAt: at });
+  }
+  return nodes;
 }

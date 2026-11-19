@@ -58,7 +58,7 @@ export async function readWorkbenchJournalDay(
   let targetPath = "";
   try {
     const settings = readNativeJournalSettings(app, options.legacyDirectory, options.bindings);
-    if (!settings.available) return { state: "unknown", path: "", text: "", reason: "日记位置尚未就绪" };
+    if (!settings.available) return { state: "unknown", path: "", text: "", reason: "日记位置尚未设置" };
     targetPath = existingNativeJournalPath(app, date, options.legacyDirectory, options.bindings) ?? nativeJournalPathForDate(app, date, options.legacyDirectory, options.bindings);
     const file = app.vault.getAbstractFileByPath(targetPath);
     if (!file) return { state: "empty", path: targetPath, text: "" };

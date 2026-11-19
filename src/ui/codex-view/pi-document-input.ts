@@ -1,3 +1,4 @@
+import { CAUSE } from "../../core/error-copy";
 import { getDesktopFsPromises } from "../../platform/desktop-filesystem";
 import { getDesktopUrl } from "../../platform/desktop-paths";
 import { getDesktopCrypto } from "../../platform/desktop-crypto";
@@ -130,7 +131,7 @@ export async function preparePiChatDocuments(
     throw new PiDocumentInputError(
       "input_budget_exceeded",
       null,
-      "当前模型已没有可用输入容量；请新开会话、减少上下文或切换容量更大的模型。"
+      "当前对话长度已超出该模型的处理上限。请新建会话后继续，或更换处理上限更高的模型。"
     );
   }
 
@@ -158,7 +159,7 @@ export async function preparePiChatDocuments(
     throw new PiDocumentInputError(
       "input_budget_exceeded",
       null,
-      `文档内容预计需要 ${estimatedInputTokens} tokens，超过当前模型剩余的 ${options.availableInputTokens} tokens；请减少文档、缩短内容、新开会话或切换容量更大的模型。`
+      CAUSE.documentsTooLong[0]
     );
   }
 
@@ -202,7 +203,7 @@ export function reconcilePiDocumentTransports(
       throw new PiDocumentInputError(
         "textless",
         document.attachment.name,
-        `入队后“${document.attachment.name}”已无法使用原生 PDF 输入，且冻结快照没有可提取文字；请恢复原 Provider 配置或重新发送。`
+        `“${document.attachment.name}”无法按原文件发送给当前模型，且无可用的文字内容，消息未发送。请切换回原模型，或重新添加附件后发送。`
       );
     }
     return Object.freeze({
@@ -247,21 +248,21 @@ async function prepareOneDocument(
       throw new PiDocumentInputError(
         "damaged",
         name,
-        `文档“${name}”的冻结提取文本已不可用；请重新添加原文件后发送。`
+        `文档“${name}”此前提取的文字已不可用。请重新添加原文件后发送。`
       );
     }
     if (text === null) {
       throw new PiDocumentInputError(
         "textless",
         name,
-        `文档“${name}”的持久化重放没有原始冻结字节，也没有冻结提取文本；为避免读取后来变化的源文件，请重新添加当前文件后发送。`
+        `文档“${name}”的原始内容已无法读取。请重新添加该文件后发送。`
       );
     }
     if (!text) {
       throw new PiDocumentInputError(
         "damaged",
         name,
-        `文档“${name}”的冻结提取文本已不可用；请重新添加原文件后发送。`
+        `文档“${name}”此前提取的文字已不可用。请重新添加原文件后发送。`
       );
     }
     return {
@@ -310,13 +311,13 @@ async function prepareOneDocument(
     throw new PiDocumentInputError(
       "unreadable",
       name,
-      `无法读取文档“${name}”；请确认文件仍在本机、没有被移动，并且 EchoInk 有读取权限。`
+      `无法读取文档“${name}”。请确认文件仍在本机、未被移动，且 EchoInk 具有读取权限。`
     );
   }
 
   const mimeType = canonicalDocumentMimeType(kind, attachment);
   if (pdfToolReference && kind === "pdf") {
-    if (bytes.subarray(0, 5).toString() !== "%PDF-") throw new PiDocumentInputError("damaged", name, "请选择有效 PDF。");
+    if (bytes.subarray(0, 5).toString() !== "%PDF-") throw new PiDocumentInputError("damaged", name, "PDF 文件无效。请选择有效的 PDF 文件。");
     return { kind, bytes: new Uint8Array(bytes), sha256: createHash("sha256").update(bytes).digest("hex"), transport: "tool_reference", attachmentId: `pdf-${randomUUID()}`, attachment: { type: "file", name, path: attachment.path, mimeType, sizeBytes, availability: "available" } };
   }
   const transport = resolvePiDocumentTransport(capabilityTarget, mimeType);
@@ -330,13 +331,13 @@ async function prepareOneDocument(
       throw new PiDocumentInputError(
         "encrypted",
         name,
-        `文档“${name}”已加密或受密码保护；请先在本机解除保护后重试。`
+        `文档“${name}”已加密或受密码保护。请先在本机解除保护后重试。`
       );
     }
     throw new PiDocumentInputError(
       "damaged",
       name,
-      `无法解析文档“${name}”；文件可能已损坏或格式与扩展名不一致，请用原应用重新保存后重试。`
+      `无法解析文档“${name}”。文件可能已损坏，或格式与扩展名不一致，请使用原应用重新保存后重试。`
     );
   }
   const text = normalizeExtractedText(extracted);
@@ -344,7 +345,7 @@ async function prepareOneDocument(
     throw new PiDocumentInputError(
       "textless",
       name,
-      `文档“${name}”没有可提取文字；扫描版 PDF 暂不支持 OCR，请改用包含可选择文字的文件。`
+      `文档“${name}”不包含可提取的文字。扫描版 PDF 暂不支持文字识别，请改用包含可选择文字的文件。`
     );
   }
 

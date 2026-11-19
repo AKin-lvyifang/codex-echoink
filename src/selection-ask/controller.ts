@@ -1,3 +1,4 @@
+import { NEXT, errorText, failureText } from "../core/error-copy";
 import { ownedEl, ownedDiv, ownedSpan } from "../ui/owned-dom";
 import { openSelectionAnnotationSource } from "./navigation";
 import { attachSourceAnchor, resolveSourceSpan, renderedSpanForSource, mapSelectionSource, mapSourceChangeOnce } from "./anchors";
@@ -9,7 +10,13 @@ import type CodexForObsidianPlugin from "../main";
 import type { SelectionAnnotation, SelectionCapture } from "../types/selection-annotations";
 import { captureEditorSelection } from "../editor-actions/selection-ask";
 import { captureReadingSelection, resolveReadingRange, resolveProjectedReadingRange, readingBodyProjection } from "./reading";
-import { createSelectionAskPopover } from "../ui/selection-ask-popover";
+import { createSelectionAskPopover, type SelectionToolbarExtras } from "../ui/selection-ask-popover";
+
+/** Another feature (note comments) adding its own buttons to the selection toolbar. */
+export interface SelectionToolbarContributor {
+  active(): boolean;
+  extras(capture: SelectionCapture, range: Range): SelectionToolbarExtras | null;
+}
 
 class AnnotationNumber extends WidgetType {
   constructor(readonly annotation: SelectionAnnotation, readonly controller: SelectionAskController) { super(); }
@@ -29,6 +36,7 @@ export class SelectionAskController {
   private menuRange: Range | null = null;
   private menuEditor: EditorView | null = null;
   private paintTimer = 0;
+  private contributor: SelectionToolbarContributor | null = null;
   private lastStatus = "";
   private redrawEffect: StateEffectType<number> | null = null;
   private readonly sourceVersions = new Map<string, string>();
@@ -86,6 +94,9 @@ export class SelectionAskController {
     this.syncDocuments(); this.plugin.register(() => this.dispose());
   }
   private enabled(): boolean { return !Platform.isMobile && this.plugin.settings.selectionAsk?.enabled !== false; }
+  /** The toolbar listens when Ask or a contributor is on; Ask marks still follow enabled(). */
+  private toolbarEnabled(): boolean { return this.enabled() || !Platform.isMobile && this.contributor?.active() === true; }
+  setToolbarContributor(contributor: SelectionToolbarContributor | null): void { this.contributor = contributor; }
   private english(): boolean { return this.plugin.settings.settingsLanguage === "en"; }
   private actions() { return (this.plugin.settings.selectionAsk?.actions ?? [{ id: "default", name: "提问", template: "" }]).map((action) => ({ ...action, name: action.id === "default" ? this.english() ? "Ask" : "提问" : action.name })); }
   private records(includeHidden = false): SelectionAnnotation[] { return this.plugin.getCodexView()?.selectionAnnotationRecords(includeHidden) ?? []; }
@@ -118,7 +129,7 @@ export class SelectionAskController {
     }
   }
   private inspectSelection(doc: Document): void {
-    if (!this.enabled() || !doc.hasFocus() || doc.activeElement?.closest(".echoink-selection-menu")) return;
+    if (!this.toolbarEnabled() || !doc.hasFocus() || doc.activeElement?.closest(".echoink-selection-menu")) return;
     const selection = doc.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount !== 1) { this.closeMenu(); return; }
     let capture: SelectionCapture | null = null, range: Range | null = null, editor: EditorView | null = null;
@@ -142,7 +153,10 @@ export class SelectionAskController {
     const rect = visible[0]; if (!rect) { this.closeMenu(); return; }
     this.closeMenu(); this.menuRange = range ?? selection.getRangeAt(0).cloneRange(); this.menuEditor = editor;
     const frozen = { ...capture, anchor: { ...capture.anchor } };
-    this.menu = createSelectionAskPopover(doc, rect, this.actions(), (action) => { void this.add(frozen, action); }, () => { editor?.focus(); this.closeMenu(); });
+    const extras = this.contributor?.active() ? this.contributor.extras(frozen, this.menuRange.cloneRange()) : null;
+    const actions = this.enabled() ? this.actions() : [];
+    if (!actions.length && !extras?.buttons.length) { this.closeMenu(); return; }
+    this.menu = createSelectionAskPopover(doc, rect, actions, (action) => { void this.add(frozen, action); }, () => { editor?.focus(); this.closeMenu(); }, extras ?? undefined);
   }
   private repositionMenu(doc: Document): void {
     if (!this.menuRange || this.menuRange.startContainer.ownerDocument !== doc) return;
@@ -170,12 +184,12 @@ export class SelectionAskController {
       }
       this.refresh();
     }
-    catch (error) { new Notice(error instanceof Error ? error.message : this.english() ? "Could not add selection" : "添加选段失败"); }
+    catch (error) { new Notice(errorText(error, ["选段未能添加。请重新选择文字后重试。", "The selection could not be added. Select the text again and try again."], this.plugin.settings.settingsLanguage)); }
   }
   annotationLabel(number: number): string { return this.english() ? `Annotation ${number}` : `注释 ${number}`; }
-  focusAnnotation(): void { void this.plugin.activateView({ focusInput: false }).then(() => this.plugin.getCodexView()?.focusSelectionAnnotations()).catch((error) => new Notice(String(error))); }
+  focusAnnotation(): void { void this.plugin.activateView({ focusInput: false }).then(() => this.plugin.getCodexView()?.focusSelectionAnnotations()).catch((error) => new Notice(failureText(error, ["对话栏中的注释未能打开。", "The annotation in the chat panel could not be opened."], NEXT.retryLater, this.plugin.settings.settingsLanguage))); }
   refresh(): void {
-    if (!this.enabled()) this.closeMenu();
+    if (!this.toolbarEnabled()) this.closeMenu();
     const ids = new Set(this.records(true).map((annotation) => annotation.id));
     for (const id of this.sourceVersions.keys()) if (!ids.has(id)) this.sourceVersions.delete(id);
     for (const id of this.initialReadingRanges.keys()) if (!ids.has(id)) this.initialReadingRanges.delete(id);

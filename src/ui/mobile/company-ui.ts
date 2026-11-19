@@ -1,7 +1,10 @@
 import { setIcon } from "obsidian";
 import { dispatchForPlanTask, pendingDecisions, projectCounts, projectMilestones, projectEstimatedTurns } from "../../company/logic";
 import type { CompanyService } from "../../company/service";
-import type { CompanyDispatch, CompanyProject, CompanyOwnerRequest } from "../../company/types";
+import type { CompanyDispatch, CompanyDocument, CompanyProject, CompanyOwnerRequest } from "../../company/types";
+import type { SyncOverviewService } from "../../sync/overview-service";
+import type { SyncRequestService, SyncRequestState } from "../../sync/requests";
+import type { RemoteCompanyDispatch } from "../../sync/company-view";
 import type { AgentDefinition } from "../../agents/types";
 import type { EchoInkQuestionAnswer } from "../../types/conversation-turn";
 import type { MobileResumeSnapshot } from "../../mobile/task-contracts";
@@ -19,17 +22,32 @@ export interface MobileCompanyContext {
   readonly agents: () => readonly AgentDefinition[];
   readonly error: (error: unknown) => void;
   readonly openTask: (taskId: string) => void;
-  readonly openProject: (projectId: string) => void;
   readonly openWorkbench: () => void;
   readonly openNote?: (path: string) => void;
   readonly assignOwner?: (request: CompanyOwnerRequest) => void;
   readonly renderQuestion?: (taskId: string) => { element: HTMLElement; dispose(): void };
+  /** deviceId names another device's project; it is shown read-only. */
+  readonly openProject: (projectId: string, deviceId?: string) => void;
+  /** Other devices' projects; null when sync is off. */
+  readonly overview?: SyncOverviewService | null;
+  /** Sends answers and stops to the device that owns the work; null when sync is off. */
+  readonly requests?: SyncRequestService | null;
+}
+
+/** A project published by another device: rendered from that device's record, never run here. */
+export interface RemoteProjectSource { readonly deviceId: string; readonly deviceName: string; readonly doc: CompanyDocument }
+export function remoteProjectSources(ctx: MobileCompanyContext): readonly (RemoteProjectSource & { readonly project: CompanyProject })[] {
+  const overview = ctx.overview?.snapshot();
+  if (!overview) return [];
+  return overview.projects.flatMap(project => { const doc = overview.docs[project.deviceId]; return doc ? [{ deviceId: project.deviceId, deviceName: project.deviceName, doc, project }] : []; });
 }
 
 export type MobileCompanyDecision =
   | { readonly key: string; readonly kind: "owner"; readonly request: CompanyOwnerRequest }
   | { readonly key: string; readonly kind: "resume"; readonly dispatch: CompanyDispatch; readonly snapshot: MobileResumeSnapshot }
   | { readonly key: string; readonly kind: "question"; readonly dispatch: CompanyDispatch; readonly prompt: string; readonly options: readonly string[] }
+  /** A decision another device is waiting on; the answer travels as a request file. */
+  | { readonly key: string; readonly kind: "remote"; readonly dispatch: RemoteCompanyDispatch; readonly prompt: string; readonly options: readonly string[]; readonly projectName?: string }
   | { readonly key: string; readonly kind: "interaction"; readonly dispatch: CompanyDispatch; readonly task: MobileSession; readonly prompt: string;
     readonly options: readonly { id: string; label: string }[]; readonly approval: boolean };
 
@@ -51,6 +69,30 @@ export function mobileCompanyDecisions(service: CompanyService, store: MobileSto
       options: question.options.map(option => ({ id: option.optionId, label: option.label })), approval: interaction.kind === "confirmation" && ids.includes("approve") && ids.includes("deny") });
   }
   return items;
+}
+
+/** Decisions other devices are waiting on, read from their mirrored records. */
+export function remoteCompanyDecisions(ctx: MobileCompanyContext, scope: Readonly<{ projectId?: string; deviceId?: string }> = {}): MobileCompanyDecision[] {
+  const overview = ctx.overview?.snapshot();
+  if (!overview || !ctx.requests) return [];
+  return overview.dispatches.filter(d => d.status === "waiting" && d.report?.outcome === "need_decision" && !d.answer
+      && (!scope.projectId || d.projectId === scope.projectId) && (!scope.deviceId || d.deviceId === scope.deviceId))
+    .map(dispatch => ({ key: `r:${dispatch.deviceId}:${dispatch.id}:${dispatch.report!.at}`, kind: "remote" as const, dispatch,
+      prompt: dispatch.report!.question || dispatch.report!.summary || dispatch.brief, options: dispatch.report!.options ?? [],
+      projectName: dispatch.projectId ? overview.docs[dispatch.deviceId]?.projects.find(p => p.id === dispatch.projectId)?.name : undefined }));
+}
+/** One line under a remote card: where the request stands. */
+export function remoteRequestStatus(ctx: MobileCompanyContext, state: SyncRequestState | undefined, targetDeviceId: string): string {
+  const device = ctx.overview?.snapshot().devices.find(d => d.id === targetDeviceId);
+  const name = device?.name ?? targetDeviceId;
+  if (!state) return device && !device.online ? `${name}离线 · 最后在线 ${lastSeen(device.lastSeenAt)}` : "";
+  if (state.status === "sent") return device?.online ? `已发出，等${name}处理` : `已发出，${name}在线时送达${device ? ` · 最后在线 ${lastSeen(device.lastSeenAt)}` : ""}`;
+  if (state.status === "adopted") return "已采纳";
+  return state.ack.reason;
+}
+async function sendRemote(ctx: MobileCompanyContext, item: Extract<MobileCompanyDecision, { kind: "remote" }>, answer: string): Promise<void> {
+  try { await ctx.requests?.send({ kind: "answer_decision", targetDeviceId: item.dispatch.deviceId, dispatchId: item.dispatch.id, ...(item.dispatch.projectId ? { projectId: item.dispatch.projectId } : {}), reportAt: item.dispatch.report!.at, answer }); }
+  catch (error) { ctx.error(error); }
 }
 
 const icon = (document: Document, name: string, className = "emc-icon") => { const span = el(document, "span", className); span.setAttribute("aria-hidden", "true"); setIcon(span, name); return span; };
@@ -113,6 +155,27 @@ export function companyDecisionCard(ctx: MobileCompanyContext, item: MobileCompa
     card.dataset.companyDisposable = "true"; (card as CompanyDisposable).disposeCompany = () => question.dispose();
     return card;
   }
+  if (item.kind === "remote") {
+    card.classList.add("is-remote");
+    const title = el(document, "div", "emc-decision-title", item.prompt);
+    const sub = el(document, "div", "emc-decision-sub", [nameOf(ctx, item.dispatch.agentId), options.showProject === false ? undefined : item.projectName, `在${item.dispatch.deviceName}上`].filter(Boolean).join(" · "));
+    copy.append(title, sub); card.append(head);
+    const state = ctx.requests?.stateFor(item.dispatch.id, item.dispatch.report!.at);
+    const status = remoteRequestStatus(ctx, state, item.dispatch.deviceId);
+    if (!state) {
+      const choices = el(document, "div", "emc-decision-choices");
+      for (const option of item.options) choices.append(button(document, option, "", () => sendRemote(ctx, item, option)));
+      const form = el(document, "form", "emc-decision-reply"), input = el(document, "input", "emc-input");
+      input.type = "text"; input.placeholder = item.options.length ? "或者自己写一句" : "写下你的回答"; input.setAttribute("aria-label", "回答");
+      const send = el(document, "button", "emc-button is-strong", "发送"); send.type = "submit";
+      form.append(input, send);
+      form.addEventListener("submit", event => { event.preventDefault(); const text = input.value.trim(); if (text) void sendRemote(ctx, item, text); });
+      if (choices.childElementCount) card.append(choices);
+      card.append(form);
+    }
+    if (status) card.append(el(document, "div", `emc-decision-sub emc-request-status is-${state?.status ?? "offline"}`, status));
+    return card;
+  }
   copy.append(el(document, "div", "emc-decision-title", item.prompt), el(document, "div", "emc-decision-sub", where));
   card.append(head);
   const choices = el(document, "div", "emc-decision-choices");
@@ -152,14 +215,16 @@ function waitingIcon(document: Document, text: string): HTMLElement {
 }
 
 /** Briefcase card: name, state, milestone bar, current step and counts. */
-export function companyProjectCard(ctx: MobileCompanyContext, project: CompanyProject): HTMLElement {
-  const { document, service } = ctx, doc = service.doc, counts = projectCounts(doc, project);
-  const card = el(document, "button", `emc-project${project.status === "done" ? " is-done" : ""}`); card.type = "button"; card.dataset.projectId = project.id;
-  card.addEventListener("click", () => ctx.openProject(project.id));
+export function companyProjectCard(ctx: MobileCompanyContext, project: CompanyProject, remote?: RemoteProjectSource): HTMLElement {
+  const { document, service } = ctx, doc = remote?.doc ?? service.doc, counts = projectCounts(doc, project);
+  const card = el(document, "button", `emc-project${project.status === "done" ? " is-done" : ""}${remote ? " is-remote" : ""}`); card.type = "button"; card.dataset.projectId = project.id;
+  if (remote) card.dataset.deviceId = remote.deviceId;
+  card.addEventListener("click", () => ctx.openProject(project.id, remote?.deviceId));
   const head = el(document, "div", "emc-project-head");
   head.append(icon(document, "briefcase"), el(document, "span", "emc-project-name", project.name));
-  const waiting = mobileCompanyDecisions(service, ctx.store, { projectId: project.id }, ctx.runtime).length;
-  if (project.status === "done") {
+  const waiting = remote ? pendingDecisions(doc, project.id).length : mobileCompanyDecisions(service, ctx.store, { projectId: project.id }, ctx.runtime).length;
+  if (remote) { const where = el(document, "span", "emc-status emc-device"); where.append(icon(document, "monitor-smartphone"), el(document, "span", "", `在${remote.deviceName}上运行`)); head.append(where); }
+  else if (project.status === "done") {
     const passed = project.acceptance?.filter(result => result.passed).length ?? 0;
     const status = el(document, "span", "emc-status"); status.append(icon(document, "check"), el(document, "span", "", `已结项 · ${passed}/${project.criteria.length} 通过`)); head.append(status);
   } else if (waiting) head.append(waitingIcon(document, `${waiting} 件等你定`));
@@ -236,23 +301,33 @@ function section(document: Document, title: string, count?: number, accent = fal
 }
 
 /** Read-only project page; answering 等你定 is the only action. Order follows the PRD. */
-export function companyProjectPage(ctx: MobileCompanyContext, projectId: string, options: Readonly<{ openConversation: () => void; back?: () => void }>): HTMLElement {
+export function companyProjectPage(ctx: MobileCompanyContext, projectId: string, options: Readonly<{ openConversation: () => void; deviceId?: string; back?: () => void }>): HTMLElement {
   const { document, service } = ctx;
   const root = el(document, "div", "emc-project-page");
   let tab: "record" | "tasks" | "milestones" | "outputs" = "record";
+  const remoteId = options.deviceId && options.deviceId !== ctx.overview?.deviceId ? options.deviceId : undefined;
   const render = () => {
-    const project = service.projectOf(projectId);
+    const remoteDoc = remoteId ? ctx.overview?.docOf(remoteId) : undefined;
+    const project = remoteId ? remoteDoc?.projects.find(p => p.id === projectId) : service.projectOf(projectId);
     const focused = document.activeElement as HTMLElement | null;
     const previous = el(document, "div", "");
     for (const card of Array.from(root.querySelectorAll<HTMLElement>("[data-decision]"))) previous.append(card);
     disposeCompanyTree(root); root.replaceChildren();
-    if (!project) { disposeCompanyTree(previous); root.append(el(document, "div", "emc-empty", "这个项目已不在本机记录里。")); return; }
-    const doc = service.doc, counts = projectCounts(doc, project);
+    if (!project || (remoteId && !remoteDoc)) { disposeCompanyTree(previous); root.append(el(document, "div", "emc-empty", remoteId ? "这个项目在另一台设备上，暂时无法读取其记录。" : "这个项目已不在本机记录里。")); return; }
+    const doc = remoteDoc ?? service.doc, counts = projectCounts(doc, project);
     const head = el(document, "div", "emc-page-head"), copy = el(document, "div", "emc-grow");
     if (options.back) { const back = button(document, "", "is-text", options.back); back.setAttribute("aria-label", "返回"); back.append(icon(document, "chevron-left")); head.append(back); }
     copy.append(el(document, "h1", "", project.name), el(document, "div", "emc-muted", project.folder ? `${project.folder}/` : "待开工"));
-    const talk = button(document, "对话", "is-text", options.openConversation);
-    talk.addEventListener("click", options.openConversation); head.append(copy, talk); root.append(head);
+    if (remoteId) {
+      const device = ctx.overview?.snapshot().devices.find(d => d.id === remoteId);
+      const where = el(document, "div", "emc-status emc-device");
+      where.append(icon(document, "monitor-smartphone"), el(document, "span", "", `在${device?.name ?? remoteId}上运行${device ? device.online ? " · 在线" : ` · 最后在线 ${lastSeen(device.lastSeenAt)}` : ""}`));
+      copy.append(where); head.append(copy);
+    } else {
+      const talk = button(document, "对话", "is-text", options.openConversation);
+      head.append(copy, talk);
+    }
+    root.append(head);
     if (project.status === "done") {
       root.append(section(document, "结项结果"));
       const result = el(document, "div", "emc-acceptance");
@@ -291,9 +366,29 @@ export function companyProjectPage(ctx: MobileCompanyContext, projectId: string,
     const stat = (label: string, value: number, total: string) => { const cell = el(document, "div", "emc-stat"); const number = el(document, "div", "emc-stat-value", `${value}`); number.append(el(document, "span", "emc-muted", ` / ${total}`)); cell.append(el(document, "div", "emc-muted", label), number); stats.append(cell); };
     stat("里程碑", counts.milestonesDone, `${counts.milestonesTotal}`); stat("任务", counts.tasksDone, `${counts.tasksTotal}`); stat("对话轮次", counts.turns, `约 ${projectEstimatedTurns(project)}`);
     root.append(stats);
-    const decisions = mobileCompanyDecisions(service, ctx.store, { projectId }, ctx.runtime);
+    const decisions = remoteId ? remoteCompanyDecisions(ctx, { projectId, deviceId: remoteId }) : mobileCompanyDecisions(service, ctx.store, { projectId }, ctx.runtime);
     if (decisions.length) { root.append(section(document, "等你定", decisions.length, true)); root.append(companyDecisionGroup(ctx, decisions, { showProject: false }, previous)!); }
     disposeCompanyTree(previous);
+    if (remoteId && ctx.requests) {
+      // Running work on the other device can be stopped from here; the stop travels as a request.
+      const live = doc.dispatches.filter(d => d.projectId === projectId && (d.status === "running" || d.status === "queued"));
+      if (live.length) {
+        root.append(section(document, "进行中", live.length));
+        const list = el(document, "div", "emc-decisions");
+        for (const d of live) {
+          const row = el(document, "div", "emc-decision is-remote"), rowHead = el(document, "div", "emc-decision-head"), rowCopy = el(document, "div", "emc-grow");
+          rowCopy.append(el(document, "div", "emc-decision-title", project.plan.find(task => task.id === d.planTaskId)?.label ?? d.brief), el(document, "div", "emc-decision-sub", `${nameOf(ctx, d.agentId)} · ${d.status === "running" ? "进行中" : "排队中"}`));
+          rowHead.append(avatar(document, agentOf(ctx, d.agentId)), rowCopy);
+          const state = ctx.requests.sent().find(s => s.request.payload.kind === "stop_dispatch" && s.request.payload.dispatchId === d.id);
+          if (!state) rowHead.append(button(document, "停下", "", async () => { try { await ctx.requests?.send({ kind: "stop_dispatch", targetDeviceId: remoteId, dispatchId: d.id, projectId }); } catch (error) { ctx.error(error); } }));
+          row.append(rowHead);
+          const status = remoteRequestStatus(ctx, state, remoteId);
+          if (status) row.append(el(document, "div", `emc-decision-sub emc-request-status is-${state?.status ?? "offline"}`, status));
+          list.append(row);
+        }
+        root.append(list);
+      }
+    }
     const tabs = el(document, "div", "emc-tabs"); tabs.setAttribute("role", "tablist");
     const outputs = doc.dispatches.filter(d => d.projectId === project.id).flatMap(d => d.report?.outputs ?? []);
     for (const [id, label, count] of [["record", "记录", ""], ["tasks", "任务", `${counts.tasksDone}/${counts.tasksTotal}`], ["milestones", "里程碑", `${counts.milestonesDone}/${counts.milestonesTotal}`], ["outputs", "产出", `${outputs.length}`]] as const) {
@@ -316,9 +411,9 @@ export function companyProjectPage(ctx: MobileCompanyContext, projectId: string,
     } else if (tab === "tasks") {
       for (const task of project.plan) {
         const d = dispatchForPlanTask(doc, project.id, task.id);
-        const row = el(document, "button", "emc-task-row"); row.type = "button"; row.disabled = !d;
+        const row = el(document, "button", "emc-task-row"); row.type = "button"; row.disabled = !d || !!remoteId;
         row.append(avatar(document, agentOf(ctx, task.agentId)), el(document, "span", "emc-grow", task.label), el(document, "span", "emc-muted", d ? { queued: "排队中", running: "进行中", waiting: "等你定", done: "已完成", failed: "没做成", stopped: "已停下" }[d.status] : "未开始"));
-        if (d) row.addEventListener("click", () => ctx.openTask(d.id));
+        if (d && !remoteId) row.addEventListener("click", () => ctx.openTask(d.id));
         body.append(row);
       }
     } else if (tab === "milestones") {
@@ -335,12 +430,16 @@ export function companyProjectPage(ctx: MobileCompanyContext, projectId: string,
       }
     }
     root.append(body);
-    const hint = el(document, "div", "emc-hint"); hint.append(icon(document, "message-circle"), el(document, "span", "", "要调整，回项目对话里跟总助说")); root.append(hint);
+    const hint = el(document, "div", "emc-hint"); hint.append(icon(document, remoteId ? "monitor-smartphone" : "message-circle"), el(document, "span", "", remoteId ? "这个项目只在它所在的设备上推进，这里只读" : "要调整，回项目对话里跟总助说")); root.append(hint);
     if (focused && root.contains(focused)) focused.focus({ preventScroll: true });
   };
   render();
-  const unsubscribe = service.subscribe(render);
-  const unsubscribeRuntime = ctx.runtime.subscribe(render);
+  const unsubscribe = remoteId ? ctx.overview?.subscribe(render) ?? (() => {}) : service.subscribe(render);
+  const unsubscribeRuntime = remoteId ? ctx.requests?.subscribe(render) ?? (() => {}) : ctx.runtime.subscribe(render);
   (root as HTMLElement & { disposeCompany?: () => void }).disposeCompany = () => { disposeCompanyTree(root); unsubscribe(); unsubscribeRuntime(); };
   return root;
+}
+function lastSeen(at: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  return minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.round(minutes / 60)} 小时前` : `${Math.round(minutes / 1440)} 天前`;
 }

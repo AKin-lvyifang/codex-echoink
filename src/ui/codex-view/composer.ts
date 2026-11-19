@@ -47,6 +47,7 @@ import {
 import { conversationUiText } from "./ui-i18n";
 
 let knowledgeCommandMenuId = 0;
+const composerToolbarObservers = new WeakMap<HTMLElement, ResizeObserver>();
 
 export interface ComposerShellRefs {
   queueEl: HTMLElement;
@@ -412,6 +413,11 @@ export function renderComposerToolbar(
   callbacks: ComposerToolbarCallbacks
 ): ComposerToolbarRefs {
   const language = state.language ?? "zh-CN";
+  composerToolbarObservers.get(container)?.disconnect();
+  composerToolbarObservers.delete(container);
+  // Retain the last measured layout while rebuilding controls. Clearing this
+  // until ResizeObserver runs makes the running send button jump 30 -> 34px.
+  if (!Platform.isDesktopApp) container.removeClass("can-expand", "is-compact");
   container.empty();
   container.toggleClass("is-desktop-composer", Platform.isDesktopApp);
   workspaceContainer.empty();
@@ -422,8 +428,9 @@ export function renderComposerToolbar(
   }
 
   const row = container.createDiv({ cls: "codex-composer-row" });
-  const left = row.createDiv({ cls: "codex-composer-left" });
-  const right = row.createDiv({ cls: "codex-composer-right" });
+  const controls = Platform.isDesktopApp ? row.createDiv({ cls: "codex-composer-controls" }) : row;
+  const left = controls.createDiv({ cls: "codex-composer-left" });
+  const right = controls.createDiv({ cls: "codex-composer-right" });
 
   const addButton = createComposerIconButton(left, "plus", conversationUiText(language, "添加资源", "Add resources"));
   addButton.setAttribute("aria-haspopup", "menu");
@@ -550,7 +557,39 @@ export function renderComposerToolbar(
     else if (action === "resume-queue") callbacks.onResumeQueue(state.session.id);
     else callbacks.onSendMessage();
   };
+  if (Platform.isDesktopApp) observeComposerToolbarWidth(container, row);
   return refs;
+}
+
+function observeComposerToolbarWidth(container: HTMLElement, row: HTMLElement): void {
+  const view = container.ownerDocument.defaultView;
+  if (!view?.ResizeObserver) return;
+  let wasConnected = false;
+  const observer = new view.ResizeObserver(() => {
+    if (!container.isConnected) {
+      if (wasConnected) observer.disconnect();
+      return;
+    }
+    wasConnected = true;
+    container.toggleClass("is-compact", row.clientWidth < 260);
+    container.style.setProperty("--codex-compact-size", `${Math.max(16, Math.min(22, Math.floor((row.clientWidth - 37) / 7)))}px`);
+    const slots = Array.from(row.querySelectorAll<HTMLElement>(".codex-composer-hover-slot"));
+    const expandedWidths = new Map(slots.map(slot => {
+      const measure = slot.querySelector<HTMLElement>(".codex-composer-hover-measure")!;
+      const width = measure.getBoundingClientRect().width;
+      slot.style.setProperty("--codex-hover-expanded-width", `${width}px`);
+      slot.toggleClass("is-label-truncated", measure.scrollWidth > Math.ceil(width));
+      return [slot, width];
+    }));
+    const controls = Array.from(row.querySelectorAll<HTMLElement>(".codex-composer-icon-button, .codex-composer-hover-slot, .codex-context-meter, .codex-send-button"));
+    const gap = (selector: string, count: number) => parseFloat(view.getComputedStyle(row.querySelector(selector)!).columnGap) * count || 0;
+    const required = controls.reduce((sum, control) => sum + (expandedWidths.get(control) ?? control.getBoundingClientRect().width), 0)
+      + gap(".codex-composer-left", 3) + gap(".codex-composer-right", 2)
+      + gap(".codex-composer-controls", 1) + (parseFloat(view.getComputedStyle(row).columnGap) || 0);
+    container.toggleClass("can-expand", row.clientWidth >= required + 2);
+  });
+  observer.observe(container);
+  composerToolbarObservers.set(container, observer);
 }
 
 export function renderComposerResourcePanel(
@@ -1351,7 +1390,9 @@ function addModelButton(
 ): HTMLButtonElement {
   const fullModelName = model.trim()
     || conversationUiText(language, "未选择", "Not selected");
-  const modelButton = container.createEl("button", {
+  const modelLabel = Platform.isDesktopApp ? fullModelName : compactBrandedModelLabel(model);
+  const modelContainer = composerHoverSlot(container, modelLabel, "model");
+  const modelButton = modelContainer.createEl("button", {
     cls: "codex-composer-model-button codex-model-summary-button",
     attr: {
       type: "button",
@@ -1360,10 +1401,14 @@ function addModelButton(
       "aria-expanded": "false"
     }
   });
-  attachNativeTooltip(modelButton, title);
+  attachNativeTooltip(modelButton, title, {
+    shouldShow: () => !modelButton.closest(".can-expand")
+      || !modelButton.matches(":hover, :focus-visible, .is-open, [aria-expanded=true]")
+      || modelContainer.hasClass("is-label-truncated")
+  });
   const providerIcon = modelButton.createSpan({ cls: "codex-composer-model-icon" });
   renderProviderBrandIcon(providerIcon, providerBrand);
-  modelButton.createSpan({ cls: "codex-composer-model-name", text: compactBrandedModelLabel(model) });
+  modelButton.createSpan({ cls: "codex-composer-model-name", text: modelLabel });
   const chevron = modelButton.createSpan({ cls: "codex-composer-chevron" });
   setIcon(chevron, "chevron-down");
   return modelButton;
@@ -1383,7 +1428,8 @@ function addComposerSelect<T extends string>(
   const accessibleLabel = language === "en"
     ? `${label}: ${selectedLabel}`
     : `${label}：${selectedLabel}`;
-  const control = container.createDiv({
+  const selectContainer = composerHoverSlot(container, selectedLabel, "permission");
+  const control = selectContainer.createDiv({
     cls: `codex-composer-select ${extraClass}`.trim()
   });
   control.dataset.value = selected;
@@ -1396,6 +1442,45 @@ function addComposerSelect<T extends string>(
   for (const value of values) select.createEl("option", { text: labelFor(value, language), value });
   select.value = selected;
   select.onchange = () => onChange(select.value as T);
+  if (Platform.isDesktopApp) {
+    const chevron = control.createSpan({ cls: "codex-composer-chevron", attr: { "aria-hidden": "true" } });
+    setIcon(chevron, "chevron-down");
+    attachNativeTooltip(select, accessibleLabel, {
+      shouldShow: () => !control.closest(".can-expand") || !control.matches(":hover, .is-keyboard-focused, .is-open")
+    });
+    // Native selects keep focus after mouse dismissal. Track that separately
+    // from keyboard focus so leaving the closed picker still collapses it.
+    let pointerFocus = false;
+    select.addEventListener("pointerdown", () => {
+      pointerFocus = true;
+      control.removeClass("is-keyboard-focused");
+      control.addClass("is-open");
+    });
+    select.addEventListener("focus", () => {
+      if (!pointerFocus) control.addClass("is-keyboard-focused");
+    });
+    select.addEventListener("keydown", event => {
+      if (event.key === "Escape") control.removeClass("is-open");
+      else { pointerFocus = false; control.addClass("is-keyboard-focused"); }
+    });
+    const dismiss = () => control.removeClass("is-open");
+    select.addEventListener("click", () => { if (!select.matches(":open")) dismiss(); });
+    select.addEventListener("change", dismiss);
+    select.addEventListener("blur", () => {
+      pointerFocus = false;
+      control.removeClass("is-open", "is-keyboard-focused");
+    });
+  }
+}
+
+/** Measure the full label outside flow, leaving the trigger to animate its own width. */
+function composerHoverSlot(container: HTMLElement, label: string, kind: string): HTMLElement {
+  if (!Platform.isDesktopApp) return container;
+  const slot = container.createDiv({
+    cls: `codex-composer-hover-slot is-${kind}`,
+  });
+  slot.createSpan({ cls: "codex-composer-hover-measure", text: label, attr: { "aria-hidden": "true" } });
+  return slot;
 }
 
 function addWorkspaceButton(

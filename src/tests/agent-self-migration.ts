@@ -24,8 +24,7 @@ export async function runAgentSelfMigrationScenarios(): Promise<void> {
     await writeFile(fixture.repository.layout.personalityState, oldPersonality);
     const repository = await fixture.reopen();
     const system = await CognitiveSystem.create({ repository, llm: () => null,
-      getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false, registerInterval: () => undefined, now: fixture.now });
+      getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }), registerInterval: () => undefined, now: fixture.now });
     try {
       for (const memoryMode of ["normal", "no_memory"] as const) {
         const fixed = await repository.loadFixedContext({ memoryMode });

@@ -306,7 +306,7 @@ export class KnowledgeBaseInitializer {
       this.job.status = "paused";
       this.job.lastError = "EchoInk 在知识库初始化期间重新启动。";
       this.job.pauseCause = "reload";
-      this.job.recoveryAction = "请检查冻结计划后点击继续；不会自动重跑 Provider。";
+      this.job.recoveryAction = "请检查冻结计划后点击继续；不会自动重新调用模型服务。";
       await this.persistJob(this.job);
     }
   }
@@ -561,7 +561,7 @@ export class KnowledgeBaseInitializer {
       guidePath: this.actualPath(KNOWLEDGE_INITIALIZATION_GUIDE_PATH),
       warnings,
       lastError: "",
-      recoveryAction: "确认前不会移动笔记或调用 Provider。"
+      recoveryAction: "确认前不会移动笔记或调用模型服务。"
     };
     refreshFrozenPlan(job, existingRaw, ignored);
     this.job = job;

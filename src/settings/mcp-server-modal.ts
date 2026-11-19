@@ -1,5 +1,7 @@
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSelect, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { App, Modal, setIcon } from "obsidian";
+import { pickErrorCopy, type ErrorCopy } from "../core/error-copy";
+import { MCP_CODES, MCP_FORM_CODES, MCP_SAVE_FAILED } from "../core/error-copy/codes/mcp";
 import type { EchoInkMcpServerDraft } from "../plugin/mcp-settings-service";
 import type {
   EchoInkMcpConnectionRecord,
@@ -455,25 +457,8 @@ export class McpServerModal extends Modal {
 
   private errorText(error: unknown): string {
     const code = error instanceof Error ? error.message : String(error);
-    const known: Record<string, [string, string]> = {
-      name_required: ["请输入 Server 名称。", "Enter a server name."],
-      endpoint_required: ["请填写 Server URL 或启动命令。", "Enter a server URL or command."],
-      credential_target_required: ["请填写 Credential 对应的 Header 或环境变量名称。", "Enter the header or environment variable used by the credential."],
-      credential_target_duplicate: ["Credential 目标不能同时出现在普通 Header 或环境变量中。", "The credential target cannot also be a public header or environment variable."],
-      mcp_credential_target_duplicate: ["Credential 目标不能同时出现在普通 Header 或环境变量中。", "The credential target cannot also be a public header or environment variable."],
-      key_value_invalid: ["普通 Header 或环境变量必须按每行 NAME=value 填写。", "Public headers and environment variables must use one NAME=value per line."],
-      mcp_server_name_invalid: ["Server 名称无效。", "The server name is invalid."],
-      mcp_http_url_invalid: ["Server URL 无效；请使用不含凭据的 http(s) 地址。", "Use a valid http(s) URL without embedded credentials."],
-      mcp_stdio_command_invalid: ["启动命令无效。", "The command is invalid."],
-      mcp_credential_header_invalid: ["Credential Header 名称无效。", "The credential header name is invalid."],
-      mcp_credential_env_invalid: ["Credential 环境变量名称无效。", "The credential environment variable is invalid."],
-      mcp_credential_prefix_invalid: ["Credential 前缀无效。", "The credential prefix is invalid."]
-    };
-    const message = known[code];
-    return message ? this.label(message[0], message[1]) : this.label(
-      "MCP Server 未保存，请检查可见字段后重试。",
-      "The MCP server was not saved. Review the visible fields and try again."
-    );
+    const known: Readonly<Record<string, ErrorCopy>> = { ...MCP_CODES, ...MCP_FORM_CODES };
+    return pickErrorCopy(Object.hasOwn(known, code) ? known[code] : MCP_SAVE_FAILED, this.options.language);
   }
 
   private fieldKeyForError(error: unknown): string | null {

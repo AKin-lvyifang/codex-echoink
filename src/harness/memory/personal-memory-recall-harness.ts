@@ -1,11 +1,16 @@
-import { estimatePiContextTokens } from "../pi-native/pi-context-budget";
+import { buildMemoryNavigation } from "./memory-navigation";
+import { MEMORY_ASSOCIATION_ADMISSION_THRESHOLD, type MemoryAssociationJudgment } from "./memory-association";
+import { prepareMemoryCatalog, normalizeMemoryDirectoryNames } from "./memory-catalog";
+import type { MemoryRecallReceipt, MemoryRecallAttempt } from "./memory-recall-receipt";
+import { estimateTokenValue } from "../usage/token-estimator";
+import { estimateTokenValueAsync } from "../usage/token-estimator";
 import type {
   PersonalMemoryMode,
   PersonalMemorySearchItem,
   PersonalMemorySearchRequest,
   SecondaryMatchView
 } from "./personal-memory-contracts";
-import { PersonalMemoryRepository } from "./personal-memory-repository";
+import type { PersonalMemoryRepository } from "./personal-memory-repository";
 import type { PersonalMemoryTurnCatalogCandidate } from "./personal-memory-repository";
 import {
   selectMemoryDirectory,
@@ -15,7 +20,7 @@ import {
 } from "./memory-directory-selector";
 
 export type PersonalMemoryRecallCandidate = Pick<PersonalMemorySearchItem,
-  "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score" | "daysAgo" | "due" | "overdue" | "recallReason"
+  "id" | "kind" | "title" | "recallWhen" | "summary" | "date" | "scope" | "score" | "daysAgo" | "due" | "overdue" | "recallReason" | "relatedFrom"
   | "basis" | "contentOrigin" | "status" | "asOf" | "supersedes" | "supersededRecord" | "sourceSummary" | "revision" | "file"
 > & Readonly<{
   /** Secondary fact that decisively pulled this Memory into the candidates. */
@@ -41,10 +46,17 @@ export interface PersonalMemoryPreparedTurnContext {
   readonly injectionKeys: readonly string[];
   /** Diagnostic receipt only; the prompt serializer does not include this. */
   readonly directorySelection?: MemoryDirectorySelectionResult;
+  readonly selectionReceipt?: MemoryRecallReceipt;
+  readonly navigation?: Awaited<ReturnType<typeof buildMemoryNavigation>>;
 }
 
 export interface PersonalMemoryRecallHarnessOptions {
   readonly directory?: Readonly<{ llm: MemoryDirectoryLlmPort; modelInputBudget: number }>;
+  /** 智能判断（PRO）挑记忆；返回 null 时回到 directory 的大模型挑选。 */
+  readonly decisions?: Readonly<{
+    diagnostic?(turnId: string): Readonly<{ reason?: string; threshold?: number; orderEnsemble?: "full" | "partial" }> | undefined;
+    judgeMemory(input: Readonly<{ turnId: string; text: string; recent?: readonly string[]; memories: readonly MemoryDirectoryEntry[] }>): Promise<Readonly<{ selected: readonly string[]; probabilities: Readonly<Record<string, number>> }> | null>;
+  }>;
 }
 
 export const PERSONAL_MEMORY_RECALL_STAGES = Object.freeze([
@@ -82,7 +94,7 @@ export function selectMemoryRecallPreviousUserContext(
 
 export class PersonalMemoryRecallHarness {
   constructor(
-    private readonly repository: PersonalMemoryRepository,
+    private readonly repository: Pick<PersonalMemoryRepository, "prepareTurnSnapshot" | "recordSecondaryRecallHits">,
     private readonly options: PersonalMemoryRecallHarnessOptions = {}
   ) {}
 
@@ -101,20 +113,28 @@ export class PersonalMemoryRecallHarness {
     from?: PersonalMemorySearchRequest["from"];
     to?: PersonalMemorySearchRequest["to"];
     tokenBudget: number;
+    availableInputTokens?: number;
     vaultId: string;
     conversationId: string;
     piSessionId: string;
     productRunId: string;
+    /** 与本轮 /turn 相同的 turnId；有它才请求智能判断。 */
+    decisionTurnId?: string;
     onProgress?(
       stage: PersonalMemoryRecallStage,
       stats?: Readonly<PersonalMemoryRecallSafeStats>
     ): void | Promise<void>;
   }>): Promise<Readonly<PersonalMemoryPreparedTurnContext>> {
+    const selectionStartedAt = Date.now();
+    let selectionQuery = input.query;
+    const attempts: MemoryRecallAttempt[] = [];
+    let catalogCount = 0;
+    let rankedIds: readonly string[] = []; let rankedCaptured = false;
     await input.onProgress?.("loading");
     if (input.signal?.aborted) throw new Error("memory_recall_aborted");
     const tokenBudget = normalizeTokenBudget(input.tokenBudget);
     const query = input.memoryMode === "normal"
-      ? buildBoundedRecallQuery(
+      ? await buildBoundedRecallQuery(
           input.query,
           input.recentConversation ?? [],
           tokenBudget
@@ -144,40 +164,83 @@ export class PersonalMemoryRecallHarness {
       memoryMode: "normal" as const
     } : undefined;
     let directorySelection: MemoryDirectorySelectionResult | undefined;
-    if (this.options.directory && input.memoryMode === "normal" && !input.preview && !input.skipDirectory) {
+    let associationJudgment: MemoryAssociationJudgment | undefined;
+    const decisions = input.decisionTurnId ? this.options.decisions : undefined;
+    if ((this.options.directory || decisions) && input.memoryMode === "normal" && !input.preview && !input.skipDirectory) {
       let catalog: readonly MemoryDirectoryEntry[] = [];
       let captured = false;
+      let localMatch = false;
       await this.repository.prepareTurnSnapshot({
         ...request,
         preview: true,
         includeUnmatchedCandidates: true,
         selectCandidateIds(candidates) {
           if (!captured) {
+            localMatch = candidates.some(candidate => candidate.score > 0);
             catalog = candidates.map(candidate => ({ id: candidate.id, title: candidate.title,
-              recallWhen: candidate.recallWhen, activity: candidate.activity ?? 0 }));
+              recallWhen: candidate.recallWhen, summary: candidate.summary, kind: candidate.kind, date: candidate.date,
+              activity: candidate.activity ?? 0, score: candidate.score, secondaryMatch: !!candidate.secondaryMatches?.length, related: candidate.related })).sort((a, b) => a.id.localeCompare(b.id));
             captured = true;
           }
           return [];
         }
       }, runtime);
-      // The repository mutation lane is released before this independent call.
-      directorySelection = await selectMemoryDirectory({
-        entries: catalog,
-        query: input.query,
-        recentConversation: input.recentConversation,
-        modelInputBudget: this.options.directory.modelInputBudget,
-        llm: this.options.directory.llm,
-        memoryMode: input.memoryMode,
-        signal: input.signal
-      });
+      catalogCount = catalog.length;
+      selectionQuery = normalizeMemoryDirectoryNames(input.query, catalog);
+      // 智能判断一次判断全部记忆（只按规则过滤过的目录，不做关键词预筛），拿到结果就不再调用户的大模型。
+      let judgedEmpty = false;
+      if (decisions && catalog.length) {
+        const startedAt = Date.now();
+        // Drex owns its model budget/chunking. A small chat model must not trim the cloud catalog.
+        const sent = await prepareMemoryCatalog(catalog, { tokenBudget: Number.POSITIVE_INFINITY, maxEntries: 1_000 });
+        let judged = sent.entries.length ? await decisions.judgeMemory({
+          turnId: input.decisionTurnId!, text: selectionQuery, recent: input.recentConversation,
+          memories: sent.entries
+        }).catch(() => null) : null;
+        const invalidProbabilities = judged && !sent.entries.every(entry => typeof judged!.probabilities?.[entry.id] === "number"
+          && Number.isFinite(judged!.probabilities[entry.id]) && judged!.probabilities[entry.id] >= 0 && judged!.probabilities[entry.id] <= 1);
+        if (invalidProbabilities) judged = null;
+        const diagnostic = decisions.diagnostic?.(input.decisionTurnId!);
+        attempts.push({ catalogCount: catalog.length, sentCount: sent.entries.length, sentIds: sent.entries.map(entry => entry.id), ...(sent.prefiltered ? { prefilterReason: sent.reason } : {}), route: "decisions", status: judged ? "selected" : "fallback", selectedIds: judged?.selected ?? [],
+          ...(diagnostic?.threshold === undefined ? {} : { threshold: diagnostic.threshold }),
+          ...(diagnostic?.orderEnsemble ? { orderEnsemble: diagnostic.orderEnsemble } : {}),
+          ...(!judged ? { reason: invalidProbabilities ? "invalid_response" : diagnostic?.reason ?? "unavailable" } : !judged.selected.length && localMatch ? { reason: "empty_local_hit" } : {}),
+          elapsedMs: Date.now() - startedAt });
+        if (judged) {
+          const known = new Set(catalog.map(entry => entry.id));
+          const ids = judged.selected.filter(id => known.has(id));
+          judgedEmpty = ids.length === 0;
+          if (ids.length || !localMatch || !this.options.directory) {
+            associationJudgment = { route: "decisions", seenIds: sent.entries.map(entry => entry.id), probabilities: judged.probabilities };
+            directorySelection = Object.freeze({ status: "selected" as const, ids: Object.freeze(ids),
+            stats: Object.freeze({ catalogCount: catalog.length, included: catalog.length, truncated: 0, tokens: 0, elapsedMs: Date.now() - startedAt }) });
+          }
+        }
+      }
+      const pickDirectory = async (reason?: string) => {
+        const directory = this.options.directory!;
+        const result = await selectMemoryDirectory({ entries: catalog, query: selectionQuery, now: input.now,
+          recentConversation: input.recentConversation, modelInputBudget: directory.modelInputBudget,
+          llm: directory.llm, memoryMode: input.memoryMode, signal: input.signal });
+        associationJudgment = result.status === "selected" ? { route: "directory", seenIds: result.stats.sentIds ?? [] } : undefined;
+        attempts.push({ route: "directory", catalogCount: result.stats.catalogCount, sentCount: result.stats.included, sentIds: result.stats.sentIds, prefilterReason: result.stats.prefilterReason, status: result.status, selectedIds: result.ids,
+          elapsedMs: result.stats.elapsedMs, ...(result.stats.reason || reason ? { reason: result.stats.reason ?? reason } : {}) });
+        return result;
+      };
+      if (!directorySelection && this.options.directory) directorySelection = await pickDirectory(judgedEmpty ? "empty_local_hit_review" : undefined);
+      if (!judgedEmpty && directorySelection?.status === "selected" && !directorySelection.ids.length
+        && localMatch && this.options.directory) directorySelection = await pickDirectory("empty_local_hit_review");
     }
     if (input.signal?.aborted) throw new Error("memory_recall_aborted");
     const snapshot = await this.repository.prepareTurnSnapshot({
       ...request,
       ...(directorySelection?.status === "selected" ? { preferredCandidateIds: directorySelection.ids } : {}),
+      ...(associationJudgment ? { associationJudgment } : {}),
       ...(input.memoryMode === "normal" ? {
-        selectCandidateIds: (candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[]) =>
-          selectRecallCandidateIds(candidates, tokenBudget)
+        selectCandidateIds: (candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[], requiredIds?: readonly string[], rankedTotal?: number) => {
+          if (!rankedCaptured && !requiredIds?.length) { rankedIds = candidates.map(candidate => candidate.id); rankedCaptured = true; }
+          return selectRecallCandidateIds(candidates, tokenBudget, requiredIds, rankedTotal);
+        }
       } : {})
     }, runtime);
     const { search, scanned, ...fixed } = snapshot;
@@ -192,6 +255,9 @@ export class PersonalMemoryRecallHarness {
       });
       return Object.freeze({
         ...fixed,
+        selectionReceipt: { schemaVersion: 1 as const, route: "skipped" as const, reason: "no_memory",
+          candidateCount: 0, selectedCount: 0, injectedCount: 0, selectedIds: [], injectedIds: [], coreIds: [],
+          elapsedMs: Date.now() - selectionStartedAt, attempts },
         recall: null,
         injectionKeys: Object.freeze([...fixed.injectionKeys])
       });
@@ -204,13 +270,19 @@ export class PersonalMemoryRecallHarness {
     }
     await input.onProgress?.("matching");
     await input.onProgress?.("budgeting");
-    const candidates = fitSecondaryMatchesWithinBudget(
+    const candidates = await fitSecondaryMatchesWithinBudget(
       search.items.map(toRecallCandidate),
       search.total,
       tokenBudget
     );
+    const delivered = new Set([...candidates.map(candidate => candidate.id), ...(fixed.core ?? []).map(core => core.id)]);
+    const fixedTokens = await estimateTokenValueAsync({ user: fixed.user, core: fixed.core, recall: finalInjectionText(candidates, search.total) });
+    const navigation = !input.preview && !input.skipDirectory ? await buildMemoryNavigation(search.directory ?? [], delivered,
+      Math.max(0, (input.availableInputTokens ?? this.options.directory?.modelInputBudget ?? 0) - fixedTokens - 128)) : undefined;
     const remaining = search.remaining;
     const exhaustive = search.exhausted;
+    const receiptRoute: MemoryRecallReceipt["route"] = directorySelection?.status === "selected"
+      ? attempts.at(-1)?.route ?? "directory" : "lexical";
     await input.onProgress?.("assembling", {
       result: "completed",
       scanned,
@@ -222,6 +294,22 @@ export class PersonalMemoryRecallHarness {
     return Object.freeze({
       ...fixed,
       ...(directorySelection ? { directorySelection } : {}),
+      ...(navigation ? { navigation } : {}),
+      selectionReceipt: {
+        schemaVersion: 1 as const,
+        route: receiptRoute,
+        ...(attempts.length ? {} : { reason: input.preview ? "preview" : input.skipDirectory ? "skip_directory" : "no_semantic_provider" }),
+        ...(navigation ? { navigation: { total: navigation.total, listed: navigation.listed, truncated: navigation.truncated, tokens: navigation.tokens } } : {}),
+        expandedIds: candidates.filter(candidate => candidate.relatedFrom).map(candidate => candidate.id),
+        expandedFrom: Object.fromEntries(candidates.filter(candidate => candidate.relatedFrom).map(candidate => [candidate.id, candidate.relatedFrom!.id])),
+        expandedSources: Object.fromEntries(candidates.filter(candidate => candidate.relatedFrom).map(candidate => [candidate.id, search.associationSources?.[candidate.id] ?? "unseen_fallback"])),
+        ...(associationJudgment?.route === "decisions" ? { associationThreshold: MEMORY_ASSOCIATION_ADMISSION_THRESHOLD } : {}),
+        candidateCount: catalogCount || search.total,
+        selectedIds: directorySelection?.status === "selected" ? directorySelection.ids : rankedIds,
+        selectedCount: directorySelection?.status === "selected" ? directorySelection.ids.length : rankedIds.length,
+        injectedIds: candidates.map(candidate => candidate.id), injectedCount: candidates.length,
+        coreIds: (fixed.core ?? []).map(core => core.id), elapsedMs: Date.now() - selectionStartedAt, attempts
+      },
       recall: Object.freeze({
         candidates: Object.freeze(candidates),
         exhaustive,
@@ -232,7 +320,8 @@ export class PersonalMemoryRecallHarness {
       }),
       injectionKeys: Object.freeze([
         ...fixed.injectionKeys,
-        "echoink.memory.recall"
+        "echoink.memory.recall",
+        ...(navigation?.content ? ["echoink.memory.navigation"] : [])
       ])
     });
   }
@@ -339,6 +428,10 @@ export function measureFinalInjectionTokens(
   items: readonly Readonly<PersonalMemoryRecallCandidate>[],
   rankedTotal?: number
 ): number {
+  return estimateTokenValue(finalInjectionText(items, rankedTotal));
+}
+
+function finalInjectionText(items: readonly Readonly<PersonalMemoryRecallCandidate>[], rankedTotal?: number): string {
   const total = rankedTotal ?? items.length;
   const injected = items.length;
   const blocks = serializeRecallBlocks({
@@ -350,7 +443,7 @@ export function measureFinalInjectionTokens(
     exhaustive: injected === total,
     hasMore: injected !== total
   });
-  return estimatePiContextTokens(blocks.combined).tokens;
+  return blocks.combined;
 }
 
 /** Primary records claim the budget first; association clues use only remainder. */
@@ -364,26 +457,27 @@ export function measurePrimaryInjectionTokens(
   );
 }
 
-function selectRecallCandidateIds(
+async function selectRecallCandidateIds(
   candidates: readonly Readonly<PersonalMemoryTurnCatalogCandidate>[],
-  tokenBudget: number
-): readonly string[] {
-  const selected: PersonalMemoryTurnCatalogCandidate[] = [];
+  tokenBudget: number, requiredIds: readonly string[] = [], rankedTotal = candidates.length
+): Promise<readonly string[]> {
+  const selected: PersonalMemoryTurnCatalogCandidate[] = candidates.filter(item => requiredIds.includes(item.id));
   for (const item of candidates) {
+    if (requiredIds.includes(item.id)) continue;
     const withCandidate = [...selected, item];
     // First reserve the complete primary-Memory block. Association clues are
     // fitted only after all selected primary records have claimed their space.
-    if (measurePrimaryInjectionTokens(withCandidate, candidates.length) > tokenBudget) continue;
+    if (await estimateTokenValueAsync(finalInjectionText(withCandidate.map(item => stripSecondaryCandidate(toRecallCandidate(item))), rankedTotal)) > tokenBudget) continue;
     selected.push(item);
   }
   return Object.freeze(selected.map((item) => item.id));
 }
 
-function fitSecondaryMatchesWithinBudget(
+async function fitSecondaryMatchesWithinBudget(
   candidates: readonly Readonly<PersonalMemoryRecallCandidate>[],
   rankedTotal: number,
   tokenBudget: number
-): readonly Readonly<PersonalMemoryRecallCandidate>[] {
+): Promise<readonly Readonly<PersonalMemoryRecallCandidate>[]> {
   let fitted = candidates.map(stripSecondaryCandidate);
   for (const [index, candidate] of candidates.entries()) {
     for (const fact of candidate.secondaryMatches ?? []) {
@@ -396,7 +490,7 @@ function fitSecondaryMatchesWithinBudget(
           ? { matchedSecondaryId: candidate.matchedSecondaryId }
           : {})
       });
-      if (measureFinalInjectionTokens(next, rankedTotal) <= tokenBudget) {
+      if (await estimateTokenValueAsync(finalInjectionText(next, rankedTotal)) <= tokenBudget) {
         fitted = next;
       }
     }
@@ -422,6 +516,7 @@ function toRecallCandidate(
     summary: item.summary,
     date: item.date,
     ...(item.recallReason ? { recallReason: item.recallReason } : {}),
+    ...(item.relatedFrom ? { relatedFrom: Object.freeze({ ...item.relatedFrom }) } : {}),
     ...(item.daysAgo !== undefined ? { daysAgo: item.daysAgo } : {}),
     ...(item.due ? { due: item.due, overdue: item.overdue } : {}),
     status: item.status,
@@ -462,11 +557,11 @@ function needsPreviousUserContext(currentQuery: string): boolean {
     || /^(?:this|that)\s+(?:project|plan|decision|task)\s+(?:is|was|has|does|can|should)\b/iu.test(query);
 }
 
-function buildBoundedRecallQuery(
+async function buildBoundedRecallQuery(
   currentQuery: string,
   recentConversation: readonly string[],
   maxTokens: number
-): string {
+): Promise<string> {
   const segments = [
     currentQuery,
     ...(needsPreviousUserContext(currentQuery) ? recentConversation.slice(-1) : [])
@@ -477,7 +572,7 @@ function buildBoundedRecallQuery(
     const remainingChars = MAX_RECALL_QUERY_CHARS - result.length - separator.length;
     if (remainingChars <= 0) break;
     const prefix = `${result}${separator}`;
-    const fitted = fitSegment(prefix, segment.slice(0, remainingChars), maxTokens);
+    const fitted = await fitSegment(prefix, segment.slice(0, remainingChars), maxTokens);
     if (!fitted) continue;
     result = `${prefix}${fitted}`;
     if (fitted.length < segment.length) break;
@@ -485,13 +580,13 @@ function buildBoundedRecallQuery(
   return result;
 }
 
-function fitSegment(prefix: string, segment: string, maxTokens: number): string {
-  if (estimatePiContextTokens(`${prefix}${segment}`).tokens <= maxTokens) return segment;
+async function fitSegment(prefix: string, segment: string, maxTokens: number): Promise<string> {
+  if (await estimateTokenValueAsync(`${prefix}${segment}`) <= maxTokens) return segment;
   let low = 0;
   let high = segment.length;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    if (estimatePiContextTokens(`${prefix}${segment.slice(0, middle)}`).tokens <= maxTokens) {
+    if (await estimateTokenValueAsync(`${prefix}${segment.slice(0, middle)}`) <= maxTokens) {
       low = middle;
     } else {
       high = middle - 1;

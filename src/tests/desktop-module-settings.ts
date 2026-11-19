@@ -6,7 +6,7 @@ import type { OriginCheckElement } from "../settings/origin-controls";
 export async function runDesktopModuleSettingsTests(): Promise<void> {
   let pro = false, benefits = 0, writes = 0, homeUpdates = 0;
   const listeners = new Set<() => void>(), rendered: DesktopModuleId[] = [];
-  const settings = { inlineAgent: { enabled: true }, settingsLanguage: "zh-CN", selectionAsk: { enabled: true }, lifestyle: { finance: { enabled: true } }, englishDiary: { enabled: false }, pdfReading: { enabled: true } };
+  const settings = { inlineAgent: { enabled: true }, noteComments: { enabled: true }, settingsLanguage: "zh-CN", selectionAsk: { enabled: true }, lifestyle: { finance: { enabled: true } }, englishDiary: { enabled: false }, pdfReading: { enabled: true } };
   const plugin = {
     settings,
     accountService: { checkCapability: () => pro, checkInSession: () => null, subscribe(listener: () => void) { listeners.add(listener); return () => listeners.delete(listener); } },
@@ -25,14 +25,14 @@ export async function runDesktopModuleSettingsTests(): Promise<void> {
   const toggle = (id: string) => drawer(id).querySelector<OriginCheckElement>('[role="switch"]');
   const publish = () => { for (const listener of listeners) listener(); };
   try {
-    for (const id of ["finance", "english", "pdf", "inline-agent", "experts"]) {
+    for (const id of ["finance", "english", "pdf", "inline-agent", "note-comments", "experts"]) {
       assert.equal(toggle(id), null, "locked modules do not show a disabled checked switch");
       assert.equal(trigger(id).disabled, false);
       assert.match(trigger(id).textContent ?? "", /需要 PRO/);
       assert.equal(drawer(id).querySelector<HTMLElement>(".echoink-module-drawer-content")!.hidden, true);
       trigger(id).click();
     }
-    assert.equal(benefits, 5); assert.equal(writes, 0); assert.deepEqual(rendered, []);
+    assert.equal(benefits, 6); assert.equal(writes, 0); assert.deepEqual(rendered, []);
     assert.equal(JSON.stringify(settings), before, "discovery preserves every saved enable flag");
     pro = true; publish();
     assert.equal(toggle("finance")!.checked, true); assert.equal(toggle("english")!.checked, false); assert.equal(toggle("pdf")!.checked, true);

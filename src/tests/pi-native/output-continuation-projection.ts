@@ -5,6 +5,8 @@ import {
   type PiSessionBranchEntryView
 } from "../../harness/pi-native/pi-chat-ui-projector";
 import type { PiChatRuntimeEvent } from "../../harness/pi-native/contracts";
+import { isReasoningOutputLimit, providerFailureText } from "../../harness/pi/provider-failure";
+import { localizeKnownConversationSystemCopy } from "../../ui/codex-view/ui-i18n";
 import {
   appendOutputContinuationText,
   outputContinuationFromSessionEntry
@@ -24,6 +26,30 @@ const continuation = (id: string, assistantEntryIds: string[], status = "complet
 });
 
 export async function runOutputContinuationProjectionTests(): Promise<void> {
+  const thinking = { type: "thinking", thinking: "Synthetic reasoning" };
+  const exhausted = { role: "assistant", stopReason: "length", content: [thinking] };
+  assert.equal(isReasoningOutputLimit(exhausted), true);
+  for (const message of [
+    { ...exhausted, stopReason: "stop" }, { ...exhausted, content: [] },
+    { ...exhausted, content: [thinking, { type: "text", text: "Visible answer" }] },
+    { ...exhausted, content: [thinking, { type: "toolCall" }] },
+    { ...exhausted, stopReason: "error", errorMessage: "provider_auth_failed" }
+  ]) assert.equal(isReasoningOutputLimit(message), false);
+  assert.equal(isReasoningOutputLimit({ ...exhausted, content: [], usage: { reasoning: 8100 } }), true);
+  const feedback = providerFailureText("provider_reasoning_output_limit_reached")!;
+  assert.match(localizeKnownConversationSystemCopy("en", feedback), /Lower the reasoning effort/u);
+  const projectorWithFailure = new PiChatUiProjector();
+  for (const withContinuation of [false, true]) {
+    const entry = { ...assistant("exhausted", ""), message: exhausted };
+    const projected = projectorWithFailure.projectSessionBranch({ piSessionId, activeLeafId: "exhausted", entries: [entry,
+      ...(withContinuation ? [continuation("failed", ["exhausted"], "failed")] : [])] });
+    assert.ok(projected.messages.some(message => message.details === feedback || message.text === feedback));
+    if (withContinuation) {
+      const error = projected.messages.find(message => message.itemType === "error")!;
+      assert.equal(error.text, feedback);
+      assert.equal(error.details, undefined, "an empty answer shows the localized system hint once");
+    }
+  }
   const entries = [
     assistant("a1", "第一段。"), assistant("a2", "第一段。第二段。", "stop"),
     continuation("continuation", ["a1", "a2"]),

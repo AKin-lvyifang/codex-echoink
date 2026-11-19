@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="One sentence to your chief of staff, and four agents go to work" src="assets/readme/demo-agents-en.webp">
+    <img width="1024" alt="EchoInk 2.9.0 — sync your vault and pick up chats across devices" src="assets/releases/echoink-agent-2.9.0-release.png">
   </a>
 </p>
 
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Downloads from Obsidian community plugins"></a>
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="Version 2.8.10"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.0"><img src="https://img.shields.io/badge/version-2.9.0-0EA5E9?style=flat-square" alt="Version 2.9.0"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="Desktop and Mobile Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
@@ -38,6 +38,10 @@
 | 🔌 **Your notes as context for other agents** | A local MCP server lets the agents you already use read the knowledge and memory you authorize. |
 
 Your notes stay in your vault. Bring your own model API key, or use the built-in models with AI credits.
+
+<p align="center">
+    <img width="100%" alt="One sentence to your chief of staff, and four agents go to work" src="assets/readme/demo-agents-en.webp">
+</p>
 
 <p align="center">
   <img width="49%" alt="Memory map: open a memory and pin it to core" src="assets/readme/demo-memory-en.webp">
@@ -128,9 +132,9 @@ You can bring your own model API key on any plan. See [current plans and prices]
 
 ## Privacy at a glance
 
-- **Your notes stay local.** Conversations, knowledge, memory, journals, and finances are stored in your vault. EchoInk does not upload your whole vault.
-- **AI requests go to the model service you choose**, using your own API key, with only the content needed for that request.
-- **echoink.cn is used for** account sign-in and PRO authorization, PRO Skill and expert downloads, optional weather, workbench check-in, and problem reports you choose to send. PRO requires an EchoInk account; chat and knowledge do not.
+- **Your notes stay local by default.** Conversations, knowledge, memory, journals, and finances are stored in your vault. Only if you turn on Cloud Sync are files in the selected scope encrypted and uploaded to echoink.cn.
+- **AI requests go to the model service you choose**, with only the content needed for that request: directly to that service with your own API key, or through echoink.cn using AI credits when you choose xiaoecho.
+- **echoink.cn is used for** account sign-in and PRO authorization, Cloud Sync, xiaoecho, smart judgment, news, PRO Skill and expert downloads, optional weather, workbench check-in, and problem reports you choose to send after signing in. PRO requires an EchoInk account; chat and knowledge with your own model do not.
 - **Optional third-party services:** web search (Tavily or DeepSeek, off by default) and MinerU PDF parsing, each with its own account and billing.
 - **On desktop, EchoInk can access files outside the vault** according to the permission mode you select, and can run the local MCP commands you configure.
 - **No client usage telemetry.**
@@ -161,7 +165,7 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 ## What's new
 
-**2.8.10** (2026-11-06) — One-person company, module owners, memory constellation, and knowledge checkups. See the [changelog](CHANGELOG.md) and [releases](https://github.com/AKin-lvyifang/codex-echoink/releases).
+**2.9.0** (2026-11-19) — Sync your whole vault and pick up chats across devices. See the [changelog](CHANGELOG.md) and [releases](https://github.com/AKin-lvyifang/codex-echoink/releases).
 
 ## License
 

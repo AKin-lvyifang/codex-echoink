@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { MarkdownRenderer, type App, Component } from "obsidian";
 import {
   createOriginButton,
@@ -178,8 +179,8 @@ export class KnowledgePreferenceWizard {
       this.phase = "review";
     } catch {
       this.error = this.label(
-        "偏好没生成好，可以重试或跳过。",
-        "Generation failed. Retry or skip.",
+        "偏好未能生成。请重试或跳过。",
+        "Preferences could not be generated. Retry or skip.",
       );
       this.phase = "choose";
     }
@@ -204,12 +205,12 @@ export class KnowledgePreferenceWizard {
         (error as { code?: unknown }).code === "revision_conflict";
       this.error = conflict
         ? this.label(
-            "偏好已有新修改，原内容保留。请返回设置重新读取。",
-            "Preferences changed. Existing content was kept; reopen from settings.",
+            CAUSE.editedElsewhere[0],
+            CAUSE.editedElsewhere[1],
           )
         : this.label(
-            "偏好没有保存，请重试或跳过。",
-            "Preferences were not saved. Retry or skip.",
+            "偏好未能保存。请重试或跳过。",
+            "Preferences could not be saved. Retry or skip.",
           );
       this.phase = "review";
       if (!this.disposed) this.options.changed();

@@ -4,6 +4,7 @@ import { Component, MarkdownRenderer, normalizePath, TFile, type App } from "obs
 import { mapMarkdownInlineCode, mapMarkdownOutsideFences, normalizeMarkdownMath } from "../core/markdown-math";
 import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
 import { renderRichText, splitMessageTableRow } from "./render-message";
+import { splitStreamMarkdown } from "./stream-markdown-blocks";
 
 function resolveNote(app: App, target: string, sourcePath: string): TFile | null {
   const path = normalizePath(target.split("#")[0]);
@@ -97,6 +98,15 @@ interface AnswerMarkdownSlot {
   revision: number;
   component: Component | null;
   pending: Component | null;
+  stream?: { text: string; sourcePath: string; blocks: StreamMarkdownBlock[] };
+}
+
+interface StreamMarkdownBlock {
+  root: HTMLElement;
+  text: string;
+  component: Component;
+  native: boolean;
+  revision: number;
 }
 
 export interface AnswerMarkdownInput {
@@ -118,9 +128,9 @@ export class AnswerMarkdownRenderer {
 
   beginRender(): void { this.visible.clear(); }
 
-  endRender(): void {
+  endRender(visibleRoot?: HTMLElement): void {
     for (const [key, slot] of this.slots) {
-      if (!this.visible.has(key)) { this.release(slot); this.slots.delete(key); }
+      if (!this.visible.has(key) && !visibleRoot?.contains(slot.root)) { this.release(slot); this.slots.delete(key); }
     }
   }
 
@@ -147,6 +157,10 @@ export class AnswerMarkdownRenderer {
     // In-flight processors may still register children. Their own finally
     // unloads them after rendering settles, even when this revision is stale.
     slot.pending = null;
+    if (streaming || slot.stream) {
+      this.renderStream(input, slot);
+      return;
+    }
     // A first render is readable immediately; subsequent async native updates
     // keep the previous committed content until the new content is ready.
     if (streaming || !slot.component) {
@@ -209,6 +223,59 @@ export class AnswerMarkdownRenderer {
   private release(slot: AnswerMarkdownSlot): void {
     slot.revision += 1;
     slot.component?.unload();
+    for (const block of slot.stream?.blocks ?? []) { block.revision++; block.component.unload(); }
     slot.root.remove();
+  }
+
+  private renderStream(input: AnswerMarkdownInput, slot: AnswerMarkdownSlot): void {
+    const { app, text, sourcePath, streaming, mutate, onCommit } = input;
+    if (!slot.stream || !text.startsWith(slot.stream.text) || sourcePath !== slot.stream.sourcePath) {
+      for (const block of slot.stream?.blocks ?? []) { block.revision++; block.component.unload(); }
+      slot.component?.unload(); slot.component = null;
+      mutate(slot.root, () => slot.root.replaceChildren());
+      slot.stream = { text: "", sourcePath, blocks: [] };
+    }
+    const stream = slot.stream, pieces = splitStreamMarkdown(text, !streaming);
+    while (stream.blocks.length > pieces.length) {
+      const block = stream.blocks.pop()!; block.revision++; block.component.unload(); block.root.remove();
+    }
+    slot.root.className = streaming ? "echoink-answer-markdown-stream" : "echoink-answer-markdown-host";
+    stream.text = text;
+    for (let i = 0; i < pieces.length; i++) {
+      let block = stream.blocks[i];
+      if (!block) {
+        const root = ownedDiv(slot.root.ownerDocument); root.className = "echoink-answer-markdown-block";
+        const component = new Component(); component.load();
+        block = { root, text: "", component, native: false, revision: 0 };
+        stream.blocks.push(block); slot.root.append(root);
+      }
+      if (block.text !== pieces[i]) {
+        const previous = block.component, component = new Component(); component.load();
+        block.text = pieces[i]; block.native = false; block.revision++; block.component = component;
+        mutate(block.root, () => renderRichText(app, component, block.root, block.text));
+        previous.unload();
+      }
+      if (block.native || streaming && i === pieces.length - 1) continue;
+      block.native = true;
+      const target = block, revision = ++block.revision, component = new Component(); component.load();
+      const staged = ownedDiv(slot.root.ownerDocument); staged.className = "echoink-answer-markdown markdown-rendered";
+      void (async () => {
+        try {
+          await MarkdownRenderer.render(app, prepareAnswerMarkdown(app, target.text, sourcePath), staged, sourcePath, component);
+          if (this.slots.get(input.key) !== slot || slot.stream !== stream || target.revision !== revision) return;
+          decorateNoteLinks(app, staged, component, sourcePath);
+          for (const table of Array.from(staged.querySelectorAll("table"))) {
+            if (table.parentElement?.hasClass("table-wrapper")) continue;
+            const scroll = ownedDiv(staged.ownerDocument); scroll.className = "codex-message-table-scroll";
+            table.replaceWith(scroll); scroll.append(table);
+          }
+          mutate(target.root, () => target.root.replaceChildren(staged));
+          target.component.unload(); target.component = component; onCommit();
+        } catch (error) {
+          if (target.revision === revision) target.native = false;
+          console.warn("EchoInk: Markdown block rendering failed", error);
+        } finally { if (target.component !== component) component.unload(); }
+      })();
+    }
   }
 }

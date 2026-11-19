@@ -1,3 +1,4 @@
+import { assertMaintenanceCopyBudget, maintenanceChangedFragments, MaintenanceCopyError } from "./maintenance-copy-guard";
 import { applyDomainMapBlockPatches, domainMapBlock, applyTreePlacement, treeMapPendingCount, appendTreeMapSources } from "./maintenance-tree-map";
 import { knowledgeSystemReminder, reminderProperties } from "./knowledge-system-reminders";
 import { patchKnowledgeProperties, readMaintenanceFrontmatterProperty } from "./maintenance-source-frontmatter";
@@ -69,7 +70,7 @@ export class MaintenanceP1Workflow {
       const currentPath = input.p1?.targetPath ?? record?.p1?.writingPlan.find(item => item.id === input.p1?.pageId)?.targetPath;
       const userReceipt = { ...(record ? maintenanceReceiptForRecord(record) : { version: 1 as const }), text: maintenanceFailureText(diagnostic, currentPath) };
       const message = `${diagnostic}${record ? `\n${JSON.stringify({ userReceipt })}` : ""}`;
-      return { status: "failed", ...(record ? { recordId: record.recordId } : {}), processedSourcePaths: [], errorCode: error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message, userReceipt };
+      return { status: "failed", ...(record ? { recordId: record.recordId } : {}), processedSourcePaths: [], errorCode: error instanceof MaintenanceCopyError ? "maintenance_copy_limit" : error instanceof Phase3MaintenanceError ? error.code : "proposal_invalid", message, userReceipt };
     }
   }
   private async run(input: Readonly<PiKnowledgeMaintenanceToolInput>): Promise<Readonly<PiKnowledgeMaintenanceToolResult>> {
@@ -265,7 +266,7 @@ export class MaintenanceP1Workflow {
         content = await this.withSources(content, item, record, baseline);
         assertMaintenanceQuoteSectionsPreserved(baseline, content);
         const generation = state.draftGenerations?.[item.id] ?? 0;
-        state.drafts[item.id] = { content, toolCallId: `${record.recordId}:${item.id}${generation ? `:r${generation}` : ""}` };
+        state.drafts[item.id] = { content, copyFragments: baseline === undefined ? [action.content!] : maintenanceChangedFragments(baseline, content), toolCallId: `${record.recordId}:${item.id}${generation ? `:r${generation}` : ""}` };
         await this.host.save(record);
       }
       await this.writePage(input, item, record);
@@ -329,7 +330,7 @@ export class MaintenanceP1Workflow {
             await this.host.validateTreeTargetDirectory?.(item.targetPath, domain);
         }
         const block = domainMapBlock(before ?? "", domain);
-        if (!block) throw new Error("知识树区块暂时读不到，保留原文。");
+        if (!block) throw new Error("知识树区块暂时无法读取，保留原文。");
         p2.treeJobs ??= [];
         const declined = readMaintenanceFrontmatterProperty(before ?? "", "不算缺口");
         if (declined.error || declined.present && (!Array.isArray(declined.value) || declined.value.some(value => typeof value !== "string"))) throw new Error("不算缺口属性必须是文本列表，保留原值。");
@@ -405,11 +406,14 @@ export class MaintenanceP1Workflow {
       });
     }
   }
-  private async assertSources(record: KnowledgeMaintenanceRecord): Promise<void> {
+  private async assertSources(record: KnowledgeMaintenanceRecord): Promise<{ path: string; content: string }[]> {
+    const sources: { path: string; content: string }[] = [];
     for (const source of record.sources) {
       const text = await this.host.read(source.path);
       if (text === null || rawDigestFingerprint(source.path, Buffer.from(text)) !== record.p1!.sourceFingerprints[source.path]) throw new Error(`来源已变化，停止剩余写入：${source.path}`);
+      sources.push({ path: source.path, content: text });
     }
+    return sources;
   }
   private async withSources(content: string, item: MaintenanceWritingItem, record: KnowledgeMaintenanceRecord, baseline?: string): Promise<string> {
     const snapshot = createMaintenanceSectionSnapshot(content), region = snapshot.regions.find(r => r.kind === "sources");
@@ -435,11 +439,23 @@ export class MaintenanceP1Workflow {
     await this.host.current?.(input, "write", item.targetPath);
     await this.host.recoverBeforeRebase();
     await serializeMaintenancePage(this.host.vaultRootPath, item.targetPath, async () => {
-      await this.assertSources(record);
+      const sources = await this.assertSources(record);
       if (await this.checkpointCommittedPage(record, item)) return;
       const current = await this.host.read(item.targetPath);
       if (current === draft.content) throw new Phase3MaintenanceError("recovery_blocked", `目标字节命中草稿但没有对应成功WAL/readback，不能猜测成功或重复写入：${item.targetPath}`);
       if (item.expectedTarget.kind === "missing" ? current !== null : current === null || revision(current) !== item.expectedTarget.contentRevision) throw new Error(`目标并发编辑冲突：${item.targetPath}；先完整note_read，再sections获取新区域并提交新patch；保留手写，禁止重放旧draft。`);
+      try {
+        draft.copySummary = assertMaintenanceCopyBudget(draft.copyFragments ?? maintenanceChangedFragments(item.expectedTarget.kind === "missing" ? undefined : current ?? undefined, draft.content), sources,
+          Object.keys(state.committedPages).flatMap(id => { const summary = state.drafts[id]?.copySummary; return summary ? [summary] : []; }));
+        await this.host.save(record);
+      } catch (error) {
+        if (error instanceof MaintenanceCopyError) {
+          delete state.drafts[item.id];
+          (state.draftGenerations ??= {})[item.id] = (state.draftGenerations?.[item.id] ?? 0) + 1;
+          await this.host.save(record);
+        }
+        throw error;
+      }
       if (!await this.host.commit({ ...input, p1RecordId: record.recordId, toolCallId: draft.toolCallId }, item, draft.content)) throw new Error(`页写入失败：${item.targetPath}；草稿与成功页已保留，可resume。`);
       const readback = await this.host.read(item.targetPath);
       if (readback !== draft.content) throw new Error(`页回读不一致：${item.targetPath}`);

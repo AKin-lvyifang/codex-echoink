@@ -53,12 +53,12 @@ export function createModelParametersPage(ctx: IPadSettingsContext, state: IPadP
       validateMobileModelParameters(model);
       if (provider.models.some(item => item.id === model.id)) throw new Error("模型 ID 已存在。");
       provider.models.push(model); state.selected.add(model.id); state.manualAdded(); state.changed(); manual.value = manualId = ""; error.hidden = true; render();
-    } catch (failure) { showSettingsError(error, failure); }
+    } catch (failure) { showSettingsError(error, failure, ctx); }
   }), error);
   const footer = el(ctx.document, "div", "pd-settings-actions");
   footer.append(settingsAction(ctx, "完成", async () => {
     try { provider.models.forEach(validateMobileModelParameters); error.hidden = true; await ctx.back(); }
-    catch (failure) { showSettingsError(error, failure); }
+    catch (failure) { showSettingsError(error, failure, ctx); }
   }, true));
   return { id: `ipad-model-parameters-${provider.id}`, title: t(ctx, "参数"), content, footer };
 }

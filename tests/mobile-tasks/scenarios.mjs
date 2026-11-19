@@ -19,7 +19,182 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     return { ...host, store, runtime, settings };
   };
 
-  await test("automatic memory and memory_search share relevance and deliver deadline context in the browser runtime", async () => {
+  await test("composer scrolling starts before admission, stays with the executing turn while queued and resets only when the queue starts", async () => {
+    const preparation = [gate(), gate()], responses = [gate(), gate()]; let preparing = 0, requests = 0;
+    const state = await fixture(async () => { const index = requests++; await responses[index].promise; return answer("openai-completions", `answer ${index}`); }, config(), async () => { const index = preparing++; await preparation[index].promise; return ""; });
+    try {
+      const taskId = state.store.session.id;
+      const first = state.runtime.beginComposerSubmission({ taskId }, { text: "先执行的问题", attachments: [] });
+      assert.equal(state.runtime.composerScrollTarget(taskId), undefined);
+      const pending = state.runtime.submitComposerSubmission(first); await waitFor(() => preparing === 1);
+      const initial = state.runtime.composerScrollTarget(taskId);
+      assert.ok(initial); assert.equal(initial.owner, taskId); assert.equal(initial.taskId, taskId); assert.equal(initial.turnId, first);
+      assert.equal(initial.paused, false); assert.equal(state.store.getSession(taskId).messages.length, 0);
+      state.runtime.pauseComposerScroll(initial.sequence);
+      preparation[0].resolve(); const admitted = await pending; await waitFor(() => requests === 1);
+      assert.equal(state.runtime.composerSubmissions.records.get(first).phase, "accepted");
+      assert.equal(state.runtime.composerScrollTarget(taskId).sequence, initial.sequence);
+      assert.equal(state.runtime.composerScrollTarget(taskId).paused, true, "manual scrolling stays paused across formal admission");
+
+      const next = state.runtime.beginComposerSubmission({ taskId }, { text: "等下一轮的问题", attachments: [] });
+      const queued = await state.runtime.submitComposerSubmission(next);
+      assert.equal(queued.queued, true); assert.equal(preparing, 1);
+      assert.equal(state.runtime.composerScrollTarget(taskId).turnId, first, "queueing cannot steal the current turn's scrolling");
+      assert.equal(state.runtime.composerScrollTarget(taskId).sequence, initial.sequence);
+      responses[0].resolve(); await admitted.completion; await waitFor(() => preparing === 2);
+      const started = state.runtime.composerScrollTarget(taskId);
+      assert.ok(started); assert.equal(started.turnId, queued.turnId); assert.equal(started.turnId, next);
+      assert.ok(started.sequence > initial.sequence); assert.equal(started.paused, false);
+      assert.equal(state.store.getSession(taskId).messages.filter(message => message.role === "user").length, 1, "queued preparation is still before its own admission");
+      state.runtime.pauseComposerScroll(initial.sequence); assert.equal(state.runtime.composerScrollTarget(taskId).paused, false, "a stale gesture cannot pause a later turn");
+      preparation[1].resolve(); await waitFor(() => requests === 2);
+      responses[1].resolve(); await queued.completion;
+      assert.equal(state.runtime.composerScrollTarget(taskId), undefined);
+      assert.equal(state.store.getSession(taskId).messages.filter(message => message.role === "user").length, 2);
+    } finally { preparation.forEach(hold => hold.resolve()); responses.forEach(hold => hold.resolve()); state.runtime.dispose(); }
+  });
+
+  await test("failed preparation clears scrolling and an explicit retry follows the same input with a fresh sequence", async () => {
+    const preparation = [gate(), gate()], response = gate(); let attempts = 0, requests = 0;
+    const state = await fixture(async () => { requests++; await response.promise; return answer("openai-completions", "retry accepted"); }, config(), async () => {
+      const index = attempts++; await preparation[index].promise; if (index === 0) throw new Error("synthetic preparation failure"); return "";
+    });
+    try {
+      const taskId = state.store.session.id, id = state.runtime.beginComposerSubmission({ taskId }, { text: "失败后重试的原文", attachments: [] });
+      const failure = state.runtime.submitComposerSubmission(id).catch(error => error); await waitFor(() => attempts === 1);
+      const first = state.runtime.composerScrollTarget(taskId); assert.ok(first); state.runtime.pauseComposerScroll(first.sequence);
+      preparation[0].resolve(); assert.match((await failure).message, /synthetic preparation failure/u);
+      assert.equal(state.runtime.composerScrollTarget(taskId), undefined); assert.equal(requests, 0); assert.equal(state.store.getSession(taskId).messages.length, 0);
+      assert.equal(state.runtime.retryComposerSubmission(id), true);
+      const retry = state.runtime.submitComposerSubmission(id); await waitFor(() => attempts === 2);
+      const second = state.runtime.composerScrollTarget(taskId); assert.ok(second);
+      assert.equal(second.turnId, first.turnId); assert.equal(second.turnId, id); assert.ok(second.sequence > first.sequence); assert.equal(second.paused, false);
+      preparation[1].resolve(); const admitted = await retry; await waitFor(() => requests === 1);
+      response.resolve(); await admitted.completion;
+      assert.equal(state.runtime.composerScrollTarget(taskId), undefined);
+      assert.equal(state.store.getSession(taskId).messages.filter(message => message.role === "user").length, 1);
+    } finally { preparation.forEach(hold => hold.resolve()); response.resolve(); state.runtime.dispose(); }
+  });
+
+  await test("new-task scrolling hands the agent owner to the admitted task and clears after a Provider failure", async () => {
+    const preparation = gate(), response = gate(); let preparing = false, requests = 0;
+    const state = await fixture(async () => { requests++; await response.promise; throw new Error("synthetic Provider failure"); }, config(), async () => { preparing = true; await preparation.promise; return ""; });
+    try {
+      const existingTasks = state.store.state.sessions.length;
+      const id = state.runtime.beginComposerSubmission({ agentId: "sol" }, { text: "从新任务入口发送", attachments: [] });
+      const pending = state.runtime.submitComposerSubmission(id); await waitFor(() => preparing);
+      const before = state.runtime.composerScrollTarget("agent:sol"); assert.ok(before);
+      assert.equal(before.owner, "agent:sol"); assert.equal(before.turnId, id); assert.ok(before.taskId);
+      assert.equal(state.runtime.composerScrollTarget(before.taskId).sequence, before.sequence);
+      assert.equal(state.store.state.sessions.length, existingTasks, "scrolling starts before the candidate task is published");
+      state.runtime.pauseComposerScroll(before.sequence); preparation.resolve(); const admitted = await pending;
+      const completed = admitted.completion.catch(error => error); await waitFor(() => requests === 1);
+      assert.equal(admitted.taskId, before.taskId); assert.equal(state.runtime.composerScrollTarget(admitted.taskId).owner, "agent:sol");
+      assert.equal(state.runtime.composerScrollTarget(admitted.taskId).paused, true);
+      assert.equal(state.store.getSession(admitted.taskId).messages.filter(message => message.role === "user").length, 1);
+      response.resolve(); assert.match((await completed).message, /模型服务未正常响应/u);
+      assert.equal(state.runtime.composerScrollTarget("agent:sol"), undefined); assert.equal(state.runtime.composerScrollTarget(admitted.taskId), undefined);
+    } finally { preparation.resolve(); response.resolve(); state.runtime.dispose(); }
+  });
+
+  for (const action of ["stop", "edit", "dispose"]) await test(`${action} clears pre-admission scrolling without sending a Provider request`, async () => {
+    const preparation = gate(); let preparing = false, requests = 0;
+    const state = await fixture(async () => { requests++; return answer("openai-completions", "unexpected"); }, config(), async () => { preparing = true; await preparation.promise; return ""; });
+    try {
+      const taskId = state.store.session.id, text = `pending ${action}`;
+      const id = state.runtime.beginComposerSubmission({ taskId }, { text, attachments: [] });
+      const pending = state.runtime.submitComposerSubmission(id).catch(error => error); await waitFor(() => preparing);
+      assert.equal(state.runtime.composerScrollTarget(taskId).turnId, id);
+      if (action === "stop") await state.runtime.cancelComposerSubmission(id);
+      else if (action === "edit") {
+        assert.equal(await state.runtime.restoreComposerSubmission(id), true);
+        assert.equal(state.store.getSession(taskId).draft, text); assert.equal(state.runtime.composerScrollTarget(taskId), undefined);
+        await state.runtime.stopTask(taskId);
+      } else state.runtime.dispose();
+      assert.equal(state.runtime.composerScrollTarget(taskId), undefined);
+      preparation.resolve(); await pending; await waitFor(() => !state.runtime.isBusy(taskId));
+      assert.equal(requests, 0); assert.equal(state.store.getSession(taskId).messages.length, 0);
+      if (action !== "dispose") assert.equal(state.store.getSession(taskId).draft, text);
+    } finally { preparation.resolve(); state.runtime.dispose(); }
+  });
+
+  await test("composer snapshot is visible before admission, fails once and retries the original model without replacing a newer draft", async () => {
+    const hold = gate(); let attempts = 0, payload;
+    const state = await fixture(async request => { payload = JSON.parse(request.body); return answer("openai-completions", "ok"); }, config(), async () => { if (attempts++ === 0) { await hold.promise; throw new Error("preparation failed"); } return ""; });
+    try {
+      const taskId = state.store.session.id;
+      const id = state.runtime.beginComposerSubmission({ taskId }, { text: "原始输入", attachments: [] });
+      assert.equal(state.runtime.composerSubmissions.records.get(id).phase, "preparing");
+      const failed = state.runtime.submitComposerSubmission(id).catch(error => error);
+      await waitFor(() => attempts === 1);
+      await state.store.patchSession(taskId, { draft: "后写的新草稿" });
+      assert.equal(state.store.getSession(taskId).messages.length, 0);
+      hold.resolve(); await failed;
+      assert.equal(state.runtime.composerSubmissions.records.get(id).phase, "failed");
+      assert.equal(await state.runtime.restoreComposerSubmission(id), false);
+      const record = state.runtime.composerSubmissions.records.get(id);
+      record.phase = "review";
+      await state.runtime.cancelResume(taskId);
+      assert.equal(record.cancelled, true); assert.equal(record.phase, "failed");
+      assert.equal(record.queued, true, "cancelled review retains paused input beside the newer draft");
+      const provider = state.settings.apiProviders[0]; provider.models.push({ ...provider.models[0], id: "later-default" }); state.settings.defaultModel = "later-default";
+      const other = state.runtime.beginComposerSubmission({ taskId }, { text: "另一条准备中的消息", attachments: [] });
+      assert.equal(state.runtime.retryComposerSubmission(id), false, "another preparation cannot consume this retry");
+      assert.equal(state.runtime.composerSubmissions.records.get(id).phase, "failed");
+      state.runtime.composerSubmissions.remove(other);
+      assert.ok(state.runtime.retryComposerSubmission(id)); assert.equal(state.runtime.retryComposerSubmission(id), false);
+      const admitted = await state.runtime.submitComposerSubmission(id); await admitted.completion;
+      assert.equal(payload.model, "fixture-model");
+      assert.equal(state.store.getSession(taskId).draft, "后写的新草稿");
+      assert.equal(state.store.getSession(taskId).messages.filter(message => message.role === "user").length, 1);
+      assert.equal(state.runtime.composerSubmissions.records.get(id).phase, "accepted");
+    } finally { state.runtime.dispose(); }
+  });
+
+  await test("composer new-task rejection retains one snapshot without publishing a task; accepted Provider failure cannot become a resend", async () => {
+    const state = await fixture(async () => { throw new Error("network failed"); });
+    try {
+      const provider = state.settings.apiProviders[0], original = provider.apiKey;
+      provider.apiKey = "";
+      const rejected = state.runtime.beginComposerSubmission({ agentId: "sol" }, { text: "新任务", attachments: [] });
+      await assert.rejects(state.runtime.submitComposerSubmission(rejected));
+      assert.equal(state.store.state.sessions.length, 1); assert.equal(state.runtime.composerSubmissions.records.get(rejected).phase, "failed");
+      provider.apiKey = original; state.runtime.composerSubmissions.retry(rejected);
+      const admitted = await state.runtime.submitComposerSubmission(rejected); await admitted.completion.catch(() => {});
+      assert.equal(state.runtime.composerSubmissions.records.get(rejected).phase, "accepted");
+      assert.equal(state.runtime.composerSubmissions.retry(rejected), undefined);
+      assert.equal(state.store.getSession(admitted.taskId).messages.filter(message => message.role === "user").length, 1);
+    } finally { state.runtime.dispose(); }
+  });
+
+  await test("stop racing a durable composer admission preserves one accepted user message without restoring or resending it", async () => {
+    let requests = 0;
+    const state = await fixture(async () => { requests++; return answer("openai-completions", "ok"); });
+    const saved = gate(), release = gate(), rename = state.adapter.rename.bind(state.adapter);
+    const taskId = state.store.session.id;
+    await state.store.patchSession(taskId, { draft: "之后的新草稿" });
+    let held = false;
+    state.adapter.rename = async (from, to) => {
+      await rename(from, to);
+      if (held || to !== state.store.statePath) return;
+      const data = JSON.parse(await state.adapter.read(to));
+      if (!data.sessions.find(task => task.id === taskId)?.messages.some(message => message.role === "user")) return;
+      held = true; saved.resolve(); await release.promise;
+    };
+    try {
+      const id = state.runtime.beginComposerSubmission({ taskId }, { text: "受理与停止同时发生", attachments: [] });
+      const flight = state.runtime.submitComposerSubmission(id).catch(error => error);
+      await saved.promise;
+      const stopping = state.runtime.cancelComposerSubmission(id);
+      release.resolve(); await stopping; await flight;
+      assert.equal(state.runtime.composerSubmissions.records.get(id).phase, "accepted");
+      assert.equal(state.store.getSession(taskId).messages.filter(message => message.role === "user").length, 1);
+      assert.equal(state.store.getSession(taskId).draft, "之后的新草稿");
+      assert.equal(state.runtime.retryComposerSubmission(id), false); assert.equal(requests, 0);
+    } finally { release.resolve(); state.adapter.rename = rename; state.runtime.dispose(); }
+  });
+
+  await test("shared semantic recall and explicit memory_search deliver the same deadline identity in the browser runtime", async () => {
     const query = "今天讨论一下北斗迁移项目的工作计划";
     const records = [
       { id: "target", title: "北斗迁移项目", content: "北斗迁移必须先导出归档，再切换数据库。", recallWhen: "北斗迁移", due: "2026-01-01" },
@@ -29,45 +204,47 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     ].map(record => ({ schema: "echoink.memory.v1", kind: "task", status: "current", basis: "explicit", date: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10), source: "fixture", revision: 1, file: `memory/${record.id}.md`, ...record }));
     let system;
     const state = await fixture(async request => { system = JSON.parse(request.body).messages[0].content; return answer("openai-completions", "ok"); });
-    state.store.bindCanonicalMemory(async () => records);
+    await state.store.update(draft => { draft.memories = records; });
+    const memory = new MobileMemoryService({adapter:state.adapter,store:state.store,settings:()=>state.settings,saveSettings:async()=>{},request:async()=>answer('openai-completions','["target"]'),changed(){},isBusy:()=>false});
+    await memory.initialize();state.runtime.setMemory(()=>memory);state.store.bindCanonicalMemory(()=>memory.recordsForRuntime());
     try {
       assert.deepEqual(Array.from(searchMemories(records, query, 20, "automatic"), record => record.id), ["target"]);
-      const service = { recordsForRuntime: async () => records, memoryActivity: async () => ({ version: 1, vaultId: "fixture", initializedAt: new Date().toISOString(), records: {} }) };
+      const service = memory;
       const tool = mobileTools(state.app, state.store, () => "", undefined, undefined, undefined, undefined, undefined, service).find(tool => tool.name === "memory_search");
       const result = await tool.execute("search-test", { query });
       const found = JSON.parse(result.content[0].text);
       assert.equal(found[0].id, "target"); assert.ok(found.length > 1, "显式搜索只保留绝对门槛，强标题命中不隐藏其他相关记录");
       assert.equal(found[0].overdue, true); assert.equal(found[0].due, "2026-01-01"); assert.ok(found[0].daysAgo > 0);
       await state.runtime.send(query);
-      const injected = JSON.parse(/相关记忆资料：(\[[^\n]*\])/u.exec(system)[1]);
+      const injected = JSON.parse(/<echoink_memory_recall[^>]*>\n([^\n]+)/u.exec(system)[1]).candidates;
       assert.deepEqual(injected.map(record => record.id), ["target"]);
       assert.equal(injected[0].overdue, true); assert.equal(injected[0].due, found[0].due); assert.equal(injected[0].daysAgo, found[0].daysAgo);
       assert.equal(Object.hasOwn(injected[0], "file"), false);
     } finally { state.runtime.dispose(); }
   });
 
-  await test("mobile core is separate from the eight ordinary candidates; actual request/read receipts deduplicate activity", async () => {
-    let calls = 0, target, system, missing = false;
+  await test("mobile core stays outside shared recall budget; actual request/read receipts deduplicate activity", async () => {
+    let calls = 0, target, system, missing = false; const directoryIds = [];
     const state = await fixture(async request => {
       const body = JSON.parse(request.body); system = body.messages[0].content;
       if (calls++ % 2 === 0) return { status: 200, json: { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: `read-${calls}`, type: "function", function: { name: "memory_read", arguments: JSON.stringify({ id: missing ? "mem_missing" : target }) } }] }, finish_reason: "tool_calls" }] } };
       return answer("openai-completions", "ok");
     });
-    const memory = new MobileMemoryService({ adapter: state.adapter, store: state.store, settings: () => state.settings, saveSettings: async () => {}, request: async () => { throw new Error("No Dream inference"); }, changed() {}, isBusy: () => false });
+    const memory = new MobileMemoryService({ adapter: state.adapter, store: state.store, settings: () => state.settings, saveSettings: async () => {}, request: async request => answer("openai-completions", JSON.stringify(JSON.parse(JSON.parse(request.body).messages.at(-1).content).query.includes("北斗发布") ? directoryIds : [])), changed() {}, isBusy: () => false });
     await memory.initialize(); state.runtime.setMemory(() => memory); state.store.bindCanonicalMemory(() => memory.recordsForRuntime());
     try {
       const core = await memory.commitToolMemory(await memory.prepareToolMemory({ kind: "fact", title: "用药安全", content: "对青霉素过敏。".repeat(50), recallWhen: "用药时", basis: "explicit" }, "task", "core", "create"), () => {});
       await memory.setPinned(core.id, true, (await memory.list()).revision);
       for (let index = 0; index < 9; index++) await memory.commitToolMemory(await memory.prepareToolMemory({ kind: "fact", title: `北斗发布 ${index}`, content: `第 ${index} 项发布前核对`, recallWhen: "北斗发布", basis: "explicit" }, "task", `ordinary-${index}`, "create"), () => {});
       const records = await memory.recordsForRuntime(), activity = await memory.memoryActivity();
-      target = searchMemories(records, "北斗发布", 8, "automatic", activity)[0].id;
+      directoryIds.push(...searchMemories(records, "北斗发布", 8, "automatic", activity).map(record=>record.id)); target = directoryIds[0];
       await state.runtime.send("北斗发布");
       const pinned = JSON.parse(/<echoink_memory_core>\n([^\n]+)\n<\/echoink_memory_core>/u.exec(system)[1]);
       assert.deepEqual(Object.keys(pinned[0]).sort(), ["id", "summary", "title"]); assert.ok(pinned[0].summary.length <= 80);
-      const ordinary = JSON.parse(/相关记忆资料：(\[[^\n]*\])/u.exec(system)[1]);
-      assert.equal(ordinary.length, 8); assert.ok(!ordinary.some(record => record.id === core.id));
+      const ordinary = JSON.parse(/<echoink_memory_recall[^>]*>\n([^\n]+)/u.exec(system)[1]).candidates;
+      assert.ok(ordinary.length > 0 && ordinary.length <= directoryIds.length, "shared token budget determines the admitted count"); assert.ok(!ordinary.some(record => record.id === core.id));
       const after = await memory.memoryActivity(); assert.equal(after.records[target].recallCount, 1); assert.equal(after.records[core.id], undefined);
-      assert.equal(state.store.session.runs.at(-1).memorySources.length, 9);
+      assert.equal(state.store.session.runs.at(-1).memorySources.length, ordinary.length + 1);
       const counts = JSON.stringify(after.records); missing = true;
       await state.runtime.send("换个话题，聊月球");
       assert.equal(JSON.stringify((await memory.memoryActivity()).records), counts, "失败的 memory_read 不计数，核心无关时不积累活跃度");
@@ -133,17 +310,17 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
         return answer("openai-completions", text);
       }, config({ toolCalling: mode !== "disabled" }));
       const failed = mode === "disabled" || mode === "enabled";
-      if (failed) await assert.rejects(state.runtime.send("read supplied note"), /本轮没有执行工具/u);
+      if (failed) await assert.rejects(state.runtime.send("read supplied note"), /未实际执行工具调用/u);
       else await state.runtime.send("read supplied note");
       const task = state.store.session;
       assert.equal(task.taskStatus, failed ? "interrupted" : "completed");
       assert.equal(task.messages.at(-1).content[0].text, text);
       const reopened = new MobileStore(state.adapter, "plugin/mobile", "task-fixture"); await reopened.load();
       const runtime = new MobileRuntime(state.app, reopened, () => state.settings, async () => { throw new Error("no replay"); });
-      assert.equal(/本轮没有执行工具/u.test(runtime.stateFor(task.id).error), failed);
+      assert.equal(/未实际执行工具调用/u.test(runtime.stateFor(task.id).error), failed);
       if (failed) {
         assert.match(reopened.session.runs.at(-1).interruption.toolCallTextFailure, /^model_tool_call_text_/u);
-        assert.match(reopened.session.runs.at(-1).interruption.detail, /本轮没有执行工具/u);
+        assert.match(reopened.session.runs.at(-1).interruption.detail, /未实际执行工具调用/u);
       }
       runtime.dispose(); state.runtime.dispose();
     }
@@ -163,7 +340,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
       return answer("openai-completions", "已读取真实工具结果");
     }, settings, undefined, true, async () => { saves++; await saveGate.promise; saved = JSON.stringify(settings); });
     try {
-      await assert.rejects(state.runtime.send("读取笔记"), /本轮没有执行工具/u);
+      await assert.rejects(state.runtime.send("读取笔记"), /未实际执行工具调用/u);
       const id = state.store.session.id;
       assert.equal(state.store.session.interruption.providerSettingsId, original.id);
       assert.equal(state.store.session.interruption.modelId, "fixture-model");
@@ -189,10 +366,10 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
       async () => { saves++; throw new Error("synthetic settings save failure"); });
     try {
       await assert.rejects(state.runtime.send("原任务")); const id = state.store.session.id;
-      await assert.rejects(state.runtime.resumeTask(id, "保留补充输入"), /设置保存失败/u);
+      await assert.rejects(state.runtime.resumeTask(id, "保留补充输入"), /设置未能保存/u);
       assert.equal(saves, 1); assert.equal(calls, 1); assert.equal(JSON.stringify(settings), before);
       assert.equal(state.store.session.taskStatus, "interrupted"); assert.equal(state.store.session.draft, "保留补充输入");
-      assert.match(state.runtime.stateFor(id).error, /设置保存失败/u);
+      assert.match(state.runtime.stateFor(id).error, /设置未能保存/u);
     } finally { state.runtime.dispose(); }
   });
 
@@ -290,7 +467,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     await state.runtime.send("existing task", created.taskId); assert.equal(payload.model, "chosen-model"); assert.equal(turn.permission, "read-only"); assert.equal(turn.skillId, undefined); assert.equal(turn.notePath, "笔记/来源.md");
     for (const invalid of [{ ...metadata, selectedModel: "removed-model" }, { ...metadata, selectedProviderSettingsId: "removed-provider" }]) {
       await state.store.patchSession(created.taskId, { draft: "keep invalid selection", draftContext: invalid }); const count = state.store.session.messages.length;
-      await assert.rejects(state.runtime.send("keep invalid selection", created.taskId), /失效/u); assert.equal(state.store.session.messages.length, count); assert.equal(state.store.session.draft, "keep invalid selection");
+      await assert.rejects(state.runtime.send("keep invalid selection", created.taskId), /已被删除/u); assert.equal(state.store.session.messages.length, count); assert.equal(state.store.session.draft, "keep invalid selection");
     }
     state.runtime.dispose();
   });
@@ -473,7 +650,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
         const searchProvider = mobileProvider("deepseek"); searchProvider.apiKey = "synthetic-search-key";
         state.settings.apiProviders.push(searchProvider); state.settings.tavily = { enabled: true, provider: "deepseek", apiKey: "" };
       }
-      const rejected = assert.rejects(state.runtime.send("preserve input"), /变化|失效/u);
+      const rejected = assert.rejects(state.runtime.send("preserve input"), /变化|变更|失效|已删除|已被删除/u);
       await waitFor(() => started);
       if (change === "endpoint") state.settings.apiProviders[0].baseUrl = "https://changed.example/v1";
       if (change === "key") state.settings.apiProviders[0].apiKey = "changed-synthetic-key";
@@ -536,7 +713,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     const history = Array.from({ length: 10 }, (_, index) => ({ role: "user", content: `history ${index} ` + "背景资料。".repeat(200), timestamp: index }));
     const old = { text: "old summary", throughMessageCount: 1, sourceDigest: taskMessageDigest(history.slice(0, 1)), createdAt: 1 };
     await state.store.patchSession(state.store.session.id, { messages: history, contextSummary: old, draft: "new" });
-    await assert.rejects(state.runtime.send("new"), /SUMMARY_FAILED/u);
+    await assert.rejects(state.runtime.send("new"), /模型服务暂时不可用/u);
     assert.deepEqual(state.store.session.messages, history); assert.deepEqual(state.store.session.contextSummary, old); assert.equal(state.store.session.draft, "new"); state.runtime.dispose();
     const blocked = gate(); let requested = false;
     const cancel = await fixture(async () => { requested = true; return blocked.promise; }, settings);

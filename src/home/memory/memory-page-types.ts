@@ -1,6 +1,13 @@
 import type { PersonalMemoryRecord, SecondaryMemoryRecord } from "../../harness/memory/personal-memory-contracts";
 import type { MemoryActivityState, MemoryLayer } from "../../harness/memory/memory-relevance";
 import type { UserProfileItem } from "../../harness/memory/user-profile-core";
+import type { DreamCorrectionEvent } from "../../harness/memory/dream-correction-core";
+
+export interface MemoryCorrectionView extends DreamCorrectionEvent {
+  before?: PersonalMemoryRecord;
+  after?: PersonalMemoryRecord;
+  canUndo: boolean;
+}
 
 export type MemoryCategory = "facts" | "views" | "decisions" | "active" | "episodes";
 export const MEMORY_CATEGORIES = [
@@ -26,20 +33,23 @@ export interface MemoryStar extends PersonalMemoryRecord {
   profiles: readonly UserProfileItem[];
   clues: readonly SecondaryMemoryRecord[];
 }
-export interface MemoryReceipt { conversationId: string; messageId?: string; question?: string; sources: readonly { id: string; title: string; reason?: string }[] }
+export interface MemoryReceipt { conversationId: string; messageId?: string; question?: string; selectedId?: string; sources: readonly { id: string; title: string; reason?: string; relatedFrom?: { id: string; title: string } }[] }
 export interface MemoryPageSnapshot {
+  corrections?: readonly MemoryCorrectionView[];
   revision: number;
   now: number;
   enabled: boolean;
   stars: readonly MemoryStar[];
   profile: readonly UserProfileItem[];
   activityState: MemoryActivityState;
-  preview?: { query: string; reasons?: Readonly<Record<string, string | undefined>>; recalled: readonly string[]; faded: readonly string[] };
+  preview?: { query: string; reasons?: Readonly<Record<string, string | undefined>>; relatedFrom?: Readonly<Record<string, { id: string; title: string } | undefined>>; recalled: readonly string[]; faded: readonly string[] };
   receipt?: MemoryReceipt;
 }
 export interface MemoryPageRequest { query?: string; receipt?: MemoryReceipt; now?: number }
 /** The view consumes one query and user-control commands; no repository escapes. */
 export interface MemoryPagePort {
+  undoCorrection?(eventId: string): Promise<string>;
+  originalQuote?(source: string): Promise<string>;
   query(request: MemoryPageRequest): Promise<MemoryPageSnapshot>;
   pin(id: string, pinned: boolean, revision: number): Promise<void>;
   restore(id: string): Promise<void>;

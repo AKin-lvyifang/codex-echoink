@@ -19,7 +19,7 @@ export interface PersonalMemoryFixture {
 
 export async function withPersonalMemoryFixture<T>(
   callback: (fixture: Readonly<PersonalMemoryFixture>) => Promise<T>,
-  options: Readonly<{ watchExternalChanges?: boolean }> = {}
+  options: Readonly<{ watchExternalChanges?: boolean; failTransactionAfterChange?: import("../harness/memory/personal-memory-repository").PersonalMemoryRepositoryOptions["failTransactionAfterChange"] }> = {}
 ): Promise<T> {
   const vaultPath = await mkdtemp(path.join(tmpdir(), "echoink-personal-memory-"));
   const vaultId = `vault-${path.basename(vaultPath)}`;
@@ -33,6 +33,7 @@ export async function withPersonalMemoryFixture<T>(
       vaultId,
       now,
       idFactory: () => `mem_fixture_${++identifier}`,
+      failTransactionAfterChange: options.failTransactionAfterChange,
       watchExternalChanges: options.watchExternalChanges
     });
     repositories.add(created);

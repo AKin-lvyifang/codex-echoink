@@ -120,6 +120,7 @@ await test("Skill grants survive Agent editing through the production Registry w
 });
 await test("module handoff only fills the Registry owner's unsent draft and conflicts never overwrite it", async () => {
   const f = await fixture();
+  f.settings.agentRegistry.moduleOwners.todos = "";
   await assert.rejects(f.services.modules.handoff("todos", "no owner"), error => error.code === "module_owner_required");
   f.settings.agentRegistry.moduleOwners.todos = "generalist";
   const count = f.store.state.sessions.length, owner = f.services.modules.owner("todos");

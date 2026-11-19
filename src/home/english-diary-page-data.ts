@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { summarizeDiaryActivity } from "../english-diary/activity";
 import type { DiaryGenerationDay, DiaryRepository, ExpressionEntry, SavedDiaryEntry } from "../english-diary/types";
 
@@ -12,7 +13,7 @@ export interface EnglishDiaryPageData {
   errors: Partial<Record<"activity" | "diaries" | "expressions", string>>;
 }
 
-const message = (error: unknown): string => error instanceof Error ? error.message : "暂时读不到，请重试。";
+const message = (error: unknown): string => userFacingErrorText(error, "暂时无法读取。请稍后重试。");
 
 /** Local, independent read regions. A failed or incomplete count stays unknown. */
 export async function loadEnglishDiaryPageData(host: EnglishDiaryPageHost, now = new Date()): Promise<EnglishDiaryPageData> {
@@ -20,7 +21,7 @@ export async function loadEnglishDiaryPageData(host: EnglishDiaryPageHost, now =
   const [activityResult, diaryResult, expressionResult] = await Promise.allSettled([
     Promise.resolve().then(() => repository.listGenerationActivity({ readOnly: true })),
     Promise.resolve().then(() => {
-      if (!repository.listSavedDiaries) throw new Error("英文日记列表暂时读不到，请重试。");
+      if (!repository.listSavedDiaries) throw new Error("英文日记列表暂时无法读取，请重试。");
       return repository.listSavedDiaries();
     }),
     Promise.resolve().then(() => repository.listExpressions("", undefined, { readOnly: true }))

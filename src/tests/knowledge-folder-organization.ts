@@ -64,14 +64,24 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     const call = async (toolName: string, input: Record<string, unknown>) => {
       const toolCallId = `folder-call-${++sequence}`;
       const blocked = await handlers.get("tool_call")!({ toolName, toolCallId, input }, { signal: undefined });
-      if (blocked) return blocked;
+      if (blocked) {
+        if (blocked.reason.startsWith("{")) {
+          const value = JSON.parse(blocked.reason);
+          assert(value.allowedDirectories.wiki === "成果");
+          return { block: true, reason: value.error.code };
+        }
+        return blocked;
+      }
       let result;
       try { result = await tools.find(tool => tool.name === toolName)!.execute(toolCallId, input, undefined, undefined); }
       catch (error) { result = { isError: true, content: [{ type: "text", text: String(error) }] }; }
       return await handlers.get("tool_result")!({ toolName, toolCallId, ...result, isError: result.isError === true });
     };
     const blocked = { block: true, reason: "tool_policy_blocked" };
-    const move = (sourcePath: string, targetPath: string, content = BODY) => ({ sourcePath, targetPath, expectedVersion: sha256(content) });
+    const disabled = { block: true, reason: "vault_organization_disabled" };
+    const outside = { block: true, reason: "vault_organization_out_of_scope" };
+    const unbound = { block: true, reason: "vault_directory_unbound" };
+    const move = (sourcePath: string, targetPath: string, content = BODY) => ({ sourcePath, targetPath, expectedVersion: `sha256:${sha256(content)}` });
     const save = (relativePath: string) => ({ relativePath, content: "# 保存内容\n" });
     const exists = async (relativePath: string) => !!await stat(path.join(vault, relativePath)).catch(() => null);
 
@@ -80,9 +90,9 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     assert.equal((await call("note_create", save("成果/直接保存.md"))).isError, false);
     assert.equal((await call("note_create", save("成果/已有/保存.md"))).isError, false, "closed organization does not block saving in an existing category");
     const confirmationsBeforeDenied = confirmations;
-    assert.deepEqual(await call("note_create", save("成果/未批准/保存.md")), blocked);
-    assert.deepEqual(await call("note_create", save("普通目录/未批准/保存.md")), blocked, "an existing unbound parent does not grant missing descendants");
-    assert.deepEqual(await call("note_move", move(SOURCE, "来源甲/已有/归类.md")), blocked);
+    assert.deepEqual(await call("note_create", save("成果/未批准/保存.md")), disabled);
+    assert.deepEqual(await call("note_create", save("普通目录/未批准/保存.md")), unbound, "an existing unbound parent does not grant missing descendants");
+    assert.deepEqual(await call("note_move", move(SOURCE, "来源甲/已有/归类.md")), disabled);
     assert.equal(confirmations, confirmationsBeforeDenied, "folder policy denies before asking for write confirmation");
     assert.equal(await exists("成果/未批准"), false);
 
@@ -90,19 +100,19 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     assert.equal((await call("note_create", save("成果/新分类/子类/保存.md"))).isError, false, "consented production create builds a category");
     assert.equal((await call("note_move", move(SOURCE, "来源甲/新分类/归类.md"))).isError, false, "production move may create its consented category");
     assert.equal(await readFile(path.join(vault, "来源甲/新分类/归类.md"), "utf8"), BODY);
-    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "来源乙/归类.md")), blocked, "two Raw bindings remain separate even when both are open");
-    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "成果/归类.md")), blocked);
-    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "来源甲/知识/归类.md")), blocked, "a nested Wiki binding is not part of the Raw binding");
+    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "来源乙/归类.md")), outside, "two Raw bindings remain separate even when both are open");
+    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "成果/归类.md")), outside);
+    assert.deepEqual(await call("note_move", move("来源甲/新分类/归类.md", "来源甲/知识/归类.md")), outside, "a nested Wiki binding is not part of the Raw binding");
     await fixture.write("成果/原成果.md", BODY);
-    assert.deepEqual(await call("note_move", move("成果/原成果.md", "来源甲/知识/原成果.md")), blocked, "two actual roots of the same outcome role cannot exchange files");
-    assert.deepEqual(await call("note_move", move("成果/原成果.md", "普通目录/原成果.md")), blocked);
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "来源甲/知识/原成果.md")), outside, "two actual roots of the same outcome role cannot exchange files");
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "普通目录/原成果.md")), outside);
 
     const rawPath = "来源甲/新分类/归类.md";
     assert.deepEqual(await call("note_update", { relativePath: rawPath, expectedVersion: sha256(BODY), content: "# 已篡改来源\n" }), blocked, "organization consent never grants source body editing");
-    assert.equal((await call("metadata_update", { relativePath: rawPath, expectedVersion: sha256(BODY), patch: { set: { topic: "test" } } })).isError, false);
+    assert.equal((await call("metadata_update", { relativePath: rawPath, expectedVersion: `sha256:${sha256(BODY)}`, patch: { set: { topic: "test" } } })).isError, false);
     const withMetadata = await readFile(path.join(vault, rawPath), "utf8");
     assert.equal(canonicalRawMarkdownForDigest(withMetadata), canonicalRawMarkdownForDigest(BODY));
-    assert.equal((await call("note_update", { relativePath: rawPath, expectedVersion: sha256(withMetadata), content: `---\ntopic: updated\n---\n${BODY}` })).isError, false, "the canonical source body protection permits metadata-only updates");
+    assert.equal((await call("note_update", { relativePath: rawPath, expectedVersion: `sha256:${sha256(withMetadata)}`, content: `---\ntopic: updated\n---\n${BODY}` })).isError, false, "the canonical source body protection permits metadata-only updates");
 
     for (const permission of ["read-only", "workspace-write"] as const) {
       access = { ...access, permission, mode: permission === "workspace-write" ? "plan" : "agent" };
@@ -130,17 +140,17 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     config.allowAgentSubfolders = true;
     config.roles.wiki.allowedSubdirectories = ["旧批准/最深"];
     config.roles.wiki.autoOrganizePaths = ["成果"];
-    assert.deepEqual(await call("note_create", save("成果/旧批准/最深/拒绝.md")), blocked);
-    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/已有/关闭.md")), blocked);
+    assert.deepEqual(await call("note_create", save("成果/旧批准/最深/拒绝.md")), disabled);
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/已有/关闭.md")), disabled);
     await mkdir(path.join(vault, "成果/选定"));
     config.organization = { enabled: true, scope: "selected", paths: ["成果/选定", "来源甲/新分类"] };
     assert.equal((await call("note_create", save("成果/选定/子/继承.md"))).isError, false);
-    assert.deepEqual(await call("note_create", save("成果/选定-other/拒绝.md")), blocked, "similar prefixes are outside selection");
-    assert.deepEqual(await call("note_create", save("成果/其他/拒绝.md")), blocked);
+    assert.deepEqual(await call("note_create", save("成果/选定-other/拒绝.md")), outside, "similar prefixes are outside selection");
+    assert.deepEqual(await call("note_create", save("成果/其他/拒绝.md")), outside);
     await fixture.write("成果/选定/原文.md", BODY);
     assert.equal((await call("note_move", move("成果/选定/原文.md", "成果/选定/子/移动.md"))).isError, false);
-    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/选定/外部来源.md")), blocked, "source also needs selected-scope consent");
-    assert.deepEqual(await call("note_move", move("成果/选定/子/移动.md", "成果/已有/越界.md")), blocked);
+    assert.deepEqual(await call("note_move", move("成果/原成果.md", "成果/选定/外部来源.md")), outside, "source also needs selected-scope consent");
+    assert.deepEqual(await call("note_move", move("成果/选定/子/移动.md", "成果/已有/越界.md")), outside);
     config.organization.paths.push("普通目录", "尚不存在的绑定");
     assert.equal(knowledgeMayCreateCategoryDirectory(config, "普通目录/新分类"), false, "stored out-of-binding selections never grant access");
     assert.equal(knowledgeMayCreateCategoryDirectory(config, "尚不存在的绑定/新分类"), false);
@@ -150,6 +160,16 @@ export async function runKnowledgeFolderOrganizationTests(): Promise<void> {
     assert.equal(knowledgeMayCreateCategoryDirectory(config, "成果"), false, "permission cannot create the binding root itself");
     assert.equal(knowledgeMayOrganizeMove(config, "来源甲/新分类/归类.md", "来源乙/归类.md"), false);
     config.organization = { enabled: false, scope: "all", paths: [] };
+
+    const largePath = "成果/大篇.md", largeBody = BODY.repeat(1800);
+    await fixture.write(largePath, largeBody);
+    const failed = await call("metadata_update", { relativePath: largePath, expectedVersion: `sha256:${"0".repeat(64)}`, patch: { set: { topic: "stale" } } });
+    const failure = JSON.parse(failed.content[0].text);
+    assert.equal(failure.error.code, "version_conflict");
+    assert(failure.recovery.includes("Read"));
+    assert.equal(failure.readbackOmitted, true);
+    assert.equal(await readFile(path.join(vault, largePath), "utf8"), largeBody, "real conflicts never mutate the source");
+    assert.equal((await call("note_delete", { relativePath: largePath, expectedVersion: `sha256:${sha256(largeBody)}` })).isError, false);
 
     await assertMaintenanceCategoryPolicy({ root, vault, fixture, config, domain });
     console.log("Knowledge folder organization production policy: PASS");

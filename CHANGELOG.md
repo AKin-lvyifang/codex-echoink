@@ -1,5 +1,59 @@
 # Changelog
 
+## 2.9.0 - 2026-11-19
+<!-- release-type: feat -->
+### 2.9.0 · 整库云同步，跨设备接着聊
+
+![EchoInk 2.9.0：整库云同步，跨设备接着聊](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.9.0/assets/releases/echoink-agent-2.9.0-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **整库云同步保留原来的目录层级。** 开启后可同步笔记、附件和空文件夹，可按子目录排除，也可关闭附件同步。在线设备之间的日常小改动通常可在秒级到达，断线恢复后继续同步。大文件和首次同步耗时取决于网速与文件量。电脑端工作台显示同步状态和用量。点笔记标题旁的云图标，可看本机与云端时间；发生冲突并保留旧版本时，可从本机版本记录恢复。
+- **在这台设备接着聊。** 工作台的「其他设备的对话」可以查看已同步的会话。电脑端用对话弹窗打开，工具步骤折叠，较长对话先显示最新 30 条消息。点「在这台设备接着聊」会在本机总助下新建同名对话，带入已收到的聊天记录。手机和平板可从「一人公司」查看和接续。各端也能查看已同步的其他设备项目，项目仍在原设备运行。
+- **在笔记旁批注、解释和翻译。** 电脑端阅读笔记时选中文字即可写评论，也能请 AI 解释、翻译、找相关笔记或在评论中 @Agent 追问。笔记评论需要登录并启用 PRO 权益，AI 操作使用所选模型的额度。
+- **看清对话用了哪些记忆。** 对话会从已命中的记忆继续找直接相关的线索，展开「用了 N 条」可看来源及使用原因。记忆整理可按原话修正或关闭过时条目，固定条目也会留下修改记录，支持时可撤销。手机和平板补齐了来源、关联和纠错记录。
+- **总助派活时可以开放文件夹。** 电脑端可在总助编辑页关闭这项默认开启的能力；手机和平板采用相同的任务权限规则，暂没有单独开关。模块目录仍由负责人写入，既有删除确认和付费模块权益继续适用。工作台每条建议也可以单独忽略，随后从工作台恢复。
+- **对话发送、滚动和恢复更顺畅。** 手机端减少了发送时的界面等待，并修正底栏遮挡输入区的问题。普通对话会带上设备当前日期。修复恢复任务后新的笔记写入被误拦的问题。更新了智谱 GLM-5.3 的输出上限；电脑端遇到纯思考耗尽额度时会停止自动重试并给出提示。常见报错会说明下一步，上报问题需登录，导出仍可在本机完成。
+
+#### 如何使用
+
+在「设置 → 账号与会员」登录并启用设备，在「云同步」用同一个账号的密码开启同步。云同步默认关闭，需有效云同步权益，PRO 订阅含 1 GB。开启前可以调整同步范围。只想跨设备接着聊，也可用自己配置的同步工具同步 Vault 中的 `EchoInk/同步数据` 文件夹。
+
+电脑端登录后，模型列表会提供小echo。小echo 无需单独填写模型 API Key，按线路和用量扣除账号内的 AI 点数。在工作台手动签到，按北京时间每连续 7 天可得 100 点，每自然月最多 400 点，获赠点数 30 天有效。使用自备模型时仍按对应服务商规则计费。
+
+#### 下载与升级
+
+需要 **Obsidian 1.11.4 及以上**。升级前完整备份 Vault、插件设置和数据。使用 EchoInk 云同步的设备请统一升级到 2.9.0 后再继续同步，旧版可能把空文件夹识别成同名空文件。通过 Obsidian 社区插件检查更新，或从[本次 Release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.0) 下载 **main.js、manifest.json、styles.css**，只替换 `.obsidian/plugins/codex-echoink/` 中这三个文件，保留原有设置和数据，再重新启用插件。**移动端仍为 Beta，本版新增与修复未经 iPhone/iPad 真机验证**。支持范围见 [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.9.0/README_CN.md)。自选模型与搜索服务由相应服务商另行计费。
+
+### English
+
+**2.9.0 · Sync your vault and pick up chats across devices**
+
+Type: New
+
+#### What's new
+
+- **Cloud sync keeps your vault's folder structure.** Once enabled, it syncs notes, attachments, and empty folders. You can exclude subfolders or turn off attachment sync. Small edits typically reach other online devices within seconds. Sync resumes after a disconnect. Initial sync and large transfers depend on your connection and file volume. The desktop workbench shows sync status and storage used. Click the cloud icon in a note header to see local and cloud timestamps and restore a locally kept version if a conflict left one.
+- **Pick up a chat on this device.** Conversations on other devices appears on the workbench after records sync. The new desktop dialog presents messages in chat order, folds tool steps, and shows the latest 30 messages first for longer conversations. Choose Continue on this device to open a new chat with the same title under your assistant and bring in the received history. On phones and tablets, open One-person company to view and resume chats. Each platform can also show synced projects from other devices, while the projects continue running on the original device.
+- **Comment, explain, and translate in a note.** Select text in desktop reading view to add a comment, ask AI for an explanation or translation, find related notes, or @mention an agent in the thread. Note comments require sign-in and active PRO access on the device. AI actions use the selected model's allowance.
+- **See which memories your chat used.** A chat can follow a relevant memory to directly related ones. Expand Memories used to see sources and why they were used. Memory review can update or close outdated entries based on the original conversation, with a change record for pinned entries too and undo when available. Phones and tablets now show sources, links, and correction history.
+- **Your assistant can share folders when dispatching work.** On desktop you can turn off this default-on option in the assistant editor. Phones and tablets use the same task permissions and currently have no switch. Module owners still control writes to their folders, with existing delete confirmations and paid-module requirements. You can also dismiss individual workbench suggestions and restore them later.
+- **Sending, scrolling, and resuming feel smoother.** On mobile, input responds sooner after you tap Send, and a layout fix keeps the floating bar clear of the input area. Chats include the device's current date. Resuming a task no longer incorrectly blocks new note writes. GLM-5.3 uses its updated output limit. On desktop, retries stop with a notice if reasoning uses all available output. Common errors show what to do next. Sending a report requires sign-in, while local export remains available.
+
+#### How to use
+
+Sign in and activate the device under Settings → Account & membership. Then enable Cloud Sync on each device with the password for the same account. Sync is off by default and requires an active sync entitlement. PRO subscriptions include 1 GB. Review the sync scope before enabling it. To continue chats with a sync service you already use, include the vault's `EchoInk/同步数据` folder.
+
+On desktop, xiaoecho appears in the model list after sign-in. It needs no separate model API key and uses your account's AI credits based on the model tier and usage. Check in manually on the workbench to earn 100 credits for each seven-day streak, up to 400 per calendar month, based on Beijing time. Reward credits expire after 30 days. Your own model service still bills according to its terms.
+
+#### Download and upgrade
+
+Requires **Obsidian 1.11.4 or later**. Back up your complete vault, plugin settings, and data before upgrading. Update all devices using EchoInk Cloud Sync to 2.9.0 before resuming sync. An older version may interpret an empty folder as an empty file with the same name. Check for updates in Obsidian's community plugins, or download **main.js, manifest.json, and styles.css** from [this release](https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.0). Replace only those three files in `.obsidian/plugins/codex-echoink/`, keep existing settings and data, and re-enable the plugin. **Mobile remains in Beta. This version's additions and fixes have not been verified on physical iPhone or iPad devices.** See the [README](https://github.com/AKin-lvyifang/codex-echoink/blob/2.9.0/README.md) for supported features. Your selected model and search service providers bill separately.
+
 ## 2.8.10 - 2026-11-06
 <!-- release-type: feat -->
 ### 2.8.10 · 一人公司开工

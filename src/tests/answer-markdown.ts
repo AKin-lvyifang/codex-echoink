@@ -1,12 +1,27 @@
+import { runPressFeedbackTests } from "./press-feedback";
 import { installObsidianDom } from "./obsidian-dom";
 import assert from "node:assert/strict";
 import { Component, MarkdownRenderer, TFile, type App } from "obsidian";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { splitVaultNoteLinkSegments } from "../core/vault-note-links";
 import { AnswerMarkdownRenderer, prepareAnswerMarkdown } from "../ui/answer-markdown";
+import { splitStreamMarkdown } from "../ui/stream-markdown-blocks";
 import { preserveTextSelectionDuringMutation } from "../ui/codex-view/message-list";
 
 export async function runAnswerMarkdownTests(): Promise<void> {
+  await runPressFeedbackTests();
+  assert.deepEqual(splitStreamMarkdown("first\n\nsecond"), ["first\n\n", "second"]);
+  for (const fence of ["```", "~~~~"]) {
+    const code = `${fence}js\nfirst\n\nsecond\n${fence}\n\nafter`;
+    assert.deepEqual(splitStreamMarkdown(code), [code.slice(0, code.indexOf("after")), "after"]);
+    assert.equal(splitStreamMarkdown(`${fence}js\nfirst\n\nsecond`).length, 1);
+  }
+  assert.equal(splitStreamMarkdown("- first\n\n  continued\n- second").length, 1, "loose list continuation stays with its list");
+  for (const indent of ["    ", "\t"]) {
+    const code = `${indent}first\n\n${indent}second\n\nafter`;
+    assert.deepEqual(splitStreamMarkdown(code), [code.slice(0, code.indexOf("after")), "after"], "blank lines do not divide an indented code block");
+  }
+  assert.equal(splitStreamMarkdown("[label][id]\n\n[id]: https://example.com").length, 1, "global definitions retain native context");
   const math = String.raw`行内 \( a^2+b^2 \)，行间 \[\sum_{i=1}^n i\]；花了 $5 和 $10。`;
   assert.equal(normalizeMarkdownMath(math), "行内 $a^2+b^2$，行间 \n$$\n\\sum_{i=1}^n i\n$$\n；花了 $5 和 $10。");
   for (const example of ["`\\(code\\)`", "``code ` \\[x\\]``", "```tex\n\\(code\\)\n```", "~~~~\n\\[code\\]\n~~~\n~~~~", "```\n\\(unfinished\\)"]) {
@@ -95,6 +110,27 @@ export async function runAnswerMarkdownTests(): Promise<void> {
     assert.equal(remounted.childElementCount, 0, "disposed/session-switched slots cannot reappear");
     assert.equal((pending[3].component as unknown as { unloaded: boolean }).unloaded, true);
     assert.equal(commits, 2);
+    MarkdownRenderer.render = async (_app, text, el) => { el.createEl("p", { text }); };
+    const incremental = new AnswerMarkdownRenderer(), incrementalHost = document.body.createDiv();
+    const publish = (text: string, streaming: boolean) => incremental.render({ app, text, streaming,
+      container: incrementalHost, key: "blocks", sourcePath: "wiki/会话.md", mutate: preserveTextSelectionDuringMutation, onCommit() {} });
+    publish("stable paragraph\n\ntail", true); await settle();
+    const firstBlock = incrementalHost.querySelector(".echoink-answer-markdown-block")!;
+    const stableParagraph = firstBlock.querySelector("p")!;
+    selected.setBaseAndExtent(stableParagraph.firstChild!, 0, stableParagraph.firstChild!, 6);
+    publish("stable paragraph\n\ntail grows", true); await settle();
+    assert.equal(firstBlock.querySelector("p"), stableParagraph, "increments retain completed native blocks");
+    assert.equal(selected.toString(), "stable");
+    publish("stable paragraph\n\ntail grows", false); await settle();
+    assert.equal(firstBlock.querySelector("p"), stableParagraph, "completion native-renders only the tail");
+    assert.equal(selected.toString(), "stable", "completion retains a selection in a completed block");
+    const prefix = document.createTextNode("new leading whitespace\n");
+    preserveTextSelectionDuringMutation(incrementalHost, () => firstBlock.before(prefix));
+    assert.equal(selected.toString(), "stable", "new preceding content cannot shift endpoints that still exist");
+    selected.setBaseAndExtent(stableParagraph.firstChild!, 7, stableParagraph.firstChild!, 16);
+    preserveTextSelectionDuringMutation(incrementalHost, () => firstBlock.before(document.createTextNode("another prefix\n")));
+    assert.equal(selected.toString(), "paragraph", "the reused document Selection follows a later user selection immediately");
+    incremental.clear();
   } finally {
     renderer.clear(); MarkdownRenderer.render = original; dom.window.close();
   }

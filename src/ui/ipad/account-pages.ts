@@ -1,3 +1,5 @@
+import { CAUSE } from "../../core/error-copy";
+import { mountSmartJudgmentAccount } from "../smart-judgment-surfaces";
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { Notice } from "obsidian";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
@@ -6,12 +8,12 @@ import { createPluginEditionBadge } from "../../settings/plugin-edition-badge";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { ipadIcon } from "./workbench-elements";
 import { settingsText as t } from "./settings-i18n";
-import { el, settingsContent, settingsRow, settingsAction, settingsField, settingsError, showSettingsError, liveSettingsPage, leaveSettingsConfirm, type IPadSettingsContext } from "./settings-elements";
+import { el, settingsContent, settingsRow, settingsGroup, settingsToggle, settingsAction, settingsField, settingsError, showSettingsError, liveSettingsPage, leaveSettingsConfirm, type IPadSettingsContext } from "./settings-elements";
 
 const validPro = (vm: AccountMembershipViewModel): boolean => ["active", "lifetime", "offline-valid"].includes(vm.membership.state);
 const accountKey = (api: AccountMembershipAdapter): string | null => api.read().identity?.email.trim().toLowerCase() ?? null;
 const english = (ctx: IPadSettingsContext): boolean => ctx.host.settings().settingsLanguage === "en";
-const planNames: Record<MembershipPlanId, string> = { early: "早鸟买断", month: "月卡", quarter: "季卡", year: "年卡" };
+const planNames: Record<MembershipPlanId, string> = { early: "早鸟终生买断", month: "PRO 月卡", quarter: "PRO 季卡", year: "PRO 年卡", "max-month": "Max 月卡", "max-quarter": "Max 季卡", "max-year": "Max 年卡" };
 const stateNames: Record<MembershipState, string> = { unavailable: "服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "终生买断权益", "offline-valid": "离线可用", "verification-required": "需要联网验证", expired: "已到期", revoked: "已撤销", "device-limit": "设备名额已满", "device-required": "本机待激活", scheduled: "尚未生效" };
 const emailValid = (email: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email.trim());
 function cleanFailure(failure: unknown, secrets: string[]): string {
@@ -36,7 +38,7 @@ function accountView(ctx: IPadSettingsContext, api: AccountMembershipAdapter, id
     content, fields, error, leaveArea, page: { id, title, content } as MobileShellPage,
     get alive() { return !disposed; }, get busy() { return busy; }, dirty: () => false, discard: () => {}, update: () => {},
     changed: () => { allowLeave = false; error.hidden = true; }, allow: () => { allowLeave = true; },
-    report: (failure: unknown, secrets: string[] = []) => { if (!disposed) showSettingsError(error, t(ctx, cleanFailure(failure, secrets))); },
+    report: (failure: unknown, secrets: string[] = []) => { if (!disposed) showSettingsError(error, t(ctx, cleanFailure(failure, secrets)), ctx); },
     cleanup: (dispose: () => void) => cleanup.push(dispose),
     async run(action: () => Promise<void>, secrets: string[] = [], transition?: { identity: string | null }): Promise<boolean> {
       if (disposed || busy) return false;
@@ -68,7 +70,17 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
   const api: AccountMembershipAdapter = ctx.host.accountService ?? createUnavailableAccountAdapter(), v = accountView(ctx, api, "ipad-settings-account", "账号与会员");
   const head = el(ctx.document, "div", "pd-account-head-area"), notices = el(ctx.document, "div", "pd-account-notices"), usage = el(ctx.document, "div", "pd-account-stats"), benefits = el(ctx.document, "div", "pd-account-benefits"), plans = el(ctx.document, "div", "pd-account-plans");
   const usageHeading = heading(ctx, v.fields, "我的使用"); usageHeading.append(el(ctx.document, "span", "pd-account-location", t(ctx, "当前 Vault · 本地")));
-  v.fields.prepend(head, notices); v.fields.append(usage); const benefitsHeading = heading(ctx, v.fields, "权益对比"); v.fields.append(benefits);
+  v.fields.prepend(head, notices); v.fields.append(usage);
+  const smartJudgment = mountSmartJudgmentAccount(v.fields, {
+    english: () => english(ctx), signedIn: () => !!api.read().identity,
+    upgrade: () => purchaseHeading.scrollIntoView({ block: "start", behavior: "smooth" }),
+    group: (parent, title) => settingsGroup(ctx, parent, title), row: (parent, title) => settingsRow(ctx, parent, title),
+    label: row => row.querySelector<HTMLElement>(".pd-settings-copy")!,
+    toggle: (row, change) => { const input = settingsToggle(ctx, "智能判断", ctx.host.settings().smartJudgment.enabled, change); row.append(input); return input; },
+    button: (text, action) => settingsAction(ctx, text, action)
+  });
+  v.cleanup(() => smartJudgment.dispose());
+  const benefitsHeading = heading(ctx, v.fields, "权益对比"); v.fields.append(benefits);
   const purchaseHeading = heading(ctx, v.fields, "购买方案"), redemption = el(ctx.document, "div", "pd-account-redemption"), redeemFeedback = settingsError(ctx);
   let redeemCode = "", redeemOpen = false, redeeming = false, identity = accountKey(api), headKey = "", planKey = "", language = "";
   const code = settingsField(ctx, redemption, t(ctx, "兑换码"), "", value => { redeemCode = value; v.changed(); redeemFeedback.hidden = true; update(); }); code.autocomplete = "off"; code.spellcheck = false; code.placeholder = t(ctx, "输入兑换码"); code.previousElementSibling?.remove();
@@ -78,7 +90,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
     if (!saved || !v.alive) {
       if (v.alive && !v.error.hidden) {
         redeemFeedback.classList.remove("pd-account-feedback"); redeemFeedback.classList.add("pd-settings-error"); redeemFeedback.setAttribute("role", "alert");
-        showSettingsError(redeemFeedback, v.error.textContent ?? ""); v.error.hidden = true;
+        showSettingsError(redeemFeedback, v.error.textContent ?? "", ctx); v.error.hidden = true;
         redeemFeedback.scrollIntoView({ block: "nearest" });
       }
       return;
@@ -88,15 +100,15 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
   }, true); redemption.append(redeem, redeemFeedback); redemption.hidden = true;
   const toggle = settingsAction(ctx, "使用兑换码", () => {
     redeemOpen = !redeemOpen; redemption.hidden = !redeemOpen; toggle.setAttribute("aria-expanded", String(redeemOpen));
-    if (redeemOpen) { if (!api.read().identity) showSettingsError(redeemFeedback, t(ctx, "请先登录账号。")); code.focus(); }
+    if (redeemOpen) { if (!api.read().identity) showSettingsError(redeemFeedback, CAUSE.signInRequired[0], ctx); code.focus(); }
   }); toggle.classList.add("pd-account-text-action"); toggle.setAttribute("aria-expanded", "false"); purchaseHeading.append(toggle); v.fields.append(redemption, plans);
-  const lifetime = el(ctx.document, "details", "pd-account-lifetime"); lifetime.append(el(ctx.document, "summary", "", t(ctx, "买断包含什么")), el(ctx.document, "div", "pd-account-lifetime-body", t(ctx, "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。"))); v.fields.append(lifetime);
+  const lifetime = el(ctx.document, "details", "pd-account-lifetime"); lifetime.append(el(ctx.document, "summary", "", t(ctx, "买断包含什么")), el(ctx.document, "div", "pd-account-lifetime-body", t(ctx, "一次买断，覆盖以后所有版本的 PRO；赠 2000 AI 点数（180 天有效）和 90 天 1 GB 云同步；之后的 AI 点数和云同步需另购；需要定期联网更新授权。"))); v.fields.append(lifetime);
   v.dirty = () => !!redeemCode.trim(); v.discard = () => { redeemCode = ""; code.value = ""; };
   v.cleanup(() => { redeemCode = ""; });
   function update(): void { if (!v.alive) return; const vm = api.read(); redeem.disabled = v.busy || !vm.identity || !vm.serviceAvailable || !api.actions.redeem || !redeemCode.trim(); setLabel(redeem, t(ctx, v.busy && redeeming ? "兑换中…" : "兑换")); }
   v.update = update;
   function render(): void {
-    if (!v.alive) return; const vm = api.read(), nextIdentity = accountKey(api);
+    if (!v.alive) return; smartJudgment.refresh(); const vm = api.read(), nextIdentity = accountKey(api);
     if (identity !== nextIdentity) { identity = nextIdentity; redeemCode = ""; code.value = ""; redeemFeedback.hidden = true; v.error.hidden = true; }
     const nextHead = JSON.stringify([vm.identity, vm.membership, vm.serviceAvailable, vm.betaOffer, ctx.host.settings().settingsLanguage]);
     if (nextHead !== headKey) {
@@ -109,8 +121,8 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
         if (validPro(vm)) edition(ctx, name); else name.append(el(ctx.document, "span", "pd-account-free", t(ctx, stateNames[vm.membership.state])));
         const membership = vm.membership, planId = membership.planId ?? (membership.state === "lifetime" ? "early" : null);
         const lifetime = membership.state === "lifetime" || planId === "early";
-        const plan = lifetime ? t(ctx, planNames.early) : membership.planName || (planId && planId in planNames ? t(ctx, planNames[planId as MembershipPlanId]) : "");
-        const details = validPro(vm) || plan ? [plan, !lifetime && membership.expiresAt ? `${formatMobileDate(membership.expiresAt)} ${t(ctx, "到期")}` : "", membership.verifiedAt ? `${formatMobileDateTime(membership.verifiedAt, Date.now(), english(ctx) ? "en" : "zh-CN")} ${t(ctx, "已验证")}` : "", !["active", "lifetime", "free"].includes(membership.state) ? t(ctx, stateNames[membership.state]) : ""].filter(Boolean).join(" · ") : vm.identity.email;
+        const plan = lifetime ? t(ctx, planNames.early) : planId && planId in planNames ? t(ctx, planNames[planId as MembershipPlanId]) : membership.planName || "";
+        const details = validPro(vm) || plan ? [plan, membership.state === "scheduled" && membership.startsAt ? (english(ctx) ? `Starts ${formatMobileDate(membership.startsAt)}` : `将于 ${formatMobileDate(membership.startsAt)} 生效`) : "", !lifetime && membership.expiresAt ? `${formatMobileDate(membership.expiresAt)} ${t(ctx, "到期")}` : "", membership.verifiedAt ? `${formatMobileDateTime(membership.verifiedAt, Date.now(), english(ctx) ? "en" : "zh-CN")} ${t(ctx, "已验证")}` : "", !["active", "lifetime", "free"].includes(membership.state) ? t(ctx, stateNames[membership.state]) : ""].filter(Boolean).join(" · ") : vm.identity.email;
         copy.append(name, el(ctx.document, "div", "pd-account-sub", details));
       } else {
         copy.append(name); const login = el(ctx.document, "div", "pd-account-login-actions"), button = settingsAction(ctx, "登录 / 注册", () => v.child(createLoginPage(ctx, api)), true); button.disabled = !vm.serviceAvailable || !api.actions.signIn;
@@ -144,7 +156,7 @@ export function createAccountPage(ctx: IPadSettingsContext): MobileShellPage {
     if (language !== nextLanguage) {
       language = nextLanguage; renderBenefits(ctx, benefits); usageHeading.querySelector("h2")!.textContent = t(ctx, "我的使用"); usageHeading.querySelector(".pd-account-location")!.textContent = t(ctx, "当前 Vault · 本地");
       benefitsHeading.querySelector("h2")!.textContent = t(ctx, "权益对比"); purchaseHeading.querySelector("h2")!.textContent = t(ctx, "购买方案"); setLabel(toggle, t(ctx, "使用兑换码"));
-      lifetime.querySelector("summary")!.textContent = t(ctx, "买断包含什么"); lifetime.lastElementChild!.textContent = t(ctx, "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。");
+      lifetime.querySelector("summary")!.textContent = t(ctx, "买断包含什么"); lifetime.lastElementChild!.textContent = t(ctx, "一次买断，覆盖以后所有版本的 PRO；赠 2000 AI 点数（180 天有效）和 90 天 1 GB 云同步；之后的 AI 点数和云同步需另购；需要定期联网更新授权。");
       code.setAttribute("aria-label", t(ctx, "兑换码")); code.placeholder = t(ctx, "输入兑换码");
     }
     renderStatistics(ctx, usage, vm);
@@ -194,7 +206,7 @@ function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountM
     if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "pd-account-saving", english(ctx) ? `Save ${plan.savingsPercent}%` : `省 ${plan.savingsPercent}%`));
     card.append(name, price);
     if (plan.id === "early") {
-      card.append(el(ctx.document, "div", "pd-account-plan-detail", t(ctx, "一次买断，终生可用")));
+      card.append(el(ctx.document, "div", "pd-account-plan-detail", t(ctx, "赠 2000 AI 点数 · 90 天 1 GB 云同步")));
       const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
       if (offerEndDate) card.append(el(ctx.document, "div", "pd-account-plan-detail", english(ctx) ? offerEndDate.en : offerEndDate.zh));
     } else {
@@ -209,7 +221,7 @@ function renderPlans(ctx: IPadSettingsContext, parent: HTMLElement, vm: AccountM
     button.onclick = () => {
       if (button.disabled || !action(api.read()).purchasable) return;
       button.disabled = true; feedback.hidden = true;
-      void api.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => showSettingsError(feedback, error)).finally(() => { button.disabled = !action(api.read()).purchasable; });
+      void api.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => showSettingsError(feedback, error, ctx)).finally(() => { button.disabled = !action(api.read()).purchasable; });
     };
     card.append(button, feedback); parent.append(card);
   }
@@ -232,7 +244,8 @@ function createLoginPage(ctx: IPadSettingsContext, api: AccountMembershipAdapter
     if (!emailValid(address) || !credential || !api.actions.signIn) return;
     sending = false;
     const saved = await v.run(async () => { await api.actions.signIn!({ email: address, method, credential }); }, [credential], { identity: address });
-    if (!saved || !v.alive) return; code = ""; password = ""; v.allow(); ctx.refresh(); await ctx.back();
+    if (!saved || !v.alive) return; code = ""; password = ""; v.allow(); ctx.refresh();
+    if (await ctx.back()) await api.signInReturned?.();
   }, true); footer.append(login); footer.classList.add("pd-account-form-actions"); v.fields.append(footer);
   let send: HTMLButtonElement | undefined;
   function schedule(): void { if (timer !== undefined) formWindow.clearTimeout(timer); timer = undefined; if (v.alive && deadline > Date.now()) timer = formWindow.setTimeout(() => { timer = undefined; update(); schedule(); }, Math.min(1000, deadline - Date.now())); }

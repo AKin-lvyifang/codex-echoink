@@ -211,7 +211,7 @@ async function assertHomeConversationLaunchFlow(): Promise<void> {
     openConversationAction(action: "daily" | "revisit"): Promise<void>;
   }).openConversationAction("daily");
   assert.deepEqual(calls, ["skill:daily-journal", "settings:daily-journal"]);
-  assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法新建会话：Skill daily-journal 已停用/u);
+  assert.match(openTestNoticeMessages.at(-1) ?? "", /^未能新建会话。Skill daily-journal 已停用/u);
 
   calls.length = 0;
   openTestNoticeMessages.length = 0;
@@ -222,7 +222,7 @@ async function assertHomeConversationLaunchFlow(): Promise<void> {
   assert.deepEqual(calls, ["skill:daily-journal", "settings:daily-journal"]);
   assert.equal(
     openTestNoticeMessages.at(-1),
-    "Could not create a new conversation: The daily-journal Skill is disabled, missing, or could not be loaded."
+    "Could not create a new conversation. The daily-journal skill is disabled, missing, or could not be loaded. Enable it in skill settings and try again."
   );
 }
 
@@ -358,21 +358,21 @@ async function assertNativeGraphBehavior(): Promise<void> {
     const rejected = createGraphApp([], rejectedLeaf);
     assert.equal(await openObsidianGraphLeaf(rejected.app), false);
     assert.equal(rejected.revealed.length, 0);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生图谱。请稍后重试。/u);
 
     openTestNoticeMessages.length = 0;
     const revealRejected = createGraphApp([createGraphLeaf("graph")], createGraphLeaf("empty"), true);
     assert.equal(await openObsidianGraphLeaf(revealRejected.app), false);
     assert.equal(revealRejected.getLeafCalls(), 0);
     assert.equal(revealRejected.revealed.length, 0);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生图谱。请稍后重试。/u);
 
     openTestNoticeMessages.length = 0;
     const wrongTypeLeaf = createGraphLeaf("empty", "ignore");
     const wrongType = createGraphApp([], wrongTypeLeaf);
     assert.equal(await openObsidianGraphLeaf(wrongType.app), false);
     assert.deepEqual(wrongType.revealed, [wrongTypeLeaf]);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生图谱。请稍后重试。/u);
 
     openTestNoticeMessages.length = 0;
     const localLeaf = createGraphLeaf("empty");
@@ -402,28 +402,28 @@ async function assertNativeGraphBehavior(): Promise<void> {
     assert.equal(await openObsidianLocalGraphLeaf(missing.app, "outputs/index.md"), false);
     assert.equal(missing.getLeafCalls(), 0);
     assert.deepEqual(missingLeaf.setViewStates, []);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /没有在当前 Vault 找到：outputs\/index\.md/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /当前仓库中未找到：outputs\/index\.md/u);
 
     openTestNoticeMessages.length = 0;
     const localRejectedLeaf = createGraphLeaf("empty", "reject");
     const localRejected = createLocalGraphApp(localRejectedLeaf);
     assert.equal(await openObsidianLocalGraphLeaf(localRejected.app, "projects/index.md"), false);
     assert.deepEqual(localRejected.revealed, []);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生局部图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生局部图谱。请稍后重试。/u);
 
     openTestNoticeMessages.length = 0;
     const wrongFileLeaf = createGraphLeaf("empty", "wrong-file");
     const wrongFile = createLocalGraphApp(wrongFileLeaf);
     assert.equal(await openObsidianLocalGraphLeaf(wrongFile.app, "inbox/index.md"), false);
     assert.deepEqual(wrongFile.revealed, []);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生局部图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生局部图谱。请稍后重试。/u);
 
     openTestNoticeMessages.length = 0;
     const localRevealLeaf = createGraphLeaf("empty");
     const localRevealRejected = createLocalGraphApp(localRevealLeaf, { rejectReveal: true });
     assert.equal(await openObsidianLocalGraphLeaf(localRevealRejected.app, "wiki/index.md"), false);
     assert.deepEqual(localRevealRejected.revealed, []);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /暂时无法打开 Obsidian 原生局部图谱/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /无法打开 Obsidian 原生局部图谱。请稍后重试。/u);
   } finally {
     console.warn = originalWarn;
     openTestNoticeMessages.length = 0;

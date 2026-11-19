@@ -1,10 +1,13 @@
 import type { IPadWorkbenchHost } from "./workbench-contract";
 const english: Record<string, string> = {
   // M10 account controls. Account names, emails and user content stay unchanged.
-  "早鸟买断": "Early lifetime",
-  "月卡": "Monthly",
-  "季卡": "Quarterly",
-  "年卡": "Annual",
+  "早鸟终生买断": "Early lifetime",
+  "PRO 月卡": "PRO Monthly",
+  "PRO 季卡": "PRO Quarterly",
+  "PRO 年卡": "PRO Annual",
+  "Max 月卡": "Max Monthly",
+  "Max 季卡": "Max Quarterly",
+  "Max 年卡": "Max Annual",
   "账号服务暂不可用": "Account service unavailable",
   "账号服务暂不可用。": "Account service unavailable.",
   "服务暂不可用": "Service unavailable",
@@ -27,10 +30,8 @@ const english: Record<string, string> = {
   "兑换码": "Redemption code",
   "输入兑换码": "Enter a code",
   "兑换": "Redeem",
-  "请先登录，再使用兑换码。": "Sign in before redeeming a code.",
-  "请先登录账号。": "Sign in first.",
   "买断包含什么": "What lifetime access includes",
-  "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。": "One payment includes PRO in all future versions. Model credits are not included. Periodic online verification is required.",
+  "一次买断，覆盖以后所有版本的 PRO；赠 2000 AI 点数（180 天有效）和 90 天 1 GB 云同步；之后的 AI 点数和云同步需另购；需要定期联网更新授权。": "One payment for lifetime PRO access, including all future versions; includes 2000 AI points (valid for 180 days) and 90 days of 1 GB cloud sync. Additional AI points and cloud sync require separate purchases. Periodic online verification is required.",
   "兑换中…": "Redeeming…",
   "兑换成功": "Code redeemed",
   "兑换后本机授权尚未生效，请重新验证权益。": "Device access is not active after redemption. Verify your membership again.",
@@ -90,7 +91,7 @@ const english: Record<string, string> = {
   "包含": "Included",
   "不含": "Not included",
   "使用中": "Current plan",
-  "一次买断，终生可用": "One payment, lifetime access",
+  "赠 2000 AI 点数 · 90 天 1 GB 云同步": "2000 AI points · 90 days of 1 GB cloud sync",
   "续费待开放": "Renewals unavailable",
   "购买待开放": "Purchasing unavailable",
   "我的订单": "My orders",
@@ -277,7 +278,7 @@ const english: Record<string, string> = {
   "连接成功": "Connection successful",
   "测试已取消。": "Test cancelled.",
   "通用": "General", "模型": "Models", "Agent": "Agent", "能力": "Capabilities", "模块": "Modules", "账号与会员": "Account & membership",
-  "外观": "Appearance", "配色": "Color palette", "极简黑白": "Minimal", "荧光笔记": "Highlighter", "黄白宣言": "Manifesto", "界面语言": "Interface language", "启动": "Startup", "启动时打开工作台": "Open workbench on startup", "关于": "About", "关于 EchoInk": "About EchoInk", "组件许可": "License", "第三方许可": "Third-party notices", "版本未提供": "Version unavailable", "已选择": "Selected",
+  "外观": "Appearance", "配色": "Color palette", "极简黑白": "Minimal", "荧光笔记": "Highlighter", "黄白宣言": "Manifesto", "界面语言": "Interface language", "启动": "Startup", "启动时打开工作台": "Open workbench on startup", "同步": "Sync", "同步数据到其他设备": "Share data with other devices", "通过笔记库里的 EchoInk/同步数据 文件夹；下次启动时生效": "Via the EchoInk/同步数据 folder in the Vault; takes effect on the next start", "关于": "About", "关于 EchoInk": "About EchoInk", "组件许可": "License", "第三方许可": "Third-party notices", "版本未提供": "Version unavailable", "已选择": "Selected",
   "默认模型": "Default model", "选择默认模型": "Choose default model", "模型服务": "Model services", "添加模型服务": "Add model service", "套餐": "Subscription", "其他": "Other", "填写模型服务": "Connect model service", "编辑模型服务": "Edit model service", "连接名称": "Connection name", "接口地址": "API URL", "参数": "Parameters", "沿用": "Current", "获取模型": "Fetch models", "重新获取": "Refresh models", "读取中…": "Fetching…", "测试并保存": "Test & save", "测试中…": "Testing…", "取消": "Cancel", "删除模型服务": "Remove service", "删除": "Remove", "删除此连接？": "Remove this connection?", "仅电脑可用": "Desktop only", "尚未配置模型服务": "No model services configured", "模型列表为空，可在参数页手动添加 Model ID。": "No models returned. Add a model ID in Parameters.", "模型列表不完整": "The model list is incomplete", "上下文窗口": "Context window", "模型输出上限": "Model output limit", "单次输出上限": "Per-request output limit", "协议": "Protocol", "工具调用": "Tool calling", "图片输入": "Image input", "思考": "Reasoning", "流式输出": "Streaming", "回答整段出现": "Answers appear all at once", "手动添加 Model ID": "Add model ID manually", "添加": "Add", "完成": "Done", "保存": "Save", "继续编辑": "Keep editing", "放弃修改": "Discard changes", "还有未保存的修改。": "There are unsaved changes.", "选择至少一个模型": "Select at least one model", "先填写 API Key": "Enter an API key first", "所有 Agent 默认使用": "Default for all Agents", "已保存": "Saved", "返回": "Back", "管理模型服务": "Manage model services",
   "我的 Agent": "My Agents", "新建 Agent": "New Agent", "模块负责人": "Module owners", "记忆": "Memory", "长期记忆": "Personal memory", "记忆修正": "Review memories", "启用": "Enable ", "启用财务": "Enable finance", "需要 PRO": "Requires PRO", "你的画像": "Your profile", "会话": "Conversations", "已归档会话": "Archived conversations", "内置技能": "Built-in Skills", "我的 Skill": "My Skills", "管理 MCP 服务": "Manage MCP services", "工具": "Tools", "移动端暂不可配置": "Configuration is unavailable on mobile", "基础模块": "Core modules", "PRO 模块": "PRO modules", "知识库": "Knowledge", "日记": "Journal", "复盘": "Review", "待办": "To-dos", "财务": "Finance", "英文日记": "English diary"
 };

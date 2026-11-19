@@ -5,7 +5,7 @@ import type { DiaryFilePort, DiarySource } from "./types";
 import { EnglishDiaryRepositoryError, normalizeDiaryPath } from "./repository";
 
 const conflict = (): never => {
-  throw new EnglishDiaryRepositoryError("FILE_MODIFIED", "内容已在其他窗口修改，当前编辑内容已保留，请重新查看后再保存。");
+  throw new EnglishDiaryRepositoryError("FILE_MODIFIED", "该内容已在其他位置被修改，当前编辑内容已保留。请重新打开后再保存。");
 };
 const locks = new WeakMap<App, Map<string, Promise<unknown>>>();
 
@@ -36,7 +36,7 @@ function nativeSnapshot(app: App, path: string): { views: MarkdownView[]; conten
 function requireFile(app: App, path: string): TFile {
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) {
-    throw new EnglishDiaryRepositoryError("NOT_FOUND", "日记文件不存在，请重新打开原日记。");
+    throw new EnglishDiaryRepositoryError("NOT_FOUND", "日记文件不存在。请重新打开原日记。");
   }
   return file;
 }
@@ -109,7 +109,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
   private path(value: string): string {
     const path = normalizeDiaryPath(value);
     if (!this.roots.some((root) => path === root || path.startsWith(`${root}/`))) {
-      throw new EnglishDiaryRepositoryError("INVALID_PATH", "路径不在英文日记的数据目录内。");
+      throw new EnglishDiaryRepositoryError("INVALID_PATH", "路径不在英文日记目录内。请重新选择位置。");
     }
     return path;
   }
@@ -122,7 +122,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
     }
     if (!await this.app.vault.adapter.exists(path)) return null;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFolder) throw new Error("文件路径被文件夹占用。");
+    if (file instanceof TFolder) throw new Error("目标位置已有同名文件夹。请更换位置后重试。");
     if (file instanceof TFile) return readNativeContent(this.app, file);
     return this.app.vault.adapter.read(path);
   }
@@ -130,10 +130,10 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
   /** Originals live outside output roots; this read never flushes or saves an editor. */
   async readSource(value: string): Promise<string | null> {
     const path = normalizeDiaryPath(value);
-    if (!/\.md$/iu.test(path)) throw new EnglishDiaryRepositoryError("INVALID_PATH", "日记原稿不是 Markdown 文件。");
+    if (!/\.md$/iu.test(path)) throw new EnglishDiaryRepositoryError("INVALID_PATH", "原稿不是 Markdown 笔记。请选择 Markdown 日记。");
     if (!await this.app.vault.adapter.exists(path)) return null;
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (file instanceof TFolder) throw new Error("文件路径被文件夹占用。");
+    if (file instanceof TFolder) throw new Error("目标位置已有同名文件夹。请更换位置后重试。");
     if (file instanceof TFile) return readNativeContent(this.app, file);
     return this.app.vault.adapter.read(path);
   }
@@ -224,7 +224,7 @@ export class EnglishDiaryVaultPort implements DiaryFilePort {
 export async function readDiarySource(app: App, value: string): Promise<DiarySource> {
   const path = normalizeDiaryPath(value);
   const file = requireFile(app, path);
-  if (file.extension !== "md") throw new Error("日记原稿不是 Markdown 文件。");
+  if (file.extension !== "md") throw new Error("原稿不是 Markdown 笔记。请选择 Markdown 日记。");
   const content = await readNativeContent(app, file);
   return { path, title: file.basename, date: file.basename, content };
 }
@@ -233,7 +233,7 @@ export async function saveDiarySource(app: App, value: string, content: string, 
   const path = normalizeDiaryPath(value);
   await withPathLock(app, path, async () => {
     const file = requireFile(app, path);
-    if (file.extension !== "md") throw new Error("日记原稿不是 Markdown 文件。");
+    if (file.extension !== "md") throw new Error("原稿不是 Markdown 笔记。请选择 Markdown 日记。");
     await writeNativeFile(app, file, content, expected);
   });
 }

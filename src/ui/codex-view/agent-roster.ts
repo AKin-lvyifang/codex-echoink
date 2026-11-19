@@ -26,9 +26,9 @@ export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefin
   const focused = root.contains(root.ownerDocument.activeElement)
     ? (root.ownerDocument.activeElement as HTMLElement).dataset.agentId : undefined;
   disposeOriginControls(root); root.empty(); root.className = "echoink-agent-roster";
-  const groups = new Map(agentRoleGroups(agents.filter(isAgentHired), language === "en").map(group => {
-    const section = root.createDiv({ cls: "echoink-agent-roster-group", attr: { "data-agent-group": group.id } });
-    section.createDiv({ cls: "echoink-agent-roster-group-label", text: group.label });
+  const groups = new Map(agentRoleGroups(agents.filter(isAgentHired), language === "en").filter(group => group.id === "role" || group.agents.length).map(group => {
+    // Size and a divider carry the main/role hierarchy; the group name stays for assistive tech only.
+    const section = root.createDiv({ cls: "echoink-agent-roster-group", attr: { role: "group", "aria-label": group.label, "data-agent-group": group.id } });
     return [group.id, section.createDiv({ cls: "echoink-agent-roster-group-items" })] as const;
   }));
   for (const agent of agentRoleGroups(agents.filter(isAgentHired)).flatMap(group => group.agents)) {
@@ -40,7 +40,7 @@ export function renderAgentRoster(root: HTMLElement, agents: readonly AgentDefin
     const button = createOriginButton(container, { cls: `echoink-agent-roster-item${agent.id === selected ? " is-selected" : ""}`,
       attr: { type: "button", "aria-label": label, "aria-description": status, "aria-pressed": agent.id === selected, "data-agent-id": agent.id } });
     setTooltip(button, label);
-    renderTaskAvatar(button, agent, 28);
+    renderTaskAvatar(button, agent, container.parentElement?.dataset.agentGroup === "main" ? 32 : 26);
     if (counts.waiting) button.createSpan({ cls: "echoink-agent-badge is-waiting", text: String(counts.waiting) });
     else if (counts.interrupted) button.createSpan({ cls: "echoink-agent-badge is-interrupted", text: "!" });
     else if (counts.running) setIcon(button.createSpan({ cls: "echoink-agent-badge is-running" }), "loader-circle");

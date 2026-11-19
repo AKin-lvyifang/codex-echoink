@@ -1,13 +1,14 @@
+import { CAUSE } from "../core/error-copy";
 import { diaryFingerprint, matchDiaryItem, sameCandidate } from "./identity";
 import { dedupePrompt, DIARY_ORGANIZER_SYSTEM, extractionPrompt } from "./prompts";
 import type { DiaryDedupeInput } from "./prompts";
 import { emptyDiaryOrganizerState, readDiaryOrganizerState } from "./state";
 import type {
   DiaryActionOptions, DiaryActionResult, DiaryCandidate, DiaryDocumentState,
-  DiaryItem, DiaryOrganizerOptions, DiaryOrganizerPorts, DiaryOrganizerState, DiaryOrganizerSummary,
+  DiaryFinanceSnapshot, DiaryItem, DiaryOrganizerOptions, DiaryOrganizerPorts, DiaryOrganizerState, DiaryOrganizerSummary, DiaryTodoSnapshotEntry,
   DiarySource, DiaryWrittenRecord, DiaryWriteInput,
 } from "./types";
-import { financeDuplicateCandidates, localDate, parseDiaryCandidates, parseDiaryJson, validDiaryDate, validateDiaryCandidate } from "./validation";
+import { dayDistance, diaryCandidateContext, financeDuplicateCandidates, localDate, parseDiaryCandidates, parseDiaryJson, validDiaryDate, validateDiaryCandidate, type DiaryEntryReview } from "./validation";
 
 export const DIARY_ORGANIZER_DEFAULTS = {
   stableMs: 60 * 60 * 1000,
@@ -18,6 +19,11 @@ export const DIARY_ORGANIZER_DEFAULTS = {
 } as const;
 
 type Decision = { id: string; decision: "distinct" | "duplicate" | "uncertain"; matchedIds: string[]; reason: string };
+/** 智能判断对一条候选的查重结论；matchedIds 是已有记录 id 或本批更早的候选序号（"#n"）。 */
+type JudgedDedupe = { decision: "distinct" | "duplicate" | "uncertain"; matchedIds: string[]; reason: string };
+interface DiaryJudgment { review: Map<number, DiaryEntryReview>; dedupe: Map<number, JudgedDedupe> | null }
+const TODO_SAME = 0.8, TODO_MAYBE = 0.5;
+const yuan = (cents: number) => (cents / 100).toFixed(2).replace(/\.00$/u, "");
 
 export class DiaryOrganizerEngine {
   private state: DiaryOrganizerState = emptyDiaryOrganizerState();
@@ -82,7 +88,7 @@ export class DiaryOrganizerEngine {
   private exclusive<T>(work: () => Promise<T>): Promise<T> {
     const operation = this.queue.then(async () => {
       await this.initialize();
-      if (this.disposed) throw new Error("日记整理已停止");
+      if (this.disposed) throw new Error("日记整理已停止。");
       this.active = true;
       try { return await work(); } finally { this.active = false; }
     });
@@ -162,7 +168,7 @@ export class DiaryOrganizerEngine {
   }
 
   private async model(purpose: "extract" | "dedupe", prompt: string): Promise<string> {
-    if (!this.ports.isEnabled() || this.ports.isBusy() || this.disposed) throw new Error("模型正在忙，已让路");
+    if (!this.ports.isEnabled() || this.ports.isBusy() || this.disposed) throw new Error("模型正在处理其他任务，日记整理已暂停。请稍后重试。");
     const controller = new AbortController();
     this.controller = controller;
     let timer: number | undefined;
@@ -170,8 +176,8 @@ export class DiaryOrganizerEngine {
       return await Promise.race([
         this.ports.generateText({ purpose, system: DIARY_ORGANIZER_SYSTEM, prompt, signal: controller.signal }),
         new Promise<never>((_, reject) => {
-          timer = window.setTimeout(() => { controller.abort(); reject(new Error("日记整理模型调用超时")); }, this.options.timeoutMs);
-          controller.signal.addEventListener("abort", () => reject(new Error("日记整理模型调用已取消")), { once: true });
+          timer = window.setTimeout(() => { controller.abort(); reject(new Error(CAUSE.providerTimeout[0])); }, this.options.timeoutMs);
+          controller.signal.addEventListener("abort", () => reject(new Error("日记整理已取消。")), { once: true });
         }),
       ]);
     } finally {
@@ -192,10 +198,12 @@ export class DiaryOrganizerEngine {
       .filter(candidate => financeEnabled || candidate.type === "todo");
     if (!await this.sourceUnchanged(doc, content)) return;
 
+    const judgment = await this.judgeDiary(candidates, content, finance, todos, doc.date);
     const existing = this.state.items.filter(item => item.documentId === doc.id);
     const used = new Set<string>();
     const current: DiaryItem[] = [];
-    for (const candidate of candidates) {
+    const candidateIndex = new Map<DiaryItem, number>();
+    for (const [index, candidate] of candidates.entries()) {
       const match = matchDiaryItem(candidate, existing, used);
       let item = match.item;
       if (item) {
@@ -226,8 +234,9 @@ export class DiaryOrganizerEngine {
         this.state.items.push(item);
         used.add(item.id);
       }
-      const validation = validateDiaryCandidate(candidate, content, finance);
+      const validation = validateDiaryCandidate(candidate, content, finance, judgment?.review.get(index));
       item.reasons = [...new Set([...item.reasons, ...validation.reasons])];
+      candidateIndex.set(item, index);
       if (validation.ignore) item.status = "ignored";
       else if (item.reasons.length) item.status = "review";
       else current.push(item);
@@ -248,7 +257,8 @@ export class DiaryOrganizerEngine {
       todoMatches: item.candidate.type === "todo" ? todos : [] }));
     // Every Todo receives the complete eligible snapshot, so paraphrased tasks are
     // compared semantically instead of being lost to a text-similarity prefilter.
-    if (dedupeInputs.some(input => input.financeMatches.length || input.todoMatches.length) || dedupeInputs.length > 1) {
+    if (judgment?.dedupe) this.applyJudgedDedupe(judgment.dedupe, current, candidateIndex, dedupeInputs);
+    else if (dedupeInputs.some(input => input.financeMatches.length || input.todoMatches.length) || dedupeInputs.length > 1) {
       await this.applyDedupe(modelContent, dedupeInputs, current);
     }
     await this.save();
@@ -271,6 +281,101 @@ export class DiaryOrganizerEngine {
     doc.financePending = !financeEnabled;
     doc.lastFailureAt = undefined;
     await this.save();
+  }
+
+  /**
+   * 智能判断：一次请求同时问收支查重、待办查重和自动入账复查（服务器扣 1 次）。
+   * 查重的题目超过接口上限（每类 20）时整篇查重仍交给模型；任何失败返回 null。
+   */
+  private async judgeDiary(candidates: readonly DiaryCandidate[], content: string, finance: DiaryFinanceSnapshot, todos: readonly DiaryTodoSnapshotEntry[], diaryDate: string): Promise<DiaryJudgment | null> {
+    if (!this.ports.decideDiary || !candidates.length) return null;
+    const entries: { id: string; text: string; date: string; candidate: string }[] = [];
+    const expenses: { id: string; text: string; existing: string; date: string; candidate: string }[] = [], todoPairs: { id: string; a: string; b: string }[] = [];
+    const pairOwner = new Map<string, { index: number; match: string }>();
+    for (const [index, candidate] of candidates.entries()) {
+      if (candidate.type === "finance") {
+        const context = diaryCandidateContext(candidate, content) || candidate.quote;
+        // 日记日期和抽出的这笔一起给，判断模型才能对上“昨晚打车 35”和已有的“11-07 23:40”。
+        const facts = { date: diaryDate, candidate: `${candidate.merchant} ${yuan(candidate.amountCents)} 元 · ${candidate.date}` };
+        if (entries.length < 20) entries.push({ id: `e${index}`, text: context, ...facts });
+        for (const match of financeDuplicateCandidates(candidate, finance.entries)) {
+          const id = `x${expenses.length}`;
+          pairOwner.set(id, { index, match: match.id });
+          expenses.push({ id, text: context, ...facts, existing: `${match.merchant} ${yuan(match.amountCents)} 元 · ${match.date}${match.description ? ` · ${match.description}` : ""}${match.source ? ` · ${match.source}` : ""}` });
+        }
+        for (const [earlierIndex, earlier] of candidates.slice(0, index).entries()) {
+          if (earlier.type !== "finance" || earlier.kind !== candidate.kind || earlier.currency !== candidate.currency || earlier.amountCents !== candidate.amountCents
+            || !validDiaryDate(earlier.date) || !validDiaryDate(candidate.date) || dayDistance(earlier.date, candidate.date) > 2) continue;
+          const id = `x${expenses.length}`;
+          pairOwner.set(id, { index, match: `#${earlierIndex}` });
+          expenses.push({ id, text: context, ...facts, existing: `${earlier.merchant} ${yuan(earlier.amountCents)} 元 · ${earlier.date} · ${earlier.quote}` });
+        }
+      } else {
+        for (const todo of todos) {
+          const id = `t${todoPairs.length}`;
+          pairOwner.set(id, { index, match: todo.id });
+          todoPairs.push({ id, a: candidate.text, b: todo.text });
+        }
+        for (const [earlierIndex, earlier] of candidates.slice(0, index).entries()) {
+          if (earlier.type !== "todo") continue;
+          const id = `t${todoPairs.length}`;
+          pairOwner.set(id, { index, match: `#${earlierIndex}` });
+          todoPairs.push({ id, a: candidate.text, b: earlier.text });
+        }
+      }
+    }
+    const dedupeFits = expenses.length <= 20 && todoPairs.length <= 20;
+    const request = { entries, ...(dedupeFits ? { expenses, todos: todoPairs } : {}) };
+    if (!entries.length && !(dedupeFits && (expenses.length || todoPairs.length))) return null;
+    const result = await this.ports.decideDiary(request).catch(() => null);
+    if (!result) return null;
+    const review = new Map<number, DiaryEntryReview>();
+    for (const entry of result.entries) {
+      const index = Number(entry.id.slice(1));
+      if (entries.some(item => item.id === entry.id)) review.set(index, { self: entry.self, happened: entry.happened, amountClear: entry.amountClear });
+    }
+    if (!dedupeFits) return { review, dedupe: null };
+    const dedupe = new Map<number, JudgedDedupe>();
+    const answered = new Set([...result.expenses.map(item => item.id), ...result.todos.map(item => item.id)]);
+    if ([...expenses, ...todoPairs].some(pair => !answered.has(pair.id))) return { review, dedupe: null };
+    const verdict = (index: number, next: JudgedDedupe["decision"], match: string, reason: string) => {
+      const previous = dedupe.get(index) ?? { decision: "distinct" as const, matchedIds: [], reason: "" };
+      const rank = { distinct: 0, uncertain: 1, duplicate: 2 } as const;
+      if (next !== "distinct") previous.matchedIds = [...new Set([...previous.matchedIds, match])];
+      if (rank[next] > rank[previous.decision]) { previous.decision = next; previous.reason = reason; }
+      dedupe.set(index, previous);
+    };
+    for (const item of result.expenses) {
+      const owner = pairOwner.get(item.id)!, pair = expenses.find(value => value.id === item.id)!;
+      verdict(owner.index, item.verdict, owner.match, `可能与「${pair.existing}」重复`);
+    }
+    for (const item of result.todos) {
+      const owner = pairOwner.get(item.id)!, pair = todoPairs.find(value => value.id === item.id)!;
+      verdict(owner.index, item.same >= TODO_SAME ? "duplicate" : item.same >= TODO_MAYBE ? "uncertain" : "distinct", owner.match, `可能与「${pair.b}」重复`);
+    }
+    return { review, dedupe };
+  }
+
+  private applyJudgedDedupe(dedupe: Map<number, JudgedDedupe>, items: DiaryItem[], candidateIndex: Map<DiaryItem, number>, inputs: DiaryDedupeInput[]): void {
+    const itemByIndex = new Map([...candidateIndex].map(([item, index]) => [index, item]));
+    for (const item of items) {
+      const input = inputs.find(value => value.id === item.id)!;
+      const judged = dedupe.get(candidateIndex.get(item)!);
+      if (!judged || judged.decision === "distinct") {
+        item.reviewedDistinct = input.financeMatches.map(value => ({ id: value.id, version: value.version }));
+        continue;
+      }
+      // "#n" → the earlier candidate's item id in this batch.
+      item.duplicateRecordIds = judged.matchedIds.map(id => id.startsWith("#") ? itemByIndex.get(Number(id.slice(1)))?.id ?? id : id);
+      if (judged.decision === "duplicate") { item.status = "ignored"; item.reasons = ["已存在同一条记录", judged.reason]; }
+      else { item.status = "review"; item.reasons = ["可能与已有记录重复", judged.reason]; }
+    }
+    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+      const a = items[i]; const b = items[j];
+      if (a.status === "pending" && b.status === "pending" && sameCandidate(a.candidate, b.candidate)) {
+        b.status = "review"; b.reasons = ["本批次存在相同候选，请核对是否同一条"];
+      }
+    }
   }
 
   private async applyDedupe(content: string, inputs: DiaryDedupeInput[], items: DiaryItem[]): Promise<void> {
@@ -329,7 +434,7 @@ export class DiaryOrganizerEngine {
   private async writeItem(item: DiaryItem, doc: DiaryDocumentState, updating = false): Promise<void> {
     if (!this.ports.isEnabled() || (item.candidate.type === "finance" && !this.ports.hasFinanceAccess())) return;
     const source = await this.ports.readDiary(doc.path);
-    if (source === null || diaryFingerprint(source) !== item.sourceFingerprint) throw new Error("原日记已变化，未写入");
+    if (source === null || diaryFingerprint(source) !== item.sourceFingerprint) throw new Error("原日记已变化，本条未写入。请重新整理该日记。");
     if (!updating) {
       const found = await this.find(item);
       if (found) { item.written = found; item.writtenAt ??= item.updatedAt; item.status = "written"; item.writeIntent = false; await this.save(); return; }
@@ -340,13 +445,13 @@ export class DiaryOrganizerEngine {
     if (item.candidate.type === "finance") {
       const input = this.input(item, doc) as DiaryWriteInput<typeof item.candidate>;
       if (updating && item.written) {
-        if (!this.ports.updateFinance) throw new Error("当前账本不支持更新原记录");
+        if (!this.ports.updateFinance) throw new Error("当前账本无法更新原记录。请在账本中手动修改。");
         receipt = await this.ports.updateFinance(item.written.id, item.written.version, input);
       } else receipt = await this.ports.writeFinance(input);
     } else {
       const input = this.input(item, doc) as DiaryWriteInput<typeof item.candidate>;
       if (updating && item.written) {
-        if (!this.ports.updateTodo) throw new Error("当前待办不支持更新原记录");
+        if (!this.ports.updateTodo) throw new Error("当前待办无法更新原记录。请在待办中手动修改。");
         receipt = await this.ports.updateTodo(item.written.id, item.written.version, input);
       } else receipt = await this.ports.writeTodo(input);
     }
@@ -394,27 +499,27 @@ export class DiaryOrganizerEngine {
   confirm(id: string, options: DiaryActionOptions = {}): Promise<DiaryActionResult> {
     return this.exclusive(async () => {
       const item = this.state.items.find(value => value.id === id);
-      if (!item) return { status: "blocked", reason: "条目不存在" };
-      if (!this.ports.isEnabled()) return { status: "blocked", reason: "请先开启日记自动整理", item: structuredClone(item) };
-      if (item.status === "ignored" || item.status === "undone") return { status: "blocked", reason: "该条已忽略或撤销", item: structuredClone(item) };
+      if (!item) return { status: "blocked", reason: "该条目已删除。请刷新列表后重试。" };
+      if (!this.ports.isEnabled()) return { status: "blocked", reason: "日记自动整理未开启。请先开启后重试。", item: structuredClone(item) };
+      if (item.status === "ignored" || item.status === "undone") return { status: "blocked", reason: "该条目已忽略或撤销，无需再次处理。", item: structuredClone(item) };
       if (options.expectedRevision !== undefined && options.expectedRevision !== item.revision
         && options.acknowledgedRevision !== item.revision) return this.changed(item, ["条目已变化，请核对最新内容"]);
       const doc = this.state.documents.find(value => value.id === item.documentId)!;
       const content = await this.ports.readDiary(doc.path);
       if (content === null || diaryFingerprint(content) !== item.sourceFingerprint) return this.changed(item, ["原日记已变化，等待重新整理后再确认"]);
       if (options.candidate && !sameCandidate(options.candidate, item.candidate)) {
-        if (options.candidate.type !== item.candidate.type) return { status: "blocked", reason: "不能改变条目类型", item: structuredClone(item) };
+        if (options.candidate.type !== item.candidate.type) return { status: "blocked", reason: "无法更改条目类型。请保持原类型后重新提交。", item: structuredClone(item) };
         item.candidate = structuredClone(options.candidate);
         item.revision++;
       }
-      if (item.candidate.type === "finance" && !this.ports.hasFinanceAccess()) return { status: "blocked", reason: "财务整理需要 PRO", item: structuredClone(item) };
+      if (item.candidate.type === "finance" && !this.ports.hasFinanceAccess()) return { status: "blocked", reason: CAUSE.proRequired[0], item: structuredClone(item) };
       const finance = item.candidate.type === "finance" ? await this.ports.readFinanceSnapshot() : { entries: [], categories: [] };
       const validation = validateDiaryCandidate(item.candidate, content, finance);
       const hardReasons = validation.reasons.filter(reason => ["原文引用未通过核对", "金额必须是正整数分", "收支日期无效", "币种无效", "交易对象不明确", "分类未对应到已启用分类", "待办内容为空", "待办日期无效", "收支类型无效", "金额与原文不一致"].includes(reason));
       if (hardReasons.length || validation.ignore) return { status: "blocked", reason: [...hardReasons, ...(validation.ignore ? ["该内容不是可确认的本人已发生收支"] : [])].join("；"), item: structuredClone(item) };
       if (item.written) {
         const current = await this.find(item);
-        if (!current) return { status: "blocked", reason: "原记录已删除，请勿重新记入", item: structuredClone(item) };
+        if (!current) return { status: "blocked", reason: "原记录已删除，该条目不会重新记入。", item: structuredClone(item) };
         if (current.version !== item.written.version) {
           if (options.acknowledgedRevision !== item.revision || item.confirmation?.action !== "confirm" || item.confirmation.recordVersion !== current.version) {
             item.revision++;
@@ -457,7 +562,7 @@ export class DiaryOrganizerEngine {
   ignore(id: string): Promise<DiaryActionResult> {
     return this.exclusive(async () => {
       const item = this.state.items.find(value => value.id === id);
-      if (!item) return { status: "blocked", reason: "条目不存在" };
+      if (!item) return { status: "blocked", reason: "该条目已删除。请刷新列表后重试。" };
       item.status = "ignored"; item.reasons = ["你已忽略该条"]; item.revision++; item.updatedAt = this.now();
       await this.save();
       return { status: "done", item: structuredClone(item) };
@@ -467,7 +572,7 @@ export class DiaryOrganizerEngine {
   undo(id: string, options: DiaryActionOptions = {}): Promise<DiaryActionResult> {
     return this.exclusive(async () => {
       const item = this.state.items.find(value => value.id === id);
-      if (!item || !item.written) return { status: "blocked", reason: "没有可撤销的写入" };
+      if (!item || !item.written) return { status: "blocked", reason: "该条目没有可撤销的写入。" };
       if (options.expectedRevision !== undefined && options.expectedRevision !== item.revision
         && options.acknowledgedRevision !== item.revision) return this.changed(item, ["条目已变化，请核对最新内容"]);
       const current = await this.find(item);

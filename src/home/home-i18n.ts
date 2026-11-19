@@ -216,8 +216,8 @@ const ZH: HomeCopy = {
     revisitSessionTitle: (date) => `未完想法 · ${date}`,
     reviewSessionTitle: (date) => `知识复盘 · ${date}`,
     sidebarNotReady: "右侧会话视图尚未准备好",
-    cannotCreateSession: (error) => `暂时无法新建会话：${error}`,
-    cannotCreateReviewSession: (error) => `暂时无法新建复盘会话：${error}`
+    cannotCreateSession: (detail) => `未能新建会话。${detail}`,
+    cannotCreateReviewSession: (detail) => `未能新建复盘会话。${detail}`
   },
   modal: {
     title: "今天想怎么写？",
@@ -243,15 +243,15 @@ const ZH: HomeCopy = {
     keepAs: (name) => `保留为 ${name}`,
     readingFile: (name) => `正在读取 ${name}…`,
     importReadComplete: "读取完成。未知 frontmatter、正文结构、代码块和占位符会原样保留。",
-    readFailed: (error) => `读取失败：${error}`,
+    readFailed: (detail) => `模板未能读取。${detail}`,
     savingLocalTemplate: "正在保存本地模板…",
     duplicateTemplate: (path) => `同名模板已存在，未覆盖：${path}`,
     saved: (path) => `已保存：${path}`,
-    saveFailed: (error) => `保存失败：${error}`,
+    saveFailed: (detail) => `模板未能保存。${detail}`,
     creatingJournal: "正在创建日记…",
     journalCreated: (path) => `已创建日记：${path}`,
     journalAlreadyExists: (path) => `今日日记已存在，已直接打开：${path}`,
-    createFailed: (error) => `创建失败：${error}`
+    createFailed: (detail) => `日记未能创建。${detail}`
   },
   template: {
     display: (id) => ZH_TEMPLATE_DISPLAY[id],
@@ -265,10 +265,10 @@ const ZH: HomeCopy = {
     folderOccupiedByFile: (path) => `无法创建目录，路径已被文件占用：${path}`
   },
   graph: {
-    cannotOpenGraph: "暂时无法打开 Obsidian 原生图谱，请稍后重试。",
+    cannotOpenGraph: "无法打开 Obsidian 原生图谱。请稍后重试。",
     folderFilterUnavailable: "目录筛选暂不可用，正在打开普通全局图谱并保留原有筛选。",
-    cannotOpenLocalGraph: "暂时无法打开 Obsidian 原生局部图谱，请稍后重试。",
-    missingVaultFile: (path) => `没有在当前 Vault 找到：${path}`
+    cannotOpenLocalGraph: "无法打开 Obsidian 原生局部图谱。请稍后重试。",
+    missingVaultFile: (path) => `当前仓库中未找到：${path}。请确认文件未被移动或删除。`
   }
 };
 
@@ -347,8 +347,8 @@ const EN: HomeCopy = {
     revisitSessionTitle: (date) => `Open thought · ${date}`,
     reviewSessionTitle: (date) => `Knowledge review · ${date}`,
     sidebarNotReady: "The sidebar conversation view is not ready",
-    cannotCreateSession: (error) => `Could not create a new conversation: ${error}`,
-    cannotCreateReviewSession: (error) => `Could not create a review conversation: ${error}`
+    cannotCreateSession: (detail) => `Could not create a new conversation. ${detail}`,
+    cannotCreateReviewSession: (detail) => `Could not create a review conversation. ${detail}`
   },
   modal: {
     title: "How would you like to write today?",
@@ -374,15 +374,15 @@ const EN: HomeCopy = {
     keepAs: (name) => `Keep as ${name}`,
     readingFile: (name) => `Reading ${name}…`,
     importReadComplete: "Read complete. Unknown frontmatter, body structure, code blocks, and placeholders are kept exactly as they are.",
-    readFailed: (error) => `Could not read the file: ${error}`,
+    readFailed: (detail) => `Could not read the template. ${detail}`,
     savingLocalTemplate: "Saving the local template…",
     duplicateTemplate: (path) => `A template with this name already exists and was not overwritten: ${path}`,
     saved: (path) => `Saved: ${path}`,
-    saveFailed: (error) => `Could not save the template: ${error}`,
+    saveFailed: (detail) => `Could not save the template. ${detail}`,
     creatingJournal: "Creating the journal…",
     journalCreated: (path) => `Journal created: ${path}`,
     journalAlreadyExists: (path) => `Today's journal already exists and was opened: ${path}`,
-    createFailed: (error) => `Could not create the journal: ${error}`
+    createFailed: (detail) => `Could not create the journal. ${detail}`
   },
   template: {
     display: (id) => EN_TEMPLATE_DISPLAY[id],
@@ -396,10 +396,10 @@ const EN: HomeCopy = {
     folderOccupiedByFile: (path) => `Could not create the folder because a file occupies this path: ${path}`
   },
   graph: {
-    cannotOpenGraph: "Could not open Obsidian's native graph. Please try again.",
+    cannotOpenGraph: "Could not open Obsidian's native graph. Try again later.",
     folderFilterUnavailable: "Folder filtering is unavailable. Opening the global graph with your existing filters.",
-    cannotOpenLocalGraph: "Could not open Obsidian's native local graph. Please try again.",
-    missingVaultFile: (path) => `The current Vault does not contain: ${path}`
+    cannotOpenLocalGraph: "Could not open Obsidian's native local graph. Try again later.",
+    missingVaultFile: (path) => `Not found in the current vault: ${path}. Make sure the file was not moved or deleted.`
   }
 };
 

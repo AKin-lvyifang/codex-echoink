@@ -20,7 +20,7 @@ for (const kind of ["answer", "generation"] as const) {
   const host = { plugin, folderOperationBusy: false, withStructureMutation: async (operation: () => Promise<unknown>) => operation() };
   const next = structuredClone(previous); next.organization!.enabled = false;
   const saving = EchoInkKnowledgeSurfaceService.prototype.saveDirectoryBindings.call(host as never, next);
-  const failed = assert.rejects(saving, /绑定保存失败，保留较新的配置/u);
+  const failed = assert.rejects(saving, /目录绑定未能保存，已保留较新的配置/u);
   await firstSaveStarted;
   await rememberConversationContentDirectory(plugin as never, knowledgeOutputLocation(plugin.settings.knowledgeBase.folderBindings, kind).directory, kind);
   rejectFirst(new Error("settings write rejected"));

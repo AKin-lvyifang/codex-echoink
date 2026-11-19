@@ -1,3 +1,4 @@
+import { isWorkbenchSignalDismissed, workbenchBodyFingerprint } from "../home/workbench-dismissals";
 import { requireModuleOwner } from "../agents/registry";
 import { TFile, parseYaml, type App, type EventRef } from "obsidian";
 import { GENERAL_ASSISTANT_ID, type AgentModuleId } from "../agents/types";
@@ -20,6 +21,8 @@ import type { MobileServices } from "./services";
 import type { MobileRuntime } from "./runtime";
 import { readMobileFile, replaceMobileFile } from "./replace-file";
 import { mobileModuleEnabled } from "./module-settings";
+import { userFacingErrorText } from "../core/error-copy";
+import { SETTINGS_FALLBACK } from "../core/error-copy/codes/settings";
 
 /** Null is deliberately preserved at the acquisition boundary; it never becomes a count of zero. */
 export interface MobileWorkbenchFacts extends Omit<WorkbenchFacts, "todos" | "inbox" | "raw" | "finance"> {
@@ -37,7 +40,7 @@ type InboxEvent = { scope: string; at: number } & ({ kind: "create" | "delete"; 
 const visible = (path: string) => !path.split("/").some(part => part.startsWith("."));
 const safePath = (path: unknown): path is string => typeof path === "string" && !!path && !path.startsWith("/") && !path.includes("\\") && !path.split("/").some(part => !part || part === "." || part === "..");
 const scopeKey = (paths: readonly string[]) => sha256Hex([...paths].sort().join("\n")).slice(0, 24);
-const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const errorText = (error: unknown) => userFacingErrorText(error, SETTINGS_FALLBACK.workbenchRead[0]);
 const objectRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 // Same content semantics as workbench-journal; the desktop reader owns a Node record store.
 function contentLines(content: string, keepHeadings = false): string[] {
@@ -148,7 +151,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   private async source(file: TFile): Promise<WorkbenchSourceFile> {
     const bytes = await this.app.vault.readBinary(file);
     const digest = await crypto.subtle.digest("SHA-256", bytes);
-    return { path: file.path, fingerprint: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
+    return { path: file.path, bodyFingerprint: workbenchBodyFingerprint(new TextDecoder().decode(bytes), file.path), fingerprint: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
   }
   private observeInbox(now: number): Promise<WorkbenchSourceFile[]> {
     const run = async () => {
@@ -392,7 +395,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   }
   private signals(facts: MobileWorkbenchFacts, now: number): WorkbenchSignal[] {
     if (this.store.unavailableReason) return [];
-    return calculateWorkbenchSignals(this.signalFacts(facts, now)).map(signal => {
+    return calculateWorkbenchSignals(this.signalFacts(facts, now)).filter(signal => !isWorkbenchSignalDismissed(signal, this.settings().workbenchDismissals)).map(signal => {
       const version = signal.moduleId === "finance" ? facts.finance
         : signal.id === 9 ? [facts.reviewComplete, this.settings().review]
         : signal.id === 14 ? [facts.isolated, facts.versions]
@@ -406,7 +409,7 @@ export class MobileWorkbenchService implements MobileWorkbenchPort {
   }
   async load(now = Date.now()): Promise<WorkbenchSnapshot> {
     const facts = await this.readFacts(now), input = this.signalFacts(facts, now), today = localWorkbenchDate(now);
-    return { generatedAt: now, modules: [...facts.modules], todoSource: facts.todoSource, signals: this.signals(facts, now),
+    return { generatedAt: now, dismissedCount: Object.keys(this.settings().workbenchDismissals?.entries ?? {}).length, modules: [...facts.modules], todoSource: facts.todoSource, signals: this.signals(facts, now),
       todayTodos: facts.modules.includes("todos") ? facts.todos?.filter(todo => !todo.done && todo.dueDate === today) ?? [] : [], issues: [...facts.issues], nextRefreshAt: nextWorkbenchRefreshAt(input) };
   }
   async handoff(signal: WorkbenchSignal, replaceDraft = false): Promise<{ agentId: string; conflict: boolean }> {

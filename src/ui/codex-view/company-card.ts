@@ -8,6 +8,7 @@ import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import type { CompanyProject } from "../../company/types";
 import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
+import { failureText, NEXT, actionFailureText } from "../../core/error-copy";
 
 /** Program-owned controls appended to the original router conversation. */
 export class CompanyConversationCard {
@@ -41,7 +42,7 @@ export class CompanyConversationCard {
       row.createSpan({ text: owner ? `${MODULE_LABELS[request.moduleId][0]}已指定 ${owner.name}` : `${MODULE_LABELS[request.moduleId][0]}还没有负责人` });
       const action = this.button(row, owner ? `交给 ${owner.name}` : "指定负责人", "secondary");
       const resume = async () => { action.disabled = true; try { await service.retryModuleAssignment(request.id); } finally { this.signature = ""; this.render(parent, routerId); } };
-      action.onclick = () => { if (action.disabled) return; if (owner) void resume().catch(error => new Notice(errorMessage(error))); else this.plugin.openModuleOwnerPicker(request.moduleId, resume); };
+      action.onclick = () => { if (action.disabled) return; if (owner) void resume().catch(error => new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage))); else this.plugin.openModuleOwnerPicker(request.moduleId, resume); };
     }
     const pending = [...waiting, ...approvals.map(a => a.dispatch)];
     for (const id of new Set(pending.map(d => d.projectId ?? ""))) {
@@ -50,7 +51,7 @@ export class CompanyConversationCard {
       const row = root.createDiv({ cls: "echoink-company-waiting", attr: { role: "status" } });
       row.createSpan({ text: `${item ? `${item.name} · ` : ""}${count} 件等你定` });
       const open = this.button(row, item ? "去项目页" : "去工作台", "secondary");
-      open.onclick = () => { void (item ? this.plugin.activateProjectPage(item.id) : this.plugin.activateHomeView()).catch(error => new Notice(errorMessage(error))); };
+      open.onclick = () => { void (item ? this.plugin.activateProjectPage(item.id) : this.plugin.activateHomeView()).catch(error => new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage))); };
     }
   }
   private button(parent: HTMLElement, text: string, variant: "primary" | "secondary"): HTMLButtonElement {
@@ -88,13 +89,12 @@ export class CompanyConversationCard {
       try {
         const service = this.plugin.companyService;
         const result = await service?.[action](project.routerConversationId, project.id);
-        if (action === "start" && service?.projectOf(project.id)?.status === "proposed" && result?.trim()) new Notice(result);
+        if (action === "start" && service?.projectOf(project.id)?.status === "proposed" && result?.trim()) new Notice(failureText(result, ["项目尚未开工。", "The project has not started yet."], NEXT.retryOrReload, this.plugin.settings.settingsLanguage));
       }
-      catch (error) { new Notice(errorMessage(error)); }
+      catch (error) { new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage)); }
       finally { this.busy.delete(project.id); this.signature = ""; refresh(); }
     };
     cancel.onclick = () => { void run("cancelProposal")(); };
     start.onclick = () => { void run("start")(); };
   }
 }
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

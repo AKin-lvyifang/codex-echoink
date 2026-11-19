@@ -101,7 +101,7 @@ export class MobileAgentRegistryService {
         const sol = draft.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)!;
         if (input.identity) {
           const name = normalizeAgentDisplayName(input.identity.displayName), avatar = normalizeAgentAvatar(input.identity.avatar);
-          if (!name || !avatar) throw new Error("请输入 1–24 个字符的名称，并选择有效头像。");
+          if (!name || !avatar) throw new Error("名称或头像无效。请输入 1–24 个字符的名称，并选择有效头像。");
           Object.assign(sol, { name, avatar, identityEdited: true });
         }
         if (input.templateId !== undefined) {

@@ -500,7 +500,7 @@ async function assertOnboardingRollback(root: string) {
   plugin.saveSettings = async () => { if (!failed && plugin.settings.knowledgeBase.folderBindings?.configured) { failed = true; throw new Error("fixture binding save failed"); } };
   try {
     const plan = await service.previewOnboardingSetupPlan();
-    await assert.rejects(service.applyOnboardingSetupPlan(plan), /fixture binding save failed/u);
+    await assert.rejects(service.applyOnboardingSetupPlan(plan), (error: unknown) => error instanceof Error && error.message.startsWith("目录方案未能应用：") && !error.message.includes("fixture binding save failed"));
     assert.equal(knowledgeFolderBindingsSignature(plugin.settings.knowledgeBase.folderBindings), knowledgeFolderBindingsSignature(before));
     for (const folder of plan.directoryPlan.create) assert.equal(await fs.stat(path.join(root, folder)).then(() => true, () => false), false);
     assert.equal(await service.getOriginalDirectoryStatus(), null, "a rolled-back attempt leaves no stale onboarding undo record");

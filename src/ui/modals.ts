@@ -1,3 +1,4 @@
+import { CAUSE, NEXT, joinErrorCopy } from "../core/error-copy";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { applyDeleteButton } from "../settings/amicro-buttons";
 import { App, Modal, Setting } from "obsidian";
@@ -552,12 +553,12 @@ function memoryCorrectionGenerationError(
   const message = error instanceof Error ? error.message : String(error);
   const zh = language !== "en";
   if (message.includes("provider_text_generation_timeout")) {
-    return zh ? "生成超时，请重试。" : "Generation timed out. Try again.";
+    return CAUSE.providerTimeout[zh ? 0 : 1];
   }
   if (message.includes("provider_text_generation_aborted")) {
-    return zh ? "生成已停止，尚未保存任何修改。" : "Generation stopped. No changes were saved.";
+    return zh ? "生成已停止，未保存任何修改。" : "Generation stopped. No changes were saved.";
   }
-  return zh ? "生成失败，请检查当前模型后重试。" : "Generation failed. Check the current model and try again.";
+  return joinErrorCopy(["内容未能生成。", "The content could not be generated."], NEXT.testConnection, zh ? "zh" : "en");
 }
 
 function isMemoryCorrectionRevisionConflict(error: unknown): boolean {

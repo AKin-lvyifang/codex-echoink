@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { KNOWLEDGE_ROOT_NAMES, knowledgeRootRole } from "./root-paths-core";
 import { FINANCE_BILINGUAL_ROOT, FINANCE_BILINGUAL_TRANSACTIONS, isFinanceRootName, isFinanceTransactionsName } from "../lifestyle/finance-paths";
 /** A name is a single portable folder segment; the model never chooses paths. */
@@ -79,7 +80,7 @@ export async function optimizeWikiFolderNames(
       );
     } catch (error) {
       host.assertActive?.();
-      translationError = `名称生成失败：${error instanceof Error ? error.message : String(error)}`;
+      translationError = `目录名称未能生成，待翻译目录保持原位。${userFacingErrorText(error, "请稍后重试。")}`;
     }
     host.assertActive?.();
     let names: Record<string, unknown>;

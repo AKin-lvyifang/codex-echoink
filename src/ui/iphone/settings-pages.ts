@@ -1,3 +1,4 @@
+import { renderMobileCloudSync } from "../mobile/cloud-sync-settings";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
 import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
 import { openFolderPicker } from "./knowledge-settings-pages";
@@ -21,7 +22,7 @@ import { IPhoneCapabilityPages } from "./capability-pages";
 import { IPhoneModelPages } from "./model-pages";
 import type { IPhonePageContext } from "./workbench-contract";
 import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
-import { pushSettingsPage, settingsBody, settingsBrand, settingsError, settingsGroup, settingsRow, settingsSelect, settingsSwitch } from "./settings-elements";
+import { pushSettingsPage, settingsBody, settingsBrand, settingsError, settingsGroup, settingsRow, settingsSelect, settingsSwitch, settingsField, settingsButton } from "./settings-elements";
 
 export const IPHONE_SETTINGS_CATEGORIES = [
   ["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["memory", "brain", "记忆"],
@@ -70,6 +71,7 @@ export class IPhoneSettingsPages {
     });
     await pushSettingsPage(ctx, page);
   }
+  private readonly disposers: (() => void)[] = [];
   private general(): MobileShellPage {
     const { ctx } = this, body = settingsBody(ctx), appearance = settingsGroup(ctx, body, "外观");
     const color = settingsRow(ctx, appearance, "配色"), track = el(ctx.document, "div", "ip-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", "配色");
@@ -91,6 +93,18 @@ export class IPhoneSettingsPages {
     start.type = "checkbox"; start.setAttribute("role", "switch"); start.setAttribute("aria-label", "启动时打开工作台"); start.checked = ctx.host.settings().autoOpenHome === true;
     startLabel.append(settingsMessage(ctx, el(ctx.document, "span", "ip-settings-label"), "启动时打开工作台"), start); startup.append(startLabel);
     start.addEventListener("change", () => { void persist("autoOpenHome", start.checked).then(sync).catch(error.show); });
+    const syncGroup = settingsGroup(ctx, body, "同步"), mirrorLabel = el(ctx.document, "label", "ip-settings-row"), mirror = el(ctx.document, "input", "ip-settings-switch");
+    mirror.type = "checkbox"; mirror.setAttribute("role", "switch"); mirror.setAttribute("aria-label", "同步数据到其他设备"); mirror.checked = ctx.host.settings().syncMirrorEnabled !== false;
+    mirrorLabel.append(settingsMessage(ctx, el(ctx.document, "span", "ip-settings-label"), "同步数据到其他设备"), mirror); syncGroup.append(mirrorLabel);
+    syncGroup.append(settingsMessage(ctx, el(ctx.document, "div", "ip-settings-detail"), "通过笔记库里的 EchoInk/同步数据 文件夹；下次启动时生效"));
+    mirror.addEventListener("change", () => { void persist("syncMirrorEnabled", mirror.checked).then(sync).catch(error.show); });
+    const cloudGroup = settingsGroup(ctx, body, "云同步"), cloudError = settingsError(ctx, cloudGroup);
+    const stopCloud = renderMobileCloudSync({ language: ctx.host.settings().settingsLanguage, document: ctx.document, group: cloudGroup, controller: ctx.host.cloudSync?.() ?? null, settings: () => ctx.host.settings().cloudSync, save: () => ctx.host.saveSettings(),
+      row: (_label, control) => { cloudGroup.append(control); },
+      field: (label, value, change, type) => settingsField(ctx, cloudGroup, label, value, change, type),
+      switchRow: (label, checked, change) => settingsSwitch(ctx, cloudGroup, label, () => label === "开启云同步" ? ctx.host.cloudSync?.()?.view().enabled ?? checked : ctx.host.settings().cloudSync.includeAttachments, async value => { await change(value); }),
+      button: (label, action, variant) => settingsButton(ctx, label, action, variant), error: cloudError.show });
+    this.disposers.push(stopCloud);
     settingsRow(ctx, settingsGroup(ctx, body, "关于"), "EchoInk Agent", { value: ctx.host.version ?? "版本未知", action: () => this.about() });
     const sync = () => {
       const value = effectiveEchoInkColorTheme(ctx.host.settings().colorTheme, ctx.host.accountService); track.dataset.selected = value;
@@ -98,9 +112,10 @@ export class IPhoneSettingsPages {
       locks.forEach(update => update());
       language.value = ctx.host.settings().settingsLanguage; language.disabled = busy; language.setAttribute("aria-label", settingsText(ctx, "界面语言"));
       start.checked = ctx.host.settings().autoOpenHome === true; start.disabled = busy;
+      mirror.checked = ctx.host.settings().syncMirrorEnabled !== false; mirror.disabled = busy;
       ctx.document.body.setAttribute("data-echoink-theme", documentEchoInkColorTheme(ctx.document, value, ctx.host.accountService));
     };
-    const persist = async (key: "colorTheme" | "autoOpenHome" | "settingsLanguage", value: string | boolean) => {
+    const persist = async (key: "colorTheme" | "autoOpenHome" | "settingsLanguage" | "syncMirrorEnabled", value: string | boolean) => {
       if (busy) { sync(); return; } busy = true; error.show(); const settings: Record<string, unknown> = ctx.host.settings(), previous = settings[key]; settings[key] = value; sync();
       try { await ctx.host.saveSettings(); this.refresh(); }
       catch (failure) { if (settings[key] === value) settings[key] = previous; throw failure; }

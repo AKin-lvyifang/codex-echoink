@@ -1,5 +1,6 @@
 import { ownedDiv, ownedEl } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import { readCompanionTheme, ECHOINK_COLOR_THEMES, ECHOINK_APPEARANCE_REFRESH, effectiveEchoInkColorTheme, type EchoInkColorTheme } from "../ui/appearance-theme";
 import { decorateProAppearanceChoice } from "../ui/appearance-pro";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
@@ -85,7 +86,7 @@ export function renderAppearancePicker(container: HTMLElement, host: AppearanceH
     } catch {
       host.settings.colorTheme = previous;
       host.applyAppearanceTheme();
-      new Notice(zh ? "主题未保存，已恢复原主题。请重试。" : "Theme could not be saved. The previous theme was restored. Please try again.");
+      new Notice(joinErrorCopy(["主题未能保存，已恢复原主题。", "The theme could not be saved, and the previous theme was restored."], NEXT.retry, zh ? "zh" : "en"));
     } finally {
       busy = false; sync();
       if (selected.isConnected && (doc.activeElement === doc.body || picker.contains(doc.activeElement))) {

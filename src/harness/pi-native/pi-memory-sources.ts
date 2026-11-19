@@ -14,12 +14,25 @@ export function normalizeInjectedMemorySources(value: unknown): InjectedPersonal
     const id = item.id.trim(), title = item.title.trim();
     if (!id || !title || sources.has(id)) continue;
     const revision = item.revision;
-    const reason = typeof item.reason === "string" && ["pinned", "title_or_trigger", "content_or_association"].includes(item.reason) ? item.reason : undefined;
+    const reason = typeof item.reason === "string" && ["pinned", "title_or_trigger", "content_or_association", "tool_read", "related"].includes(item.reason) ? item.reason : undefined;
     sources.set(id, { id, title,
       ...(reason ? { reason } : {}),
+      ...(reason === "related" && item.relatedFrom && typeof item.relatedFrom === "object"
+        && typeof (item.relatedFrom as Record<string, unknown>).id === "string" && typeof (item.relatedFrom as Record<string, unknown>).title === "string"
+        ? { relatedFrom: { id: (item.relatedFrom as { id: string }).id, title: (item.relatedFrom as { title: string }).title } } : {}),
       ...(typeof revision === "number" && Number.isSafeInteger(revision) && revision > 0 ? { revision } : {}) });
   }
   return [...sources.values()];
+}
+
+/** First delivered identity wins; a later read may supply its missing revision. */
+export function mergeInjectedMemorySources(...groups: readonly (readonly InjectedPersonalMemorySourceReference[])[]): InjectedPersonalMemorySourceReference[] {
+  const unique = new Map<string, InjectedPersonalMemorySourceReference>();
+  for (const source of groups.flatMap(group => normalizeInjectedMemorySources(group))) {
+    const previous = unique.get(source.id);
+    unique.set(source.id, previous ? { ...source, ...previous, revision: previous.revision ?? source.revision } : source);
+  }
+  return [...unique.values()];
 }
 
 /** Restore only references from this Session and ProductRun; never copy Memory bodies. */
@@ -31,6 +44,6 @@ export function projectInjectedMemorySources(messages: ChatMessage[], entries: r
     const sources = normalizeInjectedMemorySources(data.sources);
     const target = messages.find(message => message.reasoningSummary?.productRunId === data.productRunId)
       ?? messages.find(message => message.runId === data.productRunId);
-    if (target && sources.length) target.injectedMemorySources = sources;
+    if (target && sources.length) target.injectedMemorySources = mergeInjectedMemorySources(target.injectedMemorySources ?? [], sources);
   }
 }

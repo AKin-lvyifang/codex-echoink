@@ -113,14 +113,14 @@ export class MobileProfileProtocol {
     let identity = state.identity;
     if (change.identity) {
       const displayName = normalizeAgentDisplayName(change.identity.displayName), avatar = normalizeAgentAvatar(change.identity.avatar);
-      if (!displayName || !avatar) throw new Error("请输入 1–24 个字符的名称，并选择有效头像。");
+      if (!displayName || !avatar) throw new Error("名称或头像无效。请输入 1–24 个字符的名称，并选择有效头像。");
       if (displayName !== identity.displayName || JSON.stringify(avatar) !== JSON.stringify(identity.avatar) || identity.revision === 0) {
         identity = { ...identity, displayName, avatar, revision: identity.revision + 1, updatedAt: now };
       }
     }
     if (template && state.metadata.templateId === template.id && identity === state.identity) return this.publicProfile(state);
     if (!template && identity === state.identity) return this.publicProfile(state);
-    if (template && identity.revision === 0) throw new Error("请先设置 Agent 名称和头像。");
+    if (template && identity.revision === 0) throw new Error("尚未设置 Agent 名称和头像。请先完成设置。");
     const templateId = template?.id ?? state.metadata.templateId;
     const self: AgentSelfState = template ? agentSelfFromTemplate(template, state.self?.currentLearnedHabits)
       : state.self ?? agentSelfFromTemplate(getAgentTemplate("advisor")!);
@@ -198,7 +198,7 @@ export class MobileProfileProtocol {
       await this.adapter.write(`${directory}/state`, "committed\n");
     } catch (error) {
       try { await this.recover(directory); }
-      catch (restoreError) { throw new AggregateError([error, restoreError], "保存失败，原资料与事务备份已保留，恢复尚未完成。"); }
+      catch (restoreError) { throw new AggregateError([error, restoreError], "资料未能保存，自动恢复尚未完成，原资料与备份已保留。请重新打开后核对。"); }
       throw error;
     }
     await this.adapter.rmdir(directory, true);

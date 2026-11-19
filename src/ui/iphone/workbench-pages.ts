@@ -1,3 +1,5 @@
+import { saveWorkbenchDismissal } from "../../home/workbench-dismissals";
+import { settingsErrorText } from "../../core/error-copy";
 import { getModuleOwner } from "../../agents/registry";
 import { openModuleOwnerSheet } from "../mobile/module-owner-sheet";
 import { agentRoleGroups } from "../../agents/roster-groups";
@@ -12,6 +14,7 @@ import type { MobileShellPage } from "../mobile/shell-types";
 import { shellIconButton } from "../mobile/shell-controls";
 import { createIPhoneComposer, createInlineQuestion, requestIPhoneTaskResume } from "./composer";
 import type { IPhonePageContext } from "./workbench-contract";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { IPHONE_MODULES, iphoneAvatar, iphoneButton, iphoneClock, iphoneDateGroup, iphoneElement as el,
   iphoneIcon, iphoneStatus, iphoneTaskProjection, iphoneTasks, iphoneTaskStatus, iphoneTaskSummary,
   iphoneTaskTime, iphoneTaskUnread } from "./workbench-elements";
@@ -24,9 +27,10 @@ export { createAgentFormPage } from "./agent-form";
 function agentStrip(ctx: IPhonePageContext, current?: string): HTMLElement {
   const strip = el(ctx.document, "nav", "ip-agent-strip"); strip.setAttribute("aria-label", "Agent");
   const tasks = iphoneTasks(ctx.host.store.state.sessions);
-  const groups = new Map(agentRoleGroups(ctx.host.settings().agentRegistry.agents.filter(isAgentHired), ctx.host.settings().settingsLanguage === "en").map(group => {
+  const groups = new Map(agentRoleGroups(ctx.host.settings().agentRegistry.agents.filter(isAgentHired), ctx.host.settings().settingsLanguage === "en").filter(group => group.id === "role" || group.agents.length).map(group => {
+    // Size and a divider carry the main/role hierarchy; the group name stays for assistive tech only.
     const section = el(ctx.document, "div", "ip-agent-group"); section.dataset.agentGroup = group.id;
-    section.append(el(ctx.document, "div", "ip-agent-group-label", group.label));
+    section.setAttribute("role", "group"); section.setAttribute("aria-label", group.label);
     const items = el(ctx.document, "div", "ip-agent-group-items"); section.append(items); strip.append(section);
     return [group.id, items] as const;
   }));
@@ -170,13 +174,20 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const signalRow = (signal: WorkbenchSignal): HTMLElement => {
     const row = el(ctx.document, "div", "ip-row ip-signal-row"), owner = getModuleOwner(ctx.host.settings().agentRegistry, signal.moduleId);
     row.append(iphoneIcon(ctx.document, signal.icon), el(ctx.document, "div", "ip-grow", signal.description));
-    const action = iphoneButton(ctx.document, owner ? `交给 ${owner.name}` : "指定负责人", () => {
+    const action = iphoneButton(ctx.document, owner ? (ctx.host.settings().settingsLanguage === "en" ? `Assign to ${owner.name}` : `交给 ${owner.name}`) : (ctx.host.settings().settingsLanguage === "en" ? "Assign owner" : "指定负责人"), () => {
       if (getModuleOwner(ctx.host.settings().agentRegistry, signal.moduleId)) { void handoff(false).catch(() => {}); return; }
-      openModuleOwnerSheet({ document: ctx.document, prefix: "ip", agents: ctx.host.agents, roster: ctx.host.settings().agentRegistry.agents, shell: ctx.shell,
+      openModuleOwnerSheet({ document: ctx.document, prefix: "ip", language: ctx.host.settings().settingsLanguage, agents: ctx.host.agents, roster: ctx.host.settings().agentRegistry.agents, shell: ctx.shell,
         avatar: agent => iphoneAvatar(ctx.document, agent), button: (text, click, variant) => iphoneButton(ctx.document, text, click, variant),
         create: () => ctx.navigate({ kind: "agent-form", creation: { moduleIds: [signal.moduleId], onReturn: () => ctx.host.workbench.refreshTasks?.() } }),
         start: async () => { await handoff(false); }, error: ctx.error }, signal.moduleId);
-    }); row.append(action);
+    });
+    const actions = el(ctx.document, "div", "ip-signal-actions");
+    const dismiss = iphoneButton(ctx.document, ctx.host.settings().settingsLanguage === "en" ? "Dismiss" : "忽略", () => {
+      dismiss.disabled = true;
+      void saveWorkbenchDismissal(ctx.host.settings(), signal, () => ctx.host.saveSettings())
+        .then(() => { ctx.host.workbench.refreshTasks?.(); return loadFacts(); }, ctx.error).finally(() => { dismiss.disabled = false; });
+    }, "is-text");
+    actions.append(dismiss, action); row.append(actions);
     const handoff = async (replace: boolean) => {
       action.disabled = true;
       try {
@@ -199,14 +210,24 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const renderFacts = () => {
     if (disposed || !snapshot) return;
     signals.replaceChildren(); todos.replaceChildren();
-    if (snapshot.signals.length) {
+    if (snapshot.signals.length || snapshot.dismissedCount) {
       const area = section(ctx, "可以交给 Agent", snapshot.signals.length), rows = el(ctx.document, "div", "ip-rows");
+      area.heading.classList.add("ip-signal-heading");
+      if (!snapshot.signals.length) area.heading.querySelector(".ip-count")?.remove();
       if (snapshot.signals.length > 3) {
         const more = iphoneButton(ctx.document, showAll ? "收起" : `还有 ${snapshot.signals.length - 3} 条`, () => { showAll = !showAll; renderFacts(); }, "is-text ip-section-more", showAll ? "chevron-up" : "chevron-down");
         more.setAttribute("aria-expanded", `${showAll}`); area.heading.append(more);
       }
+      if (snapshot.dismissedCount) {
+        const restore = iphoneButton(ctx.document, ctx.host.settings().settingsLanguage === "en" ? "Restore dismissed suggestions" : "恢复已忽略建议", () => {
+          restore.disabled = true;
+          void saveWorkbenchDismissal(ctx.host.settings(), null, () => ctx.host.saveSettings())
+            .then(() => { ctx.host.workbench.refreshTasks?.(); return loadFacts(); }, ctx.error).finally(() => { restore.disabled = false; });
+        }, "is-text ip-section-more");
+        area.heading.append(restore);
+      }
       for (const signal of showAll ? snapshot.signals : snapshot.signals.slice(0, 3)) rows.append(signalRow(signal));
-      area.element.append(rows); signals.append(area.element);
+      if (snapshot.signals.length) area.element.append(rows); signals.append(area.element);
     }
     if (snapshot.todayTodos.length) {
       const area = section(ctx, "今日待办", snapshot.todayTodos.length), rows = el(ctx.document, "div", "ip-rows");
@@ -228,7 +249,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const loadFacts = async () => {
     if (loading) { reload = true; return; } loading = true;
     try { const next = await ctx.host.workbench.load(); if (!disposed) { snapshot = next; renderFacts(); } }
-    catch (error) { if (!disposed) { readError.textContent = error instanceof Error ? error.message : String(error); readError.hidden = false; } }
+    catch (error) { if (!disposed) { readError.textContent = settingsErrorText(error, SETTINGS_FALLBACK.workbenchRead, ctx.host.settings().settingsLanguage); readError.hidden = false; } }
     finally { loading = false; if (reload && !disposed) { reload = false; void loadFacts(); } }
   };
   renderTasks(); void loadFacts();
@@ -236,6 +257,8 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   const unsubscribeFacts = ctx.host.workbench.subscribe(() => { renderTasks(); void loadFacts(); });
   const unsubscribeIdentity = ctx.host.services.subscribeIdentity(() => { renderTasks(); renderFacts(); });
   const unsubscribeCompany = ctx.host.company?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
+  const unsubscribeSync = ctx.host.syncOverview?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
+  const unsubscribeRequests = ctx.host.syncRequests?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
   let localDay = new Date().toDateString();
   const window = ctx.document.defaultView;
   const clock = window?.setInterval(() => {
@@ -253,7 +276,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       if (task && iphoneTaskStatus(task) === "running") card.querySelector(".ip-status")?.replaceWith(iphoneStatus(ctx.document, task));
     }
   }, 60_000);
-  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
+  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
 }
 
 export function createAgentPage(ctx: IPhonePageContext, agentId: string): MobileShellPage {
@@ -263,7 +286,7 @@ export function createAgentPage(ctx: IPhonePageContext, agentId: string): Mobile
   }
   const content = el(ctx.document, "div", "ip-agent-page"), strip = el(ctx.document, "div", "ip-strip-slot"), list = el(ctx.document, "div", "ip-agent-tasks"); content.append(strip, list);
   const actions = shellIconButton(ctx.document, "编辑 Agent", "pencil", () => { void ctx.navigate({ kind: "agent-form", agentId }).catch(error => ctx.error(error)); });
-  const composer = createIPhoneComposer(ctx, { agentId }); let signature = "", disposed = false;
+  const composer = createIPhoneComposer(ctx, { agentId }); content.append(composer.submissions); let signature = "", disposed = false;
   const initial = ctx.host.settings().agentRegistry.agents.find(agent => agent.id === agentId);
   const page: MobileShellPage = { id: `iphone-agent-${agentId}`, title: initial?.name ?? "Agent", subtitle: initial?.position || "0 件事", content, actions, footer: composer.element, canLeave: composer.canLeave };
   const render = () => {

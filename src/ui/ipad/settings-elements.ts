@@ -1,3 +1,4 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
 import type { ApiProviderConfig } from "../../settings/settings";
 import type { MobileModelConfiguration } from "../../mobile/model-configuration";
@@ -6,6 +7,7 @@ import type { IPadSettingsShell } from "./settings-shell";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { ipadElement as el, ipadIcon } from "./workbench-elements";
 import { settingsText as t } from "./settings-i18n";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 
 export interface IPadSettingsContext {
   root: HTMLElement; document: Document; host: IPadWorkbenchHost; shell: IPadSettingsShell;
@@ -62,7 +64,11 @@ export function settingsSwitch(ctx: IPadSettingsContext, parent: HTMLElement, ti
   row.append(el(ctx.document, "span", "pd-settings-copy", title), input); parent.append(row); return input;
 }
 export function settingsError(ctx: IPadSettingsContext): HTMLElement { const error = el(ctx.document, "div", "pd-settings-error"); error.hidden = true; error.setAttribute("role", "alert"); return error; }
-export function showSettingsError(node: HTMLElement, error: unknown): void { node.textContent = error instanceof Error ? error.message : String(error); node.hidden = false; }
+/** Settings red text: readable reason in the interface language, never the raw error. */
+export function showSettingsError(node: HTMLElement, error: unknown, ctx?: { host: Pick<IPadWorkbenchHost, "settings"> }): void {
+  node.textContent = ctx ? settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, ctx.host.settings().settingsLanguage, zh => t(ctx, zh)) : settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, "zh");
+  node.hidden = false;
+}
 export function liveSettingsPage(ctx: IPadSettingsContext, page: MobileShellPage, render: () => void): MobileShellPage {
   const originalTitle = page.title;
   const refresh = () => { page.title = t(ctx, originalTitle); render();

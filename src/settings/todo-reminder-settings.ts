@@ -9,17 +9,17 @@ export function todoReminderStatusText(status: TodoReminderStatus, english: bool
   const permission = {
     default: english ? "Not authorized yet. Enable reminders or send a test to request permission." : "尚未授权。开启提醒或发送测试通知时请求权限。",
     granted: english ? "The notification API is authorized. System settings or Do Not Disturb may still hide alerts." : "通知接口已授权。系统通知设置或勿扰模式仍可能隐藏提示。",
-    denied: english ? "Notification permission was denied. Allow Obsidian notifications in the host/system settings, then try again." : "通知权限被拒绝。请在宿主或系统设置中允许 Obsidian 通知，再重试。",
-    unavailable: english ? "Desktop notifications are unavailable in this host." : "当前宿主不支持桌面通知。"
+    denied: english ? "Notification permission was denied. Allow Obsidian notifications in system settings, then try again." : "通知权限被拒绝。请在系统设置中允许 Obsidian 发送通知后重试。",
+    unavailable: english ? "Desktop notifications are not available in this environment." : "当前环境不支持桌面通知。"
   }[status.permission];
   const failures: Record<TodoReminderStatus["error"], string> = {
     "": "",
-    read: english ? "Could not read the to-do source. No reminders were marked as sent; retrying while enabled." : "待办源文件读取失败，未登记已提醒；开启期间会重试。",
-    send: english ? "The host could not send the notification. Check Obsidian's system notification settings and try the test again." : "宿主未能发送通知。请检查系统中的 Obsidian 通知设置，再发送测试通知。",
-    unconfirmed: english ? "The host did not confirm sending. This was not marked as sent; try the test again." : "宿主未确认通知发送，未登记已提醒；请重试测试通知。",
-    persistence: english ? "The reminder was sent, but its record could not be saved. It may repeat after restarting until saving succeeds." : "提醒已发送，但去重记录保存失败；保存成功前重启可能重复提醒。",
-    settings: english ? "The setting could not be saved. Reminders are off for this session; the previous setting may return after restarting." : "设置保存失败，本次运行已关闭提醒；重启后可能恢复先前设置。",
-    permission: english ? "Could not request permission. Check Obsidian's notification settings and try again." : "通知权限请求失败，请检查 Obsidian 的通知设置后重试。"
+    read: english ? "Could not read the to-do source. No reminders were marked as sent; retrying while enabled." : "未能读取待办文件，提醒尚未发送。开启期间将自动重试。",
+    send: english ? "Obsidian could not send the notification. Check its notification settings in system settings and send a test again." : "Obsidian 未能发送通知。请检查系统中的 Obsidian 通知设置后重新发送测试通知。",
+    unconfirmed: english ? "Could not confirm that the notification was sent, so it was not marked as sent. Send a test again." : "未能确认通知已发送，本条未记为已提醒。请重新发送测试通知。",
+    persistence: english ? "The reminder was sent, but its record could not be saved. It may repeat after restarting until saving succeeds." : "提醒已发送，但发送记录未能保存，重启后可能重复提醒。请稍后重试。",
+    settings: english ? "The setting could not be saved. Reminders are off for this session; the previous setting may return after restarting." : "设置未能保存，本次运行已关闭提醒，重启后可能恢复原设置。请稍后重新开启。",
+    permission: english ? "Could not request permission. Check Obsidian's notification settings and try again." : "未能申请通知权限。请检查 Obsidian 的通知设置后重试。"
   };
   return [permission, failures[status.error]].filter(Boolean).join(" ");
 }

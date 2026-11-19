@@ -1,4 +1,5 @@
 import { TOOL_ROUND_STOP_MESSAGE } from "../../agents/tool-round-budget";
+import { knowledgeResultText, uniqueNotePaths } from "../../types/composer-submission";
 import { projectGenerationEntries, generationStageMessage, positionGenerationMessages } from "../../generation/projection";
 import { maintenanceFailureText, maintenancePageLabel, maintenanceToolTitle, maintenanceUserReceiptFromResult } from "../../knowledge-base/maintenance-user-copy";
 import { savedAnswerNotePaths } from "./pi-answer-save";
@@ -7,12 +8,12 @@ import {
   outputContinuationFromSessionEntry,
   type PiOutputContinuationRecord
 } from "./pi-output-continuation";
-import { knowledgeVerificationFromSessionEntry } from "./pi-knowledge-verification";
+import { knowledgeVerificationFromSessionEntry, knowledgeFreshnessFromSessionEntry } from "./pi-knowledge-verification";
 import { projectInjectedMemorySources } from "./pi-memory-sources";
 import { pdfAttachmentReceipt } from "../../pdf-reading/attachment-receipt";
 import { selectionAnnotationsFromPiContext } from "./pi-selection-annotations";
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
-import { assistantProviderFailureText } from "../pi/provider-failure";
+import { assistantProviderFailureText, isReasoningOutputLimit } from "../pi/provider-failure";
 import { toolCallTextFailureMessage } from "../tool-call-text";
 import {
   extractProcessFileRefs,
@@ -75,6 +76,11 @@ import {
 } from "../../types/conversation-turn";
 import { PI_USER_QUESTION_TOOL_ID } from "./pi-user-question-tool";
 import { providerFailureText } from "../pi/provider-failure";
+import { CAUSE, errorText, joinErrorCopy, NEXT, type ErrorCopy } from "../../core/error-copy";
+
+const SESSION_DIAGNOSTIC_LEAD: ErrorCopy = ["会话运行中出现异常。", "Something went wrong in this conversation."];
+const SESSION_DIAGNOSTIC: ErrorCopy = [joinErrorCopy(SESSION_DIAGNOSTIC_LEAD, NEXT.report, "zh"), joinErrorCopy(SESSION_DIAGNOSTIC_LEAD, NEXT.report, "en")];
+import { DOCUMENT_FALLBACK_TOO_LONG, PROVIDER_CODES } from "../../core/error-copy/codes/provider";
 
 export type {
   PiChatUiToolApprovalStatus,
@@ -157,6 +163,7 @@ export interface PiSessionMessageView {
   readonly model?: string;
   readonly stopReason?: string;
   readonly errorMessage?: string;
+  readonly usage?: { readonly reasoning?: number };
   readonly echoInkProviderFailure?: unknown;
   readonly toolCallId?: string;
   readonly toolName?: string;
@@ -368,7 +375,7 @@ export class PiChatUiProjector {
       }
     }
     for (const entry of input.entries) {
-      const record = knowledgeVerificationFromSessionEntry(entry, piSessionId);
+      const record = knowledgeVerificationFromSessionEntry(entry, piSessionId) ?? knowledgeFreshnessFromSessionEntry(entry, piSessionId);
       if (record && !continuationEntryRuns.has(record.assistantEntryId)) {
         continuationEntryRuns.set(record.assistantEntryId, record.productRunId);
       }
@@ -750,7 +757,8 @@ export class PiChatUiProjector {
         ...(decoration.files === undefined ? {} : { files: decoration.files }),
         ...(decoration.knowledgeReferences === undefined
           ? {}
-          : { knowledgeReferences: decoration.knowledgeReferences.map((reference) => ({ ...reference })) }),
+          : { knowledgeReferences: decoration.knowledgeReferences.map((reference) => message.knowledgeReferenceFreshness?.includes(reference.referenceId)
+            ? { ...reference, verificationStatus: "source_link_changed" as const } : { ...reference }) }),
         ...(decoration.knowledgeProducedPaths === undefined
           ? {}
           : { knowledgeProducedPaths: [...decoration.knowledgeProducedPaths] }),
@@ -1288,23 +1296,8 @@ export class PiChatUiProjector {
     scope: string,
     event: Extract<PiChatRuntimeEvent, { type: "memory_recall_progress" }>
   ): void {
-    const id = `${scope}:memory-recall:${event.productRunId}`;
-    if (event.status === "completed") {
-      removeMessage(view.messages, id);
-      return;
-    }
-    upsertMessage(view.messages, {
-      id,
-      role: "assistant",
-      itemType: "thinking",
-      title: "查看个人记忆",
-      text: memoryRecallStageText(event.stage),
-      status: "running",
-      runId: event.productRunId,
-      turnId: event.productRunId,
-      createdAt: event.occurredAt
-    });
-    view.runState = "running";
+    // Recall is represented by memory:recall on the run's reasoning spine.
+    removeMessage(view.messages, `${scope}:memory-recall:${event.productRunId}`);
   }
 
   private projectKnowledgeProgress(
@@ -1312,27 +1305,16 @@ export class PiChatUiProjector {
     scope: string,
     event: Extract<PiChatRuntimeEvent, { type: "knowledge_progress" }>
   ): void {
-    const id = knowledgeProgressMessageId(
-      scope,
-      event.productRunId,
-      event.stage
-    );
-    if (event.status === "completed") {
-      removeMessage(view.messages, id);
+    const chainStages = ["searching", "continuing_search", "reading_knowledge", "selecting_knowledge", "comparing_memory"];
+    if (chainStages.includes(event.stage)) {
+      for (const stage of chainStages) removeMessage(view.messages, `${scope}:knowledge-progress:${encodeIdentity(event.productRunId)}:${stage}`);
       return;
     }
+    const id = knowledgeProgressMessageId(scope, event.productRunId, event.stage);
+    if (event.status === "completed") { removeMessage(view.messages, id); return; }
     const copy = knowledgeProgressCopy(event.stage);
-    upsertMessage(view.messages, {
-      id,
-      role: "assistant",
-      itemType: "thinking",
-      title: copy.title,
-      text: copy.text,
-      status: "running",
-      runId: event.productRunId,
-      turnId: event.productRunId,
-      createdAt: event.occurredAt
-    });
+    upsertMessage(view.messages, { id, role: "assistant", itemType: "thinking", title: copy.title, text: copy.text,
+      status: "running", runId: event.productRunId, turnId: event.productRunId, createdAt: event.occurredAt });
     view.runState = "running";
   }
 
@@ -2143,7 +2125,9 @@ function applyToolProductStates(
 
     const hasDurableResult = !view.provisionalMessageIds.includes(message.id)
       && !view.pendingToolCallIds.includes(identity.value);
-    let piStatus = piOwnedToolStatus(message.status, hasDurableResult, knownWrite);
+    // A live read-end event proves execution independently of durable readback.
+    // Write approval/receipt verification below still owns side-effect success.
+    let piStatus = piOwnedToolStatus(message.status, hasDurableResult, knownWrite || knownRead);
     if (
       approval?.status === "approved"
       && normalizedToken(message.status) === "waitingapproval"
@@ -2272,7 +2256,7 @@ function projectedToolId(message: ChatMessage): string {
 function piOwnedToolStatus(
   status: string | undefined,
   hasDurableResult: boolean,
-  writeTool: boolean
+  allowLiveCompletion: boolean
 ): PiChatUiToolProductStatus {
   const normalized = normalizedToken(status);
   if (normalized === "waitingapproval") return "waiting_approval";
@@ -2284,7 +2268,7 @@ function piOwnedToolStatus(
     || normalized === "interrupted"
   ) return "cancelled";
   if (hasDurableResult) return "completed";
-  if (writeTool && normalized === "completed") return "completed";
+  if (allowLiveCompletion && normalized === "completed") return "completed";
   return "running";
 }
 
@@ -2385,13 +2369,12 @@ function assistantFailure(message: PiSessionMessageView): {
   readonly text: string;
 } {
   const stopReason = normalizedToken(message.stopReason);
-  if (stopReason === "length") {
+  if (stopReason === "length" || isReasoningOutputLimit(message)) {
     return {
       itemType: "error",
       status: "failed",
       title: "回答未完成",
-      text: providerFailureText("provider_output_limit_reached")
-        ?? "达到输出上限，回答未完整生成。"
+      text: PROVIDER_CODES[isReasoningOutputLimit(message) ? "provider_reasoning_output_limit_reached" : "provider_output_limit_reached"][0]
     };
   }
   if (stopReason === "error") {
@@ -2400,7 +2383,7 @@ function assistantFailure(message: PiSessionMessageView): {
       status: "failed",
       title: "回答失败",
       text: message.echoInkProviderFailure
-        ? assistantProviderFailureText(message).replace(/Provider[ \t]*/gu, "模型服务")
+        ? assistantProviderFailureText(message)
         : assistantFailureText(message.errorMessage)
     };
   }
@@ -2418,12 +2401,9 @@ function assistantFailure(message: PiSessionMessageView): {
 function assistantFailureText(errorMessage: unknown): string {
   const safe = visibleText(errorMessage);
   if (safe === PI_DOCUMENT_FALLBACK_INPUT_BUDGET_EXCEEDED) {
-    return "模型服务不支持该原生文档输入，且冻结文本超过当前模型的输入容量；未发起第二次请求。请减少文档、新开会话或切换容量更大的模型。";
+    return DOCUMENT_FALLBACK_TOO_LONG[0];
   }
-  if (safe === "provider_auth_failed" || safe === "provider_api_key_missing") {
-    return "API Key 无效或未填写，请到设置 › 模型服务检查。";
-  }
-  return (providerFailureText(safe) ?? "模型服务请求失败，回答未完成。").replace(/Provider[ \t]*/gu, "模型服务");
+  return providerFailureText(safe) ?? CAUSE.providerNotResponding[0];
 }
 
 function toolCallsFromContent(
@@ -2590,8 +2570,10 @@ function diagnosticFromCustomEntry(
   const customType = normalizedToken(entry.customType);
   if (!customType.includes("error") && !customType.includes("diagnostic")) return undefined;
   const data = plainObject(entry.data);
-  const text = visibleText(data?.message) || visibleText(data?.error) || displayUnknown(entry.data);
-  if (!text) return undefined;
+  const raw = visibleText(data?.message) || visibleText(data?.error) || displayUnknown(entry.data);
+  if (!raw) return undefined;
+  // The raw diagnostic stays in the session record for "Report a problem"; the bubble shows plain words.
+  const text = errorText(raw, SESSION_DIAGNOSTIC, "zh");
   const createdAt = entryTime(entry);
   return {
     id: entryMessageId(context.scope, entry.id),
@@ -2754,7 +2736,7 @@ function personalMemoryToolCopy(
         terminalTitle: "检查已有记忆",
         runningText: "正在检查是否已有相关记忆。",
         completedText: "已有记忆检查完成。",
-        failedText: "已有记忆检查没有完成。"
+        failedText: "已有记忆检查未完成。"
       }
     : name === "memory_read"
       ? {
@@ -2764,7 +2746,7 @@ function personalMemoryToolCopy(
           terminalTitle: "读取相关记忆",
           runningText: "正在读取与当前对话相关的记忆。",
           completedText: "相关记忆读取完成。",
-          failedText: "相关记忆读取没有完成。"
+          failedText: "相关记忆读取未完成。"
         }
       : {
           processKind: "tool" as const,
@@ -2773,7 +2755,7 @@ function personalMemoryToolCopy(
           terminalTitle: "写入个人记忆",
           runningText: "正在整理值得长期保留的信息。",
           completedText: "个人记忆处理完成。",
-          failedText: "这次记忆操作没有完成，长期记忆未发生变化。"
+          failedText: "本次记忆操作未完成，长期记忆未发生变化。"
         };
   const terminalText = failureText
     ?? (interrupted ? "这次记忆操作已停止。" : copy.failedText);
@@ -2817,27 +2799,27 @@ function personalMemoryToolFailureText(
   const details = plainObject(outer?.details) ?? outer;
   switch (visibleText(details?.errorCode)) {
     case "personal_memory_no_memory":
-      return "长期记忆开关已关闭，本次操作没有执行。";
+      return "长期记忆开关已关闭，本次操作未执行。";
     case "personal_memory_invalid_request":
-      return "这次记忆操作未通过检查，没有执行。";
+      return "本次记忆操作未通过检查，未执行。";
     case "personal_memory_current_turn_search_required":
-      return "写入未完成：本轮还没有先检查是否已有相同记忆。";
+      return "写入未完成：本轮尚未检查是否已有相同记忆。";
     case "personal_memory_not_found":
-      return "没有找到要处理的长期记忆，本次操作没有执行。";
+      return "未找到要处理的长期记忆，本次操作未执行。";
     case "personal_memory_revision_conflict":
-      return "长期记忆刚刚发生了变化，本次操作没有执行。";
+      return "长期记忆已发生变化，本次操作未执行。";
     case "personal_memory_vault_mismatch":
-      return "当前请求与正在使用的资料库不一致，本次操作没有执行。";
+      return "当前请求与正在使用的资料库不一致，本次操作未执行。";
     case "personal_memory_unsafe_path":
       return "记忆存储位置未通过安全检查，本次操作已停止。";
     case "personal_memory_result_too_large":
       return "返回内容过多，请缩小范围后重试。";
     case "personal_memory_authorization_failed":
-      return "这次记忆操作未通过系统校验，没有执行。";
+      return "本次记忆操作未通过系统校验，未执行。";
     case "operation_cancelled":
       return "这次记忆操作已取消。";
     case "personal_memory_failed":
-      return "这次记忆操作没有完成，长期记忆未发生变化。";
+      return "本次记忆操作未完成，长期记忆未发生变化。";
     default:
       return undefined;
   }
@@ -2952,10 +2934,16 @@ function projectOutputContinuations(
       turnId: record.productRunId,
       createdAt: first?.createdAt ?? entryTime(lastEntry)
     };
-    const realFailure = normalizedToken(lastEntry.message?.stopReason) === "error"
+    const realFailure = isReasoningOutputLimit(lastEntry.message)
+      || normalizedToken(lastEntry.message?.stopReason) === "error"
       && lastEntry.message?.errorMessage !== "provider_output_limit_reached"
       ? assistantFailure(lastEntry.message!) : undefined;
     applyOutputContinuationStatus(representative, record.status, entryTime(lastEntry), realFailure);
+    // With no answer body, the error text itself carries the system hint.
+    if (record.status === "failed" && !text.trim() && isReasoningOutputLimit(lastEntry.message)) {
+      representative.text = realFailure!.text;
+      delete representative.details;
+    }
     // Keep the original answer's position while its final Entry anchors all actions.
     const position = first ? messages.indexOf(first) : messages.length;
     for (let index = messages.length - 1; index >= 0; index--) {
@@ -2978,8 +2966,7 @@ function applyOutputContinuationStatus(
   delete message.details;
   if (status === "failed") {
     message.title = realFailure?.title ?? "回答未完成";
-    message.details = realFailure?.text ?? providerFailureText("provider_output_limit_reached")
-      ?? "达到输出上限，回答未完整生成。";
+    message.details = realFailure?.text ?? PROVIDER_CODES.provider_output_limit_reached[0];
   } else if (status === "cancelled") {
     message.title = "回答已停止";
   }
@@ -2995,14 +2982,19 @@ function projectKnowledgeVerificationOutcome(
   scope: string
 ): void {
   for (const entry of entries) {
-    const record = knowledgeVerificationFromSessionEntry(entry, piSessionId);
+    const skipped = knowledgeVerificationFromSessionEntry(entry, piSessionId);
+    const freshness = knowledgeFreshnessFromSessionEntry(entry, piSessionId);
+    const record = skipped ?? freshness;
     if (!record) continue;
     const continuation = continuations.get(record.productRunId);
     const entryId = continuation?.assistantEntryIds.includes(record.assistantEntryId)
       ? continuation.assistantEntryIds.at(-1)! : record.assistantEntryId;
     const answer = messages.find(message => message.id === entryMessageId(scope, entryId)
       && message.role === "assistant" && message.runId === record.productRunId);
-    if (answer) answer.knowledgeVerificationSkipped = record.reason;
+    if (answer && skipped) answer.knowledgeVerificationSkipped = skipped.reason;
+    if (answer && freshness) {
+      answer.knowledgeReferenceFreshness = freshness.referenceIds;
+    }
   }
 }
 
@@ -3253,6 +3245,7 @@ function reopenedReasoningTerminalStatus(
 function reasoningActivityText(
   activity: Readonly<EchoInkReasoningActivity>
 ): string {
+  if (activity.kind === "judgment") return activity.status === "active" ? "智能判断中…" : "智能判断完成";
   if (activity.kind === "provider") {
     if (activity.status === "completed") return "";
     if (activity.status === "active") {
@@ -3263,10 +3256,9 @@ function reasoningActivityText(
   }
   if (activity.kind === "knowledge") {
     if (activity.stage === "searching" || activity.stage === "continuing_search"
-      || activity.stage === "reading_knowledge") {
-      if (activity.status === "active") return "检索知识库 · 查找中…";
-      return activity.total === undefined ? "检索知识库"
-        : `检索知识库 · ${activity.total} 篇相关，读了前 ${activity.current ?? activity.completed ?? 0} 篇`;
+      || activity.stage === "reading_knowledge" || activity.stage === "selecting_knowledge") {
+      if (activity.status === "active") return activity.stage === "selecting_knowledge" ? "检索知识库 · 挑选相关笔记…" : "检索知识库 · 查找中…";
+      return `检索知识库 · ${knowledgeResultText(activity.notesRead ?? 0, "zh-CN")}`;
     }
     return reasoningStageCopy(activity.stage, "处理知识库");
   }
@@ -3631,12 +3623,6 @@ function runtimeEmptyMessageText(role: "user" | "assistant", status: string): st
   return "";
 }
 
-function memoryRecallStageText(
-  _stage: Extract<PiChatRuntimeEvent, { type: "memory_recall_progress" }>["stage"]
-): string {
-  return "查看中…";
-}
-
 function knowledgeProgressCopy(
   stage: Extract<
     PiChatRuntimeEvent,
@@ -3646,6 +3632,8 @@ function knowledgeProgressCopy(
   switch (stage) {
     case "searching":
       return { title: "检索知识库", text: "查找中…" };
+    case "selecting_knowledge":
+      return { title: "检索知识库", text: "挑选相关笔记…" };
     case "continuing_search":
       return { title: "检索知识库", text: "查找中…" };
     case "reading_knowledge":
@@ -3737,8 +3725,8 @@ function privacySafeKnowledgeToolCopy(
   let text = inProgress ? (search ? "查找中…" : read ? "读取中…" : "处理中…") : "";
   if (status === "completed") {
     if (search) {
-      text = metadata.total === undefined ? "已完成本次检索"
-        : `${metadata.total} 篇相关，读了${metadata.continuation ? "" : "前 "}${metadata.returned} 篇`;
+      text = toolName === "knowledge_search" && metadata.status === "completed" || metadata.references
+        ? knowledgeResultText(uniqueNotePaths((metadata.references ?? []).map(reference => reference.vaultRelativePath)).length, "zh-CN") : "已完成本次检索";
     } else if (read && metadata.references?.length) {
       const paths = [...new Set(metadata.references.map((reference) => reference.vaultRelativePath))];
       const name = paths[0].split("/").at(-1)!.replace(/\.md$/iu, "");
@@ -3755,6 +3743,15 @@ function privacySafeKnowledgeToolCopy(
 }
 
 const KNOWLEDGE_TOOL_FAILURE_COPY: Readonly<Record<string, string>> = {
+    vault_directory_unbound: "目标目录未绑定，请先在知识库设置中选择目录。",
+    vault_directory_missing: "绑定的文件夹不存在，请在知识库设置中重新选择。",
+    vault_directory_conflict: "这个文件夹被多个用途共用，请在知识库设置中重新选择。",
+    vault_organization_disabled: "分类整理已关闭，不能新建分类或移动笔记。",
+    vault_organization_out_of_scope: "目标不在允许分类整理的范围内，请使用已选目录。",
+    vault_target_exists: "目标笔记已存在，请先读取，再决定是否补充内容。",
+    vault_write_read_only: "当前工作区只允许读取，不能写入笔记。",
+    vault_write_plan_only: "当前为计划模式，只分析，不写入笔记。",
+    version_conflict: "笔记内容已变化，请重新读取后再修改。",
     target_not_found: "未找到目标文件，文件可能尚未创建或路径已变化。",
     target_kind_invalid: "目标类型不符合本次操作要求，文件与文件夹不能互换。",
     knowledge_not_found: "未找到目标资料，资料可能已移除或尚未进入索引。",
@@ -3765,8 +3762,8 @@ const KNOWLEDGE_TOOL_FAILURE_COPY: Readonly<Record<string, string>> = {
     knowledge_unsupported_content: "暂不支持读取这份资料的内容格式。",
     knowledge_read_failed: "本次知识读取未完成，记录未保留可展示的具体原因。",
     tool_policy_blocked: "此次调用被阻止，记录未保留具体原因。",
-    authorization_failed: "此次调用未通过执行校验，没有执行。",
-    approval_denied: "此次操作未获批准，没有执行。",
+    authorization_failed: "本次调用未通过执行校验，未执行。",
+    approval_denied: "本次操作未获批准，未执行。",
     approval_cancelled: "此次操作已取消。",
     operation_cancelled: "此次操作已取消。"
 };

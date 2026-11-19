@@ -129,7 +129,7 @@ export async function runAgentSettingsTests(): Promise<void> {
     panel.renderSummary(root);
     assert.equal(root.querySelector('[data-echoink-focus-key="agent:editor:edit"] .echoink-agent-settings-modules'), null);
     failOwner = true; const todoOwner = root.querySelector<OriginSelectElement>('[data-echoink-focus-key="agent:owner:todos"]')!;
-    todoOwner.value = "editor"; todoOwner.dispatchEvent(new win.Event("change", { bubbles: true })); await settle(); assert.equal(todoOwner.value, ""); assert.ok(root.textContent?.includes("负责人未保存")); assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); failOwner = false;
+    todoOwner.value = "editor"; todoOwner.dispatchEvent(new win.Event("change", { bubbles: true })); await settle(); assert.equal(todoOwner.value, ""); assert.ok(root.textContent?.includes("负责人未能保存")); assert.equal(settings.agentRegistry.moduleOwners.journal, "editor"); failOwner = false;
 
     panel.open(GENERAL_ASSISTANT_ID); panel.renderDetail(root); await settle(); assert.equal(panel.isDetail, true); assert.equal(root.querySelector('[data-action="delete-agent"]'), null);
     assert.equal(root.querySelector('[aria-label="返回 Agent 设置"]') !== null, true);

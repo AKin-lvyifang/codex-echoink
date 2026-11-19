@@ -1139,8 +1139,8 @@ function failedBeforeStart(
     ...(targetPath ? { targetPath } : {}),
     sideEffectStarted: false,
     readbackVerified: false,
-    readback: { source },
-    error: { code, message }
+    error: { code, message },
+    readback: { source }
   });
 }
 

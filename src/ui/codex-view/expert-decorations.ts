@@ -1,3 +1,4 @@
+import { actionFailureText } from "../../core/error-copy";
 import { ownedDiv } from "../owned-dom";
 import { Notice } from "obsidian";
 import { isExpertAgent } from "../../agents/persona";
@@ -44,6 +45,6 @@ export function renderExpertConversationDecorations(root: HTMLElement, agent: Ag
       if (path !== artifact.path || path !== artifact.previewPath || !/\.html$/iu.test(path)) continue;
     } catch { continue; }
     const button = createOriginButton(node, { text: "预览", cls: "echoink-workspace-preview-action" });
-    button.onclick = () => { void openPreview(path).catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+    button.onclick = () => { void openPreview(path).catch(error => new Notice(actionFailureText(error))); };
   }
 }

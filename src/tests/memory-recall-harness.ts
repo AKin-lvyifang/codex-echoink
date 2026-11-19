@@ -75,7 +75,7 @@ export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
   await scenarioCreateIsIdempotentAndBroadConflictsDoNotWrite();
   await scenarioRecallUsesOneBoundedTurnSnapshot();
   await scenarioRecallHistoryOnlyResolvesExplicitReferences();
-  scenarioRecallProgressReusesAndDismissesOneTemporaryMessage();
+  scenarioRecallProgressStaysOnTheReasoningChain();
   await scenarioControlledInlineExtensionUsesOneBeforeAgentStartHandler();
   await scenarioHotPathPreparesRecallBeforeProviderRequest();
   await scenarioPiNativePersonalMemoryLifecycle();
@@ -551,7 +551,7 @@ async function scenarioRecallUsesOneBoundedTurnSnapshot(): Promise<void> {
   assert.match(capturedQuery, /^当前关键问题-/u, "当前消息必须优先于历史保留");
 }
 
-function scenarioRecallProgressReusesAndDismissesOneTemporaryMessage(): void {
+function scenarioRecallProgressStaysOnTheReasoningChain(): void {
   const projector = new PiChatUiProjector();
   let view = projector.createEmpty({ piSessionId: "session-recall-progress", now: 1 });
   const event = (status: "active" | "completed", stage: "loading" | "matching" | "assembling", occurredAt: number) => ({
@@ -566,16 +566,11 @@ function scenarioRecallProgressReusesAndDismissesOneTemporaryMessage(): void {
     elapsedMs: occurredAt - 1
   });
   view = projector.projectRuntimeEvent({ current: view, event: event("active", "loading", 301) });
-  const first = view.messages.find((message) => message.itemType === "thinking");
-  assert.ok(first);
-  assert.equal(first.text, "查看中…");
-  assert.equal(first.createdAt, 301);
+  assert.equal(view.messages.some(message => message.itemType === "thinking"), false, "recall is a run activity, never an independent progress message");
+  // Repeated stages also remove a leftover row from an older live projection.
+  view.messages.push({ id: "pi:session-recall-progress:leaf:root:memory-recall:run-recall-progress", role: "assistant", itemType: "thinking", text: "查看中…", status: "running", createdAt: 301 });
   view = projector.projectRuntimeEvent({ current: view, event: event("active", "matching", 350) });
-  const progressMessages = view.messages.filter((message) => message.itemType === "thinking");
-  assert.equal(progressMessages.length, 1);
-  assert.equal(progressMessages[0]!.id, first.id);
-  assert.equal(progressMessages[0]!.text, "查看中…");
-  assert.equal(progressMessages[0]!.createdAt, 350, "the next recall stage refreshes the same temporary message");
+  assert.equal(view.messages.some(message => message.itemType === "thinking"), false);
   view = projector.projectRuntimeEvent({ current: view, event: event("completed", "assembling", 380) });
   assert.equal(view.messages.some((message) => message.itemType === "thinking"), false);
 
@@ -724,8 +719,6 @@ async function scenarioRecallNamedProjectBoundaries(): Promise<void> {
       ids.set(definition.label, result.record!.id);
     }
     const globalLabels = ["无范围全局", "明确全局"];
-    const retainedLabels = [...globalLabels, "团队范围", "历史裸范围", "EchoInk 旧范围"];
-    const echoInkLabels = [...retainedLabels, "EchoInk"];
     const explicitEchoInkLabels = [...globalLabels, "EchoInk", "EchoInk 旧范围"];
     const allLabels = definitions.map(({ label }) => label);
     const runtime = fixture.runtime();
@@ -739,18 +732,18 @@ async function scenarioRecallNamedProjectBoundaries(): Promise<void> {
       name: string; query: string; expected: string[]; scope?: string;
       recentConversation?: string[];
     }> = [
-      { name: "点名一个项目且不区分大小写", query: "ECHOINK 的截止时间是什么？", expected: echoInkLabels },
-      { name: "点名两个项目", query: "EchoInk 和潮汐的截止时间是什么？", expected: [...echoInkLabels, "潮汐"] },
+      { name: "点名一个项目且不区分大小写", query: "ECHOINK 的截止时间是什么？", expected: allLabels },
+      { name: "点名两个项目", query: "EchoInk 和潮汐的截止时间是什么？", expected: allLabels },
       { name: "未点名项目", query: "截止时间是什么？", expected: allLabels },
       // 按范围名直接匹配；常见词的日常用法也命中，不做语义推断。
-      { name: "项目名为常见词", query: "潮汐变化与截止时间有什么关系？", expected: [...retainedLabels, "潮汐"] },
+      { name: "项目名为常见词", query: "潮汐变化与截止时间有什么关系？", expected: allLabels },
       { name: "显式裸项目范围优先于问句点名", query: "潮汐的截止时间是什么？", scope: " echoink ", expected: explicitEchoInkLabels },
       { name: "显式规范项目范围优先于问句点名", query: "潮汐的截止时间是什么？", scope: "project:EchoInk", expected: explicitEchoInkLabels },
       { name: "显式全局范围保留", query: "EchoInk 的截止时间是什么？", scope: "global", expected: globalLabels },
       {
         name: "代词追问复用既有前文构造", query: "它的截止时间是什么？",
         recentConversation: ["潮汐之前的安排是什么？", "EchoInk 候选版现在是什么状态？"],
-        expected: echoInkLabels
+        expected: allLabels
       },
       {
         name: "非代词问句不从历史点名", query: "截止时间是什么？",

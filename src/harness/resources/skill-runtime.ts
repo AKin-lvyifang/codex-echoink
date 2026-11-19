@@ -1,3 +1,4 @@
+import { CAUSE } from "../../core/error-copy";
 import { normalizeTaskText, isSimpleTask, builtinTrigger } from "./skill-routing";
 import { SkillContentResolver, type ResolvedSkillContent } from "./skill-content";
 import { getDesktopCrypto } from "../../platform/desktop-crypto";
@@ -413,7 +414,7 @@ export class SkillRuntimeCoordinator {
     const absolute = path.resolve(this.vaultPath, value), selected = this.resolvedPaths.get(absolute);
     if (!selected) return null;
     selected.assertAvailable();
-    if (selected.runtimeHash && sha256(await readFile(absolute, "utf8")) !== selected.runtimeHash) throw new Error("Skill 运行正文已变化，请重新开始本次运行。");
+    if (selected.runtimeHash && sha256(await readFile(absolute, "utf8")) !== selected.runtimeHash) throw new Error("技能内容已变化。请重新发送。");
     selected.assertAvailable();
     return selected.id;
   }
@@ -429,7 +430,7 @@ export class SkillRuntimeCoordinator {
       this.resolvedPaths.set(skillPath, resolved);
       return { skillPath, skillName: id, contentHash: resolved.revision };
     }
-    if (isRemoteOnlySkill(id) && record.origin !== "user") throw new Error("此 Skill 需要有效 PRO 与设备授权。");
+    if (isRemoteOnlySkill(id) && record.origin !== "user") throw new Error(CAUSE.proRequired[0]);
     const loaded = await loadVaultSkill({ vaultPath: this.vaultPath, skillId: id, maxBytes: MAX_SKILL_BYTES });
     if (loaded.frontmatter.id !== id || !loaded.frontmatter.name.trim() || !loaded.instruction.trim()) throw new Error("skill_runtime_document_invalid");
     if (record.contentHash !== loaded.contentHash) {
@@ -443,7 +444,7 @@ export class SkillRuntimeCoordinator {
     skillId: BuiltinSkillId,
     content: string
   ): Promise<BuiltinSkillRuntimeSnapshot> {
-    if (isRemoteOnlySkill(skillId)) throw new Error("官方 PRO Skill 只读；自建 Skill 请编辑保留的原文件。");
+    if (isRemoteOnlySkill(skillId)) throw new Error("官方技能为只读，未能保存。如需修改，请编辑自建技能的原文件。");
     assertUsableBuiltinSkillDocument(skillId, content);
     return await this.withStateMutation(async (state) => {
       const definition = requiredBuiltinSkillDefinition(skillId);
@@ -487,7 +488,7 @@ export class SkillRuntimeCoordinator {
   async restoreBuiltinSkill(
     skillId: BuiltinSkillId
   ): Promise<BuiltinSkillRuntimeSnapshot> {
-    if (isRemoteOnlySkill(skillId)) throw new Error("不能用官方入口覆盖用户 Skill。");
+    if (isRemoteOnlySkill(skillId)) throw new Error("自建技能不能被官方技能覆盖。请为自建技能更换名称。");
     return await this.withStateMutation(async (state) => {
       const definition = requiredBuiltinSkillDefinition(skillId);
       const entryPath = builtinSkillEntryPath(this.vaultPath, skillId);
@@ -586,11 +587,42 @@ export class SkillRuntimeCoordinator {
     });
   }
 
+  /** 智能判断的技能清单：和 selectForTask 同一套“允许 / 已安装 / PRO 远程可用”过滤，含用户自建技能。 */
+  async listDecisionOptions(input: Readonly<{
+    excludedSkillIds?: readonly string[];
+    isSkillAllowed?: (id: string) => boolean | Promise<boolean>;
+  }> = {}): Promise<readonly Readonly<{ id: string; name: string; description: string }>[]> {
+    return await this.withStateMutation(async (state) => {
+      const options: { id: string; name: string; description: string }[] = [];
+      for (const record of Object.values(state.records)) {
+        if (!await this.decisionEligible(record, input)) continue;
+        const definition = isBuiltinSkillId(record.id) ? getBuiltinSkillDefinition(record.id) : null;
+        if (definition && record.origin !== "user") { options.push({ id: record.id, name: definition.title, description: definition.description }); continue; }
+        const loaded = await loadVaultSkill({ vaultPath: this.vaultPath, skillId: record.id, maxBytes: 200_000 }).catch(() => null);
+        options.push({ id: record.id, name: loaded?.frontmatter.name?.trim() || definition?.title || record.id,
+          description: loaded?.frontmatter.description?.trim() || definition?.description || record.triggerPhrases.join("、") });
+      }
+      return Object.freeze(options.slice(0, 60).map(option => Object.freeze(option)));
+    });
+  }
+
+  private async decisionEligible(record: Readonly<SkillRuntimeRecord>, input: Readonly<{
+    excludedSkillIds?: readonly string[];
+    isSkillAllowed?: (id: string) => boolean | Promise<boolean>;
+  }>): Promise<boolean> {
+    if (input.excludedSkillIds?.includes(record.id)) return false;
+    if (isRemoteOnlySkill(record.id) && record.origin !== "user" && !this.options.content?.hasRemoteAccess()) return false;
+    if (input.isSkillAllowed && !await input.isSkillAllowed(record.id)) return false;
+    return record.status === "active" || record.status === "downranked";
+  }
+
   async selectForTask(input: Readonly<{
     text: string;
     preferredSkillIds?: readonly string[];
     excludedSkillIds?: readonly string[];
     isSkillAllowed?: (id: string) => boolean | Promise<boolean>;
+    /** 智能判断给出的技能（null = 不用技能）与是否先查最新信息；选中的技能仍要过资格检查，不合格时走原来的规则。 */
+    decision?: Readonly<{ skillId: string | null; fresh?: boolean }>;
   }>): Promise<SelectedRuntimeSkill | null> {
     return await this.withStateMutation(async (state) => {
       const text = normalizeTaskText(input.text);
@@ -606,11 +638,26 @@ export class SkillRuntimeCoordinator {
       requiredByProduct: boolean;
       requiresFreshnessVerification: boolean;
     }> = [];
-    for (const record of Object.values(state.records)) {
-      if (input.excludedSkillIds?.includes(record.id)) continue;
-      if (isRemoteOnlySkill(record.id) && record.origin !== "user" && !this.options.content?.hasRemoteAccess()) continue;
-      if (input.isSkillAllowed && !await input.isSkillAllowed(record.id)) continue;
-      if (record.status !== "active" && record.status !== "downranked") continue;
+    let decided = false;
+    if (input.decision) {
+      const picks: string[] = [];
+      const freshnessRecord = state.records["evidence-freshness-audit"];
+      if (input.decision.fresh && freshnessRecord && await this.decisionEligible(freshnessRecord, input)) picks.push(freshnessRecord.id);
+      const chosen = input.decision.skillId ? state.records[input.decision.skillId] : undefined;
+      const chosenUsable = !input.decision.skillId || !!chosen && await this.decisionEligible(chosen, input);
+      if (chosenUsable) {
+        decided = true;
+        if (chosen && !picks.includes(chosen.id)) picks.push(chosen.id);
+        for (const id of picks) {
+          const record = state.records[id];
+          candidates.push({ id, score: 100, preference: preferred.get(id) ?? Number.MAX_SAFE_INTEGER,
+            responsibility: skillResponsibility(record), requiredByProduct: id === "evidence-freshness-audit",
+            requiresFreshnessVerification: id === "evidence-freshness-audit" && input.decision.fresh === true });
+        }
+      }
+    }
+    if (!decided) for (const record of Object.values(state.records)) {
+      if (!await this.decisionEligible(record, input)) continue;
       const trigger = record.origin === "builtin" || record.origin === "user" && isBuiltinSkillId(record.id)
         ? builtinTrigger(record.id as BuiltinSkillId, text)
         : generatedTrigger(record.triggerPhrases, text);

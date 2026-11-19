@@ -1,3 +1,4 @@
+import { maintenanceQuoteLength, MAINTENANCE_EVIDENCE_MAX_QUOTES, MAINTENANCE_EVIDENCE_MAX_CHARS, MAINTENANCE_EVIDENCE_TOTAL_CHARS } from "./maintenance-copy-guard";
 import { assertMaintenanceWikiTags } from "./maintenance-tag-policy";
 import { isUnknownArray } from "../utils/unknown-array";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
@@ -413,6 +414,11 @@ export function groundMaintenanceKnowledgeUnits(
     else for (const [index, point] of unit.points.entries()) if (!nonempty(point)) fail(`points[${index}]`, "Knowledge unit points must contain nonempty strings；修复：补充该条知识主张。");
     if (!isUnknownArray(unit.evidence) || !unit.evidence.length) {
       fail("evidence", "Knowledge unit evidence must be nonempty；修复：补充至少一条本批来源的连续正文原句。");
+      continue;
+    }
+    if (unit.evidence.length > MAINTENANCE_EVIDENCE_MAX_QUOTES || unit.evidence.some(evidence => typeof evidence?.quote === "string" && maintenanceQuoteLength(evidence.quote) > MAINTENANCE_EVIDENCE_MAX_CHARS)
+      || unit.evidence.reduce((sum, evidence) => sum + (typeof evidence?.quote === "string" ? maintenanceQuoteLength(evidence.quote) : 0), 0) > MAINTENANCE_EVIDENCE_TOTAL_CHARS) {
+      fail("evidence", `每个知识点最多${MAINTENANCE_EVIDENCE_MAX_QUOTES}条短引文，每条最多${MAINTENANCE_EVIDENCE_MAX_CHARS}字符，合计最多${MAINTENANCE_EVIDENCE_TOTAL_CHARS}字符；请只选择支持要点的必要原句。`);
       continue;
     }
     const groundedEvidence: MaintenanceKnowledgeEvidence[] = [];

@@ -18,6 +18,8 @@ export interface MobileShellPage {
 export interface MobileShellOptions {
   onError?: (error: unknown) => void;
   onRootBack?: () => void;
+  /** Interface language for the shell's own error text. */
+  language?: () => string | undefined;
 }
 
 export interface MobileShellSheet {

@@ -1,28 +1,39 @@
+import { PersonalMemoryRecallHarness, selectMemoryRecallPreviousUserContext } from '../harness/memory/personal-memory-recall-harness';
+import { estimateTokenValueAsync } from '../harness/usage/token-estimator';
+import { summarize } from '../harness/memory/memory-turn-snapshot';
+import { DreamEngine, type DreamLlmPort, type DreamEngineConfig } from '../harness/memory/dream-engine';
+import { PortableDreamStateStore, PortableDreamInboxStore } from '../harness/memory/portable-dream-stores';
+import { correctionCheckComplete, emptyDreamCorrectionState, canUndoDreamCorrection } from '../harness/memory/dream-correction-core';
+import { parseMemoryQuoteSource, memoryQuoteSource, type MemoryOriginalQuotePort } from '../harness/memory/memory-quote-core';
+import { adapterMemoryQuoteReader, mobileUserEntryId, mobileAssistantEntryId, mobileMessageText, mobileExperienceTerminalState } from './memory-quotes';
+import { getDecisionClient } from '../membership/decision-client';
+import type { ApiProviderConfig, ApiProviderModelConfig } from '../settings/settings';
 import type { DataAdapter } from "obsidian";
 import type { PersonalMemoryKind, PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { canonicalMemoryPath, parseCanonicalMemoryRecord, serializeCanonicalMemoryRecord, renderCanonicalMemoryExport, renderPersonalMemoryOverview } from "../harness/memory/personal-memory-core";
-import { applyDreamProfileUpdate, profileSlotDefinition, USER_PROFILE_SLOTS, rebindProfileSource, computeReprocessedProfileMemoryIds, revokeReprocessedProfileSources } from "../harness/memory/user-profile-core";
+import { applyDreamProfileUpdate, profileSlotDefinition, USER_PROFILE_SLOTS, rebindProfileSource } from "../harness/memory/user-profile-core";
 import { projectedProfileItems } from "../harness/memory/cognitive-projection";
-import { defaultDreamState, parseDreamState, type DreamState } from "../harness/memory/dream-state-core";
-import { buildUserProfileDreamPrompt, parseUserProfileDreamCandidates, userProfileMemoryEligible } from "../harness/memory/dream-profile-core";
-import { memorySourceGroup } from "../harness/memory/dream-source-group";
 import { mobileGenerateText, type MobileRequest, type MobileUsageObserver } from "./transport";
 import { selectedModel, type MobileSettings } from "./settings";
 import { MobileDataConflictError, type MobileStore } from "./store";
 import { sha256Hex } from "../utils/sha256";
 import { MobileMemoryRepository, memoryConflict, type MobileCanonicalSnapshot } from "./memory-repository";
 import type { MobileMemorySettingsPort, MobileMemorySettingsSnapshot, MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileUserProfileSnapshot, MobileDreamStatus, MobileForgottenMemory } from "./memory-contracts";
+import { CAUSE, joinErrorCopy, userFacingErrorText } from "../core/error-copy";
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 const clone = <T>(value: T): T => structuredClone(value);
 const activeDreams = new WeakMap<DataAdapter, object>();
-const DREAM_LEDGER = "shared-user/.runtime/mobile-dream-ledger.json", DREAM_STATE = "shared-user/.runtime/dream-state.json";
+const DREAM_LEDGER = "shared-user/.runtime/mobile-dream-ledger.json";
 export interface MobileMemoryServiceOptions {
+  originalQuotes?: MemoryOriginalQuotePort;
+  dreamLlm?: DreamLlmPort;
+  engineConfig?: Partial<DreamEngineConfig>;
   storageRoot?: string;
   adapter: DataAdapter; store: MobileStore; settings(): MobileSettings; saveSettings(): Promise<void>; request: MobileRequest;
   changed(): void; isBusy(id: string): boolean; now?: () => number;
 }
-interface DreamLedger { schema: "echoink.mobile-dream.v1"; dayKey: string; attempts: number; status: MobileDreamStatus; owner: string }
+interface DreamLedger { schema: "echoink.mobile-dream.v1"; dayKey: string; attempts: number; status: MobileDreamStatus; owner: string; resumable?: boolean }
 export interface MobileCanonicalMemoryWritePlan { mode?: "pin"; revision: number; record: PersonalMemoryRecord; original?: PersonalMemoryRecord; duplicate: boolean }
 export class MobileMemoryService implements MobileMemorySettingsPort {
   readonly repository: MobileMemoryRepository;
@@ -30,6 +41,10 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   private readonly listeners = new Set<() => void>();
   private dreamRun?: { controller: AbortController; token: object; completion: Promise<MobileDreamStatus> };
   private status: MobileDreamStatus;
+  private dreamStatePort?: PortableDreamStateStore;
+  private inboxPort?: PortableDreamInboxStore;
+  private engine?: DreamEngine;
+  private resumePending = false;
   private settingsWrites: Promise<unknown> = Promise.resolve();
   private readonly now: () => number;
   private usage?: MobileUsageObserver;
@@ -38,6 +53,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     this.now = options.now ?? Date.now; this.repository = new MobileMemoryRepository(options.adapter, options.store.instanceId, this.now, () => options.store.unavailableReason, options.storageRoot);
     this.status = { phase: "idle", dayKey: this.day(), attemptsToday: 0, dailyLimit: this.readSettings().dreamRunsPerDay, startedAt: null, finishedAt: null, error: "" };
   }
+  private get ledgerPath() { return `shared-user/.runtime/mobile-dream-ledgers/${this.options.store.instanceId}.json`; }
   private day() { const date = new Date(this.now()); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
   private emit() { try { this.options.changed(); } catch { /* A view cannot invalidate an already committed local change. */ } for (const listener of this.listeners) { try { listener(); } catch { /* Other listeners still receive committed state. */ } } }
   subscribe(listener: () => void) { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
@@ -46,11 +62,13 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     if (this.options.store.unavailableReason) return Promise.resolve();
     return this.initialization ??= (async () => {
       await this.repository.importLegacy(this.options.store);
-      const raw = await this.repository.readAuxiliary(DREAM_LEDGER);
+      let raw = await this.repository.readAuxiliary(this.ledgerPath);
+      if (raw === null) { const legacy = await this.repository.readAuxiliary(DREAM_LEDGER); if (legacy !== null && this.parseLedger(legacy).owner === this.options.store.instanceId) { if (await this.repository.readAuxiliary(DREAM_LEDGER) !== legacy) throw memoryConflict(); raw = legacy; } }
       if (raw !== null) {
-        const ledger = this.parseLedger(raw); this.status = ledger.status;
+        const ledger = this.parseLedger(raw); this.status = ledger.status; this.resumePending = ledger.owner === this.options.store.instanceId && ledger.resumable === true;
         if (ledger.status.phase === "running" && ledger.owner === this.options.store.instanceId && !activeDreams.has(this.options.adapter)) {
-          await this.finishDream("interrupted", "上次整理已中断，请主动重新开始。", ledger.status.startedAt, raw);
+          this.resumePending = ledger.resumable === true;
+          await this.saveDreamStatus("interrupted", "上次整理已中断，回到前台后继续。", ledger.status.startedAt, this.resumePending);
         }
       }
     })().catch(error => { this.initialization = undefined; throw error; });
@@ -89,14 +107,15 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
     const kind = original?.kind ?? input.kind;
     const duplicate = before.records.find(record => record.status === "current" && record.content === input.content && record.kind === kind);
     if (duplicate) return { revision: before.manifest.revision, record: duplicate, original: duplicate, duplicate: true };
-    const source = `pi://${[before.manifest.vaultId, taskId, runId, callId].map(encodeURIComponent).join("/")}?productRun=${encodeURIComponent(runId)}`;
+    const run = this.options.store.getSession(taskId)?.runs?.find(item => item.id === runId);
+    const source = run?.userMessageDigest ? memoryQuoteSource({ vaultId: before.manifest.vaultId, conversationId: taskId, sessionId: `mobile:${this.options.store.instanceId}`, entryId: mobileUserEntryId(this.options.store.instanceId, runId), productRunId: runId }) : `pi://${[before.manifest.vaultId, taskId, runId, callId].map(encodeURIComponent).join("/")}?productRun=${encodeURIComponent(runId)}`;
     const record = this.repository.newRecord({ kind, title: input.title, content: input.content, recallWhen: input.recallWhen, basis: input.basis,
       contentOrigin: input.basis === "explicit" ? "user_statement" : "current_instruction", source, revision: before.manifest.revision + 1 });
-    return { revision: before.manifest.revision, record: { ...record, ...(original ? { supersedes: original.id, reason: "用户修正", pinned: original.pinned } : {}) }, original, duplicate: false };
+    return { revision: before.manifest.revision, record: { ...record, ...(original ? { supersedes: original.id, reason: "用户修正", pinned: original.pinned, related: original.related } : {}) }, original, duplicate: false };
   }
   async preparePin(id: string, pinned: boolean): Promise<MobileCanonicalMemoryWritePlan> {
     const before = await this.read(id);
-    if (before.record.status !== "current") throw new Error("当前记忆不存在。");
+    if (before.record.status !== "current") throw new Error("该记忆已不存在。请刷新记忆列表后重试。");
     return { mode: "pin", revision: before.revision, original: before.record,
       record: { ...before.record, pinned, revision: before.revision + 1 }, duplicate: false };
   }
@@ -124,7 +143,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       const record = parseCanonicalMemoryRecord(raw, tombstone.backupFile);
       if (!needle || `${record.title}\n${record.content}`.toLocaleLowerCase().includes(needle)) forgotten.push({ id: tombstone.recordId, title: record.title, forgottenAt: tombstone.forgottenAt, reason: tombstone.reason });
     }
-    return { revision: snapshot.manifest.revision, records: clone(snapshot.records.filter(record => !needle || `${record.title}\n${record.content}`.toLocaleLowerCase().includes(needle))), forgotten };
+    return { corrections: await this.corrections(snapshot), revision: snapshot.manifest.revision, records: clone(snapshot.records.filter(record => !needle || `${record.title}\n${record.content}`.toLocaleLowerCase().includes(needle))), forgotten };
   }
   async memoryActivity() { return this.repository.memoryActivity(); }
   async recordRecalledMemories(ids: readonly string[], turnId: string) { return this.repository.recordRecalledMemories(ids, turnId); }
@@ -132,14 +151,14 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   async setPinned(id: string, pinned: boolean, revision: number, guard: () => void = () => {}) {
     await this.repository.mutate(revision, "memory-pin", (draft, files) => {
       const current = draft.records.find(record => record.id === id && record.status === "current");
-      if (!current) throw new Error("当前记忆不存在。");
+      if (!current) throw new Error("该记忆已不存在。请刷新记忆列表后重试。");
       const record = { ...current, pinned, revision: draft.manifest.revision + 1 };
       draft.records = draft.records.map(item => item.id === id ? record : item);
       files.set(record.file, serializeCanonicalMemoryRecord(record, draft.originals.get(record.file) ?? undefined));
     }, guard);
     this.emit(); return this.read(id);
   }
-  async read(id: string) { const snapshot = await this.snapshot(), record = snapshot.records.find(item => item.id === id); if (!record) throw new Error("这条记忆不存在或已忘记。"); return { revision: snapshot.manifest.revision, record: clone(record) }; }
+  async read(id: string) { const snapshot = await this.snapshot(), record = snapshot.records.find(item => item.id === id); if (!record) throw new Error("这条记忆不存在或已忘记。"); return { corrections: (await this.corrections(snapshot)).filter(event=>event.beforeId===id||event.afterId===id), revision: snapshot.manifest.revision, record: clone(record) }; }
   async previewCorrection(id: string, draft: MobileMemoryCorrection, revision: number): Promise<MobileMemoryCorrectionPreview> {
     const snapshot = await this.read(id); if (snapshot.revision !== revision) throw memoryConflict();
     const title = draft.title.trim(), content = draft.content.trim(), recallWhen = draft.recallWhen.trim();
@@ -152,7 +171,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       const original = draft.records.find(record => record.id === preview.id); if (!original || original.status !== "current") throw memoryConflict();
       const revision = draft.manifest.revision + 1;
       replacement = this.repository.newRecord({ kind: original.kind, title: validated.title, content: validated.content, recallWhen: validated.recallWhen, basis: "explicit", contentOrigin: "user_edit", source: "ui://personal-memory-correction", revision });
-      replacement = { ...replacement, pinned: original.pinned, supersedes: original.id, reason: "用户修正", ...(original.scope ? { scope: original.scope } : {}), ...(original.asOf ? { asOf: original.asOf } : {}), ...(original.due ? { due: original.due } : {}), ...(original.remindAt ? { remindAt: original.remindAt } : {}) };
+      replacement = { ...replacement, pinned: original.pinned, related: original.related, supersedes: original.id, reason: "用户修正", ...(original.scope ? { scope: original.scope } : {}), ...(original.asOf ? { asOf: original.asOf } : {}), ...(original.due ? { due: original.due } : {}), ...(original.remindAt ? { remindAt: original.remindAt } : {}) };
       const superseded = { ...original, status: "superseded" as const, revision, reason: "用户修正" };
       draft.records = draft.records.map(record => record.id === original.id ? superseded : record).concat(replacement);
       draft.profile = { ...draft.profile, ...rebindProfileSource(draft.profile, { previousMemoryId: original.id, replacementMemoryId: replacement.id, previousMemoryRevision: original.revision, replacementText: replacement.content, now: this.now() }) };
@@ -220,76 +239,100 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       items: draft.profile.items.filter(item => item.profileKey !== profileKey), deletionBarriers: [...(draft.profile.deletionBarriers ?? []).filter(item => item.profileKey !== profileKey),
         { profileKey, memoryRevisionCutoff: draft.manifest.revision, experienceOccurredAtCutoff: this.now() }], updatedAt: this.now() }; }); this.emit(); return this.readProfile();
   }
+  private get dreamState() {
+    return this.dreamStatePort ??= new PortableDreamStateStore(this.cognitiveFiles());
+  }
+  private get inbox() { return this.inboxPort ??= new PortableDreamInboxStore(this.cognitiveFiles()); }
+  private cognitiveFiles() {
+    return { read: (path:string) => this.repository.readAuxiliary(path), replace: async (path:string,content:string,expected:string|null) => {
+      await this.repository.updateAuxiliary(path, raw => { if(raw!==expected)throw memoryConflict();return {content,value:undefined}; });
+    } };
+  }
+  private async quoteReader() {
+    return this.options.originalQuotes ?? adapterMemoryQuoteReader(this.options.adapter, this.options.storageRoot ?? '', this.options.store.statePath.replace(/\/devices\/[^/]+\/state\.json$/u,''), await this.repository.readVaultId());
+  }
+  async originalQuote(source:string) { return (await this.quoteReader()).source(source); }
+  async corrections(snapshot?: import("./memory-repository").MobileCanonicalSnapshot) {
+    snapshot ??= await this.snapshot(); const records = snapshot.records, state=await this.dreamState.read();
+    return (state.reconciliation??emptyDreamCorrectionState()).events.map(event=>({...event,before:records.find(record=>record.id===event.beforeId),after:records.find(record=>record.id===event.afterId),canUndo:canUndoDreamCorrection(event,records)}));
+  }
+  async undoCorrection(id:string) { const result=await this.repository.undoDreamCorrection(id);this.emit();return result.restoredId; }
+  async recordDreamExperience(taskId:string,runId:string) {
+    const task=this.options.store.getSession(taskId),run=task?.runs?.find(item=>item.id===runId);
+    if(!task||!run||run.dreamEligible===false||!mobileExperienceTerminalState(run)||run.userMessageIndex===undefined||run.assistantMessageIndex===undefined)return;
+    const user=task.messages[run.userMessageIndex],assistant=task.messages[run.assistantMessageIndex];
+    if(user?.role!=='user'||assistant?.role!=='assistant'||sha256Hex(JSON.stringify(user))!==run.userMessageDigest||sha256Hex(JSON.stringify(assistant))!==run.assistantMessageDigest)return;
+    const results=task.messages.slice(run.userMessageIndex+1,run.assistantMessageIndex+1).filter(message=>message.role==='toolResult');
+    await this.inbox.append({conversationId:taskId,productRunId:runId,userEntryId:mobileUserEntryId(this.options.store.instanceId,runId),assistantEntryId:mobileAssistantEntryId(this.options.store.instanceId,runId),occurredAt:run.completedAt??this.now(),
+      userText:mobileMessageText(user),assistantText:mobileMessageText(assistant),taskResult:{terminalState:mobileExperienceTerminalState(run)!,successfulToolNames:results.filter(message=>!message.isError).map(message=>message.toolName),failedToolNames:results.filter(message=>message.isError).map(message=>message.toolName)}},this.now());
+    await this.options.store.updateSession(taskId, latest => { const saved=latest.runs?.find(item=>item.id===runId); if(saved&&saved.userMessageDigest===run.userMessageDigest&&saved.assistantMessageDigest===run.assistantMessageDigest)saved.dreamExperienceRecorded=true; });
+  }
+  private async reconcileExperienceInbox() {
+    for (const task of this.options.store.state.sessions) for (const run of task.runs ?? []) {
+      if (run.dreamEligible && !run.dreamExperienceRecorded && mobileExperienceTerminalState(run)) await this.recordDreamExperience(task.id, run.id);
+    }
+  }
+  async prepareTurnMemory(input: {taskId:string;runId:string;text:string;history:readonly {role:string;content:string}[];availableInputTokens:number;provider:ApiProviderConfig;model:ApiProviderModelConfig;signal:AbortSignal}) {
+    const allowed=()=>{if(input.signal.aborted)throw new Error('已停止');};allowed();
+    await this.initialize();allowed();
+    const snapshot=await this.snapshot();allowed();
+    const harness=new PersonalMemoryRecallHarness(this.repository,{decisions:{diagnostic:turnId=>getDecisionClient()?.memoryDiagnostic(turnId),judgeMemory:async request=>getDecisionClient()?.judgeMemory(request)??null},
+      directory:{modelInputBudget:Math.max(0,input.model.contextWindow-input.model.maxOutputTokens-256),llm:{call:async request=>({text:await mobileGenerateText(input.provider,input.model,this.options.request,request.systemPrompt,request.userPrompt,request.maxTokens,request.signal,this.usage),usage:undefined})}}});
+    const fixedTokens=await estimateTokenValueAsync({user:snapshot.user,core:snapshot.records.filter(record=>record.status==='current'&&record.pinned).map(record=>({id:record.id,title:record.title,summary:Array.from(summarize(record.content)).slice(0,80).join('')}))});
+    allowed();
+    return harness.prepareTurnContext({memoryMode:'normal',skipDirectory:input.availableInputTokens<=fixedTokens+256,query:input.text,recentConversation:selectMemoryRecallPreviousUserContext(input.history),tokenBudget:Math.max(1,Math.min(1200,Math.floor(input.availableInputTokens-fixedTokens-256))),availableInputTokens:input.availableInputTokens,
+      vaultId:snapshot.manifest.vaultId,conversationId:input.taskId,piSessionId:`mobile:${this.options.store.instanceId}`,productRunId:input.runId,decisionTurnId:input.runId,signal:input.signal});
+  }
   dreamStatus(): MobileDreamStatus { return { ...clone(this.status), ...(this.status.dayKey !== this.day() ? { dayKey: this.day(), attemptsToday: 0 } : {}), dailyLimit: this.readSettings().dreamRunsPerDay }; }
   private parseLedger(raw: string): DreamLedger {
-    const invalid = () => new MobileDataConflictError("整理次数账本损坏或版本不支持，原文件已保留。"); let value: unknown; try { value = JSON.parse(raw); } catch { throw invalid(); }
-    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(); const record = value as Record<string, unknown>, status = record.status as Record<string, unknown> | undefined;
-    if (record.schema !== "echoink.mobile-dream.v1" || !Number.isSafeInteger(record.attempts) || Number(record.attempts) < 0 || typeof record.dayKey !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(record.dayKey) || typeof record.owner !== "string" || !record.owner
-      || !status || !["idle", "running", "completed", "interrupted", "failed"].includes(String(status.phase)) || typeof status.error !== "string"
-      || !Number.isSafeInteger(status.attemptsToday) || Number(status.attemptsToday) < 0 || !Number.isSafeInteger(status.dailyLimit) || Number(status.dailyLimit) < 1 || Number(status.dailyLimit) > 6
-      || status.dayKey !== record.dayKey || status.attemptsToday !== record.attempts || [status.startedAt, status.finishedAt].some(at => at !== null && (typeof at !== "number" || !Number.isFinite(at) || at < 0))) throw invalid();
-    return record as unknown as DreamLedger;
+    let record: DreamLedger;
+    try { record = JSON.parse(raw) as DreamLedger; } catch { throw new MobileDataConflictError('整理记录损坏，原记录已保留。'); }
+    if(record?.schema!=='echoink.mobile-dream.v1'||!Number.isSafeInteger(record.attempts)||record.attempts<0||typeof record.dayKey!=='string'||!/^\d{4}-\d{2}-\d{2}$/u.test(record.dayKey)||typeof record.owner!=='string'||!record.owner||!record.status||!['idle','running','completed','interrupted','failed'].includes(record.status.phase))throw new MobileDataConflictError('整理记录损坏，原记录已保留。');
+    return record;
   }
-  private async finishDream(phase: MobileDreamStatus["phase"], error: string, startedAt: number | null, expectedLedger?: string) {
-    this.status = await this.repository.updateAuxiliary(DREAM_LEDGER, raw => {
-      if (expectedLedger !== undefined && raw !== expectedLedger) throw memoryConflict();
-      const previous = raw ? this.parseLedger(raw) : null;
-      const status: MobileDreamStatus = { ...this.dreamStatus(), phase, error, startedAt, finishedAt: this.now(), dayKey: previous?.dayKey ?? this.day(), attemptsToday: previous?.attempts ?? 0 };
-      return { content: json({ schema: "echoink.mobile-dream.v1", dayKey: previous?.dayKey ?? this.day(), attempts: previous?.attempts ?? 0, status, owner: this.options.store.instanceId }), value: status };
-    }); this.emit(); return this.dreamStatus();
+  private async saveDreamStatus(phase:MobileDreamStatus['phase'],error:string,startedAt:number|null,resumable=false) {
+    this.status=await this.repository.updateAuxiliary(this.ledgerPath,raw=>{
+      if(raw)this.parseLedger(raw);
+      const status={...this.dreamStatus(),phase,error,startedAt,finishedAt:phase==='running'?null:this.now()};
+      return {content:json({schema:'echoink.mobile-dream.v1',dayKey:status.dayKey,attempts:status.attemptsToday,status,owner:this.options.store.instanceId,resumable}),value:status};
+    });this.emit();return this.dreamStatus();
   }
-  runDream(signal?: AbortSignal): Promise<MobileDreamStatus> {
-    if (this.options.store.unavailableReason) return Promise.reject(new Error(this.options.store.unavailableReason));
-    if (this.dreamRun) return Promise.reject(new Error("当前正在整理，请先等待或停止。"));
-    const controller = new AbortController(), token = {}, abort = () => controller.abort(); signal?.addEventListener("abort", abort, { once: true }); if (signal?.aborted) controller.abort();
-    const completion = this.executeDream(controller, token).finally(() => { signal?.removeEventListener("abort", abort); if (this.dreamRun?.token === token) this.dreamRun = undefined; if (activeDreams.get(this.options.adapter) === token) activeDreams.delete(this.options.adapter); });
-    this.dreamRun = { controller, token, completion }; return completion;
+  runDream(signal?:AbortSignal, resume=false):Promise<MobileDreamStatus> {
+    if(this.dreamRun)return Promise.reject(new Error('当前正在整理，请先等待或停止。'));
+    const controller=new AbortController(),token={};const abort=()=>{controller.abort();void this.engine?.dispose();};signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();
+    const completion=this.executeDream(controller,token,resume).finally(()=>{signal?.removeEventListener('abort',abort);if(this.dreamRun?.token===token)this.dreamRun=undefined;if(activeDreams.get(this.options.adapter)===token)activeDreams.delete(this.options.adapter);this.engine=undefined;});
+    this.dreamRun={controller,token,completion};return completion;
   }
-  private async executeDream(controller: AbortController, token: object): Promise<MobileDreamStatus> {
-    await this.initialize(); const config = this.readSettings(), model = selectedModel(this.options.settings());
-    const check = () => { if (controller.signal.aborted || activeDreams.get(this.options.adapter) !== token || !this.readSettings().memoryEnabled || !this.readSettings().dreamEnabled) throw new Error("整理已中断，晚返回结果不会保存。"); };
-    if (!config.memoryEnabled || !config.dreamEnabled) throw new Error("请先开启长期记忆和做梦。"); if (!model) throw new Error("请先配置可用模型，再整理画像。");
-    if (activeDreams.has(this.options.adapter)) throw new Error("当前已有画像整理在运行。"); activeDreams.set(this.options.adapter, token); check();
-    const before = await this.snapshot(), dreamRaw = await this.repository.readAuxiliary(DREAM_STATE);
-    let dream: DreamState = defaultDreamState();
-    if (dreamRaw !== null) { let value: unknown; try { value = JSON.parse(dreamRaw); } catch { throw new Error("整理状态损坏，未重置。"); } const parsed = parseDreamState(value as Record<string, unknown>); if (!parsed) throw new Error("整理状态版本不支持，未重置。"); dream = { ...(value as DreamState), ...parsed }; }
-    const candidates = before.records.filter(record => record.status === "current" && userProfileMemoryEligible(record) && !dream.processedMemorySources.some(source => source.memoryId === record.id && source.memoryRevision === record.revision)).slice(0, 10);
-    if (!candidates.length) { this.status = { ...this.dreamStatus(), phase: "completed", error: "", finishedAt: this.now() }; this.emit(); return this.dreamStatus(); }
-    const startedAt = this.now();
-    this.status = await this.repository.updateAuxiliary(DREAM_LEDGER, raw => {
-      check(); const previous = raw ? this.parseLedger(raw) : null, attempts = previous?.dayKey === this.day() ? previous.attempts : 0;
-      if (previous?.status.phase === "running" && previous.owner !== this.options.store.instanceId) throw new Error("另一设备的整理尚未结束，未接管或自动重试。");
-      if (attempts >= config.dreamRunsPerDay) throw new Error("今天的整理次数已用完，请明天再试。");
-      const status: MobileDreamStatus = { phase: "running", dayKey: this.day(), attemptsToday: attempts + 1, dailyLimit: config.dreamRunsPerDay, startedAt, finishedAt: null, error: "" };
-      return { content: json({ schema: "echoink.mobile-dream.v1", dayKey: this.day(), attempts: attempts + 1, status, owner: this.options.store.instanceId }), value: status };
-    }); this.emit();
-    try {
-      const items: Parameters<typeof applyDreamProfileUpdate>[1]["items"][number][] = [];
-      for (const record of candidates) {
-        check(); const prompt = buildUserProfileDreamPrompt(record);
-        const output = await mobileGenerateText(model.provider, model.model, this.options.request, prompt.system, prompt.user, Math.min(4096, model.model.maxOutputTokens), controller.signal, this.usage); check();
-        for (const item of parseUserProfileDreamCandidates(output)) {
-          if (record.basis === "observed") {
-            const group = memorySourceGroup(record.source, record.id); if (!group.independentContext) continue;
-            const sourceIds = [...before.profile.items.filter(old => old.profileKey === item.profileKey && old.basis === "observed_memory" && old.text === item.text).flatMap(old => old.sourceMemoryIds),
-              ...items.filter(old => old.profileKey === item.profileKey && old.basis === "observed_memory" && old.text === item.text).map(old => old.sourceMemoryId)];
-            if (sourceIds.some(id => { const source = before.records.find(old => old.id === id); return source && memorySourceGroup(source.source, source.id).contextId === group.contextId; })) continue;
-          }
-          items.push({ ...item, basis: record.basis === "explicit" ? "explicit_memory" : "observed_memory", sourceMemoryId: record.id, sourceEvidence: { kind: "memory", revision: record.revision } });
-        }
-      }
-      check(); await this.repository.mutate(before.manifest.revision, "dream", (draft, files) => {
-        check(); const processedSources = candidates.map(record => ({ memoryId: record.id, memoryRevision: record.revision })), reprocessed = computeReprocessedProfileMemoryIds(draft.profile, processedSources);
-        const base = reprocessed.size ? revokeReprocessedProfileSources(draft.profile, reprocessed, this.now()) : draft.profile;
-        draft.profile = { ...draft.profile, ...applyDreamProfileUpdate(base, { items, processedSources, now: this.now() }) };
-        const sources = new Map(dream.processedMemorySources.map(source => [source.memoryId, source])); for (const record of candidates) sources.set(record.id, { memoryId: record.id, memoryRevision: record.revision, processedAt: this.now() });
-        files.set(DREAM_STATE, json({ ...dream, revision: dream.revision + 1, lastRunAt: startedAt, lastSuccessAt: this.now(), lastProcessedMemoryRevision: draft.manifest.revision + 1,
-          processedMemorySources: [...sources.values()], pendingMemoryIds: dream.pendingMemoryIds.filter(id => !candidates.some(record => record.id === id)), updatedAt: this.now() }));
-      }, check, new Map([[DREAM_STATE, dreamRaw]])); check(); return await this.finishDream("completed", "", startedAt);
-    } catch (error) { return this.finishDream(controller.signal.aborted ? "interrupted" : "failed", controller.signal.aborted ? "整理已停止，晚返回结果不会保存。" : error instanceof Error ? error.message : "整理失败，原资料已保留。", startedAt); }
+  private async executeDream(controller:AbortController,token:object,resume:boolean):Promise<MobileDreamStatus> {
+    if(this.options.store.unavailableReason)throw new Error(this.options.store.unavailableReason);
+    await this.initialize();const config=this.readSettings();if(!config.memoryEnabled||!config.dreamEnabled)throw new Error('请先开启长期记忆和做梦。');
+    if(activeDreams.has(this.options.adapter))throw new Error('当前已有画像整理在运行。');activeDreams.set(this.options.adapter,token);
+    await this.reconcileExperienceInbox();
+    const state=await this.dreamState.read(),snapshot=await this.snapshot(),inbox=await this.inbox.read();
+    const pending=snapshot.records.some(record=>record.status==='current'&&!record.pinned&&!state.processedMemorySources.some(source=>source.memoryId===record.id&&source.memoryRevision===record.revision&&source.associationRevision===record.revision))
+      ||snapshot.profile.legacyUserMigration!=='done'||inbox.entries.some(entry=>entry.evaluatedAt===null||!state.reconciliation?.experiences.some(item=>item.fingerprint===entry.fingerprint&&item.completed))
+      ||snapshot.records.some(record=>record.status==='current'&&parseMemoryQuoteSource(record.source)&&!state.reconciliation?.checks.some(check=>check.phase==='original'&&check.memoryId===record.id&&check.memoryRevision===record.revision&&correctionCheckComplete(check)));
+    if(!pending){this.resumePending=false;return this.saveDreamStatus('completed','',null);}
+    const model=selectedModel(this.options.settings());if(!model&&!this.options.dreamLlm)throw new Error(joinErrorCopy(['画像未能整理。', 'The profile could not be organized.'], CAUSE.providerNotConfigured, 'zh'));
+    const startedAt=this.now();
+    this.status=await this.repository.updateAuxiliary(this.ledgerPath,raw=>{const previous=raw?this.parseLedger(raw):null;const attempts=previous?.dayKey===this.day()?previous.attempts:0;
+      if(!resume&&attempts>=config.dreamRunsPerDay)throw new Error('今天的整理次数已用完，请明天再试。');
+      const status:MobileDreamStatus={phase:'running',dayKey:this.day(),attemptsToday:attempts+(resume?0:1),dailyLimit:config.dreamRunsPerDay,startedAt,finishedAt:null,error:''};return {content:json({schema:'echoink.mobile-dream.v1',dayKey:this.day(),attempts:status.attemptsToday,status,owner:this.options.store.instanceId,resumable:true}),value:status};});this.emit();
+    const llm=():DreamLlmPort|null=>this.options.dreamLlm??(model?{inputTokenBudget:model.model.contextWindow,call:async request=>{
+      const observer:MobileUsageObserver={recordUsage:async event=>{request.onUsage?.({inputTokens:event.inputTokens,outputTokens:event.outputTokens,tokenSource:'estimated',usageRequestId:event.requestId});await this.usage?.recordUsage({...event,runId:request.runId,stepId:request.stepId});},onRecordError:this.usage?.onRecordError};
+      return mobileGenerateText(model.provider,model.model,this.options.request,request.systemPrompt,request.userPrompt,request.maxTokens,request.signal??controller.signal,observer);
+    }}:null);
+    const guard = () => { if (controller.signal.aborted) throw new Error('dream_cancelled'); };
+    this.engine=new DreamEngine({repository:{inspect:()=>this.repository.inspect(),readVaultId:()=>this.repository.readVaultId(),readFixedFiles:()=>this.repository.readFixedFiles(),applyCognitiveUpdate:input=>this.repository.applyCognitiveUpdate(input,guard),applyDreamCorrections:input=>this.repository.applyDreamCorrections(input,guard),writeSystemMemory:input=>{guard();return this.repository.writeSystemMemory(input);}},profileStore:{read:async()=>(await this.repository.snapshot()).profile},secondaryStore:{loadAll:()=>this.repository.loadSecondary(),setCache:()=>{}},dreamStateStore:this.dreamState,experienceInboxStore:this.inbox,originalQuotes:await this.quoteReader(),llm,now:this.now,config:{tokenBudget:(this.options.settings().memory as {dreamTokenBudget?:number}|undefined)?.dreamTokenBudget??50000,...this.options.engineConfig}});
+    const abort=()=>{void this.engine?.dispose();};controller.signal.addEventListener('abort',abort,{once:true});if(controller.signal.aborted)abort();
+    try {const running=this.engine.runOnce();if(controller.signal.aborted)await this.engine.dispose();const result=await running;this.resumePending=controller.signal.aborted&&this.resumePending;
+      return this.saveDreamStatus(controller.signal.aborted?'interrupted':result.error?'failed':'completed',controller.signal.aborted?'整理已中断，回到前台后继续。':result.error?'记忆整理未能全部完成，已提交的结果已保留。请稍后重试。':'',startedAt,this.resumePending);
+    }catch(error){return this.saveDreamStatus(controller.signal.aborted?'interrupted':'failed',controller.signal.aborted?'整理已中断，回到前台后继续。':userFacingErrorText(error,'记忆整理未能完成，原资料已保留。请稍后重试。'),startedAt,this.resumePending);}
+    finally{controller.signal.removeEventListener('abort',abort);}
   }
-  async cancelDream(): Promise<void> { const run = this.dreamRun; if (!run) return; run.controller.abort(); await run.completion.catch(() => {}); }
-  async suspend(reason = "应用进入后台，整理已中断。") { const run = this.dreamRun; if (run) { run.controller.abort(); await run.completion.catch(() => {}); } }
+  async cancelDream():Promise<void>{this.resumePending=false;const run=this.dreamRun;if(run){run.controller.abort();await this.engine?.dispose();await run.completion.catch(()=>{});}}
+  async suspend(){const run=this.dreamRun;if(run){this.resumePending=true;run.controller.abort();await this.engine?.dispose();await run.completion.catch(()=>{});}}
+  async resumeDream(){await this.initialize();if(this.resumePending&&!this.dreamRun){this.resumePending=false;void this.runDream(undefined,true).catch(()=>{});}}
   async archiveCompleted(): Promise<void> {
     if (this.options.store.unavailableReason) return;
     if (!this.readSettings().autoArchive) return; const at = this.now();

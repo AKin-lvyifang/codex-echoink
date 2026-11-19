@@ -1,4 +1,5 @@
-import { Modal, Setting, type App } from "obsidian";
+import { CAUSE, userFacingErrorText } from "../core/error-copy";
+import { Modal, Setting, Platform, type App } from "obsidian";
 import { createOriginButton, createOriginInput, createOriginRadioGroup, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { extractFirstUrl, isWeChatUrl } from "../knowledge-base/web-capture";
@@ -32,9 +33,20 @@ export class CaptureLinkModal extends Modal {
   onOpen(): void {
     this.modalEl.addClass("echoink-theme-boundary", "echoink-confirm-origin", "echoink-capture-link-modal");
     this.contentEl.createEl("h2", { text: "收藏" });
-    const field = new Setting(this.contentEl).setName("链接");
-    field.settingEl.addClass("echoink-capture-link-field");
-    this.input = createOriginInput(field.controlEl, { value: this.initialValue, attr: { placeholder: "粘贴网页或公众号链接", "aria-label": "链接", "data-capture-link-input": "" } });
+    const body = Platform.isDesktopApp
+      ? this.contentEl.createDiv({ cls: "echoink-capture-link-body" })
+      : this.contentEl;
+    let inputContainer: HTMLElement;
+    if (Platform.isDesktopApp) {
+      const field = body.createEl("label", { cls: "echoink-capture-link-field" });
+      field.createSpan({ cls: "setting-item-name", text: "链接" });
+      inputContainer = field;
+    } else {
+      const field = new Setting(body).setName("链接");
+      field.settingEl.addClass("echoink-capture-link-field");
+      inputContainer = field.controlEl;
+    }
+    this.input = createOriginInput(inputContainer, { value: this.initialValue, attr: { placeholder: "粘贴网页或公众号链接", "aria-label": "链接", "data-capture-link-input": "" } });
     this.input.addEventListener("input", () => {
       const url = extractFirstUrl(this.input.value);
       if (url !== this.url) {
@@ -43,11 +55,13 @@ export class CaptureLinkModal extends Modal {
         this.renderTypes();
       }
     });
-    this.types = this.contentEl.createDiv();
+    this.types = body.createDiv({ cls: "echoink-capture-link-types" });
     this.renderTypes();
-    this.status = this.contentEl.createDiv({ attr: { role: "alert", "data-capture-link-error": "" } });
+    this.status = body.createDiv({ attr: { role: "alert", "data-capture-link-error": "" } });
     this.status.hidden = true;
-    const actions = new Setting(this.contentEl).controlEl;
+    const actions = Platform.isDesktopApp
+      ? body.createDiv({ cls: "echoink-capture-link-actions" })
+      : new Setting(body).controlEl;
     this.cancel = createOriginButton(actions, { text: "取消" });
     this.cancel.onclick = () => this.close();
     this.submit = createOriginButton(actions, { text: "收藏", cls: "mod-cta", attr: { "data-capture-link-submit": "" } });
@@ -72,8 +86,15 @@ export class CaptureLinkModal extends Modal {
     this.types.empty();
     const group = createOriginRadioGroup(this.types, this.kind, "收藏类型", value => { this.kind = value as CaptureLinkKind; });
     for (const [kind, label] of [["web", "网页"], ["wechat", "公众号"]] as const) {
-      const row = new Setting(group.element).setName(label);
-      const radio = group.addItem(row.controlEl, kind, false);
+      let control: HTMLElement;
+      if (Platform.isDesktopApp) {
+        const row = group.element.createDiv({ cls: "echoink-capture-link-type-row" });
+        row.createSpan({ cls: "setting-item-name", text: label });
+        control = row;
+      } else {
+        control = new Setting(group.element).setName(label).controlEl;
+      }
+      const radio = group.addItem(control, kind, false);
       radio.setAttribute("aria-label", label);
       radio.setAttribute("data-capture-link-kind", kind);
     }
@@ -85,7 +106,7 @@ export class CaptureLinkModal extends Modal {
     const url = extractFirstUrl(input);
     this.status.hidden = true;
     if (!url) {
-      this.showError("收藏只支持网页和公众号链接");
+      this.showError(CAUSE.captureLinkUnsupported[0]);
       return;
     }
     this.setBusy(true);
@@ -95,7 +116,7 @@ export class CaptureLinkModal extends Modal {
       this.finish(paths);
       super.close();
     } catch (error) {
-      this.showError(error instanceof Error ? error.message : String(error));
+      this.showError(userFacingErrorText(error, "链接未能收藏。请检查链接后重试。"));
     } finally {
       if (!this.settled) this.setBusy(false);
     }

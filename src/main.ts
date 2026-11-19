@@ -1,3 +1,8 @@
+import { setXiaoechoLanguageProbe } from "./membership/xiaoecho-catalog";
+import { forkPrefillText, syncForkSource, type RemoteConversationSummary, type SyncConversationMessage } from "./sync/conversations";
+import { XiaoechoCatalogService } from "./plugin/xiaoecho-catalog-service";
+import { obsidianProviderFetch } from "./plugin/pi-provider-configuration-service";
+import { filterXiaoechoProviderDraft, repairSavedXiaoechoSelections } from "./membership/xiaoecho-catalog-state";
 import { ModuleOwnerModal } from "./ui/module-owner-modal";
 import {
   createProductionKnowledgeSystemService,
@@ -20,7 +25,9 @@ import { EchoInkMcpController } from "./mcp-server/plugin-service";
 import { stopTaskSideWork } from "./plugin/task-management";
 import { enableTargetToolCalling, toolCallFailureInfo, toolCallRecoveryGuidance, toolCallRecoveryTarget, TOOL_CALL_RESUME_PROMPT } from "./agents/tool-call-recovery";
 import { agentCapabilityErrorText, knownAgentCapabilityDenial } from "./agents/capability-denial";
+import { CAUSE, NEXT, joinErrorCopy, pickErrorCopy, userFacingErrorText } from "./core/error-copy";
 import { RunReportModal } from "./run-reports/desktop-ui";
+import { RunReportLogin } from "./run-reports/login";
 import { apiVersion as reportObsidianVersion } from "obsidian";
 import { getDesktopOs, getDesktopPath } from "./platform/desktop-paths";
 import { getDesktopFsPromises } from "./platform/desktop-filesystem";
@@ -30,7 +37,7 @@ import { readVaultIdentity as readReportVaultIdentity } from "./plugin/vault-ide
 import { collectDesktopRunReport } from "./run-reports/desktop-collector";
 import { configuredReportSecrets, freezeReport, reportWithoutConversation } from "./run-reports/report";
 import { runErrors } from "./run-reports/recent-errors";
-import { generateConversationTitle } from "./plugin/conversation-title";
+import { conversationTitleRequests, generateConversationTitle } from "./plugin/conversation-title";
 import { webSearchAvailable } from "./tools/web-search-settings";
 import { maintenanceActivityText, maintenanceStatusBarText, maintenanceTaskStateLabel, projectMaintenanceInitialActivity } from "./knowledge-base/maintenance-activity";
 import { knowledgeLinkingProgressText } from "./ui/codex-view/knowledge-linking-progress";
@@ -58,6 +65,9 @@ import { consumeAcceptedTaskDraft } from "./agents/task-workspace";
 import { ConversationRunService } from "./plugin/conversation-run-service";
 import type { CompanyService } from "./company/service";
 import { startCompanyService } from "./company/plugin-host";
+import type { SyncOverviewService } from "./sync/overview-service";
+import type { SyncRequestService } from "./sync/requests";
+import type { CloudSyncController } from "./sync/cloud/controller";
 import type { CompanyApprovalCoordinator } from "./company/approval-coordinator";
 import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, isUndeletableAgent, type AgentDefinition, type AgentModuleId } from "./agents/types";
 import { getModuleOwner, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "./agents/registry";
@@ -68,9 +78,12 @@ import { applyConversationTaskMetadata, normalizeConversationTaskMetadata } from
 import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./knowledge-base/folder-bindings";
 import { PdfReadingController } from "./pdf-reading/controller";
 import { createPluginAccountService } from "./membership/plugin-service";
+import { DecisionClient, setDecisionClient } from "./membership/decision-client";
+import { createDecisionFetch, membershipApiUrl } from "./membership/transport";
 import type { AccountService } from "./membership/account-service";
 import { SkillContentResolver, adapterSkillContentFiles } from "./harness/resources/skill-content";
 import { UsageStore, type UsageRequestEvent } from "./harness/usage/usage-store";
+import { disposeUsageTokenWorker } from "./harness/usage/token-estimator";
 import { hasProPluginAccess, requireProPlugin, unavailableCapabilityAccess } from "./membership/access";
 import { ConversationAutoArchive } from "./plugin/conversation-auto-archive";
 import { EchoInkAppearance } from "./ui/appearance-theme";
@@ -94,7 +107,8 @@ import {
 import type { EchoInkResource } from "./resources/types";
 import { enabledSkillResources } from "./resources/registry";
 import type { ReviewManager } from "./review/manager";
-import { getApiProviderModel, validateApiProvider, newId, apiProviderModelSupportsImage, apiProviderHasUsableCredential, getActiveApiProvider, getActiveApiProviderModel, getEnglishDiaryApiProviderModel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
+import { getApiProviderModel, validateApiProvider, newId, apiProviderModelSupportsImage, apiProviderHasUsableCredential,
+  setEchoInkAccountCredentialProbe, ensureXiaoechoProvider, getActiveApiProvider, getActiveApiProviderModel, getEnglishDiaryApiProviderModel, getNoteCommentApiProviderModel, type ChatMessage, type CodexForObsidianSettings, type ResourceManagementTab } from "./settings/settings";
 import { CodexView, VIEW_TYPE_CODEX } from "./ui/codex-view";
 import { registerEchoInkPluginFeatures, registerEchoInkStartupTasks } from "./plugin/bootstrap";
 import { EnglishDiaryController } from "./english-diary/controller";
@@ -197,6 +211,8 @@ import { DEFAULT_AGENT_DISPLAY_NAME } from "./harness/memory/agent-identity-mode
 import { resolveAgentAvatarUrl } from "./ui/agent-avatar-presets";
 import type { AgentIdentityView } from "./ui/codex-view/message-list";
 import type { DreamLlmPort } from "./harness/memory/dream-engine";
+import { MobileMemoryQuoteReader } from "./mobile/memory-quotes";
+import { MemoryOriginalQuoteReader } from "./harness/memory/memory-original-quote";
 import {
   SkillRuntimeCoordinator,
   type BuiltinSkillRuntimeSnapshot
@@ -231,6 +247,7 @@ extends ActivatePiNativeConversationOptions {
 }
 
 export default class CodexForObsidianPlugin extends Plugin {
+  private readonly reportLogin = new RunReportLogin();
   settings!: CodexForObsidianSettings;
   homeActivity: HomeActivityService | null = null;
   lifestyle!: LifestyleService;
@@ -242,6 +259,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   private viewService: EchoInkViewService | null = null;
   selectionAskController: import("./selection-ask/controller").SelectionAskController | null = null;
   inlineAgent: import("./inline-agent/controller").InlineAgentController | null = null;
+  noteComments: import("./note-comments/controller").NoteCommentController | null = null;
+  private noteCommentSearch: import("./knowledge-base/vault-body-search").VaultBodySearch | null = null;
   private quickChatWindow: QuickChatWindowController | null = null;
   private todoStore: EchoInkTodoStore | null = null;
   private todoReminderService: TodoReminderService | null = null;
@@ -259,6 +278,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private mcpSettingsService: EchoInkMcpSettingsService | null = null;
   private piProviderConfigurationService:
     PiProviderConfigurationService | null = null;
+  private xiaoechoCatalogService: XiaoechoCatalogService | null = null;
   private openAICodexOAuthService:
     OpenAICodexOAuthService | null = null;
   private piRuntimeBundle: PiProductionRuntimeBundle | null = null;
@@ -285,6 +305,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   pdfReading: PdfReadingController | null = null;
   englishDiary: EnglishDiaryController | null = null;
   accountService: AccountService | null = null;
+  /** 智能判断（PRO）；没有会员服务地址时为 null，所有判断走原来的逻辑。 */
+  decisionClient: DecisionClient | null = null;
   private expertController?: DesktopExpertController;
   private workspaceFiles?: WorkspaceService;
   get experts(): DesktopExpertController { return this.expertController ??= new DesktopExpertController(this); }
@@ -297,6 +319,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   dismissExpert(agentId: string): Promise<void> { return this.experts.dismiss(agentId); }
   showExpertAbout(agentId: string): Promise<void> { return this.experts.about(agentId); }
   prepareExpertRuntime(agentId: string, conversationId: string, text: string) { return this.experts.prepare(agentId, conversationId, text); }
+  expertDecisionSkills(agentId: string) { return this.experts.decisionSkills(agentId); }
   getExpertHallHost(): ExpertHallHost { return { content: this.experts.content, getAgents: () => this.settings.agentRegistry.agents,
     hire: async id => { await this.experts.hire(id); }, dismiss: id => this.dismissExpert(id),
     open: id => this.openExpertConversation(id), upgrade: () => this.openEchoInkAccountSettings("benefits") }; }
@@ -331,10 +354,18 @@ export default class CodexForObsidianPlugin extends Plugin {
   async ensureCompanyService(): Promise<CompanyService> {
     if (this.companyService) return this.companyService;
     const service = await (this.companyServiceFlight ??= startCompanyService(this));
-    if (!service) throw new Error("总助调度服务暂不可用，请重新打开插件。");
+    if (!service) throw new Error(joinErrorCopy(["总助调度服务暂不可用。", "The assistant's dispatch service is unavailable."], NEXT.reloadPlugin, this.settings.settingsLanguage));
     return service;
   }
   companyApprovalCoordinator: CompanyApprovalCoordinator | null = null;
+  /** This device's identity in `EchoInk/同步数据/`; null when local storage is unavailable. */
+  syncDeviceId: string | null = null;
+  /** Read-only view of the other devices' sync folders; null until the company service starts. */
+  syncOverview: SyncOverviewService | null = null;
+  /** Cross-device requests (answer a decision, stop) and their acks; null until the company service starts. */
+  syncRequests: SyncRequestService | null = null;
+  /** EchoInk cloud sync (Max/PRO); null until the company service starts or when the device id is unavailable. */
+  cloudSync: CloudSyncController | null = null;
   private personalMemoryCorrection: PersonalMemoryCorrectionService | null = null;
   private readonly productActivity = new ProductActivityGate();
   private developerMemoryChanging = false;
@@ -414,6 +445,30 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.register(() => { if (pending !== null) window.clearTimeout(pending); pending = null; });
     }); });
     this.accountService = await createPluginAccountService(this);
+    this.register(this.accountService.onSignInReturned(() => this.reportLogin.returned()));
+    setEchoInkAccountCredentialProbe(() => !!this.accountService?.apiToken());
+    this.startDecisionClient();
+    setXiaoechoLanguageProbe(() => this.settings.settingsLanguage);
+    const catalogSettings = () => this.settings;
+    this.xiaoechoCatalogService = new XiaoechoCatalogService({
+      get settings() { return catalogSettings(); },
+      token: () => this.accountService?.apiToken() ?? null,
+      persist: () => this.saveSettings(true, { flushConversationStore: false }),
+      notifyModelRetired: () => { new Notice(this.settings.settingsLanguage === "en"
+        ? "The original model is no longer available. Switched to auto."
+        : "原模型已下架，已切换为 auto。"); }
+    }, obsidianProviderFetch);
+    this.register(() => { this.xiaoechoCatalogService?.dispose(); this.xiaoechoCatalogService = null; });
+    let catalogAccountToken = this.accountService.apiToken();
+    this.register(this.accountService.subscribe(() => {
+      const next = this.accountService?.apiToken() ?? null;
+      if (next === catalogAccountToken) return;
+      catalogAccountToken = next;
+      if (next) void this.ensureXiaoechoAfterSignIn().then(() => this.refreshXiaoechoCatalog(true));
+    }));
+    void this.refreshXiaoechoCatalog(true);
+    // Already signed in from an earlier session: list 小echo once the layout (and runtime) is ready.
+    this.app.workspace.onLayoutReady(() => { void this.ensureXiaoechoAfterSignIn(); });
     this.register(this.accountService.subscribe(() => { for (const leaf of this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)) { const view = leaf.view as unknown as { refresh?(): Promise<void> }; void view.refresh?.().catch(() => {}); } }));
     if (Platform.isDesktopApp) {
       this.echoInkMcp = new EchoInkMcpController(this);
@@ -458,6 +513,17 @@ export default class CodexForObsidianPlugin extends Plugin {
         console.error("EchoInk inline requests could not initialize", error);
         new Notice("正文块暂时不可用，请求记录已保留。");
       }
+      try {
+        const { NoteCommentController } = await import("./note-comments/controller");
+        this.noteComments = await NoteCommentController.create(this, {
+          generate: input => this.generateNoteCommentText(input),
+          searchRelated: (query, excludePath) => this.searchNoteCommentRelated(query, excludePath)
+        });
+        this.noteComments.register();
+      } catch (error) {
+        console.error("EchoInk note comments could not initialize", error);
+        new Notice("笔记评论暂时不可用，已有评论已保留。");
+      }
     }
     registerEchoInkStartupTasks(this);
     // Global quick-chat window: registration is fail-safe by design; when the
@@ -475,6 +541,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.reportLogin.dispose();
+    disposeUsageTokenWorker();
     this.echoInkMcp?.dispose();
     this.diaryOrganizer?.dispose();
     this.diaryOrganizer = null;
@@ -556,13 +624,14 @@ export default class CodexForObsidianPlugin extends Plugin {
   private pdfNavigationFlight: Promise<string> | null = null;
   private pdfNavigationIndex: KnowledgeAgentIndex | null = null;
   async activatePdfReadingPage(): Promise<void> { return this.getViewService().activatePdfReadingPage(); }
+  async activateNewsPage(): Promise<void> { return this.getViewService().activateNewsPage(); }
   pdfNavigationStartReason(options: PdfOptions): string {
     const host = this.pdfReading;
     if (!host || !this.settings.pdfReading.enabled) return "请先启用 PDF 精读。";
-    if (!host.policy().canWrite) return "需要有效 PRO；已有 PDF 和成果仍可查看。";
+    if (!host.policy().canWrite) return joinErrorCopy(["PDF 精读未能开始，已有 PDF 和成果仍可查看。", "PDF reading could not start. Existing PDFs and results remain available."], CAUSE.proRequired, this.settings.settingsLanguage);
     if (host.api.isBusy()) return "已有一份 PDF 正在处理。";
     const owner = workbenchModuleOwner(this, "pdf-reading");
-    if (!owner) return "PDF 精读还没有负责人。";
+    if (!owner) return "PDF 精读尚未指定负责人。";
     const context = { settings: this.settings, agentId: owner.id, vaultRoot: this.getVaultPath(), resources: [], proAccess: this.accountService ?? unavailableCapabilityAccess };
     if (!checkAgentCapability(context, "pdf-reading", "resource").allowed) return `${owner.name}还不能处理 PDF。`;
     if ((options.reading || options.summary) && !checkAgentCapability(context, "knowledge", "resource").allowed) return `${owner.name}还不能整理知识库；请调整能力，或取消精读和摘要。`;
@@ -591,9 +660,9 @@ export default class CodexForObsidianPlugin extends Plugin {
   async verifyPdfTaskDelivery(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void> {
     const jobId = typeof request === "string" ? request : request.jobId;
     const data = await this.pdfReading?.navigationData(jobId);
-    if (!data || data.errors.length) throw new Error(data?.errors[0] || "PDF 记录暂时读不到，已保存成果保留。");
+    if (!data || data.errors.length) throw new Error(data?.errors[0] || "暂时无法读取 PDF 记录，已保存的成果不受影响。请稍后重试。");
     const entry = data.entries.find(entry => entry.job.id === jobId);
-    if (!entry) throw new Error("PDF 任务记录暂时读不到，已保存成果保留。");
+    if (!entry) throw new Error("暂时无法读取 PDF 任务记录，已保存的成果不受影响。请稍后重试。");
     assertPdfTaskDelivery(typeof request === "string" ? { jobId, sourceFingerprint: entry.job.sourceFingerprint ?? "", options: entry.job.options, requiresOriginal: !!entry.job.original } : request, entry, noNewSourcePaths);
   }
   async readPdfKnowledgeArtifacts(rawPath: string): Promise<PdfNavigationArtifact[]> {
@@ -651,7 +720,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async activateTodoView(): Promise<void> { return this.getViewService().activateTodoView(); }
-  async activateProjectPage(projectId: string): Promise<void> { return this.getViewService().activateProjectPage(projectId); }
+  async activateProjectPage(projectId: string, deviceId?: string): Promise<void> { return this.getViewService().activateProjectPage(projectId, deviceId); }
 
   async activateJournalView(): Promise<void> { return this.getViewService().activateJournalView(); }
   getWorkbenchModuleOwner(moduleId: AgentModuleId): AgentDefinition | null { return workbenchModuleOwner(this, moduleId); }
@@ -856,7 +925,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         navigating = true;
         const card = this.onboardingWorkspaceCoachmark?.element;
         card?.setAttribute("aria-busy", "true"); card?.querySelectorAll("button").forEach(button => { button.disabled = true; });
-        pending = this.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.settings.settingsLanguage === "en" ? "The page did not open. Try again." : "页面没有打开，请重试。"); })
+        pending = this.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.settings.settingsLanguage === "en" ? "The page could not be opened. Try again." : "页面未能打开。请重试。"); })
           .finally(() => { navigating = false; card?.setAttribute("aria-busy", "false"); card?.querySelectorAll("button").forEach(button => { button.disabled = false; }); });
       };
       if (step === "colleague") view.requestOnboardingEditorLeave(run); else run();
@@ -1076,10 +1145,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   }>): Promise<Readonly<PiKnowledgeMaintenanceScope>> {
     const request = input.request.trim();
     if (input.attachmentPaths.length > 1) {
-      throw new Error("/maintain 一次只支持一篇 Raw 笔记。");
+      throw new Error("/maintain 一次只能处理一篇资料笔记。请只保留一篇后重试。");
     }
     if (input.attachmentPaths.length && request) {
-      throw new Error("/maintain 不能同时使用附件和尾随名称。");
+      throw new Error("/maintain 不能同时使用附件和笔记名称。请只保留其中一种后重试。");
     }
     const bundle = await this.ensurePiProductionRuntime();
     if (input.attachmentPaths.length === 1) {
@@ -1097,7 +1166,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         || knowledgePathRole(vaultRoot, relative) !== "raw"
         || !isRawMarkdownPath(relative)
       ) {
-        throw new Error("/maintain 附件必须是当前 Vault 已绑定资料来源中的 Markdown 笔记。");
+        throw new Error("/maintain 的附件必须是已绑定资料来源中的 Markdown 笔记。请重新选择后重试。");
       }
       await bundle.knowledgeAgentIndex.read({ vaultRelativePath: relative });
       return Object.freeze({
@@ -1116,7 +1185,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       this.piSubmittingConversations.has(conversationId)
       || [...this.piRunConversations.values()].includes(conversationId)
     ) {
-      throw new Error("当前会话正在处理请求，请等待本轮完成。");
+      throw new Error(pickErrorCopy(CAUSE.busyAnswering, this.settings.settingsLanguage));
     }
     this.piSubmittingConversations.add(conversationId);
     try {
@@ -1153,7 +1222,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     listener: PiChatRuntimeEventListener
   ): PiChatEventSubscription {
     if (!this.piRuntimeBundle) {
-      throw new Error("EchoInk Pi Runtime 尚未就绪。");
+      throw new Error(pickErrorCopy(CAUSE.pluginStarting, this.settings.settingsLanguage));
     }
     return this.piRuntimeBundle.runtime.subscribeProductRun(
       productRunId,
@@ -1253,7 +1322,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   async openRunReport(conversationId = this.getViewService().getCodexView()?.openReportConversationId()): Promise<void> {
     const snapshot = await this.captureRunReport(conversationId);
-    new RunReportModal(this.app, snapshot, this.getVaultPath(), this.accountService, this.settings.settingsLanguage === "en").open();
+    new RunReportModal(this.app, snapshot, this.getVaultPath(), this.accountService, this.settings.settingsLanguage === "en", this.reportLogin,
+      () => this.getViewService().openEchoInkSettings("account", "account:login", false)).open();
   }
   async captureRunReport(conversationId?: string) {
     const environment = { pluginVersion: this.manifest.version, obsidianVersion: reportObsidianVersion,
@@ -1292,7 +1362,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     return this.getConversationRunService().resumeTask(taskId, optionalMessage, frozenItem);
   }
   isTaskResuming(taskId: string): boolean { return this.knowledgeBase?.upgrade?.ownsTask(taskId) ? this.knowledgeBase.upgrade.running : this.conversationRunService?.isResuming(taskId) ?? false; }
-  getTaskResumeError(taskId: string): string | undefined { return this.conversationRunService?.getResumeError(taskId); }
+  /** The last resume failure in plain words; raw codes and English exceptions stay in the run report. */
+  getTaskResumeError(taskId: string): string | undefined {
+    const raw = this.conversationRunService?.getResumeError(taskId);
+    return raw ? userFacingErrorText(raw, "", this.settings.settingsLanguage === "en" ? "en" : "zh") || undefined : undefined;
+  }
   taskToolCallRecovery(taskId: string, info?: TaskInterruptionInfo | null) {
     const draft = this.settings.taskWorkspace?.replyDrafts[taskId];
     const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
@@ -1364,16 +1438,16 @@ export default class CodexForObsidianPlugin extends Plugin {
     assertPiSubmissionActive(signal);
     const entry = await local.catalog.get(taskId);
     assertPiSubmissionActive(signal);
-    if (!entry || entry.status === "deleted") throw new Error("这个任务已不存在，无法继续。");
-    if (entry.taskStatus !== "interrupted") throw new Error("这个任务当前不是已中断状态，请查看最新记录。");
-    if (this.getConversationRunService().isAgentBlocked(entry.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("这个 Agent 正在调整，请稍后继续。");
+    if (!entry || entry.status === "deleted") throw new Error("该任务已删除，无法继续。");
+    if (entry.taskStatus !== "interrupted") throw new Error("该任务当前未处于中断状态。请查看最新记录。");
+    if (this.getConversationRunService().isAgentBlocked(entry.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("该 Agent 正在调整。请稍后继续。");
     // Loading this original JSONL validates its active branch and keeps native compaction intact.
     const projection = await this.readPiConversationProjection(taskId);
     assertPiSubmissionActive(signal);
     if (projection.catalog.piSessionId !== entry.piSessionId) throw new Error("任务的原始记录已变化，请重新打开后继续。");
     const last = latestTaskRun(await local.productRuns.listReadOnly(taskId));
     assertPiSubmissionActive(signal);
-    if (!last) throw new Error("这件任务没有可核对的运行记录，暂时无法安全继续。已有文字和附件已保留。");
+    if (!last) throw new Error("该任务缺少可核对的运行记录，暂时无法继续。已有文字和附件已保留。");
     const snapshotInput = { ...local, conversationId: taskId, vaultRootPath: this.getVaultPath(), ...(last ? { interruptedRunId: last.productRunId } : {}) };
     const inspected = await readTaskResumeSafety(snapshotInput);
     assertPiSubmissionActive(signal);
@@ -1393,7 +1467,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       const modelId = recoveryTarget?.modelId ?? choice?.model ?? this.settings.defaultModel;
       const provider = this.settings.apiProviders.find(provider => provider.id === providerId);
       const model = provider && getApiProviderModel(provider, modelId);
-      if (!provider || !model) throw new Error("没有可用模型，请先在设置中选择模型。");
+      if (!provider || !model) throw new Error(pickErrorCopy(CAUSE.providerModelRemoved, this.settings.settingsLanguage));
       item = { id: newId("task-resume"), sessionId: taskId, text: message?.trim() || (failure.toolCallTextFailure ? TOOL_CALL_RESUME_PROMPT : "请带着本任务已有上下文继续，先核对已经完成的内容和未完成步骤。"), attachments: [], skill: null, kind: "chat", createdAt: Date.now(),
         turnOptions: { cwd: this.getVaultPath(), providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId, model: model.id,
           reasoning: resolveComposerReasoningState(this.settings, provider.id, model.id)?.effort ?? "none",
@@ -1401,8 +1475,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     }
     const selection = item.turnOptions;
     const provider = this.settings.apiProviders.find(provider => provider.id === selection.providerSettingsId);
-    if (!provider || !getApiProviderModel(provider, selection.model)) throw new Error("没有可用模型，请检查当前 Provider 和模型设置。");
-    if (!apiProviderHasUsableCredential(provider, this.settings.openAICodexCredential)) throw new Error("当前模型尚未登录或缺少 API Key，请先检查模型设置。");
+    if (!provider || !getApiProviderModel(provider, selection.model)) throw new Error(pickErrorCopy(CAUSE.providerModelRemoved, this.settings.settingsLanguage));
+    if (!apiProviderHasUsableCredential(provider, this.settings.openAICodexCredential)) throw new Error(pickErrorCopy(provider.authMode === "oauth" ? CAUSE.providerLoginExpired : CAUSE.providerAuth, this.settings.settingsLanguage));
     const validation = validateApiProvider(provider);
     if (validation.length) throw new Error(`当前模型配置不可用：${validation.join("；")}`);
     if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
@@ -1416,7 +1490,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       return getDesktopCrypto().createHash("sha256").update(new Uint8Array(await this.app.vault.readBinary(file))).digest("hex");
     } });
     assertPiSubmissionActive(signal);
-    if (!routerResume && safety.fileConflicts.length) throw new Error(`文件已被修改，本次没有继续，也不会覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
+    if (!routerResume && safety.fileConflicts.length) throw new Error(`文件已被修改，任务未继续执行，文件不会被覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
     const interruption = {
       ...failure,
       at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.updatedAt ?? entry.updatedAt,
@@ -1428,7 +1502,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const current = await local.catalog.get(taskId);
     assertPiSubmissionActive(signal);
     if (!current || current.status === "deleted" || current.agentId !== entry.agentId || current.piSessionId !== entry.piSessionId || current.taskStatus !== "interrupted") throw new Error("任务负责人或记录已变化，请重新打开后继续。");
-    if (this.getConversationRunService().isAgentBlocked(current.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("这个 Agent 正在调整，请稍后继续。");
+    if (this.getConversationRunService().isAgentBlocked(current.agentId ?? GENERAL_ASSISTANT_ID)) throw new Error("该 Agent 正在调整。请稍后继续。");
     let session = this.settings.sessions.find(session => session.id === taskId);
     if (!session) {
       session = { id: taskId, piSessionId: entry.piSessionId, title: entry.title, cwd: this.getVaultPath(), messages: projection.messages,
@@ -1560,7 +1634,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         : id === "journal" ? settings.knowledgeBase.folderBindings?.roles.journal.enabled !== false
           : id === "knowledge" ? !settings.knowledgeBase.folderBindings || ["raw", "wiki", "projects", "inbox"].some(role => settings.knowledgeBase.folderBindings!.roles[role as "raw"].enabled) : true;
     if (!enabled) return { available: false, reason: zh ? "对应功能尚未启用" : "This feature is disabled" };
-    if (["finance", "pdf-reading", "english-diary"].includes(id) && !hasProPluginAccess(this.accountService ?? unavailableCapabilityAccess)) return { available: false, reason: zh ? "需要有效 PRO，已有资料仍可查看" : "Requires an active PRO membership; existing data remains readable" };
+    if (["finance", "pdf-reading", "english-diary"].includes(id) && !hasProPluginAccess(this.accountService ?? unavailableCapabilityAccess)) return { available: false, reason: pickErrorCopy(CAUSE.proRequired, settings.settingsLanguage) };
     if (id.startsWith("mcp:") || id.startsWith("vault-skill:")) {
       let resourceId: string; try { resourceId = decodeURIComponent(id.split(":")[1]); } catch { return { available: false, reason: zh ? "资源不可用" : "Resource unavailable" }; }
       const resource = resources.find(resource => resource.id === resourceId || resource.metadata?.resourceId === resourceId);
@@ -1610,10 +1684,32 @@ export default class CodexForObsidianPlugin extends Plugin {
     const view = this.getCodexView();
     if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
   }
+  async openAgentPersonaEditor(agentId: string): Promise<boolean> {
+    await this.activateView();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) return false;
+    view.openAgentEditorField(agentId, "persona"); return true;
+  }
   async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string, englishDiarySourcePath?: string): Promise<boolean> {
     await this.activateView();
     const view = this.getCodexView();
     return view && await view.waitForTaskUiReady() ? await view.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath) : false;
+  }
+  /**
+   * Continue another device's conversation here: a new general-assistant conversation whose history is the synced
+   * transcript, opened in the chat panel. The original stays on its device untouched.
+   */
+  async continueSyncedConversation(summary: RemoteConversationSummary, messages: readonly SyncConversationMessage[]): Promise<boolean> {
+    const seedMessages = messages.flatMap(message => message.role !== "tool" && message.text.trim() ? [{ role: message.role, text: message.text, at: message.at }] : []);
+    if (!seedMessages.some(message => message.role === "assistant")) return await this.openAgentTaskList(GENERAL_ASSISTANT_ID, forkPrefillText(summary, messages), syncForkSource(summary.deviceId, summary.id));
+    const entry = await this.createPiConversation({ conversationId: newId("conversation"), title: summary.title, titleSource: "automatic", agentId: GENERAL_ASSISTANT_ID,
+      cwd: this.getVaultPath(), defaultMemoryMode: "normal", taskStatus: "completed", syncForkOf: `${summary.deviceId}:${summary.id}`, seedMessages });
+    this.notifyHomeSurfacesChanged();
+    await this.activateView();
+    const view = this.getCodexView();
+    if (!view || !await view.waitForTaskUiReady()) return false;
+    await view.openTaskDetail(entry.conversationId);
+    return true;
   }
   getKnowledgeSystemService(): KnowledgeSystemService {
     if (!this.knowledgeSystemService) {
@@ -1629,11 +1725,11 @@ export default class CodexForObsidianPlugin extends Plugin {
   async startWorkbenchSignalTask(agentId: string, signal: import("./home/workbench-types").WorkbenchSignal): Promise<string> {
     await this.activateView();
     const view = this.getCodexView();
-    if (!view || !await view.waitForTaskUiReady()) throw new Error(this.settings.settingsLanguage === "en" ? "The conversation panel is not ready. Please try again." : "对话栏尚未就绪，请重试。");
+    if (!view || !await view.waitForTaskUiReady()) throw new Error(this.settings.settingsLanguage === "en" ? "The conversation panel is not ready. Try again." : "对话栏尚未就绪，请重试。");
     return view.startWorkbenchSignalTask(agentId, signal);
   }
   async startOnboardingRefinement(sourcePaths: readonly string[]): Promise<string> {
-    if (!sourcePaths.length || sourcePaths.length > 20) throw new Error("没有可提炼的资料，或名单超过 20 篇。");
+    if (!sourcePaths.length || sourcePaths.length > 20) throw new Error("无可提炼的资料，或资料数量超过 20 篇。请调整后重试。");
     const unique = [...new Set(sourcePaths)];
     const revision = this.settings.knowledgeBase.folderBindings?.revision ?? 0;
     const key = newId("onboarding-refinement");
@@ -1691,11 +1787,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     const draft = provider && model ? this.activePiProviderConfigurationDraft({ provider, model }) : undefined;
     const local = await this.ensurePiLocalData();
     const entry = await local.catalog.get(item.sessionId);
-    if (entry?.titleSource === "pending" && !item.maintenanceScope
+    if (entry?.titleSource === "pending" && !(entry.companyRole === "router" && item.turnOptions.companyProgrammatic) && !item.maintenanceScope
       && !this.getKnowledgeActivitySource?.()?.snapshot().maintenance.some(activity => activity.originConversationId === item.sessionId)) {
-      const requests = await this.readPiConversationProjection(item.sessionId).then(projection => projection.messages.filter(message => message.role === "user").map(message => message.text)).catch(() => [item.text]);
+      const requests = await this.readPiConversationProjection(item.sessionId).then(projection => conversationTitleRequests(projection.messages, entry?.companyRole)).catch(() => conversationTitleRequests([{ role: "user", text: item.text }], entry?.companyRole));
       await generateConversationTitle({ catalog: local.catalog, conversationId: item.sessionId,
-        requests: requests.length ? requests : [item.text],
+        requests,
         generate: draft ? prompt => this.getPiProviderConfigurationService().generateText({ draft,
           systemPrompt: "为用户的对话生成简短标题，不超过14个字符。保持用户语言，只输出标题，不解释，不加引号。", userPrompt: prompt, timeoutMs: 12_000, maxTokens: 128 }) : undefined,
         changed: () => { void local.catalog.get(item.sessionId).then(updated => {
@@ -1969,10 +2065,11 @@ export default class CodexForObsidianPlugin extends Plugin {
     runtimeMode: "replace" | "preserve" | "suspend" = "replace"
   ): Promise<void> {
     if (this.piRunConversations.size > 0) {
-      throw new Error("EchoInk 正在回答，当前模型暂时不能切换。");
+      throw new Error(pickErrorCopy(CAUSE.busyAnswering, this.settings.settingsLanguage));
     }
     this.productActivity.beginSwitch();
     try {
+      const xiaoechoBefore = new Set(this.settings.apiProviders.filter(provider => provider.providerId === "xiaoecho").map(provider => provider.id));
       const candidateSettings = structuredClone(this.settings);
       applyCandidate(candidateSettings);
       if (runtimeMode === "replace") {
@@ -1987,10 +2084,12 @@ export default class CodexForObsidianPlugin extends Plugin {
         snapshotMemory: () => snapshotApiProviderSettings(this.settings),
         readPersisted: async () =>
           await this.getSettingsStore().readPersistedApiProviderSettingsSnapshot(),
-        applyCandidate: () => restoreApiProviderSettings(
-          this.settings,
-          candidateSnapshot
-        ),
+        applyCandidate: () => {
+          // A remote catalog may arrive while activation waits for its save lane.
+          for (const provider of candidateSnapshot.apiProviders) filterXiaoechoProviderDraft(provider);
+          restoreApiProviderSettings(this.settings, candidateSnapshot);
+          repairSavedXiaoechoSelections(this.settings);
+        },
         persistCandidate: async () => {
           await this.saveSettings(true);
         },
@@ -2020,14 +2119,40 @@ export default class CodexForObsidianPlugin extends Plugin {
           await this.getSettingsStore().restorePersistedApiProviderSettingsSnapshot(snapshot)
       });
       this.applyComposerDefaultsToView();
+      if (this.settings.apiProviders.some(provider => provider.providerId === "xiaoecho" && !xiaoechoBefore.has(provider.id))) void this.refreshXiaoechoCatalog(true);
     } finally {
       this.productActivity.endSwitch();
     }
   }
 
+  /** One-shot generation for note comments; no tools, no conversation. */
+  private async generateNoteCommentText(input: Readonly<{ systemPrompt: string; userPrompt: string; timeoutMs: number }>): Promise<string> {
+    requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
+    const active = getNoteCommentApiProviderModel(this.settings);
+    if (!apiProviderHasUsableCredential(active.provider, this.settings.openAICodexCredential)) {
+      throw new Error(pickErrorCopy(active.provider.authMode === "oauth" ? CAUSE.providerLoginExpired : CAUSE.providerAuth, this.settings.settingsLanguage));
+    }
+    return await this.withProductActivity(() => this.getPiProviderConfigurationService().generateText({
+      draft: this.activePiProviderConfigurationDraft(active), systemPrompt: input.systemPrompt, userPrompt: input.userPrompt, timeoutMs: input.timeoutMs, maxTokens: 2_048
+    }));
+  }
+  private async searchNoteCommentRelated(query: string, excludePath: string): Promise<{ path: string; title: string; excerpt: string }[]> {
+    if (!this.noteCommentSearch) {
+      const { VaultBodySearch, bindVaultBodySearchEvents } = await import("./knowledge-base/vault-body-search");
+      const { getKnowledgeFolderBindings } = await import("./knowledge-base/root-paths");
+      const vaultRoot = this.getVaultPath(), dataRoot = pluginDataDir(vaultRoot, this.getPluginDataDirName());
+      const search = new VaultBodySearch(this.app, () => getKnowledgeFolderBindings(vaultRoot), { excludedRoots: () => [path.relative(vaultRoot, dataRoot).replace(/\\/gu, "/")] });
+      const release = bindVaultBodySearchEvents(this.app, search);
+      this.register(() => { release(); search.dispose(); });
+      this.noteCommentSearch = search;
+    }
+    const result = await this.noteCommentSearch.search({ query, excludePaths: [excludePath], limit: 10 });
+    return result.hits.map(hit => ({ path: hit.vaultRelativePath, title: hit.title, excerpt: hit.excerpt ?? "" }));
+  }
   private async withProductActivity<T>(action: () => Promise<T>): Promise<T> {
     if (this.piRunConversations.size > 0 || this.productActivity.hasActivity) {
-      throw new Error("EchoInk 正在处理其他请求，请稍后再试。");
+      // Tests call this with a bare host; settings may be absent there.
+      throw new Error(pickErrorCopy(CAUSE.busyAnswering, (this.settings as Partial<CodexForObsidianSettings> | undefined)?.settingsLanguage));
     }
     return await this.productActivity.run(action);
   }
@@ -2269,9 +2394,18 @@ export default class CodexForObsidianPlugin extends Plugin {
     return pluginInstallDir(this.manifest, this.app.vault.configDir);
   }
   async loadSettings(): Promise<Readonly<SettingsLoadResult>> { return this.getSettingsStore().loadSettings(); }
+  /** A sync tool rewrote data.json: take the shared settings, keep this device's own, refresh what is open. */
+  async onExternalSettingsChange(): Promise<void> {
+    try {
+      if (!await this.getSettingsStore().reloadFromExternalChange()) return;
+      this.notifyHomeSurfacesChanged();
+      if (this.settingsTabInstance?.containerEl.isConnected) this.settingsTabInstance.display();
+    } catch (error) { console.error("EchoInk external settings change could not be applied", error); }
+  }
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
     await this.getSettingsStore().saveSettings(force, options);
     this.selectionAskController?.refresh();
+    this.noteComments?.refresh();
     this.autoArchive?.configure();
     await this.echoInkMcp?.sync();
   }
@@ -2402,13 +2536,57 @@ export default class CodexForObsidianPlugin extends Plugin {
         new PiProviderConfigurationService(this, {
           recordUsage: (event) => this.recordModelUsage(event),
           resolveOAuthAccessToken: async () =>
-            await this.resolveOpenAICodexAccessToken()
+            await this.resolveOpenAICodexAccessToken(),
+          resolveAccountToken: async () =>
+            await this.resolveEchoInkAccountToken()
         });
     }
     return this.piProviderConfigurationService;
   }
   async recordModelUsage(event: UsageRequestEvent): Promise<void> {
     await this.usageStore?.recordUsage(event);
+    // A 小echo turn changes the point balance; the server also tells us whether it fell back to auto.
+    if (event.provider === "xiaoecho" && event.status === "completed") {
+      const outcome = await this.accountService?.afterXiaoechoTurn(event.recordedAt).catch(() => null);
+      if (outcome?.fallback && !event.xiaoechoFallback) new Notice(this.settings.settingsLanguage === "en"
+        ? "The selected xiaoecho tier was unavailable; auto answered instead." : "增强线路暂不可用，已用 auto 回答。");
+    }
+  }
+  /** Signed in ⇒ 小echo is listed; it becomes the default only when no usable default exists. */
+  async ensureXiaoechoAfterSignIn(): Promise<void> {
+    if (!this.accountService?.apiToken()) return;
+    const probe = structuredClone(this.settings);
+    if (!ensureXiaoechoProvider(probe)) return;
+    const switched = probe.activeApiProviderId !== this.settings.activeApiProviderId || probe.defaultModel !== this.settings.defaultModel;
+    try {
+      await this.activateApiProviderSettings(settings => { ensureXiaoechoProvider(settings); }, switched ? "replace" : "preserve");
+    } catch (error) { console.error("EchoInk could not add xiaoecho after sign-in", error); }
+  }
+  async refreshXiaoechoCatalog(force = false): Promise<void> {
+    try { await this.xiaoechoCatalogService?.refresh(force); }
+    catch (error) { console.error("EchoInk model catalog could not refresh", error); }
+  }
+  private startDecisionClient(): void {
+    if (!membershipApiUrl || !this.accountService) return;
+    const token = () => this.accountService?.apiToken() ?? null;
+    const client = new DecisionClient({
+      fetch: createDecisionFetch(membershipApiUrl), token,
+      state: () => this.settings.smartJudgment,
+      saveState: async state => { this.settings.smartJudgment = state; await this.saveSettings(); }
+    });
+    this.decisionClient = client;
+    setDecisionClient(client);
+    this.register(() => { setDecisionClient(null); this.decisionClient = null; });
+    let lastToken = token();
+    void client.refreshStatus();
+    // Sign-in/out changes the entitlement; other account updates do not need a new /status.
+    this.register(this.accountService.subscribe(() => { const next = token(); if (next !== lastToken) { lastToken = next; void client.refreshStatus(); } }));
+  }
+  /** 小echo signs requests with the EchoInk membership login; no API key is ever stored for it. */
+  async resolveEchoInkAccountToken(): Promise<string> {
+    const token = this.accountService?.apiToken();
+    if (!token) throw new Error("provider_account_login_required");
+    return token;
   }
   async generateWikiFolderNames(systemPrompt: string, userPrompt: string): Promise<string> {
     return await this.getPiProviderConfigurationService().generateText({
@@ -2418,7 +2596,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   createPdfReadingGenerator(draft: PiProviderConfigurationDraft = this.activePiProviderConfigurationDraft()) {
     const budget = Math.min(7000, Math.floor(Math.min(draft.contextWindow - draft.maxOutputTokens - 2000, draft.maxOutputTokens / 3)));
-    if (budget < 500) throw new Error("当前模型输出或上下文预算过小，请在 Provider 设置中调整。");
+    if (budget < 500) throw new Error("当前模型的“单次输出上限”过低。请在 设置 → 模型服务 中打开该模型，调高“单次输出上限”。");
     return { maxSourceCharacters: budget, generate: async (systemPrompt: string, userPrompt: string, signal: AbortSignal) => {
       requireProPlugin(this.accountService ?? unavailableCapabilityAccess);
       // The current chat owns the activity; PdfReadingService serializes jobs.
@@ -2438,7 +2616,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     providerSettingsId = providerSettingsId.trim();
     modelId = modelId.trim();
     if (this.piRunConversations.size > 0 || this.piSubmittingConversations.size > 0) {
-      throw new Error("EchoInk 正在回答，英文日记模型暂时不能切换。");
+      throw new Error(pickErrorCopy(CAUSE.busyAnswering, this.settings.settingsLanguage));
     }
     this.productActivity.beginSwitch();
     try {
@@ -2474,9 +2652,7 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (input.signal.aborted) throw new Error("已取消，未发送日记内容。");
       const active = getEnglishDiaryApiProviderModel(this.settings);
       if (!apiProviderHasUsableCredential(active.provider, this.settings.openAICodexCredential)) {
-        throw new Error(active.provider.authMode === "oauth"
-          ? "英文日记所选 Provider 需要登录，请在 API Provider 设置中完成登录。"
-          : "英文日记所选 Provider 缺少 API Key，请在 API Provider 设置中补充。");
+        throw new Error(pickErrorCopy(active.provider.authMode === "oauth" ? CAUSE.providerLoginExpired : CAUSE.providerAuth, this.settings.settingsLanguage));
       }
       const draft = this.activePiProviderConfigurationDraft(active);
       const identity = JSON.stringify([draft.providerSettingsId, draft.providerId, draft.baseUrl, draft.modelId]);
@@ -2499,15 +2675,15 @@ export default class CodexForObsidianPlugin extends Plugin {
         });
       } catch (error) {
         const failures: Record<string, string> = {
-          provider_api_key_missing: "英文日记所选 Provider 缺少 API Key，请在 API Provider 设置中补充。",
-          provider_oauth_missing: "英文日记所选 Provider 需要登录，请在 API Provider 设置中完成登录。",
-          provider_model_invalid: "英文日记所选模型无效，请在 API Provider 设置中检查模型。",
-          provider_model_metadata_invalid: "英文日记所选模型配置不完整，请在 API Provider 设置中检查模型。",
+          provider_api_key_missing: pickErrorCopy(CAUSE.providerAuth, this.settings.settingsLanguage),
+          provider_oauth_missing: pickErrorCopy(CAUSE.providerLoginExpired, this.settings.settingsLanguage),
+          provider_model_invalid: pickErrorCopy(CAUSE.providerModelUnavailable, this.settings.settingsLanguage),
+          provider_model_metadata_invalid: "英文日记所选模型的配置不完整。请在 设置 → 模型服务 中检查该模型。",
           provider_text_generation_aborted: "英文日记生成已取消。",
-          provider_text_generation_timeout: "英文日记生成超时，请稍后重试。"
+          provider_text_generation_timeout: pickErrorCopy(CAUSE.providerTimeout, this.settings.settingsLanguage)
         };
         throw new Error(failures[error instanceof Error ? error.message : ""]
-          ?? "英文日记生成失败，请检查所选 API Provider 的连接与模型设置后重试。", { cause: error });
+          ?? "英文日记未能生成。请在 设置 → 模型服务 中点击“测试连接”排查后重试。", { cause: error });
       }
   }
   async prepareWikiFolderNamesForMaintenance(input: { initialization: boolean; assertActive(): void }): Promise<string> {
@@ -2518,7 +2694,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   private activePiProviderConfigurationDraft(
     active = getActiveApiProviderModel(this.settings)
   ): PiProviderConfigurationDraft {
-    if (!active) throw new Error("请先在 API Provider 中选择可用模型。");
+    if (!active) throw new Error(pickErrorCopy(CAUSE.providerNotConfigured, this.settings.settingsLanguage));
     const { provider, model } = active;
     return {
       providerSettingsId: provider.id,
@@ -2591,16 +2767,20 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   private async createCognitiveSystem(localData: PiLocalDataService): Promise<CognitiveSystem> {
     localData.assertMemoryAvailable();
+    let mobileQuoteReader: MobileMemoryQuoteReader | undefined;
+    const mobileQuotes = () => mobileQuoteReader ??= new MobileMemoryQuoteReader(this.app.vault.adapter,
+      `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`, localData.catalog.vaultId);
     const system = await CognitiveSystem.create({
       repository: localData.personalMemory,
+      originalQuotes: new MemoryOriginalQuoteReader(localData.catalog, localData.productRuns, {
+        source: source => mobileQuotes().source(source), experience: experience => mobileQuotes().experience(experience)
+      }),
       llm: () => this.createDreamLlmPort(),
       // The same Memory/Dream gates apply to scheduled and manual runs.
       getDreamConfig: () => ({
-        enabled: this.settings.memory.dreamEnabled && this.settings.memory.useLongTermMemory,
+        enabled: !this.developerMemoryChanging && this.settings.memory.dreamEnabled && this.settings.memory.useLongTermMemory,
         runsPerDay: this.settings.memory.dreamRunsPerDay
       }),
-      isForegroundBusy: () => this.developerMemoryChanging
-        || this.piRunConversations.size > 0 || this.productActivity.hasActivity || this.diaryOrganizer?.running === true,
       registerInterval: (handle) => this.registerInterval(handle)
     });
     system.startDreamScheduler();
@@ -2609,13 +2789,21 @@ export default class CodexForObsidianPlugin extends Plugin {
 
   /** One-shot dream LLM port; null when no Provider is configured. */
   private createDreamLlmPort(): DreamLlmPort | null {
-    if (!getActiveApiProviderModel(this.settings)) return null;
+    const active = getActiveApiProviderModel(this.settings);
+    if (!active) return null;
     return {
+      inputTokenBudget: active.model.contextWindow,
       call: async (input) => await this.getPiProviderConfigurationService().generateText({
         draft: this.activePiProviderConfigurationDraft(),
         systemPrompt: input.systemPrompt,
         userPrompt: input.userPrompt,
         timeoutMs: 120_000,
+        signal: input.signal,
+        reportRateLimit: true,
+        requestId: input.requestId,
+        runId: input.runId,
+        stepId: input.stepId,
+        onUsage: input.onUsage,
         maxTokens: input.maxTokens
       })
     };
@@ -2633,7 +2821,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async generateDiaryOrganizerText(systemPrompt: string, userPrompt: string, signal: AbortSignal): Promise<string> {
-    if (!getActiveApiProviderModel(this.settings)) throw new Error("请先配置当前模型服务。");
+    if (!getActiveApiProviderModel(this.settings)) throw new Error(pickErrorCopy(CAUSE.providerNotConfigured, this.settings.settingsLanguage));
     return this.getPiProviderConfigurationService().generateText({
       draft: this.activePiProviderConfigurationDraft(), systemPrompt, userPrompt,
       timeoutMs: 120_000, maxTokens: 6000, signal
@@ -2641,7 +2829,7 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
 
   async generateLifestyleText(systemPrompt: string, userPrompt: string, maxTokens = 1400, signal?: AbortSignal): Promise<string> {
-    if (!getActiveApiProviderModel(this.settings)) throw new Error("请先在 EchoInk 模型设置中配置当前 Provider。当前记录仍可手动使用。");
+    if (!getActiveApiProviderModel(this.settings)) throw new Error(pickErrorCopy(CAUSE.providerNotConfigured, this.settings.settingsLanguage));
     return await this.withProductActivity(async () => await this.getPiProviderConfigurationService().generateText({
       draft: this.activePiProviderConfigurationDraft(),
       systemPrompt,
@@ -2855,7 +3043,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const cognitive = this.cognitiveSystem ?? await this.cognitiveSystemFlight?.catch(() => null);
     if (this.developerMemoryChanging || this.piRunConversations.size || this.piSubmittingConversations.size
       || this.productActivity.hasActivity || cognitive?.engine.isRunning) {
-      throw new Error(this.settings.settingsLanguage === "en" ? "Wait for the current task to finish, then try again." : "请等当前任务结束后再试。");
+      throw new Error(pickErrorCopy(CAUSE.busyAnswering, this.settings.settingsLanguage));
     }
     this.productActivity.beginSwitch();
     this.developerMemoryChanging = true;

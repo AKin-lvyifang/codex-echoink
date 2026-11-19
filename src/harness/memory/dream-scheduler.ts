@@ -5,8 +5,7 @@
  * - 60s heartbeat checks whether the next daily slot is due.
  * - Default 3 runs/day; interval = 24h / runsPerDay.
  * - Toggle / runs-per-day changes apply immediately — no restart needed.
- * - Dreaming pauses while a foreground Provider request is running (deferred,
- *   never cancelled).
+ * - Background Dream runs independently of foreground Provider requests.
  * - The scheduler itself never calls the LLM; DreamEngine does the work.
  */
 
@@ -26,8 +25,6 @@ export interface DreamSchedulerDeps {
   readonly engine: DreamEngine;
   /** Live settings — read on every heartbeat, so toggles apply without restart. */
   readonly getConfig: () => DreamSchedulerConfig;
-  /** True while a foreground chat/Provider request is in flight. */
-  readonly isForegroundBusy: () => boolean;
   /** Last successful/started run timestamp from dream-state (0 = never). */
   readonly readLastRunAt: () => Promise<number>;
   /** Register the heartbeat interval with the plugin lifecycle. */
@@ -83,19 +80,18 @@ export class DreamScheduler {
     return now - lastRunAt >= DAY_MS / runsPerDay;
   }
 
-  /** Heartbeat step: run when enabled, due, and the foreground is idle. */
+  /** Heartbeat step: run when enabled and due. */
   async tick(): Promise<void> {
     if (this.disposed || this.checking) return;
     this.checking = true;
     try {
       const config = this.deps.getConfig();
       if (!config.enabled) return;
-      if (this.deps.isForegroundBusy()) return; // 延后，不打断前台请求
       if (this.deps.engine.isRunning) return;
       if (!(await this.isDue())) return;
       // A reset may stop/dispose the scheduler while the due check reads disk.
       if (this.disposed || !this.deps.getConfig().enabled
-        || this.deps.isForegroundBusy() || this.deps.engine.isRunning) return;
+        || this.deps.engine.isRunning) return;
       const result = await this.deps.engine.runOnce();
       this.lastResult = result;
       this.onRunFinished?.(result);
@@ -108,12 +104,11 @@ export class DreamScheduler {
 
   /**
    * Manual trigger (e.g. diagnostics). Respects the same gates as the
-   * heartbeat: dreaming off / long-term memory off / learning off / busy.
+   * heartbeat: dreaming off / long-term memory off / another Dream running.
    */
   async forceRun(): Promise<DreamRunResult | null> {
     if (this.disposed || this.checking || this.deps.engine.isRunning) return null;
     if (!this.deps.getConfig().enabled) return null;
-    if (this.deps.isForegroundBusy()) return null;
     const result = await this.deps.engine.runOnce();
     this.lastResult = result;
     this.onRunFinished?.(result);

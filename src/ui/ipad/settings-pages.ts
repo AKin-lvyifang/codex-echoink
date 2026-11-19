@@ -1,8 +1,12 @@
+import { settingsErrorText } from "../../core/error-copy";
+import { renderMobileCloudSync } from "../mobile/cloud-sync-settings";
+import { ipadButton } from "./workbench-elements";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
 import { mountJournalFormatSettings, mountJournalOrganization } from "../../home/journal-format-view";
 import { openFolderPicker } from "./knowledge-settings-pages";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Notice } from "obsidian";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { documentEchoInkColorTheme, readCompanionTheme, effectiveEchoInkColorTheme, ECHOINK_APPEARANCE_REFRESH, ECHOINK_COLOR_THEMES, renderCompanionThemeRecommendation } from "../appearance-theme";
 import { decorateProAppearanceChoice } from "../appearance-pro";
 import license from "../../../LICENSE";
@@ -27,7 +31,7 @@ import { createEnglishDiarySettingsPage } from "./english-diary-pages";
 import { settingsText as t } from "./settings-i18n";
 import type { IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadIcon } from "./workbench-elements";
-import { el, settingsContent, settingsGroup, settingsRow, settingsSelect, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext } from "./settings-elements";
+import { el, settingsContent, settingsGroup, settingsRow, settingsSelect, settingsAction, settingsSwitch, settingsToggle, settingsError, showSettingsError, leaveSettingsConfirm, liveSettingsPage, type IPadSettingsContext, settingsField } from "./settings-elements";
 
 const CATEGORIES = [["general", "settings", "通用"], ["model", "key-round", "模型"], ["agent", "bot", "Agent"], ["memory", "brain", "记忆"], ["caps", "layout-list", "能力"], ["mods", "blocks", "模块"], ["account", "feather", "账号与会员"]] as const;
 const aliases: Record<string, string> = { providers: "model", models: "model", basic: "general", layout: "general", resources: "caps", modules: "mods" };
@@ -42,7 +46,7 @@ export class IPadSettings {
   constructor(private readonly root: HTMLElement, private readonly host: IPadWorkbenchHost) {
     root.classList.add("pd-settings");
     const categories = CATEGORIES.map(([id, icon, label]) => ({ id, icon, label: t({ host }, label), createPage: () => this.category(id) }));
-    this.shell = new IPadSettingsShell(root, categories, { onError: error => this.error(error) });
+    this.shell = new IPadSettingsShell(root, categories, { onError: error => this.error(error), language: () => host.settings().settingsLanguage });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
       models: new MobileModelConfiguration(host.settings, host.saveSettings, host.modelRequest, host.services.usageObserver, host.modelFetch),
       error: error => this.error(error), refresh: () => this.refresh(),
@@ -91,7 +95,7 @@ export class IPadSettings {
     }
     this.root.dispatchEvent(new this.root.ownerDocument.defaultView!.Event("pd-settings-refresh"));
   }
-  private error(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobileSettings, this.host.settings().settingsLanguage, text => t(this.context, text))); }
   private category(id: string): MobileShellPage {
     if (id === "general") return this.general();
     if (id === "model") return createModelPage(this.context);
@@ -106,11 +110,12 @@ export class IPadSettings {
     try { await this.host.saveSettings(); } catch (error) { restore(); this.refresh(); throw error; }
     this.refresh();
   }
+  private cloudDispose: (() => void) | null = null;
   private general(): MobileShellPage {
     const ctx = this.context, content = settingsContent(ctx); let signature = "", busy = false;
     const render = () => {
       if (busy) return;
-      const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([readCompanionTheme(this.root.ownerDocument).active, hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, this.host.version]);
+      const settings = this.host.settings(), hasPro = () => hasProPluginAccess(this.host.accountService ?? unavailableCapabilityAccess), key = JSON.stringify([readCompanionTheme(this.root.ownerDocument).active, hasPro(), settings.colorTheme, settings.settingsLanguage, settings.autoOpenHome, settings.syncMirrorEnabled, this.host.version]);
       if (key === signature) return; signature = key; content.replaceChildren();
       const appearance = settingsGroup(ctx, content, t(ctx, "外观")), row = settingsRow(ctx, appearance, t(ctx, "配色"));
       const track = el(ctx.document, "div", "pd-settings-segments"); track.setAttribute("role", "group"); track.setAttribute("aria-label", t(ctx, "配色"));
@@ -140,6 +145,18 @@ export class IPadSettings {
       settingsSwitch(ctx, settingsGroup(ctx, content, t(ctx, "启动")), t(ctx, "启动时打开工作台"), settings.autoOpenHome === true, enabled => this.save(current => {
         const previous = current.autoOpenHome; current.autoOpenHome = enabled; return () => { current.autoOpenHome = previous; };
       }));
+      const syncGroup = settingsGroup(ctx, content, t(ctx, "同步"));
+      settingsSwitch(ctx, syncGroup, t(ctx, "同步数据到其他设备"), settings.syncMirrorEnabled !== false, enabled => this.save(current => {
+        const previous = current.syncMirrorEnabled; current.syncMirrorEnabled = enabled; return () => { current.syncMirrorEnabled = previous; };
+      }));
+      syncGroup.append(el(ctx.document, "div", "pd-settings-description", t(ctx, "通过笔记库里的 EchoInk/同步数据 文件夹；下次启动时生效")));
+      const cloudGroup = settingsGroup(ctx, content, t(ctx, "云同步")), cloudError = el(ctx.document, "div", "pd-settings-description"); cloudError.setAttribute("role", "alert");
+      this.cloudDispose?.(); this.cloudDispose = renderMobileCloudSync({ language: this.host.settings().settingsLanguage, document: ctx.document, group: cloudGroup, controller: this.host.cloudSync?.() ?? null, settings: () => this.host.settings().cloudSync, save: () => this.host.saveSettings(),
+        row: (_label, control) => { cloudGroup.append(control); },
+        field: (label, value, change, type) => settingsField(ctx, cloudGroup, label, value, change, type),
+        switchRow: (label, checked, change) => settingsSwitch(ctx, cloudGroup, label, checked, change),
+        button: (label, action, variant) => ipadButton(ctx.document, label, action, variant), error: failure => { cloudError.textContent = failure === undefined ? "" : settingsErrorText(failure, SETTINGS_FALLBACK.mobileSettings, this.host.settings().settingsLanguage, text => t(ctx, text)); } });
+      cloudGroup.append(cloudError);
       settingsRow(ctx, settingsGroup(ctx, content, t(ctx, "关于")), "EchoInk Agent", this.host.version ?? "", () => ctx.push(this.about()));
     };
     content.dataset.echoinkAppearancePicker = ""; content.addEventListener(ECHOINK_APPEARANCE_REFRESH, render);
@@ -171,7 +188,7 @@ export class IPadSettings {
   private moduleContext(): IPadPageContext {
     const shell = this.shell.activePageShell; if (!shell) throw new Error("设置页面尚未打开。");
     return { root: this.root, document: this.root.ownerDocument, host: this.host, shell,
-      error: error => this.error(error), navigate: async route => { if (route.kind === "home") await shell.backTo("ipad-settings-mods"); else if (route.kind === "project") await this.host.openProject?.(route.projectId); else await this.host.openAgent(route); } };
+      error: error => this.error(error), navigate: async route => { if (route.kind === "home") await shell.backTo("ipad-settings-mods"); else if (route.kind === "project") await this.host.openProject?.(route.projectId, route.deviceId); else if (route.kind === "remote-conversation") await this.host.openRemoteConversation?.(route.deviceId, route.conversationId); else await this.host.openAgent(route); } };
   }
   private capabilities(): MobileShellPage {
     return createCapabilityPage(this.context, id => this.context.push(createAgentFormPage(this.agentContext(), id)));
@@ -250,7 +267,7 @@ export class IPadSettings {
           return () => { if (settings.mobileUi.reports[kind] === next) settings.mobileUi.reports[kind] = previous; };
         });
         allowed = true; busy = false; await ctx.back();
-      } catch (failure) { showSettingsError(error, failure); }
+      } catch (failure) { showSettingsError(error, failure, ctx); }
       finally { busy = false; update(); }
     }, true);
     function update(): void { content.querySelectorAll<HTMLSelectElement>("select").forEach(select => { select.disabled = busy; }); cancel.disabled = save.disabled = busy; content.setAttribute("aria-busy", String(busy)); }

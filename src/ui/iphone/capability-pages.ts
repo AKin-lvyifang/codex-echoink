@@ -1,3 +1,4 @@
+import { CAUSE, pickErrorCopy } from "../../core/error-copy";
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
 import { normalizeWebSearchSettings, webSearchApiKey, webSearchKeySource, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
@@ -106,7 +107,7 @@ export class IPhoneCapabilityPages {
       if (snapshot.remote || snapshot.readonly) {
         const english = ctx.host.settings().settingsLanguage === "en";
         body.append(el(ctx.document, "span", "ip-status", "PRO"));
-        const message = snapshot.locked ? (english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。") : snapshot.deliveryStatus;
+        const message = snapshot.locked ? pickErrorCopy(CAUSE.proRequired, english ? "en" : "zh") : snapshot.deliveryStatus;
         if (message) body.append(el(ctx.document, "p", "ip-settings-detail", message));
         const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
         if (compareUrl) body.append(settingsButton(ctx, english ? "View comparison" : "查看对比", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); }, "is-quiet"));

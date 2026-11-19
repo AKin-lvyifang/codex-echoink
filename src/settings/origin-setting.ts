@@ -1,5 +1,5 @@
 import { Setting, type App } from "obsidian";
-import { createOriginButton, createOriginCheck, createOriginInput, createOriginSelect, type OriginCheckElement, type OriginSelectElement } from "./origin-controls";
+import { createOriginButton, createOriginCheck, createOriginInput, createOriginSelect, type OriginCheckElement, type OriginSelectElement, type OriginSelectPresentation } from "./origin-controls";
 
 /** EchoInk-only adapters. Obsidian still owns the row; Origin owns its controls. */
 export class OriginSetting extends Setting {
@@ -32,7 +32,7 @@ class OriginDropdownControl {
   readonly selectEl: OriginSelectElement;
   private readonly select: ReturnType<typeof createOriginSelect>;
   constructor(parent: HTMLElement, app: App) { this.select = createOriginSelect(parent, {}, [], "", app); this.selectEl = this.select.element; }
-  addOption(value: string, label: string, renderIcon?: (container: HTMLElement) => void, group?: string): this { this.select.addOption(value, label, renderIcon, group); return this; }
+  addOption(value: string, label: string, renderIcon?: (container: HTMLElement) => void, group?: string, presentation?: OriginSelectPresentation): this { this.select.addOption(value, label, renderIcon, group, presentation); return this; }
   addOptions(options: Record<string, string>): this { for (const [value, label] of Object.entries(options)) this.select.addOption(value, label); return this; }
   setOptionDisabled(value: string, disabled: boolean): this { this.select.setOptionDisabled(value, disabled); return this; }
   getValue(): string { return this.selectEl.value; }

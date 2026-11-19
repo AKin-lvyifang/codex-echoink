@@ -1,6 +1,10 @@
 import type { ExpertPackageBody, ExpertSkill } from "./contracts";
 
-export interface ExpertPromptInput { text: string }
+export interface ExpertPromptInput {
+  text: string;
+  /** 智能判断选中的专家技能（null = 不用技能）；未提供时按关键词选。 */
+  decidedSkillId?: string | null;
+}
 function normalize(value: string): string { return value.normalize("NFKC").toLocaleLowerCase(); }
 function terms(value: string): string[] {
   // Segment metadata, never skill bodies or the user's Skill directory.
@@ -17,6 +21,9 @@ function score(skill: ExpertSkill, input: string): number {
 }
 /** No user skill IDs or paths are accepted. A plain conversation may select none. */
 export function selectExpertSkills(skills: readonly ExpertSkill[], input: ExpertPromptInput): ExpertSkill[] {
+  if (input.decidedSkillId === null) return [];
+  const decided = input.decidedSkillId ? skills.find(skill => skill.id === input.decidedSkillId) : undefined;
+  if (decided) return [decided];
   const text = normalize(input.text);
   if (!text.trim()) return [];
   return skills.map((skill, index) => ({ skill, index, score: score(skill, text) }))

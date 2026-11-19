@@ -1,0 +1,303 @@
+{
+ "paused": false,
+ "announcement": {
+  "text": "资讯内测中：内容由 AI 整理，发现错误可以在「反馈」里告诉我们。",
+  "url": "https://echoink.cn/support"
+ },
+ "version": 1,
+ "generatedAt": "2026-11-09T18:09:09.037Z",
+ "items": [
+  {
+   "id": "06faf81a47e17692",
+   "title": "美团开源 LongCat-2.5，支持百万上下文",
+   "summary": "美团以 MIT 协议开源原生多模态模型 LongCat-2.5，总参数1.6万亿，支持百万上下文，面向长程智能体任务。",
+   "url": "https://www.ithome.com/1/024/556.htm",
+   "source": "IT之家",
+   "category": "model",
+   "score": 95,
+   "publishedAt": "2026-11-09T14:16:38.000Z",
+   "eventId": "eb1a780f1bbe327a"
+  },
+  {
+   "id": "7cea50907b9af2dd",
+   "title": "报道称 Claude Code 导致 GitHub 敏感信息泄露",
+   "summary": "报道称，Claude Code 的“不再询问”提示导致密码、API 密钥等敏感信息被意外分享到 GitHub。",
+   "url": "https://arstechnica.com/ai/2026/11/claude-code-settings-files-expose-thousands-of-secrets-on-github/",
+   "source": "Ars Technica AI",
+   "category": "product",
+   "score": 90,
+   "publishedAt": "2026-11-09T17:24:26.000Z",
+   "eventId": "eb5dca3c2b624ed5"
+  },
+  {
+   "id": "e8884a0ba45abd76",
+   "title": "Meta 发布面向智能体执行的轻量模型 Muse Ember",
+   "summary": "Meta 发布轻量模型 Muse Ember，面向智能体执行任务，输入价格为每百万 token 0.10 美元。",
+   "url": "https://techcrunch.com/2026/11/09/meta-releases-muse-ember-a-new-lightweight-model-for-agent-execution/",
+   "source": "TechCrunch AI",
+   "category": "model",
+   "score": 88,
+   "publishedAt": "2026-11-09T18:00:00.000Z",
+   "eventId": "ed4a37f6465b0e23"
+  },
+  {
+   "id": "61b6f47399148a3f",
+   "title": "百度 ERNIE Evolve 自动研究系统刷新训练基准纪录",
+   "summary": "据报道，ERNIE Evolve 通过修改代码和验证实验改进，刷新 NanoChat、NanoGPT Speedrun 纪录并加速模型推理。",
+   "url": "https://www.marktechpost.com/2026/11/09/baidu-ernie-evolve-automated-research-system/",
+   "source": "MarkTechPost",
+   "category": "paper",
+   "score": 86,
+   "publishedAt": "2026-11-09T16:31:59.000Z",
+   "eventId": "e83913d59ce3ccf7"
+  },
+  {
+   "id": "9c15e014464735eb",
+   "title": "Cloudflare 提供多阶段代码安全审计技能",
+   "summary": "security-audit-skill 编排隔离智能体开展代码审计，覆盖侦察、漏洞验证、结构化输出和独立复核。",
+   "url": "https://github.com/cloudflare/security-audit-skill",
+   "source": "GitHub Trending",
+   "category": "product",
+   "score": 85,
+   "publishedAt": "2026-11-09T18:01:55.150Z",
+   "eventId": "efdc1ea123c0970d"
+  },
+  {
+   "id": "e2e23a0367960f2a",
+   "title": "NVKE 预览版提供裸金属 GPU 集群管理能力",
+   "summary": "NVKE 为自有 NVIDIA GPU 基础设施提供 Kubernetes 管理平面，目前处于预览阶段，不建议用于生产负载。",
+   "url": "https://github.com/dsx-ai-factory/nvke",
+   "source": "GitHub Trending",
+   "category": "product",
+   "score": 85,
+   "publishedAt": "2026-11-09T18:01:55.150Z",
+   "eventId": "e172d3f827cf4dec"
+  },
+  {
+   "id": "2f3b0617668b66d7",
+   "title": "iOS测试版代码显示 Siri 正开发个人记忆系统",
+   "summary": "代码研究人员在 iOS 27.3 测试版中发现 Siri 个人记忆系统相关组件，可整理用户信息，但功能尚未完成，上线时间未明。",
+   "url": "https://www.ithome.com/1/024/547.htm",
+   "source": "IT之家",
+   "category": "product",
+   "score": 81,
+   "publishedAt": "2026-11-09T13:47:17.000Z",
+   "eventId": "e2bedad85c6c03b7"
+  },
+  {
+   "id": "48b9783d0be50413",
+   "title": "Anthropic 斥资 34 亿美元购买天然气涡轮机",
+   "summary": "Anthropic 达成价值 34 亿美元的天然气涡轮机采购交易，体现 AI 行业对天然气发电设备的需求。",
+   "url": "https://techcrunch.com/2026/11/09/anthropic-joins-ais-natural-gas-frenzy-buys-3-4b-worth-of-turbines/",
+   "source": "TechCrunch AI",
+   "category": "industry",
+   "score": 78,
+   "publishedAt": "2026-11-09T16:56:54.000Z",
+   "eventId": "e8a21795854e61e7"
+  },
+  {
+   "id": "e804e32defe03406",
+   "title": "迪士尼与 Adobe 合作开发定制生成式 AI 工具",
+   "summary": "迪士尼与 Adobe 合作，利用 Firefly 开发面向迪士尼制作业务、强调品牌安全的定制 AI 模型与工具。",
+   "url": "https://the-decoder.com/disney-bets-on-adobes-firefly-to-create-brand-safe-ai-models-for-its-entertainment-empire/",
+   "source": "The Decoder",
+   "category": "industry",
+   "score": 75,
+   "publishedAt": "2026-11-09T16:54:16.000Z",
+   "eventId": "ed379d38116354a8"
+  },
+  {
+   "id": "39350cef01a4786c",
+   "title": "腾讯 AI 首席科学家谈生物安全风险与模型开放",
+   "summary": "姚顺雨警告 AI 生物武器风险，主张在开放与封闭间寻求平衡，并称腾讯将从 Hy4 训练数据中滤除危险黑客知识。",
+   "url": "https://the-decoder.com/tencents-ai-chief-says-ai-bioweapons-are-coming-but-closing-off-models-isnt-the-answer/",
+   "source": "The Decoder",
+   "category": "opinion",
+   "score": 75,
+   "publishedAt": "2026-11-09T15:44:53.000Z",
+   "eventId": "eb37bf6c024d1176"
+  },
+  {
+   "id": "ac8f18750241a65f",
+   "title": "Nemotron 推出日本人口与金融场景合成数据集",
+   "summary": "Nemotron-Personas-Finance-Japan 是一个涵盖日本人口特征与金融背景的合成数据集。",
+   "url": "https://huggingface.co/blog/nvidia/nemotron-personas-finance-japan",
+   "source": "Hugging Face",
+   "category": "paper",
+   "score": 70,
+   "publishedAt": "2026-11-09T15:05:57.000Z",
+   "eventId": "ef1d475fb1bc98e3"
+  },
+  {
+   "id": "e4b7803bfd815ac5",
+   "title": "Handshake 团队解析前沿模型实验室的数据需求",
+   "summary": "Handshake 团队通过金融、生物与对齐领域案例，介绍面向前沿模型实验室的专业数据业务。",
+   "url": "https://latent.space/p/handshake/",
+   "source": "Latent Space",
+   "category": "industry",
+   "score": 68,
+   "publishedAt": "2026-11-09T17:15:53.000Z",
+   "eventId": "ea2f6fb239ff9a73"
+  },
+  {
+   "id": "5131ef79c54b6bbf",
+   "title": "Instagram 推出 AI 提示词滤镜生成工具",
+   "summary": "Instagram 上线 Effect Builder，可用文字提示生成 Stories 滤镜，目前面向美国年满18岁的用户开放。",
+   "url": "https://www.theverge.com/tech/1030061/instagram-ai-effect-builder-filters",
+   "source": "The Verge AI",
+   "category": "product",
+   "score": 65,
+   "publishedAt": "2026-11-09T18:07:23.000Z",
+   "eventId": "ed97ebb6e11e472f"
+  },
+  {
+   "id": "3a1221e5dc68f151",
+   "title": "迪士尼与 Adobe 达成多年生成式 AI 合作",
+   "summary": "双方宣布多年合作，将开发支持迪士尼制作流程、由艺术家主导的专有生成式 AI 模型，并提供新技术优先体验。",
+   "url": "https://www.theverge.com/tech/1029773/disney-adobe-generative-ai-partnership",
+   "source": "The Verge AI",
+   "category": "industry",
+   "score": 55,
+   "publishedAt": "2026-11-09T15:38:56.000Z",
+   "eventId": "ed379d38116354a8"
+  }
+ ],
+ "events": [
+  {
+   "id": "ed379d38116354a8",
+   "title": "迪士尼与Adobe达成多年生成式AI合作",
+   "heat": 3.59,
+   "trend": "new",
+   "sourceCount": 2,
+   "itemIds": [
+    "e804e32defe03406",
+    "3a1221e5dc68f151"
+   ]
+  },
+  {
+   "id": "ed97ebb6e11e472f",
+   "title": "Instagram推出AI提示词滤镜生成工具",
+   "heat": 2,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "5131ef79c54b6bbf"
+   ]
+  },
+  {
+   "id": "ed4a37f6465b0e23",
+   "title": "Meta发布智能体执行轻量模型Muse Ember",
+   "heat": 1.98,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "e8884a0ba45abd76"
+   ]
+  },
+  {
+   "id": "eb5dca3c2b624ed5",
+   "title": "报道称Claude Code致敏感信息泄露至GitHub",
+   "heat": 1.92,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "7cea50907b9af2dd"
+   ]
+  },
+  {
+   "id": "e8a21795854e61e7",
+   "title": "Anthropic斥资34亿美元采购天然气涡轮机",
+   "heat": 1.87,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "48b9783d0be50413"
+   ]
+  },
+  {
+   "id": "e83913d59ce3ccf7",
+   "title": "百度ERNIE Evolve刷新模型训练基准纪录",
+   "heat": 1.82,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "61b6f47399148a3f"
+   ]
+  },
+  {
+   "id": "eb37bf6c024d1176",
+   "title": "腾讯姚顺雨谈AI生物安全风险与模型开放",
+   "heat": 1.74,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "39350cef01a4786c"
+   ]
+  },
+  {
+   "id": "ef1d475fb1bc98e3",
+   "title": "Nemotron推出日本人口与金融合成数据集",
+   "heat": 1.68,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "ac8f18750241a65f"
+   ]
+  },
+  {
+   "id": "efdc1ea123c0970d",
+   "title": "Cloudflare提供多阶段代码安全审计技能",
+   "heat": 0.99,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "9c15e014464735eb"
+   ]
+  },
+  {
+   "id": "e172d3f827cf4dec",
+   "title": "NVKE预览版提供裸金属GPU集群管理",
+   "heat": 0.99,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "e2e23a0367960f2a"
+   ]
+  },
+  {
+   "id": "ea2f6fb239ff9a73",
+   "title": "Handshake团队解析前沿模型实验室数据需求",
+   "heat": 0.95,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "e4b7803bfd815ac5"
+   ]
+  },
+  {
+   "id": "eb1a780f1bbe327a",
+   "title": "美团开源百万上下文多模态模型LongCat-2.5",
+   "heat": 0.8,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "06faf81a47e17692"
+   ]
+  },
+  {
+   "id": "e2bedad85c6c03b7",
+   "title": "iOS测试版代码显示Siri正开发个人记忆系统",
+   "heat": 0.78,
+   "trend": "new",
+   "sourceCount": 1,
+   "itemIds": [
+    "2f3b0617668b66d7"
+   ]
+  }
+ ],
+ "lead": [
+  "ed379d38116354a8",
+  "ed97ebb6e11e472f",
+  "ed4a37f6465b0e23"
+ ]
+}

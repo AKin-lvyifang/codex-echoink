@@ -242,7 +242,7 @@ await check("opening inline task skips the raw Pi projection while ordinary task
     taskUiMounted: true, viewLifecycleAbortController: new AbortController(), taskNav: navigation, taskDetailEl: document.createElement("div"), saveTaskComposerDraft() {}, rememberTaskListPosition() {}, restoreTaskComposerDraft() {}, renderTaskPages() {}, renderToolbar() {}, showTaskError(message: string) { error = message; } });
   await view.openTaskDetail("t1"); assert.equal(projections, 0); assert.equal(view.taskDetailLoaded, true); assert.equal(view.plugin.settings.activeSessionId, "t1");
   view.leaveUnavailableTask = async () => { exits++; };
-  await view.openTaskDetail("ordinary"); assert.equal(projections, 1); assert.ok(error.includes("ordinary projection route")); assert.equal(exits, 0, "temporary read failures remain retryable");
+  await view.openTaskDetail("ordinary"); assert.equal(projections, 1); assert.ok(error.includes("任务未能打开") && !error.includes("ordinary projection route")); assert.equal(exits, 0, "temporary read failures remain retryable");
   catalogStatus = "deleted"; await view.openTaskDetail("t1"); assert.equal(exits, 1, "an inline request cannot reopen its deleted catalog task"); f.close();
 });
 
@@ -254,7 +254,7 @@ await check("view subscription refreshes projections once and onClose only unsub
   Object.assign(view, { plugin: { inlineAgent: f.host, getConversationRunService: () => ({ async flushSave() {} }) }, taskUiMounted: true,
     viewLifecycleAbortController: new AbortController(), viewLifecycleGeneration: 1, taskRefreshTimer: null, taskMidnightTimer: null, rootEl: document.createElement("div"), migrationMode: true,
     renderTaskPages() { renders++; }, renderToolbar() {}, settleTaskUiReady() {}, saveTaskComposerDraft() {}, rememberTaskListPosition() {}, composerHost: () => ({}), clearKnowledgeBaseRunProgressTimer() {}, clearHomeAttentionFrame() {},
-    taskPlanDock: { dispose() {} }, interactionDock: { dispose() {} }, messageListRenderer: { dispose() {} } });
+    taskPlanDock: { dispose() {} }, interactionDock: { dispose() {} }, messageListRenderer: { dispose() {} }, messageScrollFollow: { reset() {} } });
   view.refreshInlineTasks(); view.refreshInlineTasks(); assert.equal(subscriptions, 1);
   const before = renders; f.emit(); assert.equal(renders, before + 1);
   await view.onClose(); assert.equal(unsubscriptions, 1); assert.equal(f.calls.some(call => call[0] === "stop"), false);
@@ -324,7 +324,7 @@ await check("pencil resend uses the original message selection snapshot", async 
 
 disposeOriginControls(document.body); await check("expired PRO keeps old draft actions and shows a clickable local upgrade route", async () => {
   const f = fixture(); let paid = false, upgrades = 0;
-  f.host.generationAccess = () => ({ allowed: paid, requiresPro: !paid, message: paid ? "" : "正文管家需要有效 PRO，已有提议仍可处理。" });
+  f.host.generationAccess = () => ({ allowed: paid, requiresPro: !paid, message: paid ? "" : "此操作需要有效的 PRO 权益。请在 设置 → 账号与会员 中查看会员状态。" });
   f.host.openProBenefits = async () => { upgrades++; };
   const view = Object.create(CodexView.prototype) as any;
   const root = document.createElement("div"), input = document.createElement("textarea"), toolbar = document.createElement("div"), queue = document.createElement("div");
@@ -332,7 +332,7 @@ disposeOriginControls(document.body); await check("expired PRO keeps old draft a
   Object.assign(view, { plugin: { inlineAgent: f.host, settings: { settingsLanguage: "zh-CN" } }, rootEl: root, inputEl: input, toolbarEl: toolbar, queueEl: queue,
     taskUiMounted: true, taskNav: { page: { kind: "detail", taskId: "t1" }, token: 1 }, taskSubmitting: new Set(), inlineComposerKey: "", onInputChanged() {} });
   view.renderInlineComposer(); const gate = toolbar.querySelector(".echoink-inline-generation-gate")!;
-  assert.match(gate.textContent!, /有效 PRO/); (gate.querySelector("button") as HTMLButtonElement).click(); await settle(); assert.equal(upgrades, 1);
+  assert.match(gate.textContent!, /有效的 PRO/); (gate.querySelector("button") as HTMLButtonElement).click(); await settle(); assert.equal(upgrades, 1);
   const annotationInput = input; paid = true; view.renderInlineComposer(); assert.equal(toolbar.querySelector(".echoink-inline-generation-gate"), null); assert.equal(input, annotationInput); assert.equal(input.value, "尚未发送");
   paid = false; f.records[0].status = "conflict"; f.render();
   const pin = f.root.querySelector(".echoink-inline-task-pin")!;

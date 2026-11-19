@@ -132,7 +132,7 @@ export async function runLifestyleFinanceIntegrationTests(): Promise<void> {
     failed.ready();
     await settle();
     assert.equal(openTestNoticeMessages.length, noticeCount + 1);
-    assert.match(openTestNoticeMessages.at(-1)!, /财务账本初始化未完成.*synthetic startup failure/u);
+    assert.equal(openTestNoticeMessages.at(-1), "财务账本未能完成初始化，原数据已保留。请稍后重新打开财务。");
     failed.service.dispose();
   } finally {
     await rm(root, { recursive: true, force: true });

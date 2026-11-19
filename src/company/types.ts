@@ -35,6 +35,8 @@ export interface CompanyProject {
   readonly folder: string;
   /** The general assistant card bound to this project. */
   readonly routerConversationId: string;
+  /** Only this device runs the project; other devices read it. Missing on records written before sync. */
+  readonly ownerDeviceId?: string;
   readonly status: CompanyProjectStatus;
   readonly plan: readonly CompanyPlanTask[];
   readonly roles: Readonly<Record<string, string>>;
@@ -65,10 +67,14 @@ export interface CompanyDispatch {
   readonly planTaskId?: string;
   readonly agentId: string;
   readonly moduleId?: AgentModuleId | "none";
+  /** Only this device starts turns for the dispatch; see CompanyProject.ownerDeviceId. */
+  readonly ownerDeviceId?: string;
   readonly brief: string;
   readonly status: CompanyDispatchStatus;
   /** Permission inherited from the router card at dispatch time. */
   readonly permission: "read-only" | "workspace-write" | "danger-full-access";
+  /** Folders the assistant opened for this worker to write, vault-relative. */
+  readonly folderGrants?: readonly string[];
   /** Permission used by the active turn; the dispatch permission remains its original ceiling. */
   readonly turnPermission?: CompanyDispatch["permission"];
   /** The dispatch is saved before creating its worker conversation. */

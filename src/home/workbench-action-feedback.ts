@@ -1,3 +1,4 @@
+import { NEXT, failureText, ACTION_FAILED } from "../core/error-copy";
 import { ModuleOwnerRequired } from "../agents/registry";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -11,11 +12,11 @@ export class WorkbenchSetupRequired extends Error {
 export function showWorkbenchActionFailure(plugin: CodexForObsidianPlugin, error: unknown): void {
   if (error instanceof ModuleOwnerRequired) { plugin.openModuleOwnerPicker(error.moduleId); return; }
   const english = plugin.settings.settingsLanguage === "en";
-  const message = error instanceof Error ? error.message : String(error);
   if (!(error instanceof WorkbenchSetupRequired)) {
-    new Notice(`${english ? "Could not complete the action" : "操作未完成"}：${message}`);
+    new Notice(failureText(error, ACTION_FAILED, NEXT.retryOrReload, plugin.settings.settingsLanguage));
     return;
   }
+  const message = error instanceof Error ? error.message : String(error);
   const doc = plugin.app.workspace.containerEl.ownerDocument;
   const content = ownedFragment(doc); content.append(`${message} `);
   const button = ownedEl(doc, "button"); button.type = "button";

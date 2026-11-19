@@ -172,7 +172,7 @@ export class MaintenanceActivityController {
       else {
         const count = Object.keys(record.p1!.committedPages).length;
         progress.status = count ? "partial" : failed ? "failed" : "interrupted";
-        notice = count ? `知识整理没做完：已写好 ${count} 页 Wiki，点继续会处理剩余内容。` : "知识整理没做完，点继续会接着处理。";
+        notice = count ? `知识整理尚未完成，已写入 ${count} 页 Wiki。请点击“继续”处理剩余内容。` : "知识整理尚未完成。请点击“继续”接着处理。";
       }
     });
     if (record) this.host.onRecord?.(record);
@@ -183,7 +183,7 @@ export class MaintenanceActivityController {
     if (active.initial.progress.notified.includes(key)) return;
     active.initial.progress.notified.push(key);
     await this.persistInitial(conversationId, active);
-    this.host.notice?.("知识整理没做完，可回到原任务继续。");
+    this.host.notice?.("知识整理尚未完成。请回到原任务点击“继续”。");
   }
   private advance(progress: MaintenanceActivityProgress, active?: ActiveMaintenance): MaintenanceActivityProgress {
     const now = this.host.now();

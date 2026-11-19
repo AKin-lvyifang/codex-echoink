@@ -1,3 +1,7 @@
+import { CAUSE, pickErrorCopy, settingsErrorText } from "../../core/error-copy";
+import { safeSkillCompareUrl } from "../../membership/skill-delivery";
+import { MobileSubmissionScroller } from "../mobile/submission-scroll";
+import { renderComposerSubmission } from "../composer-submission-renderer";
 import { isAgentHired, isExpertAgent } from "../../agents/persona";
 import { attachNativeTooltip } from "../native-tooltip";
 import { setIcon } from "obsidian";
@@ -7,15 +11,16 @@ import { selectedModel, supportedProvider } from "../../mobile/settings";
 import { toolCallRecoveryTarget } from "../../agents/tool-call-recovery";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
 import { shellElement } from "../mobile/shell-controls";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import type { IPadPageContext } from "./workbench-contract";
 export { createInlineQuestion } from "./inline-question";
 
-type Surface = { element: HTMLElement; flush: () => Promise<void>; canLeave: () => Promise<boolean>; dispose: () => void };
+type Surface = { scroll: MobileSubmissionScroller; element: HTMLElement; submissions: HTMLElement; refreshSubmissions: () => void; flush: () => Promise<void>; canLeave: () => Promise<boolean>; dispose: () => void };
 const permissions: [MobilePermission, string][] = [["read-only", "只读"], ["workspace-write", "工作区可写"], ["full-access", "完全访问权限"]];
 const resumeFlights = new WeakMap<object, Set<string>>();
 type ResumeDraft = { text(): string; accepted(text: string): void };
 const resumeDrafts = new WeakMap<IPadPageContext, Map<string, ResumeDraft>>();
-const failureText = (error: unknown) => error instanceof Error ? error.message : String(error);
+const failureText = (ctx: Pick<IPadPageContext, "host">, error: unknown): string => settingsErrorText(error, SETTINGS_FALLBACK.mobileTask, ctx.host.settings().settingsLanguage);
 
 export function iPadAction(ctx: IPadPageContext, label: string, action: () => void | Promise<void>, icon?: string, primary = false): HTMLButtonElement {
   const button = shellElement(ctx.document, "button", `pd-action${primary ? " pd-primary" : ""}`); button.type = "button";
@@ -30,7 +35,7 @@ export function iPadAction(ctx: IPadPageContext, label: string, action: () => vo
 }
 
 /** All three continue entry points retain M4 inspection and its exact fingerprint. */
-export async function requestIPadTaskResume(ctx: IPadPageContext, taskId: string, text?: string, accepted?: () => void): Promise<void> {
+export async function requestIPadTaskResume(ctx: IPadPageContext, taskId: string, text?: string, accepted?: () => void, submissionId?: string): Promise<void> {
   const flights = resumeFlights.get(ctx.host.runtime) ?? new Set<string>(); resumeFlights.set(ctx.host.runtime, flights);
   if (flights.has(taskId) || ctx.host.runtime.stateFor(taskId).resuming) return;
   const draft = resumeDrafts.get(ctx)?.get(taskId), submitted = text ?? draft?.text();
@@ -39,12 +44,15 @@ export async function requestIPadTaskResume(ctx: IPadPageContext, taskId: string
     if (flights.has(taskId)) return;
     flights.add(taskId);
     try {
-      const submission = await ctx.host.runtime.resumeTask(taskId, submitted?.trim() ? submitted : undefined, fingerprint);
+      const submission = submissionId ? await ctx.host.runtime.submitComposerSubmission(submissionId, fingerprint) : await ctx.host.runtime.resumeTask(taskId, submitted?.trim() ? submitted : undefined, fingerprint);
       void submission.completion.catch(error => ctx.error(error));
       if (accepted) accepted(); else if (submitted !== undefined) draft?.accepted(submitted);
     } catch (error) {
       const review = ctx.host.runtime.stateFor(taskId).resumeReview;
-      if (!review?.issues.length || review.taskId !== taskId) { ctx.error(error); return; }
+      if (!review?.issues.length || review.taskId !== taskId) {
+        if (!submissionId || !ctx.host.runtime.composerSubmissions.captureFailure(submissionId, failureText(ctx, error))) ctx.error(error);
+        return;
+      }
       if (ctx.shell.activePageId !== originPageId) { await ctx.host.runtime.cancelResume(taskId); return; }
       const snapshot = structuredClone(review);
       const body = shellElement(ctx.document, "div", "pd-resume-review");
@@ -77,6 +85,11 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   if (!!target.agentId === !!target.taskId) throw new Error("输入区需要唯一的 Agent 或任务。");
   const { host, document } = ctx, taskId = target.taskId, agentId = target.agentId;
   const element = shellElement(document, "div", "pd-composer-wrap");
+  const submissions = shellElement(document, "div", "echoink-composer-submissions");
+  const owner = taskId ?? `agent:${agentId}`;
+  const scroll = new MobileSubmissionScroller(host.runtime, () => owner, () => submissions.parentElement,
+    () => submissions.closest<HTMLElement>(agentId ? ".pd-agent-tasks" : ".echoink-ipad-content"), document);
+  let handingOff = false;
   const references = shellElement(document, "div", "pd-composer-references");
   const composer = shellElement(document, "div", "pd-composer");
   const input = shellElement(document, "textarea", "pd-composer-input"); input.rows = 2; input.setAttribute("aria-label", taskId ? "任务回复草稿" : "新任务草稿");
@@ -93,7 +106,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     return { text: task?.draft ?? "", attachments: [], ...(target ? { selectedProviderSettingsId: target.providerSettingsId, selectedModel: target.modelId } : {}), ...task?.draftContext };
   };
   input.value = readDraft().text;
-  const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(failure); error.hidden = false; } };
+  const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(ctx, failure); error.hidden = false; } };
   const update = (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission): Promise<void> => {
     const command = saves.catch(() => {}).then(() => host.store.update(latest => {
       if (workspacePermission) latest.permission = workspacePermission;
@@ -163,8 +176,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
             if (skill.locked) {
               const info = shellElement(document, "div", "pd-picker");
               info.append(shellElement(document, "p", "", skill.description));
-              info.append(shellElement(document, "p", "", "需要有效 PRO，并在账号与会员中启用本机。"));
-              if (skill.compareUrl) { const link = shellElement(document, "a", "", "查看对比示例"); link.href = skill.compareUrl; link.target = "_blank"; link.rel = "noopener noreferrer"; info.append(link); }
+              info.append(shellElement(document, "p", "", pickErrorCopy(CAUSE.proRequired, host.settings().settingsLanguage)));
+              const compareUrl = skill.compareUrl ? safeSkillCompareUrl(skill.compareUrl) : null;
+              if (compareUrl) { const link = shellElement(document, "a", "", "查看对比示例"); link.href = compareUrl; link.target = "_blank"; link.rel = "noopener noreferrer"; info.append(link); }
               open(skill.name, info); return;
             }
             const resource = host.settings().resources.catalog.find(item => item.kind === "skill" && (item.id === skill.id || item.metadata?.resourceId === skill.id))
@@ -201,25 +215,49 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     } open("工作区权限", body);
   }); bar.append(permission);
   const stop = iconButton("停止当前任务", "square", async () => {
+    const pending = [...host.runtime.composerSubmissions.records.values()].find(record => record.owner === owner && record.phase === "preparing");
+    if (pending) { await host.runtime.cancelComposerSubmission(pending.id); input.value = readDraft().text; refresh(); return; }
     if (!taskId || stopping) return; stopping = true; refresh();
     try { if (host.runtime.stateFor(taskId).resuming) await host.runtime.cancelResume(taskId); else await host.runtime.stopTask(taskId); }
     catch (failure) { showFailure(failure); } finally { stopping = false; refresh(); }
   }); stop.classList.add("pd-composer-stop"); bar.append(stop);
   const send = iconButton("发送", "arrow-up", async () => {
     if (sending || !input.value.trim()) return;
-    const text = input.value; sending = true; error.hidden = true; refresh();
-    const accepted = () => { restoreAfterAdmission(text); refresh(); };
+    const text = input.value, snapshot = { ...structuredClone(readDraft()), text };
+    const submissionId = host.runtime.beginComposerSubmission(target, snapshot);
+    input.value = ""; sending = true; error.hidden = true; refresh();
     try {
-      await saveText(text); await saves; if (saveFailure) throw saveFailure instanceof Error ? saveFailure : new Error(typeof saveFailure === "string" ? saveFailure : "草稿保存失败，请重试。");
-      if (taskId && host.store.getSession(taskId)?.taskStatus === "interrupted") await requestIPadTaskResume(ctx, taskId, text, accepted);
-      else {
-        const submission = taskId ? await host.runtime.submit(text, taskId) : await host.runtime.sendNew(agentId!, text);
-        void submission.completion.catch(failure => { showFailure(failure); ctx.error(failure); }); accepted();
-        if (agentId && !disposed) await ctx.navigate({ kind: "task", taskId: submission.taskId });
-      }
-    } catch (failure) { showFailure(failure); }
+      await update(draft => { if (draft.text === text) Object.assign(draft, { text: "", attachments: [], noteMentions: [], annotations: [], selectedSkill: null }); });
+      dirty = false;
+      if (taskId && host.store.getSession(taskId)?.taskStatus === "interrupted") await requestIPadTaskResume(ctx, taskId, text, () => refresh(), submissionId);
+      else await submitSnapshot(submissionId);
+    } catch (failure) { host.runtime.composerSubmissions.fail(submissionId, failureText(ctx, failure)); }
     finally { sending = false; refresh(); }
   }); send.classList.add("pd-composer-send"); bar.append(send);
+  const submitSnapshot = async (id: string) => {
+    const submission = await host.runtime.submitComposerSubmission(id);
+    void submission.completion.catch(failure => ctx.error(failure));
+    if (agentId && !disposed) {
+      handingOff = true;
+      try { await ctx.navigate({ kind: "task", taskId: submission.taskId }); host.runtime.composerSubmissions.remove(id); }
+      finally { handingOff = false; }
+    }
+  };
+  const renderSubmissions = () => {
+    scroll.capture(); submissions.replaceChildren();
+    for (const record of host.runtime.composerSubmissions.records.values()) {
+      if (record.owner !== owner) continue;
+      if (taskId && record.phase === "preparing" && host.runtime.isRunning?.(taskId)
+        && host.runtime.isComposerSubmissionRunning?.(record.id) === false) continue;
+      if (record.phase === "accepted" && taskId && record.turnId && submissions.parentElement?.querySelector(`[data-submission-turn="${record.turnId}"]`)) { host.runtime.composerSubmissions.records.delete(record.id); continue; }
+      renderComposerSubmission(submissions, record, { text: record.snapshot.text, language: host.settings().settingsLanguage ?? "zh", userClass: "pd-task-user",
+        button: (parent, label, action) => { parent.append(iPadAction(ctx, label, action)); },
+        retry: async () => { if (!host.runtime.retryComposerSubmission(record.id)) return; try { await submitSnapshot(record.id); } catch { /* The runtime owns its failed snapshot. */ } },
+        edit: async () => { await flush(); if (!await host.runtime.restoreComposerSubmission(record.id)) { showFailure(new Error("输入框里有新的草稿，请先处理它；这条消息仍然保留。")); return; } input.value = readDraft().text; refresh(); }
+      });
+    }
+    scroll.refresh();
+  };
   const effectivePermission = (): MobilePermission => {
     const draft = readDraft(), workspace = host.store.permission;
     const requested = draft.selectedMode === "plan" ? "read-only" : draft.selectedPermission === "danger-full-access" ? "full-access" : draft.selectedPermission ?? workspace;
@@ -227,6 +265,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   };
   const refresh = () => {
     if (disposed) return;
+    renderSubmissions();
     const task = taskId ? host.store.getSession(taskId) : undefined, state = taskId ? host.runtime.stateFor(taskId) : undefined;
     const name = host.settings().agentRegistry.agents.find(agent => agent.id === (agentId ?? task?.agentId))?.name ?? "Agent";
     input.placeholder = taskId ? task?.taskStatus === "completed" ? `接着和${name}聊这件事…` : `回复${name}…` : `交代给${name}一件新事…`;
@@ -242,7 +281,7 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     permission.setAttribute("aria-label", `工作区权限：${permissions.find(item => item[0] === effectivePermission())?.[1]}`);
     send.disabled = sending || !!state?.resuming || !input.value.trim() || !isAgentHired(currentAgent()); send.setAttribute("aria-busy", String(sending));
     send.hidden = !!state?.busy && !input.value.trim() && state?.interaction?.status !== "pending";
-    stop.hidden = (!state?.busy && !state?.resuming) || state?.interaction?.status === "pending"; stop.disabled = stopping; stop.setAttribute("aria-label", state?.resuming ? "取消继续" : "停止当前任务");
+    stop.hidden = (!state?.busy && !state?.resuming && ![...host.runtime.composerSubmissions.records.values()].some(record => record.owner === owner && record.phase === "preparing")) || state?.interaction?.status === "pending"; stop.disabled = stopping; stop.setAttribute("aria-label", state?.resuming ? "取消继续" : "停止当前任务");
     status.textContent = state?.queuedCount ? state.paused ? `已暂停 ${state.queuedCount} 条` : `排队 ${state.queuedCount} 条` : ""; status.hidden = !status.textContent;
     references.replaceChildren();
     const note = draft.noteMentions !== undefined ? draft.noteMentions[0]?.vaultRelativePath : task?.notePath;
@@ -263,14 +302,16 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
   const resume = () => {
     if (!taskId) return;
     const text = input.value;
+    if (text.trim()) { send.click(); return; }
     void saveText(text).then(() => requestIPadTaskResume(ctx, taskId, text, () => {
       restoreAfterAdmission(text); refresh();
     })).catch(showFailure);
   };
   element.addEventListener("pd-resume-task", resume);
+  const unsubscribeSubmissions = host.runtime.composerSubmissions.subscribe(() => { if (!disposed) refresh(); });
   refresh();
-  return { element, flush, async canLeave() {
-    try { await flush(); return true; }
+  return { scroll, element, submissions, refreshSubmissions: renderSubmissions, flush, async canLeave() {
+    try { await flush(); scroll.leave(handingOff); return true; }
     catch (failure) { showFailure(failure); return false; }
-  }, dispose() { if (disposed) return; disposed = true; unsubscribe(); unsubscribeWorkbench(); if (taskId && drafts.get(taskId) === resumeDraft) drafts.delete(taskId); element.removeEventListener("pd-resume-task", resume); } };
+  }, dispose() { if (disposed) return; disposed = true; scroll.dispose(); unsubscribeSubmissions(); unsubscribe(); unsubscribeWorkbench(); if (taskId && drafts.get(taskId) === resumeDraft) drafts.delete(taskId); element.removeEventListener("pd-resume-task", resume); } };
 }

@@ -1,3 +1,4 @@
+import { NEXT, errorText, actionFailureText } from "../core/error-copy";
 import { ownedDiv, ownedEl } from "../ui/owned-dom";
 import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
@@ -135,7 +136,7 @@ export class EchoInkHomeView extends ItemView {
     this.registerEvent(this.app.vault.on("modify", (file) => changed(file.path)));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => changed(file.path, oldPath)));
     this.registerEvent(this.app.vault.on("delete", (file) => changed(file.path)));
-    this.registerDomEvent(this.contentEl, "click", (e) => { void this.handleClick(e).catch((error) => new Notice(errorMessage(error))); });
+    this.registerDomEvent(this.contentEl, "click", (e) => { void this.handleClick(e).catch((error) => new Notice(errorMessage(error, this.language))); });
     this.registerDomEvent(this.contentEl, "keydown", (e) => this.handleKeys(e));
     this.registerDomEvent(this.contentEl, "scroll", () => this.scheduleShortNavigation(), { passive: true });
     this.registerDomEvent(this.contentEl, "input", (e) => {
@@ -354,7 +355,7 @@ export class EchoInkHomeView extends ItemView {
     const icon = button.createSpan({ attr: { "aria-hidden": "true" } }); setIcon(icon, "arrow-left"); button.prepend(icon);
     button.onclick = () => {
       const plugin = this.plugin as FinanceHomeHost & { activateHomeView(): Promise<void> };
-      void plugin.activateHomeView().catch(error => new Notice(errorMessage(error)));
+      void plugin.activateHomeView().catch(error => new Notice(errorMessage(error, this.language)));
     };
   }
   private renderLoadingState(): void {
@@ -471,7 +472,7 @@ export class EchoInkHomeView extends ItemView {
     const excerpt = card.createEl("p", { text: occurrence.targetExcerpt });
     excerpt.createSpan({ text: ` · ${occurrence.date}` });
     const button = card.createEl("button", { text: this.t("查看词条", "View expression"), attr: { type: "button" } });
-    button.onclick = () => void this.plugin.englishDiary?.openLibrary?.(entry.id).catch((error) => new Notice(errorMessage(error)));
+    button.onclick = () => void this.plugin.englishDiary?.openLibrary?.(entry.id).catch((error) => new Notice(errorMessage(error, this.language)));
     this.el(".page-footer").insertAdjacentElement("beforebegin", card);
   }
   private renderShortNavigation(): void {
@@ -984,7 +985,7 @@ export class EchoInkHomeView extends ItemView {
     if (isImeKeyEvent(event)) return;
     if ((event.metaKey || event.ctrlKey) && ["k", "j"].includes(event.key.toLowerCase())) {
       event.preventDefault(); event.stopPropagation();
-      if (event.key.toLowerCase() === "k") this.openSearch(); else void this.capture().catch((error) => new Notice(errorMessage(error)));
+      if (event.key.toLowerCase() === "k") this.openSearch(); else void this.capture().catch((error) => new Notice(errorMessage(error, this.language)));
       return;
     }
     if (!this.searchOpen) return;
@@ -1019,8 +1020,8 @@ export class EchoInkHomeView extends ItemView {
         await this.plugin.requireAvailableEchoInkSkill("daily-journal");
       } catch (error) {
         const detail = this.language === "en"
-          ? "The daily-journal Skill is disabled, missing, or could not be loaded."
-          : errorMessage(error);
+          ? "The daily-journal skill is disabled, missing, or could not be loaded. Enable it in skill settings and try again."
+          : errorText(error, ["“daily-journal”技能已停用、缺失或未能加载。请在技能设置中启用后重试。", "The daily-journal skill is disabled, missing, or could not be loaded. Enable it in skill settings and try again."], this.language);
         new Notice(this.copy.conversation.cannotCreateSession(detail));
         await this.plugin.openEchoInkSkillSettings("daily-journal").catch(
           (settingsError) => console.warn(
@@ -1049,7 +1050,7 @@ export class EchoInkHomeView extends ItemView {
       });
     } catch (error) {
       console.warn("[EchoInk] Failed to start Home conversation:", error);
-      new Notice(this.copy.conversation.cannotCreateSession(errorMessage(error)));
+      new Notice(this.copy.conversation.cannotCreateSession(errorText(error, NEXT.retryLater, this.language)));
     }
   }
 
@@ -1093,7 +1094,7 @@ export class EchoInkHomeView extends ItemView {
       });
     } catch (error) {
       console.warn("[EchoInk] Failed to prepare Home review draft:", error);
-      new Notice(this.copy.conversation.cannotCreateReviewSession(errorMessage(error)));
+      new Notice(this.copy.conversation.cannotCreateReviewSession(errorText(error, NEXT.retryLater, this.language)));
     }
   }
 
@@ -1125,4 +1126,4 @@ export class EchoInkHomeView extends ItemView {
 
   }
 
-function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function errorMessage(error: unknown, language: string): string { return actionFailureText(error, language); }

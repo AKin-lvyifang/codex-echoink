@@ -11,13 +11,14 @@ import { assertKnowledgeModulePath, prepareKnowledgeModuleDirectories } from "..
 import { applyFolderConfigurationDelta, folderConfigurationDelta, folderConfigurationLabels, legacyConfigurationKeys, type CurrentFolderConfiguration } from "./knowledge-folders-configuration";
 import { FolderJournal, validateFolderConfiguration, type FolderTransaction, type FolderConfiguration, type FolderAction } from "./knowledge-folders-journal";
 import { assertSavedBindings, digest, fileHash, inventory, kind, moduleDirectories, nativeJournalFolder, object, parentPath, protectedPaths, readBaseline, safePath, saveJournalFolder, settingsToken, stopped, within } from "./knowledge-folders-io";
+import { userFacingErrorText } from "../core/error-copy";
 
 interface PreparedFolders {
   preview: MobileKnowledgeFolderPreview; baseline: Awaited<ReturnType<typeof readBaseline>>;
   configuration?: { before: FolderConfiguration; after: FolderConfiguration };
   hashes: Record<string, string>; plan?: KnowledgeDirectoryPlan; original?: FolderTransaction;
 }
-const detail = (error: unknown): string => error instanceof Error ? error.message : "目录操作未完成，请重新核对。";
+const detail = (error: unknown): string => userFacingErrorText(error, "目录操作未能完成。请重新预览并核对。");
 
 /** One mobile structural writer, using the existing domain rules and host rename API. */
 export class MobileKnowledgeFoldersService implements MobileKnowledgeFoldersPort {

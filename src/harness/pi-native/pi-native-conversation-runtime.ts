@@ -1,5 +1,6 @@
 import { ToolRoundBudget } from "../../agents/tool-round-budget";
 import { requiresProductFreshnessVerification } from "../resources/skill-routing";
+import { DEFAULT_DECISION_THRESHOLDS, newDecisionId, type DecisionThresholds, type TurnCheck, type TurnJudgment, type TurnJudgmentInput, type TurnSkillOption } from "../../membership/decision-client";
 import { runErrors } from "../../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
@@ -16,6 +17,7 @@ import { normalizeEnglishDiarySourcePath, englishDiaryTaskContextFromEntries, ty
 import type { TaskInterruptionReason, TaskInterruptionRecord, TaskResumeContext } from "../../agents/task-resume";
 import { assertPiSubmissionActive } from "./pi-submission-lifecycle";
 import { selectMemoryRecallPreviousUserContext } from "../memory/personal-memory-recall-harness";
+import { reportPreparation, uniqueNotePaths, preparationActivity, type PreparationUpdate, type PreparationObserver } from "../../types/composer-submission";
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../../knowledge-base/search/contracts";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../../knowledge-base/root-paths";
 import { normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
@@ -42,9 +44,9 @@ import {
   type Model,
   type ModelThinkingLevel
 } from "@earendil-works/pi-ai";
-import { assistantProviderFailureText, type AssistantProviderFailure, safeProviderFailureCode } from "../pi/provider-failure";
+import { assistantProviderFailureText, isReasoningOutputLimit, type AssistantProviderFailure, safeProviderFailureCode } from "../pi/provider-failure";
 import { appendOutputContinuationText, outputContinuationFromSessionEntry, PI_OUTPUT_CONTINUATION_ENTRY_TYPE, type PiOutputContinuationRecord } from "./pi-output-continuation";
-import { knowledgeVerificationFromSessionEntry, PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, type PiKnowledgeVerificationSkippedRecord } from "./pi-knowledge-verification";
+import { knowledgeVerificationFromSessionEntry, PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, type PiKnowledgeVerificationSkippedRecord } from "./pi-knowledge-verification";
 import {
   routeKnowledgeConversationCommand,
   type KnowledgeConversationCommand
@@ -67,7 +69,7 @@ import {
 import { appendSavedAnswerNote } from "./pi-answer-save";
 import { diagnoseToolCallText, toolCallTextFailureMessage } from "../tool-call-text";
 import { toolCallingDisabledMessage } from "../../agents/tool-call-recovery";
-import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
+import { PI_MEMORY_SOURCES_ENTRY_TYPE, normalizeInjectedMemorySources, mergeInjectedMemorySources, projectInjectedMemorySources } from "./pi-memory-sources";
 import {
   PiSessionDurabilityError,
   assertPiSessionAppendsDurable,
@@ -118,7 +120,7 @@ import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
 import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
-import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, isMaintenanceScopeConfirmation, isNewMaintenanceScopeRequest, isFrozenMaintenanceBatchSuccessor, maintenanceTopicBoundary, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
+import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, maintenanceConfirmationWithJudgment, isNewMaintenanceScopeRequest, isFrozenMaintenanceBatchSuccessor, maintenanceTopicBoundary, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
 import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
@@ -255,6 +257,8 @@ export interface PiNativeAgentSessionFactoryInput {
     vaultId: string;
     userEntryId: string;
     userEntryText: string;
+    /** 智能判断：用户是不是明确要求记账 / 改账（第二道把关）；没有判断时不出现。 */
+    financeWrite?: number;
   }>;
   currentWorkspaceAccess?(): Readonly<PiWorkspaceAccess> | null;
   currentTaskResumeContext?(): Readonly<TaskResumeContext> | undefined;
@@ -313,6 +317,8 @@ export interface PiNativeMemoryTurnContext {
   readonly projectId?: string;
   readonly query: string;
   readonly recentConversation?: readonly string[];
+  /** 智能判断：与本轮 /turn 相同的 turnId，服务器一轮只扣 1 次。 */
+  readonly decisionTurnId?: string;
 }
 
 export interface PiNativeNoteMentionTurnContext {
@@ -340,6 +346,14 @@ export function shouldPreflightPersonalKnowledge(text: string, skillId?: string)
     return false;
   }
   return !/^(?:请)?(?:翻译|改写|润色|校对|计算|格式化|translate|rewrite|proofread|calculate|format)(?:一下|下列|以下|这段|这个|\s|[:：])/iu.test(normalized);
+}
+
+/** 知识库预检：有智能判断时用它替换正则；日记 Skill 的模板规则仍先于判断。 */
+export function shouldPreflightPersonalKnowledgeWithJudgment(text: string, skillId: string | undefined, knowledge: number | undefined, threshold: number): boolean {
+  if (knowledge === undefined) return shouldPreflightPersonalKnowledge(text, skillId);
+  if (skillId === "daily-journal" && !shouldPreflightPersonalKnowledge(text, skillId)) return false;
+  if (!text.normalize("NFKC").trim()) return false;
+  return knowledge >= threshold;
 }
 
 const FAST_CHANGING_KNOWLEDGE = /(?:\bAI\b|人工智能|大模型|LLM|模型能力|API|SDK|软件|框架|版本|产品能力|价格|政策|法规|安全公告|漏洞)/iu;
@@ -437,10 +451,28 @@ export interface PiNativeAgentSessionFactoryResult {
   warnings?: readonly string[];
 }
 
+/** 智能判断已给出的选择；selectForTask 仍要过“允许 / 已安装 / PRO 远程可用”检查。 */
+export interface PiSkillDecision {
+  readonly skillId: string | null;
+  readonly fresh?: boolean;
+}
+
+/** 智能判断（PRO）；任何失败返回 null，调用方走原来的逻辑。 */
+export interface PiRuntimeDecisionPort {
+  /** False when a request would certainly be skipped; avoids preparing the skill list. */
+  ready?(): boolean;
+  judgeTurn(input: TurnJudgmentInput): Promise<TurnJudgment | null>;
+  thresholds(): DecisionThresholds;
+}
+
 export interface PiRuntimeSkillPort {
   selectForTask(
-    input: Readonly<{ text: string; catalog?: Readonly<PiConversationCatalogEntry> }>
+    input: Readonly<{ text: string; catalog?: Readonly<PiConversationCatalogEntry>; decision?: Readonly<PiSkillDecision> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill> | null>;
+  /** Skills the turn judgment may choose from; same eligibility as selectForTask. */
+  listDecisionOptions?(
+    input: Readonly<{ catalog?: Readonly<PiConversationCatalogEntry> }>
+  ): Promise<readonly TurnSkillOption[]>;
   resolveById?(
     input: Readonly<{ id: string; catalog?: Readonly<PiConversationCatalogEntry> }>
   ): Promise<Readonly<PiRuntimeResolvedSkill>>;
@@ -499,6 +531,8 @@ export interface PiNativeConversationRuntimeOptions {
   recordDreamExperience?(input: DreamPublicExperienceInput): Promise<void>;
   /** Product-owned Skill routing and independent post-task review. */
   skills?: PiRuntimeSkillPort;
+  /** 智能判断（PRO）：选技能和小判断；没有时全部走原来的规则。 */
+  decisions?: PiRuntimeDecisionPort;
   /** Disposes runtime-owned live resources before active sessions are released. */
   disposeRuntimeResources?(): void | Promise<void>;
   knowledge?: PiKnowledgeRuntimePort;
@@ -534,6 +568,8 @@ export interface CreatePiNativeConversationInput extends ConversationTaskMetadat
   defaultSkillId?: string;
   journalDirectory?: string;
   createdAt?: number;
+  /** Earlier turns written as plain history before the first run (continuing another device's conversation). */
+  seedMessages?: readonly { readonly role: "user" | "assistant"; readonly text: string; readonly at: number }[];
 }
 
 export interface CreatePiConversationTransactionInput {
@@ -750,7 +786,11 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  onPreparationStage?: PreparationObserver;
   companyProgrammatic?: boolean;
+  /** 智能判断：本轮 turnId 与 /turn 结果（null 表示没拿到，走原来的规则）。 */
+  decisionTurnId?: string;
+  turnJudgment?: TurnJudgment | null;
   toolRoundBudget: ToolRoundBudget;
   drawingRequested?: boolean;
   inlineProposal?: { request: Readonly<InlineModelRequest>; previousAutoCompaction?: boolean };
@@ -1488,18 +1528,36 @@ export class PiNativeConversationRuntime {
       );
     }
     this.submitting.add(request.conversationId);
+    const candidatesAbort = new AbortController();
+    const cancelCandidates = () => candidatesAbort.abort();
+    request.signal?.addEventListener("abort", cancelCandidates, { once: true });
     try {
       const inlineProposalRequest = request.inlineProposalRequest ? freezeInlineModelRequest(request.inlineProposalRequest) : undefined;
       const workbenchSource = freezeWorkbenchTaskSource(request.workbenchSource);
-      return await this.submitPrepared(Object.freeze({ ...request, inlineProposalRequest, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }));
+      return await this.submitPrepared(Object.freeze({ ...request, inlineProposalRequest, workbenchSource: workbenchSource ?? undefined, permission: normalizePiWorkspacePermission(request.permission) }), candidatesAbort);
     } finally {
+      cancelCandidates();
+      request.signal?.removeEventListener("abort", cancelCandidates);
       this.submitting.delete(request.conversationId);
     }
   }
 
   private async submitPrepared(
-    request: Readonly<PiChatSubmitRequest>
+    request: Readonly<PiChatSubmitRequest>,
+    candidatesAbort: AbortController
   ): Promise<PiChatRunHandle> {
+    const preparationStages = new Map<string, PreparationUpdate>();
+    let preparationRun: ActiveProductRun | undefined;
+    const observer = request.onPreparationStage;
+    request = Object.freeze({ ...request, onPreparationStage: (update: Readonly<PreparationUpdate>) => {
+      const at = Math.max(request.submittedAt, this.now());
+      const previous = preparationStages.get(update.stage);
+      const stage = { ...update, startedAt: previous?.startedAt ?? at, updatedAt: at };
+      preparationStages.set(stage.stage, stage);
+      const activity = preparationActivity(stage);
+      if (preparationRun && activity?.kind === "judgment") this.updateReasoningActivitySafely(preparationRun, activity);
+      reportPreparation(observer, stage);
+    } });
     assertPiSubmissionActive(request.signal);
     this.assertConversationNotRecovering(request.conversationId);
     if (request.inlineProposalRequest && (request.generationRequest || request.pdfTaskRequest || request.englishDiarySourcePath
@@ -1542,22 +1600,45 @@ export class PiNativeConversationRuntime {
     }
 
     assertPiSubmissionActive(request.signal);
-    const selectedDraft = request.draftId
-      ? await this.requireDraftForSubmission(catalog, request.draftId)
-      : null;
-
     const knowledgeCommand: KnowledgeConversationCommand =
       request.companyProgrammatic || request.inlineProposalRequest || request.generationRequest || mode === "plan" || !this.options.knowledge
         ? Object.freeze({ kind: "chat", originalText: request.text })
         : routeKnowledgeConversationCommand(request.text);
 
-    const selectedRuntimeSkill = !request.companyProgrammatic && !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
+    const ordinaryTurn = !request.companyProgrammatic && !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath;
+    const automaticSkill = ordinaryTurn && !request.skillId && !request.skillPath && !catalog.defaultSkillId && mode !== "plan" && knowledgeCommand.kind !== "maintain";
+    const decisionTurnId = newDecisionId();
+    const decisionRecent = this.decisionRecent(catalog.conversationId);
+    // 智能判断和读草稿同时进行，只减少等待，不改结果；judgeTurn 自己吞掉失败。
+    const judging = ordinaryTurn && mode !== "plan"
+      ? this.judgeTurn(catalog, request.text, decisionTurnId, automaticSkill, request.onPreparationStage, request.signal)
+      : Promise.resolve(null);
+    const candidates = ordinaryTurn && mode !== "plan" && knowledgeCommand.kind === "chat"
+      && this.options.decisions && this.options.decisions.ready?.() !== false
+      && this.options.knowledge?.shouldPreflightChat?.(catalog.conversationId) !== false
+      ? this.options.knowledge?.collectChatCandidates?.({ conversationId: catalog.conversationId, question: request.text,
+        signal: candidatesAbort.signal }).catch(() => null)
+      : undefined;
+    const selectedDraft = request.draftId
+      ? await this.requireDraftForSubmission(catalog, request.draftId)
+      : null;
+    const turnJudgment = await judging;
+    assertPiSubmissionActive(request.signal);
+    const knowledgePickApproved = turnJudgment?.knowledge !== undefined
+      && turnJudgment.knowledge >= this.decisionThresholds().knowledge;
+    if (!knowledgePickApproved) candidatesAbort.abort();
+    reportPreparation(request.onPreparationStage, { stage: "thinking", status: "active" });
+    const skillDecision: PiSkillDecision | undefined = turnJudgment?.skill
+      ? { skillId: turnJudgment.skill.id, ...(turnJudgment.fresh !== undefined ? { fresh: turnJudgment.fresh >= this.decisionThresholds().fresh } : {}) }
+      : undefined;
+
+    const selectedRuntimeSkill = ordinaryTurn
       ? request.skillId && this.options.skills?.resolveById
         ? await this.options.skills.resolveById({ id: request.skillId, catalog })
         : !request.skillPath && catalog.defaultSkillId
         ? await this.resolveConversationDefaultSkill(catalog.defaultSkillId, catalog)
         : !request.skillPath && mode !== "plan" && knowledgeCommand.kind !== "maintain"
-          ? await this.options.skills?.selectForTask({ text: request.text, catalog }) ?? null
+          ? await this.options.skills?.selectForTask({ text: request.text, catalog, ...(skillDecision ? { decision: skillDecision } : {}) }) ?? null
           : null
       : null;
     const selectedRuntimeSkills = selectedRuntimeSkill
@@ -1661,6 +1742,7 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      onPreparationStage: request.onPreparationStage,
       toolRoundBudget: new ToolRoundBudget(),
       ...(request.companyProgrammatic ? { companyProgrammatic: true } : {}),
       ...(request.inlineProposalRequest ? { inlineProposal: { request: request.inlineProposalRequest } } : {}),
@@ -1671,6 +1753,8 @@ export class PiNativeConversationRuntime {
       ...(request.workbenchSource ? { workbenchSource: request.workbenchSource } : {}),
       ...(request.resumeContext ? { resumeContext: structuredClone(request.resumeContext) } : {}),
       productRunId,
+      decisionTurnId,
+      turnJudgment,
       submittedAt: request.submittedAt,
       baselineEntryIds: new Set(
         active.sessionManager.getEntries().map((entry) => entry.id)
@@ -1691,7 +1775,9 @@ export class PiNativeConversationRuntime {
         selectedRuntimeSkill?.requiresFreshnessVerification === true
         || !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath
           && !request.skillId && !request.skillPath && !catalog.defaultSkillId && mode !== "plan" && knowledgeCommand.kind !== "maintain"
-          && requiresProductFreshnessVerification(request.text),
+          && (turnJudgment?.fresh !== undefined
+            ? turnJudgment.fresh >= this.decisionThresholds().fresh
+            : requiresProductFreshnessVerification(request.text)),
       successfulCapabilityIds: new Set<string>(),
       ...(projectId ? { projectId } : {}),
       mode,
@@ -1718,12 +1804,18 @@ export class PiNativeConversationRuntime {
       knowledgeObservation: null,
       knowledgeWorkflow: null
     };
+    preparationRun = execution;
+    for (const stage of preparationStages.values()) {
+      const activity = preparationActivity(stage);
+      if (activity) this.updateReasoningActivitySafely(execution, activity);
+    }
     active.currentRun = execution;
     active.pendingSettlement = execution;
     active.currentExecution = executionContext(
       productRunId,
       request.conversationId
     );
+    execution.knowledgeAbort.signal.addEventListener("abort", () => candidatesAbort.abort(), { once: true });
     if (request.signal) {
       const onAbort = () => {
         if (active.currentRun !== execution) return;
@@ -1767,7 +1859,7 @@ export class PiNativeConversationRuntime {
         }
         const inputBudget = active.generationInputBudget ?? calculatePiEffectiveInputBudget({ contextWindow: active.session.model!.contextWindow, maxOutputReserve: active.session.model!.maxTokens }).effectiveInputBudget;
         const tokens = estimateTokenValue(INLINE_PROPOSAL_SYSTEM_PROMPT) + estimateTokenValue(inlineProposalContextContent(execution.inlineProposal.request)) + estimateTokenValue(request.text);
-        if (tokens + 1024 > inputBudget) throw new Error("正文全文超出当前模型的本轮预算，请缩小正文或切换模型；本轮没有截断发送。");
+        if (tokens + 1024 > inputBudget) throw new Error("正文长度已超出当前模型的处理上限，未发送。请缩小正文，或更换处理上限更高的模型。");
       } else if (execution.generation) {
         if (!this.options.generation || mode === "plan" || permission === "read-only" || englishDiarySourcePath || pdfTaskRequest || noteMentions.length || documents.length || promptImages.length || request.skillPath) throw new Error("生成需要独立的资料选择、Agent 模式和可写权限。");
         active.knowledgeTurnContext = null;
@@ -1826,7 +1918,7 @@ export class PiNativeConversationRuntime {
         && knowledgeCommand.kind === "chat"
         && this.options.knowledge?.retrieveChat
         && this.options.knowledge.shouldPreflightChat?.(catalog.conversationId) !== false
-        && shouldPreflightPersonalKnowledge(request.text, execution.skillTurnContext?.skillId)) {
+        && shouldPreflightPersonalKnowledgeWithJudgment(request.text, execution.skillTurnContext?.skillId, turnJudgment?.knowledge, this.decisionThresholds().knowledge)) {
         await this.emitRuntimeEvent(active, execution, {
           type: "knowledge_progress",
           status: "active",
@@ -1839,6 +1931,14 @@ export class PiNativeConversationRuntime {
           piSessionId: catalog.piSessionId,
           productRunId,
           question: request.text,
+          decisionTurnId,
+          recent: decisionRecent,
+          knowledgePickApproved,
+          candidates,
+          onStage: async stage => {
+            assertPiSubmissionActive(execution.knowledgeAbort.signal);
+            await this.emitRuntimeEvent(active, execution, { type: "knowledge_progress", status: "active", stage });
+          },
           explicitPaths: [],
           includeUnrefined: false
         });
@@ -2202,6 +2302,42 @@ export class PiNativeConversationRuntime {
     run.maintenanceScopePersisted = true;
   }
 
+  private decisionThresholds(): DecisionThresholds {
+    return this.options.decisions?.thresholds() ?? { ...DEFAULT_DECISION_THRESHOLDS };
+  }
+
+  /** 智能判断：每轮一次 /turn（1.2 秒内），拿不到就返回 null，各处走原来的规则。 */
+  private decisionRecent(conversationId: string): string[] {
+    return (this.active.get(conversationId)?.sessionManager.getBranch() ?? [])
+      .flatMap(entry => entry.type === "message" && (entry.message.role === "user" || entry.message.role === "assistant")
+        ? [publicMessageText(entry.message).trim()] : []).filter(Boolean).slice(-3);
+  }
+
+  private async judgeTurn(catalog: Readonly<PiConversationCatalogEntry>, text: string, turnId: string, automaticSkill: boolean, observer?: PreparationObserver, signal?: AbortSignal): Promise<TurnJudgment | null> {
+    const decisions = this.options.decisions;
+    if (!decisions || !text.trim() || decisions.ready?.() === false) return null;
+    reportPreparation(observer, { stage: "thinking", status: "completed" });
+    reportPreparation(observer, { stage: "judgment", status: "active" });
+    let judgment: TurnJudgment | null = null;
+    let skillName: string | undefined;
+    try {
+      const branch = this.active.get(catalog.conversationId)?.sessionManager.getBranch() ?? [];
+      const skills = automaticSkill ? await this.options.skills?.listDecisionOptions?.({ catalog }) ?? [] : [];
+      const checks: TurnCheck[] = [...(automaticSkill ? ["fresh" as const] : []), "financeWrite", "knowledge"];
+      if (branch.some(entry => entry.type === "custom" && entry.customType === MAINTENANCE_SCOPE_CONTEXT_TYPE)) checks.push("maintenance");
+      const recent = this.decisionRecent(catalog.conversationId);
+      judgment = await decisions.judgeTurn({ turnId, conversationId: catalog.conversationId, text, recent, skills, checks, signal });
+      skillName = skills.find(skill => skill.id === judgment?.skill?.id)?.name;
+      return judgment;
+    } catch {
+      return null;
+    } finally {
+      reportPreparation(observer, { stage: "judgment", status: "completed",
+        ...(judgment?.knowledge !== undefined ? { knowledgeDecision: judgment.knowledge >= this.decisionThresholds().knowledge } : {}),
+        ...(skillName ? { skillName } : {}) });
+    }
+  }
+
   private async openMaintenanceSelection(active: ActiveConversation) {
     const branch = new Set(active.sessionManager.getBranch().map(entry => entry.id));
     const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId))
@@ -2220,10 +2356,10 @@ export class PiNativeConversationRuntime {
     const recoveryScope = freezeMaintenanceScopeContext(resume?.safety.maintenanceContext);
     const maintenanceResume = !!resume && (!!recoveryScope
       || (await this.productRuns.read(resume.safety.interruptedRunId))?.knowledge?.workflow === "maintain");
-    const confirmation = isMaintenanceScopeConfirmation(request);
+    const confirmation = maintenanceConfirmationWithJudgment(request, run.turnJudgment?.maintenance);
     // A new explicit source/query wins even on a resumed turn. The product's
     // generic resume instruction is recovery context, never a Raw query.
-    const newScope = isNewMaintenanceScopeRequest(request, active.cwd)
+    const newScope = !confirmation && isNewMaintenanceScopeRequest(request, active.cwd)
       || run.commandKind === "maintain" && !!request.trim() && !confirmation && !resume;
     if (!newScope) {
       // A genuine continuation uses durable open work even when a later batch
@@ -3066,6 +3202,7 @@ export class PiNativeConversationRuntime {
         if (run && run.providerStartedAt === undefined) {
           const providerStartedAt = this.now();
           run.providerStartedAt = providerStartedAt;
+          reportPreparation(run.onPreparationStage, { stage: "thinking", status: "active", readyForModel: true });
           this.queueReasoningActivity(active, run, {
             id: "provider",
             kind: "provider",
@@ -3108,7 +3245,8 @@ export class PiNativeConversationRuntime {
           productRunId: run.productRunId,
           vaultId: catalog.vaultId,
           userEntryId: userEntry.id,
-          userEntryText: publicMessageText(userEntry.message)
+          userEntryText: publicMessageText(userEntry.message),
+          ...(run.turnJudgment?.financeWrite !== undefined ? { financeWrite: run.turnJudgment.financeWrite } : {})
         };
       },
       currentMaintenanceCommand: async ({ activateMaintenance = false } = {}) => {
@@ -3204,6 +3342,7 @@ export class PiNativeConversationRuntime {
           conversationId: catalog.conversationId,
           piSessionId: catalog.piSessionId,
           productRunId: run.productRunId,
+          ...(run.decisionTurnId ? { decisionTurnId: run.decisionTurnId } : {}),
           memoryMode: run.memoryMode,
           signal: run.knowledgeAbort.signal,
           ...(run.projectId ? { projectId: run.projectId } : {}),
@@ -3279,20 +3418,33 @@ export class PiNativeConversationRuntime {
         const active = holder.active;
         const run = active?.currentRun;
         if (!active || !run || run.memoryMode === "no_memory" || run.productRunId !== input.productRunId) return;
-        const sources = normalizeInjectedMemorySources(input.sources);
-        if (!sources.length || active.sessionManager.getBranch().some(entry => entry.type === "custom"
-          && entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE && (entry.data as { productRunId?: string })?.productRunId === run.productRunId)) return;
+        const previous = active.sessionManager.getBranch().flatMap(entry => entry.type === "custom"
+          && entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE && (entry.data as { productRunId?: string })?.productRunId === run.productRunId
+          ? normalizeInjectedMemorySources((entry.data as { sources?: unknown }).sources) : []);
+        const before = mergeInjectedMemorySources(previous);
+        const sources = mergeInjectedMemorySources(before, normalizeInjectedMemorySources(input.sources));
+        if (!sources.length || JSON.stringify(before) === JSON.stringify(sources)) return;
         const id = active.sessionManager.appendCustomEntry(PI_MEMORY_SOURCES_ENTRY_TYPE, {
           schemaVersion: 1, conversationId: active.catalog.conversationId,
           piSessionId: active.catalog.piSessionId, productRunId: run.productRunId, sources
         });
         assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [id] });
         this.checkpointConversationLeaf(active);
+        const recall = run.reasoningSummary.activities.find(activity => activity.id === "memory:recall");
+        if (recall) {
+          const at = Math.max(recall.updatedAt, this.now());
+          this.updateReasoningActivitySafely(run, { ...recall, status: "completed", current: sources.length,
+            completed: sources.length, total: Math.max(sources.length, recall.total ?? 0), updatedAt: at });
+          reportPreparation(run.onPreparationStage, { stage: "memory", status: "completed", memoriesUsed: sources.length, memorySources: sources });
+          await this.emitRuntimeEvent(active, run, { type: "reasoning_summary", summary: cloneReasoningSummary(run.reasoningSummary) });
+        }
       },
       reportMemoryRecallProgress: async (progress) => {
         const active = holder.active;
         const run = active?.currentRun;
         if (!active || !run) return;
+        reportPreparation(run.onPreparationStage, { stage: "thinking", status: "completed" });
+        reportPreparation(run.onPreparationStage, { stage: "memory", status: progress.status, ...(progress.recall ? { memoriesUsed: progress.recall.injected } : {}) });
         if (progress.recall) {
           run.memoryRecall = Object.freeze({ ...progress.recall });
           if (
@@ -3529,6 +3681,11 @@ export class PiNativeConversationRuntime {
     if (!continuation || error || execution.abortRequested) return error;
     for (;;) {
       if (execution.abortRequested) return error;
+      const previous = lastAssistantEntry(active.sessionManager.getEntries())?.message;
+      if (previous?.provider === "zai-coding-cn" && isReasoningOutputLimit(previous)) {
+        continuation.noProgress = 2;
+        return new Error("provider_reasoning_output_limit_reached");
+      }
       assertPiSubmissionActive(execution.knowledgeAbort.signal);
       this.persistOutputContinuation(active, execution, "running");
       const before = continuation.text;
@@ -3902,6 +4059,12 @@ export class PiNativeConversationRuntime {
           productRunId: execution.productRunId,
           references: actualReferences
         });
+        if (verification.status === "source_changed"
+          && this.options.knowledge?.referenceVerificationMode === "annotate-delivered-snapshots") {
+          // This opt-in promises annotation, never replacement of text already
+          // published. Fail the run rather than silently retracting that text.
+          throw new Error("knowledge_snapshot_verification_contract_violated");
+        }
         if (verification.status === "source_changed") {
           readSourceChanged = true;
           if (execution.knowledgeObservation) {
@@ -3946,6 +4109,15 @@ export class PiNativeConversationRuntime {
             "completed"
           );
         } else {
+          const changedReferenceIds = verification.references.filter(reference => reference.verificationStatus === "source_link_changed").map(reference => reference.referenceId);
+          if (changedReferenceIds.length) {
+            const entryId = active.sessionManager.appendCustomEntry(PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, {
+              schemaVersion: 1, piSessionId: active.catalog.piSessionId, productRunId: execution.productRunId,
+              assistantEntryId, referenceIds: changedReferenceIds
+            });
+            assertPiSessionAppendsDurable({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager, expectedEntryIds: [entryId] });
+            persistPiActiveLeaf({ sessionRoot: this.catalog.sessionRootPath, sessionManager: active.sessionManager });
+          }
           if (verification.status === "verification_skipped") {
             const record: PiKnowledgeVerificationSkippedRecord = {
               schemaVersion: 1, piSessionId: active.catalog.piSessionId, productRunId: execution.productRunId,
@@ -5162,7 +5334,8 @@ export class PiNativeConversationRuntime {
   ): Promise<void> {
     const workflow = execution.knowledgeWorkflow;
     if ((workflow?.kind === "ask" || workflow?.kind === "chat")
-      && runtimeMessageRole(message) === "assistant") {
+      && runtimeMessageRole(message) === "assistant"
+      && this.options.knowledge?.referenceVerificationMode !== "annotate-delivered-snapshots") {
       workflow.bufferedAssistantEvents.push(structuredClone(event));
       return;
     }
@@ -5266,19 +5439,15 @@ export class PiNativeConversationRuntime {
       // Tool calls already have their own stable rows and per-call result counts.
       // This row describes only the initial retrieval, never the turn aggregate.
       const retrieval = event.stage === "searching" || event.stage === "continuing_search"
-        || event.stage === "reading_knowledge";
+        || event.stage === "reading_knowledge" || event.stage === "selecting_knowledge";
       if (event.stage === "comparing_memory" || execution.knowledgeToolStages.size > 0) return;
       if (retrieval && execution.reasoningSummary.activities.some((activity) =>
         activity.id === "knowledge:retrieval" && activity.status === "completed"
       )) return;
+      const noteCount = uniqueNotePaths(execution.knowledgeWorkflow?.kind === "ask" || execution.knowledgeWorkflow?.kind === "chat"
+        ? execution.knowledgeWorkflow.references.map(reference => reference.vaultRelativePath) : []).length;
       const observation = execution.knowledgeObservation;
-      const counts = observation && observation.candidates > 0
-        ? {
-            current: Math.min(observation.returned, observation.candidates),
-            total: observation.candidates,
-            completed: Math.min(observation.returned, observation.candidates)
-          }
-        : {};
+      const counts = observation && observation.candidates > 0 ? { current: Math.min(observation.returned, observation.candidates), total: observation.candidates, completed: Math.min(observation.returned, observation.candidates) } : {};
       this.updateReasoningActivitySafely(execution, {
         id: retrieval ? "knowledge:retrieval" : `knowledge:${event.stage}`,
         kind: "knowledge",
@@ -5286,7 +5455,8 @@ export class PiNativeConversationRuntime {
         stage: event.stage,
         startedAt: occurredAt,
         updatedAt: occurredAt,
-        ...counts
+        ...counts,
+        notesRead: noteCount
       });
       return;
     }
@@ -5371,6 +5541,16 @@ export class PiNativeConversationRuntime {
     event: PiChatRuntimeEventPayload,
     observedAt?: number
   ): Promise<void> {
+    if (event.type === "knowledge_progress" && (event.stage === "searching" || event.stage === "reading_knowledge" || event.stage === "continuing_search" || event.stage === "selecting_knowledge")) {
+      const paths = execution.knowledgeWorkflow?.kind === "ask" || execution.knowledgeWorkflow?.kind === "chat"
+        ? execution.knowledgeWorkflow.references.map(reference => reference.vaultRelativePath) : [];
+      reportPreparation(execution.onPreparationStage, { stage: "thinking", status: "completed" });
+      reportPreparation(execution.onPreparationStage, { stage: "knowledge", status: event.status,
+        ...(event.stage === "selecting_knowledge" ? { detail: "selecting_knowledge" as const } : {}), notePaths: uniqueNotePaths(paths) });
+    } else if (event.type === "memory_recall_progress") {
+      reportPreparation(execution.onPreparationStage, { stage: "thinking", status: "completed" });
+      reportPreparation(execution.onPreparationStage, { stage: "memory", status: event.status, ...(event.recall ? { memoriesUsed: event.recall.injected } : {}) });
+    }
     const occurredAt = typeof observedAt === "number"
       && Number.isFinite(observedAt)
       ? observedAt
@@ -5459,7 +5639,7 @@ export class PiNativeConversationRuntime {
       ?? runs.at(-1)?.productRunId;
     const toolProductState = await this.loadToolProductState(active.catalog);
     const branchEntries = active.sessionManager.getBranch();
-    const projected = this.projector.projectSessionBranch({
+    let projected = this.projector.projectSessionBranch({
       piSessionId: active.catalog.piSessionId,
       activeLeafId: active.sessionManager.getLeafId(),
       entries: branchEntries,
@@ -5470,6 +5650,17 @@ export class PiNativeConversationRuntime {
       ...toolProductState,
       now: this.now()
     });
+    // The start checkpoint precedes recall. Retain the current run's bounded
+    // preparation metadata until its terminal summary is durably appended.
+    const current = active.currentRun;
+    if (current && (runState === "running" || runState === "finalizing" || current.reasoningSummary.terminalAt !== undefined)) {
+      projected = this.projector.projectRuntimeEvent({ current: projected, event: {
+        type: "reasoning_summary", summary: current.reasoningSummary,
+        productRunId: current.productRunId, conversationId: active.catalog.conversationId,
+        piSessionId: active.catalog.piSessionId, activeLeafId: active.sessionManager.getLeafId(), occurredAt: this.now(),
+        ...(current.commandKind === "maintain" ? { maintenanceContext: true } : {})
+      } });
+    }
     settleFailedKnowledgeMaintenanceToolCalls(projected, runs, branchEntries);
     const decorated = this.projector.decorate(
       projected,
@@ -6254,7 +6445,7 @@ function validatedPiThinkingLevel(
   if (!isEchoInkPiReasoningEffortSupported(capabilities, reasoning)) {
     throw new PiNativeConversationRuntimeError(
       "reasoning_level_invalid",
-      `思考强度 ${reasoning} 不受当前 Pi 模型支持，本轮未调用 Provider。`
+      `思考强度 ${reasoning} 不受当前模型支持，本轮未调用模型服务。`
     );
   }
   const requested = reasoning === "none" ? "off" : reasoning;
@@ -6262,7 +6453,7 @@ function validatedPiThinkingLevel(
   if (clamped !== requested) {
     throw new PiNativeConversationRuntimeError(
       "reasoning_level_invalid",
-      `思考强度 ${reasoning} 会被 Pi 改为 ${clamped}，本轮已在 Provider 请求前停止。`
+      `思考强度 ${reasoning} 会被自动改为 ${clamped}，本轮已在调用模型服务前停止。`
     );
   }
   return requested;

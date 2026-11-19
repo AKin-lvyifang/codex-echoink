@@ -39,6 +39,7 @@ import {
   resolveEchoInkProviderReasoningWirePolicy,
   withEchoInkProviderReasoningWirePolicy
 } from "../harness/pi/provider-reasoning-wire-policy";
+import type { EchoInkProviderReasoningWirePolicy } from "../harness/pi/provider-reasoning-wire-policy";
 import type { ReasoningEffort } from "../types/app-server";
 
 const ECHOINK_PI_MODEL_CATALOGS = Object.freeze({
@@ -110,6 +111,8 @@ export function resolveEchoInkPiReasoningCapabilities(
   modelId: string,
   configured: boolean | { reasoning: boolean; discovery?: DiscoveredProviderModel; metadataSource?: string } = false
 ): Readonly<EchoInkPiReasoningCapabilities> {
+  const policy = resolveEchoInkProviderReasoningWirePolicy(runtimeProviderId, modelId);
+  if (policy?.supportsOff === false) return providerReasoningCapabilities(policy);
   const manuallyConfiguredReasoning = typeof configured === "boolean" ? configured : configured.reasoning;
   if (typeof configured !== "boolean" && configured.discovery) {
     const declared = declaredReasoningCapabilities(configured.reasoning, configured.discovery);
@@ -191,6 +194,8 @@ export function resolveEchoInkPiReasoningCapabilities(
 export function resolveEchoInkPiModelReasoningCapabilities(
   model: Model<Api>
 ): Readonly<EchoInkPiReasoningCapabilities> {
+  const policy = resolveEchoInkProviderReasoningWirePolicy(model.provider, model.id);
+  if (policy?.supportsOff === false) return providerReasoningCapabilities(policy);
   const metadata = (model as Model<Api> & { echoInkReasoningMetadata?: DiscoveredProviderModel }).echoInkReasoningMetadata;
   if (metadata) {
     const declared = declaredReasoningCapabilities(model.reasoning, metadata);
@@ -248,6 +253,13 @@ export function resolveEchoInkPiModelReasoningCapabilities(
       ?? enabledOptions[0]?.effort
       ?? null;
   return frozenCapabilities("catalog", options, defaultEffort);
+}
+
+function providerReasoningCapabilities(policy: Readonly<EchoInkProviderReasoningWirePolicy>): Readonly<EchoInkPiReasoningCapabilities> {
+  return frozenCapabilities("manual", policy.selectableLevels.map(level => ({
+    effort: level as ReasoningEffort, piLevel: level, display: "level" as const,
+    wireValueKey: `${policy.id}:${policy.thinkingLevelMap[level] ?? level}`
+  })), policy.defaultLevel as ReasoningEffort);
 }
 
 export function withDiscoveredPiReasoningModel(model: Model<Api>, discovery?: DiscoveredProviderModel): Model<Api> {

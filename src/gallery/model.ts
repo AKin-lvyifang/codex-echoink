@@ -2,7 +2,7 @@
 export interface ImageSpan { from: number; to: number; raw: string; target: string }
 export interface GalleryBlock { from: number; to: number; headerTo: number; header: string; body: string; images: ImageSpan[]; valid: boolean; row: boolean; height?: number }
 export interface GalleryEdit { from: number; to: number; insert: string; cursor?: number }
-export const GALLERY_GAP_MESSAGE = "这几张图片之间有其他内容，先把它们挪到一起";
+export const GALLERY_GAP_MESSAGE = "所选图片之间有其他内容。请先将图片移到相邻位置后重试。";
 /** The first numeric token is the sole height control; clamp to safe tile sizes. */
 export function galleryOptions(metadata = ""): { row: boolean; height?: number } {
   const parts = metadata.split("|").map(part => part.trim().toLowerCase());
@@ -127,11 +127,11 @@ export function imagesInSelection(source: string, from: number, to: number): Ima
   return standaloneImages(source).filter(image => image.from >= from && image.to <= to);
 }
 export function groupImages(source: string, chosen: readonly ImageSpan[], row = false): GalleryEdit {
-  if (chosen.length < 2) throw new Error("再选 1 张");
-  if (chosen.length > 3) throw new Error("一组最多 3 张");
+  if (chosen.length < 2) throw new Error("图片组至少需要 2 张图片。请再选择 1 张。");
+  if (chosen.length > 3) throw new Error("每个图片组最多 3 张图片。请减少选择后重试。");
   const ordered = [...chosen].sort((a, b) => a.from - b.from);
   const eligible = standaloneImages(source);
-  if (ordered.some(image => source.slice(image.from, image.to) !== image.raw || !eligible.some(item => item.from === image.from && item.to === image.to))) throw new Error("图片内容已变化，请重新选择");
+  if (ordered.some(image => source.slice(image.from, image.to) !== image.raw || !eligible.some(item => item.from === image.from && item.to === image.to))) throw new Error("图片内容已变化。请重新选择图片。");
   const from = source.lastIndexOf("\n", ordered[0].from - 1) + 1;
   const lastEnd = source.indexOf("\n", ordered.at(-1)!.to), to = lastEnd < 0 ? source.length : lastEnd;
   const region = source.slice(from, to);
@@ -143,12 +143,12 @@ export function groupImages(source: string, chosen: readonly ImageSpan[], row = 
   return { from, to, insert: separated };
 }
 export function splitGallery(source: string, position: number): GalleryEdit {
-  const group = galleryAt(source, position); if (!group) throw new Error("把光标放到图片组中再拆开");
+  const group = galleryAt(source, position); if (!group) throw new Error("请将光标放在图片组内，再执行拆分。");
   return { from: group.from, to: group.to, insert: group.valid ? group.images.map(image => image.raw).join("\n\n") : group.body };
 }
 export function changeGalleryLayout(source: string, position: number, row: boolean): GalleryEdit {
   const group = galleryAt(source, position);
-  if (!group?.valid || group.images.length !== 3) throw new Error("只有三张图片的图片组可以切换排法");
+  if (!group?.valid || group.images.length !== 3) throw new Error("仅含 3 张图片的图片组可以切换排列方式。请选择含 3 张图片的图片组。");
   const metadata = group.header.match(/\[!gallery(?:\|([^\]]*))?\]/iu)?.[1] ?? "";
   const parts = metadata.split("|").map(part => part.trim()).filter(part => part && part.toLowerCase() !== "row");
   if (row) parts.unshift("row");
@@ -158,9 +158,9 @@ export function insertGallery(source: string, position: number): GalleryEdit {
   const from = source.lastIndexOf("\n", position - 1) + 1;
   const end = source.indexOf("\n", position);
   const probe = source.slice(0, from) + "![[__echoink_gallery_probe__.png]]" + source.slice(end < 0 ? source.length : end);
-  if (!standaloneImages(probe).some(image => image.from === from)) throw new Error("请把光标放到笔记的普通正文中再插入图片组");
+  if (!standaloneImages(probe).some(image => image.from === from)) throw new Error("请将光标放在笔记的普通正文中，再插入图片组。");
   // Inserting into a source container would make a nested or non-rendering group.
-  if (galleryAt(source, position) || /^(?:\s*>|\s*[-+*]\s|\s*\d+[.)]\s| {4}|\t)/u.test(source.slice(from, position))) throw new Error("请把光标放到笔记的普通正文中再插入图片组");
+  if (galleryAt(source, position) || /^(?:\s*>|\s*[-+*]\s|\s*\d+[.)]\s| {4}|\t)/u.test(source.slice(from, position))) throw new Error("请将光标放在笔记的普通正文中，再插入图片组。");
   const before = source.slice(0, position), after = source.slice(position);
   const prefix = before ? before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n" : "";
   const block = `${prefix}> [!gallery]\n> `, suffix = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";

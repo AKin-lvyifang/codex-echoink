@@ -3,6 +3,8 @@ import type CodexForObsidianPlugin from "../main";
 import { validInlineTrigger } from "../inline-agent/settings";
 import { createOriginInput } from "./origin-controls";
 import { createSettingsGroup } from "./settings-v2";
+import { NEXT, failureText } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 
 export function renderInlineAgentSettings(parent: HTMLElement, plugin: CodexForObsidianPlugin): void {
   const zh = plugin.settings.settingsLanguage !== "en";
@@ -12,11 +14,11 @@ export function renderInlineAgentSettings(parent: HTMLElement, plugin: CodexForO
   label.htmlFor = input.id = "echoink-inline-trigger";
   input.onchange = () => {
     const next = input.value;
-    if (!validInlineTrigger(next)) { input.value = plugin.settings.inlineAgent.trigger; new Notice(zh ? "请输入一个符号，例如 @ 或 !。" : "Enter one symbol, such as @ or !."); return; }
+    if (!validInlineTrigger(next)) { input.value = plugin.settings.inlineAgent.trigger; new Notice(zh ? "唤起符号无效。请输入一个符号，例如 @ 或 !。" : "The trigger is invalid. Enter one symbol, such as @ or !."); return; }
     const previous = plugin.settings.inlineAgent.trigger;
     plugin.settings.inlineAgent.trigger = next; input.disabled = true;
     void plugin.saveSettings(true).then(() => plugin.inlineAgent?.checkDateConflict()).catch(error => {
-      plugin.settings.inlineAgent.trigger = previous; input.value = previous; new Notice(error instanceof Error ? error.message : "设置未保存。");
+      plugin.settings.inlineAgent.trigger = previous; input.value = previous; new Notice(failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, plugin.settings.settingsLanguage));
     }).finally(() => { input.disabled = false; });
   };
 }

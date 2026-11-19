@@ -229,7 +229,8 @@ function measuredRows(first: Window, second: Window) {
     };
     const renderer = new CodexMessageListRenderer();
     const state = renderer as any;
-    state.env = { messagesEl: messages, virtualListEl: list, shouldFollowBottom: () => true };
+    state.env = { messagesEl: messages, virtualListEl: list, shouldFollowBottom: () => true,
+      onScheduleMeasure: (forceBottom: boolean) => renderer.measureVisibleVirtualRows(messages, list, forceBottom) };
     let rerenders = 0;
     state.scheduleMeasuredRowsRerender = () => { rerenders += 1; };
     assert.equal(renderer.measureVisibleVirtualRows(messages, list, true, { rerender: false }), true);

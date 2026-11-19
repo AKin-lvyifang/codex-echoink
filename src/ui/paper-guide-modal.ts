@@ -1,3 +1,4 @@
+import { actionFailureText } from "../core/error-copy";
 import type { KnowledgeMaintenancePreferenceSnapshot } from "../knowledge-base/knowledge-maintenance-preferences";
 import { KnowledgePreferenceWizard } from "./knowledge-preference-wizard";
 import type { KnowledgePreferenceWizardHost } from "../knowledge-base/knowledge-preference-wizard";
@@ -397,7 +398,7 @@ export class PaperGuideModal extends Modal {
   }
 
   private errorText(error: unknown): string {
-    const text = error instanceof Error ? error.message : String(error);
+    const text = actionFailureText(error, this.options.language);
     return this.key.trim() ? text.replaceAll(this.key.trim(), this.label("[已隐藏凭据]", "[credential hidden]")) : text;
   }
   private setBusyState(): void {

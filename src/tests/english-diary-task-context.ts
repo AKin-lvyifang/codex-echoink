@@ -141,8 +141,11 @@ function exactDiaryCapabilityRegression(root: string): void {
   const generate = (ctx: AgentCapabilityContext) => checkAgentTool(ctx, "english_diary_generate", { sourcePath: SOURCE }, target);
   assert.equal(checkAgentCapability(context, "knowledge").allowed, false, "the test Agent really has no Knowledge grant");
   assert.equal(generate(context).allowed, true, "the precise English output root overrides its generic Knowledge parent");
-  assert.equal(checkAgentTool(context, "note_read", { path: "outputs/unrelated.md" }).allowed, false, "the exact diary grant does not authorize the rest of outputs");
-  for (const disabled of ["journal", "english-diary"]) {
+  assert.equal(checkAgentTool({ ...context, companyRole: "worker" }, "note_update", { relativePath: "outputs/unrelated.md" }).reason, "folder_grant_required", "the exact diary grant does not open the rest of outputs to a dispatched worker");
+  const journalRevoked = structuredClone(settings);
+  journalRevoked.agentRegistry.agents.find(agent => agent.id === "diary-only")!.capabilityIds = ["english-diary"];
+  assert.equal(generate({ ...context, settings: journalRevoked }).allowed, true, "reading the source diary needs no journal grant; only the English output is owned");
+  for (const disabled of ["english-diary"]) {
     const deniedSettings = structuredClone(settings);
     deniedSettings.agentRegistry.agents.find(agent => agent.id === "diary-only")!.capabilityIds = ["journal", "english-diary"].filter(capability => capability !== disabled);
     const denied = generate({ ...context, settings: deniedSettings });
@@ -152,11 +155,11 @@ function exactDiaryCapabilityRegression(root: string): void {
   const englishOff = structuredClone(settings); englishOff.englishDiary.enabled = false;
   assert.equal(generate({ ...context, settings: englishOff }).reason, "module_disabled");
   const journalOff = structuredClone(settings); journalOff.knowledgeBase.folderBindings!.roles.journal.enabled = false;
-  assert.equal(generate({ ...context, settings: journalOff }).reason, "module_disabled");
+  assert.equal(generate({ ...context, settings: journalOff }).allowed, true, "a switched-off journal folder binding no longer blocks reading the source");
   assert.equal(generate({ ...context, proAccess: unavailableCapabilityAccess }).reason, "pro_required");
   assert.equal(generate({ ...context, access: { permission: "read-only", mode: "agent", memoryMode: "normal" } }).reason, "read_only");
   assert.equal(generate({ ...context, access: { permission: "workspace-write", mode: "plan", memoryMode: "normal" } }).reason, "read_only");
-  console.log("PASS exact capability regression: journal + English Agent can target English output under Knowledge outputs; missing capability/module, expired PRO, read-only and Plan deny generation.");
+  console.log("PASS exact capability regression: journal + English Agent can target English output under Knowledge outputs; missing English capability/module, expired PRO, read-only and Plan deny generation.");
 }
 
 function sourceTemplateBodyRegression(): void {

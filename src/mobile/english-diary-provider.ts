@@ -6,12 +6,12 @@ import { fingerprint } from "../english-diary/model";
 /** The desktop's exact dedicated-model choice: only two empty ids follow the global default. */
 export function mobileEnglishProvider(settings: MobileSettings) {
   const diary = settings.englishDiary;
-  if (!!diary.providerSettingsId !== !!diary.modelId) throw new Error("英文日记模型配置不完整，请重新选择 Provider 和模型。");
+  if (!!diary.providerSettingsId !== !!diary.modelId) throw new Error("英文日记的模型选择不完整。请在 设置 → 英文日记 中重新选择模型服务和模型。");
   const providerId = diary.providerSettingsId || settings.activeApiProviderId, modelId = diary.modelId || settings.defaultModel;
   const provider = settings.apiProviders.find(candidate => candidate.id === providerId);
-  if (!provider) throw new Error("英文日记所选 Provider 不存在，请重新选择。");
+  if (!provider) throw new Error("英文日记所选的模型服务已删除。请在 设置 → 英文日记 中重新选择。");
   const model = provider.models.find(candidate => candidate.id === modelId);
-  if (!model) throw new Error("英文日记所选模型不存在，请重新选择；没有改用其他模型。");
+  if (!model) throw new Error("英文日记所选的模型已删除。请在 设置 → 英文日记 中重新选择模型。");
   const normalizedId = normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name);
   const identity = JSON.stringify([provider.id, normalizedId, provider.baseUrl, model.id]);
   let recipient: string = normalizedId;

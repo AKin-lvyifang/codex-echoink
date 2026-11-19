@@ -52,6 +52,8 @@ export interface MobileToolExecutionContext {
   runId: string;
   /** Frozen human input, never supplied by model tool arguments. */
   userText?: string;
+  /** 智能判断：本轮 turnId（排队轮次 id），用来取本轮 /turn 的记账把关结果。 */
+  turnId?: string;
   resume?: MobileResumeSnapshot;
 }
 
@@ -104,5 +106,7 @@ export interface MobileTaskViewState {
 export interface MobileTaskSubmission {
   taskId: string;
   queued: boolean;
+  /** Runtime identity of the accepted or queued turn, never inferred by a view. */
+  turnId?: string;
   completion: Promise<void>;
 }

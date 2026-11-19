@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { cloneSelectionAnnotations, type SelectionAnnotation } from "../types/selection-annotations";
 import type CodexForObsidianPlugin from "../main";
@@ -24,20 +25,20 @@ export class InlineAgentRuntimeController {
   }
   private model(): InlineModelSelection {
     const selected = getActiveApiProviderModel(this.plugin.settings);
-    if (!selected) throw new Error("请先在设置里选择默认 Provider 和模型。");
+    if (!selected) throw new Error(CAUSE.providerNotConfigured[0]);
     const reasoning = resolveComposerReasoningState(this.plugin.settings, selected.provider.id, selected.model.id);
-    if (!reasoning || ["missing", "invalid"].includes(reasoning.status)) throw new Error("默认模型的推理设置不完整，请在设置里重新选择。");
+    if (!reasoning || ["missing", "invalid"].includes(reasoning.status)) throw new Error("默认模型的推理设置不完整。请在 设置 → 模型服务 中重新选择模型。");
     return { providerSettingsId: selected.provider.id, runtimeProviderId: selected.provider.runtimeProviderId, modelId: selected.model.id, reasoning: reasoning.effort,
       memoryMode: this.plugin.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" };
   }
   async sendDraft(input: InlineDraftSubmission): Promise<void> {
     requireInlineGeneration(this.plugin);
     const submittedAt = Date.now();
-    if (!input.text.trim()) throw new Error("先写下要交代的事。");
+    if (!input.text.trim()) throw new Error("请输入要交给管家的内容。");
     const model = this.model(), editor = await this.host.editor(input.path);
     if (editor.read() !== input.document) throw new Error("正文已变化，请重新发送。");
     const agent = this.plugin.settings.agentRegistry.agents.find(a => a.id === input.agentId);
-    if (!agent) throw new Error("这位管家已不存在，请重新选择。");
+    if (!agent) throw new Error("所选管家已删除。请重新选择管家。");
     requireInlineGeneration(this.plugin);
     const taskId = `inline-${randomUUID()}`;
     await this.plugin.createPiConversation({ conversationId: taskId, title: input.text.trim().slice(0, 64), agentId: agent.id, cwd: this.plugin.getVaultPath(), defaultMemoryMode: model.memoryMode });
@@ -50,7 +51,7 @@ export class InlineAgentRuntimeController {
     if (!text.trim()) return;
     requireInlineGeneration(this.plugin);
     let request = this.service.latestForTask(taskId);
-    if (!request) throw new Error("这件任务没有正文位置。");
+    if (!request) throw new Error("该任务没有关联的正文位置。请从正文重新 @ 管家。");
     const snapshot = cloneSelectionAnnotations(annotations ?? request.selectionAnnotations);
     const model = this.model();
     if (this.flights.has(taskId)) await this.stop(taskId);
@@ -65,7 +66,7 @@ export class InlineAgentRuntimeController {
   async retry(taskId: string): Promise<void> {
     requireInlineGeneration(this.plugin);
     const request = this.service.latestForTask(taskId);
-    if (!request) throw new Error("找不到正文请求。");
+    if (!request) throw new Error("未找到对应的正文请求。请从正文重新 @ 管家。");
     const requirement = request.thread?.filter(m => m.role === "user").at(-1)?.text ?? request.versions.at(-1)?.requirement;
     if (!requirement) throw new Error("请重新写下要求。");
     if (this.flights.has(taskId)) return;
@@ -81,7 +82,7 @@ export class InlineAgentRuntimeController {
   }
   private launch(request: InlineRequest, requirement: string, model: InlineModelSelection, addMessage: boolean, annotations = request.selectionAnnotations ?? []): Promise<void> {
     requireInlineGeneration(this.plugin);
-    if (this.flights.has(request.taskId)) throw new Error("这件事正在写，请稍候。");
+    if (this.flights.has(request.taskId)) throw new Error("该任务正在生成内容。请等待完成后重试。");
     const flight: InlineFlight = { id: request.id, abort: new AbortController() };
     let accept!: () => void, reject!: (error: unknown) => void;
     const accepted = new Promise<void>((resolve, fail) => { accept = resolve; reject = fail; });
@@ -149,7 +150,7 @@ export class InlineAgentRuntimeController {
       if (flight.token) {
         if (previous && (previous.versions.length || ["clarifying", "queued"].includes(previous.status)) && !inlineGenerationAccess(this.plugin).allowed && !flight.abort.signal.aborted)
           await this.service.restoreDeniedRun(request.id, flight.token, previous);
-        else await this.service.failRun(request.id, flight.token, error instanceof Error ? error.message : "模型请求失败。", flight.abort.signal.aborted);
+        else await this.service.failRun(request.id, flight.token, error instanceof Error ? error.message : CAUSE.providerNotResponding[0], flight.abort.signal.aborted);
       }
     } finally {
       unsubscribe?.();

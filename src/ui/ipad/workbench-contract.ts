@@ -14,6 +14,9 @@ import type { IPadShell } from "./shell";
 import type { AccountService } from "../../membership/account-service";
 import type { MobileRequest, MobileStreamFetch } from "../../mobile/transport";
 import type { CompanyService } from "../../company/service";
+import type { SyncOverviewService } from "../../sync/overview-service";
+import type { SyncRequestService } from "../../sync/requests";
+import type { CloudSyncController } from "../../sync/cloud/controller";
 
 export interface IPadWorkbenchHost {
   app: App;
@@ -23,6 +26,7 @@ export interface IPadWorkbenchHost {
   agents: MobileAgentRegistryService;
   workbench: MobileWorkbenchPort;
   accountService?: AccountService;
+  reportLogin?: import("../../run-reports/login").RunReportLogin;
   version?: string;
   settings: () => MobileSettings;
   saveSettings: () => Promise<void>;
@@ -39,14 +43,21 @@ export interface IPadWorkbenchHost {
   renderMarkdown: (text: string, element: HTMLElement, sourcePath?: string) => void;
   /** Null when the company record is unavailable on this device. */
   company?: () => CompanyService | null;
+  /** Other devices' sync folders, read-only; null when sync is off. */
+  syncOverview?: () => SyncOverviewService | null;
+  syncRequests?: () => SyncRequestService | null;
+  /** EchoInk cloud sync; null when it is not available on this device. */
+  cloudSync?: () => CloudSyncController | null;
   /** The project page opens in the central home pane. */
-  openProject?: (projectId: string) => Promise<void>;
+  openProject?: (projectId: string, deviceId?: string) => Promise<void>;
+  /** Another device's conversation opens read-only in the central pane. */
+  openRemoteConversation?: (deviceId: string, conversationId: string) => Promise<void>;
 }
 
 export type IPadRoute = { kind: "home" } | { kind: "agent"; agentId: string }
-  | { kind: "task"; taskId: string } | { kind: "agent-form"; agentId?: string; creation?: AgentEditorCreationOptions } | { kind: "project"; projectId: string };
+  | { kind: "task"; taskId: string } | { kind: "agent-form"; agentId?: string; creation?: AgentEditorCreationOptions } | { kind: "project"; projectId: string; deviceId?: string } | { kind: "remote-conversation"; deviceId: string; conversationId: string };
 
-export type IPadAgentRoute = Exclude<IPadRoute, { kind: "home" } | { kind: "project" }>;
+export type IPadAgentRoute = Exclude<IPadRoute, { kind: "home" } | { kind: "project" } | { kind: "remote-conversation" }>;
 
 export interface IPadPageContext {
   root: HTMLElement;

@@ -117,7 +117,7 @@ async function maintenanceDisplayProjection(f: any, doc: Document): Promise<void
     const progress = doc.body.createDiv();
     const unmountProgress = mountKnowledgeActivityProgress(progress, { ready: Promise.resolve(), snapshot: () => ({ primary: partial, other: null, maintenance: [partial] }), subscribe: () => () => {} }, () => {});
     assert.equal(progress.querySelector(":scope > .echoink-knowledge-activity-failures"), null, "The outer duplicate failure list is removed");
-    assert.match(progress.querySelector(".echoink-knowledge-linking-progress-status")?.textContent ?? "", /不覆盖你的修改/u);
+    assert.match(progress.querySelector(".echoink-knowledge-linking-progress-status")?.textContent ?? "", /保留您的修改/u);
     assert.equal((progress.querySelector(".echoink-knowledge-activity-details") as HTMLElement).hidden, true);
     assert.equal(progress.querySelectorAll(".echoink-knowledge-activity-details .echoink-knowledge-activity-failures li").length, 1);
     (progress.querySelector(".echoink-knowledge-linking-progress-button") as HTMLButtonElement).click();
@@ -126,7 +126,7 @@ async function maintenanceDisplayProjection(f: any, doc: Document): Promise<void
     unmountProgress(); progress.remove();
     assert.equal(view.taskDetailHeaderEl.querySelector(".echoink-task-card-status")?.textContent, "没做完", "shared-source change refreshes the real header without catalog writes");
     assert.equal(maintenanceVisibleCopyIsSafe(view.taskInterruptionEl.textContent), true);
-    assert.match(view.taskInterruptionEl.textContent, /《知识条目》.*不覆盖你的修改.*继续/u);
+    assert.match(view.taskInterruptionEl.textContent, /《知识条目》.*保留您的修改.*继续/u);
     assert.equal(view.taskInterruptionEl.querySelector("button")?.disabled, false);
     assert.equal(original.taskStatus, "running");
     navigation.page = { kind: "list", agentId: "sol" }; view.renderTaskPages();
@@ -479,18 +479,21 @@ async function navigationAndSubmission(f: any, doc: Document): Promise<void> {
     const provider = f.settings.apiProviders[0], credential = provider.apiKey; provider.apiKey = "";
     await view.sendMessage();
     assert.equal((await f.catalog.get(originalId)).taskStatus, "interrupted");
-    assert.equal(view.inputEl.value, "P4-REPLY-KEPT-ON-FAILURE");
+    assert.equal(view.inputEl.value, "");
+    const failed = [...view.composerTransfers.values()].find((record: any) => record.snapshot.text === "P4-REPLY-KEPT-ON-FAILURE") as any;
+    assert.equal(failed.phase, "failed", "the unaccepted reply has one retained retry owner");
     assert.match(view.taskInterruptionEl.textContent, /没有可用模型|模型/);
     const queuedResume = f.item(originalId, "P4-QUEUED-FAILURE");
     f.service.turnQueue.enqueue(queuedResume);
     await assert.doesNotReject(view.resumeQueuedTurns(originalId), "queue UI presents a failed preflight instead of rejecting an unobserved event handler");
     assert.equal(f.service.turnQueue.itemsForSession(originalId).length, 1);
     assert.equal(f.service.turnQueue.isSessionQueuePaused(originalId), true);
-    assert.equal(view.inputEl.value, "P4-REPLY-KEPT-ON-FAILURE");
+    assert.equal(view.inputEl.value, "");
+    assert.equal(failed.snapshot.text, "P4-REPLY-KEPT-ON-FAILURE");
     assert.match(view.taskInterruptionEl.textContent, /API Key|模型/);
     f.service.turnQueue.removeQueuedItem(originalId, queuedResume.id);
     provider.apiKey = credential;
-    await view.sendMessage(); await f.service.runs.get(originalId)?.flight;
+    await view.retryComposerTransfer(failed.id); await f.service.runs.get(originalId)?.flight;
     assert.equal((await f.productRuns.list(originalId)).length, 3, `interrupted detail sends through resumeTask into the same Conversation: ${view.taskInterruptionEl.textContent}`);
     assert.equal((await f.catalog.get(originalId)).piSessionId, created.piSessionId);
     assert.ok(f.requests.get(originalId).at(-1).includes("P4-REPLY-KEPT-ON-FAILURE"));
@@ -568,7 +571,7 @@ async function deriveWhilePaused(f: any, view: any, sourceId: string, anchorId: 
       assert.deepEqual(f.settings.taskWorkspace.page, originalPage);
       assert.equal(f.settings.activeSessionId, sourceId);
       assert.equal(view.inputEl.value, "SOURCE-DRAFT-BEFORE-DERIVATION");
-      assert.equal(view.inputEl.parentElement.hidden, false); assert.match(view.taskLoadError, /injected derived (?:API|metadata) failure/);
+      assert.equal(view.inputEl.parentElement.hidden, false); assert.match(view.taskLoadError, /新分出的任务未能打开/u); assert.doesNotMatch(view.taskLoadError, /injected/u);
     } else {
       assert.deepEqual(f.settings.taskWorkspace.page, { kind: "list", agentId: "colleague" });
       assert.equal(view.inputEl.value, "DESTINATION-DRAFT-KEPT"); assert.equal(view.attachments[0].name, "destination.txt");
@@ -781,7 +784,7 @@ async function hiddenSurfaceDuringRead(f: any, view: any): Promise<void> {
     assert.equal(view.taskPlanDockEl.hidden, true); assert.equal(view.interactionDockEl.hidden, true);
     assert.ok(approve.closest("[hidden]"), "A's confirmation cannot be exposed or reached from B's loading page");
     reject(new Error("broken B Session")); await opening;
-    assert.match(view.taskLoadError, /broken B Session/);
+    assert.match(view.taskLoadError, /任务未能打开/u); assert.doesNotMatch(view.taskLoadError, /broken B Session/);
     assert.equal(view.messagesEl.parentElement.hidden, true); assert.equal(view.interactionDockEl.hidden, true);
     f.plugin.readPiConversationProjection = read;
     await view.openTaskDetail("B");
@@ -825,10 +828,17 @@ async function handoffBoundary(f: any, doc: Document): Promise<void> {
   assert.doesNotMatch(mount.textContent!, /转交给总助/);
   renderTaskDetailHeader(mount, f.settings.agentRegistry.agents.find((agent: any) => agent.id === "generalist"), { ...entry, taskTransfers: [{ fromAgentId: "old", fromName: "旧同事", at: 1 }] } as any, () => undefined);
   assert.doesNotMatch(mount.textContent!, /转交给总助/, "old data cannot restore the removed display row");
-  let animations = 0; mount.animate = (() => { animations++; return {} as Animation; }) as any;
+  let animations = 0, cancellations = 0;
+  mount.animate = () => {
+    animations++;
+    const control = { playState: "running" as AnimationPlayState, cancel() { cancellations++; this.playState = "idle"; } };
+    return control as unknown as Animation;
+  };
   animateTaskDetailEntry(mount, 1); animateTaskDetailEntry(mount, 1); assert.equal(animations, 1);
+  animateTaskDetailEntry(mount, 2); assert.equal(animations, 2);
+  assert.equal(cancellations, 1, "a new navigation cancels the earlier entry rather than stacking animations");
   const match = doc.defaultView!.matchMedia; doc.defaultView!.matchMedia = (() => ({ matches: true })) as any;
-  animateTaskDetailEntry(mount, 2); assert.equal(animations, 1); doc.defaultView!.matchMedia = match;
+  animateTaskDetailEntry(mount, 3); assert.equal(animations, 2); doc.defaultView!.matchMedia = match;
   const title = `完整标题 ${"长".repeat(110)}`, summary = `${"😀".repeat(110)} 结尾全文`;
   const hintedEntry = { ...entry, title, unreadAnswerAt: 1 };
   let opened = "";

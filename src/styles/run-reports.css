@@ -10,6 +10,7 @@ textarea.echoink-run-report-input { min-height: 110px; resize: vertical; }
 .echoink-run-report-preview > summary { min-height: 32px; display: list-item; cursor: pointer; padding: 6px 0; }
 .echoink-run-report-json { margin: 8px 0 0; padding: 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 var(--font-monospace); background: var(--background-primary); }
 .echoink-run-report-footer { display: flex; flex-direction: column; gap: 10px; flex: 0 0 auto; }
+.echoink-run-report-login { margin: 0; font-size: 13px; line-height: 1.6; }
 .echoink-run-report-result { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; user-select: text; }
 .echoink-run-report-result:empty { display: none; }
 .echoink-run-report-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

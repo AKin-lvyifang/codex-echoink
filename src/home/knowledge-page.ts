@@ -1,3 +1,4 @@
+import { actionFailureText } from "../core/error-copy";
 import { ModuleOwnerRequired } from "../agents/registry";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { KnowledgeCheckupPanel } from "./knowledge-checkup/panel";
@@ -126,7 +127,7 @@ export class KnowledgePageView extends ItemView {
     } catch (error) {
       if (this.closed || generation !== this.generation) return;
       const status = this.field("status"); this.reset(status);
-      status.createSpan({ text: this.t("知识库状态暂时读不到", "Knowledge is unavailable") + `：${this.error(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : "") });
+      status.createSpan({ text: this.t("知识库状态暂时无法读取", "Knowledge is unavailable") + `：${this.error(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : "") });
       this.button(status, this.t("重试", "Retry"), () => this.refresh());
     }
   }
@@ -138,7 +139,7 @@ export class KnowledgePageView extends ItemView {
     if (this.active() && (page === "overview" || !this.snapshot)) void this.refresh();
   }
   private reset(host: HTMLElement): void { disposeOriginControls(host); host.empty(); }
-  private error(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private error(error: unknown): string { return actionFailureText(error, this.plugin.settings.settingsLanguage); }
   private button(host: HTMLElement, text: string, action: () => unknown, cls = "is-tertiary"): HTMLButtonElement {
     const button = createOriginButton(host, { text, cls: `knowledge-button ${cls}` });
     button.onclick = async () => {
@@ -241,7 +242,7 @@ export class KnowledgePageView extends ItemView {
     this.reset(host); host.hidden = !error && (!upgrade || upgrade.status === "ready" && !this.upgradeHasWork(upgrade));
     if (host.hidden) return;
     if (error || upgrade?.status === "failed" && !upgrade.recordId) {
-      host.createSpan({ text: this.t("旧资料检查暂时没完成", "Legacy check is unavailable") + `：${error || upgrade?.message || this.t("请重试", "Retry")}` });
+      host.createSpan({ text: this.t("旧资料检查尚未完成", "The legacy check did not finish") + `：${error || upgrade?.message || this.t("请重试", "Retry")}` });
       this.button(host, this.t("重试", "Retry"), () => this.openUpgradePreview(), "is-secondary").disabled = this.upgradeBusy; return;
     }
     if (!upgrade) return;
@@ -264,7 +265,7 @@ export class KnowledgePageView extends ItemView {
       : upgrade.preview?.rootAdditions.length ? this.t("有旧文件夹需要接着使用", "Legacy folders are ready to reconnect")
       : this.t(`有 ${upgrade.preview?.issues.length ?? 0} 项旧资料需要核对`, `${upgrade.preview?.issues.length ?? 0} legacy items need review`)
       : upgrade.status === "completed" ? this.upgradeResult(upgrade) || this.t("旧知识升级已完成", "Legacy knowledge upgrade completed")
-      : activity ? maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en") : upgrade.message || this.t(upgrade.status === "running" ? "正在升级旧知识" : "旧知识升级没做完", upgrade.status === "running" ? "Upgrading legacy knowledge" : "Legacy upgrade is not finished");
+      : activity ? maintenanceActivityText(activity, this.plugin.settings.settingsLanguage === "en") : upgrade.message || this.t(upgrade.status === "running" ? "正在升级旧知识" : "旧知识升级尚未完成", upgrade.status === "running" ? "Upgrading legacy knowledge" : "Legacy upgrade is not finished");
     host.createSpan({ text });
     this.button(host, ready ? automatic ? this.t("查看并升级", "Review and upgrade") : this.t("查看清单", "Review items") : this.t("查看升级", "View upgrade"), () => ready ? this.openUpgradePreview() : this.openPage("upgrade"), "is-secondary").disabled = this.upgradeBusy;
   }
@@ -430,7 +431,7 @@ export class KnowledgePageView extends ItemView {
   }
   private roleLabel(role: string): string { const names: Record<string, [string, string]> = { raw: ["资料来源", "Sources"], wiki: ["知识成果", "Knowledge"], projects: ["项目", "Projects"], inbox: ["收件箱", "Inbox"] }; return this.t(...names[role]); }
   private directoryState(state: string): string {
-    const labels: Record<string, [string, string]> = { disabled: ["未启用", "Disabled"], unbound: ["尚未设置知识库位置", "No location configured"], invalid: ["位置已失效", "Location is unavailable"], unavailable: ["位置暂时读不到", "Location cannot be read"], partial: ["部分位置尚未更新", "Some locations are not updated"] };
+    const labels: Record<string, [string, string]> = { disabled: ["未启用", "Disabled"], unbound: ["尚未设置知识库位置", "No location configured"], invalid: ["位置已失效", "Location is unavailable"], unavailable: ["位置暂时无法读取", "Location cannot be read"], partial: ["部分位置尚未更新", "Some locations are not updated"] };
     return labels[state] ? this.t(...labels[state]) : "";
   }
   private renderLocations(): void {

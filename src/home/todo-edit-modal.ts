@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { isImeKeyEvent, watchImeComposition } from "../ui/ime-composition";
 import { App, Modal, Notice, setIcon } from "obsidian";
 import type { TodoHost } from "./home-host";
@@ -307,10 +308,7 @@ export class EchoInkTodoFormModal extends Modal {
     } catch (error) {
       this.saving = false;
       this.syncDisabled?.();
-      new Notice(this.t(
-        `保存失败：${error instanceof Error ? error.message : String(error)}；输入已保留，请重试。`,
-        `Save failed: ${error instanceof Error ? error.message : String(error)}. Your input was kept.`
-      ));
+      new Notice(failureText(error, ["待办未能保存，输入已保留。", "The to-do could not be saved. Your input was kept."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
     }
   }
 }

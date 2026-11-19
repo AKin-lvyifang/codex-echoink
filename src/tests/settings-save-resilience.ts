@@ -153,7 +153,7 @@ export async function runSettingsSaveResilienceTests(): Promise<void> {
       const f = fixture(); f.settings.settingsLanguage = "en";
       f.plugin.saveData = async () => { throw busy(); };
       await assert.rejects(f.store.saveSettings(true));
-      assert.deepEqual(openTestNoticeMessages, ["EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."]);
+      assert.deepEqual(openTestNoticeMessages, ["EchoInk could not save settings. Check whether a sync or antivirus app is locking the plugin folder."]);
     }],
     ["a committed write which throws is still successful", async () => {
       const f = fixture();

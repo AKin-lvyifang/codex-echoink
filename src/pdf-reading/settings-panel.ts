@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginInput, createOriginSelect, createOriginSwitch, disposeOriginControls } from "../settings/origin-controls";
@@ -24,7 +25,7 @@ export class PdfReadingSettingsPanel {
     const row = (title: string, description?: string) => { const el = page.createDiv({ cls: "echoink-life-setting-row" }); const text = el.createDiv(); text.createEl("strong", { text: title }); if (description) text.createEl("small", { text: description }); return el; };
     if (!options.embedded) {
     const enabled = createOriginSwitch(row("启用插件"), { attr: { "aria-label": "启用 PDF 精读" } }); enabled.checked = this.plugin.settings.pdfReading.enabled;
-    this.controls.bind(enabled); enabled.onchange = () => { void host.setEnabled(enabled.checked).catch(error => { enabled.checked = this.plugin.settings.pdfReading.enabled; new Notice(String(error)); }); };
+    this.controls.bind(enabled); enabled.onchange = () => { void host.setEnabled(enabled.checked).catch(error => { enabled.checked = this.plugin.settings.pdfReading.enabled; new Notice(userFacingErrorText(error, "PDF 精读未能切换开关。请稍后重试。")); }); };
     }
     const form = page.createEl("form", { cls: "echoink-pdf-settings-form" });
     if (options.embedded) form.addClass("is-embedded");
@@ -70,6 +71,6 @@ export class PdfReadingSettingsPanel {
       this.plugin.settings.pdfReading = { ...previous, engine: engine.value as "local" | "mineru", originalDirectory: originalDirectory.value, mineruToken: token.value.trim(), translationLanguage: language.value.trim().slice(0, 40) };
       try { await this.plugin.saveSettings(true); new Notice("PDF 设置已保存。"); } catch (error) { this.plugin.settings.pdfReading = previous; throw error; }
       finally { saving = false; this.controls?.refresh(); }
-    })().catch(error => new Notice(String(error))); };
+    })().catch(error => new Notice(userFacingErrorText(error, "PDF 设置未能保存。请稍后重试。"))); };
   }
 }

@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
@@ -39,7 +40,7 @@ export function renderWorkbenchModuleLock(parent: HTMLElement, plugin: CodexForO
   for (const [key, text, variant] of [["login", en ? "Sign in" : "登录", "tertiary"], ["benefits", en ? "View PRO benefits" : "查看 PRO 权益", "primary"]] as const) {
     const button = createOriginButton(actions, { text, cls: `wb-button is-${variant}`, attr: { "data-wb-focus": `module-lock-${key}` } });
     applyAmicroButton(button, { variant });
-    button.onclick = () => { void plugin.openEchoInkAccountSettings(key).catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+    button.onclick = () => { void plugin.openEchoInkAccountSettings(key).catch(error => new Notice(failureText(error, ["账号设置未能打开。", "Account settings could not be opened."], NEXT.retryLater, plugin.settings.settingsLanguage))); };
   }
   return page;
 }

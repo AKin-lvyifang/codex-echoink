@@ -11,6 +11,7 @@ import { calculatePiEffectiveInputBudget } from "../harness/pi-native/pi-effecti
 import { createConfiguredPiAutoOutputLimitPolicy } from "../plugin/configured-pi-provider-dispatcher";
 import { ProviderModelModal } from "../settings/provider-model-modal";
 import { settingsCopy } from "../settings/i18n";
+import { resolveEchoInkPiReasoningCapabilities } from "../settings/pi-model-catalog";
 
 export async function runProviderAutoLimitSettingsTests(): Promise<void> {
   const unknown = () => createApiProviderModelConfig("custom", "auto-output-fixture");
@@ -53,6 +54,33 @@ export async function runProviderAutoLimitSettingsTests(): Promise<void> {
   provider.models[0]!.autoLimits = { maxOutputTokens: -1, contextWindow: Number.NaN };
   assert.equal(load(provider).apiProviders[0]!.models[0]!.autoLimits, undefined);
   delete provider.models[0]!.autoLimits;
+  const glm = createApiProviderConfig("glm", "glm-53-upgrade");
+  glm.models = [createApiProviderModelConfig("glm", "glm-5.3")];
+  glm.defaultModelId = "glm-5.3";
+  for (const discovery of [undefined, { id: "glm-5.3" }, {
+    id: "glm-5.3", contextWindow: 64_000, modelMaxTokens: 8_192, reasoning: true,
+    reasoningLevels: ["low", "medium", "high", "xhigh", "max"] as const
+  }]) {
+    const old = { ...glm.models[0]!, limitsOverride: undefined, contextWindow: 64_000, modelMaxTokens: 8_192, maxOutputTokens: 8_192,
+      metadataSource: discovery ? "discovery" as const : "unknown" as const,
+      ...(discovery ? { discovery: JSON.parse(JSON.stringify(discovery)) } : {}), autoLimits: { maxOutputTokens: 8_192 } };
+    glm.models = [old];
+    const upgraded = load(glm).apiProviders[0]!.models[0]!;
+    assert.deepEqual([upgraded.contextWindow, upgraded.modelMaxTokens, upgraded.maxOutputTokens], [1_000_000, 131_072, 131_072]);
+    assert.equal(apiProviderModelUsesAutoOutputLimit("glm", upgraded), false);
+    const owner = { settings: load(glm), saveSettings: async () => {} };
+    assert.equal(createConfiguredPiAutoOutputLimitPolicy(owner, owner.settings.apiProviders[0]!, old.id).read({ id: old.id } as Model<Api>), null,
+      "obsolete learned 8192 must not cap a now-known GLM model");
+    glm.models = [{ ...old, limitsOverride: { maxOutputTokens: 8_192 } }];
+    const explicit = load(glm).apiProviders[0]!.models[0]!;
+    assert.equal(explicit.maxOutputTokens, 8_192);
+    assert.deepEqual(explicit.limitsOverride, { maxOutputTokens: 8_192 }, "explicit user limit survives the metadata upgrade");
+  }
+  const capabilities = resolveEchoInkPiReasoningCapabilities("zai-coding-cn", "glm-5.3", { reasoning: true });
+  assert.equal(capabilities.supportsOff, false);
+  assert.equal(capabilities.defaultEffort, "max");
+  assert.deepEqual(capabilities.enabledOptions.map(option => option.effort), ["low", "high", "max"]);
+  console.log("PASS GLM-5.3: preset, stale discovery/8192 cache upgrade, explicit user cap, always-thinking low/high/max");
   let saves = 0;
   const host = { settings: load(provider), saveSettings: async () => { saves++; } };
   const current = host.settings.apiProviders[0]!;

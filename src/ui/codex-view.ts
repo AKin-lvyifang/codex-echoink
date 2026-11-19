@@ -1,4 +1,9 @@
+import { bindPressFeedback } from "./press-feedback";
+import { ACTION_FAILED, failureText, joinErrorCopy, NEXT } from "../core/error-copy";
 import { requireModuleOwner } from "../agents/registry";
+import { renderComposerSubmission } from "./composer-submission-renderer";
+import type { DesktopComposerDraft } from "./codex-view/composer-submission";
+import type { PiConversationProjection } from "../harness/pi-native/contracts";
 import { TOOL_ROUND_STOP_MESSAGE } from "../agents/tool-round-budget";
 import { KnowledgeSystemConversationCard } from "./codex-view/knowledge-system-card";
 import { CompanyConversationCard } from "./codex-view/company-card";
@@ -74,7 +79,8 @@ import {
 import type {
   CodexViewLifecycleSnapshot,
   CodexViewPromptEnhanceContext,
-  CodexViewTurnContext
+  CodexViewTurnContext,
+  QueuedTurnOutcome
 } from "./codex-view/runner-context";
 import type { SessionMessageInput } from "./codex-view/session-message-store";
 import {
@@ -113,11 +119,13 @@ import {
   renderKnowledgeCommandMatches as renderKnowledgeCommandMatchesAction,
   renderQueue as renderQueueAction,
   renderToolbar as renderToolbarAction,
+  repairComposerXiaoechoSelection,
   submitKnowledgeBaseCommand as submitKnowledgeBaseCommandAction,
   updateContextForSession as updateContextForSessionAction,
   selectComposerMode as selectComposerModeAction,
   type CodexComposerHost
 } from "./codex-view/composer-controller";
+import { subscribeXiaoechoCatalogChanges } from "../membership/xiaoecho-catalog-state";
 import { knowledgeCommandQueryForInput } from "../knowledge-base/commands";
 import {
   addContextCompactionMessage as addContextCompactionMessageAction,
@@ -163,6 +171,7 @@ import { TurnNavigator } from "./codex-view/turn-navigator";
 import { conversationUiText } from "./codex-view/ui-i18n";
 import { TaskPlanDockController } from "./codex-view/task-plan-dock";
 import { InteractionDockController } from "./codex-view/interaction-dock";
+import { SmartJudgmentNotice } from "./codex-view/smart-judgment-notice";
 import { piEntryIdFromProjectedMessageId, piToolCallIdFromProjectedMessageId } from "../harness/pi-native/pi-chat-ui-projector";
 import { updateCodexHeaderIdentity } from "./codex-view/header";
 import { closeComposerParameterMenu } from "./codex-view/menus";
@@ -225,9 +234,10 @@ export interface CodexViewMigrationState {
   };
 }
 
-interface ComposerSessionDraft { drawingRequested?: boolean; text: string; annotations: SelectionDraft; attachments: StoredAttachment[]; noteMentions: readonly NoteMentionSelection[]; selectedSkill: EchoInkResource | null }
+type ComposerSessionDraft = DesktopComposerDraft;
 
 export class CodexView extends ItemView {
+  private pressFeedbackDispose?: () => void;
   private taskUiMounted = false;
   private resolveTaskUiReady?: (ready: boolean) => void;
   private readonly taskUiReady = new Promise<boolean>(resolve => { this.resolveTaskUiReady = resolve; });
@@ -255,6 +265,8 @@ export class CodexView extends ItemView {
   private taskEditorEl?: HTMLElement;
   private taskErrorEl?: HTMLElement;
   private taskInterruptionEl?: HTMLElement;
+  private smartJudgmentNotice?: SmartJudgmentNotice;
+  private smartJudgmentUnsubscribe?: () => void;
   private readonly taskInterruptions = new Map<string, { key: string; info?: TaskInterruptionInfo | null; error?: string }>();
   private readonly taskResumeErrors = new Map<string, string>();
   private taskEditor?: AgentEditorController;
@@ -325,6 +337,16 @@ export class CodexView extends ItemView {
     this.taskDetailEl.append(shell, this.taskPlanDockEl, this.interactionDockEl);
     this.taskInterruptionEl = this.messagesEl.createDiv({ cls: "echoink-task-interruption" });
     this.taskInterruptionEl.dataset.messageTail = "interruption";
+    const smartJudgmentEl = this.messagesEl.createDiv();
+    smartJudgmentEl.dataset.messageTail = "smart-judgment";
+    this.smartJudgmentNotice?.dispose();
+    this.smartJudgmentNotice = new SmartJudgmentNotice(smartJudgmentEl, { client: () => this.plugin.decisionClient,
+      language: () => this.plugin.settings.settingsLanguage, openSettings: () => { void this.plugin.openEchoInkAccountSettings(); },
+      // 和账号页购买方案同一条跳转（年付）；不能买时打开账号页的会员权益。
+      upgrade: () => { const select = this.plugin.accountService?.actions.selectPlan;
+        void (select ? select({ planId: "year", currency: "CNY" }) : Promise.reject(new Error("unavailable"))).catch(() => this.plugin.openEchoInkAccountSettings("benefits")); } });
+    this.smartJudgmentUnsubscribe?.();
+    this.smartJudgmentUnsubscribe = this.plugin.decisionClient?.subscribe(() => this.renderSmartJudgmentNotice());
     this.inputEl.addEventListener("compositionstart", () => { this.inlineComposerComposing = true; });
     this.inputEl.addEventListener("compositionend", () => { this.inlineComposerComposing = false; });
     this.restoreTaskComposerDraft();
@@ -361,6 +383,7 @@ export class CodexView extends ItemView {
     this.selectedModel = draft.selectedModel ?? recovery?.target?.modelId ?? this.plugin.settings.defaultModel;
     this.selectedPermission = draft.selectedPermission ?? this.plugin.settings.defaultPermission;
     this.selectedMode = draft.selectedMode ?? "agent";
+    this.repairXiaoechoComposerSelection();
     this.renderAttachments(); this.renderToolbar(); this.updateInputPlaceholder();
   }
   private rememberTaskListPosition(taskId?: string): void {
@@ -371,7 +394,7 @@ export class CodexView extends ItemView {
   async openAgentTaskList(agentId: string, prefill?: string, prefillSource?: string, englishDiarySourcePath?: string): Promise<boolean> {
     if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return false;
     if (this.taskEditorOnboarding) { this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); void this.openAgentTaskList(agentId, prefill, prefillSource, englishDiarySourcePath); }); return false; }
-    if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) { this.showTaskError(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists.")); return false; }
+    if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) { this.showTaskError(this.taskText("该 Agent 已删除。", "This Agent no longer exists.")); return false; }
     this.saveTaskComposerDraft(); this.rememberTaskListPosition();
     this.taskEditor?.dispose(); this.taskEditor = undefined;
     this.taskNavigation.navigate({ kind: "list", agentId }); this.taskDetailLoaded = false; this.taskLoadError = "";
@@ -390,14 +413,20 @@ export class CodexView extends ItemView {
     this.plugin.getConversationRunService().scheduleSave();
     return accepted;
   }
-  async openTaskDetail(taskId: string): Promise<void> {
+  async openTaskDetail(taskId: string, fromAcceptedSubmission = false): Promise<void> {
     if (!this.taskUiMounted || this.viewLifecycleAbortController.signal.aborted) return;
     if (this.taskEditorOnboarding) { this.requestOnboardingEditorLeave(() => { this.plugin.hideEchoInkOnboardingWorkspaceCard(); void this.openTaskDetail(taskId); }); return; }
+    let preparedProjection: PiConversationProjection | undefined;
+    if (fromAcceptedSubmission) {
+      const origin = this.taskNavigation.token;
+      preparedProjection = await this.plugin.readPiConversationProjection(taskId);
+      if (origin !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
+    }
     this.saveTaskComposerDraft(); this.rememberTaskListPosition(taskId);
     this.taskEditor?.dispose(); this.taskEditor = undefined;
     const token = this.taskNavigation.navigate({ kind: "detail", taskId });
     this.taskDetailLoaded = false; this.taskLoadError = "";
-    this.restoreTaskComposerDraft(); this.renderTaskPages();
+    this.restoreTaskComposerDraft(); if (!preparedProjection) this.renderTaskPages();
     const inline = inlineTaskHost(this.plugin)?.service.latestForTask(taskId);
     try {
       if (inline) {
@@ -408,7 +437,7 @@ export class CodexView extends ItemView {
         this.renderTaskPages(); this.renderToolbar(); animateTaskDetailEntry(this.taskDetailEl!, token);
         this.plugin.getConversationRunService().scheduleSave(); return;
       }
-      const projection = await this.plugin.readPiConversationProjection(taskId);
+      const projection = preparedProjection ?? await this.plugin.readPiConversationProjection(taskId);
       if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
       if (projection.catalog.status !== "active" || !isUserTask(projection.catalog)) { await this.leaveUnavailableTask(taskId, projection.catalog.agentId); return; }
       let session = this.sessionById(taskId);
@@ -425,7 +454,7 @@ export class CodexView extends ItemView {
           this.restoreTaskComposerDraft();
         } catch (error) {
           if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
-          this.taskInterruptions.set(taskId, { key, error: error instanceof Error ? error.message : String(error) });
+          this.taskInterruptions.set(taskId, { key, error: failureText(error, ["未能读取中断记录。", "The interruption details could not be read."], NEXT.continueTask, this.failureLanguage()) });
         }
       }
       this.plugin.settings.activeSessionId = taskId;
@@ -442,7 +471,7 @@ export class CodexView extends ItemView {
       if (token !== this.taskNavigation.token || this.viewLifecycleAbortController.signal.aborted) return;
       const failure: unknown = error;
       if (failure && typeof failure === "object" && "code" in failure && failure.code === "conversation_not_found") { await this.leaveUnavailableTask(taskId); return; }
-      this.showTaskError(`${this.taskText("读取任务失败：", "Could not load the task: ")}${error instanceof Error ? error.message : String(error)}`);
+      this.showTaskError(failureText(error, ["任务未能打开。", "The task could not be opened."], NEXT.retryOrReload, this.failureLanguage()));
     }
   }
 
@@ -499,7 +528,7 @@ export class CodexView extends ItemView {
             }
           }
           this.renderTaskPages();
-        } catch (error) { this.showTaskError(`${this.taskText("读取任务列表失败：", "Could not load tasks: ")}${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) { this.showTaskError(failureText(error, ["未能读取任务列表。", "The task list could not be loaded."], NEXT.retryOrReload, this.failureLanguage())); }
       } while (this.taskRefreshAgain && !this.viewLifecycleAbortController.signal.aborted);
     })().finally(() => { this.taskCatalogFlight = undefined; });
     await this.taskCatalogFlight;
@@ -514,13 +543,20 @@ export class CodexView extends ItemView {
   }
   private showTaskError(message: string): void { this.taskLoadError = message; this.renderTaskPages(); }
   private async openTaskRunReport(id: string): Promise<void> {
-    try { await this.plugin.openRunReport(id); } catch (error) { new Notice(error instanceof Error ? error.message : "无法打开上报问题"); }
+    try { await this.plugin.openRunReport(id); } catch (error) { new Notice(failureText(error, ["“上报问题”未能打开。", "Report a problem could not be opened."], NEXT.retryOrReload, this.failureLanguage())); }
   }
   openReportConversationId(): string | undefined {
     if (this.taskUiMounted) return !this.taskEditor && this.taskNavigation.page.kind === "detail" ? this.taskNavigation.page.taskId : undefined;
     return this.plugin.settings.activeSessionId || undefined;
   }
+  /** 智能判断只在两个时刻说话：首次开启、本月用完；只在对话详情里显示。 */
+  private renderSmartJudgmentNotice(): void {
+    const entry = this.currentTaskEntry();
+    this.smartJudgmentNotice?.render(!!entry && !!this.taskDetailLoaded && !this.taskEditor && !this.taskDerivationInProgress && !this.currentInlineTask()
+      && !this.isDispatchedTask(entry.conversationId), entry?.conversationId ?? "");
+  }
   private renderTaskInterruptionCard(): void {
+    this.renderSmartJudgmentNotice();
     const element = this.taskInterruptionEl, entry = this.currentTaskEntry();
     if (!element) return;
     if (this.currentInlineTask()) { element.hidden = true; return; }
@@ -554,10 +590,10 @@ export class CodexView extends ItemView {
           && !draft?.selectedProviderSettingsId && !draft?.selectedModel
           && this.selectedProviderSettingsId === this.plugin.settings.activeApiProviderId && this.selectedModel === this.plugin.settings.defaultModel) {
           const target = this.plugin.taskToolCallRecovery?.(id, info)?.target;
-          if (target) { this.selectedProviderSettingsId = target.providerSettingsId; this.selectedModel = target.modelId; this.renderToolbar(); }
+          if (target) { this.selectedProviderSettingsId = target.providerSettingsId; this.selectedModel = target.modelId; this.repairXiaoechoComposerSelection(); this.renderToolbar(); }
         }
       }).catch(error => {
-        current.error = this.taskText("读取中断记录失败：", "Could not read interruption details: ") + (error instanceof Error ? error.message : String(error));
+        current.error = failureText(error, ["未能读取中断记录。", "The interruption details could not be read."], NEXT.continueTask, this.failureLanguage());
       }).finally(() => {
         if (this.viewLifecycleAbortController.signal.aborted || this.currentTaskEntry()?.conversationId !== id || this.taskInterruptions.get(id) !== current) return;
         const follow = this.isMessagesNearBottom();
@@ -591,7 +627,7 @@ export class CodexView extends ItemView {
       if (item && this.isComposerTransferCancelled(item.id)) return;
       outcome = await this.plugin.resumeTask(taskId, item?.text, item ?? undefined);
     } catch (error) {
-      this.taskResumeErrors.set(taskId, error instanceof Error ? error.message : String(error));
+      this.taskResumeErrors.set(taskId, failureText(error, ["任务未能继续执行。", "The task could not be continued."], NEXT.continueOrReport, this.failureLanguage()));
     } finally {
       if (item) this.onComposerTransferFinished(item, outcome);
       this.taskSubmitting.delete(key);
@@ -610,7 +646,7 @@ export class CodexView extends ItemView {
     renderAgentRoster(this.tabBarEl, this.plugin.settings.agentRegistry.agents, displayEntries, agent.id,
       { onSelect: id => {
         const selected = this.plugin.settings.agentRegistry.agents.find(item => item.id === id);
-        if (isExpertAgent(selected)) void this.plugin.openExpertConversation(id).catch(error => new Notice(error instanceof Error ? error.message : String(error)));
+        if (isExpertAgent(selected)) void this.plugin.openExpertConversation(id).catch(error => new Notice(failureText(error, ["专家对话未能打开。", "The expert conversation could not be opened."], NEXT.retryOrReload, this.failureLanguage())));
         else void this.openAgentTaskList(id);
       }, onCreate: () => this.openAgentEditor(), onHire: () => { void this.plugin.openExpertHall(); } }, this.plugin.settings.settingsLanguage);
     this.taskEditorEl.hidden = !this.taskEditor; this.taskListEl.hidden = !!this.taskEditor || page.kind !== "list";
@@ -649,7 +685,7 @@ export class CodexView extends ItemView {
       status: entry => { const request = inlineHost?.service.latestForTask(entry.conversationId); return request ? inlineTaskStatus(request, this.plugin.settings.settingsLanguage) : undefined; },
       ...(agent.id === GENERAL_ASSISTANT_ID && this.plugin.companyService ? { section: (entry: TaskEntry) => entry.companyRole === "router" && entry.projectId ? "project" as const : "chat" as const } : {})
     }, Date.now(), this.plugin.settings.settingsLanguage);
-    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(error instanceof Error ? error.message : String(error)); }),
+    else if (entry) renderTaskDetailHeader(this.taskDetailHeaderEl!, agent, entry, () => void this.openAgentTaskList(entry.agentId ?? GENERAL_ASSISTANT_ID), this.plugin.settings.settingsLanguage, this.taskMaintenanceActivities ?? [], () => this.stopTurn().catch(error => { new Notice(failureText(error, ["任务未能停止。", "The task could not be stopped."], NEXT.retryOrReload, this.failureLanguage())); }),
       inline ? { subtitle: `${agent.name} · ${inlineNoteName(inline.path)}`, status: inlineTaskStatus(inline, this.plugin.settings.settingsLanguage), state: inlineTaskState(inline) }
         : companyRouterWaiting(this.plugin, entry.conversationId) ? { subtitle: agent.name, status: this.taskText("等你回应", "Waiting for you"), state: "waiting" } : undefined, {
         export: async () => exportDesktopRunReport(this.app, this.plugin.getVaultPath(), await this.plugin.captureRunReport(entry.conversationId), this.plugin.settings.settingsLanguage === "en"),
@@ -688,6 +724,8 @@ export class CodexView extends ItemView {
     return this.taskPreviews.get(entry.conversationId)?.text ?? taskSummary(entry, undefined, this.plugin.settings.settingsLanguage);
   }
   private taskText(zh: string, en: string): string { return conversationUiText(this.plugin.settings.settingsLanguage, zh, en); }
+  /** Failure copy must still render when settings are not loaded yet (or in host stubs). */
+  private failureLanguage(): string { return this.plugin?.settings?.settingsLanguage ?? "zh-CN"; }
 
   private renderInlineComposer(): boolean {
     if (!this.taskUiMounted || !this.toolbarEl || !this.inputEl) return false;
@@ -750,7 +788,7 @@ export class CodexView extends ItemView {
           this.plugin.getConversationRunService().scheduleSave();
         }
       }
-    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { new Notice(failureText(error, ["消息未能发送，内容已保留。", "The message could not be sent; your text has been kept."], NEXT.resendOrTest, this.failureLanguage())); }
     finally {
       this.taskSubmitting.delete(key);
       if (!this.viewLifecycleAbortController.signal.aborted) this.refreshInlineTasks();
@@ -763,12 +801,18 @@ export class CodexView extends ItemView {
     return this.taskEditorEl?.querySelector<HTMLElement>(".echoink-agent-editor-header") ?? this.taskEditorEl ?? null;
   }
   async submitOnboardingAgentEditor(): Promise<void> {
-    if (!this.taskEditorOnboarding || !this.taskEditor) throw new Error(this.taskText("新建表单还没准备好，请重试。", "The new Agent form is not ready. Try again."));
+    if (!this.taskEditorOnboarding || !this.taskEditor) throw new Error(this.taskText("新建表单尚未就绪。请重试。", "The new Agent form is not ready. Try again."));
     await this.taskEditor.submitOnboarding();
   }
   requestOnboardingEditorLeave(done: () => void): void {
     if (!this.taskEditorOnboarding || !this.taskEditor) { done(); return; }
     this.taskEditor.requestLeave(() => { this.taskEditor?.dispose(); this.taskEditor = undefined; this.taskEditorOnboarding = false; this.renderTaskPages(); done(); });
+  }
+  /** Workbench setup reminders land on one editor field, with the rest of the editor intact. */
+  openAgentEditorField(agentId: string, field: "persona"): void {
+    this.openAgentEditor(agentId);
+    const input = this.taskEditorEl?.querySelector<HTMLTextAreaElement>(`[data-field="${field}"]`);
+    input?.scrollIntoView({ block: "center" }); input?.focus({ preventScroll: true });
   }
   private openAgentEditor(agentId?: string, onboarding = false): void {
     if (this.taskEditorOnboarding && this.taskEditor) {
@@ -854,7 +898,7 @@ export class CodexView extends ItemView {
   }
 
   private async createWorkbenchSignalTask(agentId: string, signal: WorkbenchSignal, onboardingScope?: Extract<import("../harness/pi-native/contracts").PiKnowledgeMaintenanceScope, { mode: "batch" }>, modulePrompt = false, englishDiarySourcePath?: string): Promise<string> {
-    if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("这个 Agent 已不存在。", "This Agent no longer exists."));
+    if (!this.plugin.settings.agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error(this.taskText("该 Agent 已删除。", "This Agent no longer exists."));
     if (!onboardingScope && requireModuleOwner(this.plugin.settings.agentRegistry, signal.moduleId).id !== agentId) throw new Error("负责人已变化，请重新发起。");
     this.saveTaskComposerDraft();
     const draft: StoredSession = { id: newId("workbench-draft"), agentId, title: "", cwd: this.plugin.getVaultPath(), messages: [], createdAt: 0, updatedAt: 0 };
@@ -994,7 +1038,7 @@ export class CodexView extends ItemView {
           accepted = outcome === "running" || outcome === "completed";
           if (!accepted) throw new Error("生成尚未提交，请检查模型和工作区权限后重试。");
           try { await this.reloadTaskCatalog(); await this.openTaskDetail(session.id); }
-          catch (error) { new Notice(`生成已开始，暂时无法打开任务：${error instanceof Error ? error.message : String(error)}`); }
+          catch (error) { new Notice(failureText(error, ["生成已开始，但任务页未能打开。", "Generation started, but the task page could not be opened."], ["请在任务列表中打开该任务。", "Open it from the task list."], this.failureLanguage())); }
         } catch (error) {
           if (!accepted) { await this.plugin.setPiConversationStatus(session.id, "deleted"); this.plugin.settings.sessions = this.plugin.settings.sessions.filter(item => item.id !== session.id); }
           throw error;
@@ -1002,7 +1046,7 @@ export class CodexView extends ItemView {
       } }).open();
   }
 
-  private async sendNewAgentTask(): Promise<void> {
+  private async sendNewAgentTask(retryItem?: QueuedTurnItem): Promise<void> {
     if (this.taskDerivationInProgress) return;
     const page = this.taskNavigation.page;
     if (page.kind !== "list" || this.taskEditor) return;
@@ -1010,13 +1054,13 @@ export class CodexView extends ItemView {
     if (this.taskSubmitting.has(key)) return;
     this.composerConversationTargets.delete(key);
     this.taskSubmitting.add(key); this.saveTaskComposerDraft();
-    const { prefillSource, englishDiarySourcePath } = this.taskNavigation.draft(page);
+    const { prefillSource, englishDiarySourcePath } = retryItem ?? this.taskNavigation.draft(page);
     let created: StoredSession | undefined, item: QueuedTurnItem | null = null;
     let submissionOutcome: "running" | "failed" = "failed";
     try {
       // This data-only Composer adapter prepares files and references before a Conversation exists.
       const context = this.createTurnRunnerContext(key);
-      item = await createQueuedTurnFromComposerRunner(context, { allowLocalKnowledgeCommands: true });
+      item = retryItem ?? await createQueuedTurnFromComposerRunner(context, { allowLocalKnowledgeCommands: true });
       if (item) item.englishDiarySourcePath = englishDiarySourcePath;
       if (!item || !await validateTaskTurnBeforeCreation(context, item) || this.viewLifecycleAbortController.signal.aborted || this.isComposerTransferCancelled(item.id)) return;
       item.prefillSource = prefillSource;
@@ -1042,7 +1086,7 @@ export class CodexView extends ItemView {
         }
         this.plugin.getConversationRunService().scheduleSave();
         await this.reloadTaskCatalog();
-        if (token === this.taskNavigation.token && !this.viewLifecycleAbortController.signal.aborted) await this.openTaskDetail(created.id);
+        if (token === this.taskNavigation.token && !this.viewLifecycleAbortController.signal.aborted) await this.openTaskDetail(created.id, true);
       } else {
         this.rehomeComposerQueue(created.id, key); this.composerConversationTargets.delete(key);
         await this.plugin.setPiConversationStatus(created.id, "deleted");
@@ -1055,7 +1099,9 @@ export class CodexView extends ItemView {
         await this.plugin.setPiConversationStatus(created.id, "deleted").catch(cleanupError => console.error("Unaccepted task cleanup failed", cleanupError));
         this.plugin.settings.sessions = this.plugin.settings.sessions.filter(session => session.id !== created!.id);
       }
-      this.showTaskError(`${item?.piUserEntryAccepted ? this.taskText("消息已发送，状态刷新失败", "Message sent, but its status could not refresh") : this.taskText("发送失败", "Could not send")}：${error instanceof Error ? error.message : String(error)}`);
+      this.showTaskError(item?.piUserEntryAccepted
+        ? failureText(error, ["消息已发送，但状态未能刷新。", "The message was sent, but its status could not be refreshed."], ["请点击“重试”刷新，无需重新发送。", "Click Retry to refresh; no need to resend."], this.failureLanguage())
+        : failureText(error, ["消息未能发送。", "The message could not be sent."], NEXT.resendOrTest, this.failureLanguage()));
     } finally {
       if (item) { this.onComposerTransferFinished(item, submissionOutcome); this.taskDraftOrigins.delete(item.id); }
       this.taskSubmitting.delete(key); this.scheduleTaskCatalogRefresh();
@@ -1069,34 +1115,54 @@ export class CodexView extends ItemView {
     for (const item of this.turnQueue.itemsForSession(from)) { this.turnQueue.enqueue({ ...item, sessionId: to }); this.turnQueue.removeQueuedItem(from, item.id); }
     if (paused) this.turnQueue.pauseSessionQueue(to);
   }
-  private readonly composerTransfers = new Map<string, { owner: string; snapshot: QueuedTurnItem; draft: ComposerSessionDraft; cancelled: boolean }>();
+  private get composerTransfers() { return this.plugin.getConversationRunService().composerSubmissions.records; }
   private readonly cancelledComposerTransfers = new Set<string>();
   private activeComposerTransfer(): boolean {
     const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
-    return [...this.composerTransfers.values()].some(transfer => transfer.owner === owner);
+    return [...this.composerTransfers.values()].some(transfer => transfer.owner === owner && transfer.phase === "preparing");
   }
-  isComposerTransferCancelled(id: string): boolean { return this.cancelledComposerTransfers.has(id); }
+  isComposerTransferCancelled(id: string): boolean { return this.cancelledComposerTransfers.has(id) || this.composerTransfers.get(id)?.cancelled === true; }
   onComposerTransferStarted(item: Readonly<QueuedTurnItem>): void {
+    const follow = !this.activeComposerTransfer() && !this.plugin.getConversationRunService().isTurnActive(item.sessionId);
     const owner = this.composerDraftOwner || item.sessionId;
     if (this.taskUiMounted) {
       const draft = this.taskNavigation.draft();
       Object.assign(item, { prefillSource: draft.prefillSource, englishDiarySourcePath: draft.englishDiarySourcePath });
     }
-    this.composerTransfers.set(item.id, { owner, snapshot: { ...item }, cancelled: false, draft: {
+    this.plugin.getConversationRunService().composerSubmissions.begin(item.id, owner, { ...item }, {
       text: this.inputEl.value, annotations: snapshotSelectionDraft(this.inputEl),
       attachments: this.attachments.map(value => ({ ...value })), noteMentions: composerNoteMentionSelections(this.inputEl), drawingRequested: this.drawingRequested, selectedSkill: this.selectedSkill
-    } });
+    });
     this.clearComposerDraft();
     if (this.taskUiMounted) this.saveTaskComposerDraft();
     this.renderAttachments(); this.renderToolbar(); this.renderComposerTransfers();
+    if (follow) this.followComposerSubmission(item.id);
+  }
+  private followComposerSubmission(id: string): void {
+    if (!this.messagesEl || this.taskUiMounted && (this.taskNavigation.page.kind !== "detail" || !this.taskDetailLoaded)) return;
+    this.messageListRenderer.followComposerSubmission(id);
+    this.messageScrollFollow.followLatest(this.messagesEl, options => this.renderMessages(options));
   }
   private removeComposerTransfer(id: string): void {
+    this.messageListRenderer.clearComposerReadingAnchor(id);
     this.composerTransfers.delete(id);
     this.rootEl?.querySelectorAll<HTMLElement>("[data-composer-transfer]").forEach(node => { if (node.dataset.composerTransfer === id) node.remove(); });
   }
   onComposerTransferFinished(item: Readonly<QueuedTurnItem>, outcome: "running" | "completed" | "failed" | "cancelled" | "queued"): void {
     const transfer = this.composerTransfers.get(item.id);
     if (!transfer) return;
+    if (!transfer.cancelled && (outcome === "failed" || outcome === "completed") && !item.piUserEntryAccepted && transfer.phase !== "accepted") {
+      const message = outcome === "completed" ? this.taskText("任务已恢复，但补充内容尚未发送。请重试。", "The task was restored, but this additional message was not sent. Retry.")
+        : transfer.error ?? this.plugin.getTaskResumeError(item.sessionId) ?? joinErrorCopy(["消息未能发送。", "The message could not be sent."], NEXT.resendOrTest, this.failureLanguage());
+      this.plugin.getConversationRunService().composerSubmissions.fail(item.id, message);
+      this.turnQueue.pauseSessionQueue(item.sessionId);
+      this.turnQueue.pauseSessionQueue(transfer.owner);
+      this.renderToolbar(); this.renderQueue(); this.renderComposerTransfers(); return;
+    }
+    if (item.piUserEntryAccepted || transfer.phase === "accepted") {
+      this.plugin.getConversationRunService().composerSubmissions.accept(item.id, { userEntryId: item.piUserEntryId ?? transfer.userEntryId, turnId: item.piProductRunId ?? transfer.turnId });
+      this.renderComposerTransfers(); return;
+    }
     this.removeComposerTransfer(item.id);
     const target = this.composerConversationTargets.get(transfer.owner);
     if (outcome === "queued" && target && target !== item.sessionId) {
@@ -1105,7 +1171,7 @@ export class CodexView extends ItemView {
     if (!item.piUserEntryAccepted && outcome !== "queued" && outcome !== "running" && outcome !== "completed") {
       this.turnQueue.pauseSessionQueue(target ?? transfer.owner);
       const active = transfer.owner === (this.composerDraftOwner || this.plugin.settings.activeSessionId);
-      const otherTransfer = [...this.composerTransfers.values()].some(value => value.owner === transfer.owner);
+      const otherTransfer = [...this.composerTransfers.values()].some(value => value.owner === transfer.owner && value.phase === "preparing" && !value.queued);
       const newer = otherTransfer || (active ? Boolean(this.inputEl.value.trim() || this.attachments.length || this.drawingRequested || this.selectedSkill
         || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length)
         : Boolean(this.composerSessionDrafts.get(transfer.owner)?.text.trim() || this.composerSessionDrafts.get(transfer.owner)?.attachments.length
@@ -1138,20 +1204,80 @@ export class CodexView extends ItemView {
     }
     this.cancelledComposerTransfers.delete(item.id); this.renderToolbar(); this.renderQueue();
   }
+  private composerTransferPreviewMounted = false;
   private renderComposerTransfers(): void {
     if (!this.rootEl) return;
+    if (!this.composerTransfers.size && !this.composerTransferPreviewMounted) return;
+    const follow = this.messageListRenderer.followingComposerSubmission && !this.messagesBottomFollowPaused
+      && !this.messageScrollFollow.animating && this.isMessagesAtBottom();
     this.rootEl.querySelectorAll("[data-composer-transfer]").forEach(node => node.remove());
+    this.composerTransferPreviewMounted = false;
     const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
     const host = this.taskUiMounted && this.taskNavigation.page.kind === "list" ? this.taskListEl : this.messagesEl;
     if (!host) return;
     for (const [id, transfer] of this.composerTransfers) {
-      if (transfer.owner !== owner) continue;
+      if (transfer.owner !== owner && !(transfer.phase === "accepted" && transfer.snapshot.sessionId === owner)) continue;
+      if (transfer.phase === "accepted") this.messageListRenderer.acceptComposerSubmission(id, transfer);
       const session = this.sessionById(transfer.snapshot.sessionId);
-      if (session?.messages.some(message => message.role === "user" && message.createdAt >= transfer.snapshot.createdAt)) continue;
-      const bubble = host.createDiv({ cls: "codex-message codex-message-user codex-composer-pending", attr: { "data-composer-transfer": id, role: "status", "aria-live": "polite" } });
-      bubble.createDiv({ cls: "codex-message-content codex-composer-pending-text", text: transfer.snapshot.text || transfer.snapshot.attachments.map(value => value.name).join("、") });
-      bubble.createDiv({ cls: "codex-composer-pending-status", text: this.taskText("发送中", "Sending") });
+      const visibleDetail = !this.taskUiMounted || this.taskNavigation.page.kind === "detail" && this.taskDetailLoaded;
+      const projectedUser = session?.messages.find(message => message.role === "user" && (piEntryIdFromProjectedMessageId(message.id) === transfer.userEntryId
+        || transfer.turnId && message.runId === transfer.turnId));
+      const renderedUser = visibleDetail && Array.from(this.messagesEl?.querySelectorAll<HTMLElement>('[data-message-role="user"][data-message-id]') ?? [])
+        .some(node => node.dataset.messageId === projectedUser?.id);
+      if (transfer.phase === "accepted" && transfer.userEntryId && renderedUser) {
+        this.messageListRenderer.acceptComposerSubmission(id, transfer);
+        this.composerTransfers.delete(id); continue;
+      }
+      const element = renderComposerSubmission(host, transfer.queued && transfer.phase !== "failed" ? { ...transfer, queued: false } : transfer, { text: transfer.snapshot.text || transfer.snapshot.attachments.map(value => value.name).join("、"),
+        renderProcess: parent => this.messageListRenderer.renderComposerPreparation(parent, transfer.id, transfer.stages, {
+          language: this.plugin.settings.settingsLanguage, agentIdentity: this.plugin.getEchoInkAgentIdentityView(),
+          openNote: path => { void this.app.workspace.openLinkText(path, ""); }, readMemory: (id, revision) => this.plugin.readEchoInkPersonalMemorySource(id, revision), onMeasure: () => this.messageListRenderer.refreshComposerLayout()
+        }),
+        showProcess: transfer.phase !== "accepted" || this.plugin.getConversationRunService().isTurnActive(transfer.snapshot.sessionId), language: this.plugin.settings.settingsLanguage, userClass: "codex-message codex-message-user codex-ai-elements-message is-user codex-message-type-user",
+        retry: () => this.retryComposerTransfer(id), edit: () => this.editComposerTransfer(id),
+        button: (parent, text, action) => { const button = createOriginButton(parent, { text, attr: { type: "button" } }); button.onclick = () => { void Promise.resolve(action()).catch(error => new Notice(failureText(error, ACTION_FAILED, NEXT.retry, this.failureLanguage()))); }; }
+      });
+      if (host === this.messagesEl) element.dataset.messageTail = "true";
+      this.composerTransferPreviewMounted = true;
     }
+    this.messageListRenderer.refreshComposerLayout();
+    if (follow && host === this.messagesEl) this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+  }
+  private async retryComposerTransfer(id: string): Promise<void> {
+    const submissions = this.plugin.getConversationRunService().composerSubmissions;
+    const transfer = submissions.records.get(id);
+    if (!transfer || transfer.phase !== "failed") return;
+    const service = this.plugin.getConversationRunService();
+    if (service.isTurnActive(transfer.snapshot.sessionId) || service.isResuming(transfer.snapshot.sessionId)
+      || this.taskSubmitting.has(transfer.owner) || [...this.composerTransfers.values()].some(value => value.id !== id && value.owner === transfer.owner && value.phase === "preparing")) {
+      new Notice(this.taskText("请等待当前回复或准备完成后重试。", "Wait for the current reply or preparation before retrying.")); return;
+    }
+    if (!submissions.retry(id)) return;
+    this.followComposerSubmission(id);
+    if (transfer.owner.startsWith("agent:")) { await this.sendNewAgentTask(transfer.snapshot); return; }
+    let outcome: QueuedTurnOutcome = "failed";
+    try {
+      outcome = this.sessionById(transfer.snapshot.sessionId)?.taskStatus === "interrupted"
+        ? await this.plugin.resumeTask(transfer.snapshot.sessionId, transfer.snapshot.text, transfer.snapshot)
+        : await this.plugin.getConversationRunService().start(transfer.snapshot, "composer");
+    }
+    finally { this.onComposerTransferFinished(transfer.snapshot, outcome); }
+  }
+  private editComposerTransfer(id: string): void {
+    const transfer = this.composerTransfers.get(id);
+    if (!transfer || transfer.phase !== "failed") return;
+    if (this.inputEl.value.trim() || this.attachments.length || this.drawingRequested || this.selectedSkill || composerNoteMentionSelections(this.inputEl).length || composerSelectionAnnotations(this.inputEl).length) {
+      new Notice(this.taskText("输入框中已有新的草稿，该消息已保留。请先处理当前草稿。", "Finish your current draft first. This message has been kept.")); return;
+    }
+    const draft = transfer.draft, options = transfer.snapshot.turnOptions;
+    this.inputEl.value = draft.text; this.attachments = draft.attachments.map(value => ({ ...value }));
+    this.selectedSkill = draft.selectedSkill; this.drawingRequested = draft.drawingRequested === true;
+    restoreSelectionDraft(this.inputEl, draft.annotations); clearComposerNoteMentions(this.inputEl);
+    for (const mention of draft.noteMentions) addComposerNoteMentionSelection(this.inputEl, mention);
+    this.selectedProviderSettingsId = options.providerSettingsId ?? ""; this.selectedModel = options.model;
+    this.selectedPermission = options.permission; this.selectedMode = options.mode;
+    if (this.taskUiMounted) this.saveTaskComposerDraft();
+    this.removeComposerTransfer(id); this.renderAttachments(); this.renderToolbar(); this.inputEl.focus();
   }
   private readonly composerSessionDrafts = new Map<string, ComposerSessionDraft>();
   switchComposerDraft(sessionId: string): void {
@@ -1171,7 +1297,7 @@ export class CodexView extends ItemView {
     this.renderAttachments();
   }
   clearAcceptedComposerDraft(item: Readonly<QueuedTurnItem>): void {
-    if (item.composerDraftTransferred) { this.removeComposerTransfer(item.id); return; }
+    if (item.composerDraftTransferred) return;
     if (this.taskUiMounted && this.viewLifecycleAbortController.signal.aborted) {
       consumeAcceptedTaskDraft(this.plugin.settings.taskWorkspace, this.taskDraftOrigins.get(item.id) ?? item.sessionId, item);
       this.plugin.getConversationRunService().scheduleSave(); return;
@@ -1287,6 +1413,7 @@ export class CodexView extends ItemView {
   private selectedModel = "";
   private selectedPermission: PermissionMode;
   private selectedMode: UiMode;
+  private xiaoechoCatalogDispose?: () => void;
   private skillsRequested = false;
   private viewLifecycleGeneration = 0;
   private viewLifecycleAbortController = new AbortController();
@@ -1312,6 +1439,7 @@ export class CodexView extends ItemView {
     super(leaf);
     this.selectedProviderSettingsId = plugin.settings.activeApiProviderId;
     this.selectedModel = plugin.settings.defaultModel;
+    repairComposerXiaoechoSelection(this.composerHost());
     this.selectedPermission = plugin.settings.defaultPermission;
     this.selectedMode = plugin.settings.taskWorkspace?.replyDrafts[plugin.settings.activeSessionId]?.selectedMode ?? "agent";
     this.promptEnhancerRunnerContext = this.createPromptEnhancerRunnerContext();
@@ -1358,11 +1486,15 @@ export class CodexView extends ItemView {
     return ((view: this) => {
       const state = this.conversationRun(sessionId);
       const lifecycle = this.turnLifecycleHost(sessionId);
+      let composerTransferId = "";
       const context: CodexViewTurnContext = {
         get lifecycleSignal() { return view.viewLifecycleAbortController.signal; }, get app() { return view.app; }, get plugin() { return view.plugin; }, get running() { return state.running; }, set running(value) { state.running = value; }, get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; }, get activeRunKind() { return state.activeRunKind; }, set activeRunKind(value) { state.activeRunKind = value; }, get activeRunSessionId() { return state.activeRunSessionId; }, set activeRunSessionId(value) { state.activeRunSessionId = value; }, get activeTurnId() { return state.activeTurnId; }, set activeTurnId(value) { state.activeTurnId = value; },
         get turnQueue() { return view.turnQueue; }, get queueStartInProgress() { return state.queueStartInProgress; }, set queueStartInProgress(value) { state.queueStartInProgress = value; if (!value && !state.running) view.clearConversationRun(sessionId, state); }, get turnStartedAt() { return state.turnStartedAt; }, set turnStartedAt(value) { state.turnStartedAt = value; }, get inputEl() { return view.inputEl; }, get attachments() { return view.attachments; }, get drawingRequested() { return view.drawingRequested; }, get selectedSkill() { return view.selectedSkill; }, get selectedProviderSettingsId() { return view.selectedProviderSettingsId; }, set selectedProviderSettingsId(value) { view.selectedProviderSettingsId = value; }, get selectedModel() { return view.selectedModel; }, set selectedModel(value) { view.selectedModel = value; }, get messagesBottomFollowPaused() { return view.messagesBottomFollowPaused; }, set messagesBottomFollowPaused(value) { view.messagesBottomFollowPaused = value; },
         applyStatus: () => view.applyStatus(), armTurnWatchdog: (timeoutMs, timeoutText) => armTurnWatchdogAction(lifecycle, timeoutMs, timeoutText), clearTurnWatchdog: () => clearTurnWatchdogAction(lifecycle), clearActiveRun: () => view.clearConversationRun(sessionId, state), renderToolbar: () => view.renderToolbar(), diagnoseCodexFailure: (error, model) => view.diagnoseCodexFailure(error, model), ensureSession: () => view.sessionById(sessionId) ?? view.ensureSession(), composerStateForSession: (session) => view.composerStateForSession(session), enqueueComposerDraft: () => enqueueComposerDraftRunner(context), resumeQueuedTurns: (sessionId) => view.resumeQueuedTurns(sessionId), stopTurn: () => view.stopTurn(), pauseQueueForSession: (sessionId) => view.pauseQueueForSession(sessionId),
-        onComposerTransferStarted: item => view.onComposerTransferStarted(item),
+        onComposerTransferStarted: item => { composerTransferId = item.id; view.onComposerTransferStarted(item); },
+        onComposerTransferPrepared: item => { const transfer = view.composerTransfers.get(item.id); if (transfer) transfer.snapshot = { ...item }; },
+        onComposerTransferError: (id, message) => { const transfer = view.composerTransfers.get(id); if (transfer) transfer.error = message; },
+        onPiRunFailure: message => view.plugin.getConversationRunService().composerSubmissions.captureFailure(composerTransferId, message),
         onComposerTransferFinished: (item, outcome) => view.onComposerTransferFinished(item, outcome),
         isComposerTransferCancelled: id => view.isComposerTransferCancelled(id),
         clearAcceptedComposerDraft: (item) => view.clearAcceptedComposerDraft(item),
@@ -1422,6 +1554,7 @@ export class CodexView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.pressFeedbackDispose?.(); this.pressFeedbackDispose = bindPressFeedback(this.contentEl);
     this.viewLifecycleAbortController?.abort();
     this.viewLifecycleGeneration = (
       Number.isSafeInteger(this.viewLifecycleGeneration)
@@ -1430,13 +1563,22 @@ export class CodexView extends ItemView {
     ) + 1;
     this.viewLifecycleAbortController = new AbortController();
     const signal = this.viewLifecycleAbortController.signal;
+    this.xiaoechoCatalogDispose?.();
+    if (!Platform.isMobile) {
+      this.xiaoechoCatalogDispose = subscribeXiaoechoCatalogChanges(() => {
+        if (signal.aborted) return;
+        this.repairXiaoechoComposerSelection();
+        if (this.toolbarEl) this.renderToolbar();
+      });
+      void this.plugin.refreshXiaoechoCatalog?.();
+    }
     try {
       try {
         await refreshPiConversationShellsAction(this.sessionHost(), { createIfEmpty: Platform.isMobile || !this.plugin.settings.agentRegistry });
       } catch (error) {
         console.error("Pi Conversation Catalog refresh failed", error);
         new Notice(
-          `${conversationUiText(this.plugin.settings.settingsLanguage, "读取会话列表失败：", "Could not load the conversation list: ")}${error instanceof Error ? error.message : String(error)}`
+          failureText(error, ["未能读取会话列表。", "The conversation list could not be loaded."], NEXT.retryOrReload, this.failureLanguage())
         );
       }
       if (signal.aborted) return;
@@ -1444,16 +1586,22 @@ export class CodexView extends ItemView {
       const initialConversation = desktopTasks ? null : await ensureInitialConversationAction(this.sessionHost());
       if (signal.aborted) return;
       this.render();
+      this.register(this.plugin.getConversationRunService().composerSubmissions.subscribe(() => { if (!this.viewLifecycleAbortController.signal.aborted) this.renderComposerTransfers(); }));
       const mountToken = desktopTasks ? this.taskNavigation.token : 0;
       this.runSubscriptionDispose?.();
       this.runSubscriptionDispose = this.plugin.getConversationRunService().subscribe({
         isTaskVisible: id => !this.viewLifecycleAbortController.signal.aborted && this.plugin.settings.activeSessionId === id
           && (!this.taskUiMounted || !this.taskEditor && this.taskDetailLoaded && this.taskNavigation.page.kind === "detail" && this.taskNavigation.page.taskId === id),
         clearAcceptedDraft: item => this.clearAcceptedComposerDraft(item),
-        refresh: (id, message) => {
+        turnStarting: item => {
+          if (this.plugin.settings.activeSessionId === item.sessionId) this.followComposerSubmission(item.id);
+        },
+        refresh: (id, message, shellChanged = true) => {
           if (this.viewLifecycleAbortController.signal.aborted) return;
-          if (this.taskUiMounted) this.scheduleTaskCatalogRefresh();
-          this.renderTabs(); this.renderQueue(); this.renderToolbar(); this.applyStatus();
+          if (shellChanged) {
+            if (this.taskUiMounted) this.scheduleTaskCatalogRefresh();
+            this.renderTabs(); this.renderQueue(); this.renderToolbar(); this.applyStatus();
+          }
           this.renderCompanyCard();
           const session = this.sessionById(id);
           if (session) { this.renderMessagesIfActive(session, message); if (this.plugin.settings.activeSessionId === id) this.renderInteractionDock(session); }
@@ -1483,7 +1631,7 @@ export class CodexView extends ItemView {
         } catch (error) {
           console.error("Pi Conversation activation failed", error);
           new Notice(
-            `${conversationUiText(this.plugin.settings.settingsLanguage, "恢复会话失败：", "Could not restore the conversation: ")}${error instanceof Error ? error.message : String(error)}`
+            failureText(error, ["上次的会话未能打开。", "The last conversation could not be opened."], NEXT.retryOrReload, this.failureLanguage())
           );
         }
       }
@@ -1495,8 +1643,12 @@ export class CodexView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.pressFeedbackDispose?.(); this.pressFeedbackDispose = undefined;
+    this.xiaoechoCatalogDispose?.(); this.xiaoechoCatalogDispose = undefined;
     this.companyCard?.dispose(); this.companyCard = undefined;
     this.knowledgeSystemCard?.dispose(); this.knowledgeSystemCard = undefined;
+    this.smartJudgmentUnsubscribe?.(); this.smartJudgmentUnsubscribe = undefined;
+    this.smartJudgmentNotice?.dispose(); this.smartJudgmentNotice = undefined;
     this.settleTaskUiReady(false);
     if (this.taskUiMounted) { this.saveTaskComposerDraft(); this.rememberTaskListPosition(); }
     this.taskEditor?.dispose(); this.taskEditor = undefined;
@@ -1518,7 +1670,7 @@ export class CodexView extends ItemView {
       await this.plugin.getConversationRunService().flushSave();
     } finally {
       this.clearHomeAttentionFrame(); this.taskPlanDock.dispose(); this.interactionDock.dispose();
-      this.messageListRenderer.dispose(); this.turnNavigator?.dispose(); this.turnNavigator = null;
+      this.messageScrollFollow.reset(); this.messageListRenderer.dispose(); this.turnNavigator?.dispose(); this.turnNavigator = null;
     }
   }
 
@@ -1602,6 +1754,7 @@ export class CodexView extends ItemView {
         addComposerNoteMentionSelection(this.inputEl, mention);
       }
     }
+    this.repairXiaoechoComposerSelection();
     this.renderAttachments();
     this.renderQueue();
     this.renderTabs();
@@ -1699,6 +1852,7 @@ export class CodexView extends ItemView {
     this.selectedProviderSettingsId = this.plugin.settings.activeApiProviderId;
     this.selectedModel = this.plugin.settings.defaultModel;
     this.selectedPermission = this.plugin.settings.defaultPermission;
+    this.repairXiaoechoComposerSelection();
     this.renderToolbar();
   }
 
@@ -1880,8 +2034,8 @@ export class CodexView extends ItemView {
         session = null;
         throw new Error(conversationUiText(
           this.plugin.settings.settingsLanguage,
-          "知识复盘提示语未被 Agent 接受，请检查 Provider 后重试",
-          "The Agent did not accept the knowledge review prompt. Check the Provider and try again."
+          "知识复盘未能开始。请在 设置 → 模型服务 中点击“测试连接”排查后重试。",
+          "The knowledge review could not start. Go to Settings → Model services, click “Test connection” to diagnose, then try again."
         ));
       }
       return session;
@@ -2133,12 +2287,12 @@ export class CodexView extends ItemView {
         targetConversationId: newId("conversation"), anchorEntryId: entryId, title });
       const taskId = derivation.projection.catalog.conversationId;
       if (derivation.sourceConversationId !== session.id || taskId === session.id) {
-        throw new Error(this.taskText("派生结果没有独立任务身份。", "The derived result has no independent task identity."));
+        throw new Error(this.taskText("该派生结果无法作为独立任务打开。", "The derived result cannot be opened as a separate task."));
       }
       if (derivation.activation.status === "failed") throw new Error(derivation.activation.message);
       const snapshot = derivation.projection.messages.slice().reverse().find(message => message.role === "assistant" && message.status === "completed"
         && Number.isSafeInteger(message.completedAt ?? message.createdAt) && (message.completedAt ?? message.createdAt) > 0);
-      if (!snapshot) throw new Error(this.taskText("这个位置没有已完成的历史快照，请返回任务列表交代新事。", "There is no completed history snapshot here. Return to the task list to start a new task."));
+      if (!snapshot) throw new Error(this.taskText("该位置无已完成的历史记录。请返回任务列表新建任务。", "There is no completed history here. Return to the task list to start a new task."));
       // Finalize only the new Catalog while awaiting; the current View is untouched until takeover.
       const entry = await this.plugin.setPiConversationTaskMetadata(taskId, { taskStatus: "completed",
         taskCompletedAt: snapshot.completedAt ?? snapshot.createdAt, taskInterruptedAt: undefined, pendingResponse: undefined });
@@ -2160,7 +2314,7 @@ export class CodexView extends ItemView {
     } catch (error) {
       if (stillCurrent()) {
         this.restoreTaskComposerDraft();
-        this.showTaskError(this.taskText("打开派生任务失败：", "Could not open the derived task: ") + (error instanceof Error ? error.message : String(error)));
+        this.showTaskError(failureText(error, ["新分出的任务未能打开。", "The new branched task could not be opened."], ["请点击“重试”；如问题持续，请从任务列表打开。", "Click Retry; if the problem persists, open it from the task list."], this.failureLanguage()));
       }
     } finally {
       this.taskDerivationToken = null;
@@ -2304,7 +2458,7 @@ export class CodexView extends ItemView {
       } await this.plugin.getConversationRunService().resumeQueuedTurns(sessionId); }
     catch (error) {
       if (this.viewLifecycleAbortController.signal.aborted) return;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = failureText(error, ["排队的消息未能继续发送。", "The queued messages could not continue."], NEXT.continueOrReport, this.failureLanguage());
       if (this.taskUiMounted) { this.taskResumeErrors.set(sessionId, message); this.renderTaskInterruptionCard(); }
       else new Notice(message);
     }
@@ -2331,21 +2485,27 @@ export class CodexView extends ItemView {
     if (entry && activity?.taskKind === "upgrade" && activity.originConversationId === entry.conversationId && activity.status === "running") {
       const service = this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null;
       const snapshot = await service?.getUpgradeSnapshot?.();
-      if (snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.taskText("升级任务已更新，请重新打开", "Upgrade task changed. Reopen it."));
+      if (snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.taskText("升级任务已更新。请重新打开该任务后重试。", "The upgrade task has changed. Reopen it and try again."));
       await service.stopUpgrade(); return;
     }
     const owner = this.composerDraftOwner || this.plugin.settings.activeSessionId;
-    for (const [id, transfer] of this.composerTransfers) if (transfer.owner === owner) {
+    for (const [id, transfer] of this.composerTransfers) if (transfer.owner === owner && transfer.phase === "preparing") {
       transfer.cancelled = true; this.cancelledComposerTransfers.add(id);
       this.turnQueue.pauseSessionQueue(transfer.snapshot.sessionId); this.turnQueue.pauseSessionQueue(owner);
     }
-    const transfer = [...this.composerTransfers.values()].find(value => value.owner === owner);
+    const transfer = [...this.composerTransfers.values()].find(value => value.owner === owner && value.phase === "preparing");
     await stopManagedTask(this.plugin, transfer?.snapshot.sessionId ?? (owner.startsWith("agent:") ? owner : this.plugin.settings.activeSessionId));
   }
   private settleStaleMessages(session: StoredSession): void { settleStaleMessagesAction(typeof (this as unknown as { messageHost?: unknown }).messageHost === "function" ? this.messageHost() : this as unknown as CodexMessageHost, session); }
   private armTurnWatchdog(timeoutMs?: number, timeoutText?: string): void { armTurnWatchdogAction(this.turnLifecycleHost(), timeoutMs, timeoutText); }
   private clearTurnWatchdog(): void { clearTurnWatchdogAction(this.turnLifecycleHost()); }
-  private currentTurnOptions(session?: StoredSession) { return currentTurnOptionsAction(this.workspaceHost(), session); }
+  private repairXiaoechoComposerSelection(): void {
+    if (repairComposerXiaoechoSelection(this.composerHost())) this.saveTaskComposerDraft();
+  }
+  private currentTurnOptions(session?: StoredSession) {
+    this.repairXiaoechoComposerSelection();
+    return currentTurnOptionsAction(this.workspaceHost(), session);
+  }
   private currentEchoInkResourceCatalog(): EchoInkResource[] { return currentEchoInkResourceCatalogAction(this.workspaceHost()); }
   private effectiveModel(): string { return effectiveModelAction(this.workspaceHost()); }
 

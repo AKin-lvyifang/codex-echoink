@@ -1,15 +1,10 @@
-export const OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE =
-  "OpenAI Codex 授权已失效，请在设置中重新登录。";
+import { OPENAI_CODEX_AUTH_CODES } from "../core/error-copy/codes/modules";
 
-const AUTH_FAILURE_MESSAGES = {
-  provider_oauth_relogin_required: OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE,
-  provider_network_error: "OpenAI Codex 授权服务连接失败，请检查网络后重试。",
-  provider_rate_limited: "OpenAI Codex 授权请求暂时受限，请稍后重试。",
-  provider_request_rejected: "OpenAI Codex 拒绝了授权请求，请检查设置后重试。",
-  provider_service_unavailable: "OpenAI Codex 授权服务暂时不可用，请稍后重试。",
-  provider_protocol_failed: "OpenAI Codex 授权响应格式异常，请重试。",
-  provider_unavailable: "OpenAI Codex 授权暂不可用，请重试。"
-} as const;
+export const OPENAI_CODEX_RELOGIN_REQUIRED_MESSAGE = OPENAI_CODEX_AUTH_CODES.provider_oauth_relogin_required[0];
+
+const AUTH_FAILURE_MESSAGES = Object.fromEntries(
+  Object.entries(OPENAI_CODEX_AUTH_CODES).map(([code, copy]) => [code, copy[0]])
+) as Record<keyof typeof OPENAI_CODEX_AUTH_CODES, string>;
 
 export type OpenAICodexAuthFailureCode = keyof typeof AUTH_FAILURE_MESSAGES;
 

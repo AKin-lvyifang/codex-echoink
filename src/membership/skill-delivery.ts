@@ -1,4 +1,5 @@
 import { REMOTE_ONLY_SKILL_IDS } from "../harness/resources/builtin-skills";
+import { tagMembershipWebsiteLink } from "./website-links";
 
 export type SkillPlatform = "desktop" | "ios" | "android";
 export interface OfficialSkillCatalogEntry {
@@ -20,7 +21,7 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
 const text = (value: unknown, max = 128): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 export function parseOfficialSkillCatalog(value: unknown): OfficialSkillCatalog {
   const data = record(value);
-  if (!text(data.catalogVersion) || !Array.isArray(data.skills) || data.skills.length !== REMOTE_SKILL_IDS.length) throw new Error("Skill 目录格式无效。");
+  if (!text(data.catalogVersion) || !Array.isArray(data.skills) || data.skills.length !== REMOTE_SKILL_IDS.length) throw new Error("官方技能目录无效。请联网后重试。");
   const seen = new Set<string>();
   const skills = data.skills.map((raw: unknown): OfficialSkillCatalogEntry => {
     const item = record(raw);
@@ -29,7 +30,7 @@ export function parseOfficialSkillCatalog(value: unknown): OfficialSkillCatalog 
       || item.tier !== "pro" || item.variant !== (item.id === "knowledge-review" ? "enhanced" : "full")
       || !text(item.version) || !parseSemver(item.minPluginVersion) || !Array.isArray(item.platforms) || !item.platforms.length
       || !item.platforms.every(platform => ["desktop", "ios", "android"].includes(String(platform)))
-      || !(item.compareUrl === null || typeof item.compareUrl === "string" && safeSkillCompareUrl(item.compareUrl) !== null)) throw new Error("Skill 目录条目无效。");
+      || !(item.compareUrl === null || typeof item.compareUrl === "string" && safeSkillCompareUrl(item.compareUrl) !== null)) throw new Error("官方技能目录无效。请联网后重试。");
     seen.add(item.id);
     return { id: item.id, name: item.name, nameEn: item.nameEn, summary: item.summary, summaryEn: item.summaryEn,
       tier: "pro", variant: item.id === "knowledge-review" ? "enhanced" : "full", version: item.version, minPluginVersion: item.minPluginVersion as string,
@@ -39,17 +40,17 @@ export function parseOfficialSkillCatalog(value: unknown): OfficialSkillCatalog 
 }
 export function parseSkillDelivery(value: unknown, id: string): SkillDeliveryResponse {
   const data = record(value);
-  if (data.id !== id || !text(data.version)) throw new Error("Skill 正文身份或版本无效。");
+  if (data.id !== id || !text(data.version)) throw new Error("技能正文无效。请联网后重新下载。");
   if (data.notModified === true) return { id, version: data.version, notModified: true };
   if (typeof data.content !== "string" || !data.content.trim() || new TextEncoder().encode(data.content).length > MAX_SKILL_CONTENT_BYTES
     || typeof data.sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(data.sha256)
     || !Number.isSafeInteger(data.issuedAt) || Number(data.issuedAt) <= 0
-    || !Number.isSafeInteger(data.maxOfflineSeconds) || Number(data.maxOfflineSeconds) <= 0) throw new Error("Skill 正文格式无效。");
+    || !Number.isSafeInteger(data.maxOfflineSeconds) || Number(data.maxOfflineSeconds) <= 0) throw new Error("技能正文无效。请联网后重新下载。");
   return { id, version: data.version, sha256: data.sha256, content: data.content,
     issuedAt: Number(data.issuedAt), maxOfflineSeconds: Math.min(Number(data.maxOfflineSeconds), MAX_SKILL_OFFLINE_MS / 1000) };
 }
 export function safeSkillCompareUrl(value: string): string | null {
-  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password ? url.href : null; } catch { return null; }
+  try { const url = new URL(value); return url.protocol === "https:" && !url.username && !url.password ? tagMembershipWebsiteLink(url.href, "plugin.skills.comparison") : null; } catch { return null; }
 }
 function parseSemver(value: unknown): { core: number[]; pre: string[] } | null {
   if (typeof value !== "string") return null;

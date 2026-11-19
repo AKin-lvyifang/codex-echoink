@@ -1,4 +1,6 @@
 import { setIcon } from "obsidian";
+import { NEXT, settingsErrorText } from "../../core/error-copy";
+import { joinCopyPair } from "../../core/error-copy/codes/settings";
 import { createStaticSettingsTabIcon } from "../../settings/animated-settings-tab-icon";
 import { ContainedShellSheet, shellElement, shellIconButton } from "../mobile/shell-controls";
 import type { MobileShellCategory, MobileShellOptions, MobileShellPage, MobileShellSheet } from "../mobile/shell-types";
@@ -253,7 +255,7 @@ export class IPadSettingsShell {
 
   private reportError(error: unknown): void {
     if (!this.disposed) {
-      this.error.textContent = error instanceof Error ? error.message : "无法打开设置，请重试。";
+      this.error.textContent = settingsErrorText(error, joinCopyPair(["设置未能打开。", "Settings could not be opened."], NEXT.retry), this.options.language?.());
       this.error.hidden = false;
     }
     this.options.onError?.(error);

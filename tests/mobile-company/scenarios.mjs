@@ -41,7 +41,7 @@ export async function companyScenarios({ MobileRuntime, MobileStore, loadMobileS
 
   await test("a plain assistant card becomes a router, dispatches to a worker task, and the report returns to the same card", async () => {
     const model = scriptedModel({
-      on: (role, user) => role === "router" && user === "帮我写一句问候" ? ["task_dispatch", { agentId: "generalist", brief: "写一句问候" }]
+      on: (role, user) => role === "router" && user === "帮我写一句问候" ? ["task_dispatch", { agentId: "generalist", moduleId: "none", brief: "写一句问候" }]
         : role === "worker" ? ["report_to_router", { outcome: "done", summary: "问候写好了：你好，周一。" }] : null,
       reply: (role, user) => role === "router" && user.startsWith("〔员工汇报〕") ? "通才写好了：你好，周一。" : "好的。",
       after: role => role === "router" ? "已派给通才。" : "已汇报。"
@@ -71,7 +71,7 @@ export async function companyScenarios({ MobileRuntime, MobileStore, loadMobileS
     const model = scriptedModel({
       on: (role, user) => {
         if (role === "router" && user === "做一期视频") return ["project_propose", { name: "视频", background: "测试", goal: "做出视频稿", criteria: ["稿子写好", "分镜写好"], roles: { generalist: "执行" },
-          plan: [{ id: "t1", agentId: "generalist", label: "写稿", brief: "写稿", dependsOn: [] }, { id: "t2", agentId: "generalist", label: "分镜", brief: "拆分镜", dependsOn: ["t1"] }] }];
+          plan: [{ id: "t1", agentId: "generalist", moduleId: "none", label: "写稿", brief: "写稿", dependsOn: [] }, { id: "t2", agentId: "generalist", moduleId: "none", label: "分镜", brief: "拆分镜", dependsOn: ["t1"] }] }];
         if (role === "worker") return ["report_to_router", { outcome: "done", summary: user.includes("拆分镜") ? "分镜写好了" : "稿子写好了", outputs: [] }];
         if (role === "router" && user.includes("project_accept")) return ["project_accept", { projectId, summary: "视频稿和分镜都好了。",
           results: [{ criterion: "稿子写好", passed: true, evidence: "稿子写好了" }, { criterion: "分镜写好", passed: true, evidence: "分镜写好了" }] }];
@@ -99,7 +99,7 @@ export async function companyScenarios({ MobileRuntime, MobileStore, loadMobileS
 
   await test("need_decision becomes a waiting decision; answering resumes the same worker", async () => {
     const model = scriptedModel({
-      on: (role, user) => role === "router" && user === "整理一下标题" ? ["task_dispatch", { agentId: "generalist", brief: "给笔记起标题" }]
+      on: (role, user) => role === "router" && user === "整理一下标题" ? ["task_dispatch", { agentId: "generalist", moduleId: "none", brief: "给笔记起标题" }]
         : role === "worker" && !user.startsWith("用户答") ? ["report_to_router", { outcome: "need_decision", summary: "有两种风格", question: "标题要正式还是轻松？", options: ["正式", "轻松"] }]
         : role === "worker" ? ["report_to_router", { outcome: "done", summary: "按轻松风格起好了" }] : null
     });
@@ -123,7 +123,7 @@ export async function companyScenarios({ MobileRuntime, MobileStore, loadMobileS
     let release; const hold = new Promise(resolve => { release = resolve; });
     let held = false;
     const model = scriptedModel({
-      on: (role, user) => role === "router" && user === "查一下资料" ? ["task_dispatch", { agentId: "generalist", brief: "查资料" }]
+      on: (role, user) => role === "router" && user === "查一下资料" ? ["task_dispatch", { agentId: "generalist", moduleId: "none", brief: "查资料" }]
         : role === "worker" ? ["report_to_router", { outcome: "done", summary: "查好了" }] : null
     });
     const request = model.request;

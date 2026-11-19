@@ -1,9 +1,11 @@
 import type { ApiProviderId } from "../../settings/provider-presets";
+import { settingsErrorText } from "../../core/error-copy";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPhonePageContext } from "./workbench-contract";
 import { iphoneButton, iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import { settingsMessage, settingsText } from "./settings-language";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 
 export function settingsBody(ctx: IPhonePageContext): HTMLElement { return el(ctx.document, "div", "ip-settings"); }
 export function settingsGroup(ctx: IPhonePageContext, body: HTMLElement, title?: string, literal = false): HTMLElement {
@@ -45,7 +47,7 @@ export function settingsSelect(ctx: IPhonePageContext, parent: HTMLElement, name
 }
 export function settingsError(ctx: IPhonePageContext, parent: HTMLElement): { element: HTMLElement; show: (failure?: unknown) => void } {
   const element = el(ctx.document, "div", "ip-settings-error"); element.hidden = true; element.setAttribute("role", "alert"); parent.append(element);
-  return { element, show: failure => { element.textContent = failure === undefined ? "" : failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "操作失败，请重试。"; element.hidden = failure === undefined; } };
+  return { element, show: failure => { element.textContent = failure === undefined ? "" : settingsErrorText(failure, SETTINGS_FALLBACK.mobilePage, ctx.host.settings().settingsLanguage, zh => settingsText(ctx, zh)); element.hidden = failure === undefined; } };
 }
 export function settingsField(ctx: IPhonePageContext, parent: HTMLElement, name: string, value: string, change: (value: string) => void, type = "text"): HTMLInputElement {
   const label = el(ctx.document, "label", "ip-settings-field"), input = el(ctx.document, "input", "ip-settings-input");

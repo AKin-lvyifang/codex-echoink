@@ -29,7 +29,9 @@ let state = {
 };
 const emit = () => [...listeners].forEach(listener => listener());
 const signedIn = email => { state = { ...state, identity: { name: "本地账号", email, joinedAt: "2026-10-19", avatar: "initial", passwordSet: true }, membership: { ...state.membership, state: "free", devices: [{ id: "this", name: "这台 iPad", description: "iPadOS · 今天", current: true }, { id: "old", name: "旧电脑", description: "macOS · 昨天", current: false }], deviceLimit: 3 } }; emit(); };
+let loginReturns = 0;
 const api = {
+  async signInReturned() { assert.equal(current().id, "ipad-settings-account"); assert.equal(root.querySelector('[aria-label="邮箱验证码"]'), null); loginReturns++; },
   read() { assert.equal(this, api, "read preserves AccountService method binding"); return structuredClone(state); },
   subscribe(listener) { assert.equal(this, api, "subscribe preserves AccountService method binding"); listeners.add(listener); return () => listeners.delete(listener); },
   actions: {
@@ -61,9 +63,9 @@ try {
   assert.ok([...account.content.querySelectorAll(".pd-account-plan button")].every(button => button.disabled)); assert.match(account.content.textContent, /仅电脑/); assert.equal(account.content.querySelector(".heat,.heatmap"), null);
   assert.match(account.content.querySelector('[data-plan-id="month"]').textContent, /¥10/);
   assert.equal([...account.content.querySelectorAll(".pd-account-currency")].every(node => node.textContent === "¥"), true, "all plans use server CNY prices in every timezone");
-  assert.match(account.content.querySelector('[data-plan-id="quarter"]').textContent, /省 17%/); assert.match(account.content.querySelector('[data-plan-id="year"]').textContent, /省 50%/);
+  assert.match(account.content.querySelector('[data-plan-id="quarter"]').textContent, /省 17%/); assert.match(account.content.querySelector('[data-plan-id="year"]').textContent, /省 51%/);
   assert.doesNotMatch(account.content.textContent, /限量|2\.x|US\$|查看人民币套餐|比年卡少付/);
-  assert.match(account.content.querySelector(".pd-account-lifetime-body").textContent, /覆盖以后所有版本的 PRO.*不含模型调用额度.*定期联网更新授权/);
+  assert.match(account.content.querySelector(".pd-account-lifetime-body").textContent, /覆盖以后所有版本的 PRO.*2000 AI 点数（180 天有效）.*90 天 1 GB 云同步.*需另购.*定期联网更新授权/);
   const products = state.products;
   state.products = undefined; emit(); await tick(); assert.equal(account.content.querySelectorAll("[data-plan-id]").length, 0, "missing catalogue never uses fallback prices");
   state.products = products.map(product => product.id === "month" ? { ...product, prices: { USD: 399 } } : product); emit(); await tick(); assert.equal(account.content.querySelector('[data-plan-id="month"]'), null, "missing CNY hides the plan even when USD exists");
@@ -80,12 +82,13 @@ try {
   assert.equal(planButton("early").textContent.trim(), "立即购买"); assert.equal(planButton("early").disabled, false);
   assert.match(account.content.querySelector('[data-plan-id="early"]').textContent, /¥23[.,]7/);
   const earlyCard = () => account.content.querySelector('[data-plan-id="early"]');
-  assert.match(earlyCard().textContent, /一次买断，终生可用/); assert.match(earlyCard().textContent, /活动截止 2026年12月31日/);
+  assert.match(account.content.querySelector(".pd-account-lifetime").textContent, /2000 AI 点数（180 天有效）.*需另购/);
+  assert.match(earlyCard().textContent, /赠 2000 AI 点数 · 90 天 1 GB 云同步/); assert.match(earlyCard().textContent, /活动截止 2026年12月31日/);
   assert.equal([...account.content.querySelectorAll(".pd-account-plan-detail")].filter(node => /活动截止/.test(node.textContent)).length, 1, "only early shows an offer end date");
   const previousEarlyCard = earlyCard(); state.earlyOffer = { ...state.earlyOffer, endsAt: "2026-11-03" }; emit(); await tick();
   assert.notEqual(earlyCard(), previousEarlyCard, "an earlyOffer-only change repaints iPad plans"); assert.match(earlyCard().textContent, /活动截止 2026年11月3日/);
   state.earlyOffer.endsAt = "2026-11-01"; emit(); await tick(); assert.match(earlyCard().textContent, /活动截止 2026年11月1日/);
-  language = "en"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Nov 1, 2026/); assert.match(earlyCard().textContent, /One payment, lifetime access/);
+  language = "en"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Nov 1, 2026/); assert.match(earlyCard().textContent, /2000 AI points · 90 days of 1 GB cloud sync/); assert.match(account.content.querySelector(".pd-account-lifetime").textContent, /2000 AI points.*180 days.*separate purchases/);
   state.earlyOffer.endsAt = "2026-12-31"; emit(); await tick(); assert.match(earlyCard().textContent, /Offer ends Dec 31, 2026/);
   for (const endsAt of ["2026-10-31", "invalid", null]) { state.earlyOffer.endsAt = endsAt; emit(); await tick(); assert.doesNotMatch(earlyCard().textContent, /Offer ends/); assert.equal(planButton("early").disabled, false, "the display date never changes availability"); }
   language = "zh-CN"; state.earlyOffer.endsAt = "2026-12-31"; emit(); await tick();
@@ -109,18 +112,19 @@ try {
   await click("密码登录"); assert.equal(login.content.querySelector('[aria-label="邮箱"]').value, "test@example.invalid"); const password = fill("密码", "x"); assert.equal(findButton("登录").disabled, false, "existing password login delegates non-empty short passwords to service");
   await click("邮箱验证码"); fill("邮箱验证码", "123456"); time += 61_000; dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); await tick(); assert.ok(findButton("获取验证码")); assert.equal(findButton("获取验证码").disabled, false, "resume recomputes deadline rather than decrementing hidden ticks");
   loginFailure = true; await click("登录"); assert.match(login.content.textContent, /登录失败/); assert.equal(login.content.querySelector('[aria-label="邮箱验证码"]').value, "123456");
-  loginFailure = false; await click("登录"); assert.equal(current().id, "ipad-settings-account"); assert.match(account.content.textContent, /免费版/); assert.equal(calls.login.at(-1).method, "code"); assert.equal(password.value, "", "disposed login form clears detached password inputs");
+  loginFailure = false; await click("登录"); assert.equal(loginReturns, 1); assert.equal(current().id, "ipad-settings-account"); assert.match(account.content.textContent, /免费版/); assert.equal(calls.login.at(-1).method, "code"); assert.equal(password.value, "", "disposed login form clears detached password inputs");
   await click("使用兑换码"); const redemption = fill("兑换码", "synthetic-code"); const redemptionNode = redemption;
   state.statistics.totalTurns = 8; emit(); await tick(); assert.equal(account.content.querySelector('[aria-label="兑换码"]'), redemptionNode, "subscription update retains redemption input node"); assert.equal(redemption.value, "synthetic-code");
   redeemFailure = true; await click("兑换"); assert.match(account.content.textContent, /\[redacted\]/); assert.equal(redemption.value, "synthetic-code"); redeemFailure = false;
-  await click("兑换"); assert.match(account.content.textContent, /实际季卡/); assert.equal(account.content.querySelector('[data-plan-id="quarter"] .pd-account-current-plan').textContent, "使用中"); assert.equal(account.content.querySelector('[data-plan-id="year"] .pd-account-current-plan'), null); assert.equal(redemption.value, ""); assert.equal(current(), account, "redemption remains in place");
+  await click("兑换"); assert.match(account.content.textContent, /PRO 季卡/); assert.equal(account.content.querySelector('[data-plan-id="quarter"] .pd-account-current-plan').textContent, "使用中"); assert.equal(account.content.querySelector('[data-plan-id="year"] .pd-account-current-plan'), null); assert.equal(redemption.value, ""); assert.equal(current(), account, "redemption remains in place");
   assert.equal(findButton("退出登录").querySelector('[data-icon="chevron-right"]'), null, "Sign out is an action, not navigation"); assert.ok(findButton("编辑资料").querySelector('[data-icon="chevron-right"]'));
   await click("编辑资料"); fill("名字", "discarded fixture name"); const savesBeforeCancel = calls.profile.length, originalName = state.identity.name; await click("取消"); assert.equal(current(), account); assert.equal(calls.profile.length, savesBeforeCancel); assert.equal(state.identity.name, originalName);
   await click("编辑资料"); const profile = current(); fill("名字", "新的名字"); profileFailure = true; await click("保存"); assert.equal(profile.content.querySelector('[aria-label="名字"]').value, "新的名字"); assert.match(profile.content.textContent, /资料保存失败/); profileFailure = false;
   await click("保存"); assert.equal(current(), account); assert.equal(state.identity.name, "新的名字"); assert.equal(Object.hasOwn(calls.profile.at(-1), "avatar"), false, "name edit preserves avatar");
   await click("设备管理2 / 3"); const devices = current(); assert.equal(devices.content.querySelectorAll("button").length, 1, "current device has no remove action"); await click("移除"); deviceFailure = true; await click("移除", devices.content.querySelector(".pd-account-inline-confirm:not(:empty)")); assert.match(devices.content.textContent, /移除失败/); assert.match(devices.content.textContent, /旧电脑/); deviceFailure = false;
   await click("移除", devices.content.querySelector(".pd-account-inline-confirm:not(:empty)")); assert.deepEqual(calls.removed, ["old", "old"]); assert.equal(devices.content.querySelectorAll("button").length, 0); await ctx.back();
-  state.membership = { ...state.membership, state: "lifetime", planId: "early", planName: "2.x 买断", expiresAt: null }; emit(); await tick(); assert.match(account.content.querySelector(".pd-account-sub").textContent, /早鸟买断/); assert.doesNotMatch(account.content.querySelector(".pd-account-sub").textContent, /2\.x/); assert.equal(account.content.querySelector('[data-plan-id="early"] .pd-account-current-plan').textContent, "使用中");
+  state.membership = { ...state.membership, state: "scheduled", planId: "max-year", startsAt: "2027-01-15", expiresAt: "2028-01-15" }; emit(); await tick(); assert.match(account.content.querySelector(".pd-account-sub").textContent, /Max 年卡.*将于 2027-01-15 生效.*2028-01-15 到期/);
+  state.membership = { ...state.membership, state: "lifetime", planId: "early", planName: "2.x 买断", expiresAt: null }; emit(); await tick(); assert.match(account.content.querySelector(".pd-account-sub").textContent, /早鸟终生买断/); assert.doesNotMatch(account.content.querySelector(".pd-account-sub").textContent, /2\.x/); assert.equal(account.content.querySelector('[data-plan-id="early"] .pd-account-current-plan').textContent, "使用中");
   language = "en"; emit(); await tick(); assert.match(account.content.querySelector(".pd-account-sub").textContent, /Early lifetime/); assert.doesNotMatch(account.content.querySelector(".pd-account-sub").textContent, /2\.x|买断/); language = "zh-CN"; emit(); await tick();
   state.membership = { ...state.membership, state: "offline-valid", planId: "month", planName: "月卡", offlineUntil: "2026-10-22" }; emit(); await tick(); assert.match(account.content.textContent, /离线可用/);
   state.membership.state = "device-required"; emit(); await tick(); await click("重新验证"); assert.equal(calls.verify, 1); await click("启用本机"); assert.equal(calls.activate, 1); assert.equal(state.membership.state, "active");

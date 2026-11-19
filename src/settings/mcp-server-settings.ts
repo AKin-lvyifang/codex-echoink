@@ -5,6 +5,7 @@ import { createOriginButton, createOriginCheck, createOriginSwitch, disposeOrigi
 import { createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import { applyAmicroButton } from "./amicro-buttons";
+import { failureText } from "../core/error-copy";
 
 /** The MCP resource page contains both incoming EchoInk sharing and outgoing client connections. */
 export function renderMcpServerSettings(host: HTMLElement, plugin: CodexForObsidianPlugin, onProBenefits: () => void): () => void {
@@ -71,13 +72,13 @@ export function renderMcpServerSettings(host: HTMLElement, plugin: CodexForObsid
     const text = controller.server.setupText(); setup.value = text ?? ""; setup.hidden = text === null;
     copyButton.disabled = pending || !text;
     rotate.disabled = pending || !qualified || !settings.enabled;
-    error.setText(localError || (state.status === "error" ? (english ? "Could not start the local MCP server. Try turning it off and on." : "本机 MCP 服务启动失败，请关闭后重试。") : ""));
+    error.setText(localError || (state.status === "error" ? (english ? "Could not start the local MCP server. Turn it off and on again." : "本机 MCP 服务未能启动。请关闭后重新开启。") : ""));
     error.hidden = !error.textContent;
   };
   const run = (action: () => Promise<void>) => {
     if (pending || disposed) return;
     pending = true; localError = ""; refresh();
-    void action().catch(failure => { localError = failure instanceof Error ? failure.message : String(failure); })
+    void action().catch(failure => { localError = failureText(failure, ["本机 MCP 服务设置未能生效。", "The local MCP server setting could not be applied."], ["请重试；如问题持续，请关闭后重新开启。", "Try again; if the problem persists, turn it off and on again."], english ? "en" : "zh"); })
       .finally(() => { pending = false; refresh(); });
   };
   trigger.onclick = () => { if (!hasProPluginAccess(access)) onProBenefits(); else if (plugin.settings.mcpServer.enabled) { expanded = !expanded; refresh(); } };

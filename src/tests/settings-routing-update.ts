@@ -26,6 +26,8 @@ for (const [legacy, options, expected] of [
   ["general", { focus: "general:memory" }, { tab: "memory", focus: "general:memory" }],
   ["general", { focus: "general:journal" }, { tab: "modules", section: "journal", focus: "general:journal" }],
   ["agent", {}, { tab: "agent" }],
+  ["general", { focus: "agent:owner:journal" }, { tab: "agent", focus: "agent:owner:journal" }],
+  ["general", { focus: "agent:owner:knowledge-base" }, { tab: "agent", focus: "agent:owner:knowledge-base" }],
   ["account", {}, { tab: "account" }]
 ] as const) assert.deepEqual(resolveDesktopSettingsRoute(legacy, options), expected);
 console.log("PASS desktop routes preserve legacy aliases, resource identity and focus");

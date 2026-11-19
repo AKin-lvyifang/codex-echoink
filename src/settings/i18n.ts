@@ -10,6 +10,30 @@ import type {
 } from "./settings";
 import type { PermissionMode, UiMode } from "../types/app-server";
 import type { KnowledgeBaseRunCompletion } from "../knowledge-base/types";
+import { judgmentResultText, knowledgeResultText } from "../types/composer-submission";
+import type { PiProviderConnectionFailureKind } from "../harness/pi/pi-provider-protocol-adapter";
+import { CAUSE, NEXT, type ErrorCopy } from "../core/error-copy";
+import { SETTINGS_SCENE, joinCopyPair } from "../core/error-copy/codes/settings";
+
+const SAVE_FAILED = joinCopyPair(SETTINGS_SCENE.providerSaveFailed, NEXT.testConnection);
+/** One language of a shared sentence, widened to string so both copies share a type. */
+const copyAt = (copy: ErrorCopy, index: 0 | 1): string => copy[index];
+
+/** Test-connection failure kind → root-cause sentence (index 0 = 中文, 1 = English). */
+function connectionFailures(index: 0 | 1) {
+  return {
+    auth: copyAt(CAUSE.providerAuth, index),
+    protocol: copyAt(CAUSE.providerProtocolMismatch, index),
+    model: copyAt(CAUSE.providerModelUnavailable, index),
+    rate_limit: copyAt(CAUSE.providerRateLimit, index),
+    network: copyAt(CAUSE.providerNetwork, index),
+    certificate: copyAt(CAUSE.providerCertificate, index),
+    proxy: copyAt(CAUSE.providerProxy, index),
+    timeout: copyAt(CAUSE.providerTimeout, index),
+    request: copyAt(CAUSE.providerRejectedOnTest, index),
+    provider: copyAt(CAUSE.providerUnavailable, index)
+  } satisfies Record<PiProviderConnectionFailureKind, string>;
+}
 
 const ZH_CN = {
   languageName: "中文",
@@ -21,12 +45,10 @@ const ZH_CN = {
     disconnected: "未连接",
     unknown: "未知",
     current: (value: string) => `当前：${value}`,
-    readFailed: (error: string) => `读取失败：${error}`,
-    partialReadFailed: (error: string) => `部分读取失败：${error}`,
     detected: (value: string) => `已检测：${value}`,
     notDetectedManual: "未检测到，可手动填写",
     missing: (items: string[]) => `缺少：${items.join("，")}`,
-    enableFailed: (items: string[]) => `无法启用：${items.join("，")}`,
+    enableFailed: (items: string[]) => `未能保存：${items.join("")}`,
     refresh: "刷新",
     loading: "读取中",
     cancel: "取消",
@@ -36,7 +58,7 @@ const ZH_CN = {
   tabs: {
     general: "基础设置",
     layout: "布局与外观",
-    providers: "API Provider",
+    providers: "模型服务",
     resources: "Skills & MCP",
     knowledgeBase: "知识库管理",
     review: "复盘",
@@ -68,7 +90,6 @@ const ZH_CN = {
   knowledge: {
     title: "知识库管理",
     safety: "EchoInk 只响应显式 /maintain，在同一轮核对来源、安全写入并回读验证；原始资料保持不变。",
-    lastRunIncomplete: "上一次知识库运行未完成。请检查当前模型设置和操作指南后，从知识库面板重试。",
     statusHeading: "运行状态",
     recentStatus: (status: string, time: string) => `最近状态：${status}${time ? ` · ${time}` : ""}`,
     recentCompletion: (completion: string, attempts: number, pending: number) => [
@@ -93,7 +114,7 @@ const ZH_CN = {
     ],
     enabled: "启用知识库管理",
     backend: "知识库使用模型",
-    backendDesc: "统一继承当前启用的 Provider 与 Model；请在 API Provider 中修改。",
+    backendDesc: "统一继承当前启用的模型服务与模型；请在 设置 → 模型服务 中修改。",
     followGlobal: (backend: string) => `跟随全局（${backend}）`,
     detection: (value: string) => `检测结果：${value}`,
     modelCapabilities: (text: boolean, image: boolean, pdf: boolean) => `模型能力：文本 ${text ? "✓" : "×"} · 图片 ${image ? "✓" : "×"} · PDF ${pdf ? "✓" : "×"}`,
@@ -106,7 +127,6 @@ const ZH_CN = {
     memoryEnabledDesc: "普通 Chat 和 /ask 会读取提炼记忆，并获得仍在保留期内的本地记录查询入口；维护类 workflow 只在本地提交成功后记录结果。",
     memoryStatusLine: (initialized: boolean, revision: number, pending: number, confirmations: number, issues: number) => `状态：${initialized ? "已初始化" : "未初始化"} · revision ${revision} · pending ${pending} · 待确认 ${confirmations} · 异常 ${issues}`,
     memoryLastSync: (outcome: string, time: string) => `最近同步：${outcome}${time ? ` · ${time}` : ""}`,
-    memoryStatusFailed: (_error: string) => "Memory 状态暂时无法读取。请重新加载；若仍未恢复，请使用“恢复事务”。",
     memoryReload: "重新加载状态",
     memoryInitialize: "初始化",
     memorySync: "立即同步",
@@ -120,7 +140,6 @@ const ZH_CN = {
     memoryDrop: "放弃 pending",
     memoryItems: "已记录项",
     memoryDeleteConfirm: (statement: string) => `删除这条 EchoInk 长期记忆？\n\n${statement}`,
-    memoryActionFailed: (_error: string) => "Memory 操作未完成。请重新加载状态后重试。",
     statusLabels: {
       idle: "未运行",
       running: "运行中",
@@ -163,9 +182,9 @@ const ZH_CN = {
     openHtmlAfterRun: "生成后打开 HTML"
   },
   providers: {
-    title: "API Provider",
-    simpleSetup: "选择服务商，确认 API URL，输入 API Key 后保存即可聊天。API Key 直接保存在当前 Vault 的插件设置中。",
-    provider: "Provider",
+    title: "模型服务",
+    simpleSetup: "选择模型服务，确认接口地址，输入 API Key 后保存即可聊天。API Key 直接保存在当前 Vault 的插件设置中。",
+    provider: "模型服务",
     protocol: "API 协议",
     protocolOptions: {
       "openai-responses": "OpenAI Responses",
@@ -183,12 +202,11 @@ const ZH_CN = {
     modelListIdle: "未获取模型列表",
     modelListLoading: "正在获取模型列表…",
     modelListAvailable: (count: number) => `已获取 ${count} 个模型，请勾选并指定默认模型`,
-    modelListUnsupported: "该服务未提供可读取的模型列表，请使用右侧 + 添加 Model ID",
-    modelListApiKeyError: "API Key 无效或没有模型列表权限，请检查后重试",
-    modelListRateOrServiceError: "Provider 正在限流或服务暂时异常，请稍后重试。已保存模型不会受影响。",
-    modelListNetworkError: "无法连接 Provider，请检查网络与接口地址后重试。",
-    modelListResponseFormatError: "Provider 返回了无法识别的模型列表格式，请手动输入准确的 Model ID。",
-    modelListFailed: "本次获取失败。已保存模型仍会保留，也可在下拉中手动输入模型 ID。",
+    modelListApiKeyError: copyAt(CAUSE.providerAuth, 0),
+    modelListRateOrServiceError: copyAt(CAUSE.providerUnavailable, 0),
+    modelListNetworkError: copyAt(CAUSE.providerNetwork, 0),
+    modelListResponseFormatError: "未能读取模型列表。请点击右侧“+”手动填写 Model ID。",
+    modelListFailed: "未能获取模型列表。已保存的模型不受影响，也可在下拉框中手动填写 Model ID。",
     keyPlaceholder: "输入 API Key",
     savedKeyPlaceholder: "API Key 已保存；留空表示继续使用",
     showKey: "显示当前输入",
@@ -197,33 +215,23 @@ const ZH_CN = {
     testingConnection: "测试中…",
     connectionIdle: "尚未测试连接；测试会产生一次极少量 API 费用",
     connectionAvailable: "连接可用",
-    connectionFailures: {
-      auth: "API Key 无效或没有权限",
-      protocol: "接口地址、协议或返回数据不匹配，请检查 Provider 设置。",
-      model: "模型不可用，请检查 Model ID 或当前账号的模型权限。",
-      rate_limit: "请求过于频繁或额度已用尽，请稍后重试或检查账户额度。",
-      network: "无法连接模型服务，请检查网络或代理。",
-      certificate: "证书校验失败，请检查服务商证书或代理证书。",
-      proxy: "无法连接代理，请检查代理设置或代理服务。",
-      timeout: "等待模型回答超时，请稍后重试。",
-      request: "服务商拒绝了请求。",
-      provider: "Provider 暂时异常"
-    },
+    connectionFailures: connectionFailures(0),
     saveAndUse: "保存并使用",
     saving: "保存中…",
     missingKey: "请输入 API Key。",
     saved: (provider: string) => `${provider} 已保存，可以直接聊天。`,
-    saveFailed: "Provider 未能保存或启用。请检查 Endpoint、API Key、协议与网络后重试。",
+    saveFailed: copyAt(SAVE_FAILED, 0),
+    urlInvalid: copyAt(CAUSE.providerUrlInvalid, 0),
     warningKey: "API Key 输入会被遮挡，并直接保存在当前 Vault 的 EchoInk 插件设置中。",
     warningApi: "API URL 需要兼容所选的 API 协议。",
     add: "新增",
-    addTitle: "新增 API Provider",
+    addTitle: "新增模型服务",
     defaultName: "自定义 API",
-    empty: "还没有自定义 API Provider。",
-    unnamed: "未命名 Provider",
+    empty: "还没有自定义模型服务。",
+    unnamed: "未命名模型服务",
     active: "已启用",
     enableReconnect: "启用并重连",
-    deleteConfirm: (name: string) => `删除 ${name || "这个 Provider"}？`,
+    deleteConfirm: (name: string) => `删除 ${name || "这个模型服务"}？`,
     name: "名称",
     namePlaceholder: "例如 OpenAI API",
     baseUrl: "Base URL",
@@ -276,12 +284,10 @@ const EN: SettingsCopy = {
     disconnected: "Disconnected",
     unknown: "Unknown",
     current: (value) => `Current: ${value}`,
-    readFailed: (error) => `Failed to load: ${error}`,
-    partialReadFailed: (error) => `Some items failed: ${error}`,
     detected: (value) => `Detected: ${value}`,
     notDetectedManual: "Not found. Enter manually.",
     missing: (items) => `Missing: ${items.join(", ")}`,
-    enableFailed: (items) => `Cannot enable: ${items.join(", ")}`,
+    enableFailed: (items) => `Could not save: ${items.join(" ")}`,
     refresh: "Refresh",
     loading: "Loading",
     cancel: "Cancel",
@@ -291,7 +297,7 @@ const EN: SettingsCopy = {
   tabs: {
     general: "General",
     layout: "Layout & appearance",
-    providers: "API Provider",
+    providers: "Model services",
     resources: "Skills & MCP",
     knowledgeBase: "Knowledge",
     review: "Review",
@@ -323,7 +329,6 @@ const EN: SettingsCopy = {
   knowledge: {
     title: "Knowledge",
     safety: "EchoInk responds only to explicit /maintain, checks sources, writes safely, and verifies readback in one turn while leaving source material unchanged.",
-    lastRunIncomplete: "The last Knowledge run did not finish. Check the current Provider and guide, then retry from the Knowledge panel.",
     statusHeading: "Run status",
     recentStatus: (status, time) => `Latest: ${status}${time ? ` · ${time}` : ""}`,
     recentCompletion: (completion, attempts, pending) => [
@@ -348,7 +353,7 @@ const EN: SettingsCopy = {
     ],
     enabled: "Enable Knowledge",
     backend: "Knowledge model",
-    backendDesc: "Inherits the active Provider and model. Change it from API Provider.",
+    backendDesc: "Inherits the active model service and model. Change it in Settings → Model services.",
     followGlobal: (backend) => `Follow global (${backend})`,
     detection: (value) => `Detection: ${value}`,
     modelCapabilities: (text, image, pdf) => `Model capabilities: Text ${text ? "✓" : "×"} · Images ${image ? "✓" : "×"} · PDF ${pdf ? "✓" : "×"}`,
@@ -361,7 +366,6 @@ const EN: SettingsCopy = {
     memoryEnabledDesc: "Chat and /ask retrieve curated memory and receive a lookup entry for local records that remain within retention. Maintenance workflows record results only after the local commit succeeds.",
     memoryStatusLine: (initialized, revision, pending, confirmations, issues) => `Status: ${initialized ? "initialized" : "not initialized"} · revision ${revision} · pending ${pending} · confirmations ${confirmations} · issues ${issues}`,
     memoryLastSync: (outcome, time) => `Latest sync: ${outcome}${time ? ` · ${time}` : ""}`,
-    memoryStatusFailed: (_error) => "Memory status is temporarily unavailable. Reload it, or use Recover transactions if it does not return.",
     memoryReload: "Reload status",
     memoryInitialize: "Initialize",
     memorySync: "Sync now",
@@ -375,7 +379,6 @@ const EN: SettingsCopy = {
     memoryDrop: "Drop pending",
     memoryItems: "Recorded memories",
     memoryDeleteConfirm: (statement) => `Delete this EchoInk long-term memory?\n\n${statement}`,
-    memoryActionFailed: (_error) => "The Memory action did not finish. Reload the status, then try again.",
     statusLabels: {
       idle: "Not run",
       running: "Running",
@@ -419,9 +422,9 @@ const EN: SettingsCopy = {
     openHtmlAfterRun: "Open HTML after run"
   },
   providers: {
-    title: "API Provider",
-    simpleSetup: "Choose a provider, confirm the API URL, enter an API key, and save. The key is stored directly in this Vault's EchoInk plugin settings.",
-    provider: "Provider",
+    title: "Model services",
+    simpleSetup: "Choose a model service, confirm the endpoint, enter an API key, and save. The key is stored directly in this Vault's EchoInk plugin settings.",
+    provider: "Model service",
     protocol: "API protocol",
     protocolOptions: {
       "openai-responses": "OpenAI Responses",
@@ -439,11 +442,10 @@ const EN: SettingsCopy = {
     modelListIdle: "Model list not loaded",
     modelListLoading: "Loading models…",
     modelListAvailable: (count) => `${count} models loaded; enable models and choose a default`,
-    modelListUnsupported: "This service does not expose a readable model list. Use + to add a Model ID.",
-    modelListApiKeyError: "The API key is invalid or cannot list models. Check it and retry.",
-    modelListRateOrServiceError: "The provider is rate-limited or temporarily unavailable. Try again later; saved models are unchanged.",
-    modelListNetworkError: "Could not reach the provider. Check the network and endpoint URL, then retry.",
-    modelListResponseFormatError: "The provider returned an unrecognized model-list format. Enter an exact Model ID manually.",
+    modelListApiKeyError: copyAt(CAUSE.providerAuth, 1),
+    modelListRateOrServiceError: copyAt(CAUSE.providerUnavailable, 1),
+    modelListNetworkError: copyAt(CAUSE.providerNetwork, 1),
+    modelListResponseFormatError: "Could not read the model list. Use + on the right to enter a Model ID.",
     modelListFailed: "Could not load models this time. The saved model is preserved, and you can enter a Model ID in the dropdown.",
     keyPlaceholder: "Enter API key",
     savedKeyPlaceholder: "API key saved; leave blank to keep using it",
@@ -453,33 +455,23 @@ const EN: SettingsCopy = {
     testingConnection: "Testing…",
     connectionIdle: "Connection not tested. A test may incur a very small API charge.",
     connectionAvailable: "Connection available",
-    connectionFailures: {
-      auth: "The API key is invalid or lacks permission",
-      protocol: "The endpoint, protocol, or response format does not match. Check provider settings.",
-      model: "The model is unavailable. Check the Model ID and your account's model access.",
-      rate_limit: "Requests are rate-limited or quota is exhausted. Retry later or check account usage.",
-      network: "Could not connect to the service. Check your network or proxy.",
-      certificate: "Certificate verification failed. Check the service or proxy certificate.",
-      proxy: "Could not connect to the proxy. Check its settings or availability.",
-      timeout: "Timed out waiting for the model's answer. Try again later.",
-      request: "The service rejected the request.",
-      provider: "The provider is temporarily unavailable"
-    },
+    connectionFailures: connectionFailures(1),
     saveAndUse: "Save and use",
     saving: "Saving…",
     missingKey: "Enter an API key.",
     saved: (provider) => `${provider} is ready for chat.`,
-    saveFailed: "The provider was not saved or activated. Check the endpoint, API key, protocol, and network, then retry.",
+    saveFailed: copyAt(SAVE_FAILED, 1),
+    urlInvalid: copyAt(CAUSE.providerUrlInvalid, 1),
     warningKey: "API key input is masked and stored directly in this Vault's EchoInk plugin settings.",
     warningApi: "The API URL must support the selected API protocol.",
     add: "Add",
-    addTitle: "Add API Provider",
+    addTitle: "Add model service",
     defaultName: "Custom API",
-    empty: "No custom API providers yet.",
-    unnamed: "Unnamed provider",
+    empty: "No custom model services yet.",
+    unnamed: "Unnamed model service",
     active: "Enabled",
     enableReconnect: "Enable and reconnect",
-    deleteConfirm: (name) => `Delete ${name || "this provider"}?`,
+    deleteConfirm: (name) => `Delete ${name || "this model service"}?`,
     name: "Name",
     namePlaceholder: "Example: OpenAI API",
     baseUrl: "Base URL",
@@ -597,6 +589,7 @@ export interface ConversationCopy {
     artifactCount: (count: number) => string;
     fallbackTitle: (kind: string) => string;
     activityTitle: (kind: string, name?: string) => string;
+    judgmentResult: (value: Readonly<{ knowledgeDecision?: boolean; skillName?: string }>, running: boolean) => string;
     activityCompleted: (count: number) => string;
     activityStage: (stage: string) => string;
     publicReasoningRunning: string;
@@ -937,7 +930,7 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
   process: {
     searching: "查找中…",
     memoryChecking: "查看中…",
-    knowledgeResult: (candidates, returned) => `${candidates} 篇相关，读了前 ${returned} 篇`,
+    knowledgeResult: (_candidates, returned) => knowledgeResultText(returned, "zh-CN"),
     memoryUsed: (count) => `用上 ${count} 条`,
     waitingSeconds: (seconds) => `${seconds} 秒`,
     reasoningTitle: "模型推理",
@@ -971,7 +964,8 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
       interaction: "等你确认",
       process: "整理对话"
     }[kind] ?? "整理对话"),
-    activityTitle: (kind, name) => kind === "knowledge"
+    judgmentResult: (value, running) => running ? "看看要不要查资料…" : judgmentResultText(value, "zh-CN"),
+    activityTitle: (kind, name) => kind === "judgment" ? "智能判断" : kind === "knowledge"
       ? "检索知识库"
       : kind === "memory"
         ? "查看个人记忆"
@@ -984,6 +978,7 @@ const ZH_CONVERSATION_COPY: ConversationCopy = {
     activityStage: (stage) => ({
       requesting: "请求模型",
       searching: "检索中",
+      selecting_knowledge: "挑选相关笔记…",
       continuing_search: "继续检索",
       reading_knowledge: "阅读知识",
       comparing_memory: "比较记忆",
@@ -1333,7 +1328,7 @@ const EN_CONVERSATION_COPY: ConversationCopy = {
   process: {
     searching: "Searching…",
     memoryChecking: "Checking…",
-    knowledgeResult: (candidates, returned) => `${candidates} relevant notes, read the first ${returned}`,
+    knowledgeResult: (_candidates, returned) => knowledgeResultText(returned, "en"),
     memoryUsed: (count) => `Used ${count}`,
     waitingSeconds: (seconds) => `${seconds}s`,
     reasoningTitle: "Reasoning",
@@ -1367,7 +1362,8 @@ const EN_CONVERSATION_COPY: ConversationCopy = {
       interaction: "Wait for user action",
       process: "Process context"
     }[kind] ?? "Process context"),
-    activityTitle: (kind, name) => kind === "knowledge"
+    judgmentResult: (value, running) => running ? "Assessing your request…" : judgmentResultText(value, "en"),
+    activityTitle: (kind, name) => kind === "judgment" ? "Assess request" : kind === "knowledge"
       ? "Search local knowledge"
       : kind === "memory"
         ? "Check personal memory"
@@ -1380,6 +1376,7 @@ const EN_CONVERSATION_COPY: ConversationCopy = {
     activityStage: (stage) => ({
       requesting: "Requesting model",
       searching: "Searching",
+      selecting_knowledge: "Selecting relevant notes…",
       continuing_search: "Continuing search",
       reading_knowledge: "Reading knowledge",
       comparing_memory: "Comparing memory",

@@ -1,3 +1,4 @@
+import { runMobileMemoryParityScenarios } from './mobile-memory-parity-scenarios.mjs';
 import { isDisposableTestRoot } from "./disposable-test-root.mjs";
 import assert from "node:assert/strict";
 import vm from "node:vm";
@@ -9,14 +10,17 @@ import esbuild from "esbuild";
 import { mobileBuildOptions } from "./mobile-build.mjs";
 
 const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-memory-settings/entry.ts"), metafile: true });
-assert.ok(!Object.keys(build.metafile.inputs).some(path => /node:|personal-memory-repository\.ts|dream-engine\.ts|agent-self\.ts|agent-self-metadata\.ts/u.test(path)));
+assert.ok(!Object.keys(build.metafile.inputs).some(path => /node:|personal-memory-repository\.ts|agent-self\.ts|agent-self-metadata\.ts/u.test(path)));
 const module = { exports: {} };
 const browser = vm.createContext({ module, exports: module.exports, crypto: webcrypto, TextEncoder, TextDecoder, Uint8Array, URL, URLSearchParams,
   structuredClone, AbortController, setTimeout, clearTimeout, require: name => { assert.equal(name, "obsidian"); return { TFile: class {}, TFolder: class {} }; } });
-browser.self = browser;
+browser.self = browser; browser.window = browser;
 vm.runInContext(build.outputFiles[0].text, browser);
 const { MobileMemoryService, MobileMemoryRepository, MobileStore, loadMobileSettings, mobileProvider, mobileModel, MobileCapabilityPolicy, mobileTools,
-  inspectMobileTaskResume, USER_PROFILE_SLOTS, applyDreamProfileUpdate, parseCanonicalMemoryRecord, indexChecksum } = module.exports;
+  inspectMobileTaskResume, USER_PROFILE_SLOTS, applyDreamProfileUpdate, parseCanonicalMemoryRecord, indexChecksum, canUndoDreamCorrection } = module.exports;
+const dreamResults=[];
+const originalDreamRun=module.exports.DreamEngine.prototype.runOnce;
+module.exports.DreamEngine.prototype.runOnce=async function(){const result=await originalDreamRun.call(this);dreamResults.push(result);return result;};
 const plain = value => JSON.parse(JSON.stringify(value)), clone = value => structuredClone(value);
 const turn = () => new Promise(resolve => setTimeout(resolve, 0));
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes; }); return { promise, resolve }; };
@@ -46,14 +50,54 @@ function model(f) {
   const provider = mobileProvider("custom"); Object.assign(provider, { apiKey: "synthetic-key", baseUrl: "https://provider.invalid/v1", models: [mobileModel("fixture")], defaultModelId: "fixture" });
   f.settings.apiProviders = [provider]; f.settings.activeApiProviderId = provider.id; f.settings.defaultModel = "fixture";
 }
+function dreamAnswer(input, items = []) {
+ const body=JSON.parse(input.body),last=body.messages?.at(-1)?.content??'',q=JSON.parse(typeof last==='string'?last:last[0].text);
+ if(q.sources)return answer('no_change');
+ if(q.memories&&!q.phase)return answer(JSON.stringify(Object.fromEntries(q.memories.map(record=>[record.id,[]]))));
+ return answer(JSON.stringify({secondaryFacts:[],relatedIds:[],userProfileItems:items}));
+}
 const answer = text => ({ status: 200, json: { choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }] } });
+await test("desktop correction source and ledger survive mobile reads; both mobile correction paths invalidate undo", async () => {
+  for (const mode of ["control", "tool"]) {
+    const f = await fixture(); await seed(f); await f.service.initialize();
+    const before = await f.service.read("mem_old");
+    await f.service.repository.mutate(before.revision, "fixture-desktop-correction", (draft, files) => {
+      const old = { ...draft.records.find(record => record.id === "mem_old"), status: "superseded", revision: draft.manifest.revision + 1 };
+      draft.records = draft.records.map(record => record.id === old.id ? old : record);
+      const next = { ...old, id: "mem_dream", status: "current", contentOrigin: "dream_correction", content: "桌面纠正的事实", supersedes: old.id, file: "shared-user/memory/facts/mem_dream.md" };
+      draft.records.push(next);
+      // The production serializer is tested by the real mobile correction below; seed canonical bytes here.
+      files.set(old.file, module.exports.serializeCanonicalMemoryRecord(old));
+      files.set(next.file, module.exports.serializeCanonicalMemoryRecord(next));
+    });
+    const initial = await f.service.repository.snapshot();
+    const old = initial.records.find(r => r.id === "mem_old"), next = initial.records.find(r => r.id === "mem_dream");
+    const event = { id: "correction-mobile", checkKey: "key", phase: "original", source: "pi://vault/conversation/session/entry?productRun=run", beforeId: old.id, afterId: next.id, beforeRevision: old.revision, afterRevision: next.revision, action: "correct", at: 1 };
+    const ledger = JSON.stringify({ schema: "echoink.dream.v1", reconciliation: { checks: [], experiences: [], events: [event], suggestions: [], calls: [] } });
+    f.files.set(".echoink/shared-user/.runtime/dream-state.json", ledger);
+    assert.equal(canUndoDreamCorrection(event, initial.records), true);
+    const cold = await fixture(undefined, f); await cold.service.initialize();
+    assert.equal((await cold.service.read(next.id)).record.contentOrigin, "dream_correction");
+    if (mode === "control") {
+      const read = await cold.service.read(next.id);
+      await cold.service.applyCorrection(await cold.service.previewCorrection(next.id, { title: "手机修正", content: "手机新事实", recallWhen: "核对时" }, read.revision));
+    } else {
+      const plan = await cold.service.prepareToolMemory({ targetId: next.id, kind: "fact", title: "手机替代", content: "手机新事实", recallWhen: "核对时", basis: "explicit" }, "task", "run", "call");
+      await cold.service.commitToolMemory(plan, () => {});
+    }
+    assert.equal(canUndoDreamCorrection(event, (await cold.service.repository.snapshot()).records), false);
+    assert.equal(f.files.get(".echoink/shared-user/.runtime/dream-state.json"), ledger, "mobile preserves desktop correction history bytes");
+  }
+});
 await test("pinned canonical inheritance, core limit, profile protection and independent merged activity survive mobile cold reads", async () => {
-  const f = await fixture(); await seed(f, [{ ...oldMemory(), pinned: true }]); await f.service.initialize();
+  const f = await fixture(); await seed(f, [{ ...oldMemory(), pinned: true, related: ["mem_neighbor"] }, { ...oldMemory("mem_neighbor"), title: "关联邻居" }]); await f.service.initialize();
   const initial = await f.service.read("mem_old"); assert.equal(initial.record.pinned, true);
   const preview = await f.service.previewCorrection("mem_old", { title: "移动修正", content: "喜欢具体例子", recallWhen: "解释时" }, initial.revision);
   const corrected = await f.service.applyCorrection(preview); assert.equal(corrected.record.pinned, true);
+  assert.deepEqual(plain(corrected.record.related), ["mem_neighbor"]);
   const plan = await f.service.prepareToolMemory({ targetId: corrected.record.id, kind: "fact", title: "再次修正", content: "喜欢生活里的具体例子", recallWhen: "解释时", basis: "explicit" }, "task", "run", "call");
   const replacement = await f.service.commitToolMemory(plan, () => {}); assert.equal(replacement.pinned, true);
+  assert.deepEqual(plain(replacement.related), ["mem_neighbor"]);
   const forgotten = await f.service.forget(replacement.id, "用户忘记", (await f.service.list()).revision);
   const restored = await f.service.restore(replacement.id, forgotten.revision); assert.equal(restored.record.pinned, true);
   let profile = await f.service.readProfile();
@@ -71,6 +115,7 @@ await test("pinned canonical inheritance, core limit, profile protection and ind
   await f.service.recordRecalledMemories([restored.record.id], "one-turn");
   await f.service.recordRecalledMemories([restored.record.id], "one-turn");
   const cold = await fixture(undefined, f); await cold.service.initialize(); await cold.service.recordRecalledMemories([health.id], "another-turn");
+  assert.deepEqual(plain((await cold.service.read(restored.record.id)).record.related), ["mem_neighbor"]);
   const activity = await f.service.memoryActivity(); assert.equal(activity.records[restored.record.id].recallCount, 1); assert.equal(activity.records[health.id].recallCount, 1);
   assert.equal(f.files.get(".echoink/shared-user/.runtime/manifest.json"), beforeManifest);
   await f.service.restoreMemoryActivity(restored.record.id); assert.equal((await f.service.memoryActivity()).records[restored.record.id].recallCount, 1);
@@ -159,6 +204,8 @@ await test("unknown canonical metadata and live secondary index entries survive 
   const rawProfile = JSON.parse(f.files.get(profilePath)); rawProfile.future = true; rawProfile.items[0].futureItem = true; f.files.set(profilePath, JSON.stringify(rawProfile));
   const record = (await f.service.read("mem_old")).record, file = `.echoink/${record.file}`; f.files.set(file, f.files.get(file).replace("\n---\n", '\nfuture_field: "preserve"\n---\n'));
   const index = JSON.parse(f.files.get(indexPath)); index.secondaryCatalog = [{ id: "secondary_test", parentId: "mem_old", title: "关联", content: "可能相关", recallWhen: "关联", matchTerms: ["相关"], relation: "associated", basis: "llm_inferred", routeTokens: [], contentTokens: [] }];
+  const secondary=module.exports.createSecondaryRecord({parentId:'mem_old',title:'关联',content:'可能相关',recallWhen:'关联',matchTerms:['相关'],relation:'associated',basis:'llm_inferred',confidence:.8,supportLevel:'strong_inference',reason:'由原话推导',evidence:'喜欢简洁答复',sourceMemoryRevision:record.revision,now:1,idFactory:()=> 'secondary_test'});
+  await f.adapter.mkdir('.echoink/shared-user/memory/secondary');await f.adapter.mkdir('.echoink/shared-user/memory/secondary/mem_old');f.files.set(`.echoink/${secondary.file}`,module.exports.serializeSecondaryRecord(secondary));
   index.secondaryIndex = [{ term: "相关", parentId: "mem_old", secondaryId: "secondary_test" }]; index.checksum = indexChecksum(index.revision, index.catalog, index.secondaryCatalog, index.secondaryIndex); f.files.set(indexPath, JSON.stringify(index));
   await f.service.export(); assert.equal(JSON.parse(f.files.get(indexPath)).secondaryCatalog.length, 1); assert.equal(JSON.parse(f.files.get(manifestPath)).future.keep, true); assert.equal(JSON.parse(f.files.get(profilePath)).items[0].futureItem, true);
   const current = await f.service.read("mem_old"), preview = await f.service.previewCorrection("mem_old", { title: "Changed", content: "Changed", recallWhen: "Changed" }, current.revision); await f.service.applyCorrection(preview);
@@ -219,23 +266,23 @@ await test("canonical Memory completion receipt failure survives cold Store and 
   assert.equal(f.store.getSession(taskId).operations[0].status, "uncertain"); const cold = await fixture(undefined, f); await cold.service.initialize();
   const snapshot = await inspectMobileTaskResume(app, cold.store, taskId); assert.equal(snapshot.issues.length, 0); assert.equal(cold.store.getSession(taskId).operations[0].status, "completed"); assert.equal((await cold.service.list()).records.length, 2);
 });
-await test("Dream only sends user-profile prompt, commits canonical state, counts daily attempt before inference", async () => {
-  const bodies = [], f = await fixture(async input => { bodies.push(JSON.parse(input.body)); return answer(JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.detail", text: "喜欢简洁答复" }] })); });
-  await seed(f); model(f); await f.service.initialize(); const status = await f.service.runDream(); assert.equal(status.phase, "completed"); assert.equal(status.attemptsToday, 1); assert.equal(f.calls(), 1);
+await test("Dream shares derivation/profile engine and counts one daily attempt for all internal calls", async () => {
+  const bodies = [], f = await fixture(async input => { bodies.push(JSON.parse(input.body)); return dreamAnswer(input,[{ section: "preference", profileKey: "preference.detail", text: "喜欢简洁答复" }]); });
+  await seed(f); model(f); await f.service.initialize(); const status = await f.service.runDream(); assert.equal(status.phase, "completed", status.error+JSON.stringify(dreamResults.at(-1))); assert.equal(status.attemptsToday, 1); assert.equal(f.calls(), 2);
   assert.equal((await f.service.readProfile()).items[0].text, "喜欢简洁答复"); assert.ok(![...f.files.keys()].some(path => path.includes("AGENT.md") || path.includes("agent-self")));
   assert.equal(f.settings.memory.dreamRunsPerDay, 6); assert.equal(f.service.readSettings().dreamRunsPerDay, 1);
   const current = await f.service.readProfile(); await f.service.saveProfile("preference.language", "中文", current.revision);
-  await assert.rejects(f.service.runDream(), /次数/u); assert.equal(f.calls(), 1); assert.ok(JSON.stringify(bodies).includes("userProfileItems"));
+  await assert.rejects(f.service.runDream(), /次数/u); assert.equal(f.calls(), 2); assert.ok(JSON.stringify(bodies).includes("userProfileItems"));
 });
 await test("Dream cancellation/background rejects late result and cold startup marks running interrupted without inference", async () => {
   const pending = deferred(), f = await fixture(() => pending.promise); await seed(f); model(f); await f.service.initialize(); const before = f.files.get(".echoink/shared-user/USER.md");
   const running = f.service.runDream(); while (!f.calls()) await turn(); await f.service.cancelDream(); assert.equal((await running).phase, "interrupted");
   pending.resolve(answer(JSON.stringify({ userProfileItems: [{ section: "identity", profileKey: "identity.name", text: "晚到值" }] }))); await turn(); assert.equal(f.files.get(".echoink/shared-user/USER.md"), before);
-  const ledgerPath = ".echoink/shared-user/.runtime/mobile-dream-ledger.json", ledger = JSON.parse(f.files.get(ledgerPath)); ledger.status.phase = "running"; f.files.set(ledgerPath, JSON.stringify(ledger));
+  const ledgerPath = `.echoink/shared-user/.runtime/mobile-dream-ledgers/${f.store.instanceId}.json`, ledger = JSON.parse(f.files.get(ledgerPath)); ledger.status.phase = "running"; f.files.set(ledgerPath, JSON.stringify(ledger));
   const cold = await fixture(undefined, f); await cold.service.initialize(); assert.equal(cold.service.dreamStatus().phase, "interrupted"); assert.equal(cold.calls(), 0);
 });
 await test("observed Dream evidence needs independent source groups rather than two records from one task", async () => {
-  const output = JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "偏好清楚" }] }), f = await fixture(async () => answer(output));
+  const output = JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "偏好清楚" }] }), f = await fixture(async input => dreamAnswer(input, [{ section: "preference", profileKey: "preference.tone", text: "偏好清楚" }]));
   await seed(f, ["mem_a", "mem_b"].map(id => ({ ...oldMemory(id), kind: "view", basis: "observed", source: `pi://vault/conversation/session/${id}?productRun=same-task` }))); model(f); await f.service.runDream();
   assert.equal((await f.service.readProfile()).items.length, 0); const current = await f.service.repository.snapshot();
   await f.service.repository.mutate(current.manifest.revision, "test-new-source", (draft, files) => { const record = f.service.repository.newRecord({ kind: "view", title: "不同任务", content: "偏好清楚", recallWhen: "表达", basis: "observed", source: "pi://vault/conversation/session/third?productRun=another-task", revision: draft.manifest.revision + 1 }); draft.records.push(record); files.set(record.file, module.exports.serializeCanonicalMemoryRecord(record)); });
@@ -265,6 +312,7 @@ await test("automatic archive is completed+seven days only, protects drafts/queu
   assert.deepEqual((await f.service.listArchives()).map(task => task.id), ["eligible"]); assert.deepEqual(plain(f.store.state.page), before);
   await f.service.restoreArchive("eligible"); assert.equal(f.store.getSession("eligible").agentId, "sol"); assert.equal(f.store.getSession("eligible").archivedAt, undefined); assert.deepEqual(plain(f.store.state.page), before); assert.equal(f.calls(), 0);
 });
+await runMobileMemoryParityScenarios(module.exports, {test,fixture,seed,oldMemory,model,answer,dreamAnswer,turn,plain});
 const crossEndRoot = process.env.ECHOINK_MOBILE_MEMORY_TEST_ROOT;
 if (crossEndRoot) {
   const registered = path.resolve(process.env.HOME, "EchoInk-TestVaults/90-任务临时/移动端改版-M9-20261019"), requested = path.resolve(crossEndRoot);

@@ -6,6 +6,7 @@ import {
   getActiveApiProvider,
   apiProviderHasUsableCredential,
 } from "../settings/settings";
+import { setMembershipLanguageProbe } from "./messages";
 import { AccountService } from "./account-service";
 import { createMembershipTransport, membershipApiUrl } from "./transport";
 import { createMembershipStorage, type DeviceEncryptionPort } from "./storage";
@@ -14,6 +15,7 @@ import { membershipWebsiteUrl } from "./website-links";
 export async function createPluginAccountService(
   plugin: CodexForObsidianPlugin,
 ): Promise<AccountService> {
+  setMembershipLanguageProbe(() => plugin.settings.settingsLanguage);
   const apiUrl = membershipApiUrl;
   const website = membershipWebsiteUrl;
   const storage = await createMembershipStorage(

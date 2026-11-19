@@ -14,7 +14,7 @@ export function diaryReviewReason(reasons: readonly string[], zh: boolean): stri
     [/改|变化|更新中断|找不到/iu, "原记录有变化，核对一下", "The original record changed. Please check."],
     [/交易对象|merchant|counterparty/iu, "交易对象还不清楚，改一下", "Check the counterparty."],
     [/日期|date/iu, "日期还不清楚，改一下", "Check the date."],
-    [/写|撤销/iu, "上次操作没完成，核对一下", "The last action needs checking."],
+    [/写|撤销/iu, "上次操作尚未完成。请核对后继续。", "The last action did not finish. Check it, then continue."],
     [/待办|愿望|感想/iu, "是否要做这件事，确认一下", "Check whether this is a to-do."]
   ];
   for (const [pattern, chinese, english] of rules) {

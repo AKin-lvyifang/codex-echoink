@@ -1,3 +1,6 @@
+import { saveWorkbenchDismissal } from "./workbench-dismissals";
+import { userFacingErrorText, rawErrorText, actionFailureText } from "../core/error-copy";
+import { bindPressFeedback } from "../ui/press-feedback";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { openTaskMenu } from "../ui/codex-view/task-menu";
@@ -7,17 +10,16 @@ import { isAnimateIconName, renderAnimateIcon } from "../ui/animate-icon";
 import { workbenchAgentState } from "./workbench-doll-motion";
 import { WorkbenchWeatherStage } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
-import { WorkbenchStarters } from "./workbench-starters";
 import { workbenchResultType, type WorkbenchResultType } from "./workbench-result";
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
-import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, type AgentDefinition, type AgentModuleId } from "../agents/types";
 import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
-import { onboardingSetupComplete, onboardingDirectoriesReady } from "../settings/onboarding-setup-status";
+import { workbenchGuideSteps, workbenchSetupTodos, setupTodoModuleName, type WorkbenchGuideStep, type WorkbenchSetupTodoKind } from "./workbench-setup-todos";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { renderTaskAvatar } from "../ui/codex-view/agent-roster";
 import { ForegroundView } from "../ui/foreground-view";
@@ -28,7 +30,7 @@ import { getWorkbenchDataService } from "./workbench-data";
 import type { WorkbenchDataPort, WorkbenchSignal, WorkbenchSnapshot } from "./workbench-types";
 import { answerWorkbenchQuestion, launchWorkbenchSignal } from "./task-launcher";
 import { showWorkbenchActionFailure } from "./workbench-action-feedback";
-import { openWorkbenchModule, WORKBENCH_MODULES } from "./module-navigation";
+import { openWorkbenchModule, prefillWorkbenchModule, workbenchModuleOwner, WORKBENCH_MODULES } from "./module-navigation";
 import { expertModuleEnabled } from "../experts/module";
 import type { ParsedTodoRecord } from "./todo-markdown";
 import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
@@ -42,10 +44,15 @@ import { renderDiaryOrganizerBanner } from "./diary-organizer-banner";
 import { diaryHomeSummary } from "./diary-organizer-summary";
 import type { VaultMemoryNotice } from "../storage/vault-identity";
 import type { CompanyService } from "../company/service";
+import type { CompanyDocument, CompanyProject } from "../company/types";
+import { RemoteConversationModal } from "./remote-conversation-modal";
+import { friendlyDeviceName } from "../sync/conversations";
+import { formatClock } from "./project-parts";
 import { companyApprovals, companyDecisions, CompanyInteractionController } from "../company/interaction-bridge";
 import { pendingDecisions } from "../company/logic";
 import { agentLookup } from "./project-parts";
 import { workbenchProjectCard, workbenchProjectSignature, workbenchProjects } from "./workbench-projects";
+import { mountWorkbenchCloudSync } from "./cloud-sync-status";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
@@ -54,8 +61,11 @@ let viewId = 0;
 export const WORKBENCH_NAVIGATION_DELAY_MS = 240;
 const WORKBENCH_NAVIGATION = [
   ...WORKBENCH_MODULES,
-  { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const
+  { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const,
+  // 资讯不是 Agent 模块，没有负责人。这个工作台视图只在桌面注册，手机端第一期没有入口。
+  { id: "news", icon: "newspaper", zh: "资讯", en: "News" } as const
 ];
+const isProNavigation = (id: typeof WORKBENCH_NAVIGATION[number]["id"]): boolean => id === "experts" || id === "news" || isProWorkbenchModule(id);
 
 function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceActivity>[], entries: readonly TaskEntry[] = []): Map<string, Readonly<MaintenanceActivity>> {
   const latest = new Map<string, Readonly<MaintenanceActivity>>();
@@ -96,9 +106,17 @@ export function workbenchInlineQuestion(entry: TaskEntry, pending?: Readonly<Ech
   if (question.selection === "single" && question.questionId === entry.pendingResponse.questionId) return question;
 }
 
+const SETUP_TODO_ICONS: Record<WorkbenchSetupTodoKind, string> = {
+  model: "plug", knowledge: "library", "knowledge-owner": "link-2-off", owners: "user-round-plus", "pro-owner": "crown", persona: "pen-line"
+};
+const SETUP_TODO_MODULE_ICONS: Record<AgentModuleId, string> = {
+  journal: "notebook-pen", todos: "list-checks", "knowledge-base": "library", review: "rotate-ccw", finance: "wallet", "english-diary": "languages", "pdf-reading": "file-text"
+};
 export class EchoInkWorkbenchView extends ItemView {
+  private pressFeedbackDispose?: () => void;
   private weatherStage?: WorkbenchWeatherStage;
-  private starters?: WorkbenchStarters;
+  private guideVisible = false;
+  private setupTodosExpanded = false;
   private onboardingHistoryReady = false;
   private readonly onboardingChecks = new Map<string, string>();
   private navObserver?: ResizeObserver;
@@ -148,6 +166,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private modulePageState = "";
   private companyService: CompanyService | null = null;
   private companyUnsubscribe?: () => void;
+  private syncUnsubscribe?: () => void;
+  private cloudSyncDispose?: () => void;
   private readonly companyInteractions: CompanyInteractionController;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CodexForObsidianPlugin) {
@@ -165,6 +185,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private active(): boolean { return !this.closed && (this.foreground?.isActive() ?? true); }
 
   async onOpen(): Promise<void> {
+    this.pressFeedbackDispose?.(); this.pressFeedbackDispose = bindPressFeedback(this.contentEl);
     this.register(watchImeComposition(this.contentEl));
     this.closed = false;
     this.contentEl.addClass("echoink-workbench");
@@ -175,8 +196,9 @@ export class EchoInkWorkbenchView extends ItemView {
     this.foregroundChanged(this.foreground.isActive());
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
-    this.unsubscribers.push(service.subscribe({ refresh: () => {
-      if (this.plugin.settings.workbenchOnboardingDismissed) this.renderStarters();
+    this.unsubscribers.push(service.subscribe({ refresh: (_id, _message, shellChanged = true) => {
+      if (!shellChanged) return;
+      if (this.plugin.settings.workbenchOnboardingDismissed) { this.syncGuideVisibility(); this.renderSetupTodos(); }
       this.scheduleRefresh();
     }, clearAcceptedDraft() {}, isTaskVisible: () => false }));
     this.registerDomEvent(this.contentEl, "keydown", event => this.handleKeys(event));
@@ -201,12 +223,14 @@ export class EchoInkWorkbenchView extends ItemView {
     this.scheduleRefresh(0);
   }
   async onClose(): Promise<void> {
+    this.pressFeedbackDispose?.(); this.pressFeedbackDispose = undefined;
     this.closed = true; this.refreshVersion++;
     this.foreground?.dispose(); this.foreground = null;
-    this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
+    this.disposeHeader();
     for (const unsubscribe of this.unsubscribers.splice(0)) unsubscribe();
     this.knowledgeUnsubscribe?.(); this.knowledgeUnsubscribe = undefined; this.knowledgeSource = undefined; this.maintenanceActivities = []; this.maintenance.clear(); this.linkingTask = null;
     this.companyUnsubscribe?.(); this.companyUnsubscribe = undefined; this.companyService = null;
+    this.syncUnsubscribe?.(); this.syncUnsubscribe = undefined;
     this.companyInteractions.dispose();
     this.clearTimers(); this.stopSearchWork();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
@@ -219,7 +243,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private foregroundChanged(active: boolean): void {
     if (this.closed) return;
-    this.weatherStage?.setActive(active); this.starters?.setActive(active);
+    this.weatherStage?.setActive(active);
     if (!active) {
       this.clearNavigationPlayback();
       this.clearTimers(); this.stopSearchWork(); this.refreshVersion++; this.refreshPending = true;
@@ -257,20 +281,55 @@ export class EchoInkWorkbenchView extends ItemView {
     if (service === this.companyService) return;
     this.companyUnsubscribe?.(); this.companyUnsubscribe = undefined; this.companyService = service;
     if (service) this.companyUnsubscribe = service.subscribe(() => { if (this.active()) this.render(); else this.refreshPending = true; });
+    if (!this.syncUnsubscribe && this.plugin.syncOverview) this.syncUnsubscribe = this.plugin.syncOverview.subscribe(() => { if (this.active()) this.render(); else this.refreshPending = true; });
   }
   private renderProjects(): void {
     this.watchCompany();
     const doc = this.companyService?.doc;
-    const projects = doc ? workbenchProjects(doc) : [];
-    const section = this.group("projects", this.t("项目", "Projects"), projects.length, false);
-    if (!section || !doc) return;
+    const overview = this.plugin.syncOverview?.snapshot();
+    type Item = { readonly key: string; readonly project: CompanyProject; readonly doc: CompanyDocument; readonly device?: { id: string; name: string } };
+    const items: Item[] = doc ? workbenchProjects(doc).map(project => ({ key: `project-${project.id}`, project, doc })) : [];
+    // Other devices' unfinished projects follow this device's own; they are read-only here.
+    for (const project of overview?.projects ?? []) {
+      const remote = overview?.docs[project.deviceId];
+      if (remote) items.push({ key: `project-${project.deviceId}-${project.id}`, project, doc: remote, device: { id: project.deviceId, name: project.deviceName } });
+    }
+    const section = this.group("projects", this.t("项目", "Projects"), items.length, false);
+    if (!section) return;
     const agents = this.plugin.settings.agentRegistry.agents, agent = agentLookup(agents);
-    const approvals = companyApprovals(this.plugin, doc);
+    const approvals = doc ? companyApprovals(this.plugin, doc) : [];
     const roster = agents.map(a => [a.id, a.name, a.avatar]);
-    this.syncRows(section.lastElementChild as HTMLElement, projects, project => `project-${project.id}`,
-      project => JSON.stringify([this.language, workbenchProjectSignature(doc, project), roster, approvals.filter(a => a.dispatch.projectId === project.id).map(a => a.key)]),
-      project => workbenchProjectCard(this.contentEl.ownerDocument, doc, project, agent,
-        () => { void this.plugin.activateProjectPage(project.id).catch(error => new Notice(message(error))); }, approvals.filter(a => a.dispatch.projectId === project.id).length));
+    this.syncRows(section.lastElementChild as HTMLElement, items, item => item.key,
+      item => JSON.stringify([this.language, workbenchProjectSignature(item.doc, item.project), roster, item.device, item.device ? [] : approvals.filter(a => a.dispatch.projectId === item.project.id).map(a => a.key)]),
+      item => {
+        const card = workbenchProjectCard(this.contentEl.ownerDocument, item.doc, item.project, agent,
+          () => { void this.plugin.activateProjectPage(item.project.id, item.device?.id).catch(error => new Notice(message(error, this.language))); }, item.device ? 0 : approvals.filter(a => a.dispatch.projectId === item.project.id).length);
+        if (item.device) {
+          card.classList.add("is-remote");
+          const where = card.querySelector<HTMLElement>(".wb-project-head")?.createSpan({ cls: "wb-project-status wb-project-device" });
+          if (where) { setIcon(where.createSpan({ cls: "wb-project-status-icon", attr: { "aria-hidden": "true" } }), "monitor-smartphone"); where.createSpan({ text: this.t(`在${item.device.name}上运行`, `Running on ${item.device.name}`) }); }
+        }
+        return card;
+      });
+  }
+  /** Conversations other devices mirrored into the sync folder: open read-only, or continue here as a new conversation. */
+  private renderRemoteConversations(): void {
+    const items = this.plugin.syncOverview?.snapshot().conversations.slice(0, 20) ?? [];
+    const section = this.group("remote-conversations", this.t("其他设备的对话", "Conversations on other devices"), items.length, true);
+    if (!section) return;
+    this.syncRows(section.lastElementChild as HTMLElement, items, item => `remote-${item.deviceId}-${item.id}`, item => JSON.stringify([this.language, item]), item => {
+      const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-completed"; row.dataset.remoteConversation = `${item.deviceId}:${item.id}`;
+      const button = this.button(row, "", `remote-${item.deviceId}-${item.id}`, () => new RemoteConversationModal(this.plugin, item).open(), "tertiary"); button.classList.add("wb-completed-body");
+      setIcon(button.createSpan({ cls: "wb-result-kind", attr: { "aria-label": this.t("对话", "Conversation") } }), "message-square-text");
+      const copy = button.createSpan({ cls: "wb-grow" }); copy.createSpan({ cls: "wb-row-title", text: item.title });
+      const sub = copy.createSpan({ cls: "wb-completed-sub" });
+      const deviceName = friendlyDeviceName(item.deviceName);
+      const continuedDevices = item.continuedOn.map(device => friendlyDeviceName(device.deviceName));
+      sub.createSpan({ cls: "wb-completed-agent", text: this.t(`在${deviceName}上`, `On ${deviceName}`) });
+      sub.createSpan({ cls: "wb-secondary", text: `· ${continuedDevices.length ? this.t(`已在${continuedDevices.join("、")}接着聊`, `Continued on ${continuedDevices.join(", ")}`) : item.preview ?? ""}` });
+      button.createSpan({ cls: "wb-time", text: formatClock(item.updatedAt) });
+      return row;
+    });
   }
   private renderCompanyDecisions(): void {
     const doc = this.companyService?.doc;
@@ -308,9 +367,9 @@ export class EchoInkWorkbenchView extends ItemView {
         await this.syncOnboardingHistory(version);
         if (!this.active() || version !== this.refreshVersion) return;
       }
-      else this.taskError = message(tasks.reason);
+      else this.taskError = rawErrorText(tasks.reason);
       if (snapshot.status === "fulfilled") { this.snapshot = snapshot.value; this.dataError = ""; }
-      else this.dataError = message(snapshot.reason);
+      else this.dataError = rawErrorText(snapshot.reason);
       const groups = tasks.status === "fulfilled" ? this.taskGroups(now) : undefined;
       const interrupted = groups?.interrupted ?? [];
       const unread = interrupted.filter(entry => {
@@ -340,7 +399,7 @@ export class EchoInkWorkbenchView extends ItemView {
         })()
       ]);
     })().catch(error => {
-      if (this.active() && version === this.refreshVersion) { this.taskError = message(error); this.render(now); }
+      if (this.active() && version === this.refreshVersion) { this.taskError = rawErrorText(error); this.render(now); }
     }).finally(() => {
       this.refreshFlight = null;
       if (this.active()) {
@@ -428,7 +487,7 @@ export class EchoInkWorkbenchView extends ItemView {
     for (const cleanup of this.navigationAnimations.values()) cleanup();
   }
   private renderShell(): void {
-    this.disposeHeader(); this.starters?.dispose(); this.starters = undefined;
+    this.disposeHeader();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
     const page = this.contentEl.createDiv({ cls: "wb-page", attr: { "data-wb": "page" } });
     const header = page.createEl("header", { cls: "wb-header" });
@@ -453,10 +512,10 @@ export class EchoInkWorkbenchView extends ItemView {
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
+    page.createDiv({ attr: { "data-wb": "cloud-sync" } });
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
-    page.createDiv({ attr: { "data-wb": "starters" } });
-    page.createDiv({ attr: { "data-wb": "knowledge-reminder", "aria-live": "polite" } });
+    page.createDiv({ attr: { "data-wb": "setup-todos", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
@@ -469,6 +528,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
 
   private disposeHeader(): void {
+    this.cloudSyncDispose?.(); this.cloudSyncDispose = undefined;
     this.clearNavigationPlayback();
     this.navObserver?.disconnect(); this.navObserver = undefined;
     if (this.navFrame !== undefined) this.contentEl.ownerDocument.defaultView?.cancelAnimationFrame(this.navFrame);
@@ -512,7 +572,7 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private openMoreModules(): void {
     const menu = new Menu();
-    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${(module.id === "experts" || isProWorkbenchModule(module.id)) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
+    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${isProNavigation(module.id) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
     const box = this.field("module-more").getBoundingClientRect(); menu.showAtPosition({ x: box.left, y: box.bottom });
   }
   private async syncOnboardingHistory(version: number): Promise<void> {
@@ -541,47 +601,108 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     this.onboardingHistoryReady = !failed;
   }
-  private renderStarters(): void {
-    const show = this.entries !== null && !this.taskError && this.onboardingHistoryReady && !this.plugin.settings.workbenchOnboardingDismissed;
-    const host = this.field("starters"); host.hidden = !show;
-    if (!show) { this.starters?.dispose(); this.starters = undefined; return; }
-    if (!this.starters) this.starters = new WorkbenchStarters(host, {
-      english: () => this.language === "en", hasPro: () => workbenchHasPro(this.plugin),
-      avatar: () => { const avatar = this.plugin.settings.agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.avatar; return avatar?.kind === "preset" ? avatar.presetId : "sol"; },
-      act: async index => {
-        if (index === 0) return this.plugin.openPaperGuideAfterOnboarding(true);
-        if (index < 3) return this.plugin.openWorkbenchSetup((["knowledge", "agent", "appearance"] as const)[index]);
-        if (index === 3 || index === 4) return this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, index === 3
-          ? this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first.") : this.t("带我精读 @", "Read closely @"));
-        return this.openModule(index === 5 ? "english-diary" : "pdf-reading");
-      }, upgrade: () => this.plugin.openEchoInkAccountSettings("benefits"), error: error => new Notice(message(error))
-    });
-    else this.starters.update();
-    if (this.lockedModule) this.starters.setActive(false);
+  private syncGuideVisibility(): void {
+    this.guideVisible = this.entries !== null && !this.taskError && this.onboardingHistoryReady && !this.plugin.settings.workbenchOnboardingDismissed;
   }
-  private renderKnowledgeReminder(): void {
-    const host = this.field("knowledge-reminder"), initialized = onboardingSetupComplete(this.plugin.settings) || (this.plugin.settings.setup?.knowledgeReminderDismissedAt ?? 0) > 0;
-    host.hidden = initialized;
-    if (initialized) { this.disposeControls(host); host.empty(); delete host.dataset.signature; return; }
-    const reminderSignature = JSON.stringify([this.language, onboardingDirectoriesReady(this.plugin.settings)]);
-    if (host.dataset.signature === reminderSignature) return;
-    this.disposeControls(host); host.empty(); host.dataset.signature = reminderSignature;
-    const row = host.createDiv({ cls: "wb-knowledge-reminder" });
-    row.createSpan({ cls: "wb-grow", text: onboardingDirectoriesReady(this.plugin.settings) ? this.t("还没连接模型", "Model not connected") : this.t("还没设置知识库", "Knowledge base not set up") });
-    this.button(row, this.t("去初始化", "Set up"), "knowledge-reminder-settings", () => this.plugin.openPaperGuideAfterOnboarding(true), "secondary", "arrow-right").classList.add("is-small");
-    this.button(row, this.t("关闭知识库提醒", "Dismiss knowledge base reminder"), "knowledge-reminder-dismiss", async () => {
-      if (this.busy.has("knowledge-reminder-dismiss")) return;
-      await this.runAction("knowledge-reminder-dismiss", async () => {
-        this.plugin.settings.setup.knowledgeReminderDismissedAt = Date.now();
-        try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
-        catch (error) { this.plugin.settings.setup.knowledgeReminderDismissedAt = 0; throw error; }
-        this.plugin.notifyHomeSurfacesChanged();
-      });
-    }, "icon", "x");
+  private async runGuideStep(step: WorkbenchGuideStep): Promise<void> {
+    if (step.pro && !workbenchHasPro(this.plugin)) { await this.plugin.openEchoInkAccountSettings("benefits"); return; }
+    // Clicking a step counts as doing it (方哥 11-09); the row leaves once the action starts.
+    await this.markGuide({ [step.key]: true });
+    if (step.key === "knowledge") await this.plugin.openPaperGuideAfterOnboarding(true);
+    else if (step.key === "avatar" || step.key === "appearance") await this.plugin.openWorkbenchSetup(step.key === "avatar" ? "agent" : "appearance");
+    else if (step.key === "journal") await prefillWorkbenchModule(this.plugin, "journal", this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first."));
+    else if (step.key === "reading") await this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, this.t("带我精读 @", "Read closely @"));
+    else await this.openModule(step.key === "english" ? "english-diary" : "pdf-reading");
+  }
+  private async markGuide(done: Record<string, true> | "all"): Promise<void> {
+    const settings = this.plugin.settings, previous = { done: settings.setup.onboardingGuideDone, dismissed: settings.workbenchOnboardingDismissed };
+    if (done === "all") settings.workbenchOnboardingDismissed = true;
+    else settings.setup.onboardingGuideDone = [...new Set([...(previous.done ?? []), ...Object.keys(done)])];
+    try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
+    catch (error) { settings.setup.onboardingGuideDone = previous.done; settings.workbenchOnboardingDismissed = previous.dismissed; throw error; }
+    this.plugin.notifyHomeSurfacesChanged(); this.render();
+  }
+  private renderSetupTodos(): void {
+    const host = this.field("setup-todos"), english = this.language === "en";
+    const items = workbenchSetupTodos(this.plugin.settings, workbenchHasPro(this.plugin));
+    const steps = this.guideVisible ? workbenchGuideSteps(this.plugin.settings, items) : [];
+    const guide = this.guideVisible && items.length + steps.length > 0, limit = guide ? 5 : 3, total = items.length + steps.length;
+    host.hidden = !total;
+    const journalOwner = !!workbenchModuleOwner(this.plugin, "journal"), pro = workbenchHasPro(this.plugin);
+    const signature = JSON.stringify([this.language, this.setupTodosExpanded, guide, journalOwner, pro, items.map(item => [item.key, item.signature, item.agentName]), steps.map(step => step.key)]);
+    if (host.dataset.signature === signature) return;
+    this.disposeControls(host); host.empty(); host.dataset.signature = signature;
+    if (!total) return;
+    const names = (ids: readonly AgentModuleId[]) => ids.map(id => setupTodoModuleName(id, english)).join(english ? ", " : "、");
+    const owners = (id: AgentModuleId) => () => this.plugin.openModuleOwnerSettings(id);
+    const box = guide ? host.createEl("section", { cls: "wb-guide" }) : host;
+    if (guide) {
+      const head = box.createDiv({ cls: "wb-section-heading" });
+      head.createEl("h2", { text: this.t("新手引导", "Getting started") }); head.createSpan({ cls: "wb-count", text: String(total) });
+      this.button(head, this.t("全部关掉", "Dismiss all"), "guide-dismiss-all", () => this.markGuide("all"), "tertiary");
+    }
+    const list = box.createDiv({ cls: "wb-setup-todos" });
+    const lead = (row: HTMLElement, icon: string, warn = false) => setIcon(row.createSpan({ cls: `wb-setup-todo-lead${warn ? " is-warning" : ""}`, attr: { "aria-hidden": "true" } }), icon);
+    const room = this.setupTodosExpanded || total <= limit ? total : limit;
+    const shown = items.slice(0, room), shownSteps = steps.slice(0, Math.max(0, room - shown.length));
+    for (const item of shown) {
+      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-setup-todo": item.key } });
+      lead(row, SETUP_TODO_ICONS[item.kind], item.kind === "model" || item.kind === "knowledge-owner" || item.kind === "pro-owner");
+      const text = item.kind === "model" ? this.t("还没连接模型", "Model not connected")
+        : item.kind === "knowledge" ? this.t("还没设置知识库", "Knowledge base not set up")
+        : item.kind === "knowledge-owner" ? this.t("知识库没有负责人，自动双链已暂停", "Knowledge base has no owner, so auto-linking is paused")
+        : item.kind === "owners" ? this.t(`${names(item.moduleIds)}还没有负责人`, `${names(item.moduleIds)} ${item.moduleIds.length > 1 ? "have" : "has"} no owner`)
+        : item.kind === "pro-owner" ? this.t(`${names(item.moduleIds)}负责人「${item.agentName}」需要 PRO`, `${names(item.moduleIds)} owner "${item.agentName}" requires PRO`)
+        : this.t(`${names(item.moduleIds)}都交给了${item.agentName}`, `${names(item.moduleIds)} ${item.moduleIds.length > 1 ? "are" : "is"} handled by ${item.agentName}`);
+      const label = row.createSpan({ cls: "wb-grow", text });
+      if (item.kind === "owners") {
+        const mods = label.createSpan({ cls: "wb-setup-todo-mods", attr: { "aria-hidden": "true" } });
+        for (const id of item.moduleIds) setIcon(mods.createSpan(), SETUP_TODO_MODULE_ICONS[id]);
+      }
+      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
+      const key = `setup-todo:${item.key}`;
+      const main = (label: string, action: () => unknown, variant: "primary" | "secondary" = "secondary") => this.button(actions, label, key, action, variant).classList.add("is-small");
+      const aside = (label: string, action: () => unknown) => this.button(actions, label, `${key}:aside`, action, "tertiary");
+      if (item.kind === "model") main(this.t("去连接", "Connect"), () => this.plugin.openWorkbenchSetup("models"));
+      else if (item.kind === "knowledge") main(this.t("去初始化", "Set up"), () => this.plugin.openPaperGuideAfterOnboarding(true));
+      else if (item.kind === "knowledge-owner" || item.kind === "owners") main(this.t("去指定", "Assign"), owners(item.moduleIds[0]));
+      else if (item.kind === "pro-owner") { aside(this.t("换负责人", "Change owner"), owners(item.moduleIds[0])); main(this.t("续费 PRO", "Renew PRO"), () => this.plugin.openEchoInkAccountSettings("benefits"), "primary"); }
+      else { aside(this.t("换负责人", "Change owner"), owners(item.moduleIds[0])); main(this.t("写人格", "Write persona"), () => this.plugin.openAgentPersonaEditor(GENERALIST_AGENT_ID)); }
+      this.button(actions, this.t("关闭这条提醒", "Dismiss this reminder"), `setup-todo-dismiss:${item.key}`, async () => {
+        const busyKey = `setup-todo-dismiss:${item.key}`;
+        if (this.busy.has(busyKey)) return;
+        await this.runAction(busyKey, async () => {
+          const setup = this.plugin.settings.setup, previous = setup.setupTodoDismissed;
+          setup.setupTodoDismissed = { ...previous, [item.key]: item.signature };
+          try { await this.plugin.saveSettings(true, { flushConversationStore: false }); }
+          catch (error) { setup.setupTodoDismissed = previous; throw error; }
+          this.plugin.notifyHomeSurfacesChanged();
+        });
+      }, "icon", "x");
+    }
+    for (const step of shownSteps) {
+      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-guide-step": step.key } });
+      lead(row, step.icon);
+      const text = row.createSpan({ cls: "wb-grow", text: this.t(step.zh, step.en) });
+      const locked = step.pro && !pro;
+      if (locked) text.createSpan({ cls: "wb-guide-pro", text: "PRO" });
+      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
+      const label = locked ? this.t("了解 PRO", "About PRO") : step.key === "journal" && !journalOwner ? this.t("指定负责人", "Assign owner") : this.t(step.actionZh, step.actionEn);
+      this.button(actions, label, `guide:${step.key}`, () => this.runGuideStep(step), "secondary", locked ? "lock" : undefined).classList.add("is-small");
+      this.button(actions, this.t("关闭这一条", "Dismiss this step"), `guide-dismiss:${step.key}`, () => this.markGuide({ [step.key]: true }), "icon", "x");
+    }
+    const hidden = total - shown.length - shownSteps.length;
+    if (hidden > 0) {
+      const more = this.button(list, this.t(`还有 ${hidden} 项`, `${hidden} more`), "setup-todo-more", () => { this.setupTodosExpanded = true; this.renderSetupTodos(); }, "tertiary", "chevron-down");
+      more.classList.add("wb-setup-todo", "is-more");
+      more.querySelector(".wb-button-icon")?.classList.add("wb-setup-todo-lead");
+    }
   }
 
   private async openModule(id: typeof WORKBENCH_NAVIGATION[number]["id"]): Promise<void> {
     if (id === "experts") { if (expertModuleEnabled(this.plugin)) await this.plugin.openExpertHall(); return; }
+    // 资讯页自己处理免费、未开放、下线等状态，这里只负责打开。
+    if (id === "news") { await this.plugin.activateNewsPage(); return; }
     if (isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) || workbenchModuleSetupReason(this.plugin, id)) { this.showModuleLock(id); return; }
     await openWorkbenchModule(this.plugin, id);
   }
@@ -591,7 +712,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (previous) { this.disposeControls(previous); previous.remove(); }
     this.lockedModule = id;
     this.clearNavigationPlayback();
-    this.weatherStage?.setActive(false); this.starters?.setActive(false);
+    this.weatherStage?.setActive(false);
     this.field("page").hidden = true;
     this.field("page").inert = true;
     const reason = workbenchModuleSetupReason(this.plugin, id);
@@ -608,13 +729,15 @@ export class EchoInkWorkbenchView extends ItemView {
     this.lockedModule = null; this.modulePageState = "";
     this.field("page").hidden = false;
     this.field("page").inert = false;
-    this.weatherStage?.setActive(this.active()); this.starters?.setActive(this.active());
+    this.weatherStage?.setActive(this.active());
     this.field("modules").querySelector<HTMLButtonElement>(`[data-module="${id}"]`)?.focus();
   }
 
   private render(now = Date.now()): void {
     if (this.closed) return;
     if (!this.active()) { this.refreshPending = true; return; }
+    const cloudHost = this.contentEl.querySelector<HTMLElement>('[data-wb="cloud-sync"]');
+    if (cloudHost && this.plugin.cloudSync && !cloudHost.hasChildNodes()) this.cloudSyncDispose = mountWorkbenchCloudSync(cloudHost, this.plugin, this.language !== "en");
     const active = this.contentEl.ownerDocument.activeElement as HTMLElement | null;
     const focus = active && this.field("groups").contains(active) ? active.dataset.wbFocus : undefined;
     const oldGroup = active?.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup;
@@ -624,7 +747,7 @@ export class EchoInkWorkbenchView extends ItemView {
     date.setAttribute("datetime", dayKey(now));
     this.field("modules").querySelectorAll<HTMLButtonElement>("[data-module]").forEach(button => {
       const id = button.dataset.module as typeof WORKBENCH_NAVIGATION[number]["id"];
-      const proModule = id === "experts" || isProWorkbenchModule(id);
+      const proModule = isProNavigation(id);
       button.hidden = id === "experts" && !expertModuleEnabled(this.plugin);
       const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
       const locked = proModule && !workbenchHasPro(this.plugin);
@@ -634,12 +757,12 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.lockedModule) {
       const id = this.lockedModule;
       const state = isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) ? "pro" : workbenchModuleSetupReason(this.plugin, id) ?? "";
-      if (!state) { this.closeModuleLock(); void this.openModule(id).catch(error => new Notice(message(error))); }
+      if (!state) { this.closeModuleLock(); void this.openModule(id).catch(error => new Notice(message(error, this.language))); }
       else if (state !== this.modulePageState) this.showModuleLock(id);
     }
     this.scheduleNav();
-    this.renderStarters();
-    this.renderKnowledgeReminder();
+    this.syncGuideVisibility();
+    this.renderSetupTodos();
     this.renderStatus();
     renderDiaryOrganizerBanner(this.field("diary-organizer"), this.plugin);
     renderVaultMemoryBanner(this.field("memory-notice"), this.memoryNotice, this.language, {
@@ -655,6 +778,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
     this.renderProjects();
+    this.renderRemoteConversations();
     this.renderCompanyDecisions();
     for (const [state, zh, en] of [["waiting", "等你回应", "Waiting for you"], ["running", "正在进行", "In progress"], ["interrupted", "没做完", "Not finished"]] as const) {
       this.taskGroup(state, this.t(zh, en), groups[state], now);
@@ -663,7 +787,7 @@ export class EchoInkWorkbenchView extends ItemView {
     this.taskGroup("completed", this.t("今天完成", "Completed today"), groups.completed, now);
     this.renderTodos();
     this.updateActionStates();
-    this.field("empty").hidden = !this.entries || !this.snapshot || !!this.taskError || !!this.dataError || !!this.snapshot.issues.length || this.field("groups").children.length > 0 || !!this.starters;
+    this.field("empty").hidden = !this.entries || !this.snapshot || !!this.taskError || !!this.dataError || !!this.snapshot.issues.length || this.field("groups").children.length > 0 || this.guideVisible;
     this.updateSelection();
     this.contentEl.scrollTop = oldScroll;
     if (focus && active && !active.isConnected) {
@@ -683,14 +807,20 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.taskError || this.dataError || this.memoryError || this.snapshot?.issues.length || previewErrors.length) {
       const row = host.createDiv({ cls: "wb-error", attr: { role: "status" } });
       const copy = row.createDiv({ cls: "wb-grow" });
-      if (this.memoryError) copy.createDiv({ text: this.t("记忆暂时读不到", "Memory unavailable") });
-      if (this.taskError) copy.createDiv({ text: this.t(`任务暂时读不到${this.entries ? "，尚未更新" : ""}`, `Tasks unavailable${this.entries ? "; not updated" : ""}`) });
-      if (this.dataError) copy.createDiv({ text: this.t(`本地事项暂时读不到${this.snapshot ? "，尚未更新" : ""}`, `Local items unavailable${this.snapshot ? "; not updated" : ""}`) });
+      if (this.memoryError) copy.createDiv({ text: this.t("暂时无法读取记忆", "Memory is temporarily unavailable") });
+      if (this.taskError) copy.createDiv({ text: this.t(`暂时无法读取任务${this.entries ? "，尚未更新" : ""}`, `Tasks are temporarily unavailable${this.entries ? "; not updated" : ""}`) });
+      if (this.dataError) copy.createDiv({ text: this.t(`暂时无法读取本地事项${this.snapshot ? "，尚未更新" : ""}`, `Local items are temporarily unavailable${this.snapshot ? "; not updated" : ""}`) });
       if (this.snapshot?.issues.length) copy.createDiv({ text: this.t("部分事项暂时无法确认", "Some items could not be checked") });
-      if (previewErrors.length) copy.createDiv({ text: this.t("部分任务结果暂时读不到", "Some task results are unavailable") });
-      const details = copy.createEl("details");
-      details.createEl("summary", { text: this.t("查看原因", "Details") });
-      for (const reason of [this.taskError, this.dataError, this.memoryError, ...(this.snapshot?.issues ?? []), ...previewErrors].filter((value): value is string => !!value)) details.createDiv({ text: reason });
+      if (previewErrors.length) copy.createDiv({ text: this.t("暂时无法读取部分任务结果", "Some task results are temporarily unavailable") });
+      // Only reasons a user can read are listed; internal codes and English exceptions stay in the run report.
+      const language = this.plugin.settings.settingsLanguage === "en" ? "en" : "zh";
+      const reasons = [...new Set([this.taskError, this.dataError, this.memoryError, ...(this.snapshot?.issues ?? []), ...previewErrors]
+        .filter((value): value is string => !!value).map(reason => userFacingErrorText(reason, "", language)).filter(Boolean))];
+      if (reasons.length) {
+        const details = copy.createEl("details");
+        details.createEl("summary", { text: this.t("查看原因", "Details") });
+        for (const reason of reasons) details.createDiv({ text: reason });
+      }
       this.button(row, this.t("重试", "Retry"), "retry", async () => {
         if (this.memoryError) await this.plugin.resolveVaultMemory("retry");
         for (const [id, preview] of this.completedPreviews) if (preview.error) this.completedPreviews.delete(id);
@@ -712,15 +842,15 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     section.querySelector("h2")!.textContent = title;
     // Projects come from the company store, which is already in memory: no loading or error state.
-    const projects = key === "projects" || key === "company-decisions", taskGroup = !projects && !["signals", "todos"].includes(key);
+    const projects = key === "projects" || key === "company-decisions" || key === "remote-conversations", taskGroup = !projects && !["signals", "todos"].includes(key);
     const available = projects || (taskGroup ? this.entries !== null : this.snapshot !== null);
     const error = projects ? "" : taskGroup ? this.taskError : this.dataError;
     const uncertain = !taskGroup && !projects && !!this.snapshot?.issues.some(issue => key === "signals" || /待办|工作区仍在加载/u.test(issue));
-    const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count ? "ready" : "empty";
+    const status = error ? "error" : !available ? "loading" : uncertain ? "unconfirmed" : count || key === "signals" && (this.snapshot?.dismissedCount ?? 0) > 0 ? "ready" : "empty";
     if (status === "empty") { this.disposeControls(section); section.remove(); return null; }
     section.dataset.state = status;
     const counter = section.querySelector<HTMLElement>(".wb-count")!;
-    counter.hidden = status === "loading" || status === "error" || status === "unconfirmed";
+    counter.hidden = status === "loading" || status === "error" || status === "unconfirmed" || key === "signals" && count === 0;
     counter.textContent = counter.hidden ? "" : String(count);
     const feedback = section.querySelector<HTMLElement>(".wb-group-status")!;
     this.disposeControls(feedback); feedback.empty();
@@ -728,12 +858,12 @@ export class EchoInkWorkbenchView extends ItemView {
     feedback.setAttribute("aria-busy", String(status === "loading"));
     if (status === "loading") feedback.createSpan({ text: this.t("正在读取…", "Reading…") });
     else if (status === "error") {
-      feedback.createSpan({ text: available ? this.t("读取失败，尚未更新", "Could not refresh; showing previous items") : this.t("读取失败", "Could not read items") });
+      feedback.createSpan({ text: available ? this.t("暂时无法读取，尚未更新", "Temporarily unavailable; not updated") : this.t("暂时无法读取", "Temporarily unavailable") });
       this.button(feedback, this.t("重试", "Retry"), `retry-${key}`, () => this.refresh(), "tertiary");
     } else if (status === "unconfirmed") feedback.createSpan({ text: this.t("部分事项尚未确认", "Some items have not been checked") });
     section.lastElementChild?.classList.toggle("is-empty", !count);
     // Reorder only when a group appears; retained rows and focused controls stay put.
-    const order = ["company-decisions", "projects", "waiting", "running", "interrupted", "signals", "completed", "todos"];
+    const order = ["company-decisions", "projects", "waiting", "running", "interrupted", "signals", "completed", "remote-conversations", "todos"];
     const next = Array.from(host.children).find(node => order.indexOf((node as HTMLElement).dataset.wbGroup!) > order.indexOf(key));
     if (next && section.nextElementSibling !== next) host.insertBefore(section, next);
     return section;
@@ -800,7 +930,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (taskState(entry) === "completed" && !session?.messages.some(item => item.role === "assistant" && item.text.trim())) {
       const preview = this.completedPreviews.get(entry.conversationId);
       if (preview?.revision !== this.completedPreviewRevision(entry)) return this.t("正在读取结果…", "Reading result…");
-      return preview.error ? this.t("结果暂时读不到", "Result unavailable") : preview.text || this.t("未记录结果摘要", "No result summary recorded");
+      return preview.error ? this.t("暂时无法读取结果", "The result is temporarily unavailable") : preview.text || this.t("未记录结果摘要", "No result summary recorded");
     }
     return (taskState(entry) === "interrupted" ? this.interruptions.get(entry.conversationId)?.stage : "") || taskSummary(entry, session, this.language, this.pending(entry));
   }
@@ -820,7 +950,7 @@ export class EchoInkWorkbenchView extends ItemView {
           this.completedPreviews.set(entry.conversationId, { revision, text: hasAnswer ? taskSummary(entry, projection, this.language) : "", type: workbenchResultType(projection.messages, entry.taskStartedAt) });
         } catch (error) {
           if (!this.active() || version !== this.refreshVersion) return;
-          this.completedPreviews.set(entry.conversationId, { revision, error: `${entry.title}：${message(error)}` });
+          this.completedPreviews.set(entry.conversationId, { revision, error: `${entry.title}：${rawErrorText(error)}` });
         }
       }
     };
@@ -832,7 +962,7 @@ export class EchoInkWorkbenchView extends ItemView {
     card.oncontextmenu = event => { void openTaskMenu(this.plugin, event, entry.conversationId, () => this.scheduleRefresh(0)); };
     card.onclick = event => {
       if ((event.target as Element).closest("button, input, textarea, select, label, a, summary")) return;
-      void this.openTask(entry.conversationId).catch(error => new Notice(message(error)));
+      void this.openTask(entry.conversationId).catch(error => new Notice(message(error, this.language)));
     };
     const activity = this.maintenance.get(entry.conversationId), state = this.taskState(entry), agent = this.agent(entry);
     const body = this.button(card, "", `task-${entry.conversationId}`, () => this.openTask(entry.conversationId), "tertiary");
@@ -875,7 +1005,7 @@ export class EchoInkWorkbenchView extends ItemView {
         const current = maintenanceActivityForTask(entry, this.plugin.getKnowledgeActivitySource?.()?.snapshot().maintenance ?? []);
         const service = this.plugin.getKnowledgeSurfaceService() as Partial<MaintenanceUpgradeSurface> | null;
         const snapshot = await service?.getUpgradeSnapshot?.();
-        if (current?.taskKind !== "upgrade" || current.originConversationId !== entry.conversationId || snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.t("升级任务已更新，请重新打开", "Upgrade task changed. Reopen it."));
+        if (current?.taskKind !== "upgrade" || current.originConversationId !== entry.conversationId || snapshot?.taskId !== entry.conversationId || snapshot.status !== "running" || !service?.stopUpgrade) throw new Error(this.t("升级任务已更新。请重新打开该任务后重试。", "The upgrade task has changed. Reopen it and try again."));
         await service.stopUpgrade();
       }), "secondary", "square");
       stop.classList.add("is-small"); stop.disabled = this.busy.has(key); setAmicroButtonPending(stop, this.busy.has(key));
@@ -904,7 +1034,7 @@ export class EchoInkWorkbenchView extends ItemView {
   private interruptionText(entry: TaskEntry, info: TaskInterruptionInfo | null | undefined): string {
     const at = info?.at ?? entry.taskInterruptedAt;
     const time = at === undefined ? "" : `${localDateLabel(at, Date.now(), this.language)} ${localTaskTime(at)} · `;
-    if (this.interruptionErrors.has(entry.conversationId)) return `${time}${this.t("中断记录暂时读不到", "Interruption details unavailable")}`;
+    if (this.interruptionErrors.has(entry.conversationId)) return `${time}${this.t("暂时无法读取中断记录", "Interruption details are temporarily unavailable")}`;
     if (info === undefined) return `${time}${this.t("正在读取中断记录…", "Reading interruption details…")}`;
     if (!info) return `${time}${this.t("中断原因未记录", "Cause was not recorded")}`;
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
@@ -947,6 +1077,17 @@ export class EchoInkWorkbenchView extends ItemView {
     const section = this.group("signals", this.t("可以交给 Agent", "Ready for an Agent"), signals.length, true);
     if (!section) return;
     const heading = section.firstElementChild as HTMLElement;
+    let restore = heading.querySelector<HTMLButtonElement>("[data-wb=signal-restore]");
+    if ((this.snapshot?.dismissedCount ?? 0) > 0) {
+      if (!restore) {
+        restore = this.button(heading, this.t("恢复已忽略建议", "Restore dismissed suggestions"), "signal-restore", () => this.runAction("signal-restore", async () => {
+          await saveWorkbenchDismissal(this.plugin.settings, null, () => this.plugin.saveSettings(true, { flushConversationStore: false }));
+          this.plugin.notifyHomeSurfacesChanged();
+        }), "tertiary");
+        restore.dataset.wb = "signal-restore";
+      }
+      restore.textContent = this.t("恢复已忽略建议", "Restore dismissed suggestions");
+    } else if (restore) { this.disposeControls(restore); restore.remove(); }
     let toggle = heading.querySelector<HTMLButtonElement>("[data-wb=signal-toggle]");
     if (signals.length > 5) {
       if (!toggle) {
@@ -956,7 +1097,7 @@ export class EchoInkWorkbenchView extends ItemView {
       toggle.textContent = this.signalsExpanded ? this.t("收起", "Collapse") : this.t(`还有 ${signals.length - 5} 条`, `${signals.length - 5} more`);
       toggle.setAttribute("aria-expanded", String(this.signalsExpanded)); toggle.setAttribute("aria-controls", `${this.id}-signals`);
     } else if (toggle) { this.disposeControls(toggle); toggle.remove(); }
-    const host = section.lastElementChild as HTMLElement; host.id = `${this.id}-signals`;
+    const host = section.lastElementChild as HTMLElement; host.id = `${this.id}-signals`; host.hidden = !signals.length;
     this.syncRows(host, this.signalsExpanded ? signals : signals.slice(0, 5), signal => signal.key,
       // A fresh capture time is not a visual change. Replacing the button between
       // pointerdown and pointerup prevents the browser from firing its click.
@@ -965,8 +1106,13 @@ export class EchoInkWorkbenchView extends ItemView {
         const row = ownedDiv(this.contentEl.ownerDocument); row.className = "wb-row";
         const icon = row.createSpan({ cls: "wb-lead", attr: { "aria-hidden": "true" } }); setIcon(icon, signal.icon);
         row.createSpan({ cls: "wb-grow", text: signal.description });
+        const actions = row.createDiv({ cls: "wb-signal-actions" });
+        this.button(actions, this.t("忽略", "Dismiss"), `dismiss-${signal.key}`, () => this.runAction(`dismiss-${signal.key}`, async () => {
+          await saveWorkbenchDismissal(this.plugin.settings, signal, () => this.plugin.saveSettings(true, { flushConversationStore: false }));
+          this.plugin.notifyHomeSurfacesChanged();
+        }), "tertiary");
         const key = `signal-${signal.key}`;
-        const button = this.button(row, moduleOwnerLabel(this.plugin, signal.moduleId), key,
+        const button = this.button(actions, moduleOwnerLabel(this.plugin, signal.moduleId), key,
           () => this.runAction(key, async () => {
             await launchWorkbenchSignal(this.plugin, signal, { load: async now => {
               const current = await this.port.load(now);
@@ -1091,7 +1237,7 @@ export class EchoInkWorkbenchView extends ItemView {
       });
       this.field("search-empty").hidden = result.count > 0;
       this.field("search-hint").textContent = result.failed ? this.t(`${result.failed} 篇笔记读取失败`, `${result.failed} notes could not be read`) : this.t("↑ ↓ 选择 · Enter 打开 · 最多显示 6 项", "↑ ↓ Select · Enter Open · Up to 6 results");
-    } catch { if (!abort.signal.aborted && this.active()) this.field("search-heading").textContent = this.t("搜索失败，请重试", "Search failed. Try again."); }
+    } catch { if (!abort.signal.aborted && this.active()) this.field("search-heading").textContent = this.t("搜索未能完成。请重试。", "The search could not be completed. Try again."); }
   }
   private handleKeys(event: KeyboardEvent): void {
     if (isImeKeyEvent(event)) return;
@@ -1111,7 +1257,7 @@ export class EchoInkWorkbenchView extends ItemView {
     if (event.key === "Enter") {
       event.preventDefault(); if (this.searchResolvedQuery !== (this.field("search-input") as HTMLInputElement).value) return;
       const match = this.searchMatches[Math.max(0, this.searchIndex)];
-      if (match) { this.closeSearch(true); void this.openNote(match.path).catch(error => new Notice(message(error))); }
+      if (match) { this.closeSearch(true); void this.openNote(match.path).catch(error => new Notice(message(error, this.language))); }
     }
   }
   private selectSearchIndex(index: number, scroll: boolean): void {
@@ -1132,4 +1278,4 @@ export class EchoInkWorkbenchView extends ItemView {
 
 function dayKey(at: number): string { const date = new Date(at); return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`; }
 function sameDay(a: number, b: number): boolean { return dayKey(a) === dayKey(b); }
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function message(error: unknown, language: string): string { return actionFailureText(error, language); }

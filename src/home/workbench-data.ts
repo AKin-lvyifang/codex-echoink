@@ -1,3 +1,4 @@
+import { isWorkbenchSignalDismissed, workbenchBodyFingerprint } from "./workbench-dismissals";
 import { loadKnowledgeSystemReminders } from "../knowledge-base/knowledge-system-reminders";
 import { resolveMaintenanceSourceState } from "../knowledge-base/maintenance-source-state";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
@@ -37,6 +38,7 @@ interface CachedSourceContent {
   markdown: string;
   fingerprint: string;
   rawFingerprint: string;
+  bodyFingerprint: string;
   rawDigest: RawDigestFrontmatterRecord | null;
 }
 
@@ -87,8 +89,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (previous?.mtime === mtime && previous.size === size) return previous.result;
     const result = this.plugin.app.vault.readBinary(file).then(content => {
       const bytes = Buffer.from(content);
-      let full: string | undefined, raw: string | undefined;
-      return { markdown: bytes.toString("utf8"), get fingerprint() { return full ??= workbenchFingerprint(bytes); }, get rawFingerprint() { return raw ??= rawDigestFingerprint(target, bytes); },
+      let full: string | undefined, raw: string | undefined, body: string | undefined;
+      return { markdown: bytes.toString("utf8"), get bodyFingerprint() { return body ??= workbenchBodyFingerprint(bytes.toString("utf8"), target); }, get fingerprint() { return full ??= workbenchFingerprint(bytes); }, get rawFingerprint() { return raw ??= rawDigestFingerprint(target, bytes); },
         rawDigest: /\.(?:md|markdown)$/iu.test(target) ? rawDigestRecordFromMarkdown(bytes) : null };
     });
     const cached = { mtime, size, result };
@@ -109,7 +111,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     const enqueue = (work: () => Promise<void>) => {
       const run = async () => { await work(); this.eventError = undefined; this.changed(); };
       this.observationQueue = this.observationQueue.then(run, run).catch(error => {
-        this.eventError = `收件箱观察失败：${message(error)}`; this.changed();
+        this.eventError = `收件箱状态未能更新：${message(error)}`; this.changed();
       });
     };
     const onFile = (file: { path: string }, kind: "create" | "modify" | "delete") => {
@@ -168,7 +170,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     if (!roots.length) return [];
     const files: WorkbenchSourceFile[] = [];
     // A failed read cannot establish absence or a first-observation baseline.
-    for (const file of this.inboxFiles()) files.push({ path: file.path, fingerprint: await this.fingerprint(file) });
+    for (const file of this.inboxFiles()) files.push({ path: file.path, fingerprint: await this.fingerprint(file), bodyFingerprint: (await this.readSourceContent(file)).bodyFingerprint });
     const scope = scopeKey(roots);
     await this.records.update(draft => {
       const previous = draft.inbox[scope], initial = !previous;
@@ -234,8 +236,8 @@ export class WorkbenchDataService implements WorkbenchDataPort {
     const attempt = async <T>(label: string, fallback: T, read: () => Promise<T>): Promise<T> => {
       try { return await read(); } catch (error) { issues.push(`${label}：${message(error)}`); return fallback; }
     };
-    if (!this.plugin.app.workspace.layoutReady) issues.push("工作区仍在加载，部分本地数据尚未就绪");
-    if (this.initializationError) issues.push(`工作台观察记录：${message(this.initializationError)}`);
+    if (!this.plugin.app.workspace.layoutReady) issues.push("工作区仍在加载，部分本地数据尚未读取");
+    if (this.initializationError) issues.push(`工作台记录：${message(this.initializationError)}`);
     if (this.eventError) issues.push(this.eventError);
     const records = await attempt<WorkbenchRecords | null>("本地记录读取失败", null, () => this.records.snapshot());
     const pro = this.plugin.accountService ? hasProPluginAccess(this.plugin.accountService) : false;
@@ -295,7 +297,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
         if (day.state === "unknown" && day.reason !== "旧日记缺少可核实的初始模板") issues.push(`日记：${day.reason}`);
       }
       if (new Set(facts.journals.map(day => day.path)).size !== 3) {
-        facts.journals = []; issues.push("日记日期格式无法区分日期");
+        facts.journals = []; issues.push("日记文件名格式无法识别日期");
       }
     }
     if (authorizedModules.includes("english-diary") && facts.journals[0]?.state === "body") facts.englishMissing = await attempt("英文日记关联读取失败", null,
@@ -311,11 +313,12 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       }
     }
     if (authorizedModules.includes("pdf-reading")) facts.pdfJobs = await attempt("PDF 历史读取失败", [], async () => {
-      if (!this.plugin.pdfReading) throw new Error("PDF 本地服务尚未就绪");
+      if (!this.plugin.pdfReading) throw new Error("PDF 精读尚未就绪");
       return this.plugin.pdfReading.api.history();
     });
     if (records) facts.reviewComplete = await attempt("复盘记录读取失败", null, () => this.hasReviewThisWeek(records, now));
-    return { generatedAt: now, signals: calculateWorkbenchSignals(facts), todayTodos: todos.filter(todo => !todo.done && todo.dueDate === today),
+    return { generatedAt: now, signals: calculateWorkbenchSignals(facts).filter(signal => !isWorkbenchSignalDismissed(signal, this.plugin.settings.workbenchDismissals)),
+      dismissedCount: Object.keys(this.plugin.settings.workbenchDismissals?.entries ?? {}).length, todayTodos: todos.filter(todo => !todo.done && todo.dueDate === today),
       modules, lockedModules, issues, nextRefreshAt: nextWorkbenchRefreshAt(facts) };
   }
   private async readPendingRaw(issues: string[]): Promise<WorkbenchSourceFile[]> {
@@ -332,7 +335,7 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       try {
         const cached = await this.readSourceContent(file), content = cached.markdown;
         const resolution = resolveMaintenanceSourceState(content, { fingerprint: () => cached.rawFingerprint, registry: registry.entries[file.path], maintenance: latest.get(file.path), previous: this.plugin.settings.knowledgeBase.processedSources[file.path] });
-        if (resolution.state !== "digested") result.push({ path: file.path, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
+        if (resolution.state !== "digested") result.push({ path: file.path, bodyFingerprint: cached.bodyFingerprint, fingerprint: resolution.origin === "new" ? `stat:${file.stat.mtime}:${file.stat.size}` : cached.rawFingerprint });
       } catch (error) { issues.push(`来源暂不可读取：${file.path}：${message(error)}`); }
       if (++batch % 32 === 0) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }

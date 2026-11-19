@@ -1,3 +1,5 @@
+import { CAUSE } from "../../core/error-copy";
+import { mountSmartJudgmentAccount } from "../smart-judgment-surfaces";
 import { formatMobileDate, formatMobileDateTime } from "../../mobile/date-display";
 import { membershipPlanAction, registrationGiftLabel, createUnavailableAccountAdapter, type AccountIdentity, type AccountMembershipAdapter, type AccountMembershipViewModel, type MembershipState } from "../../settings/account-membership-model";
 import { formatEarlyOfferEndDate, getMembershipPlanPricing, type MembershipPlanId } from "../../settings/account-membership-pricing";
@@ -6,9 +8,9 @@ import type { MobileShellPage } from "../mobile/shell-types";
 import { iphoneElement as el, iphoneIcon } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
 import { settingsMessage, settingsText } from "./settings-language";
-import { pushSettingsPage, settingsBody, settingsButton, settingsError, settingsField, settingsGroup, settingsRow } from "./settings-elements";
+import { pushSettingsPage, settingsBody, settingsButton, settingsError, settingsField, settingsGroup, settingsRow, settingsSwitch } from "./settings-elements";
 
-const PLAN_NAMES: Record<MembershipPlanId, string> = { early: "早鸟买断", month: "月卡", quarter: "季卡", year: "年卡" };
+const PLAN_NAMES: Record<MembershipPlanId, string> = { early: "早鸟终生买断", month: "PRO 月卡", quarter: "PRO 季卡", year: "PRO 年卡", "max-month": "Max 月卡", "max-quarter": "Max 季卡", "max-year": "Max 年卡" };
 const STATE_NAMES: Record<MembershipState, string> = {
   unavailable: "账号服务暂不可用", anonymous: "未登录", free: "免费版", active: "有效", lifetime: "终生买断权益",
   "offline-valid": "离线可用", "verification-required": "需要联网验证", expired: "已到期", revoked: "已撤销", scheduled: "尚未生效",
@@ -29,13 +31,22 @@ export class IPhoneAccountPages {
     const body = this.body(), identityArea = el(ctx.document, "div", "ip-account-identity"), accountLinks = el(ctx.document, "div", "ip-account-links"); body.append(identityArea, accountLinks);
     const serviceFeedback = settingsError(ctx, body), actionFeedback = settingsError(ctx, body), statusActions = el(ctx.document, "div", "ip-settings-actions ip-account-actions"); body.append(statusActions);
     this.heading(body, "我的使用", "当前 Vault · 本地"); const usage = el(ctx.document, "div", "ip-account-usage"); body.append(usage);
+    const smartJudgment = mountSmartJudgmentAccount(body, {
+      english: () => ctx.host.settings().settingsLanguage === "en", signedIn: () => !!this.adapter.read().identity,
+      upgrade: () => purchaseHeading.scrollIntoView({ block: "start", behavior: "smooth" }),
+      group: (parent, title) => settingsGroup(ctx, parent, title, true),
+      row: (parent, title) => settingsRow(ctx, parent, title, { literal: true }),
+      label: row => row.querySelector<HTMLElement>(".ip-settings-label")!,
+      toggle: (row, change) => settingsSwitch(ctx, row.parentElement!, "智能判断", () => ctx.host.settings().smartJudgment.enabled, change, undefined, row),
+      button: (text, action) => settingsButton(ctx, text, action)
+    });
     this.heading(body, "权益对比"); this.benefits(body);
     const purchaseHeading = this.heading(body, "购买方案"), redeemToggle = settingsButton(ctx, "使用兑换码", () => { redeemOpen = !redeemOpen; redemption.hidden = !redeemOpen; redeemToggle.setAttribute("aria-expanded", String(redeemOpen)); if (redeemOpen) redeemInput.focus(); }, "is-text"); purchaseHeading.append(redeemToggle); redeemToggle.setAttribute("aria-expanded", "false");
     const redemption = el(ctx.document, "div", "ip-account-redemption"), redeemFields = el(ctx.document, "div", "ip-account-redeem-fields"); redemption.hidden = true; redemption.append(redeemFields); body.append(redemption);
     const redeemInput = settingsField(ctx, redeemFields, "兑换码", "", value => { redeemCode = value; syncRedeem(); }); redeemInput.autocomplete = "off"; redeemInput.spellcheck = false; redeemInput.placeholder = settingsText(ctx, "输入兑换码");
     const redeemError = settingsError(ctx, redemption), redeem = settingsButton(ctx, "兑换", () => { void (async () => {
       if (busy || !redeemCode.trim()) return;
-      if (!this.adapter.read().identity) { redeemError.show(settingsText(ctx, "请先登录，再使用兑换码。")); return; }
+      if (!this.adapter.read().identity) { redeemError.show(CAUSE.signInRequired[0]); return; }
       const operation = epoch; busy = true; syncRedeem(); redeemError.show();
       try {
         if (!this.adapter.actions.redeem) throw new Error(settingsText(ctx, "账号服务暂不可用"));
@@ -45,7 +56,7 @@ export class IPhoneAccountPages {
       finally { if (!disposed && operation === epoch) { busy = false; render(); } }
     })(); }, "is-primary"); redeemFields.append(redeem);
     const plans = el(ctx.document, "div", "ip-account-plans"); body.append(plans);
-    const scope = el(ctx.document, "details", "ip-account-scope"); scope.append(settingsMessage(ctx, el(ctx.document, "summary", ""), "买断包含什么"), settingsMessage(ctx, el(ctx.document, "div", ""), "一次买断，覆盖以后所有版本的 PRO；不含模型调用额度。需要定期联网更新授权。")); body.append(scope);
+    const scope = el(ctx.document, "details", "ip-account-scope"); scope.append(settingsMessage(ctx, el(ctx.document, "summary", ""), "买断包含什么"), settingsMessage(ctx, el(ctx.document, "div", ""), "一次买断，覆盖以后所有版本的 PRO；赠 2000 AI 点数（180 天有效）和 90 天 1 GB 云同步；之后的 AI 点数和云同步需另购；需要定期联网更新授权。")); body.append(scope);
     let disposed = false, busy = false, epoch = 0, identityKey = this.identityKey(), redeemCode = "", redeemOpen = false;
     const syncRedeem = () => { const vm = this.adapter.read(); redeemInput.disabled = busy; redeem.disabled = busy || !vm.serviceAvailable || !this.adapter.actions.redeem || !redeemCode.trim(); this.buttonText(redeem, busy ? "兑换中…" : "兑换"); redemption.setAttribute("aria-busy", String(busy)); if (busy) { this.disable(accountLinks, true); this.disable(statusActions, true); } };
     const runAccountAction = async (action: () => Promise<void>) => {
@@ -55,7 +66,7 @@ export class IPhoneAccountPages {
       finally { if (!disposed && operation === epoch) { busy = false; render(); } }
     };
     const render = () => {
-      if (disposed) return; const vm = this.adapter.read(), nextIdentity = this.identityKey();
+      if (disposed) return; smartJudgment.refresh(); const vm = this.adapter.read(), nextIdentity = this.identityKey();
       if (identityKey !== nextIdentity) {
         identityKey = nextIdentity; epoch++; busy = false; redeemCode = ""; redeemInput.value = ""; redeemError.show(); actionFeedback.show();
         accountLinks.querySelector(".ip-settings-confirm")?.remove();
@@ -93,7 +104,7 @@ export class IPhoneAccountPages {
       this.plans(plans, vm); syncRedeem();
     };
     render(); this.refreshers.add(render); const unsubscribe = this.adapter.subscribe?.(render);
-    await pushSettingsPage(ctx, { id, title: "账号与会员", content: body, canLeave: () => !busy, dispose: () => { disposed = true; epoch++; redeemCode = ""; redeemInput.value = ""; unsubscribe?.(); this.refreshers.delete(render); } });
+    await pushSettingsPage(ctx, { id, title: "账号与会员", content: body, canLeave: () => !busy, dispose: () => { disposed = true; smartJudgment.dispose(); epoch++; redeemCode = ""; redeemInput.value = ""; unsubscribe?.(); this.refreshers.delete(render); } });
   }
 
   private async login(): Promise<void> {
@@ -123,7 +134,8 @@ export class IPhoneAccountPages {
         await this.adapter.actions.signIn({ email: requestedEmail, method: submittedMode, credential });
         if (disposed || invalidated) return;
         if (this.identityKey() !== targetEmail) { error.show(settingsText(ctx, "登录尚未完成，请重试。")); return; }
-        code = ""; password = ""; codeInput.value = ""; passwordInput.value = ""; busy = false; await ctx.shell.back(); this.refresh();
+        code = ""; password = ""; codeInput.value = ""; passwordInput.value = ""; busy = false; const returned = await ctx.shell.back(); this.refresh();
+        if (returned) await this.adapter.signInReturned?.();
       } catch (failure) { if (!disposed && !invalidated) error.show(this.safeFailure(failure, [code, password])); }
       finally { if (!disposed) { busy = false; targetEmail = undefined; sync(); } }
     };
@@ -216,7 +228,7 @@ export class IPhoneAccountPages {
       const price = el(ctx.document, "div", "ip-account-price"); price.append(el(ctx.document, "span", "ip-account-currency", symbol), el(ctx.document, "span", "", money(plan.amountMinor)));
       if (plan.id !== "early" && plan.savingsPercent !== null && plan.savingsPercent > 0) price.append(el(ctx.document, "span", "ip-account-savings", this.text(`省 ${plan.savingsPercent}%`, `Save ${plan.savingsPercent}%`))); card.append(price);
       if (plan.id === "early") {
-        card.append(settingsMessage(ctx, el(ctx.document, "div", "ip-account-plan-detail"), "一次买断，终生可用"));
+        card.append(settingsMessage(ctx, el(ctx.document, "div", "ip-account-plan-detail"), "赠 2000 AI 点数 · 90 天 1 GB 云同步"));
         const offerEndDate = formatEarlyOfferEndDate(vm.earlyOffer?.endsAt);
         if (offerEndDate) card.append(el(ctx.document, "div", "ip-account-plan-detail", this.text(offerEndDate.zh, offerEndDate.en)));
       } else {
@@ -230,14 +242,14 @@ export class IPhoneAccountPages {
       const purchase = settingsButton(ctx, label, () => {
         if (purchase.disabled || !action(this.adapter.read()).purchasable) return;
         purchase.disabled = true; feedback.show();
-        void this.adapter.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => feedback.show(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !action(this.adapter.read()).purchasable; });
+        void this.adapter.actions.selectPlan!({ planId: plan.id, currency: "CNY" }).catch(error => feedback.show(error)).finally(() => { purchase.disabled = !action(this.adapter.read()).purchasable; });
       }); purchase.disabled = !purchasable; if (current) purchase.setAttribute("aria-current", "true"); card.append(purchase); parent.append(card);
     }
   }
   private membershipLine(vm: AccountMembershipViewModel): string {
     const member = vm.membership, lifetime = member.state === "lifetime" || member.planId === "early";
-    const planName = lifetime ? settingsText(this.ctx, PLAN_NAMES.early) : member.planName || (member.planId && PLAN_NAMES[member.planId as MembershipPlanId] ? settingsText(this.ctx, PLAN_NAMES[member.planId as MembershipPlanId]) : "");
-    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`${formatMobileDate(member.startsAt)} 生效`, `Starts ${formatMobileDate(member.startsAt)}`) : "", member.expiresAt && !lifetime ? this.text(`${formatMobileDate(member.expiresAt)} 到期`, `Expires ${formatMobileDate(member.expiresAt)}`) : "", member.verifiedAt ? this.text(`${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")} 已验证`, `Verified ${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${formatMobileDate(member.offlineUntil)}`, `Offline until ${formatMobileDate(member.offlineUntil)}`) : ""].filter(Boolean).join(" · ");
+    const planName = lifetime ? settingsText(this.ctx, PLAN_NAMES.early) : member.planId && PLAN_NAMES[member.planId as MembershipPlanId] ? settingsText(this.ctx, PLAN_NAMES[member.planId as MembershipPlanId]) : member.planName || "";
+    return [planName, settingsText(this.ctx, STATE_NAMES[member.state]), member.state === "scheduled" && member.startsAt ? this.text(`将于 ${formatMobileDate(member.startsAt)} 生效`, `Starts ${formatMobileDate(member.startsAt)}`) : "", member.expiresAt && !lifetime ? this.text(`${formatMobileDate(member.expiresAt)} 到期`, `Expires ${formatMobileDate(member.expiresAt)}`) : "", member.verifiedAt ? this.text(`${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")} 已验证`, `Verified ${formatMobileDateTime(member.verifiedAt, Date.now(), this.language().startsWith("en") ? "en" : "zh-CN")}`) : "", member.state === "offline-valid" && member.offlineUntil ? this.text(`离线可用至 ${formatMobileDate(member.offlineUntil)}`, `Offline until ${formatMobileDate(member.offlineUntil)}`) : ""].filter(Boolean).join(" · ");
   }
   private valid(vm: AccountMembershipViewModel): boolean { return ["active", "lifetime", "offline-valid"].includes(vm.membership.state); }
   private avatar(identity: AccountIdentity | null): HTMLElement { const { ctx } = this; if (identity && identity.avatar !== "initial") { const image = el(ctx.document, "img", "ip-account-avatar"); image.src = identity.avatar.url; image.alt = ""; return image; } const avatar = el(ctx.document, "span", `ip-account-avatar${identity ? "" : " is-anonymous"}`); avatar.setAttribute("aria-hidden", "true"); if (identity) avatar.textContent = Array.from(identity.name)[0]?.toUpperCase() || "?"; else avatar.append(iphoneIcon(ctx.document, "user")); return avatar; }

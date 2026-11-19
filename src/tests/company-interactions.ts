@@ -549,6 +549,6 @@ async function folderAndHost(document: Document): Promise<void> {
   await Promise.all([host.createWorker({ id: "worker", agentId: "lin", title: "研究" }), host.createWorker({ id: "worker", agentId: "lin", title: "研究" })]);
   await host.createWorker({ id: "worker", agentId: "lin", title: "研究" });
   assert.equal(created, 1); assert.equal(plugin.settings.sessions.length, 1, "恢复与并发创建幂等");
-  await assert.rejects(host.startTurn("worker", "继续", "workspace-write", "router"), /没能开工/u);
+  await assert.rejects(host.startTurn("worker", "继续", "workspace-write", "router"), /任务未能开始/u);
   assert.equal(acceptedOptions.companyProgrammatic, true); assert.equal(acceptedOptions.companyApprovalKey, undefined, "普通公司轮次不继承审批工具权限");
 }

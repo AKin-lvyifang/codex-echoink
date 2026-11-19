@@ -48,8 +48,33 @@ export interface MembershipEarlyOffer {
   readonly endsAt?: string | null;
 }
 /** The cached snapshot can retain only a state after a server-side revocation. */
+/** Mirrors the server's GET /api/entitlements (also embedded in /api/membership as `entitlements`). */
+export interface MembershipEntitlements {
+  tier: "free" | "beta" | "lifetime" | "pro" | "max";
+  lifetime: boolean;
+  isPro: boolean;
+  subscription: { plan: "pro" | "max"; planId: string; startsAt: string; endsAt: string | null } | null;
+  next: { plan: "pro" | "max"; planId: string; startsAt: string; endsAt: string | null } | null;
+  sync: { status: "active" | "grace" | "none"; plan: "pro" | "max" | null; quotaBytes: number; readOnly: boolean; graceUntil: string | null; deviceLimit: number };
+  devices: { limit: number; active: number; remaining: number };
+  points: { balanceMilli: number; balance: string; nextExpiry: { at: number; milli: number; points: string } | null; monthly: number };
+  maxCoupon: boolean;
+  serverTime: number;
+}
+export interface PointsSummary {
+  balanceMilli: number;
+  balance: string;
+  nextExpiry: { at: number; milli: number; points: string } | null;
+  batches: { id: string; kind: string; points: string; remaining: string; startsAt: number; expiresAt: number; state: "available" | "scheduled" | "expired"; note: string }[];
+  serverTime: number;
+}
+export interface PointsHistory {
+  items: { id: string; status: string; tier: string; fallback: boolean; points: string; tokens: { input: number; output: number; cached: number }; createdAt: number }[];
+  total: number; page: number; pageSize: number; pages: number;
+}
 export interface MembershipRights {
   state: string;
+  entitlements?: MembershipEntitlements | null;
   serverTime?: number;
   planId?: string | null;
   planName?: string | null;
@@ -66,10 +91,14 @@ export interface DeviceLeaseResponse {
   deviceId: string;
   serverTime: number;
 }
+export interface CheckInRewards { monthPoints: string; monthCap: number; everyDays: number; points: number; validDays: number }
 export interface CheckInSummary {
   total: number;
   today: { date: string; checkedIn: boolean; source: "manual" | null };
   recent: string[];
+  /** Consecutive Beijing days including today; the server computes it, the client never does. */
+  streak?: number;
+  rewards?: CheckInRewards;
   serverTime: number;
 }
 export interface CheckInResult {
@@ -77,6 +106,7 @@ export interface CheckInResult {
   alreadyCheckedIn: boolean;
   source: "manual";
   checkedInAt: number;
+  reward?: { points: number; streak: number; expiresAt: number } | null;
   summary: Omit<CheckInSummary, "today">;
 }
 /** Response shapes for the API endpoints whose payloads the client consumes. */
@@ -85,11 +115,13 @@ export interface MembershipApiResponses {
   "/api/auth/password": { token: string };
   "/api/account": MembershipAccount;
   "/api/membership": MembershipRights & { serverTime: number };
-  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean; earlyOffer?: MembershipEarlyOffer | null; betaOffer?: MembershipRights["betaOffer"] };
+  "/api/products": { products: MembershipProduct[]; salesOpen?: boolean; maxSalesOpen?: boolean; proMonthlyPoints?: number; earlyOffer?: MembershipEarlyOffer | null; betaOffer?: MembershipRights["betaOffer"] };
   "/api/devices/challenge": { challengeId: string; nonce: string };
   "/api/devices/activate": DeviceLeaseResponse;
   "/api/devices/lease": DeviceLeaseResponse;
   "/api/keys": { keys: MembershipSigningKey[] };
+  "/api/points": PointsSummary;
+  "/api/entitlements": MembershipEntitlements & { userId: string };
 }
 export interface LocalAccountState {
   token?: string;

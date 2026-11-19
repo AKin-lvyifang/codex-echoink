@@ -21,18 +21,23 @@ try {
       build.onResolve({ filter: /(?:^|\/)settings\/origin-controls$/ }, () => ({ path: path.resolve("src/tests/origin-controls-shim.ts") }));
     } }],
     logLevel: "silent", loader: { ".md": "text", ".txt": "text", ".svg": "dataurl" } };
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company.ts"], outfile: file });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-scheduler.ts"], outfile: schedulerFile });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-ui.ts"], outfile: uiFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-runtime.ts"], outfile: runtimeFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-interactions.ts"], outfile: interactionsFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-approval.ts"], outfile: approvalFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
-  await esbuild.build({ ...options, entryPoints: ["src/tests/company-agent-groups.ts"], outfile: groupsFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
-  await (await import(pathToFileURL(file).href)).runCompanyTests();
-  await (await import(pathToFileURL(schedulerFile).href)).runCompanySchedulerTests();
-  await (await import(pathToFileURL(uiFile).href)).runCompanyUiTests(dom.window.document);
-  await (await import(pathToFileURL(runtimeFile).href)).runCompanyRuntimeTests();
-  await (await import(pathToFileURL(interactionsFile).href)).runCompanyInteractionTests(dom.window.document);
-  await (await import(pathToFileURL(approvalFile).href)).runCompanyApprovalTests();
-  await (await import(pathToFileURL(groupsFile).href)).runCompanyAgentGroupTests(dom.window.document);
+  const reportFile = path.join(directory, "report-collapse-tests.mjs");
+  await esbuild.build({ ...options, entryPoints: ["src/tests/company-report-collapse.ts"], outfile: reportFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+  await (await import(pathToFileURL(reportFile).href)).runCompanyReportCollapseTests(dom.window.document);
+  if (!process.argv.includes("--report-collapse")) {
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company.ts"], outfile: file });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-scheduler.ts"], outfile: schedulerFile });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-ui.ts"], outfile: uiFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-runtime.ts"], outfile: runtimeFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-interactions.ts"], outfile: interactionsFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-approval.ts"], outfile: approvalFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+    await esbuild.build({ ...options, entryPoints: ["src/tests/company-agent-groups.ts"], outfile: groupsFile, loader: { ".md": "text", ".svg": "text", ".txt": "text", ".webp": "dataurl" } });
+    await (await import(pathToFileURL(file).href)).runCompanyTests();
+    await (await import(pathToFileURL(schedulerFile).href)).runCompanySchedulerTests();
+    await (await import(pathToFileURL(uiFile).href)).runCompanyUiTests(dom.window.document);
+    await (await import(pathToFileURL(runtimeFile).href)).runCompanyRuntimeTests();
+    await (await import(pathToFileURL(interactionsFile).href)).runCompanyInteractionTests(dom.window.document);
+    await (await import(pathToFileURL(approvalFile).href)).runCompanyApprovalTests();
+    await (await import(pathToFileURL(groupsFile).href)).runCompanyAgentGroupTests(dom.window.document);
+  }
 } finally { dom.window.close(); await rm(directory, { recursive: true, force: true }); }

@@ -244,7 +244,7 @@ export function assertMaintenanceUserPresentation(): void {
   assert.equal(maintenanceVisibleCopyIsSafe(raw), false);
   for (const token of ['recordId', 'toolCallId', 'productRunId', 'maintenanceStage', 'aliases', 'writingPlan', 'decompositions', 'sectionPatches', 'contentRevision', 'sourcePath', 'sourcePaths', 'targetPath', 'candidatePath', 'reverseReason', 'knowledge.decision', 'pendingPageCount', 'expectedTarget', 'regionId', 'unitIds', 'nextOffset', 'resume', 'stage', 'revision', 'CAS', '清单']) assert.equal(maintenanceVisibleCopyIsSafe(token), false, token);
   const friendly = maintenanceFailureText('目标并发编辑冲突：wiki/指数退避.md；resume expectedTarget contentRevision');
-  assert.equal(friendly, '《指数退避》在整理时被改过。为了不覆盖你的修改，这一页先跳过了；点继续会重新读取后再写。');
+  assert.equal(friendly, '《指数退避》在整理期间已被修改，为保留您的修改，已跳过该页面。请点击“继续”重新读取后再写入。');
   assert.ok(maintenanceVisibleCopyIsSafe(friendly));
   const visibleQuestion = { questionId: 'stage-internal-id', prompt: '放在哪个目录更合适？', options: [{ optionId: 'resume', label: '工程工具', description: '侧重实际使用。' }, { optionId: 'writingPlan', label: '软件架构', description: '侧重设计取舍。' }] };
   assert.ok([visibleQuestion.prompt, ...visibleQuestion.options.flatMap(option => [option.label, option.description])].every(text => maintenanceVisibleCopyIsSafe(text, true)), 'machine option/question IDs are not visible copy');
@@ -278,7 +278,7 @@ export function assertMaintenanceUserPresentation(): void {
   const summary = { schemaVersion: 1 as const, conversationId: identity.conversationId, piSessionId: identity.piSessionId, productRunId: identity.productRunId, status: 'running' as const, startedAt: 1, updatedAt: 8, activities: [{ id: 'unknown-tool', kind: 'tool' as const, name: 'unregistered_internal_tool', status: 'failed' as const, startedAt: 1, updatedAt: 8 }] };
   view = projector.projectRuntimeEvent({ current: view, event: { ...identity, maintenanceContext: true, type: 'reasoning_summary', occurredAt: 8, summary } });
   const processTitles = buildAgentTurns(view.messages).flatMap(turn => turn.processNodes.map(node => node.title));
-  assert.ok(processTitles.includes('这一步没完成'));
+  assert.ok(processTitles.includes('此步骤未完成'));
   assert.ok(!processTitles.some(title => title.includes('unregistered_internal_tool')));
   assert.equal(summary.activities[0].name, 'unregistered_internal_tool', 'the original registered tool identity stays internal');
   assert.equal(JSON.stringify(result), untouched, 'UI projection must preserve the full model-facing JSON and tool arguments');

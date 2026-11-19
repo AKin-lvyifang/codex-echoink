@@ -6,6 +6,7 @@ import { renderExpertConversationDecorations } from "../ui/codex-view/expert-dec
 import { mobileExpertEvents } from "../ui/mobile/expert-ui";
 import { renderMessages, type CodexMessageHost } from "../ui/codex-view/message-controller";
 import { CodexMessageListRenderer, type MessageListRenderedRow } from "../ui/codex-view/message-list";
+import { MessageScrollFollowController } from "../ui/conversation-scroll";
 import { installObsidianDom } from "./obsidian-dom";
 import { installComposerMenuDomHelpers } from "./composer-menu-dom-host";
 import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
@@ -125,8 +126,9 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
   const host = {
     app: {}, plugin: { settings: { settingsLanguage: "zh-CN", knowledgeBase: { folderBindings: null } }, getEchoInkAgentIdentityView: () => undefined, getVaultPath: () => "/fixture" },
     messagesEl, virtualListEl, messageListRenderer: renderer, messagesBottomFollowPaused: true, running: false,
+    messageScrollFollow: Object.assign(new MessageScrollFollowController(), { paused: true }),
     ensureSession: () => session, renderTaskPlanDock() {}, renderInteractionDock() {},
-    scheduleMeasureVirtualRows() {}, scheduleKnowledgeBaseRunProgress() {},
+    scheduleMeasureVirtualRows() { renderer.measureVisibleVirtualRows(messagesEl, virtualListEl, false, { rerender: false }); }, scheduleKnowledgeBaseRunProgress() {},
     renderExpertDecorations(current: StoredSession, root: HTMLElement, rows: readonly MessageListRenderedRow[]) {
       calls++; renderExpertConversationDecorations(root, agent, current.id, current.messages, async path => { opened.push(path); }, rows);
     }
@@ -144,7 +146,8 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
   try {
     renderMessages(host, { preserveScroll: true }); assertDecorations();
     assert(measuredDecoratedRows > 0, "public events must already exist when their virtual row is measured");
-    const beforeMeasureRerender = calls; flushFrames(); assert(calls > beforeMeasureRerender); assertDecorations();
+    const beforeMeasureRerender = calls; flushFrames();
+    assert.equal(calls, beforeMeasureRerender, "measuring unchanged visible identities must not reconstruct decorated rows"); assertDecorations();
     for (const disclosure of invalidOpenings) {
       Object.assign(agent.expert!, { disclosure });
       renderExpertConversationDecorations(virtualListEl, agent, session.id, messages, async () => {});
@@ -156,9 +159,10 @@ export async function runExpertMessageDecorationsTests(): Promise<void> {
     const firstButton = virtualListEl.querySelector<HTMLButtonElement>(".echoink-workspace-preview-action")!;
     firstButton.click(); await Promise.resolve(); assert.deepEqual(opened, ["EchoInk/工作区/demo.html"]);
     const viewportObserver = observers.find(observer => observer.targets.includes(messagesEl))!;
-    width = 500; const beforeResize = calls; viewportObserver.callback(); flushFrames();
-    assert(calls > beforeResize); assertDecorations();
-    assert.notEqual(virtualListEl.querySelector(".echoink-workspace-preview-action"), firstButton, "resize reconstructed the rows and their preview action");
+    width = 500; const beforeResize = calls, beforeResizeMeasurements = measuredDecoratedRows; viewportObserver.callback(); flushFrames();
+    assert.equal(calls, beforeResize); assertDecorations();
+    assert(measuredDecoratedRows > beforeResizeMeasurements, "resize measures decorations before updating row offsets");
+    assert.equal(virtualListEl.querySelector(".echoink-workspace-preview-action"), firstButton, "a stable visible window retains its preview action through resize");
     renderer.resetVirtualWindow(); renderMessages(host, { preserveScroll: true }); flushFrames(); assertDecorations();
 
     // A tool/reasoning item can be absent from the folded DOM but still belongs

@@ -1,3 +1,4 @@
+import { NEXT, errorText, failureText, rawErrorText, pickErrorCopy, type ErrorCopy } from "../core/error-copy";
 import { loadKnowledgeMapData } from "./knowledge-map/data";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
@@ -23,7 +24,9 @@ export type KnowledgePageSnapshot = Omit<SharedKnowledgePageSnapshot, "dashboard
 interface DirectoryScan { directory: KnowledgePageDirectory; files: PageFile[]; }
 const markdown = (file: string): boolean => /\.(?:md|markdown)$/iu.test(file);
 const yieldFrame = (): Promise<void> => new Promise(resolve => window.setTimeout(resolve, 0));
-const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
+const READ_FAILED: ErrorCopy = ["暂时无法读取。请稍后重试。", "Temporarily unavailable. Try again later."];
+const HISTORY_READ_FAILED: ErrorCopy = ["暂时无法读取维护记录。", "Maintenance records are temporarily unavailable."];
+const message = (error: unknown, language?: string): string => errorText(error, READ_FAILED, language);
 
 async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, role: KnowledgePageDirectoryRole): Promise<DirectoryScan> {
   const binding = bindings.roles[role];
@@ -41,7 +44,7 @@ async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, ro
       rootPath = normalizeKnowledgeDirectory(savedRoot);
       if (!(await knowledgePagePathStat(vaultPath, rootPath)).isDirectory()) { root.state = "invalid"; root.error = "位置已失效"; continue; }
     } catch (error) {
-      root.state = (error as NodeJS.ErrnoException).code === "ENOENT" || message(error).includes("合法") ? "invalid" : "unavailable";
+      root.state = (error as NodeJS.ErrnoException).code === "ENOENT" || rawErrorText(error).includes("合法") ? "invalid" : "unavailable";
       root.error = root.state === "invalid" ? "位置已失效" : message(error); continue;
     }
     if (role !== "wiki" && role !== "inbox") continue;
@@ -80,11 +83,12 @@ async function scanRole(vaultPath: string, bindings: KnowledgeFolderBindings, ro
 export async function loadKnowledgePageData(host: KnowledgePageHost, now = Date.now()): Promise<KnowledgePageSnapshot> {
   const bindings = structuredClone(host.settingsKnowledgeBindings?.() ?? host.settings.knowledgeBase?.folderBindings ?? emptyKnowledgeFolderBindings());
   const errors: KnowledgePageSnapshot["errors"] = {};
+  const language = (host.settings as { settingsLanguage?: string }).settingsLanguage;
   let service: ReturnType<KnowledgePageHost["getKnowledgeSurfaceService"]> = null;
-  try { service = host.getKnowledgeSurfaceService(); } catch (error) { errors.health = message(error); errors.history = message(error); errors.upgrade = message(error); }
+  try { service = host.getKnowledgeSurfaceService(); } catch (error) { errors.health = message(error, language); errors.history = message(error, language); errors.upgrade = message(error, language); }
   const [healthResult, recordsResult, upgradeResult, checkupResult] = await Promise.allSettled([
-    Promise.resolve().then(() => { if (!service) throw new Error("知识库状态暂时读不到"); return service.getHealthSnapshot(); }),
-    Promise.resolve().then(() => { if (!service?.getMaintenanceRecords) throw new Error("维护记录暂时读不到"); return service.getMaintenanceRecords(); }),
+    Promise.resolve().then(() => { if (!service) throw new Error("暂时无法读取知识库状态。请稍后重试。"); return service.getHealthSnapshot(); }),
+    Promise.resolve().then(() => { if (!service?.getMaintenanceRecords) throw new Error("暂时无法读取维护记录。请稍后重试。"); return service.getMaintenanceRecords(); }),
     Promise.resolve().then(() => service?.getUpgradeSnapshot?.() ?? null),
     Promise.resolve().then(async () => {
       if (!service?.checkup) return null;
@@ -93,17 +97,17 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, now = Date.
     })
   ]);
   const upgrade = upgradeResult.status === "fulfilled" ? upgradeResult.value : null;
-  if (upgradeResult.status === "rejected") errors.upgrade = message(upgradeResult.reason);
+  if (upgradeResult.status === "rejected") errors.upgrade = message(upgradeResult.reason, language);
   const health = healthResult.status === "fulfilled" ? healthResult.value : null;
-  if (healthResult.status === "rejected") errors.health = message(healthResult.reason);
+  if (healthResult.status === "rejected") errors.health = message(healthResult.reason, language);
   const maintenanceRecords = recordsResult.status === "fulfilled" ? recordsResult.value : [];
-  if (recordsResult.status === "rejected") errors.history = message(recordsResult.reason);
+  if (recordsResult.status === "rejected") errors.history = failureText(recordsResult.reason, HISTORY_READ_FAILED, NEXT.retryLater, language);
   const maintenanceHistory = mergeKnowledgeMaintenanceHistory(host.settings.knowledgeBase?.maintenanceHistory ?? [], maintenanceRecords);
   let vaultPath = "";
   try {
     const adapter = host.app.vault.adapter as typeof host.app.vault.adapter & { getBasePath?(): string };
     vaultPath = adapter.getBasePath?.() ?? "";
-  } catch (error) { errors.directories = message(error); }
+  } catch (error) { errors.directories = message(error, language); }
   const scans: DirectoryScan[] = [];
   for (const role of ["raw", "wiki", "projects", "inbox"] as const) {
     if (vaultPath) scans.push(await scanRole(vaultPath, bindings, role));
@@ -113,15 +117,15 @@ export async function loadKnowledgePageData(host: KnowledgePageHost, now = Date.
   const activity = aggregateKnowledgePageActivity(wiki.files, maintenanceHistory, now);
   if (!["ready", "disabled", "unbound"].includes(wiki.directory.state)) {
     activity.weekly.added = null;
-    errors.activity = "知识成果统计尚未更新";
+    errors.activity = pickErrorCopy(["知识成果统计尚未更新", "Knowledge statistics are not up to date"], language);
   }
   if (errors.history) {
     activity.weekly.organized = null;
-    errors.activity = [errors.activity, "维护活动记录尚未更新"].filter(Boolean).join("；");
+    errors.activity = [errors.activity, pickErrorCopy(["维护活动记录尚未更新", "Maintenance activity is not up to date"], language)].filter(Boolean).join(language === "en" ? "; " : "；");
   }
-  if (scans.some(scan => ["partial", "unavailable"].includes(scan.directory.state))) errors.directories ??= "部分目录尚未读完，请重试";
+  if (scans.some(scan => ["partial", "unavailable"].includes(scan.directory.state))) errors.directories ??= pickErrorCopy(["部分目录尚未读取完成。请重试。", "Some folders have not been read yet. Try again."], language);
   const map = await loadKnowledgeMapData(host.app, bindings).catch((error: unknown) => {
-    errors.system = message(error);
+    errors.system = message(error, language);
     return { domains: [], reminders: [] };
   });
   return {

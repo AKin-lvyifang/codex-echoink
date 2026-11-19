@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { WORKSPACE_MAX_BYTES, workspaceDependencyPath, workspacePath, type WorkspaceService } from "./service";
 import { ownedDiv, ownedEl } from "../ui/owned-dom";
 
@@ -122,7 +123,7 @@ export function renderWorkspacePreview(document: Document, container: HTMLElemen
   const externalButton = openExternal ? button("在浏览器打开") : undefined;
   root.append(toolbar, error, frame); container.append(root);
   let destroyed = false, generation = 0, active: AbortController | undefined;
-  const fail = (reason: unknown) => { error.textContent = reason instanceof Error ? reason.message : String(reason); error.hidden = false; };
+  const fail = (reason: unknown) => { error.textContent = userFacingErrorText(reason, "页面未能加载。请点击“刷新”重试。"); error.hidden = false; };
   const refresh = async () => {
     if (destroyed) return;
     active?.abort(); const current = ++generation; active = new AbortController();

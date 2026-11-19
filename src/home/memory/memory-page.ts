@@ -1,3 +1,4 @@
+import { NEXT, failureText, type ErrorCopy, actionFailureText } from "../../core/error-copy";
 import { ItemView, Notice, setIcon, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "../../settings/origin-controls";
@@ -32,6 +33,12 @@ export class MemoryPageView extends ItemView {
     super(leaf);
     this.port = plugin.createMemoryPagePort(() => this.request.receipt);
     this.actions = {
+      undoCorrection: id => void this.mutate(async () => {
+        const restoredId = await this.port.undoCorrection!(id);
+        this.state = { mode: "detail", id: restoredId };
+        return this.t("已恢复上一版", "Previous version restored");
+      }),
+      originalQuote: source => this.port.originalQuote!(source),
       overview: () => {
         this.state = { mode: this.summaryMode() };
         this.draw();
@@ -155,7 +162,9 @@ export class MemoryPageView extends ItemView {
   }
   openPage(request: MemoryPageRequest = {}): void {
     this.request = request;
-    this.state = { mode: request.receipt ? "receipt" : request.query ? "search" : "overview" };
+    this.state = request.receipt?.selectedId && request.receipt.sources.some(source => source.id === request.receipt!.selectedId)
+      ? { mode: "detail", id: request.receipt.selectedId }
+      : { mode: request.receipt ? "receipt" : request.query ? "search" : "overview" };
     if (this.search)
       this.search.value = request.query ?? "";
     if (!this.closed)
@@ -227,7 +236,7 @@ export class MemoryPageView extends ItemView {
     catch (error) {
       if (this.closed || generation !== this.generation)
         return;
-      this.error = error instanceof Error ? error.message : String(error);
+      this.error = failureText(error, MEMORY_READ_FAILED, NEXT.retryLater, this.plugin.settings.settingsLanguage);
       this.draw(true);
     }
   }
@@ -237,7 +246,7 @@ export class MemoryPageView extends ItemView {
     disposeOriginControls(this.status);
     this.status.empty();
     if (this.error) {
-      this.status.createSpan({ cls: "memory-error", text: `${this.t("读取或保存记忆失败", "Memory could not be read or saved")}：${this.error}` });
+      this.status.createSpan({ cls: "memory-error", text: this.error });
       const retry = createOriginButton(this.status, { text: this.t("重试", "Retry"), cls: "memory-button is-secondary" });
       retry.onclick = () => void this.refresh();
     }
@@ -296,7 +305,7 @@ export class MemoryPageView extends ItemView {
       void this.refresh();
     };
   }
-  private async mutate(action: () => Promise<string>): Promise<void> {
+  private async mutate(action: () => Promise<string | null>): Promise<void> {
     if (this.busy || !this.snapshot)
       return;
     this.busy = true;
@@ -306,11 +315,11 @@ export class MemoryPageView extends ItemView {
       const message = await action();
       if (!this.closed) {
         await this.refresh();
-        new Notice(message);
+        if (message) new Notice(message);
       }
     }
     catch (error) {
-      this.error = error instanceof Error ? error.message : String(error);
+      this.error = failureText(error, MEMORY_SAVE_FAILED, NEXT.retryLater, this.plugin.settings.settingsLanguage);
     }
     finally {
       this.busy = false;
@@ -323,7 +332,10 @@ export class MemoryPageView extends ItemView {
       await action();
     }
     catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
+      new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage));
     }
   }
 }
+
+const MEMORY_READ_FAILED: ErrorCopy = ["暂时无法读取记忆。", "Memory is temporarily unavailable."];
+const MEMORY_SAVE_FAILED: ErrorCopy = ["记忆未能保存，原内容已保留。", "Memory could not be saved. Your content is unchanged."];

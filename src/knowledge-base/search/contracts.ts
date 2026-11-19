@@ -70,6 +70,25 @@ export interface BodySearchRequest {
   readonly limit?: number;
   readonly offset?: number;
   readonly signal?: AbortSignal;
+  /** Internal ordinary-chat collection only; never supplied by the search tool. */
+  readonly candidateSearch?: KnowledgeCandidateSearch;
+}
+
+export type KnowledgeCandidateStopReason = "candidate_limit" | "exhausted" | "scan_budget" | "time_budget";
+
+/** One ranked scan with a cooperative deadline owned by its caller. */
+export interface KnowledgeCandidateSearch {
+  readonly maxCandidates: number;
+  readonly maxScannedHits: number;
+  readonly allowsPath: (path: string) => boolean;
+  readonly check: () => void;
+  /** False when the user cancelled, even if the deadline has also elapsed. */
+  readonly timedOut: () => boolean;
+}
+
+export interface KnowledgeCandidateSearchAudit {
+  readonly scannedHits: number;
+  readonly stopReason: KnowledgeCandidateStopReason;
 }
 
 export interface BodySearchHit {
@@ -100,6 +119,7 @@ export interface BodySearchResult {
   readonly hits: readonly BodySearchHit[];
   readonly total: number;
   readonly coverage: Readonly<BodySearchCoverage>;
+  readonly candidateSearch?: KnowledgeCandidateSearchAudit;
 }
 
 /** Counts describe search preparation, excluding later source reads/verification.

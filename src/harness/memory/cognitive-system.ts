@@ -3,26 +3,31 @@ import { inspectUserProfileStateFile, userProfileStateJson, UserProfileStateStor
 import { DreamStateStore, enqueuePendingMemoryIds } from "./dream-state";
 import { DreamExperienceInboxStore } from "./dream-experience-inbox";
 import { SecondaryMemoryStore, serializeSecondaryRecord } from "./secondary-memory-store";
-import { DreamEngine, type DreamLlmPort, type DreamRepositoryPort, type DreamRunResult } from "./dream-engine";
+import { DreamEngine, type DreamEngineDeps, type DreamLlmPort, type DreamRepositoryPort, type DreamRunResult } from "./dream-engine";
 import { DreamScheduler, type DreamSchedulerConfig } from "./dream-scheduler";
 import type { PersonalMemoryRecord, SecondaryMemoryRecord } from "./personal-memory-contracts";
 import type { PersonalMemoryRepository } from "./personal-memory-repository";
 
 export interface CognitiveSystemOptions {
+  readonly originalQuotes?: DreamEngineDeps["originalQuotes"];
+  readonly engineConfig?: DreamEngineDeps["config"];
   readonly repository: PersonalMemoryRepository;
   readonly llm: () => DreamLlmPort | null;
   readonly getDreamConfig: () => DreamSchedulerConfig;
-  readonly isForegroundBusy: () => boolean;
   readonly registerInterval: (handle: number) => void;
   readonly now?: () => number;
+  readonly sleep?: DreamEngineDeps["sleep"];
 }
 
 class RepositoryDreamPort implements DreamRepositoryPort {
   constructor(private readonly repository: PersonalMemoryRepository) {}
+  async applyDreamCorrections(input: import("./dream-correction-core").DreamCorrectionBatch) {
+    return await this.repository.applyDreamCorrections(input);
+  }
 
-  async inspect(): Promise<Readonly<{ revision: number; records: readonly PersonalMemoryRecord[] }>> {
+  async inspect(): Promise<Readonly<{ revision: number; records: readonly PersonalMemoryRecord[]; activity: import("./memory-relevance").MemoryActivityState }>> {
     const state = await this.repository.inspect();
-    return Object.freeze({ revision: state.revision, records: state.records });
+    return Object.freeze({ revision: state.revision, records: state.records, activity: await this.repository.memoryActivity() });
   }
 
   async readVaultId(): Promise<string> {
@@ -39,6 +44,7 @@ class RepositoryDreamPort implements DreamRepositoryPort {
 
   async applyCognitiveUpdate(input: Readonly<{
     userContent?: string;
+    associationUpdates?: readonly Readonly<{ id: string; expectedRevision: number; relatedIds: readonly string[] }>[];
     secondaryRecords: readonly SecondaryMemoryRecord[];
     extraChanges: readonly Readonly<{ relativePath: string; content: string }>[];
     detail: string;
@@ -138,6 +144,9 @@ export class CognitiveSystem {
       dreamStateStore,
       experienceInboxStore,
       llm: options.llm,
+      ...(options.originalQuotes ? { originalQuotes: options.originalQuotes } : {}),
+      ...(options.engineConfig ? { config: options.engineConfig } : {}),
+      ...(options.sleep ? { sleep: options.sleep } : {}),
       ...(options.now ? { now: options.now } : {})
     });
 
@@ -152,7 +161,6 @@ export class CognitiveSystem {
     const scheduler = new DreamScheduler({
       engine,
       getConfig: options.getDreamConfig,
-      isForegroundBusy: options.isForegroundBusy,
       readLastRunAt: async () => (await dreamStateStore.read()).lastRunAt,
       registerInterval: options.registerInterval,
       ...(options.now ? { now: options.now } : {})
@@ -228,6 +236,7 @@ export class CognitiveSystem {
 
   async dispose(): Promise<void> {
     this.scheduler.dispose();
+    await this.engine.dispose();
     await this.repository.dispose();
     await this.settleDreamEnqueue();
   }
@@ -240,9 +249,7 @@ export class CognitiveSystem {
 
   async enqueueForDream(memoryIds: readonly string[]): Promise<void> {
     const run = async (): Promise<void> => {
-      const state = await this.dreamStateStore.read();
-      const next = enqueuePendingMemoryIds(state, memoryIds, this.now());
-      if (next !== state) await this.dreamStateStore.write(next);
+      await this.dreamStateStore.update(state => enqueuePendingMemoryIds(state, memoryIds, this.now()));
     };
     const lane = this.enqueueLane.then(run, run);
     this.enqueueLane = lane.catch(() => undefined);

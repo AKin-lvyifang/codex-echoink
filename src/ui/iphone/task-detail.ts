@@ -1,3 +1,9 @@
+import { settingsErrorText } from "../../core/error-copy";
+import { MobileLiveTaskTranscript, MobileTranscriptNodes } from "../mobile/live-task-transcript";
+import { renderCompanyReportSource } from "../company-report-source";
+import { mobileCompanyMessageId, mobileCompanyReportProjection } from "../mobile/company-report";
+import { renderMobilePreparation, renderMobileSearchResult } from "../mobile/preparation";
+import { mountSmartJudgmentNotice } from "../smart-judgment-surfaces";
 import { messageRunIds } from "../../mobile/task-recovery";
 import { mobileExpertEvents, mobileWorkspacePreviewPath } from "../mobile/expert-ui";
 import { taskInterruptionExplanation, interruptionErrorDetail } from "../../agents/task-interruption-copy";
@@ -5,6 +11,7 @@ import { toolCallRecoveryGuidance } from "../../agents/tool-call-recovery";
 import { toolCallTextFailureMessage } from "../../harness/tool-call-text";
 import { mobileReportActions, openMobileRunReport } from "../../run-reports/mobile-ui";
 import { formatMobileDateTime } from "../../mobile/date-display";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { visibleReasoning } from "../../mobile/transport";
 import { setIcon } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -33,7 +40,15 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
   const liveBox = shellElement(document, "div", "ip-task-streaming"); liveBox.hidden = true;
   const question = createInlineQuestion(ctx, taskId), composer = createIPhoneComposer(ctx, { taskId });
   const companySlot = shellElement(document, "div", "ip-company-chat");
-  content.append(stream, companySlot, liveBox, question.element, tail, errors);
+  content.append(stream, composer.submissions, companySlot, liveBox, question.element, tail, errors);
+  const smartSlot = shellElement(document, "div", "echoink-smart-judgment-slot"); content.append(smartSlot);
+  const openAccount = () => { void host.openLegacy("account").catch(ctx.error); };
+  const smartJudgment = mountSmartJudgmentNotice(smartSlot, {
+    visible: () => !content.closest("[hidden]") && host.store.getSession(taskId)?.companyRole !== "worker",
+    english: () => host.settings().settingsLanguage === "en", openSettings: openAccount,
+    upgrade: () => { void host.openLegacy("account").then(() => ctx.document.querySelector<HTMLElement>(".ip-account-plans")?.scrollIntoView({ block: "start", behavior: "smooth" })).catch(ctx.error); },
+    button: (text, action, primary) => iPhoneAction(ctx, text, action, undefined, primary), actionsClass: "ip-task-actions"
+  });
   let companyKey = "";
   /** Start card and 等你定 reminder: the only company content in a router conversation. */
   const renderCompany = () => {
@@ -51,7 +66,8 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
     if (reminder) companySlot.append(reminder);
     if (readOnlyWorker) companySlot.append(shellElement(document, "div", "emc-hint", "这是项目里的员工对话，只读。要调整，回项目对话里跟总助说。"));
   };
-  let disposed = false, messagesKey = "", lastRead = 0, liveOpen: boolean | undefined;
+  const openReports = new Map<string, boolean>();
+  let disposed = false, messagesKey = "", lastRead = 0;
   const reasoningBlock = (parent: HTMLElement, key: string, label: string, text: string, open: boolean) => {
     const details = shellElement(document, "details", "ip-task-tool ip-task-reasoning"); details.dataset.toolId = key; details.open = open;
     const summary = shellElement(document, "summary", ""), icon = shellElement(document, "span", "ip-icon"); setIcon(icon, "brain"); icon.setAttribute("aria-hidden", "true");
@@ -59,20 +75,13 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
     const body = shellElement(document, "div", "ip-task-tool-body ip-task-reasoning-body"); body.textContent = text;
     details.append(summary, body); parent.append(details); return details;
   };
-  /** Plain text while streaming; the saved message renders Markdown once. */
+  const nodes = new MobileTranscriptNodes();
+  const liveView = new MobileLiveTaskTranscript(liveBox, "ip", open => reasoningBlock(shellElement(document, "div", ""), "reasoning:live", "思考中…", "", open),
+    () => !composer.scroll.userControlling, composer.scroll.pauseForReading, composer.scroll.resumeIfAtBottom);
   const renderLive = () => {
-    const live = host.runtime.stateFor(taskId).live, scroller = content.closest<HTMLElement>(".eis-scroll");
-    const pinned = !!scroller && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    const live = host.runtime.stateFor(taskId).live;
     tail.querySelector<HTMLElement>(".ip-task-live")?.toggleAttribute("hidden", !!live);
-    liveBox.replaceChildren(); liveBox.hidden = !live;
-    if (!live) { liveOpen = undefined; return; }
-    if (live.reasoning) {
-      const details = reasoningBlock(liveBox, "reasoning:live", live.text ? "思考过程" : "思考中…", live.reasoning, liveOpen ?? !live.text);
-      details.querySelector("summary")!.addEventListener("click", () => { liveOpen = !details.open; });
-      const body = details.querySelector<HTMLElement>(".ip-task-reasoning-body")!; body.scrollTop = body.scrollHeight;
-    }
-    if (live.text) { const article = shellElement(document, "article", "ip-task-answer ip-task-answer-live"); article.setAttribute("aria-label", "Agent 回复"); article.textContent = live.text; liveBox.append(article); }
-    if (pinned && scroller) scroller.scrollTop = scroller.scrollHeight;
+    liveView.render(live); composer.scroll.refreshOutput();
   };
   const task = host.store.getSession(taskId);
   const page: MobileShellPage = { id: `task:${taskId}`, title: task?.title ?? "任务详情", content, footer: composer.element, canLeave: composer.canLeave };
@@ -86,15 +95,16 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       .catch(error => { lastRead = 0; if (!disposed) ctx.error(error); });
   };
   const messages = (records: AgentMessage[]) => {
-    const owner = host.store.getSession(taskId)?.agentId;
+    const ownerTask = host.store.getSession(taskId), owner = ownerTask?.agentId;
     const events = mobileExpertEvents(host.settings().agentRegistry.agents.find(agent => agent.id === owner), taskId);
-    const key = JSON.stringify([records, host.runtime.stateFor(taskId).interaction?.status, events]); if (key === messagesKey) return; messagesKey = key;
+    const key = JSON.stringify([records, ownerTask?.notePath, ownerTask?.runs, ownerTask?.companyRole, host.runtime.stateFor(taskId).interaction?.status, events]); if (key === messagesKey) return; messagesKey = key;
     const openTools = new Set(Array.from(stream.querySelectorAll<HTMLDetailsElement>("details[open]")).map(node => node.dataset.toolId));
-    stream.replaceChildren();
+    nodes.begin(); const desired: HTMLElement[] = [];
+    const append = (...elements: HTMLElement[]) => { desired.push(...elements); };
     let eventIndex = 0;
     const emitEvents = (through: number) => {
       while (eventIndex < events.length && events[eventIndex].at <= through) {
-        const event = events[eventIndex++], line = shellElement(document, "div", "ip-expert-conversation-event", event.text); line.dataset.eventId = event.id; stream.append(line);
+        const event = events[eventIndex++], line = shellElement(document, "div", "ip-expert-conversation-event", event.text); line.dataset.eventId = event.id; append(line);
       }
     };
     const results = new Map(records.flatMap(message => message.role === "toolResult" ? [[message.toolCallId, message] as const] : []));
@@ -107,54 +117,83 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       else if (!result) summary.append(shellElement(document, "span", "ip-tool-pending", name === "user_question" && host.runtime.stateFor(taskId).interaction?.status === "pending" ? "等你回应" : "未记录结果"));
       const detail = shellElement(document, "div", "ip-task-tool-body");
       if (args !== undefined) { const input = shellElement(document, "pre", "ip-tool-input"); input.textContent = typeof args === "string" ? args : JSON.stringify(args, null, 2); detail.append(input); }
-      if (result) { const output = shellElement(document, "div", "ip-tool-result markdown-rendered"); host.renderMarkdown(messageText(result), output, host.store.getSession(taskId)?.notePath); detail.append(output); }
+      if (result) { const output = shellElement(document, "div", "ip-tool-result markdown-rendered"); if (name === "vault_search" && !("isError" in result && result.isError)) renderMobileSearchResult(output, result, host.settings().settingsLanguage ?? "zh", path => host.openNote(path)); else host.renderMarkdown(messageText(result), output, ownerTask?.notePath); detail.append(output); }
       const previewPath = mobileWorkspacePreviewPath(result);
       if (previewPath && host.services.openWorkspacePreview) {
         const preview = shellElement(document, "button", "ip-workspace-preview", "预览"); preview.type = "button";
         preview.addEventListener("click", event => { event.preventDefault(); event.stopPropagation(); void host.services.openWorkspacePreview(previewPath).catch(ctx.error); }); summary.append(preview);
       }
-      details.append(summary, detail); stream.append(details); rendered.add(id);
+      details.append(summary, detail); append(details); rendered.add(id);
     };
-    const ownerTask = host.store.getSession(taskId);
-    const runIds = ownerTask?.companyRole === "router" ? messageRunIds(ownerTask) : new Map<number, string>();
+    const runIds = ownerTask ? messageRunIds(ownerTask) : new Map<number, string>();
     const runs = new Map(ownerTask?.runs?.map(run => [run.id, run]));
+    const reports = ownerTask ? mobileCompanyReportProjection(ownerTask) : undefined;
     for (const [index, message] of records.entries()) {
       const run = runs.get(runIds.get(index) ?? "");
-      if (ownerTask?.companyRole === "router" && (run?.companyApproval || run?.companyProgrammatic && message.role === "user")) continue;
+      const messageId = mobileCompanyMessageId(message, index);
+      if (ownerTask?.companyRole === "router" && run?.companyApproval) continue;
+      const sources = reports?.standalone.get(messageId) ?? reports?.replies.get(messageId);
+      if (sources) {
+        const source = shellElement(document, "div", "echoink-report-mobile"); append(source);
+        renderCompanyReportSource({ buttonParent: source, detailParent: source, sources, open: openReports,
+          key: `${taskId}:${sources[0].messageId}`, english: host.settings().settingsLanguage === "en", mobile: true,
+          onToggle: () => { composer.scroll.capture(); composer.scroll.refresh(); } });
+      }
+      if (reports?.hidden.has(messageId)) continue;
       emitEvents("timestamp" in message && typeof message.timestamp === "number" ? message.timestamp : Number.POSITIVE_INFINITY);
       if (message.role === "toolResult") { if (!rendered.has(message.toolCallId)) tool(message.toolCallId, message.toolName, undefined, message); continue; }
       const reasoning = message.role === "assistant" ? visibleReasoning(message) : "";
-      if (reasoning) reasoningBlock(stream, `reasoning:${index}`, "思考过程", reasoning, openTools.has(`reasoning:${index}`));
+      if (reasoning) append(nodes.get(`reasoning:${index}`, reasoning, () => {
+        const reused = index === records.length - 1 ? liveView.takeReasoning(reasoning) : undefined;
+        if (reused) { reused.dataset.toolId = `reasoning:${index}`; return reused; }
+        return reasoningBlock(shellElement(document, "div", ""), `reasoning:${index}`, "思考过程", reasoning, openTools.has(`reasoning:${index}`));
+      }));
       const text = messageText(message);
       if (text) {
-        const article = shellElement(document, "article", message.role === "user" ? "ip-task-user" : "ip-task-answer markdown-rendered");
-        article.setAttribute("aria-label", message.role === "user" ? "你的消息" : "Agent 回复");
-        if (message.role === "user") article.textContent = text; else host.renderMarkdown(text, article, host.store.getSession(taskId)?.notePath);
-        stream.append(article);
+        const article = nodes.get(`message:${messageId}:${message.role}`, JSON.stringify([text, message.role === "assistant" ? ownerTask?.notePath : undefined]), () => {
+          const element = shellElement(document, "article", message.role === "user" ? "ip-task-user" : "ip-task-answer markdown-rendered");
+          element.dataset.messageRole = message.role;
+          element.setAttribute("aria-label", message.role === "user" ? "你的消息" : "Agent 回复");
+          if (message.role === "user") element.textContent = text; else host.renderMarkdown(text, element, ownerTask?.notePath);
+          return element;
+        });
+        if (message.role === "user" && run) article.dataset.submissionTurn = run.id;
+        append(article);
+        if (message.role === "user") {
+          const language = host.settings().settingsLanguage ?? "zh";
+          const preparation = nodes.get(`preparation:${messageId}`, JSON.stringify([run, language]), () => {
+            const slot = shellElement(document, "div", ""); renderMobilePreparation(slot, run, language, path => host.openNote(path)); return slot;
+          });
+          if (preparation.childNodes.length) append(preparation);
+        }
       }
       if (message.role === "assistant") for (const block of message.content) if (block.type === "toolCall") tool(block.id, block.name, block.arguments, results.get(block.id));
     }
     emitEvents(Number.POSITIVE_INFINITY);
-    if (!records.length && !events.length) stream.append(shellElement(document, "p", "ip-task-empty", "这件事还没有消息。"));
+    if (!records.length && !events.length) append(shellElement(document, "p", "ip-task-empty", "这件事还没有消息。"));
+    nodes.commit(stream, desired);
   };
   const refresh = () => {
+    composer.scroll.capture();
     if (disposed) return;
     const task = host.store.getSession(taskId), state = host.runtime.stateFor(taskId);
-    if (!task) { stream.replaceChildren(shellElement(document, "p", "ip-task-empty", "任务已不存在。")); tail.replaceChildren(); composer.element.hidden = true; return; }
+    if (!task) { nodes.clear(); liveView.render(undefined); stream.replaceChildren(shellElement(document, "p", "ip-task-empty", "任务已不存在。")); tail.replaceChildren(); composer.element.hidden = true; return; }
+    const feedback = [...host.runtime.composerSubmissions.records.values()].find(record => record.owner === taskId
+      && (record.phase === "failed" && !record.queued || record.phase === "preparing" && host.runtime.isComposerSubmissionRunning?.(record.id)));
     const name = host.settings().agentRegistry.agents.find(agent => agent.id === task.agentId)?.name ?? "Agent";
-    const status = task.taskStatus === "completed" ? `已完成${task.taskCompletedAt ? ` · ${formatMobileDateTime(task.taskCompletedAt)}` : ""}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
+    const status = feedback?.phase === "preparing" ? "进行中" : task.taskStatus === "completed" ? `已完成${task.taskCompletedAt ? ` · ${formatMobileDateTime(task.taskCompletedAt)}` : ""}` : task.taskStatus === "interrupted" ? "已中断" : state.interaction?.status === "pending" ? "等你回应" : state.busy ? "进行中" : task.taskStatus === "waiting" ? "等你回应" : "";
     page.title = task.title; page.subtitle = [name, status].filter(Boolean).join(" · ");
     const panel = content.closest(".eis-page");
     const heading = panel?.querySelector<HTMLElement>(".eis-title"); if (heading) heading.textContent = page.title;
     const subtitle = panel?.querySelector<HTMLElement>(".eis-subtitle"); if (subtitle) subtitle.textContent = page.subtitle;
-    messages(task.messages); tail.replaceChildren();
+    messages(task.messages); composer.refreshSubmissions(); tail.replaceChildren();
     const draft = task.draftContext;
     const selected = draft?.selectedProviderSettingsId && draft.selectedModel ? { providerSettingsId: draft.selectedProviderSettingsId, modelId: draft.selectedModel } : undefined;
     const recovery = toolCallRecoveryGuidance(state.interruption, host.settings().apiProviders, "iphone", selected);
     const explanation = recovery?.message ?? taskInterruptionExplanation(state.interruption, host.settings().settingsLanguage ?? "zh");
     const repeatedError = !!explanation && !!state.error && (interruptionErrorDetail(state.error) === state.interruption?.detail || !!recovery && state.error === toolCallTextFailureMessage(state.interruption?.toolCallTextFailure));
-    errors.textContent = repeatedError ? "" : state.error; errors.hidden = repeatedError || !state.error;
-    if (task.taskStatus === "interrupted" || state.interruption && !state.busy) {
+    errors.textContent = feedback || repeatedError || !state.error ? "" : settingsErrorText(state.error, SETTINGS_FALLBACK.mobileTask, host.settings().settingsLanguage); errors.hidden = !!feedback || repeatedError || !state.error;
+    if (!feedback && (task.taskStatus === "interrupted" || state.interruption && !state.busy)) {
       const box = shellElement(document, "section", "ip-task-stopbox"); box.setAttribute("aria-label", "任务中断记录");
       const line = shellElement(document, "div", "ip-task-interrupted"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "circle-pause"); mark.setAttribute("aria-hidden", "true"); line.append(mark);
       const at = state.interruption?.at ?? task.taskInterruptedAt;
@@ -163,24 +202,25 @@ export function createTaskPage(ctx: IPhonePageContext, taskId: string): MobileSh
       if (explanation) box.append(shellElement(document, "div", "ip-task-interrupted", explanation));
       else box.append(line, shellElement(document, "div", "ip-task-stage", `停在：${stageLabel(state.interruption?.stage ?? task.taskStage)}`));
       const actions = shellElement(document, "div", "ip-task-actions");
-      const report = iPhoneAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "iphone", { document, open: config => ctx.shell.openSheet(config) }));
+      const report = iPhoneAction(ctx, "上报问题", () => openMobileRunReport(host, taskId, "iphone", { document, open: config => ctx.shell.openSheet(config), close: () => { ctx.shell.closeSheet(); }, restore: () => ctx.shell.backTo(page.id) }));
       report.dataset.action = "report-task"; actions.append(report);
       report.disabled = !!state.resuming || state.busy;
       const resume = iPhoneAction(ctx, state.resuming ? "准备中…" : recovery?.buttonLabel ?? "继续", () => { composer.element.dispatchEvent(new document.defaultView!.Event("ip-resume-task")); }, undefined, true);
       resume.dataset.action = "resume-task";
       resume.disabled = !!state.resuming || state.busy; actions.append(resume); box.append(actions); tail.append(box);
-    } else if (state.busy && state.interaction?.status !== "pending") {
+    } else if (!feedback && state.busy && state.interaction?.status !== "pending") {
       const live = shellElement(document, "div", "ip-task-live"); const mark = shellElement(document, "span", "ip-icon"); setIcon(mark, "loader-circle"); mark.setAttribute("aria-hidden", "true"); live.append(mark, shellElement(document, "span", "", task.taskStage ? stageLabel(task.taskStage) : "正在进行")); tail.append(live);
     } else if (task.taskStatus === "waiting" && !state.busy) tail.append(shellElement(document, "div", "ip-task-stage", "当前问题已失效。"));
-    renderLive(); renderCompany();
+    renderLive(); renderCompany(); smartJudgment.refresh();
     if (ctx.shell.activePageId === page.id) markRead();
   };
   refresh();
   const unsubscribe = host.runtime.subscribe(id => { if (id === taskId) refresh(); });
+  const unsubscribeSubmissions = host.runtime.composerSubmissions.subscribe(refresh);
   const unsubscribeLive = host.runtime.subscribeLive(id => { if (id === taskId && !disposed) renderLive(); });
   const unsubscribeWorkbench = host.workbench.subscribe(refresh);
   const unsubscribeCompany = host.company?.()?.subscribe(() => { if (!disposed) renderCompany(); }) ?? (() => {});
   const unsubscribeWorkers = host.runtime.subscribe(id => { if (id !== taskId && !disposed) renderCompany(); });
-  page.dispose = () => { if (disposed) return; disposed = true; unsubscribe(); unsubscribeLive(); unsubscribeWorkbench(); unsubscribeCompany(); unsubscribeWorkers(); question.dispose(); composer.dispose(); };
+  page.dispose = () => { if (disposed) return; disposed = true; liveView.dispose(); nodes.clear(); smartJudgment.dispose(); unsubscribe(); unsubscribeSubmissions(); unsubscribeLive(); unsubscribeWorkbench(); unsubscribeCompany(); unsubscribeWorkers(); question.dispose(); composer.dispose(); };
   return page;
 }

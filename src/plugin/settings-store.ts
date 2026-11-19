@@ -1,3 +1,4 @@
+import { DESKTOP_DEVICE_SETTING_KEYS, DESKTOP_LOCAL_STATE_KEYS, deviceSettingsSnapshot, mergeExternalSettings, overlayDeviceSettings, readDeviceSettings, writeDeviceSettings } from "../sync/device-settings";
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { runErrors } from "../run-reports/recent-errors";
 import { Notice, Platform } from "obsidian";
@@ -14,6 +15,7 @@ import {
   sanitizeStoredPiImageAttachments,
   sanitizeCredentialSettingsForDataSave,
   type ChatMessage,
+  type StoredSession,
   type ApiProviderConfig,
   type CodexForObsidianSettings
 } from "../settings/settings";
@@ -101,6 +103,8 @@ export class EchoInkSettingsStore {
     const emptyData = isEmptyEchoInkPluginData(data);
     const normalized = normalizeSettingsData(data);
     this.plugin.settings = normalized.settings;
+    // data.json may have arrived from another device; this device's own proxy/startup choices win.
+    overlayDeviceSettings(this.plugin.settings as unknown as Record<string, unknown>, readDeviceSettings(this.plugin.app), DESKTOP_DEVICE_SETTING_KEYS);
     let agentsMigrated = false;
     try {
       let migratedRegistry = await migrateLegacyAgentRegistry(
@@ -146,6 +150,20 @@ export class EchoInkSettingsStore {
       });
     }
     return Object.freeze({ emptyData });
+  }
+
+  /**
+   * Obsidian calls onExternalSettingsChange when a sync tool rewrote data.json. The file wins for shared settings;
+   * device-owned keys and the live conversation list stay as they are here.
+   */
+  async reloadFromExternalChange(): Promise<boolean> {
+    const data: unknown = await this.plugin.loadData();
+    if (isEmptyEchoInkPluginData(data)) return false;
+    const incoming = normalizeSettingsData(data).settings as unknown as Record<string, unknown>;
+    const current = this.plugin.settings as unknown as Record<string, unknown>;
+    const changed = mergeExternalSettings(current, incoming, [...DESKTOP_DEVICE_SETTING_KEYS, ...DESKTOP_LOCAL_STATE_KEYS]);
+    overlayDeviceSettings(current, readDeviceSettings(this.plugin.app), DESKTOP_DEVICE_SETTING_KEYS);
+    return changed;
   }
 
   async saveSettings(force = false, options: SettingsSaveOptions = {}): Promise<void> {
@@ -382,6 +400,7 @@ export class EchoInkSettingsStore {
             prepared.candidate,
             prepared.persistedBefore
           );
+          writeDeviceSettings(this.plugin.app, deviceSettingsSnapshot(prepared.candidate as unknown as Record<string, unknown>, DESKTOP_DEVICE_SETTING_KEYS));
           this.reportedSettingsSaveErrors.clear();
           // A write can yield while another caller changes settings. Coalesce a
           // follow-up instead of waiting for all running Conversations to go idle.
@@ -427,8 +446,8 @@ export class EchoInkSettingsStore {
     if (this.reportedSettingsSaveErrors.has(code)) return;
     this.reportedSettingsSaveErrors.add(code);
     const english = this.plugin.settings.settingsLanguage === "en";
-    const message = english ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
-      : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹";
+    const message = english ? "EchoInk could not save settings. Check whether a sync or antivirus app is locking the plugin folder."
+      : "EchoInk 设置未能保存。请检查同步或杀毒软件是否占用了插件文件夹。";
     const doc = this.plugin.app?.workspace?.containerEl?.ownerDocument;
     new Notice(doc ? settingsReportNoticeContent(doc, message, () => this.plugin.openRunReport(), english) : message, 15000);
   }
@@ -480,7 +499,7 @@ export class EchoInkSettingsStore {
         this.settingsConflictBackupPending = true;
         throw new SettingsPersistenceError(
           "settings_persist_failed",
-          "settings saveData 结果未知，严格 readback 失败",
+          "设置保存结果无法确认。请重新打开设置核对；如问题持续，请检查同步或杀毒软件是否占用了插件文件夹。",
           "unknown",
           null,
           { cause: new AggregateError([saveError, readbackError], "Settings write and readback failed") }
@@ -492,7 +511,7 @@ export class EchoInkSettingsStore {
       if (stableJson(readback) === stableJson(persistedBefore)) {
         throw new SettingsPersistenceError(
           "settings_persist_failed",
-          `settings saveData 未提交：${errorMessage(saveError)}`,
+          "设置未能保存，已保留原设置。请检查同步或杀毒软件是否占用了插件文件夹后重试。",
           "not_committed",
           null,
           { cause: saveError }
@@ -501,7 +520,7 @@ export class EchoInkSettingsStore {
       const persistedSettings = normalizeSettingsData(readback).settings;
       const error = new SettingsPersistenceError(
         "settings_persist_failed",
-        "settings saveData 抛错后的严格 readback 既不匹配提交前状态，也不匹配完整目标；下次写入前备份磁盘数据",
+        "设置保存结果无法确认，下次保存前将自动备份。请重新打开设置核对。",
         "unknown",
         persistedSettings,
         { cause: saveError }
@@ -516,16 +535,19 @@ export class EchoInkSettingsStore {
 export function settingsForDataSave(settings: CodexForObsidianSettings): CodexForObsidianSettings {
   const data = JSON.parse(JSON.stringify(settings)) as CodexForObsidianSettings;
   sanitizeCredentialSettingsForDataSave(data);
-  for (const session of data.sessions) {
-    session.messages = [];
-    const normalizedImageMetadata = session.bodyAuthority === "pi_session_only"
-      ? sanitizeStoredPiImageAttachments(session.piImageAttachments)
-      : undefined;
-    if (normalizedImageMetadata) {
-      session.piImageAttachments = normalizedImageMetadata;
-    } else {
-      delete session.piImageAttachments;
-    }
+  data.sessions = data.sessions.map(sessionForDataSave);
+  return data;
+}
+
+/** The exact persisted shell, without traversing a live transcript. */
+export function sessionForDataSave(session: StoredSession): StoredSession {
+  const data = { ...session, messages: [] };
+  const images = data.bodyAuthority === "pi_session_only"
+    ? sanitizeStoredPiImageAttachments(data.piImageAttachments) : undefined;
+  if (images) {
+    data.piImageAttachments = images;
+  } else {
+    delete data.piImageAttachments;
   }
   return data;
 }
@@ -551,10 +573,6 @@ function stableJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function settingsSaveErrorDetail(error: unknown, seen = new Set<unknown>()): string {

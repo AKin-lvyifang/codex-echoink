@@ -3,6 +3,7 @@ import type CodexForObsidianPlugin from "../../main";
 import type { StoredSession } from "../../settings/settings";
 import type { KnowledgeBaseDashboardSnapshot } from "../../knowledge-base/dashboard";
 import { clearKnowledgeDashboardHealthTooltips, renderKnowledgeDashboardView, type KnowledgeDashboardTooltipState } from "./knowledge-dashboard";
+import { failureText, NEXT } from "../../core/error-copy";
 
 export interface CodexKnowledgeDashboardHost {
   readonly app: App;
@@ -64,7 +65,7 @@ export async function refreshKnowledgeDashboard(host: CodexKnowledgeDashboardHos
     host.knowledgeDashboardSnapshot = snapshot;
   } catch (error) {
     if (requestId !== host.knowledgeDashboardRequestId) return;
-    host.knowledgeDashboardError = error instanceof Error ? error.message : String(error);
+    host.knowledgeDashboardError = failureText(error, ["知识库概况未能加载。", "The knowledge overview could not be loaded."], NEXT.retry, host.plugin.settings.settingsLanguage);
   } finally {
     if (requestId === host.knowledgeDashboardRequestId) {
       host.knowledgeDashboardLoading = false;

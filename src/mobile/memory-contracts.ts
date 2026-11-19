@@ -1,3 +1,4 @@
+import type { DreamCorrectionEvent } from "../harness/memory/dream-correction-core";
 import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import type { UserProfileItem, UserProfileSlotDefinition } from "../harness/memory/user-profile-state";
 import type { MobileSession } from "./store";
@@ -6,8 +7,9 @@ export interface MobileMemorySettingsSnapshot {
   memoryEnabled: boolean; dreamEnabled: boolean; dreamRunsPerDay: number; autoArchive: boolean; version: string;
 }
 export interface MobileForgottenMemory { id: string; title: string; forgottenAt: number; reason: string }
-export interface MobileMemoryListSnapshot { revision: number; records: PersonalMemoryRecord[]; forgotten: MobileForgottenMemory[] }
-export interface MobileMemorySnapshot { revision: number; record: PersonalMemoryRecord }
+export interface MobileMemoryCorrectionEvent extends DreamCorrectionEvent { before?: PersonalMemoryRecord; after?: PersonalMemoryRecord; canUndo: boolean }
+export interface MobileMemoryListSnapshot { corrections?: readonly MobileMemoryCorrectionEvent[]; revision: number; records: PersonalMemoryRecord[]; forgotten: MobileForgottenMemory[] }
+export interface MobileMemorySnapshot { corrections?: readonly MobileMemoryCorrectionEvent[]; revision: number; record: PersonalMemoryRecord }
 export interface MobileMemoryCorrection { title: string; content: string; recallWhen: string }
 export interface MobileMemoryCorrectionPreview extends MobileMemoryCorrection { id: string; revision: number; original: PersonalMemoryRecord }
 export interface MobileProfileSource { profileKey: string; id: string; title: string; content: string; basis: string; available: boolean }
@@ -19,6 +21,9 @@ export interface MobileDreamStatus {
 export interface MobileArchiveItem { id: string; agentId: string; title: string; updatedAt: number; archivedAt: number; messageCount: number }
 /** Both device pages consume data only. Local management never needs a Provider. */
 export interface MobileMemorySettingsPort {
+  corrections(): Promise<readonly MobileMemoryCorrectionEvent[]>;
+  originalQuote(source: string): Promise<import('../harness/memory/memory-quote-core').MemoryQuoteResult>;
+  undoCorrection(id: string): Promise<string>;
   readSettings(): MobileMemorySettingsSnapshot;
   saveSettings(draft: MobileMemorySettingsSnapshot): Promise<MobileMemorySettingsSnapshot>;
   list(query?: string): Promise<MobileMemoryListSnapshot>;

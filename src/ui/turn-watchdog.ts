@@ -65,7 +65,7 @@ export function turnWatchdogTimeoutText(timeoutMs: number, language = "zh-CN"): 
   const minutes = Math.max(1, Math.floor(timeoutMs / 60_000));
   return language === "en"
     ? `Agent has made no progress for ${minutes} ${minutes === 1 ? "minute" : "minutes"} and has stopped. Click Continue to retry.`
-    : `Agent 已经 ${minutes} 分钟没有任何进展，已停止。可以点继续重试。`;
+    : `Agent 已 ${minutes} 分钟无进展，已停止。请点击“继续”重试。`;
 }
 export function isTurnWatchdogProgressEvent(event: Readonly<{ type: string; textDelta?: string }>): boolean {
   switch (event.type) {

@@ -201,7 +201,7 @@ export class PiLocalDataService {
   get memoryUnavailable(): boolean { return this.memoryIssue !== null; }
 
   assertMemoryAvailable(): void {
-    if (this.memoryIssue !== null) throw new Error("Personal Memory is paused; resolve it in Workbench");
+    if (this.memoryIssue !== null) throw new Error("记忆已暂停使用。请在工作台中处理记忆提示后重试。");
   }
 
   async retryMemory(): Promise<void> {
@@ -218,7 +218,7 @@ export class PiLocalDataService {
   }
 
   async resolveMemory(action: "adopt" | "reset"): Promise<string> {
-    if (!(this.memoryIssue instanceof PersonalMemoryIdentityMismatchError)) throw new Error("Memory identity recovery is unavailable for this error");
+    if (!(this.memoryIssue instanceof PersonalMemoryIdentityMismatchError)) throw new Error("当前记忆问题无法通过此方式恢复。请在工作台中点击“重试”。");
     await this.personalMemory.dispose();
     let next: PersonalMemoryRepository | null = null;
     try {

@@ -27,10 +27,10 @@ export function buildUserProfileDreamPrompt(record: PersonalMemoryRecord): { sys
 }
 export function parseUserProfileDreamCandidates(text: string): DreamUserProfileCandidate[] {
   if (text.trim() === "no_change") return [];
-  let value: unknown; try { value = JSON.parse(text); } catch { throw new Error("整理结果格式无效，未保存画像。"); }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("整理结果格式无效，未保存画像。");
+  let value: unknown; try { value = JSON.parse(text); } catch { throw new Error("记忆整理结果无效，画像未保存。请稍后重新整理。"); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("记忆整理结果无效，画像未保存。请稍后重新整理。");
   const rows = (value as Record<string, unknown>).userProfileItems;
-  if (Object.keys(value).some(key => key !== "userProfileItems") || !Array.isArray(rows) || rows.length > 1) throw new Error("整理结果格式无效，未保存画像。");
+  if (Object.keys(value).some(key => key !== "userProfileItems") || !Array.isArray(rows) || rows.length > 1) throw new Error("记忆整理结果无效，画像未保存。请稍后重新整理。");
   const normalized = normalizeDreamUserProfileItems(rows);
-  if (normalized.length !== rows.length) throw new Error("整理结果的画像分类或内容无效，未保存。"); return normalized;
+  if (normalized.length !== rows.length) throw new Error("记忆整理结果中的画像分类或内容无效，画像未保存。请稍后重新整理。"); return normalized;
 }

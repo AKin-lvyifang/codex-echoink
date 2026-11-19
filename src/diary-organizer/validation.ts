@@ -17,7 +17,20 @@ export function dayDistance(a: string, b: string): number {
 }
 
 export interface CandidateValidation { reasons: string[]; ignore: boolean }
-export function validateDiaryCandidate(candidate: DiaryCandidate, content: string, finance: DiaryFinanceSnapshot): CandidateValidation {
+/** 智能判断对一条自动入账的复查：是不是本人的、是不是已经发生、金额是不是清楚。 */
+export interface DiaryEntryReview { self: number; happened: number; amountClear: number }
+const REVIEW_THRESHOLD = 0.5;
+
+/** The sentence around a quote, used by both the regex review and the smart judgment. */
+export function diaryCandidateContext(candidate: DiaryCandidate, content: string): string {
+  const quote = typeof candidate.quote === "string" ? candidate.quote.trim() : "";
+  const position = quote ? content.indexOf(quote) : -1;
+  const before = position >= 0 ? content.slice(Math.max(0, position - 100), position).split(/[。！？!?\n]/u).pop() || "" : "";
+  const after = position >= 0 ? content.slice(position + quote.length, position + quote.length + 100).split(/[。！？!?\n]/u)[0] : "";
+  return `${before}${quote}${after}`;
+}
+
+export function validateDiaryCandidate(candidate: DiaryCandidate, content: string, finance: DiaryFinanceSnapshot, review?: DiaryEntryReview): CandidateValidation {
   const reasons: string[] = [];
   const quote = typeof candidate.quote === "string" ? candidate.quote.trim() : "";
   if (!quote || !content.includes(quote)) reasons.push("原文引用未通过核对");
@@ -25,14 +38,13 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
   if (candidate.ownership !== "self") reasons.push("无法确认属于你本人");
   if (candidate.occurred !== true) reasons.push(candidate.type === "finance" ? "无法确认已经发生" : "无法确认是明确待办");
   if (Array.isArray(candidate.concerns) && candidate.concerns.length) reasons.push(...candidate.concerns.filter(x => typeof x === "string"));
-  const position = quote ? content.indexOf(quote) : -1;
-  const before = position >= 0 ? content.slice(Math.max(0, position - 100), position).split(/[。！？!?\n]/u).pop() || "" : "";
-  const after = position >= 0 ? content.slice(position + quote.length, position + quote.length + 100).split(/[。！？!?\n]/u)[0] : "";
-  const context = `${before}${quote}${after}`;
+  const context = diaryCandidateContext(candidate, content);
+  // 有智能判断时，“别人付的 / 只是计划 / 金额不清”三项用判断结果替换正则；其余硬性核对不变。
+  const judged = candidate.type === "finance" && review ? review : undefined;
   const advance = /(?:垫付|代付|帮.{0,8}付|替.{0,8}付)/u.test(context);
-  const other = !advance && (/(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
+  const other = judged ? judged.self < REVIEW_THRESHOLD : !advance && (/(?:别人|朋友|同事|他|她|他们|她们|老板|爸妈|父母|老公|老婆).{0,6}(?:请我|请客|买单|付了|支付了)/u.test(context)
     || /(?:别人请客|朋友请客|同事请客|他请客|她请客|不用我付|没花我的钱)/u.test(context));
-  const planned = /(?:打算|计划|准备|考虑|想要|希望|要不要|如果|预计|预算).{0,18}(?:买|购|消费|花|付|订)|(?:还没|尚未|没有|未|没)(?:买|付款|支付|消费)|明天(?:去)?买/u.test(context);
+  const planned = judged ? judged.happened < REVIEW_THRESHOLD : /(?:打算|计划|准备|考虑|想要|希望|要不要|如果|预计|预算).{0,18}(?:买|购|消费|花|付|订)|(?:还没|尚未|没有|未|没)(?:买|付款|支付|消费)|明天(?:去)?买/u.test(context);
   if (other) reasons.push(candidate.ownership === "other" ? "这是他人的收支或请客" : "上下文提到他人付款或请客，请核对这笔是否由你支付");
   if (candidate.type === "finance") {
     if (!["expense", "income", "refund", "transfer"].includes(candidate.kind)) reasons.push("收支类型无效");
@@ -43,10 +55,11 @@ export function validateDiaryCandidate(candidate: DiaryCandidate, content: strin
     if (typeof candidate.merchant !== "string" || !candidate.merchant.trim()) reasons.push("交易对象不明确");
     if (!finance.categories.some(category => category.name === candidate.category && (!category.kind || category.kind === candidate.kind))) reasons.push("分类未对应到已启用分类");
     if (planned) reasons.push(candidate.occurred === false ? "原文描述的是计划或未发生消费" : "上下文含购买计划，请核对这笔是否已经发生");
-    if (/(?:垫付|代付|帮.{0,8}付|替.{0,8}付|报销|借给|借了|借款|一百多|几十|几百|大约|大概|左右|差不多|多块|多元|不到|至少|美元|美金|欧元|日元|港币|外币|美刀)/u.test(context)) reasons.push("金额、币种或垫付关系需核对");
+    if (judged ? judged.amountClear < REVIEW_THRESHOLD
+      : /(?:垫付|代付|帮.{0,8}付|替.{0,8}付|报销|借给|借了|借款|一百多|几十|几百|大约|大概|左右|差不多|多块|多元|不到|至少|美元|美金|欧元|日元|港币|外币|美刀)/u.test(context)) reasons.push("金额、币种或垫付关系需核对");
     const explicitOwnShare = /(?:我|自己|本人|我的).{0,8}(?:付|出|那份|承担|份额|分摊)/u.test(context);
     if (candidate.kind === "transfer" || candidate.kind === "refund" || /(?:转账|退款|退货|退回|收回垫款)/u.test(context)
-      || (/(?:AA|aa|平摊|均摊)/u.test(context) && !explicitOwnShare)) reasons.push("转账、退款或分摊需核对");
+      || (!judged && /(?:AA|aa|平摊|均摊)/u.test(context) && !explicitOwnShare)) reasons.push("转账、退款或分摊需核对");
     // The model must not invent or scale an Arabic amount visible in the quote.
     const amounts = [...quote.matchAll(/(?:¥|￥|人民币\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块|人民币|rmb|RMB|[¥￥])/g)].map(match => Math.round(Number(match[1]) * 100));
     if (amounts.length && !amounts.includes(candidate.amountCents)) reasons.push("金额与原文不一致");
@@ -85,7 +98,7 @@ export function parseDiaryCandidates(text: string): DiaryCandidate[] {
   const candidates = (parsed as { candidates: unknown[] }).candidates;
   if (candidates.length > 100) throw new Error("单篇候选条目超过限制");
   return candidates.map(candidate => {
-    if (!candidate || typeof candidate !== "object" || !["todo", "finance"].includes((candidate as DiaryCandidate).type)) throw new Error("抽取结果含无效条目类型");
+    if (!candidate || typeof candidate !== "object" || !["todo", "finance"].includes((candidate as DiaryCandidate).type)) throw new Error("整理结果无效。请重试；如问题持续，请更换模型。");
     return candidate as DiaryCandidate;
   });
 }

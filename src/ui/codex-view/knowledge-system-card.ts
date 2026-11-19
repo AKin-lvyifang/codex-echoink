@@ -1,3 +1,4 @@
+import { actionFailureText } from "../../core/error-copy";
 import { Component, MarkdownRenderer, Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import type { KnowledgeSystemTask } from "../../knowledge-base/knowledge-system-task";
@@ -197,7 +198,7 @@ export class KnowledgeSystemConversationCard {
         setAmicroButtonPending(button, true);
         void action()
           .catch(
-            (error) => new Notice(error instanceof Error ? error.message : "操作未完成，请重试。"),
+            (error) => new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage)),
           )
           .finally(() => {
             if (button.isConnected) {

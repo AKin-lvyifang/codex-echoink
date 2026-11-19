@@ -37,6 +37,7 @@ export function resolveDesktopSettingsRoute(
   const focus = (options.focus ?? "").replace("general:memory:drawer", "general:memory:enabled");
   if (focus.replace(/^explicit:/u, "") === "knowledge:provider") return { tab: "models", focus: "models:default" };
   const extra = { ...(focus ? { focus } : {}), ...(options.resourceId ? { resourceId: options.resourceId } : {}) };
+  if (/^(?:explicit:)?agent:owner:/u.test(focus)) return { tab: "agent", ...extra };
   if (/memory|dream|画像|记忆|做梦/iu.test(focus)) return { tab: "memory", ...extra };
   if (legacyTab === "agents" || legacyTab === "providers") {
     return { tab: /tavily|deepseek|tools/iu.test(focus) ? "capabilities" : "models", ...(/tavily|deepseek|tools/iu.test(focus) ? { capabilityTab: "tools" as const } : {}), ...extra };

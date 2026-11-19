@@ -56,30 +56,28 @@ export async function runMobileCapabilityScenarios(api) {
     const journal = f.settings.knowledgeBase.folderBindings.roles.journal;
     journal.readPaths = ["Daily"];
     assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
-    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/module_disabled:journal/u));
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/invalid_target/u), "a switched-off journal binding stays out of mobile search scopes");
     assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
     journal.readPaths = [];
     journal.writePath = "Daily";
     assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
-    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/module_disabled:journal/u));
+    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/invalid_target/u), "a switched-off journal binding stays out of mobile search scopes");
     journal.writePath = null;
     journal.searchEnabled = false;
     assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
     assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/invalid_target/u));
     assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
     journal.searchEnabled = true;
-    assert.throws(() => f.policy.assertTool("note_create", { path: "输出/生成.md" }), code(/module_disabled:knowledge/u));
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "输出/生成.md" }), "direct chat may write ordinary folders without the Knowledge switch");
     f.grant.disabledCapabilityIds.push("journal");
-    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
-    assert.throws(() => f.policy.assertReadPath("Daily/今日.md"), code(/agent_disabled:journal/u));
-    assert.ok(!(await f.search.search({ query: "普通读取" })).hits.some(hit => hit.vaultRelativePath === "Daily/今日.md"));
+    assert.equal(f.policy.canReadPath("Daily/今日.md"), true, "reading needs no module grant");
+    assert.throws(() => f.policy.assertTool("note_create", { path: "Daily/新.md" }), code(/agent_disabled:journal/u), "writing the journal still needs it");
     f.grant.disabledCapabilityIds = [];
     f.settings.mobileUi.moduleEnabled = { "knowledge-base": false };
-    assert.equal(f.policy.canReadPath("普通/笔记.md"), false);
-    assert.throws(() => f.policy.assertReadPath("普通/笔记.md"), code(/module_disabled:knowledge/u));
-    await assert.rejects(tool(f, "note_read").execute("module-off", { path: "普通/笔记.md" }, signal()), code(/module_disabled:knowledge/u));
+    assert.equal(f.policy.canReadPath("普通/笔记.md"), true);
+    assert.match(JSON.stringify(await tool(f, "note_read").execute("module-off", { path: "普通/笔记.md" }, signal())), /普通读取/u);
     f.settings.mobileUi.moduleEnabled = { journal: false };
-    assert.equal(f.policy.canReadPath("Daily/今日.md"), false);
+    assert.throws(() => f.policy.assertTool("note_create", { path: "Daily/新.md" }), code(/module_disabled:journal/u));
     f.settings.mobileUi.moduleEnabled = {};
     Object.assign(f.settings.knowledgeBase.folderBindings.roles.templates, { enabled: true, readPaths: ["模板"], writePath: "模板" });
     assert.equal(f.policy.canReadPath("模板/旅行.md"), false, "existing template search filtering remains authoritative");
@@ -94,8 +92,8 @@ export async function runMobileCapabilityScenarios(api) {
     assert.doesNotThrow(() => restricted.policy.assertReadPath("普通/笔记.md"));
     await reader.execute("knowledge-only", { path: "普通/笔记.md" }, signal());
     restricted.grant.capabilityIds = [];
-    assert.equal(restricted.policy.canReadPath("普通/笔记.md"), false);
-    await assert.rejects(reader.execute("revoked", { path: "普通/笔记.md" }, signal()), code(/agent_disabled:knowledge/u));
+    assert.equal(restricted.policy.canReadPath("普通/笔记.md"), true, "every hired Agent can read");
+    await reader.execute("revoked", { path: "普通/笔记.md" }, signal());
     restricted.search.dispose();
   });
 
@@ -115,11 +113,14 @@ export async function runMobileCapabilityScenarios(api) {
     await assert.rejects(writer.execute("write", { path: "finance/transactions/越权.md", content: "不能写" }, signal()), code(/agent_disabled:finance/u));
     assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
     f.grant.capabilityIds = [];
-    await assert.rejects(writer.execute("write", { path: "raw/越权.md", content: "不能写" }, signal()), code(/agent_disabled:knowledge/u));
-    const sol = await setup({ agentId: "sol" }), solWriter = tool(sol, "note_create");
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "raw/普通.md" }), "ordinary folders do not need the Knowledge grant");
+    const sol = await setup({ agentId: "sol" });
     sol.grant.disabledCapabilityIds.push("knowledge");
-    await assert.rejects(solWriter.execute("write", { path: "raw/越权.md", content: "不能写" }, signal()), code(/agent_disabled:knowledge/u));
-    assert.equal(sol.calls.create.length, 0);
+    assert.doesNotThrow(() => sol.policy.assertTool("note_create", { path: "raw/普通.md" }));
+    const worker = await setup(); worker.grant.capabilityIds = ["journal"];
+    assert.throws(() => new worker.policy.constructor({ ...worker.policy.options, companyRole: "worker" }).assertTool("note_create", { path: "raw/普通.md" }), code(/folder_grant_required/u), "a dispatched worker needs the assistant's grant");
+    assert.doesNotThrow(() => new worker.policy.constructor({ ...worker.policy.options, companyRole: "worker", folderGrants: () => ["raw"] }).assertTool("note_create", { path: "raw/普通.md" }));
+    worker.search.dispose();
     f.search.dispose(); sol.search.dispose();
   });
 
@@ -145,9 +146,10 @@ export async function runMobileCapabilityScenarios(api) {
     f.paid.active = false;
     await assert.rejects(write.execute("write", { path: "finance/transactions/已过期.md", content: "禁止" }, signal()), code(/pro_required/u));
     f.settings.lifestyle.finance.enabled = false;
-    assert.throws(() => f.policy.assertReadPath("finance/transactions/账目.md"), code(/module_disabled/u));
+    assert.doesNotThrow(() => f.policy.assertReadPath("finance/transactions/账目.md"), "existing finance files stay readable");
+    await assert.rejects(write.execute("write", { path: "finance/transactions/关闭.md", content: "禁止" }, signal()), code(/module_disabled|pro_required/u));
     f.settings.knowledgeBase.folderBindings.roles.raw.enabled = false;
-    await assert.rejects(write.execute("write", { path: "raw/禁止.md", content: "禁止" }, signal()), code(/module_disabled/u));
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "raw/普通.md" }), "a switched-off Knowledge folder is an ordinary folder for writes");
     assert.equal(f.calls.create.length, 1); f.search.dispose();
   });
 
@@ -220,15 +222,17 @@ export async function runMobileCapabilityScenarios(api) {
   });
 
   await test("revocation while exists awaits prevents mkdir/create; every later mkdir boundary is checked", async () => {
+    // Writes into a module folder are what a capability revocation can still stop.
     const f = await setup(), write = tool(f, "note_create"), exists = f.adapter.exists.bind(f.adapter);
+    f.grant.capabilityIds = ["journal"];
     f.adapter.exists = async path => { if (path.endsWith("禁止.md")) f.grant.capabilityIds = []; return exists(path); };
-    await assert.rejects(write.execute("write", { path: "raw/新目录/禁止.md", content: "禁止" }, signal()), code(/agent_disabled/u));
+    await assert.rejects(write.execute("write", { path: "journal/新目录/禁止.md", content: "禁止" }, signal()), code(/agent_disabled/u));
     assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
-    f.grant.capabilityIds = ["knowledge"];
+    f.grant.capabilityIds = ["journal"];
     const mkdir = f.app.vault.createFolder;
     f.app.vault.createFolder = async path => { await mkdir(path); f.grant.capabilityIds = []; };
-    await assert.rejects(write.execute("write", { path: "新目录/次级/禁止2.md", content: "禁止" }, signal()), code(/agent_disabled/u));
-    assert.deepEqual(f.calls.folders, ["新目录"]); assert.equal(f.calls.create.length, 0); f.search.dispose();
+    await assert.rejects(write.execute("write", { path: "journal/新目录2/次级/禁止2.md", content: "禁止" }, signal()), code(/agent_disabled/u));
+    assert.equal(f.calls.folders.length, 1); assert.equal(f.calls.create.length, 0); f.search.dispose();
   });
 
   await test("memory_write rechecks current permission and Memory toggle inside the real store queue", async () => {
@@ -245,12 +249,8 @@ export async function runMobileCapabilityScenarios(api) {
   await test("body pre-search reads/indexes only authorized candidates and yields empty material to chat-only Agents", async () => {
     const f = await setup(); const found = await f.search.search({ query: "共同检索词", limit: 20 });
     assert.ok(found.hits.some(hit => hit.vaultRelativePath === "raw/来源.md"));
-    for (const forbidden of ["journal/2026-10-19.md", "finance/transactions/账目.md", "outputs/英文日记/今日.md"]) {
-      assert.ok(!f.calls.read.includes(forbidden)); assert.ok(!f.calls.metadata.includes(forbidden));
-      assert.ok(!found.hits.some(hit => hit.vaultRelativePath === forbidden));
-    }
-    const none = await setup({ grants: [] }); const empty = await none.search.search({ query: "共同检索词" });
-    assert.equal(empty.hits.length, 0); assert.equal(none.calls.read.length, 0); assert.equal(none.calls.metadata.length, 0);
+    const none = await setup({ grants: [] }); const open = await none.search.search({ query: "共同检索词" });
+    assert.ok(open.hits.some(hit => hit.vaultRelativePath === "raw/来源.md"), "an Agent without module grants can still read and search notes");
     assert.doesNotThrow(() => none.policy.assertTool("task_update")); assert.doesNotThrow(() => none.policy.assertTool("user_question"));
     f.search.dispose(); none.search.dispose();
   });
@@ -258,11 +258,7 @@ export async function runMobileCapabilityScenarios(api) {
   await test("search caches and note_read cannot return previously authorized material after in-flight revocation", async () => {
     const f = await setup(); await f.search.search({ query: "共同检索词" });
     f.grant.capabilityIds = [];
-    assert.equal((await f.search.search({ query: "共同检索词" })).hits.length, 0);
-    f.grant.capabilityIds = ["knowledge"]; const reader = tool(f, "note_read"), read = f.app.vault.read;
-    f.app.vault.read = async file => { const text = await read(file); f.grant.capabilityIds = []; return text; };
-    await assert.rejects(reader.execute("read", { path: "raw/来源.md" }, signal()), code(/agent_disabled/u));
-    assert.equal((await f.search.search({ query: "共同检索词" })).hits.length, 0);
+    assert.ok((await f.search.search({ query: "共同检索词" })).hits.length > 0, "module grants no longer gate reading");
     f.search.dispose(); await assert.rejects(f.search.search({ query: "共同检索词" }), /disposed/u);
   });
 
@@ -280,7 +276,7 @@ export async function runMobileCapabilityScenarios(api) {
       const before = f.policy.signature(); change(); assert.notEqual(f.policy.signature(), before);
     }
     assert.deepEqual([...snapshot.capabilityIds], ["knowledge"]);
-    assert.throws(() => f.policy.assertTool("note_create", { path: "raw/禁止.md" }), code(/agent_disabled/u)); f.search.dispose();
+    assert.throws(() => f.policy.assertTool("note_create", { path: "journal/禁止.md" }), code(/agent_disabled/u)); f.search.dispose();
   });
 
   await test("legacy direct fixture calls default safely to sol and do not grant non-sol or paid writes", async () => {

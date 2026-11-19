@@ -1,4 +1,5 @@
 import { Notice, type App } from "obsidian";
+import { failureText, NEXT } from "../../core/error-copy";
 import type CodexForObsidianPlugin from "../../main";
 import type { TurnOptions } from "../turn-options";
 import {
@@ -72,8 +73,9 @@ export async function chooseChatWorkspace(host: CodexWorkspaceHost, session: Sto
     try {
       await commitChatWorkspaceSelection(host, session, workspacePath);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      new Notice(conversationUiText(language, `切换工作区失败：${detail}`, `Could not switch workspace: ${detail}`));
+      new Notice(failureText(error,
+        ["工作区未能切换。", "The workspace could not be switched."],
+        NEXT.retryOrReload, language));
       return false;
     }
   }

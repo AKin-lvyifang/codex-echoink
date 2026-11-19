@@ -4,7 +4,9 @@ import type { App } from "obsidian";
 import { financeConversationPort } from "../lifestyle/finance-conversation-port";
 import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { financeValueVersion } from "../lifestyle/finance-operation-types";
-import { PI_FINANCE_TOOL_IDS, normalizeFinanceToolRequest, financeToolEffect, hasDirectFinanceIntent } from "../harness/pi-native/finance-tool-policy";
+import { PI_FINANCE_TOOL_IDS, normalizeFinanceToolRequest, financeToolEffect, financeIntentWithJudgment } from "../harness/pi-native/finance-tool-policy";
+import { getDecisionClient } from "../membership/decision-client";
+import { mobileTurnJudgment } from "./decision-turn";
 import type { MobileCapabilityPolicy } from "./capability-policy";
 import { newId, type MobileStore } from "./store";
 import type { MobileToolExecutionContext, MobileWriteOperation } from "./task-contracts";
@@ -17,7 +19,7 @@ export function mobileFinanceTools(app: App, finance: LifestyleFinanceService, s
     totalCents: Type.Optional(Type.Integer()), budgetCents: Type.Optional(Type.Integer()), allocations: Type.Optional(Type.Record(Type.String(), Type.Integer())), deltas: Type.Optional(Type.Record(Type.String(), Type.Integer())), limit: Type.Optional(Type.Integer()), offset: Type.Optional(Type.Integer()) };
   const descriptions = [
     "只读查账：action records/catalog/budget/bills/operations。records返回真实id和expectedVersion，limit最多50、offset续读；operations读取当前任务写前意图/回执，未知结果禁止重放。",
-    "账目action create/update/delete。create用record，amountCents整数分；update/delete先查询，targets必须含id和expectedVersion。update仅改patch。分类取catalog已有值，明确用户指令才写；失败/未知先查operations，不能重复create。",
+    "账目action create/update/delete。create用record，amountCents整数分；update/delete先查询，targets必须含id和expectedVersion。update仅改patch。分类优先取catalog已有值，都不合适可写新分类名（自动创建，结果createdCategories列出）；明确用户指令才写；失败/未知先查operations，不能重复create。",
     "预算action get/update；scope current/YYYY-MM/default。先get拿expectedVersion，再用totalCents、allocations绝对分或deltas相对分修改；未设额度不得猜测，保留其他字段。",
     "账单action list/create/update/associate。create用name/budgetCents/allocations；update需id/expectedVersion；associate还需精确targets。金额整数分，失败/未知先读operations。"
   ];
@@ -30,7 +32,9 @@ export function mobileFinanceTools(app: App, finance: LifestyleFinanceService, s
         await finance.readForConversation(); allowed();
         return result({ operations: (store.getSession(taskId)?.operations ?? []).filter(item => item.toolName === "finance_write" && (!input.id || item.id === input.id)) });
       }
-      if (write && (!execution || !hasDirectFinanceIntent(tool, input, execution.userText ?? ""))) throw new Error("请先明确本次财务写入意图，未执行操作。");
+      // 智能判断是第二道把关：正则漏掉但很有把握是记账时放行；正则说是但很有把握不是时不写，先请用户说明。
+      if (write && (!execution || !financeIntentWithJudgment(tool, input, execution.userText ?? "",
+        (await mobileTurnJudgment(execution.turnId))?.financeWrite, getDecisionClient()?.thresholds()))) throw new Error("请先明确本次财务写入意图，未执行操作。");
       const guard = () => { allowed(); if (write && execution) { const task = store.getSession(taskId); if (!task) throw new Error("任务不存在。"); assertMobileWriteRun(task, execution); } };
       const prepared = await financeConversationPort(finance, guard)(tool, input, `${taskId}:${execution?.runId ?? "read"}:${callId}`, signal);
       guard();

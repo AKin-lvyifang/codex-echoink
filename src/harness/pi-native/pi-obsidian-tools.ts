@@ -7,7 +7,8 @@ import { normalizeJsonValue, canonicalJsonStringify, confirmAndConsumeApprovalTi
 import type { FileDomainReceiptStore } from "./domain-receipt-store";
 import type { PiWorkspaceAccess } from "./pi-workspace-access";
 import { OBSIDIAN_CLI_COMMANDS, normalizeObsidianCliRequest, obsidianCliEffect, type ObsidianCliRequest, type ObsidianCliEffect } from "./obsidian-cli-policy";
-import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, hasDirectFinanceIntent, type PiFinanceToolId } from "./finance-tool-policy";
+import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, financeIntentWithJudgment, type PiFinanceToolId } from "./finance-tool-policy";
+import { getDecisionClient } from "../../membership/decision-client";
 import { createPiFinanceToolDefinitions } from "./pi-finance-tool-definitions";
 import { financeValueVersion } from "../../lifestyle/finance-operation-types";
 
@@ -51,7 +52,7 @@ export interface PiObsidianSecurityOptions {
   assertToolAllowed?(toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown): Promise<void>;
   currentAccess?: () => PiWorkspaceAccess | null | undefined;
   currentRunIdentity?: () => RunIdentity;
-  currentUserEntry?: () => { entryId: string; text: string };
+  currentUserEntry?: () => { entryId: string; text: string; financeWrite?: number };
   approvals?: FileApprovalTicketStore;
   receipts?: FileDomainReceiptStore;
   confirmation?: { confirm(input: ObsidianApprovalInput): Promise<boolean> };
@@ -155,7 +156,9 @@ export class PiObsidianToolSecurity implements PiVaultAdditionalToolSecurityPort
           call.authorization = await confirmAndConsumeApprovalTicket({
             approvals, contract, signal,
             onExpired: () => { renewed = true; this.options.onApprovalExpired?.(); },
-            confirm: async ticket => !renewed && !!(financeTool && entry?.entryId && hasDirectFinanceIntent(financeTool, financeRequest!, entry.text))
+            // 智能判断是第二道把关：正则漏掉但很有把握是记账时放行；正则说是但很有把握不是时先问用户。
+            confirm: async ticket => !renewed && !!(financeTool && entry?.entryId
+              && financeIntentWithJudgment(financeTool, financeRequest!, entry.text, entry.financeWrite, getDecisionClient()?.thresholds()))
               || await confirmation.confirm({ ...identity, toolId: contract.toolId as ObsidianApprovalInput["toolId"], requestId: ticket.ticketId, toolCallId: event.toolCallId, target: ticket.resolvedTarget, preview: ticket.preview,
                 ...(request?.command === "plugin:uninstall" || financeTool === "finance_record" && financeRequest?.action === "delete" ? { deleteAction: true } : {}), signal })
           });

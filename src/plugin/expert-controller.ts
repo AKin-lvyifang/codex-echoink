@@ -2,6 +2,7 @@ import type CodexForObsidianPlugin from "../main";
 import { ExpertContentService, adapterExpertContentFiles } from "../experts/service";
 import { hireExpert, dismissExpert, rememberExpertConversation } from "../agents/expert-lifecycle";
 import { isExpertAgent } from "../agents/persona";
+import { getDecisionClient } from "../membership/decision-client";
 
 
 export class DesktopExpertController {
@@ -46,11 +47,20 @@ export class DesktopExpertController {
       if (pack.disclosure) current.expert!.disclosure = pack.disclosure; else delete current.expert!.disclosure;
     });
     await this.plugin.mutateExpertRegistry(registry => { assertAvailable(); rememberExpertConversation(registry, agentId, conversationId); });
-    return { prompt: `${pack.buildTransientPrompt({ text })}\n首次视角声明由产品在会话中展示，不重复声明。`, assertAvailable: () => {
+    // 智能判断已在本轮开头带着专家技能清单问过；拿不到时按关键词选。
+    const judged = await getDecisionClient()?.latestTurn(conversationId, text).catch(() => null) ?? null;
+    const decision = judged?.skill ? { decidedSkillId: judged.skill.id } : {};
+    return { prompt: `${pack.buildTransientPrompt({ text, ...decision })}\n首次视角声明由产品在会话中展示，不重复声明。`, assertAvailable: () => {
       assertAvailable();
       const current = this.plugin.settings.agentRegistry.agents.find(item => item.id === agentId);
       if (current?.expert?.packageVersion !== pack.version) throw new Error("专家包版本已变化，本次任务已停止。");
     } };
+  }
+  /** 智能判断的专家技能清单；专家不可用时为空，回到关键词选择。 */
+  async decisionSkills(agentId: string): Promise<{ id: string; name: string; description: string }[]> {
+    const agent = this.plugin.settings.agentRegistry.agents.find(item => item.id === agentId);
+    if (!isExpertAgent(agent) || !agent.expert.hired) return [];
+    try { const pack = await this.content.resolve(agent.expert.expertId); pack.assertAvailable(); return pack.skillOptions(); } catch { return []; }
   }
   async about(agentId: string): Promise<void> {
     const agent = this.plugin.settings.agentRegistry.agents.find(item => item.id === agentId);

@@ -63,7 +63,7 @@ export async function runFinanceAnalysisArchiveTests() {
     assert.equal(JSON.parse(restart.analysisInput("2026-09").text).前次成功报告[0].分析ID,previous[0].分析ID,"failed parse never becomes comparison history");
     response=JSON.stringify({version:8,sections:[{title:"存档重试",blocks:[{type:"text",markdown:"保留的完整内容"}]}]});
     vault.failMarkdownAfter=vault.createCount;const before=calls;
-    await assert.rejects(restart.analyze("2026-09",true),/保存失败/);assert.equal(calls,before+1);
+    await assert.rejects(restart.analyze("2026-09",true),/^Error: 分析未能保存，本次内容已保留。请点击重试保存。$/);assert.equal(calls,before+1);
     assert.equal(restart.pendingAnalysisSave("2026-09"),true);
     assert.ok(reloaded.snapshot().financeAnalysisPending!.at(-1)!.report);
     const againStore=new LifestyleStore(file);await againStore.initialize();const again=make(againStore);await again.initialize();
@@ -75,7 +75,7 @@ export async function runFinanceAnalysisArchiveTests() {
     await vault.create("early-conflict", "ordinary file");
     settings.lifestyle.finance.analysisDirectory="early-conflict/reports";
     const beforeEarly=calls;
-    await assert.rejects(again.analyze("2026-09",true),/保存失败/);
+    await assert.rejects(again.analyze("2026-09",true),/^Error: 分析未能保存，本次内容已保留。请点击重试保存。$/);
     const early=againStore.snapshot().financeAnalysisPending!.at(-1)!;
     assert.equal(early.raw,response);assert.equal(early.record,undefined);
     assert.ok(!againStore.snapshot().financeAnalysisArchives!.some(r=>r.id===early.id),"unreserved draft is not an invalid archive index");

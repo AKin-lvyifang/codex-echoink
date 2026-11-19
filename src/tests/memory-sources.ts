@@ -37,6 +37,7 @@ export async function runMemorySourceTests(): Promise<void> {
       let memoryMode: "normal" | "no_memory" = "normal";
       const snapshots: Array<{ productRunId: string; sources: readonly InjectedPersonalMemorySourceReference[] }> = [];
       const askSnapshots: unknown[] = [];
+      const recallReceipts: unknown[] = [];
       const extension = createPiKnowledgeInlineExtension({
         vaultSecurity: { name: "memory-source-fixture", hidden: true, factory: async () => undefined } as never,
         currentTurn: () => ({ kind: workflow, references: [], providerResourceText: "" } as never),
@@ -45,6 +46,7 @@ export async function runMemorySourceTests(): Promise<void> {
         personalMemory: { loadFixedContext: input => fixture.repository.loadFixedContext(input),
           prepareTurnContext: input => recall.prepareTurnContext(input) },
         onPersonalMemorySourcesInjected: snapshot => { snapshots.push(snapshot); },
+        onPersonalMemoryRecallReceipt: snapshot => { recallReceipts.push(snapshot); },
         onAskPersonalMemorySourcesInjected: snapshot => { askSnapshots.push(snapshot); }
       });
       await extension.factory({ on: (name: string, handler: (event: any) => Promise<any>) => { handlers.set(name, handler); } } as never);
@@ -64,6 +66,8 @@ export async function runMemorySourceTests(): Promise<void> {
         assert.equal(snapshots.length, previous + 1, "tool continuation must not duplicate injection receipts");
       }
       assert.equal(askSnapshots.length, 1, "legacy ask attribution remains ask-only");
+      assert.equal(recallReceipts.length, 2, "one diagnostic receipt at actual context delivery, not every tool continuation");
+      assert.doesNotMatch(JSON.stringify(recallReceipts), /湖蓝|乌龙|银槐|query|summary|recallWhen/u);
       memoryMode = "no_memory";
       await handlers.get("before_agent_start")!({ systemPrompt: "SYSTEM", systemPromptOptions: { skills: [] } });
       const withoutMemory = await handlers.get("context")!({ messages: [{ role: "user", content: "普通问题", timestamp: 3 }] });
@@ -108,10 +112,50 @@ export async function runMemorySourceTests(): Promise<void> {
       const initial = render();
       assert.equal(reads, 0, "collapsed details never read Memory bodies");
       assert.match(renderedText(initial.footer), /用了 2 条记忆/u);
-      assert.doesNotMatch(renderedText(initial.footer), /银槐颜色|银槐饮品/u, "the receipt entry keeps detailed sources on the memory page");
+      assert.equal(initial.footer.findByClass("codex-memory-receipt-list")?.hidden, true, "receipt sources start collapsed");
       const receiptButton = initial.footer.findByClass("codex-memory-receipt")!;
       await receiptButton.onclick!({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
-      assert.deepEqual(openedReceipt, { conversationId, messageId: turn.finalAnswer?.id, question: "银槐验收", sources }, "opening the page passes the frozen actual receipt");
+      assert.equal(openedReceipt, undefined, "the count button expands in place");
+      assert.equal(initial.footer.findByClass("codex-memory-receipt-list")?.hidden, false);
+      assert.equal(receiptButton.attributes.get("aria-expanded"), "true");
+      assert.doesNotMatch(renderedText(initial.footer), /title_or_trigger|content_or_association/u);
+      await initial.footer.findByClass("codex-memory-receipt-row")!.onclick!({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+      assert.deepEqual(openedReceipt, { conversationId, messageId: turn.finalAnswer?.id, question: "银槐验收", sources, selectedId: sources[0].id }, "a source click passes its exact id and the frozen actual receipt");
+      await receiptButton.onclick!({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+      assert.equal(initial.footer.findByClass("codex-memory-receipt-list")?.hidden, true);
+      const rebuiltFooter = new FakeElement("div");
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, turn);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), receiptButton,
+        "a structural answer redraw retains the receipt pointer target and its static icon");
+      const sparse = { ...turn, messages: turn.messages.map(message => ({ ...message, injectedMemorySources: undefined })) };
+      const liveSparse = { ...sparse, status: "running" as const };
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, liveSparse);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), receiptButton, "a live sparse projection retains its already proven injection receipt");
+      const explicitEmpty = { ...liveSparse, messages: turn.messages.map(message => ({ ...message, injectedMemorySources: [] })) };
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, explicitEmpty);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), null, "an explicit empty receipt is never replaced with cached sources");
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, liveSparse);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), null, "a later sparse event cannot resurrect a receipt after an explicit empty signal");
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, turn);
+      const differentTurn = { ...liveSparse, key: "another-memory-free-turn" };
+      const otherFooter = new FakeElement("div");
+      (initial.renderer as any).renderAnswerSources(otherFooter, differentTurn);
+      assert.equal(otherFooter.findByClass("codex-memory-receipt"), null, "a new turn without sources never inherits an old receipt");
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, sparse);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), null, "missing metadata never displays a stale memory count");
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, turn);
+      assert.equal(rebuiltFooter.findByClass("codex-memory-receipt"), receiptButton,
+        "a sparse closeout projection cannot discard a still-visible turn's receipt identity");
+      const finalized = { ...turn, finalAnswer: { ...turn.finalAnswer!, id: `${turn.finalAnswer!.id}:committed` } };
+      (initial.renderer as any).renderAnswerSources(rebuiltFooter, finalized);
+      await rebuiltFooter.findByClass("codex-memory-receipt-row")!.onclick!({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+      assert.equal((openedReceipt as { messageId: string }).messageId, finalized.finalAnswer.id,
+        "retaining nodes still binds receipt actions to the finalized message identity");
+      (initial.renderer as any).env.settingsLanguage = "en";
+      const englishFooter = new FakeElement("div");
+      (initial.renderer as any).renderAnswerSources(englishFooter, finalized);
+      assert.match(renderedText(englishFooter), /Used 2 memories/u, "the receipt cache never carries an old interface language into a redraw");
+      (initial.renderer as any).env.settingsLanguage = "zh-CN";
       assert.ok(sources.every(source => source.reason === "title_or_trigger" || source.reason === "content_or_association"));
       assert.deepEqual(projection.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, sources, "cold projection retains original recall reasons");
       const disclosure = initial.process.findByClass("codex-assistant-turn-resource")!;

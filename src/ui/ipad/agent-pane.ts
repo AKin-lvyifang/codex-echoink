@@ -1,10 +1,13 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { agentRoleGroups } from "../../agents/roster-groups";
 import { isAgentHired } from "../../agents/persona";
 import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import { IPadShell } from "./shell";
+import { bindMobilePressFeedback } from "../mobile/press-feedback";
 import { createAgentPage } from "./agent-pages";
 import { createAgentFormPage } from "./agent-form";
 import { createTaskPage } from "./task-detail";
@@ -27,14 +30,16 @@ export class IPadAgentPane {
   private activeSync?: { id: string; promise: Promise<void> };
   private stripSignature = "";
   private readonly projections = new Map<string, string>();
+  private readonly releasePress: () => void;
 
   constructor(private readonly root: HTMLElement, private readonly host: IPadWorkbenchHost) {
     root.classList.add("echoink-ipad", "pd-agent-pane");
+    this.releasePress = bindMobilePressFeedback(root);
     this.strip = el(root.ownerDocument, "nav", "pd-agent-strip"); this.strip.setAttribute("aria-label", "Agents");
     this.pane = el(root.ownerDocument, "div", "pd-agent-shell"); root.append(this.strip, this.pane);
     this.shell = new IPadShell(this.pane, { onError: error => this.error(error) });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
-      navigate: (route, replace) => route.kind === "home" ? host.openHome() : route.kind === "project" ? host.openProject?.(route.projectId) ?? Promise.resolve() : this.navigate(route, replace), error: error => this.error(error) };
+      navigate: (route, replace) => route.kind === "home" ? host.openHome() : route.kind === "project" ? host.openProject?.(route.projectId, route.deviceId) ?? Promise.resolve() : route.kind === "remote-conversation" ? host.openRemoteConversation?.(route.deviceId, route.conversationId) ?? Promise.resolve() : this.navigate(route, replace), error: error => this.error(error) };
     const Observer = root.ownerDocument.defaultView?.MutationObserver;
     if (Observer) {
       this.observer = new Observer(() => {
@@ -114,7 +119,7 @@ export class IPadAgentPane {
   private async showAgent(agentId: string): Promise<boolean> {
     const id = `ipad-agent-${agentId}`;
     if (this.shell.activePageId === id) return true;
-    if (!this.host.settings().agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error("这个 Agent 已被删除。");
+    if (!this.host.settings().agentRegistry.agents.some(agent => agent.id === agentId)) throw new Error("该 Agent 已删除。");
     if (this.shell.hasPage(id)) return this.shell.backTo(id);
     if (this.basePageId && this.shell.hasPage(this.basePageId) && !await this.shell.backTo(this.basePageId)) return false;
     const page = createAgentPage(this.context, agentId);
@@ -137,9 +142,10 @@ export class IPadAgentPane {
     for (const task of tasks) this.projections.set(task.id, ipadTaskProjection([task]));
     const scroll = this.strip.scrollLeft, focused = (this.root.ownerDocument.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-agent-id]")?.dataset.agentId;
     this.strip.replaceChildren();
-    const groups = new Map(agentRoleGroups(registry.agents.filter(isAgentHired), this.host.settings().settingsLanguage === "en").map(group => {
+    const groups = new Map(agentRoleGroups(registry.agents.filter(isAgentHired), this.host.settings().settingsLanguage === "en").filter(group => group.id === "role" || group.agents.length).map(group => {
+      // Size and a divider carry the main/role hierarchy; the group name stays for assistive tech only.
       const section = el(this.root.ownerDocument, "div", "pd-agent-group"); section.dataset.agentGroup = group.id;
-      section.append(el(this.root.ownerDocument, "div", "pd-agent-group-label", group.label));
+      section.setAttribute("role", "group"); section.setAttribute("aria-label", group.label);
       const items = el(this.root.ownerDocument, "div", "pd-agent-group-items"); section.append(items); this.strip.append(section);
       return [group.id, items] as const;
     }));
@@ -186,9 +192,10 @@ export class IPadAgentPane {
     this.activeSync = { id: pageId, promise }; return promise;
   }
 
-  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage)); }
   dispose(): void {
     if (this.closed) return; this.closed = true; this.observer?.disconnect(); this.unsubscribe.forEach(unsubscribe => unsubscribe());
+    this.releasePress();
     this.shell.dispose(); this.strip.remove(); this.pane.remove(); this.root.classList.remove("echoink-ipad", "pd-agent-pane");
   }
 }

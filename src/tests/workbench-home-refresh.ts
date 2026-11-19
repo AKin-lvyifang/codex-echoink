@@ -5,7 +5,6 @@ import path from "node:path";
 import { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
 import { generateConversationTitle } from "../plugin/conversation-title";
 import { workbenchResultType } from "../home/workbench-result";
-import { WorkbenchStarters } from "../home/workbench-starters";
 import type { ChatMessage } from "../settings/settings";
 import { DEFAULT_SETTINGS, normalizeSettingsData } from "../settings/settings";
 import { emptyKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -54,84 +53,6 @@ export async function runWorkbenchHomeRefreshTests(): Promise<void> {
     assert.equal(workbenchResultType([...messages, message({ savedNotePath: "outputs/result.md" })], 20), "note");
     assert.equal(workbenchResultType([...messages, message({ role: "user", runId: "later", createdAt: 40 }), message({ runId: "later", createdAt: 41 })], 40), "answer");
 
-    const parent = document.body.createDiv(); let actions = 0, pro = false;
-    const deck = new WorkbenchStarters(parent, { english: () => false, hasPro: () => pro, avatar: () => "sol", act: async () => { actions++; }, upgrade: async () => {}, error: error => { throw error; } });
-    assert.equal(parent.querySelectorAll(".wb-starter-card").length, 5);
-    assert.match(parent.querySelector(".wb-starter-card.is-current h3")!.textContent!, /知识库/);
-    assert.match(parent.querySelector('[data-starter="1"] h3')!.textContent!, /头像/);
-    const track = parent.querySelector<HTMLElement>(".wb-deck")!;
-    let captures = 0;
-    track.setPointerCapture = () => { captures++; };
-    const pointer = (type: string, x: number) => Object.assign(new MouseEvent(type, { bubbles: true, button: 0, clientX: x }), { pointerId: 1 });
-    const side = parent.querySelector<HTMLElement>('[data-starter="1"]')!;
-    side.dispatchEvent(pointer("pointerdown", 10));
-    assert.equal(captures, 0, "ordinary side-card clicks must not be retargeted to the deck by pointer capture");
-    side.dispatchEvent(pointer("pointerup", 10)); side.querySelector<HTMLElement>("h3")!.click();
-    assert.equal(parent.querySelector<HTMLElement>(".is-current[data-starter]")?.dataset.starter, "1");
-    assert.equal(actions, 0);
-    parent.querySelector<HTMLButtonElement>('[data-starter="2"] button')!.click(); await Promise.resolve();
-    assert.equal(parent.querySelector<HTMLElement>(".is-current[data-starter]")?.dataset.starter, "2", "side actions only select their card");
-    assert.equal(actions, 0);
-    const select = parent.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button"); select[0].click(); await Promise.resolve();
-    track.dispatchEvent(pointer("pointerdown", 10)); track.dispatchEvent(pointer("pointermove", 80));
-    assert.equal(captures, 1, "capture begins only after an actual drag");
-    track.dispatchEvent(pointer("pointerup", 80));
-    const afterDrag = parent.querySelector<HTMLButtonElement>('[data-starter="0"] button')!;
-    afterDrag.dispatchEvent(pointer("pointerdown", 20)); afterDrag.click(); await Promise.resolve();
-    assert.equal(parent.querySelector<HTMLElement>(".is-current[data-starter]")?.dataset.starter, "0", "the next deliberate side-button click survives a preceding drag");
-    assert.equal(actions, 0);
-    parent.querySelector<HTMLButtonElement>(".wb-deck-arrow")!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
-    assert.equal(parent.querySelector<HTMLElement>(".is-current[data-starter]")?.dataset.starter, "1", "arrow-key navigation also works from the relocated controls");
-    select[0].click(); await Promise.resolve();
-    const current = parent.querySelector<HTMLElement>(".wb-starter-card.is-current")!; current.click(); assert.equal(actions, 0, "card body never executes");
-    current.querySelector<HTMLButtonElement>("button")!.click(); await Promise.resolve(); await Promise.resolve(); assert.equal(actions, 1);
-    const dots = parent.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button"); dots[5].click(); await Promise.resolve();
-    parent.querySelector<HTMLButtonElement>(".wb-starter-card.is-current .wb-starter-actions button")!.click(); await Promise.resolve();
-    assert.ok(parent.querySelector(".wb-starter-lock")); assert.equal(actions, 1, "locked card never starts a task");
-    assert.equal(parent.querySelector<HTMLButtonElement>(".wb-starter-card.is-current > .wb-starter-actions button")!.disabled, true, "covered action cannot receive keyboard activation");
-    parent.querySelector<HTMLElement>(".wb-deck")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    assert.equal(parent.querySelector(".wb-starter-lock"), null);
-    assert.equal(parent.ownerDocument.activeElement, parent.querySelector(".wb-starter-card.is-current > .wb-starter-actions button"));
-    pro = true; deck.update(); assert.equal(parent.querySelector(".wb-starter-pro"), null);
-    const ids = Array.from(parent.querySelectorAll("[id]")).map(node => node.id); assert.equal(new Set(ids).size, ids.length, "nested SVG IDs are unique");
-    deck.dispose();
-    parent.remove();
-    await assertStarterRotation();
-    console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, per-turn results, bounded carousel and PRO");
+    console.log("PASS workbench home: once-only titles, manual rename race, durable fallback, per-turn results");
   } finally { await fs.rm(root, { recursive: true, force: true }); }
-}
-
-async function assertStarterRotation(): Promise<void> {
-  const win = document.defaultView!, originalSet = win.setTimeout, originalClear = win.clearTimeout;
-  const timers = new Map<number, { action: () => void; at: number }>();
-  let now = 0, sequence = 0;
-  win.setTimeout = ((action: () => void, delay: number) => { const id = ++sequence; timers.set(id, { action, at: now + delay }); return id; }) as typeof win.setTimeout;
-  win.clearTimeout = (id: number) => { timers.delete(id); };
-  const advance = (duration: number) => {
-    const end = now + duration;
-    while (true) {
-      const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-      if (!next) break;
-      now = next[1].at; timers.delete(next[0]); next[1].action();
-    }
-    now = end;
-  };
-  const parent = document.body.createDiv();
-  let deck: WorkbenchStarters | undefined;
-  try {
-    deck = new WorkbenchStarters(parent, { english: () => false, hasPro: () => true, avatar: () => "sol", act: async () => {}, upgrade: async () => {}, error: error => { throw error; } });
-    const current = () => parent.querySelector<HTMLElement>(".wb-starter-card.is-current")?.dataset.starter;
-    advance(4_999); assert.equal(current(), "0"); advance(1); assert.equal(current(), "1");
-    advance(30_000); assert.equal(current(), "0", "rotation wraps after the final card");
-    deck.element.dispatchEvent(new MouseEvent("mouseenter")); advance(10_000); assert.equal(current(), "0", "hovering the whole carousel pauses rotation");
-    parent.querySelector<HTMLButtonElement>(".wb-deck-arrow.is-next")!.click(); await Promise.resolve(); await Promise.resolve();
-    assert.equal(current(), "1"); advance(10_000); assert.equal(current(), "1", "manual controls do not resume rotation while hovered");
-    deck.element.dispatchEvent(new MouseEvent("mouseleave")); advance(4_000);
-    parent.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button")[3].click(); await Promise.resolve(); await Promise.resolve();
-    advance(4_999); assert.equal(current(), "3"); advance(1); assert.equal(current(), "4", "manual dot selection starts a full new five-second interval");
-    deck.setActive(false); advance(10_000); assert.equal(current(), "4");
-    deck.setActive(true); advance(5_000); assert.equal(current(), "5");
-    deck.dispose(); deck = undefined;
-    assert.equal(timers.size, 0, "disposing the carousel releases its timer");
-  } finally { deck?.dispose(); parent.remove(); win.setTimeout = originalSet; win.clearTimeout = originalClear; }
 }

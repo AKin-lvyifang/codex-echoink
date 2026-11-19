@@ -1,3 +1,4 @@
+import { syntheticCopySource } from "./maintenance-copy-guard";
 import { canonicalRawMarkdownForDigest, rawDigestFingerprint, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { createPiKnowledgeMaintenanceToolSecurity } from "../harness/pi-native/pi-knowledge-maintenance-tool";
 import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
@@ -489,6 +490,34 @@ export async function runKnowledgeMaintainP2Tests(root: string): Promise<void> {
     const ownedEdit=(await f.read(mapPath)).replace("### 概念","### 用户分组");await f.write(mapPath,ownedEdit);
     const blocked=await f.call({stage:"write",pageId:"owned",content:page(owned.title)},["raw/owned.md"]);assert.equal(blocked.status,"failed");assert.match(blocked.message,/并发冲突/u);assert.equal(await f.read(mapPath),ownedEdit);
   });
+  await scenario("copy-guard-cross-page-survives-cold-resume", async f => {
+    const source = "raw/cross-copy.md", text = syntheticCopySource();
+    await f.write(source, `# 合成来源\n${text}\n必要短原句。\n`);
+    const a = await f.unit("copy-a", source, "合成甲"), b = await f.unit("copy-b", source, "合成乙");
+    f.ok(await f.decompose([source], [a, b]));
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("one", "wiki/合成甲.md", [source], [a.id]), f.item("two", "wiki/合成乙.md", [source], [b.id])] }, [source]));
+    f.ok(await f.call({ stage: "write", pageId: "one", content: page("合成甲") + `\n${text.slice(0, 400)}` }, [source]));
+    await f.restart();
+    const rejected = await f.call({ stage: "write", pageId: "two", content: page("合成乙") + `\n${text.slice(0, 400)}` }, [source]);
+    assert.equal(rejected.errorCode, "maintenance_copy_limit");
+    assert.equal(f.writes.filter(path => path === "wiki/合成甲.md").length, 1);
+    f.ok(await f.call({ stage: "write", pageId: "two", content: page("合成乙") }, [source]));
+  });
+  await scenario("copy-guard-rejects-and-allows-rewrite", async f => {
+    const source = "raw/copy.md", text = syntheticCopySource();
+    await f.write(source, `# 合成来源\n${text}\n必要短原句。\n`);
+    const unit = await f.unit("copy", source, "合成知识"); f.ok(await f.decompose([source], [unit]));
+    f.ok(await f.call({ stage: "plan", writingPlan: [f.item("one", "wiki/合成知识.md", [source], [unit.id])] }, [source]));
+    const rejected = await f.call({ stage: "write", pageId: "one", content: page("合成知识") + `\n## 普通标题\n${text}` }, [source]);
+    assert.equal(rejected.status, "failed"); assert.equal(rejected.errorCode, "maintenance_copy_limit");
+    assert.match(rejected.userReceipt!.text, /太多原文/u);
+    assert.ok(!f.writes.includes("wiki/合成知识.md"), "copy rejected before any page side effect");
+    const saved = (await readPrivateMaintenanceRecords(f.privateRoot))[0];
+    assert.equal(saved.p1!.drafts.one, undefined, "rejected draft does not pin the model to its old text");
+    await f.restart();
+    f.ok(await f.call({ stage: "write", pageId: "one", content: page("合成知识") + `\n必要短引用：${text.slice(0, 100)}` }, [source]));
+    assert.ok(f.writes.includes("wiki/合成知识.md"));
+  });
   await fs.writeFile(path.join(root,"p2-report.json"),JSON.stringify(report,null,2));
   console.log(`P2 production maintenance: PASS (${report.length} scenarios; seven types, quotes, aggregation, real note_read, 20+1, mutual relations, maps/CAS/cold resume)`);
 }
@@ -517,7 +546,10 @@ export async function runMaintenanceReceiptBudgetTests(root: string, replay?: { 
       for(const [i,source]of paths.entries()) {
         const body=`这是预算${i}的原文。\n`+"完整原句保留换行与证据。".repeat(60);
         await f.write(source,`# 二十篇规模原文${i}\n${body}\n`);await f.write(`wiki/预算候选${i}.md`,`# 预算候选${i}\n${body}\n`);
-        units.push(await f.unit(`budget-${i}`,source,`预算候选${i}`));
+        const prepared = await f.unit(`budget-${i}`,source,`预算候选${i}`);
+        const quote = prepared.evidence[0];
+        prepared.evidence = [quote.quote.slice(0, 400), quote.quote.slice(400)].filter(Boolean).map(text => ({ ...quote, quote: text }));
+        units.push(prepared);
       }
       action={stage:"decompose",decompositions:paths.map((sourcePath,i)=>({sourcePath,summary:"二十篇规模预算夹具",units:[units[i]]}))};
     }

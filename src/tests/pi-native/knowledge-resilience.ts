@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { PiKnowledgeReference } from "../../harness/pi-native/contracts";
 import { PiKnowledgeReadToolSecurity } from "../../harness/pi-native/pi-knowledge-read-tools";
-import { PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, knowledgeVerificationFromSessionEntry } from "../../harness/pi-native/pi-knowledge-verification";
+import { PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, knowledgeVerificationFromSessionEntry, PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, knowledgeFreshnessFromSessionEntry } from "../../harness/pi-native/pi-knowledge-verification";
 import { EchoInkVaultToolEgressPolicy } from "../../harness/pi-native/vault-tool-result-safety";
 import { KnowledgeAgentIndex } from "../../knowledge-base/knowledge-agent-index";
 import { KnowledgeRetriever } from "../../knowledge-base/query";
@@ -108,6 +108,7 @@ function verificationRuntime(isConversationKnowledgeAllowed?: () => Promise<bool
 async function emptyReferenceVerification(): Promise<void> {
   let permissionChecks = 0;
   const runtime = verificationRuntime(async () => { permissionChecks++; throw new Error("permission-store-unavailable"); });
+  assert.equal(runtime.referenceVerificationMode, "annotate-delivered-snapshots");
   assert.deepEqual(await runtime.verifyAskReferences({ ...identity, references: [] }), { status: "valid", references: [] });
   assert.equal(permissionChecks, 0, "an empty reference list cannot require current Knowledge permission");
 }
@@ -159,6 +160,13 @@ async function allowedVerificationFreshness(): Promise<void> {
 }
 
 async function verificationRecordParsing(): Promise<void> {
+  const freshness = { type: "custom", customType: PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, data: {
+    schemaVersion: 1, piSessionId: identity.piSessionId, productRunId: identity.productRunId,
+    assistantEntryId: "assistant-freshness", referenceIds: [references[0].referenceId]
+  } };
+  assert.deepEqual(knowledgeFreshnessFromSessionEntry(freshness, identity.piSessionId)?.referenceIds, [references[0].referenceId]);
+  assert.equal(knowledgeFreshnessFromSessionEntry(freshness, "another-session"), null);
+  assert.equal(knowledgeFreshnessFromSessionEntry({ ...freshness, data: { ...freshness.data, referenceIds: [] } }, identity.piSessionId), null);
   const data = { schemaVersion: 1, piSessionId: identity.piSessionId, productRunId: identity.productRunId,
     assistantEntryId: "assistant-resilience", reason: "knowledge_permission_revoked", referenceIds: [references[0].referenceId] };
   const entry = { type: "custom", customType: PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, data };

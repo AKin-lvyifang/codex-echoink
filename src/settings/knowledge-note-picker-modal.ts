@@ -1,5 +1,6 @@
 import { createOriginInput, createOriginButton, createOriginCheck, disposeOriginControls, type OriginCheckElement } from "./origin-controls";
 import { Modal, setIcon, type App } from "obsidian";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import type {
   KnowledgeInitializationAssignment,
   KnowledgeInitializationRole
@@ -265,7 +266,7 @@ export class KnowledgeNotePickerModal extends Modal {
       this.close();
     } catch {
       this.setSubmitting(false);
-      this.errorEl?.setText(this.options.zh ? "没有保存成功，请再试一次。" : "Changes weren't saved. Try again.");
+      this.errorEl?.setText(joinErrorCopy(["未能保存。", "Could not save."], NEXT.retry, this.options.zh ? "zh" : "en"));
     }
   }
 

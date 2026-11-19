@@ -30,6 +30,8 @@ await esbuild.build({
   stdin: {
     contents: [
       'import assert from "node:assert/strict";',
+      'import { runMemoryAssociationTests } from "./src/tests/memory-association";',
+      'import { runDreamCompletionTests } from "./src/tests/dream-run-completion";',
       'import { runMemoryLifecycleScenarios } from "./src/tests/memory-lifecycle";',
       'import { withPersonalMemoryFixture } from "./src/tests/personal-memory-fixture";',
       'import { runMemoryRecallHarnessContractScenarios } from "./src/tests/memory-recall-harness";',
@@ -46,6 +48,8 @@ await esbuild.build({
         : "await runSecondaryMemorySupportActivityTests();"] : [
         "await runMemoryLifecycleScenarios();",
         "await runMemoryRecallHarnessContractScenarios();",
+        "await runMemoryAssociationTests();",
+        "await runDreamCompletionTests();",
         "await runPersonalMemoryCorrectionTests();"
       ]),
       ...(focusedRecall || focusedSecondary || focusedPersistence ? [] : [

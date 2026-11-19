@@ -3,8 +3,8 @@
 // SPDX-License-Identifier: LicenseRef-EchoInk-Pro
 // Scope and preserved rights: ../../LICENSE
 /** Account display and action contracts; service owns authentication and entitlements. */
-import type { MembershipEarlyOffer } from "../membership/types";
-import { isValidMembershipProduct } from "./account-membership-pricing";
+import type { MembershipEarlyOffer, MembershipEntitlements } from "../membership/types";
+import { isMaxPlanId, isValidMembershipProduct } from "./account-membership-pricing";
 import type { MembershipCurrency, MembershipPlanId, MembershipProductPricing } from "./account-membership-pricing";
 export type MembershipState = "unavailable" | "anonymous" | "free" | "active" | "lifetime" | "offline-valid" | "verification-required" | "expired" | "revoked" | "device-limit" | "device-required" | "scheduled";
 export type AccountAvatar = "initial" | { readonly url: string };
@@ -63,10 +63,15 @@ export interface AccountMembershipViewModel {
   readonly storageNotice?: string | null;
   readonly verificationError?: string | null;
   readonly salesOpen?: boolean;
+  readonly maxSalesOpen?: boolean;
   readonly earlyOffer?: MembershipEarlyOffer | null;
   readonly products?: readonly MembershipProductPricing[];
+  /** Public catalogue allowance; independent of this account's own monthly grant. */
+  readonly proMonthlyPoints?: number;
   readonly activityGifts?: readonly AccountActivityGift[];
   readonly betaOffer?: { readonly status: string; readonly visible?: boolean } | null;
+  /** Points, cloud sync quota and the one-time Max coupon, as the server computed them. */
+  readonly entitlements?: MembershipEntitlements | null;
 }
 /** UI intents only; a future adapter supplies the callbacks and refreshed view model. */
 export interface AccountActions {
@@ -88,6 +93,7 @@ export interface AccountActions {
   readonly removeDevice?: (id: string) => Promise<void>;
 }
 export interface AccountMembershipAdapter {
+  readonly signInReturned?: () => Promise<void>;
   readonly read: () => AccountMembershipViewModel;
   readonly actions: AccountActions;
   readonly subscribe?: (listener:()=>void)=>()=>void;
@@ -109,10 +115,26 @@ export function membershipPlanAction(vm: AccountMembershipViewModel, planId: Mem
   const product = vm.products?.find(item => item.id === planId);
   if (planId === "early" && product?.availability === "owned") return { purchasable: false, zh: "已拥有", en: "Owned" };
   if (planId === "early" && (product?.availability === "paused" || product?.availability === "sold_out")) return { purchasable: false, zh: "售罄", en: "Sold out" };
-  if (!vm.salesOpen || !product || !isValidMembershipProduct(product) || product.available !== true || product.availability !== "available") {
+  const max = isMaxPlanId(planId);
+  if (max && vm.maxSalesOpen !== true) return { purchasable: false, zh: "即将开放", en: "Coming soon" };
+  if ((!max && !vm.salesOpen) || !product || !isValidMembershipProduct(product) || product.available !== true || product.availability !== "available") {
     return { purchasable: false, zh: "购买待开放", en: "Purchasing unavailable" };
   }
+  if (isMaxPlanId(planId)) {
+    const coupon = !current && !!product.quote?.coupon;
+    return { purchasable: canSelect, zh: current ? "续费" : coupon ? "用首次优惠" : "立即订阅", en: current ? "Renew" : coupon ? "Use first-time offer" : "Subscribe now" };
+  }
   return { purchasable: canSelect, zh: planId === "early" ? "立即购买" : current ? "续费" : "立即订阅", en: planId === "early" ? "Buy now" : current ? "Renew" : "Subscribe now" };
+}
+/** What the one primary button in the membership header does; null = no primary (lifetime owners). */
+export function membershipPrimaryAction(input: { state: MembershipState; planId: string | null; signedIn: boolean }): { kind: "renew" | "upgrade" | "subscribe"; zh: string; en: string } | null {
+  if (!input.signedIn) return null;
+  const valid = ["active", "lifetime", "offline-valid"].includes(input.state);
+  if (input.state === "lifetime" || (valid && input.planId === "early")) return null;
+  if (valid && input.planId === "beta") return { kind: "upgrade", zh: "升级 PRO", en: "Upgrade to PRO" };
+  if (valid && input.planId) return { kind: "renew", zh: "续费", en: "Renew" };
+  if (input.state === "free" || input.state === "expired") return { kind: "subscribe", zh: "开通 PRO", en: "Get PRO" };
+  return null;
 }
 export function registrationGiftLabel(vm: AccountMembershipViewModel): readonly [string, string] | null {
   if (vm.betaOffer?.visible === false || vm.betaOffer?.status === "stopped") return null;

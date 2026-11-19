@@ -1,3 +1,4 @@
+import { actionFailureText, userFacingErrorText } from "../../core/error-copy";
 import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
 import { Notice, setIcon } from "obsidian";
@@ -37,7 +38,7 @@ export function renderInlineGenerationGate(root: HTMLElement, host: InlineTaskHo
   hint.createSpan({ text: policy.message });
   if (policy.requiresPro) {
     const upgrade = createOriginButton(hint, { cls: "echoink-inline-task-action", text: language === "en" ? "View PRO benefits" : "查看 PRO 权益" });
-    upgrade.onclick = () => { void host?.openProBenefits?.().catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+    upgrade.onclick = () => { void host?.openProBenefits?.().catch(error => new Notice(actionFailureText(error, language))); };
   }
 }
 
@@ -163,7 +164,7 @@ export class InlineTaskDetailView {
   private async perform(key: string, run: () => Promise<void> | void, button?: HTMLButtonElement): Promise<void> {
     if (this.busy.size) return;
     this.busy.add(key); if (button) { button.disabled = true; button.setAttribute("aria-busy", "true"); }
-    try { await run(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    try { await run(); } catch (error) { new Notice(actionFailureText(error, this.current?.language ?? "zh-CN")); }
     finally {
       this.busy.delete(key); if (button?.isConnected) { button.disabled = false; button.removeAttribute("aria-busy"); }
       this.signature = ""; this.refresh();
@@ -229,7 +230,9 @@ export class InlineTaskDetailView {
     }
     if (!actions.childElementCount) actions.remove();
     if (["clarifying", "queued", "conflict", "failed", "interrupted"].includes(request.status)) renderInlineGenerationGate(this.pin, host, language);
-    if (request.error && ["conflict", "failed", "interrupted", "missing", "save_failed"].includes(request.status)) this.pin.createDiv({ cls: "echoink-inline-task-error", text: request.error });
+    // Raw errors stay in the task record; only a readable reason is shown under the status line.
+    const reason = request.error && ["conflict", "failed", "interrupted", "missing", "save_failed"].includes(request.status) ? userFacingErrorText(request.error, "", en ? "en" : "zh") : "";
+    if (reason) this.pin.createDiv({ cls: "echoink-inline-task-error", text: reason });
   }
   private renderThread(): void {
     const current = this.current!;

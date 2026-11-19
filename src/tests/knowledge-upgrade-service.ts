@@ -51,7 +51,7 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
         enteredClassification();
         if (blocked) await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
         if (signal.aborted) throw new Error("aborted");
-        if (failClassification) throw new KnowledgeUpgradeClassificationError("这页的类型判断没有返回完整结果，原文件会保留，点继续重试。", "invalid-json", "length");
+        if (failClassification) throw new KnowledgeUpgradeClassificationError("未能获取该页的完整类型判断结果，原文件已保留。请点击“继续”重试。", "invalid-json", "length");
         return { type: "趋势 / 主题", uncertain: true };
       },
       write: async write => {
@@ -91,7 +91,7 @@ export async function runKnowledgeUpgradeServiceTests(root: string): Promise<voi
     blocked = false; failClassification = true; await service.resumeUpgrade();
     const partial = await settle(service);
     assert.equal(stored[0].upgrade?.classificationFailures?.["Wiki/map.md"].stopReason, "length");
-    assert.ok(partial.preview?.issues.some(item => item.message.includes("没有返回完整结果")));
+    assert.ok(partial.preview?.issues.some(item => item.message.includes("未能获取该页的完整类型判断结果")));
     assert.equal(partial.status, "interrupted"); assert.equal(partial.completed?.sources, 1, "link-only sources are excluded from status count");
     assert.equal(partial.completed?.links, 2); assert.equal(partial.completed?.wiki, 0);
     assert.equal(stored[0].progress?.completedAt, undefined); assert.equal(stored[0].result.status, "partial");

@@ -80,7 +80,7 @@ export async function preparePiChatImages(
       throw new PiImageInputError(
         "ordinary_file_unsupported",
         displayName,
-        `普通 Pi Chat 只支持图片附件：“${displayName}”不会发送。`
+        `当前对话只支持图片附件，“${displayName}”未发送。请改用图片，或使用 PDF、Word、Markdown、HTML 文件。`
       );
     }
     prepared.push(await preparePiChatImage(attachment, index));
@@ -178,7 +178,7 @@ export async function preparePiChatImage(
     throw new PiImageInputError(
       "image_resize_failed",
       displayName,
-      `无法处理图片附件“${displayName}”，Pi 未返回有效图片内容。`
+      `无法处理图片附件“${displayName}”，图片可能已损坏。请更换图片后重试。`
     );
   }
 

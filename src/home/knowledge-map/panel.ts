@@ -1,3 +1,4 @@
+import { actionFailureText } from "../../core/error-copy";
 import { openObsidianGraphLeaf } from "../open-native-graph";
 import { Notice, TFile, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
@@ -65,7 +66,7 @@ export class KnowledgeMapPanel {
           }
         }
       } catch (error) {
-        new Notice(error instanceof Error ? error.message : String(error));
+        new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage));
       }
     };
     return button;

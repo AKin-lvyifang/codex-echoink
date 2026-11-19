@@ -1,8 +1,13 @@
-.echoink-agent-roster-group { display: flex; flex: 0 0 auto; flex-direction: column; gap: 4px; padding-inline-end: 12px; }
-.echoink-agent-roster-group-label { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--text-muted); }
+.echoink-agent-roster-group { display: flex; flex: 0 0 auto; align-items: center; }
+.echoink-agent-roster-group[data-agent-group="main"]::after { content: ""; flex: 0 0 auto; width: 1px; height: 24px; margin-inline: 8px; background: var(--background-modifier-border); }
 .echoink-agent-roster-group-items { display: flex; align-items: center; gap: 2px; }
 .echoink-agent-company-approval .echoink-origin-radio-group { display: flex; flex-wrap: wrap; gap: 14px; }
 .echoink-agent-approval-choice { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .echoink-iphone .ip-agent-group, .echoink-ipad .pd-agent-group { display: flex; flex: 0 0 auto; flex-direction: column; padding-inline-end: 12px; gap: 2px; }
-.echoink-iphone .ip-agent-group-label, .echoink-ipad .pd-agent-group-label { font-size: .85em; font-weight: 600; line-height: 1.4; color: var(--text-muted); }
 .echoink-iphone .ip-agent-group-items, .echoink-ipad .pd-agent-group-items { display: flex; align-items: center; gap: 2px; }
+.echoink-iphone .ip-agent-strip .ip-agent-group, .echoink-ipad .pd-agent-strip .pd-agent-group { flex-direction: row; align-items: center; gap: 0; padding-inline-end: 0; }
+.echoink-iphone .ip-agent-strip .ip-agent-group[data-agent-group="main"]::after, .echoink-ipad .pd-agent-strip .pd-agent-group[data-agent-group="main"]::after { content: ""; flex: 0 0 auto; width: 1px; height: 24px; margin-inline: 6px; background: var(--background-modifier-border); }
+.echoink-iphone .ip-agent-strip [data-agent-group="main"] .ip-agent-avatar > .ip-avatar { width: 38px; height: 38px; }
+.echoink-iphone .ip-agent-strip [data-agent-group="role"] .ip-agent-avatar > .ip-avatar { width: 30px; height: 30px; }
+.echoink-ipad .pd-agent-strip [data-agent-group="main"] .pd-agent-avatar > .pd-avatar { width: 34px; height: 34px; }
+.echoink-ipad .pd-agent-strip [data-agent-group="role"] .pd-agent-avatar > .pd-avatar { width: 28px; height: 28px; }

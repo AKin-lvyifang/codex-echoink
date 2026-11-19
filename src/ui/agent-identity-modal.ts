@@ -306,8 +306,8 @@ export class AgentIdentityModal extends Modal {
     } catch (error) {
       const zh = this.options.language !== "en";
       const message = error instanceof Error && error.message === "agent_identity_invalid_name"
-        ? (zh ? "名称无效，请检查后重试。" : "Invalid name. Please check and retry.")
-        : (zh ? "身份保存失败，请重试。" : "Failed to save identity. Please retry.");
+        ? (zh ? "名称无效。请修改名称后重试。" : "The name is invalid. Change it and try again.")
+        : (zh ? "身份未能保存。请稍后重试。" : "The identity could not be saved. Try again later.");
       new Notice(message);
     } finally {
       this.busy = false;

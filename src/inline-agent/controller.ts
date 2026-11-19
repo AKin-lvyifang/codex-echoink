@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { Annotation, StateEffect, StateField, Transaction, type EditorState } from "@codemirror/state";
@@ -66,7 +67,7 @@ export class InlineAgentController {
   static async create(plugin: CodexForObsidianPlugin): Promise<InlineAgentController> {
     const dataRoot = pluginDataDir(plugin.getVaultPath(), plugin.getPluginDataDirName());
     const identity = await readVaultIdentity(dataRoot);
-    if (!identity) throw new Error("正文块尚未取得仓库身份。");
+    if (!identity) throw new Error("正文块未能识别当前仓库。请重新加载 EchoInk 插件后重试。");
     const controller = new InlineAgentController(plugin, identity.vaultId, path.join(dataRoot, "pi-agent-product-v1", "inline-requests.v1.json"));
     await controller.service.initialize();
     return controller;
@@ -100,7 +101,7 @@ export class InlineAgentController {
     if (view && await view.waitForTaskUiReady()) await view.openTaskDetail(taskId);
   }
   async openSource(id: string): Promise<void> {
-    const r = this.service.get(id); if (!r) throw new Error("来源请求已不存在。");
+    const r = this.service.get(id); if (!r) throw new Error("来源请求已删除。请从正文重新 @ 管家。");
     const { leaf, markdown, cm } = await this.sourceEditor(r.path), document = cm.state.doc.toString();
     await this.plugin.app.workspace.revealLeaf(leaf);
     const target = r.commit?.result ?? (r.targetResolved === false ? r.instruction : r.target);
@@ -241,7 +242,7 @@ export class InlineAgentController {
       save: async () => { assertFile(); await markdown.save(); assertFile(); }
     };
   }
-  report(error: unknown): void { new Notice(error instanceof Error ? error.message : "正文块操作失败，当前文字已保留。"); }
+  report(error: unknown): void { new Notice(userFacingErrorText(error, "正文块操作未能完成，当前文字已保留。请稍后重试。")); }
 }
 
 class ProposalWidget extends WidgetType {

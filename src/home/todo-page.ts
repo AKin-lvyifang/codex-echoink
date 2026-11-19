@@ -1,3 +1,4 @@
+import { NEXT, failureText, type ErrorCopy, actionFailureText } from "../core/error-copy";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { todoPageRecords } from "./todo-page-model";
 export { todoPageRecords } from "./todo-page-model";
@@ -130,7 +131,7 @@ export class TodoPageView extends ItemView {
   private showError(error: unknown): void {
     this.field("data").hidden = true;
     const status = this.field("status"); disposeOriginControls(status); status.empty();
-    status.createSpan({ text: this.t("待办暂时读不到", "To-dos are unavailable") + `：${error instanceof Error ? error.message : String(error)}`
+    status.createSpan({ text: this.t("待办暂时无法读取", "To-dos are unavailable") + `：${error instanceof Error ? error.message : String(error)}`
       + (this.initialized ? this.t(" · 尚未更新", " · Not updated") : "") });
     this.button(status, this.t("重试", "Retry"), () => this.refresh());
   }
@@ -157,7 +158,7 @@ export class TodoPageView extends ItemView {
           button.disabled = true; setAmicroButtonPending(button, true);
           try { await Promise.resolve(result); } finally { button.disabled = false; setAmicroButtonPending(button, false); }
         }
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+      } catch (error) { new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage)); }
     };
     return button;
   }
@@ -267,7 +268,7 @@ export class TodoPageView extends ItemView {
       onToggle: (record, done) => { void this.toggle(record, done); },
       onEdit: record => new EchoInkTodoFormModal(this.app, this.plugin, record).open(),
       onOpenDiary: path => { void this.app.workspace.openLinkText(path, this.plugin.getTodoStore().sourcePath); },
-      onDelete: record => { void this.remove(record).catch(error => new Notice(error instanceof Error ? error.message : String(error))); }
+      onDelete: record => { void this.remove(record).catch(error => new Notice(failureText(error, TODO_SAVE_FAILED, NEXT.retryLater, this.plugin.settings.settingsLanguage))); }
     }, this.projects);
     const wrap = host.querySelector<HTMLElement>(".echoink-todo-table-wrap")!;
     wrap.tabIndex = 0; wrap.setAttribute("aria-label", this.t("待办表格", "To-do table"));
@@ -289,7 +290,7 @@ export class TodoPageView extends ItemView {
     if (checkbox?.disabled) return;
     if (checkbox) checkbox.disabled = true;
     try { await this.plugin.getTodoStore().toggleDone(record, done); }
-    catch (error) { if (this.active()) this.renderList(); new Notice(error instanceof Error ? error.message : String(error)); }
+    catch (error) { if (this.active()) this.renderList(); new Notice(failureText(error, TODO_SAVE_FAILED, NEXT.retryLater, this.plugin.settings.settingsLanguage)); }
     finally { if (checkbox?.isConnected) checkbox.disabled = false; }
   }
   private async remove(record: ParsedTodoRecord): Promise<void> {
@@ -298,3 +299,5 @@ export class TodoPageView extends ItemView {
     if (accepted) await this.plugin.getTodoStore().removeTodo(record);
   }
 }
+
+const TODO_SAVE_FAILED: ErrorCopy = ["待办未能保存。", "The to-do could not be saved."];

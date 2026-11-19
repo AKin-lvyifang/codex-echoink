@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { Notice, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { DiaryActionOptions, DiaryActionResult, DiaryCandidate, DiaryItem } from "../diary-organizer/types";
@@ -27,7 +28,7 @@ export function renderDiaryOrganizerBanner(host: HTMLElement, plugin: CodexForOb
     node.onclick = () => {
       if (node.disabled) return;
       node.disabled = true; setAmicroButtonPending(node, true);
-      void action(node).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => {
+      void action(node).catch(error => new Notice(failureText(error, ["日记整理未能完成，原日记已保留。", "Diary organizing could not be completed. Your diary is unchanged."], NEXT.retryLater, plugin.settings.settingsLanguage))).finally(() => {
         node.disabled = false; setAmicroButtonPending(node, false);
       });
     };

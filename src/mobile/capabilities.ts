@@ -12,12 +12,13 @@ import { MobileSkillsService } from "./skills";
 import type { SkillContentResolver } from "../harness/resources/skill-content";
 import { MobileHttpMcpClient, mobileMcpAdmitted, mobileMcpContractFingerprint, mobileMcpHeaders, mobileMcpToolName, mobileMcpUrl } from "./remote-tools";
 import type { MobileCapabilitiesPort, MobileMcpDraft, MobileMcpStatus, MobileMcpSummary, MobileTavilySnapshot } from "./capabilities-contracts";
+import { CAUSE, userFacingErrorText } from "../core/error-copy";
 export type * from "./capabilities-contracts";
 
 const clone = <T>(value: T): T => structuredClone(value);
 const version = (value: unknown): string => sha256Hex(JSON.stringify(value));
 const result = (details: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(details) }], details });
-const conflict = () => new Error("配置已在其他位置修改，请重新读取后再保存；编辑草稿已保留。");
+const conflict = () => new Error(CAUSE.editedElsewhere[0]);
 const labels: Record<MobileMcpStatus, string> = { missing: "未配置连接", configured: "已配置，尚未连接", connected: "本次连接成功", failed: "连接失败",
   "desktop-only": "仅在电脑运行", "credential-required": "请填写移动端认证请求头" };
 export interface MobileRemoteToolInvocation {
@@ -53,7 +54,8 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
   defaultSkillContent(id: string) { return this.skillsService.defaultSkillContent(id); }
   recordSkillUse(id: string) { return this.skillsService.recordUse(id); }
   hasRunSkills(taskId: string): boolean { return this.skillsService.hasRunSkills(taskId); }
-  resolveRunSkills(taskId: string, agentId: string, text: string, skillId?: string, recordUsage = true) { return this.skillsService.resolveRunSkills(taskId, agentId, text, skillId, recordUsage); }
+  resolveRunSkills(taskId: string, agentId: string, text: string, skillId?: string, recordUsage = true, decision?: Readonly<{ skillId: string | null; fresh?: boolean }>) { return this.skillsService.resolveRunSkills(taskId, agentId, text, skillId, recordUsage, decision); }
+  skillDecisionOptions(agentId: string) { return this.skillsService.decisionOptions(agentId); }
   assertRunSkills(taskId: string) { this.skillsService.assertRunSkills(taskId); }
   releaseRunSkills(taskId: string) { this.skillsService.releaseRunSkills(taskId); }
   private resource(id: string): EchoInkResource | undefined { return this.options.settings().resources.catalog.find(item => item.id === id && item.kind === "mcp-server"); }
@@ -141,7 +143,7 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
     return this.serialize(async () => {
       const settings = this.options.settings(), previous = settings.tavily;
       if (version(previous) !== candidate.version) throw conflict();
-      if (candidate.enabled && !webSearchApiKey(candidate, settings.apiProviders)) throw new Error(webSearchProvider(candidate) === "deepseek" ? "先在模型里添加 DeepSeek" : "请先填写 API Key。");
+      if (candidate.enabled && !webSearchApiKey(candidate, settings.apiProviders)) throw new Error(webSearchProvider(candidate) === "deepseek" ? "尚未添加 DeepSeek。请先在 设置 → 模型服务 中添加 DeepSeek。" : "请先填写 API Key。");
       const value = { ...previous, ...normalizeWebSearchSettings(candidate) }, installed = version(value); settings.tavily = value;
       try { await this.options.saveSettings(); } catch { if (settings.tavily === value && version(value) === installed) settings.tavily = previous; throw new Error("联网搜索配置保存失败，编辑草稿已保留。"); }
       return this.readTavily();
@@ -180,7 +182,7 @@ export class MobileCapabilitiesService implements MobileCapabilitiesPort {
       this.statuses.set(resourceId, { configuration: baseline, status: "connected" });
       return { result: response, readbackVerified };
     } catch (error) {
-      this.statuses.set(resourceId, { configuration: baseline, status: "failed", error: error instanceof Error ? error.message : "MCP 调用失败。" }); throw error;
+      this.statuses.set(resourceId, { configuration: baseline, status: "failed", error: userFacingErrorText(error, "MCP 工具调用未能完成。请稍后重试。") }); throw error;
     }
   }
   runtimeTools(policy: MobileCapabilityPolicy, invoke: (input: MobileRemoteToolInvocation) => Promise<unknown>): AgentTool[] {

@@ -6,7 +6,6 @@ import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { activateApiProvider, apiProviderModelSupportsImage, createApiProviderConfig, getActiveApiProviderModel, getDefaultApiProviderModel, validateApiProvider } from "../settings/settings";
 import { getApiProviderPreset, type ApiProviderId } from "../settings/provider-presets";
 import { settingsCopy } from "../settings/i18n";
-import { providerFailureDetailText } from "../harness/pi/provider-failure";
 import { onboardingDirectoriesReady } from "../settings/onboarding-setup-status";
 
 /** Owns automatic/manual entry and delegates mutations to the existing services. */
@@ -106,7 +105,7 @@ export class PaperGuideController {
     const draft = createApiProviderConfig(providerId);
     draft.apiKey = key.trim();
     const errors = validateApiProvider(draft, this.plugin.settings.settingsLanguage);
-    if (errors.length) return { available: false, message: errors.join("；") };
+    if (errors.length) return { available: false, message: errors.join(" ") };
     const model = getDefaultApiProviderModel(draft)!;
     const preset = getApiProviderPreset(providerId);
     const result = await this.plugin.testPiProviderConnection({ providerSettingsId: draft.id, providerId, runtimeProviderId: draft.runtimeProviderId,
@@ -115,8 +114,7 @@ export class PaperGuideController {
       discovery: model.discovery, contextWindow: model.contextWindow, modelMaxTokens: model.modelMaxTokens, maxOutputTokens: model.maxOutputTokens });
     if (this.disposed) throw new Error("设置引导已关闭。 ");
     if (result.status !== "available") {
-      const detail = providerFailureDetailText(result.detail);
-      return { available: false, message: `${settingsCopy(this.plugin.settings.settingsLanguage).providers.connectionFailures[result.failure]}${detail ? `：${detail}` : ""}` };
+      return { available: false, message: settingsCopy(this.plugin.settings.settingsLanguage).providers.connectionFailures[result.failure] };
     }
     await this.plugin.activateApiProviderSettings(settings => {
       settings.apiProviders.push(structuredClone(draft));

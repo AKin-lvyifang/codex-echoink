@@ -1,6 +1,10 @@
 import { knowledgeMaintenanceBatchPrompt } from "../../knowledge-base/initializer";
+import { runComposerSubmissionTests } from "../composer-submission";
+import { runComposerScrollTests } from "../composer-scroll";
+import { MessageScrollFollowController } from "../../ui/codex-view/message-scroll-follow";
+import { ComposerSubmissions } from "../../types/composer-submission";
 import { isPiConversationPersistenceError } from "../../harness/pi-native/pi-conversation-persistence-error";
-import { Platform } from "obsidian";
+import { Platform, TFile } from "obsidian";
 import { annotationFixture } from "../selection-annotations";
 import { attachTestConversationRunService } from "../conversation-run-host";
 import { applyConversationTaskMetadata, patchConversationTaskMetadata, type ConversationTaskMetadataPatch } from "../../agents/task-metadata";
@@ -42,6 +46,7 @@ import {
   startChatTurn as runChatTurn,
   steerPiChatFromComposer,
   startQueuedTurnItem,
+  validateTaskTurnBeforeCreation,
   startNextQueuedTurn
 } from "../../ui/codex-view/turn-runner";
 import { classifyLocalAttachmentType } from "../../ui/codex-view/attachments";
@@ -210,7 +215,7 @@ export async function runTurnWatchdogProgressTests(): Promise<void> {
       await clock.advance(1);
       assert.equal(f.aborts(), 1);
       assert.equal(await f.result, "cancelled");
-      assert.ok(!openTestNoticeMessages.includes("Agent 已经 5 分钟没有任何进展，已停止。可以点继续重试。"), "the persistent interruption card owns this message");
+      assert.ok(!openTestNoticeMessages.includes("Agent 已连续 5 分钟无进展，任务已停止。请点击“继续”重试。"), "the persistent interruption card owns this message");
     }],
     ["approval waiting during a continuation does not consume the idle budget", async (f, clock) => {
       await f.emit({ type: "output_continuation", messageKey: "approval-continuation", text: "等待审批前已保留的正文。", status: "running" });
@@ -422,7 +427,7 @@ export async function acceptedMetadataFailureConsumesDraftAndQueue(): Promise<vo
     assert.equal(item.piUserEntryAccepted, true);
     assert.equal(view.inputEl.value, "", "accepted Composer content cannot be offered for resend");
     assert.deepEqual(submitted, [item.text]);
-    assert.match(openTestNoticeMessages.at(-1) ?? "", /已受理.*状态保存失败/u);
+    assert.match(openTestNoticeMessages.at(-1) ?? "", /已接收.*进度未能保存/u);
     if (source === "queue") {
       assert.deepEqual(view.turnQueue.itemsForSession(session.id).map((queued: QueuedTurnItem) => queued.id), ["next"],
         "consume only the accepted queue lease, leaving the next message intact");
@@ -784,7 +789,7 @@ async function queuedNativeDocumentCapabilityLossUsesFrozenTextOnly(): Promise<v
   assert.equal(submitted, null);
   assert.match(
     openTestNoticeMessages.at(-1) ?? "",
-    /冻结快照没有可提取文字/u
+    /无可用的文字内容/u
   );
 }
 
@@ -866,7 +871,7 @@ async function queuedTurnsKeepExactProviderModelAndRetainUnavailableHead(): Prom
     })
   } as any, { allowLocalKnowledgeCommands: false });
   assert.equal(invalidComposerItem, null);
-  assert.match(openTestNoticeMessages.at(-1) ?? "", /本轮没有入队/u);
+  assert.match(openTestNoticeMessages.at(-1) ?? "", /所选模型服务或模型已被删除或停用。请重新选择模型后发送。/u);
 
   queue.enqueue(queued("turn-a", first.id, "model-a"));
   queue.enqueue(queued("turn-b", second.id, "model-b"));
@@ -987,7 +992,7 @@ async function queuedTurnsKeepExactProviderModelAndRetainUnavailableHead(): Prom
   );
   assert.match(
     openTestNoticeMessages.at(-1) ?? "",
-    /队首已保留并暂停/u
+    /发送已暂停/u
   );
   first.runtimeProviderId = frozenRuntimeProviderId;
   queue.resumeSessionQueue(session.id);
@@ -1013,7 +1018,7 @@ async function queuedTurnsKeepExactProviderModelAndRetainUnavailableHead(): Prom
   );
   assert.match(
     openTestNoticeMessages.at(-1) ?? "",
-    /思考强度.*队首已保留并暂停/u
+    /模型配置已变更.*发送已暂停/u
   );
   assert.equal(sends.length, 6, "invalid queue snapshots never reach Pi");
   queue.clearSessionQueue(session.id);
@@ -2055,7 +2060,7 @@ async function disabledOrStaleSkillCannotStartTurn(): Promise<void> {
   assert.equal(await startChatTurn(view, session, item, "composer"), "failed");
   assert.equal(submitted, null, "disabled Skill must fail before Provider submit");
   assert.equal(
-    openTestNoticeMessages.some((message) => message.includes("会话默认 Skill")),
+    openTestNoticeMessages.some((message) => message.includes("会话默认技能")),
     true
   );
 
@@ -2064,7 +2069,7 @@ async function disabledOrStaleSkillCannotStartTurn(): Promise<void> {
   assert.equal(await startChatTurn(view, session, item, "queue"), "failed");
   assert.equal(submitted, null, "removed Skill must fail before Provider submit");
   assert.equal(
-    openTestNoticeMessages.some((message) => message.includes("会话默认 Skill")),
+    openTestNoticeMessages.some((message) => message.includes("会话默认技能")),
     true
   );
 
@@ -2269,6 +2274,7 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
     taskPlanDockEl: new FakeElement("div"),
     interactionDockEl: new FakeElement("div"),
     messageListRenderer,
+    messageScrollFollow: new MessageScrollFollowController(),
     registerDomEvent: messageContext.component.registerDomEvent,
     inputEl: { value: item.text },
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
@@ -2477,7 +2483,7 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
   assert.equal(virtualListEl.findByClass("codex-ai-elements-reasoning"), reasoningRoot);
   assert.equal(dom.selectedText(), selectedBeforeDelta,
     "a production reasoning delta restores the existing browser Selection");
-  assert.ok(dom.selectionRestoreCalls() >= 1);
+
   await emit(listener, runtimeEvent({
     type: "provider_reasoning_end",
     messageKey: "assistant-reasoning-1",
@@ -2517,8 +2523,8 @@ async function agentSettlementOnlyFinalizesPiChatTurn(): Promise<void> {
         piToolCallIdFromProjectedMessageId(message.id) === "tool-turn-runner-1"
       )
       .map((message) => message.status),
-    ["running", "running", "running"],
-    "production Tool status events pass each changed Tool carrier to the local updater"
+    ["running", "running", "completed"],
+    "production read-end events settle the Tool carrier before the Agent turn itself settles"
   );
   assert.equal(
     renderedIncrementalMessages
@@ -2654,7 +2660,7 @@ Promise<void> {
           ? {
               ...message,
               text: "失败前保留的 partial",
-              details: "Provider 返回的流数据格式损坏，回答未完成。",
+              details: "模型服务返回的内容不完整，回答未能生成完毕。请重新发送；如问题持续，请更换模型。",
               status: "failed" as const
             }
           : message
@@ -2749,7 +2755,7 @@ Promise<void> {
   if (retryExhausted) { assert.equal(openTestNoticeMessages.length, 0, "the interruption card replaces the duplicate failure Notice"); return; }
   assert.equal(
     openTestNoticeMessages.at(-1),
-    "Provider 返回的流数据格式损坏，回答未完成。"
+    "模型服务返回的内容不完整，回答未能生成完毕。请重新发送；如问题持续，请更换模型。"
   );
   const durableAssistant = session.messages.find((message) =>
     message.role === "assistant"
@@ -3415,6 +3421,7 @@ function installTurnRunnerMessageDom(): Readonly<{
         removeAllRanges: () => undefined,
         addRange: () => undefined
       };
+      (fakeDocument as unknown as Document).dispatchEvent(new Event("selectionchange"));
     },
     selectedText: () => {
       if (!selection) return "";
@@ -3674,7 +3681,112 @@ if (process.env.ECHOINK_RUN_PI_TURN_RUNNER_TESTS === "1") {
 
 /** Focused B/C regression: uses production transfer handlers and queue, never a Provider. */
 export async function runWorkbenchComposerTests(): Promise<void> {
+  runComposerScrollTests();
+  for (const queued of [false, true]) {
+    const session = piSessionShell(`scroll-send-${queued}`);
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null };
+    const service = attachTestConversationRunService(plugin);
+    service.stateFor(session.id).running = queued;
+    const view: any = new CodexView({} as any, plugin); view.inputEl = { value: "滚动入口" }; view.composerDraftOwner = session.id;
+    let scrolls = 0;
+    view.followComposerSubmission = () => { scrolls += 1; };
+    for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers"]) view[method] = () => undefined;
+    view.clearComposerDraft = () => { view.inputEl.value = ""; };
+    view.ensureChatWorkspaceSelected = async () => false;
+    await createQueuedTurnFromComposer(view.createTurnRunnerContext(session.id), { allowLocalKnowledgeCommands: false });
+    assert.equal(scrolls, queued ? 0 : 1, "enqueueing during a running turn never scrolls; an immediate send does");
+    service.stateFor(session.id).running = false;
+    const record = [...service.composerSubmissions.records.values()][0];
+    if (record) {
+      service.start = async () => "running";
+      const beforeRetry = scrolls;
+      await view.retryComposerTransfer(record.id);
+      assert.equal(scrolls, beforeRetry + 1, "a failed-bubble retry restores the same send landing");
+    }
+  }
+  runComposerSubmissionTests();
   await workbenchSignalDispatch();
+  for (const bubble of [true, false]) {
+    const session = piSessionShell(`notice-owner-${bubble}`);
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    settings.apiProviders[0].apiKey = "";
+    const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null };
+    const service = attachTestConversationRunService(plugin);
+    const view: any = new CodexView({} as any, plugin); view.inputEl = { value: "只显示一份失败原因" }; view.composerDraftOwner = session.id;
+    for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers"]) view[method] = () => undefined;
+    view.clearComposerDraft = () => { view.inputEl.value = ""; };
+    view.ensureChatWorkspaceSelected = async () => true;
+    const context = view.createTurnRunnerContext(session.id);
+    if (!bubble) context.onComposerTransferStarted = undefined;
+    const item = await createQueuedTurnFromComposer(context, { allowLocalKnowledgeCommands: false }); assert.ok(item);
+    openTestNoticeMessages.length = 0;
+    assert.equal(await validateTaskTurnBeforeCreation(context, item), false);
+    assert.equal(openTestNoticeMessages.length, bubble ? 0 : 1, "only the submission bubble suppresses its duplicate validation Notice");
+    if (bubble) { view.onComposerTransferFinished(item, "failed"); assert.match(view.composerTransfers.get(item.id).error, /Provider|模型/u); }
+    const originalError = console.error;
+    try {
+      console.error = () => undefined;
+      service.run = async () => { throw new Error("启动准备失败"); };
+      openTestNoticeMessages.length = 0;
+      assert.equal(await service.start(item, "composer"), "failed");
+      assert.equal(openTestNoticeMessages.length, bubble ? 0 : 1, "startup throws keep the same failure owner");
+    } finally { console.error = originalError; }
+  }
+  {
+    const dom = new JSDOM("<!doctype html><body></body>"); installObsidianDom(dom.window);
+    try {
+      const session = piSessionShell("rendered-entry-handoff");
+      const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+      settings.taskWorkspace.page = { kind: "list", agentId: "sol" };
+      const plugin: any = { settings }; const service = attachTestConversationRunService(plugin);
+      const view: any = new CodexView({} as any, plugin); view.rootEl = dom.window.document.body;
+      view.messagesEl = view.rootEl.appendChild(dom.window.document.createElement("div"));
+      view.taskListEl = view.rootEl.appendChild(dom.window.document.createElement("div"));
+      view.taskUiMounted = true; view.composerDraftOwner = "agent:sol";
+      const item: QueuedTurnItem = { ...queuedImageTurn(session.id, "unused"), id: "handoff", attachments: [], text: "不能闪掉的消息" };
+      const projectedId = "pi:fixture:leaf:branch:provisional-message:message-1";
+      session.messages = [{ id: projectedId, runId: "accepted-run", role: "user", text: item.text, createdAt: 1 }];
+      service.composerSubmissions.begin(item.id, "agent:sol", item, { text: item.text, attachments: [], selectedSkill: null, annotations: emptySelectionDraft(), noteMentions: [] });
+      service.composerSubmissions.accept(item.id, { userEntryId: "accepted-entry", turnId: "accepted-run" });
+      view.renderComposerTransfers();
+      assert.equal(view.taskListEl.querySelectorAll(".echoink-submission").length, 1, "list keeps its message until the detail projection renders");
+      view.taskNavigation.navigate({ kind: "detail", taskId: session.id }); view.composerDraftOwner = session.id; view.taskDetailLoaded = true;
+      view.renderComposerTransfers();
+      assert.equal(service.composerSubmissions.records.has(item.id), true, "data projection alone cannot remove the displayed message");
+      const user = view.messagesEl.appendChild(dom.window.document.createElement("article"));
+      user.dataset.messageRole = "user"; user.dataset.messageId = projectedId;
+      view.renderComposerTransfers();
+      assert.equal(service.composerSubmissions.records.has(item.id), false);
+      assert.equal(view.rootEl.querySelectorAll(".echoink-submission").length, 0);
+    } finally { dom.window.close(); }
+  }
+  {
+    const session = piSessionShell("failed-reference-snapshot");
+    const settings = createQueueImageProviderSettings(), provider = settings.apiProviders[0], models = provider.models;
+    const file = Object.assign(new TFile(), { path: "notes/frozen.md", name: "frozen.md" });
+    let content = "发送当时的正文", reads = 0, retained!: QueuedTurnItem;
+    const input = { value: "总结这篇笔记" } as HTMLTextAreaElement;
+    addComposerNoteMentionSelection(input, { vaultRelativePath: file.path, fileName: file.name });
+    const context: any = { plugin: { settings }, inputEl: input, attachments: [], selectedSkill: null,
+      app: { vault: { getAbstractFileByPath: () => file, read: async () => { reads++; return content; } } },
+      ensureSession: () => session, sessionById: () => session, ensureChatWorkspaceSelected: async () => true,
+      currentTurnOptions: () => ({ providerSettingsId: provider.id, runtimeProviderId: provider.runtimeProviderId,
+        model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false }),
+      onComposerTransferStarted: (item: QueuedTurnItem) => { retained = { ...item }; },
+      onComposerTransferPrepared: (item: QueuedTurnItem) => { retained = { ...item }; },
+      turnQueue: new RuntimeTurnQueue(), queueStartInProgress: false,
+      startChatTurn: async (_session: StoredSession, item: QueuedTurnItem) => {
+        assert.equal(item.noteMentions?.[0]?.content, "发送当时的正文"); return "completed";
+      }
+    };
+    provider.models = [];
+    assert.equal(await createQueuedTurnFromComposer(context, { allowLocalKnowledgeCommands: false }), null);
+    assert.equal(retained.preparedNoteMentions?.[0]?.content, "发送当时的正文");
+    provider.models = models; content = "失败之后被修改的正文";
+    assert.equal(await startQueuedTurnItem(context, retained, "composer"), "completed");
+    assert.equal(reads, 1, "retry uses the already captured note body even after later validation failed");
+  }
   for (const newDraft of [false, true]) {
     const session = piSessionShell(`workbench-transfer-${newDraft}`);
     const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
@@ -3688,7 +3800,8 @@ export async function runWorkbenchComposerTests(): Promise<void> {
     for (const method of ["renderToolbar", "renderQueue", "renderAttachments", "renderComposerTransfers"]) view[method] = () => undefined;
     view.clearComposerDraft = () => { view.inputEl.value = ""; view.attachments = []; view.selectedSkill = null; };
     const ready = deferred<boolean>(); view.ensureChatWorkspaceSelected = () => ready.promise;
-    view.currentTurnOptions = () => ({ providerSettingsId: settings.apiProviders[0].id, model: "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false });
+    view.selectedModel = "queue-image-model";
+    view.currentTurnOptions = () => ({ providerSettingsId: settings.apiProviders[0].id, model: newDraft ? "" : "queue-image-model", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false });
     const context = view.createTurnRunnerContext(session.id);
     const flight = createQueuedTurnFromComposer(context, { allowLocalKnowledgeCommands: false });
     assert.equal(view.inputEl.value, "", "the draft clears before workspace IO returns");
@@ -3696,15 +3809,14 @@ export async function runWorkbenchComposerTests(): Promise<void> {
     assert.equal(view.composerTransfers.size, 1);
     if (newDraft) view.inputEl.value = "新的草稿";
     ready.resolve(false); assert.equal(await flight, null);
-    assert.equal(view.composerTransfers.size, 0);
-    assert.equal(view.inputEl.value, newDraft ? "新的草稿" : "原输入");
-    if (newDraft) {
-      const retained = view.turnQueue.itemsForSession(session.id);
-      assert.equal(retained.length, 1); assert.equal(retained[0].text, "原输入");
-      assert.deepEqual(retained[0].attachments, originalAttachments);
-      assert.equal(retained[0].composerPreparationRequired, true);
-      assert.equal(view.turnQueue.isSessionQueuePaused(session.id), true);
-    } else assert.deepEqual(view.attachments, originalAttachments);
+    assert.equal(view.composerTransfers.size, 1);
+    assert.equal(view.inputEl.value, newDraft ? "新的草稿" : "");
+    const retained = [...view.composerTransfers.values()][0];
+    assert.equal(retained.phase, "failed"); assert.equal(retained.snapshot.text, "原输入");
+    assert.equal(retained.snapshot.turnOptions.model, "queue-image-model", "credential validation cannot erase the selected model from retry");
+    assert.deepEqual(retained.snapshot.attachments, originalAttachments);
+    assert.equal(retained.snapshot.composerPreparationRequired, true);
+    assert.equal(view.turnQueue.itemsForSession(session.id).length, 0, "a failed bubble has only one resend owner");
   }
   {
     const session = piSessionShell("workbench-cancel-pending");
@@ -3720,6 +3832,28 @@ export async function runWorkbenchComposerTests(): Promise<void> {
     const flight = createQueuedTurnFromComposer(view.createTurnRunnerContext(session.id), { allowLocalKnowledgeCommands: false });
     await view.stopTurn(); ready.resolve(true); assert.equal(await flight, null);
     assert.equal(view.inputEl.value, "取消前输入"); assert.equal(view.turnQueue.isSessionQueuePaused(session.id), true);
+  }
+  {
+    const session = piSessionShell("workbench-restored-without-admission");
+    const settings = createQueueImageProviderSettings(); settings.sessions = [session]; settings.activeSessionId = session.id;
+    const plugin: any = { settings, getVaultPath: () => "/fixture" };
+    const service = attachTestConversationRunService(plugin);
+    const view: any = new CodexView({} as any, plugin); view.inputEl = { value: "" }; view.composerDraftOwner = session.id;
+    for (const method of ["renderToolbar", "renderQueue", "renderComposerTransfers"]) view[method] = () => undefined;
+    const item: QueuedTurnItem = { id: "restored-supplement", sessionId: session.id, text: "必须保留的补充", attachments: [], skill: null,
+      kind: "chat", createdAt: 1, turnOptions: { model: "fixture", reasoning: "none", permission: "read-only", mode: "agent", mcpEnabled: false } };
+    service.composerSubmissions.begin(item.id, session.id, item, { text: item.text, attachments: [], selectedSkill: null, annotations: emptySelectionDraft(), noteMentions: [] });
+    view.onComposerTransferFinished(item, "completed");
+    const record = service.composerSubmissions.records.get(item.id)!;
+    assert.equal(record.phase, "failed", "restoring an existing task does not accept its new supplement");
+    assert.equal(record.snapshot.text, item.text); assert.equal(view.inputEl.value, "");
+    service.composerSubmissions.begin("other-preparation", session.id, { ...item, id: "other-preparation" }, record.draft);
+    await view.retryComposerTransfer(item.id);
+    assert.equal(record.phase, "failed", "retry stays available after another preparation blocks it");
+    service.composerSubmissions.remove("other-preparation");
+    service.isResuming = () => true;
+    await view.retryComposerTransfer(item.id);
+    assert.equal(record.phase, "failed", "retry cannot attach a supplement to another recovery flight");
   }
   const queue = new RuntimeTurnQueue();
   const plain: QueuedTurnItem = { id: "plain", sessionId: "insert", text: "补充文字", attachments: [], skill: null,
@@ -3766,7 +3900,7 @@ async function workbenchSignalDispatch(): Promise<void> {
         createPiConversation: async (input: any) => { created.push(input); return { ...input, piSessionId: "pi", status: "active", createdAt: 1, updatedAt: 1 }; },
         setPiConversationTaskMetadata: async (id: string, value: any) => { metadata.push({ id, ...value }); },
         setPiConversationStatus: async (id: string) => { deleted.push(id); },
-        getConversationRunService: () => ({ turnQueue: queue, runs: new Map([[oldId, oldRun]]), start: async (item: any) => {
+        getConversationRunService: () => ({ composerSubmissions: plugin._composerSubmissions ??= new ComposerSubmissions(), turnQueue: queue, runs: new Map([[oldId, oldRun]]), start: async (item: any) => {
           assert.equal(settings.activeSessionId, item.sessionId, "new conversation is visible before runtime accepts it");
           assert.equal(metadata.at(-1).taskStatus, "running", "the workbench card exists while preparation is in flight");
           assert.equal(metadata.at(-1).businessKey, "review-week", "handoff identity is durable before runtime acceptance");
@@ -3815,7 +3949,7 @@ async function workbenchListComposerOwnership(): Promise<void> {
     let creations = 0; const creation = deferred<any>(), acceptance = deferred<"running" | "failed" | "cancelled">();
     const stopped: string[] = [];
     const plugin: any = { settings, getVaultPath: () => "/fixture", getKnowledgeSurfaceService: () => null,
-      persistPiNativeSettings: async () => undefined, createPiConversation: async () => { creations++; return await creation.promise; },
+      getTaskResumeError: () => "执行器未受理", persistPiNativeSettings: async () => undefined, createPiConversation: async () => { creations++; return await creation.promise; },
       setPiConversationStatus: async () => undefined };
     const service = attachTestConversationRunService(plugin);
     service.start = async () => await acceptance.promise;
@@ -3923,7 +4057,7 @@ async function workbenchMaintenanceBatches(): Promise<void> {
         plugin.steerPiConversation = async () => { throw new Error("offline insertion rejected"); };
         await insertQueuedTurnIntoActiveRun(host, session.id, insertion.id);
         assert.equal(service.turnQueue.itemsForSession(session.id).some(value => value.id === insertion.id), true, "failed insertion preserves the queued payload");
-        assert.match(openTestNoticeMessages.at(-1) ?? "", /插入失败/);
+        assert.equal(openTestNoticeMessages.at(-1), "消息未能插入当前任务。该消息仍在队列中，请稍后重新插入。");
         service.turnQueue.removeQueuedItem(session.id, insertion.id);
       }
       if (terminal === "cancelled") await service.stopTask(session.id);

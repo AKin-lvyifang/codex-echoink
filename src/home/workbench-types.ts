@@ -23,10 +23,12 @@ export interface WorkbenchSignal {
   description: string;
   prompt: string;
   source: WorkbenchTaskSource;
+  dismissalBasis?: import("./workbench-dismissals").WorkbenchDismissalBasis;
 }
 
 export interface WorkbenchSnapshot {
   generatedAt: number;
+  dismissedCount?: number;
   signals: WorkbenchSignal[];
   todayTodos: readonly ParsedTodoRecord[];
   /** Frozen source identity and bytes corresponding to todayTodos. */

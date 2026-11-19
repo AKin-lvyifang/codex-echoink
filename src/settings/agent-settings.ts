@@ -10,6 +10,7 @@ import type { AgentEditorCreationOptions, AgentEditorHost } from "../ui/codex-vi
 import { resolveAgentAvatarUrl } from "../ui/agent-avatar-presets";
 import { createOriginButton, createOriginSelect, disposeOriginControls } from "./origin-controls";
 import { createSettingsGroup, createSettingsNavigationRow, createSettingsSection } from "./settings-v2";
+import { NEXT, errorText } from "../core/error-copy";
 
 export interface DesktopAgentSettingsHost extends Omit<AgentEditorHost, "onClose" | "backLabel" | "confirmLeave"> {
   readonly app?: Pick<App, "scope" | "keymap">;
@@ -97,7 +98,7 @@ export class DesktopAgentSettings {
         status.textContent = this.text("正在保存…", "Saving…");
         void this.host.setAgentModuleOwner(module, next).catch(error => {
           const saved = this.owner(module); select.value = saved?.id ?? "";
-          const message = `${this.text(`负责人未保存，仍由 ${saved?.name ?? this.text("未指定", "Unassigned")} 负责。`, `The owner was not saved. ${saved?.name ?? this.text("未指定", "Unassigned")} is still responsible.`)} ${error instanceof Error ? error.message : String(error)}`;
+          const message = `${this.text(`负责人未能保存，仍由 ${saved?.name ?? this.text("未指定", "Unassigned")} 负责。`, `The owner could not be saved. ${saved?.name ?? this.text("未指定", "Unassigned")} is still responsible.`)} ${errorText(error, NEXT.retryLater, this.text("zh", "en"))}`;
           this.ownerErrors.set(module, message); status.addClass("is-error"); status.textContent = message;
         }).finally(() => {
           this.pendingOwners.delete(module);

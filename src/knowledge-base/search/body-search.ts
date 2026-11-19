@@ -83,6 +83,11 @@ function checkAbort(signal?: AbortSignal): void {
   }
 }
 
+function checkRequest(request: BodySearchRequest): void {
+  request.candidateSearch?.check();
+  checkAbort(request.signal);
+}
+
 function isAbort(error: unknown): boolean {
   return typeof error === "object" && error !== null && "name" in error && error.name === "AbortError";
 }
@@ -189,12 +194,14 @@ function firstBodyParagraph(lines: readonly string[], included: readonly boolean
     sectionTitle: headings.filter(heading => heading.line <= start + 1).at(-1)?.heading ?? title };
 }
 
-async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal): Promise<DocumentStatistics> {
+async function buildDocumentStatistics(document: BodySearchDocument, content: string, contentRevision: string, dictionary: readonly string[], signal?: AbortSignal, checkCandidate?: () => void): Promise<DocumentStatistics> {
+  checkCandidate?.();
   const lines = content.split(/\r\n|\n|\r/u);
   const headings = currentHeadings(document, lines);
   const outline = createKnowledgeDocumentOutline(headings, lines, contentRevision);
   const anchorLinks = content.includes("[[") && content.includes("#") ? extractMarkdownAnchorLinks(content) : { links: [], total: 0 };
   const linkTargets = extractMarkdownLinkTargets(content);
+  checkCandidate?.();
   const includedBodyLines = bodyLines(lines, headings);
   const paragraph = firstBodyParagraph(lines, includedBodyLines, headings, document.title);
   const ranges: { title: string; start: number; end: number }[] = [];
@@ -211,6 +218,7 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
   let characters = (paragraph?.excerpt.length ?? 0) + (outline ? knowledgeOutlineCharacters(outline) : 0) + (anchorLinks.total ? JSON.stringify(anchorLinks).length : 0) + (linkTargets.length ? JSON.stringify(linkTargets).length : 0);
   let tokenEntries = titleTerms.size + tagTerms.size;
   for (const range of ranges) {
+    checkCandidate?.();
     checkAbort(signal);
     const text = lines.slice(range.start - 1, range.end).join("\n");
     if (!text.trim()) continue;
@@ -220,9 +228,9 @@ async function buildDocumentStatistics(document: BodySearchDocument, content: st
     const frequencies = new Map<string, number>();
     let length = 0;
     for (const result of iterateSearchTokens(text, dictionary)) {
-      if (!result) { await yieldToUi(signal); continue; }
-      if ((++length & 255) === 0) checkAbort(signal);
-      if ((length & 8191) === 0) await yieldToUi(signal);
+      if (!result) { await yieldToUi(signal); checkCandidate?.(); continue; }
+      if ((++length & 255) === 0) { checkCandidate?.(); checkAbort(signal); }
+      if ((length & 8191) === 0) { await yieldToUi(signal); checkCandidate?.(); }
       const { token, start } = result;
       frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
       const fragment = fragments[rangeIndex(fragments, start)];
@@ -410,7 +418,7 @@ function queryTermWeights(text: string, dictionary: readonly string[], exactName
 
 function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const { request } = options;
-  checkAbort(request.signal);
+  checkRequest(request);
   const texts = queryTexts(request);
   const dateFrom = calendarDate(request.dateFrom);
   const dateTo = calendarDate(request.dateTo);
@@ -421,6 +429,7 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const exactNames = new Set<string>();
   let unknownJournalDates = 0;
   const documents = options.documents.filter((document) => {
+    request.candidateSearch?.check();
     if (seen.has(document.vaultRelativePath) || excluded.has(document.vaultRelativePath) || (kinds && !kinds.has(document.kind))) return false;
     seen.add(document.vaultRelativePath);
     const date = journalDate(document);
@@ -434,6 +443,7 @@ function prepareSearch(options: BodySearchOptions): PreparedSearch {
   const coverage: BodySearchCoverage = { totalFiles: documents.length, scannedFiles: 0, readFiles: 0, cachedFiles: 0, indexedFiles: 0,
     failedFiles: 0, complete: !(unknownJournalDates && (dateFrom || dateTo)), unknownJournalDates };
   const dictionary = buildSearchDictionary(documents);
+  request.candidateSearch?.check();
   const preparedQueries = texts.map(text => ({ text, weights: queryTermWeights(text, dictionary, exactNames) })).filter(query => query.weights.size);
   const queryWeights = preparedQueries.map(query => query.weights);
   const queries = queryWeights.map((weights) => new Set(weights.keys()));
@@ -451,6 +461,11 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   const { request } = options;
   const { documents, dictionary, queryWeights, queries, bodyQueries, referencePath, referenceScope, union } = prepared;
   const coverage = { ...prepared.coverage };
+  const candidate = request.candidateSearch;
+  const candidateHits: BodySearchHit[] = [];
+  let candidateScanned = 0;
+  let candidateTotal = 0;
+  try {
   if (!queries.length && !referencePath) return { hits: [], total: 0, coverage: { ...coverage, complete: coverage.totalFiles === 0 && coverage.complete } };
   const sections: Section[] = [];
   const linkStatistics = new Map<string, DocumentStatistics>();
@@ -458,7 +473,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   let freshFilesSinceYield = 0;
   let filesSinceYield = 0;
   for (let index = 0; index < documents.length; index++) {
-    checkAbort(request.signal);
+    checkRequest(request);
     cache?.check();
     const document = documents[index];
     try {
@@ -467,10 +482,10 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       else {
         coverage.readFiles++;
         const { content, contentRevision } = await document.read();
-        checkAbort(request.signal);
+        checkRequest(request);
         cache?.check(document);
         coverage.scannedFiles++;
-        statistics = await buildDocumentStatistics(document, content, contentRevision, dictionary, request.signal);
+        statistics = await buildDocumentStatistics(document, content, contentRevision, dictionary, request.signal, candidate?.check);
         cache?.check(document);
         cache?.stage(document, statistics);
         scannedSections += statistics.sections.length;
@@ -481,7 +496,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
         journalDate: journalDate(document), titleTerms: statistics.titleTerms, tagTerms: statistics.tagTerms, firstBodyParagraph: statistics.firstBodyParagraph, outline: statistics.outline });
       coverage.indexedFiles++;
     } catch (error) {
-      checkAbort(request.signal);
+      checkRequest(request);
       if (isAbort(error) || isIndexStateError(error)) throw error;
       coverage.failedFiles++;
       coverage.complete = false;
@@ -497,7 +512,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   const collectionFrequency = new Map<string, number>();
   let totalLength = 0;
   for (let index = 0; index < sections.length; index++) {
-    checkAbort(request.signal);
+    checkRequest(request);
     const section = sections[index];
     totalLength += section.length;
     for (const term of union) {
@@ -513,7 +528,7 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
     const query = queries[queryIndex];
     const results: { section: Section; score: number; query: number }[] = [];
     for (let index = 0; index < sections.length; index++) {
-      checkAbort(request.signal);
+      checkRequest(request);
       const section = sections[index];
       let score = 0;
       let tagMatches = 0;
@@ -544,12 +559,13 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
       if ((index + 1) % 128 === 0) await yieldToUi(request.signal);
     }
     results.sort((left, right) => right.score - left.score || left.section.document.vaultRelativePath.localeCompare(right.section.document.vaultRelativePath) || left.section.sectionStart - right.section.sectionStart);
+    candidate?.check();
     ranked.push(results);
   }
   const fused = new Map<Section, { section: Section; score: number; query: number; bestRank: number }>();
   for (const ranking of ranked) {
     for (let rank = 0; rank < ranking.length; rank++) {
-      checkAbort(request.signal);
+      checkRequest(request);
       const result = ranking[rank];
       const existing = fused.get(result.section);
       const score = ranked.length === 1 ? result.score : 1 / (60 + rank + 1);
@@ -591,6 +607,37 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
     else if (section) ordered.unshift({ section, score: 0, bestRank: 0, inclusionReason: "按指代带入" });
   }
   if (referenceScope === "single") ordered = ordered.filter(result => result.section.document.vaultRelativePath === referencePath);
+  if (candidate) {
+    // Ranking (including link boosting and explicit-reference handling) is now
+    // complete. Only this bounded prefix may contribute chat candidates.
+    candidate.check();
+    candidateTotal = ordered.length;
+    const paths = new Set<string>();
+    for (const { section, score, query, inclusionReason } of ordered) {
+      if (candidateScanned >= candidate.maxScannedHits || candidateHits.length >= candidate.maxCandidates) break;
+      checkRequest(request);
+      candidateScanned++;
+      const relativePath = section.document.vaultRelativePath;
+      if (!candidate.allowsPath(relativePath) || paths.has(relativePath)) continue;
+      paths.add(relativePath);
+      candidateHits.push({
+        vaultRelativePath: relativePath, title: section.document.title, kind: section.document.kind,
+        recordedAt: section.document.recordedAt, contentRevision: section.contentRevision, totalLines: section.totalLines,
+        ...(query === undefined
+          ? section.firstBodyParagraph ?? { ...sectionEvidence(section, new Set()), sectionTitle: section.sectionTitle }
+          : searchEvidence(section, queries[query], bodyQueries[query], dictionary)),
+        ...(inclusionReason ? { inclusionReason } : {}), score,
+        ...(section.journalDate ? { journalDate: section.journalDate } : {})
+      });
+    }
+    checkRequest(request);
+    cache?.check();
+    coverage.complete = coverage.complete && coverage.indexedFiles === coverage.totalFiles && coverage.failedFiles === 0;
+    return { hits: candidateHits, total: ordered.length, coverage, candidateSearch: {
+      scannedHits: candidateScanned,
+      stopReason: candidateHits.length >= candidate.maxCandidates ? "candidate_limit" : candidateScanned < ordered.length ? "scan_budget" : "exhausted"
+    } };
+  }
   const cueSections = new Map<string, Section>();
   for (const { section } of ordered) if (neighborhood.cues.has(section.document.vaultRelativePath) && !cueSections.has(section.document.vaultRelativePath)) cueSections.set(section.document.vaultRelativePath, section);
   const outlines = new Map<Section, Readonly<KnowledgeDocumentOutline>>();
@@ -629,6 +676,14 @@ async function executeSearch(options: BodySearchOptions, prepared: PreparedSearc
   cache?.check();
   coverage.complete = coverage.complete && coverage.indexedFiles === coverage.totalFiles && coverage.failedFiles === 0;
   return { hits, total: ordered.length, coverage };
+  } catch (error) {
+    if (!candidate || !isAbort(error) || !candidate.timedOut()) throw error;
+    cache?.check();
+    // Before the complete ordering exists, candidateHits stays empty. Completed
+    // per-file statistics are retained separately; they are not a partial rank.
+    return { hits: candidateHits, total: candidateTotal, coverage: { ...coverage, complete: false },
+      candidateSearch: { scannedHits: candidateScanned, stopReason: "time_budget" } };
+  }
 }
 
 /** A single scan with no statistics retained across calls. */
@@ -725,11 +780,14 @@ export class BodySearchMemoryIndex implements BodySearchMemoryPort {
           if (document.revisionKey !== undefined) staged.set(document.vaultRelativePath, { key: keys.get(document.vaultRelativePath)!, statistics });
         },
       });
-      checkAbort(options.request.signal);
+      const candidateDeadline = result.candidateSearch?.stopReason === "time_budget" && options.request.candidateSearch?.timedOut();
+      if (!candidateDeadline) checkAbort(options.request.signal);
       check();
-      for (const document of prepared.documents) check(document);
+      for (const document of prepared.documents) if (!candidateDeadline || staged.has(document.vaultRelativePath)) check(document);
       // A cancelled/failed/invalidated build never publishes partial state as complete.
-      if (result.coverage.complete && viewVersion === this.viewVersion) for (const [path, record] of staged) this.retain(path, record);
+      // Candidate deadlines may retain only completed, checked file records so a
+      // subsequent request can continue warming. Ordinary cancellation is unchanged.
+      if ((result.coverage.complete || candidateDeadline) && viewVersion === this.viewVersion) for (const [path, record] of staged) this.retain(path, record);
       return result;
     } finally { this.activeSearches.delete(active); }
   }

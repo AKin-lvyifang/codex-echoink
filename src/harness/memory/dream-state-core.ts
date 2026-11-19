@@ -1,5 +1,16 @@
 import { DREAM_STATE_SCHEMA } from "./personal-memory-contracts";
+import { emptyDreamCorrectionState, parseDreamCorrectionState, type DreamCorrectionState } from "./dream-correction-core";
+export interface DreamAssociationSelection {
+  readonly memoryId: string; readonly mode: "full" | "association";
+  readonly catalogCount: number; readonly sentCount: number; readonly sentIds: readonly string[];
+  readonly selectedIds: readonly string[]; readonly reason?: string; readonly elapsedMs: number;
+  readonly batchIndex?: number; readonly batchSize?: number;
+  readonly inputTokens?: number; readonly outputTokenReserve?: number;
+}
 export interface DreamState {
+  readonly reconciliation?: DreamCorrectionState;
+  readonly runSummary?: DreamRunSummary;
+  readonly associationSelections?: readonly DreamAssociationSelection[];
   readonly schema: typeof DREAM_STATE_SCHEMA;
   readonly revision: number;
   readonly lastRunAt: number;
@@ -12,10 +23,18 @@ export interface DreamState {
   readonly updatedAt: number;
 }
 
+export interface DreamRunSummary {
+  readonly startedAt: number; readonly finishedAt: number;
+  readonly batches: number; readonly processedMemories: number; readonly evaluatedExperiences: number;
+  readonly modelCalls: number; readonly rateLimitRetries: number;
+  readonly stopReason: "running" | "completed" | "failed" | "cancelled" | "no_progress";
+}
+
 export interface DreamProcessedMemorySource {
   readonly memoryId: string;
   readonly memoryRevision: number;
   readonly processedAt: number;
+  readonly associationRevision?: number;
 }
 
 export const DREAM_STATE_RELATIVE_PATH = "shared-user/.runtime/dream-state.json";
@@ -25,6 +44,7 @@ export const DREAM_PENDING_CAP = 500;
 
 export function defaultDreamState(): DreamState {
   return Object.freeze({
+    reconciliation: emptyDreamCorrectionState(),
     schema: DREAM_STATE_SCHEMA,
     revision: 0,
     lastRunAt: 0,
@@ -39,6 +59,15 @@ export function defaultDreamState(): DreamState {
 
 export function parseDreamState(raw: Record<string, unknown>): DreamState | null {
   if (raw.schema !== DREAM_STATE_SCHEMA) return null;
+  const reconciliation = parseDreamCorrectionState(raw.reconciliation);
+  if (!reconciliation) return null;
+  if (raw.runSummary !== undefined) {
+    if (!raw.runSummary || typeof raw.runSummary !== "object") return null;
+    const run = raw.runSummary as Record<string, unknown>;
+    if (![run.startedAt, run.finishedAt, run.batches, run.processedMemories, run.evaluatedExperiences, run.modelCalls, run.rateLimitRetries]
+      .every(value => typeof value === "number" && Number.isFinite(value) && value >= 0)
+      || !["running", "completed", "failed", "cancelled", "no_progress"].includes(String(run.stopReason))) return null;
+  }
   const numberOr = (value: unknown, fallback: number): number =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
   const pending = Array.isArray(raw.pendingMemoryIds)
@@ -57,9 +86,11 @@ export function parseDreamState(raw: Record<string, unknown>): DreamState | null
         || source.memoryRevision < 1
         || typeof source.processedAt !== "number"
         || !Number.isFinite(source.processedAt)) return null;
+      if (source.associationRevision !== undefined && (!Number.isSafeInteger(source.associationRevision) || Number(source.associationRevision) < 1)) return null;
       const parsed = Object.freeze({
         memoryId: source.memoryId,
         memoryRevision: source.memoryRevision,
+        ...(source.associationRevision === undefined ? {} : { associationRevision: source.associationRevision as number }),
         processedAt: source.processedAt
       });
       const previous = processedById.get(parsed.memoryId);
@@ -69,7 +100,19 @@ export function parseDreamState(raw: Record<string, unknown>): DreamState | null
       }
     }
   }
+  const associationSelections = Array.isArray(raw.associationSelections) ? raw.associationSelections as unknown[] : [];
+  if (associationSelections.some(value => {
+    if (!value || typeof value !== "object") return true;
+    const item = value as Record<string, unknown>;
+    return typeof item.memoryId !== "string" || !["full", "association"].includes(String(item.mode))
+      || ![item.catalogCount, item.sentCount, item.elapsedMs].every(n => typeof n === "number" && Number.isFinite(n) && n >= 0)
+      || [item.batchIndex, item.batchSize, item.inputTokens, item.outputTokenReserve].some(n => n !== undefined && (!Number.isSafeInteger(n) || Number(n) < 1))
+      || ![item.sentIds, item.selectedIds].every(ids => Array.isArray(ids) && ids.every(id => typeof id === "string" && /^[a-zA-Z0-9_-]{3,96}$/u.test(id)));
+  })) return null;
   return Object.freeze({
+    reconciliation,
+    ...(raw.runSummary ? { runSummary: raw.runSummary as DreamRunSummary } : {}),
+    ...(associationSelections.length ? { associationSelections: associationSelections as DreamAssociationSelection[] } : {}),
     schema: DREAM_STATE_SCHEMA,
     revision: numberOr(raw.revision, 0),
     lastRunAt: numberOr(raw.lastRunAt, 0),

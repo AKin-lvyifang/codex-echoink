@@ -86,6 +86,8 @@ export interface KnowledgeAgentSearchHit extends KnowledgeApplicability {
 }
 
 export interface KnowledgeAgentSearchRequest {
+  /** Internal candidate collection; absent for existing tool/retrieval searches. */
+  candidateSearch?: import("./search/contracts").KnowledgeCandidateSearch;
   /** Omitted only when mode=recent. */
   query?: string;
   queries?: readonly string[];
@@ -104,6 +106,7 @@ export interface KnowledgeAgentSearchRequest {
 }
 
 export interface KnowledgeAgentSearchResult {
+  candidateSearch?: import("./search/contracts").KnowledgeCandidateSearchAudit;
   coverage?: import("./search/contracts").BodySearchResult["coverage"];
   generation: number;
   total: number;

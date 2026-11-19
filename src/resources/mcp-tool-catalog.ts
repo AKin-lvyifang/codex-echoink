@@ -16,6 +16,8 @@ import type {
   EchoInkMcpToolReadbackContract,
   EchoInkResource
 } from "./types";
+import { userFacingErrorText } from "../core/error-copy";
+import { MCP_CODES } from "../core/error-copy/codes/mcp";
 
 const { createHash } = getDesktopCrypto();
 
@@ -42,11 +44,11 @@ export async function buildCallableMcpToolCatalog(input: BuildCallableMcpToolCat
     const record = resolveMcpConnectionRecord(resource, settings);
     if (!config || !record) {
       const status = mcpConnectionStatus(resource, settings);
-      warnings.push(`${resource.name}：${mcpConnectionStatusLabel(status)}，缺少 EchoInk broker 连接配置，暂不可调用。`);
+      warnings.push(`${resource.name}：${mcpConnectionStatusLabel(status)}。该服务缺少连接配置，暂不可调用；请在 MCP 设置中重新保存该服务。`);
       continue;
     }
     if (!record.trusted) {
-      warnings.push(`${resource.name}：Server 尚未信任，未向当前 Pi AgentSession 注册工具。`);
+      warnings.push(`${resource.name}：该服务尚未信任，其工具暂不可在对话中使用。请在 MCP 设置中信任该服务。`);
       continue;
     }
     let inspected: InspectMcpToolListResult;
@@ -61,10 +63,10 @@ export async function buildCallableMcpToolCatalog(input: BuildCallableMcpToolCat
       if (!mcpToolIsAdmitted(record, tool)) continue;
       const cachedTool = record.tools.find((candidate) => candidate.name === tool.name);
       if (!cachedTool) {
-        warnings.push(`${resource.name}：Tool ${tool.name} 尚未经过刷新与信任，暂不注册。`);
+        warnings.push(`${resource.name}：工具 ${tool.name} 尚未刷新和信任，暂不可使用。请在 MCP 设置中刷新并信任该工具。`);
         continue;
       } else if (!mcpToolContractsMatch(cachedTool, tool)) {
-        warnings.push(`${resource.name}：Tool ${tool.name} 的 Schema 或安全合同已变化，请刷新后重新信任。`);
+        warnings.push(`${resource.name}：工具 ${tool.name} 的定义已变化。请在 MCP 设置中刷新后重新信任。`);
         continue;
       }
       if (tool.readback) {
@@ -76,7 +78,7 @@ export async function buildCallableMcpToolCatalog(input: BuildCallableMcpToolCat
           || (cachedReadbackTool && !mcpToolContractsMatch(cachedReadbackTool, readbackTool))
           || !cachedReadbackTool
         ) {
-          warnings.push(`${resource.name}：Tool ${tool.name} 的 Readback ${tool.readback.toolName} 尚未启用并信任，暂不注册副作用 Tool。`);
+          warnings.push(`${resource.name}：工具 ${tool.name} 依赖的核对工具 ${tool.readback.toolName} 尚未启用和信任，该工具暂不可使用。请在 MCP 设置中启用并信任核对工具。`);
           continue;
         }
       }
@@ -104,21 +106,21 @@ export function inspectMcpToolList(value: unknown[] | { tools?: unknown[] }): In
   for (const [index, raw] of rawTools.entries()) {
     const tool = plainRecord(raw);
     if (!tool) {
-      warnings.push(`第 ${index + 1} 个 Tool 不是有效对象，已拒绝。`);
+      warnings.push(`第 ${index + 1} 个工具定义无效，已忽略。`);
       continue;
     }
     const name = typeof tool.name === "string" ? tool.name.trim() : "";
     if (!name || name.length > 256) {
-      warnings.push(`第 ${index + 1} 个 Tool 缺少有效名称，已拒绝。`);
+      warnings.push(`第 ${index + 1} 个工具缺少有效名称，已忽略。`);
       continue;
     }
     if (names.has(name)) {
-      warnings.push(`Tool ${name} 重名，已拒绝重复项。`);
+      warnings.push(`工具 ${name} 重名，已忽略重复项。`);
       continue;
     }
     const inputSchema = normalizeInputSchema(tool.inputSchema);
     if (!inputSchema) {
-      warnings.push(`Tool ${name} 的 inputSchema 非法，已拒绝注册。`);
+      warnings.push(`工具 ${name} 的参数定义无效，已忽略。`);
       continue;
     }
     names.add(name);
@@ -139,7 +141,7 @@ export function inspectMcpToolList(value: unknown[] | { tools?: unknown[] }): In
     if (!tool.readback) return tool;
     const readbackTool = byName.get(tool.readback.toolName);
     if (!readbackTool || !readbackTool.readOnly) {
-      warnings.push(`Tool ${tool.name} 的 Readback ${tool.readback.toolName} 不存在或未声明只读，已禁用 Readback。`);
+      warnings.push(`工具 ${tool.name} 依赖的核对工具 ${tool.readback.toolName} 不存在或不是只读工具，已停用核对。`);
       const { readback: _readback, ...withoutReadback } = tool;
       return withoutReadback;
     }
@@ -224,5 +226,5 @@ function safeDiscoveryFailure(error: unknown): string {
     .replace(/[\r\n]+/gu, " ")
     .trim()
     .slice(0, 300);
-  return safe || "tools/list 失败。";
+  return userFacingErrorText(safe, MCP_CODES.mcp_tool_list_failed[0]);
 }

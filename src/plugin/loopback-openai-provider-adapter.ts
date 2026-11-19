@@ -33,7 +33,7 @@ import {
 } from "../harness/pi/provider-failure";
 import {
   apiProviderRequestUrl,
-  isLoopbackApiProviderUrl
+  isLocalNetworkApiProviderUrl
 } from "../settings/provider-presets";
 
 const { Buffer } = getDesktopBuffer();
@@ -125,7 +125,7 @@ export async function loopbackProviderFetch(
 export async function requestLoopbackProvider(
   input: LoopbackProviderRequest
 ): Promise<LoopbackProviderResponse> {
-  if (!isLoopbackApiProviderUrl(input.url)) {
+  if (!isLocalNetworkApiProviderUrl(input.url)) {
     throw new Error("loopback_provider_target_invalid");
   }
   const parsed = new URL(input.url);
@@ -260,7 +260,7 @@ async function executeLoopbackCompletion(input: {
   try {
     if (
       input.model.api !== "openai-completions"
-      || !isLoopbackApiProviderUrl(input.model.baseUrl)
+      || !isLocalNetworkApiProviderUrl(input.model.baseUrl)
     ) {
       throw new Error("loopback_provider_model_invalid");
     }

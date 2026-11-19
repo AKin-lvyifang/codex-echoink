@@ -584,16 +584,16 @@ function assertWorkRecordProjectionContracts(): void {
     assert.equal(projection?.kind, "assistantTurn");
     return projection.kind === "assistantTurn" ? projection.turn : assert.fail("missing turn");
   };
-  const base: EchoInkReasoningActivity = { id: "knowledge:retrieval", kind: "knowledge", status: "completed", total: 26, current: 6, completed: 6, startedAt: 1, updatedAt: 100 };
-  assert.equal(project(base).processNodes[0]?.summary, "26 篇相关，读了前 6 篇");
-  assert.equal(project({ ...base, id: "memory:recall", kind: "memory", completed: 0, current: 0 }).processNodes.length, 0);
+  const base: EchoInkReasoningActivity = { id: "knowledge:retrieval", kind: "knowledge", status: "completed", total: 26, current: 6, completed: 6, notesRead: 3, startedAt: 1, updatedAt: 100 };
+  assert.equal(project(base).processNodes[0]?.summary, "读了 3 篇相关笔记");
+  assert.equal(project({ ...base, id: "memory:recall", kind: "memory", completed: 0, current: 0 }).processNodes[0]?.summary, "用上 0 条");
   assert.equal(project({ ...base, id: "memory:recall", kind: "memory", status: "active" }).processNodes[0]?.summary, "查看中…");
   assert.equal(project({ ...base, id: "memory:recall", kind: "memory", completed: 2 }).processNodes[0]?.summary, "用上 2 条");
-  assert.equal(project({ ...base, id: "provider", kind: "provider" }).processNodes.length, 0);
-  assert.equal(project({ ...base, id: "provider", kind: "provider", status: "active", updatedAt: 5001 }).processNodes.length, 0);
+  assert.equal(project({ ...base, id: "provider", kind: "provider" }).processNodes[0]?.status, "completed");
+  assert.equal(project({ ...base, id: "provider", kind: "provider", status: "active", updatedAt: 1 }).processNodes[0]?.status, "running", "waiting is visible immediately");
   const waiting = project({ ...base, id: "provider", kind: "provider", status: "active", updatedAt: 6001 });
-  assert.equal(waiting.processNodes[0]?.title, "等待模型响应");
-  assert.equal(waiting.processNodes[0]?.summary, "6 秒");
+  assert.equal(waiting.processNodes[0]?.title, "思考中");
+  assert.equal(waiting.processNodes[0]?.summary, undefined);
   assert.equal(project({ ...base, id: "provider", kind: "provider", status: "failed" }).processNodes[0]?.status, "failed");
   const failure = new PiChatUiProjector().projectSessionBranch({
     piSessionId: "provider-failed", activeLeafId: "failed-answer", entries: [{
@@ -679,6 +679,8 @@ async function assertInlineApprovalDockIntegration(): Promise<void> {
     settingsLanguage: "zh-CN", messages: session.messages, vaultPath: "/test-vault", readRawMessageText: async () => "",
     resolveApprovalDecision: () => broker.bindingFor(identity), onScheduleMeasure() {}, onScheduleRunProgress() {} };
   renderer.render(input as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(renderer.tryUpdateVisibleMessages(session.messages), false,
+    "live approval bindings retain their explicit refresh even when the durable message is unchanged");
   const view = Object.assign({}, {
     renderInteractionDock: (CodexView.prototype as unknown as { renderInteractionDock(session: StoredSession): void }).renderInteractionDock,
     isDispatchedTask: () => false,
@@ -707,6 +709,88 @@ async function assertInlineApprovalDockIntegration(): Promise<void> {
   assert.equal(messagesEl.findAllByClass("codex-smooth-ai-approval-card").length, 0, "settled work removes the previous live approval card");
   assert.equal(dockEl.findAllByClass("is-approve").length, 0);
   renderer.dispose(); view.interactionDock.dispose(); broker.dispose();
+}
+
+function assertReasoningRebuildKeepsViewport(): void {
+  const context = createTestContext(), renderer = new CodexMessageListRenderer();
+  const messagesEl = new FakeElement("div"), virtualListEl = messagesEl.createDiv();
+  let readerPaused = false;
+  const input = { app: context.app, component: context.component, messagesEl, virtualListEl, sessionId: "reasoning-reader",
+    settingsLanguage: "zh-CN", vaultPath: "/test-vault", readRawMessageText: async () => "", onScheduleMeasure() {}, onScheduleRunProgress() {},
+    onProcessDisclosureToggle: () => { readerPaused = true; } };
+  const paint = (suffix: string) => renderer.render({ ...input,
+    messages: reasoningVisibilityFixture(false, 0, `公开思考${suffix}`, "running").messages
+  } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  paint("开始");
+  const root = virtualListEl.findByClass("codex-assistant-turn-reasoning-node")!;
+  const trigger = root.findByClass("codex-ai-elements-reasoning-trigger")!;
+  const body = root.findByClass("codex-ai-elements-reasoning-content")!;
+  (trigger as unknown as HTMLElement).onpointerdown?.({ isTrusted: true, button: 0 } as PointerEvent);
+  assert.equal(readerPaused, true, "pressing a reasoning trigger stops following before native click release");
+  body.clientHeight = 280; body.scrollHeight = 1000; body.scrollTop = 120;
+  trigger.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  root.open = false; root.ontoggle?.({ isTrusted: true });
+  paint("增加内容");
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), root,
+    "a full virtual redraw retains the exact disclosure and pointer target");
+  assert.equal(root.open, false, "a redraw preserves the reader's collapsed state");
+  assert.equal(body.scrollTop, 120, "a full redraw does not pull an older reasoning viewport to the bottom");
+  assert.match(renderedText(root), /增加内容/u, "retaining the disclosure still updates its actual content");
+  body.scrollTop = 0; paint("继续输出");
+  assert.equal(body.scrollTop, 0, "the first line remains readable through another full redraw");
+  const clears = virtualListEl.emptyCallCount;
+  assert.equal(renderer.tryUpdateVisibleMessages(reasoningVisibilityFixture(false, 0, "公开思考，汇总事件也增加内容", "running").messages), true,
+    "a summary refresh without one changed-message identity patches the visible running turn");
+  assert.equal(virtualListEl.emptyCallCount, clears, "an incremental summary never clears the virtual window");
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), root);
+  assert.equal(body.scrollTop, 0);
+  assert.equal(renderer.refreshRunProgress(), true);
+  assert.equal(virtualListEl.emptyCallCount, clears, "the loading-copy clock never detaches a disclosure during a click");
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), root);
+  body.scrollTop = 720; paint("读者回到底部");
+  assert.ok(isReasoningScrollNearBottom(body.scrollTop, body.clientHeight, body.scrollHeight), "following resumes only when the reader was near the bottom");
+  trigger.onclick?.({ isTrusted: true, preventDefault() {}, stopPropagation() {} });
+  root.open = true; root.ontoggle?.({ isTrusted: true });
+  const durableIdentity = reasoningVisibilityFixture(false, 2000, "公开思考读者回到底部", "running").messages.map(message => message.assistantTurn
+    ? { ...message, assistantTurn: { ...message.assistantTurn, providerReasoningSegments: message.assistantTurn.providerReasoningSegments.map(segment => ({ ...segment, reasoningId: "durable-reasoning" })) } } : message);
+  renderer.render({ ...input, messages: durableIdentity } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(virtualListEl.findByClass("codex-assistant-turn-reasoning-node"), root,
+    "the first public reasoning keeps its reader when provisional IDs become archive IDs");
+  const completedMessages = [...reasoningVisibilityFixture(false, 2000, "公开思考完成").messages,
+    { id: "visibility-answer", role: "assistant", itemType: "assistant", status: "completed", runId: "visibility-run", text: "最终回答", createdAt: 2001 }
+  ];
+  renderer.render({ ...input, messages: completedMessages } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-chain-of-thought")?.hidden, false,
+    "completion cannot hide reasoning that the reader explicitly opened");
+  const finalContent = virtualListEl.findByClass("codex-assistant-turn-final")!.findByClass("codex-message-content")!;
+  const answerRoot = finalContent.children[0], beforeSourceRefresh = virtualListEl.emptyCallCount;
+  const annotated = completedMessages.map(message => message.id === "visibility-answer"
+    ? { ...message, knowledgeVerificationSkipped: "knowledge_permission_revoked" as const } : message);
+  assert.equal(renderer.tryUpdateVisibleMessages(annotated as ChatMessage[]), true,
+    "terminal source metadata updates use the same visible row");
+  assert.equal(virtualListEl.emptyCallCount, beforeSourceRefresh);
+  assert.equal(finalContent.children[0], answerRoot, "source freshness cannot replace the answer subtree");
+  assert.match(renderedText(virtualListEl), /权限关闭/u);
+  const reference = { referenceId: "stable-snapshot", vaultRelativePath: "projects/Alpha.md", title: "Alpha",
+    excerpt: "exact source", contentRevision: `sha256:${"a".repeat(64)}`, lineStart: 1, lineEnd: 2,
+    verificationStatus: "local_revision_verified" as const };
+  const sourced = completedMessages.map(message => message.id === "visibility-answer" ? { ...message, knowledgeReferences: [reference] } : message);
+  assert.equal(renderer.tryUpdateVisibleMessages(sourced as ChatMessage[]), true);
+  const sourceHost = virtualListEl.findByClass("codex-answer-sources")!;
+  const sourceRow = sourceHost.findByClass("codex-ai-elements-source")!;
+  assert.ok(sourceRow, "the exact reference envelope creates a source row");
+  const changedSource = sourced.map(message => message.id === "visibility-answer"
+    ? { ...message, knowledgeReferences: [{ ...reference, verificationStatus: "source_link_changed" as const }] } : message);
+  assert.equal(renderer.tryUpdateVisibleMessages(changedSource as ChatMessage[]), true);
+  assert.equal(virtualListEl.findByClass("codex-answer-sources"), sourceHost);
+  assert.equal(sourceHost.findByClass("codex-ai-elements-source"), sourceRow, "freshness patches the stable source row");
+  assert.match(renderedText(sourceRow), /来源已变化/u);
+  assert.equal(finalContent.children[0], answerRoot);
+  renderer.resetVirtualWindow();
+  renderer.render({ ...input, messages: completedMessages } as unknown as Parameters<CodexMessageListRenderer["render"]>[0]);
+  assert.equal(virtualListEl.findByClass("codex-ai-elements-chain-of-thought")?.hidden, true,
+    "reopening the task keeps the existing default-folded work record");
+  renderer.dispose();
 }
 
 async function assertReasoningTransitionRendererContracts(): Promise<void> {
@@ -1786,6 +1870,10 @@ export async function runSmoothConversationUiTests(): Promise<void> {
   });
   preserveTextSelectionDuringMutation(selectionHost as unknown as HTMLElement, () => {
     selectionText.textContent = "alpha beta";
+    // Replacing CharacterData collapses browser ranges; this fake has no DOM
+    // range engine, so model that invalidation explicitly.
+    selection.anchorOffset = 0;
+    selection.focusOffset = 0;
   });
   assert.deepEqual(restoredSelection, [selectionText, 1, selectionText, 4],
     "a local streaming mutation restores the browser text selection by character offsets");
@@ -2401,6 +2489,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     }
   });
   try {
+    assertReasoningRebuildKeepsViewport();
     await assertReasoningTransitionRendererContracts();
     await assertInlineApprovalDockIntegration();
     await assertAnswerSaveUiContracts();
@@ -4494,7 +4583,7 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     );
 
     const localUpdater = renderer as unknown as {
-      env: { messages: ChatMessage[] };
+      env: { messages: ChatMessage[]; messagesEl: HTMLElement; virtualListEl: HTMLElement };
       tryUpdateAssistantTurnMessage(row: unknown, message: ChatMessage): boolean;
     };
     const secondReasoningRoot = providerReasoningDom[1];
@@ -4504,6 +4593,9 @@ export async function runSmoothConversationUiTests(): Promise<void> {
     secondReasoningBody.clientHeight = 280;
     secondReasoningBody.scrollHeight = 840;
     secondReasoningBody.scrollTop = 560;
+    const reasoningScrolled = () => secondReasoningBody.listeners.get("scroll")?.({ preventDefault() {}, stopPropagation() {} });
+    const flushReasoningLayout = () => renderer.measureVisibleVirtualRows(localUpdater.env.messagesEl, localUpdater.env.virtualListEl, false, { rerender: false });
+    reasoningScrolled();
     const reasoningDelta = " SECOND_REASONING_DELTA memory_read mem_fedc";
     const updatedReasoningSibling: ChatMessage = {
       ...reasoningSibling,
@@ -4540,11 +4632,13 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       /memory_read|mem_fedc/u,
       "the Reasoning DOM cache stores only user-facing text"
     );
-    assert.equal(secondReasoningBody.scrollTop, secondReasoningBody.scrollHeight,
+    flushReasoningLayout();
+    assert.ok(isReasoningScrollNearBottom(secondReasoningBody.scrollTop, secondReasoningBody.clientHeight, secondReasoningBody.scrollHeight),
       "a Reasoning delta keeps following while the reader is at the bottom");
 
     secondReasoningBody.scrollHeight = 960;
     secondReasoningBody.scrollTop = 240;
+    reasoningScrolled();
     const manualReviewReasoningSibling: ChatMessage = {
       ...updatedReasoningSibling,
       assistantTurn: {
@@ -4564,10 +4658,12 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       true
     );
     await Promise.resolve();
+    flushReasoningLayout();
     assert.equal(secondReasoningBody.scrollTop, 240,
       "a Reasoning delta preserves the reader's manual scroll position");
 
     secondReasoningBody.scrollTop = secondReasoningBody.scrollHeight - secondReasoningBody.clientHeight;
+    reasoningScrolled();
     const resumedFollowReasoningSibling: ChatMessage = {
       ...manualReviewReasoningSibling,
       assistantTurn: {
@@ -4587,7 +4683,8 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       true
     );
     await Promise.resolve();
-    assert.equal(secondReasoningBody.scrollTop, secondReasoningBody.scrollHeight,
+    flushReasoningLayout();
+    assert.ok(isReasoningScrollNearBottom(secondReasoningBody.scrollTop, secondReasoningBody.clientHeight, secondReasoningBody.scrollHeight),
       "returning to the Reasoning bottom restores follow on the next delta");
 
     const answerContentBefore = assistantTurnRoot.findByClass("codex-assistant-turn-answer")!;
@@ -4622,6 +4719,19 @@ export async function runSmoothConversationUiTests(): Promise<void> {
       "loader-circle",
       "a running Tool patch uses the shared progress icon"
     );
+
+    locallyUpdatedMessages[2] = { ...updatedTool, status: "completed" };
+    const answerAfterTool = { ...updatedAnswer, text: `${updatedAnswer.text} AFTER_TOOL_COMPLETED` };
+    locallyUpdatedMessages[locallyUpdatedMessages.length - 1] = answerAfterTool;
+    localUpdater.env.messages = locallyUpdatedMessages;
+    assert.equal(localUpdater.tryUpdateAssistantTurnMessage(assistantTurnSurface, answerAfterTool), true,
+      "an answer delta settles sibling Tool semantics without rebuilding the Turn");
+    assert.equal(assistantTurnRoot.findAllByClass("codex-action-item")
+      .find(action => action.dataset.messageId === "tool-separated"), toolRowBefore);
+    const settledToolIcon = toolRowBefore.findByClass("codex-action-item-icon")!;
+    assert.equal(settledToolIcon.dataset.icon, "search", "a completed sibling Tool stops showing the progress icon");
+    assert.equal(settledToolIcon.hasClass("is-running"), false);
+    assert.equal(toolRowBefore.attributes.get("data-tool-status"), "success");
 
     const visibleTurnCanaries = [
       siblingCanaries.answer,

@@ -24,4 +24,4 @@ export const FINANCE_IMPORT_SKILL = `## 用途与触发
 
 ## 边界与输出
 
-只输出 JSON 对象，例如 {"rows":[{"ref":0,"merchantChoice":"m0","accountChoice":"a0","category":"餐饮","iconChoice":"b0"}]}。ref 必须是输入候选编号；常规商户/账户/品牌匹配选各自候选 id，不匹配可省略。仅需新名称时输出 merchant/account/iconId；仅说明需要清洗时输出 description。分类只从输入 categories 选择。不确定给简短 review。常规候选选择无需生成文字理由；保留原字段供用户在账目详情核对。不得输出业务类型、原始单号或其他字段。`;
+只输出 JSON 对象，例如 {"rows":[{"ref":0,"merchantChoice":"m0","accountChoice":"a0","category":"餐饮","iconChoice":"b0"}]}。ref 必须是输入候选编号；常规商户/账户/品牌匹配选各自候选 id，不匹配可省略。仅需新名称时输出 merchant/account/iconId；仅说明需要清洗时输出 description。分类优先从输入 categories 选择；都不合适时可写新的简短分类名（2–6 个字），程序会自动建好该分类。不确定给简短 review。常规候选选择无需生成文字理由；保留原字段供用户在账目详情核对。不得输出业务类型、原始单号或其他字段。`;

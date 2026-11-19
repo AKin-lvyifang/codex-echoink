@@ -25,7 +25,7 @@ try {
  let release;h.gate=new Promise(r=>release=r);h.fail=true;
  const failed=h.setAgentModuleOwner('knowledge-base',first.id);const succeeded=h.setAgentModuleOwner('journal',second.id); release();
  await assert.rejects(failed,/disk failed/);await succeeded;
- assert.equal(h.disk.moduleOwners['knowledge-base'],'');assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(notices,3);
+ assert.equal(h.disk.moduleOwners['knowledge-base'],'generalist');assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(notices,3);
  await Promise.all([h.saveAgentDefinition({...first,name:'Renamed'},['knowledge-base'],{agent:structuredClone(h.settings.agentRegistry.agents.find(a=>a.id===first.id)),moduleIds:[]}),h.setAgentModuleOwner('review',second.id)]);
  assert.equal(h.disk.agents.find(a=>a.id===first.id).name,'Renamed');assert.equal(h.disk.moduleOwners['knowledge-base'],first.id);assert.equal(h.disk.moduleOwners.journal,second.id);assert.equal(h.disk.moduleOwners.review,second.id);
  await assert.rejects(h.saveAgentDefinition({...first,name:'Duplicate new'},[]),/already created|已经创建/);

@@ -161,7 +161,7 @@ export async function runSettingsEditorTests(): Promise<void> {
     assert.equal(remove().disabled, true, "the redraw keeps deletion pending");
     gate.resolve(false); await settle();
     assert.equal(f.closed, 0); assert.equal(f.handle.disposed, false, "a rejected deletion cannot close the retained form");
-    assert.equal(remove().disabled, false); assert.match(f.root.textContent!, /未删除/);
+    assert.equal(remove().disabled, false); assert.match(f.root.textContent!, /模型服务未能删除。请重试。/);
     assert.equal(field<HTMLInputElement>(f.root, "name").value, "保留的删除草稿");
     assert.equal(field<HTMLInputElement>(f.root, "apiKey").value, "fixture-delete-draft-key");
     remove().click(); f.root.querySelector<HTMLButtonElement>(".echoink-settings-inline-confirm .settings-danger")!.click(); await settle();
@@ -185,7 +185,7 @@ export async function runSettingsEditorTests(): Promise<void> {
     input(f.root, "model:fixture-model:modelMaxTokens", "8000"); input(f.root, "model:fixture-model:maxOutputTokens", "4000");
     click(f.root, "save"); click(f.root, "save"); assert.equal(saved.length, 1);
     f.handle.suspend(); f.handle.resume(document.body); gate.resolve({ saved: false, message: "fixture disk failure" }); await settle();
-    assert.match(f.root.textContent!, /fixture disk failure/);
+    assert.match(f.root.textContent!, /未能保存/u); assert.doesNotMatch(f.root.textContent!, /fixture disk failure/);
     assert.equal(field<HTMLButtonElement>(f.root, "save").disabled, false, "failed save must unlock the current mounted button");
     click(f.root, "save"); await settle(); assert.equal(saved.length, 2); assert.equal(f.handle.disposed, true);
     assert.equal(saved[1].draft.name, "完整字段连接"); assert.equal(saved[1].key, "fixture-fresh-key");

@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { parseJournalDate } from "../home/journal-format";
 import { nativeRootJournalPaths, readNativeJournalSettings } from "../home/native-journal";
 import type { App } from "obsidian";
@@ -47,9 +48,9 @@ function denied(capabilityId: string, reason: AgentCapabilityDecision["reason"])
 const denialMessages: Record<AgentCapabilityDecision["reason"], string> = {
   allowed: "操作无法执行。",
   agent_missing: "当前 Agent 已不存在，请重新选择。",
-  agent_disabled: "当前 Agent 未获准执行此操作。",
+  agent_disabled: "当前 Agent 还没开这项能力，请在 Agent 设置「能用的能力」里勾选。",
   module_disabled: "此功能已关闭，暂时无法执行。",
-  pro_required: "此操作需要有效 PRO，已有资料仍可查看。",
+  pro_required: CAUSE.proRequired[0],
   read_only: "当前为只读权限，未写入资料。",
   memory_disabled: "长期记忆已关闭。",
   resource_disabled: "此 Skill 或资源已停用。",
@@ -57,7 +58,8 @@ const denialMessages: Record<AgentCapabilityDecision["reason"], string> = {
   unknown_resource: "此 Skill 或资源不存在或尚未接通。",
   unknown_tool: "此工具尚未接通，无法执行。",
   invalid_target: "目标不在当前允许范围内，请重新选择。",
-  router_only: "总助只负责派活，这件事要交给员工去做。"
+  router_only: "总助只负责派活，这件事要交给员工去做。",
+  folder_grant_required: "这个文件夹还没开放给这位员工写入：请总助派活时开放它，或直接找这位员工来写。"
 };
 /** Local UI receives useful copy; diagnostic consumers retain the exact shared failure code. */
 export function requireMobileAgentCapability(result: AgentCapabilityDecision): void {
@@ -86,6 +88,8 @@ export interface MobileCapabilityPolicyOptions {
   readonly proAccess?: () => CapabilityAccess | undefined;
   /** Router cards only dispatch; workers report back. Unset keeps the classic assistant. */
   readonly companyRole?: "router" | "worker";
+  /** Worker runs: folders the assistant opened for this task, read live. */
+  readonly folderGrants?: () => readonly string[];
 }
 
 /** Current Agent grants intersect with run-frozen and live workspace permission. */
@@ -103,7 +107,7 @@ export class MobileCapabilityPolicy {
       memory: { useLongTermMemory: this.options.store.memoryEnabled },
       lifestyle: { finance: { enabled: s.lifestyle.finance.enabled } }, pdfReading: { enabled: false }, englishDiary: { enabled: s.englishDiary.enabled },
       tavily: s.tavily, apiProviders: s.apiProviders, knowledgeBase: { folderBindings: s.knowledgeBase.folderBindings }
-    }, agentId: this.options.agentId, ...(this.options.companyRole ? { companyRole: this.options.companyRole } : {}), resources: currentResources(s), proAccess: this.options.proAccess?.(),
+    }, agentId: this.options.agentId, ...(this.options.companyRole ? { companyRole: this.options.companyRole } : {}), ...(this.options.folderGrants ? { folderGrants: this.options.folderGrants() } : {}), resources: currentResources(s), proAccess: this.options.proAccess?.(),
     access: { permission: this.permission === "read-only" || this.options.store.permission === "read-only" ? "read-only" : "workspace-write",
       mode: "agent", memoryMode: this.options.store.memoryEnabled ? "default" : "no_memory" },
     moduleEnabled: { knowledge: mobileModuleEnabled(s, "knowledge-base"), journal: mobileModuleEnabled(s, "journal"),

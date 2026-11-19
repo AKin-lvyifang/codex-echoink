@@ -30,6 +30,11 @@ export function parseCanonicalMemoryManifest(raw: string): CanonicalMemoryManife
       || !row.backupFile.startsWith("shared-user/.runtime/backups/") || !Number.isFinite(row.forgottenAt) || typeof row.reason !== "string" || typeof row.source !== "string")) {
     throw new Error("Personal Memory manifest structure or schema is invalid");
   }
+  for (const record of value.records) {
+    const related = normalizeRelatedIds(record.related, record.id);
+    if (related) Object.assign(record, { related });
+    else delete (record as { related?: readonly string[] }).related;
+  }
   return value as CanonicalMemoryManifest;
 }
 export const canonicalMemoryMetadata = (record: PersonalMemoryRecord): CanonicalMemoryMetadata => {
@@ -46,9 +51,16 @@ export function canonicalSourceMap(manifest: CanonicalMemoryManifest) {
 }
 const MAX_RECORD_CONTENT_CHARS = 24_000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{3,96}$/u;
+/** Canonical empty and missing relationships have identical record metadata. */
+export function normalizeRelatedIds(value: unknown, self?: string): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 5 || value.some(id => typeof id !== "string" || !SAFE_ID.test(id) || id === self)
+    || new Set(value).size !== value.length) throw new CanonicalMemoryFormatError("invalid_request", "Memory related IDs are invalid");
+  return value.length ? Object.freeze((value as string[]).slice()) : undefined;
+}
 export class CanonicalMemoryFormatError extends Error { constructor(readonly code: "invalid_request", message: string) { super(message); } }
 export function serializeCanonicalMemoryRecord(record: Readonly<PersonalMemoryRecord>, previousText?: string): string {
-  const fields: Array<readonly [string, string | number | boolean | undefined]> = [
+  const fields: Array<readonly [string, string | number | boolean | readonly string[] | undefined]> = [
     ["schema", record.schema],
     ["id", record.id],
     ["kind", record.kind],
@@ -63,6 +75,7 @@ export function serializeCanonicalMemoryRecord(record: Readonly<PersonalMemoryRe
     ["scope", record.scope],
     ["as_of", record.asOf],
     ["supersedes", record.supersedes],
+    ["related", normalizeRelatedIds(record.related, record.id)],
     ["due", record.due],
     ["remind_at", record.remindAt],
     ["reason", record.reason],
@@ -115,6 +128,7 @@ export function parseCanonicalMemoryRecord(text: string, file: string): Personal
     id: assertSafeId(requiredField(fields, "id")),
     kind,
     status,
+    ...(normalizeRelatedIds(fields.get("related"), fields.get("id") as string) ? { related: normalizeRelatedIds(fields.get("related"), fields.get("id") as string) } : {}),
     ...(fields.has("pinned") ? { pinned: fields.get("pinned") as boolean } : {}),
     date: validateDate(requiredField(fields, "date"), "date"),
     source: cleanRequired(requiredField(fields, "source"), "source", 2_000),
@@ -181,7 +195,7 @@ function isMemoryBasis(value: unknown): value is PersonalMemoryBasis {
 
 function requireContentOrigin(value: unknown): PersonalMemoryContentOrigin {
   const origin = cleanRequired(value, "content_origin", 64) as PersonalMemoryContentOrigin;
-  if (!["user_statement", "user_edit", "confirmed_change", "current_instruction", "quotation", "code", "hypothesis", "knowledge", "tool_output"].includes(origin)) {
+  if (!["user_statement", "user_edit", "dream_correction", "confirmed_change", "current_instruction", "quotation", "code", "hypothesis", "knowledge", "tool_output"].includes(origin)) {
     throw new CanonicalMemoryFormatError("invalid_request", "content_origin is invalid");
   }
   return origin;

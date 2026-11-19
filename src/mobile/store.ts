@@ -12,9 +12,17 @@ import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction, Mob
 export type MobilePermission = "read-only" | "workspace-write" | "full-access";
 /** Historical attribution and lifecycle; opening stored runs never starts execution. */
 export interface MobileTaskRun {
+  preparation?: import("../types/composer-submission").PreparationUpdate[];
   companyProgrammatic?: boolean;
   companyApproval?: boolean;
-  memorySources?: { id: string; title: string; reason: string }[];
+  dreamEligible?: boolean;
+  dreamExperienceRecorded?: boolean;
+  userMessageIndex?: number;
+  userMessageDigest?: string;
+  assistantMessageIndex?: number;
+  assistantMessageDigest?: string;
+  memoryRecallReceipt?: import('../harness/memory/memory-recall-receipt').MemoryRecallReceipt;
+  memorySources?: import('../settings/settings').InjectedPersonalMemorySourceReference[];
   id: string;
   startedAt: number;
   agentSnapshot?: AgentRunSnapshot;
@@ -157,12 +165,15 @@ function validMetadata(value: Record<string, unknown>): boolean {
   const pending = value.pendingResponse;
   return (status === undefined || ["running", "waiting", "completed", "interrupted"].includes(status as string))
     && ["taskStartedAt", "taskCompletedAt", "taskInterruptedAt", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"].every(key => value[key] === undefined || time(value[key]))
-    && ["businessKey", "taskStage"].every(key => value[key] === undefined || typeof value[key] === "string")
+    && ["businessKey", "taskStage", "syncForkOf"].every(key => value[key] === undefined || typeof value[key] === "string")
     && (pending === undefined || (object(pending) && nonempty(pending.runId) && nonempty(pending.questionId) && ["question", "confirmation"].includes(pending.kind as string)));
 }
 function validRun(value: Record<string, unknown>): boolean {
   const snapshot = value.agentSnapshot;
-  return ["companyProgrammatic", "companyApproval"].every(key => value[key] === undefined || typeof value[key] === "boolean") && time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
+  return ["companyProgrammatic", "companyApproval", "dreamEligible", "dreamExperienceRecorded"].every(key => value[key] === undefined || typeof value[key] === "boolean") && time(value.startedAt) && ["queuedTurnId", "providerId", "modelId", "notePath", "skillId"].every(key => value[key] === undefined || typeof value[key] === "string")
+    && (value.preparation === undefined || Array.isArray(value.preparation) && value.preparation.every((stage: unknown) => object(stage)
+      && ["thinking", "judgment", "knowledge", "memory"].includes(stage.stage as string) && ["active", "completed"].includes(stage.status as string)
+      && (stage.notePaths === undefined || Array.isArray(stage.notePaths) && stage.notePaths.every((path: unknown) => typeof path === "string"))))
     && (value.permission === undefined || permission(value.permission)) && (value.status === undefined || ["running", "waiting", "completed", "interrupted"].includes(value.status as string))
     && ["completedAt", "interruptedAt"].every(key => value[key] === undefined || time(value[key]))
     && (value.interruption === undefined || (value.status === "interrupted" && validInterruption(value.interruption) && value.interruptedAt === (value.interruption as Record<string, unknown>).at))

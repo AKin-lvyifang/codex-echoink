@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runKnowledgeWriteBlockedTests } from "./knowledge-write-blocked";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -22,6 +23,7 @@ function buildBindings() {
 }
 
 export async function runKnowledgeFolderPlanTests(): Promise<void> {
+  await runKnowledgeWriteBlockedTests();
   const issues = initializationFolderIssues([
     { key: "raw", title: "资料来源", values: [{ path: "Library", create: false }, { path: "Archive", create: false }] },
     { key: "wiki", title: "知识成果", values: [{ path: "library", create: true }] },
@@ -283,7 +285,7 @@ async function assertFailedCreateRecovery(root: string) {
     };
     const before = knowledgeFolderBindingsSignature(fixture.plugin.settings.knowledgeBase.folderBindings);
     const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
-    await assert.rejects(fixture.service.applyDirectoryPlan(plan), /fixture create failed/u);
+    await assert.rejects(fixture.service.applyDirectoryPlan(plan), (error: unknown) => error instanceof Error && error.message.startsWith("目录方案未能应用：") && !error.message.includes("fixture create failed"));
     assert.equal(await fs.readFile(path.join(root, "旧来源/a.md"), "utf8"), "A");
     assert.equal(await fs.readFile(path.join(root, "旧来源/b.md"), "utf8"), "B");
     assert.equal(await fs.readFile(path.join(root, "outputs/.ingest-tracker.md"), "utf8"), "# Tracker\n- `旧来源/a.md`\n", "failed setup leaves existing source references unchanged");
@@ -378,7 +380,7 @@ async function assertFailedSaveRecovery(root: string) {
       if (!failed && fixture.plugin.settings.knowledgeBase.folderBindings.roles.wiki.enabled) { failed = true; throw new Error("settings disk unavailable"); }
     };
     const plan = await fixture.service.previewDirectoryPlan(buildBindings(), ["资料/原文", "资料/知识"], { mode: "build" });
-    await assert.rejects(fixture.service.applyDirectoryPlan(plan), /settings disk unavailable/u);
+    await assert.rejects(fixture.service.applyDirectoryPlan(plan), (error: unknown) => error instanceof Error && error.message.startsWith("目录方案未能应用：") && !error.message.includes("settings disk unavailable"));
     assert.equal(await fs.readFile(path.join(root, "source.md"), "utf8"), "SAVED CONTENT");
     assert.equal(fixture.plugin.settings.knowledgeBase.folderBindings.roles.wiki.enabled, false);
     assert.notEqual(fixture.plugin.settings.knowledgeBase.initialized, true, "failed setup restores the completion marker");

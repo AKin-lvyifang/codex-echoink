@@ -6,7 +6,13 @@ import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/sett
 import { apiProviderRequestUrl } from "../settings/provider-presets";
 import { applyEchoInkProviderReasoningWirePolicy, resolveEchoInkProviderReasoningWirePolicy, withEchoInkProviderReasoningWirePolicy } from "../harness/pi/provider-reasoning-wire-policy";
 import { observeUsageStream, type ObserveUsageOptions, type UsageSource } from "../harness/usage/usage-stream";
-import { countTextTokens, estimateTokenValue } from "../harness/usage/token-estimator";
+import { countTextTokensAsync, estimateTokenValueAsync } from "../harness/usage/token-estimator";
+import { runErrors } from "../run-reports/recent-errors";
+import { CAUSE, NEXT, userFacingErrorText } from "../core/error-copy";
+import { providerStatusCopy } from "../core/error-copy/codes/settings";
+
+const ANSWER_FAILED = CAUSE.providerNotRespondingMobile[0];
+const TRANSFER_INTERRUPTED = `回答传输中断。${NEXT.retry[0]}`;
 
 export type MobileRequest = (request: RequestUrlParam) => Promise<{ status: number; json: unknown }>;
 /** WebView fetch subset: requestUrl buffers the whole body, so streaming needs fetch. */
@@ -18,7 +24,7 @@ export interface MobileStreamResponse {
   text(): Promise<string>;
 }
 export type MobileUsageObserver = Pick<ObserveUsageOptions, "recordUsage" | "onRecordError">;
-export const MOBILE_STREAM_BLOCKED = "流式请求没有连上。此服务可能不允许手机直接流式访问，可在模型服务的「参数」里关闭「流式输出」后重试。";
+export const MOBILE_STREAM_BLOCKED = "流式请求未能连接。该模型服务可能不支持移动端直接流式访问，请在 设置 → 模型服务 的“参数”中关闭“流式输出”后重试。";
 /** Undefined where the WebView has no fetch (test hosts); callers then keep requestUrl. */
 export function webviewFetch(): MobileStreamFetch | undefined {
   const fetch = typeof window === "undefined" ? undefined : window.fetch?.bind(window);
@@ -81,33 +87,34 @@ function records(value: unknown): Record<string, unknown>[] {
   const items: unknown[] = Array.isArray(value) ? value : [];
   return items.map(record);
 }
-function visibleReasoningTokens(item: Record<string, unknown>): number {
+async function visibleReasoningTokens(item: Record<string, unknown>): Promise<number> {
   if (item.type !== "reasoning") return 0;
-  return [...records(item.summary).filter(part => part.type === "summary_text"),
+  return sumCounts([...records(item.summary).filter(part => part.type === "summary_text"),
     ...records(item.content).filter(part => part.type === "reasoning_text")]
-    .reduce((total, part) => total + (typeof part.text === "string" ? countTextTokens(part.text) : 0), 0);
+    .map(part => typeof part.text === "string" ? countTextTokensAsync(part.text) : 0));
 }
-function transcriptReasoningTokens(context: Context, responses: boolean): number {
-  return transcript(context, responses).reduce<number>((total, value) => {
+async function sumCounts(counts: (number | Promise<number>)[]): Promise<number> { return (await Promise.all(counts.map(count => Promise.resolve(count)))).reduce((sum, count) => sum + count, 0); }
+function transcriptReasoningTokens(context: Context, responses: boolean): Promise<number> {
+  return sumCounts(transcript(context, responses).map(value => {
     const item = record(value);
-    return total + (responses ? visibleReasoningTokens(item) : typeof item.reasoning_content === "string" ? countTextTokens(item.reasoning_content) : 0);
-  }, 0);
+    return responses ? visibleReasoningTokens(item) : typeof item.reasoning_content === "string" ? countTextTokensAsync(item.reasoning_content) : 0;
+  }));
 }
-function returnedToolTokens(name: unknown, args: unknown): number {
+async function returnedToolTokens(name: unknown, args: unknown): Promise<number> {
   if (typeof name !== "string" || !name) return 0;
-  try { return estimateTokenValue({ name, arguments: toolArguments(args) }); }
-  catch { return countTextTokens(name) + (typeof args === "string" ? countTextTokens(args) : 0); }
+  try { return await estimateTokenValueAsync({ name, arguments: toolArguments(args) }); }
+  catch { return await countTextTokensAsync(name) + (typeof args === "string" ? await countTextTokensAsync(args) : 0); }
 }
 /** Numeric snapshot only: parsing failure must not erase already-returned text. */
-function returnedOutputTokens(data: Record<string, unknown>, responses: boolean): number {
-  if (responses) return records(data.output).reduce((total, item) => total + visibleReasoningTokens(item)
-    + (item.type === "message" ? records(item.content).reduce((sum, part) => sum
-      + (part.type === "output_text" && typeof part.text === "string" ? countTextTokens(part.text) : 0)
-      + (part.type === "refusal" && typeof part.refusal === "string" ? countTextTokens(part.refusal) : 0), 0) : 0)
-    + (item.type === "function_call" ? returnedToolTokens(item.name, item.arguments) : 0), 0);
+async function returnedOutputTokens(data: Record<string, unknown>, responses: boolean): Promise<number> {
+  if (responses) return sumCounts(records(data.output).flatMap(item => [visibleReasoningTokens(item),
+    ...(item.type === "message" ? records(item.content).flatMap(part => [
+      part.type === "output_text" && typeof part.text === "string" ? countTextTokensAsync(part.text) : 0,
+      part.type === "refusal" && typeof part.refusal === "string" ? countTextTokensAsync(part.refusal) : 0]) : []),
+    item.type === "function_call" ? returnedToolTokens(item.name, item.arguments) : 0]));
   const content = record(records(data.choices)[0]?.message);
-  return [content.content, content.reasoning_content, content.refusal].reduce<number>((total, value) => total + (typeof value === "string" ? countTextTokens(value) : 0), 0)
-    + records(content.tool_calls).reduce((total, call) => { const fn = record(call.function); return total + returnedToolTokens(fn.name, fn.arguments); }, 0);
+  return sumCounts([...[content.content, content.reasoning_content, content.refusal].map(value => typeof value === "string" ? countTextTokensAsync(value) : 0),
+    ...records(content.tool_calls).map(call => { const fn = record(call.function); return returnedToolTokens(fn.name, fn.arguments); })]);
 }
 function usage(value: unknown, responses: boolean): Usage {
   const data = record(value);
@@ -118,7 +125,7 @@ function usage(value: unknown, responses: boolean): Usage {
 }
 function toolArguments(value: unknown): Record<string, unknown> {
   const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("模型返回了无效的工具参数。");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(CAUSE.toolCallIncomplete[0]);
   return parsed as Record<string, unknown>;
 }
 function transcript(context: Context, responses: boolean): unknown[] {
@@ -192,16 +199,18 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
         if (options?.signal?.aborted) throw new Error("已停止");
         const data = record(response.json);
         const responses = provider.apiProtocol === "openai-responses";
-        if (observer) outputTokens = returnedOutputTokens(data, responses);
+        if (observer) outputTokens = await returnedOutputTokens(data, responses);
+        if (options?.signal?.aborted) throw new Error("已停止");
         if (response.status < 200 || response.status >= 300 || data.error || data.status === "failed") {
           const providerError = record(data.error).message;
-          throw new Error(`Provider 请求失败（${response.status}）：${typeof providerError === "string" && providerError || "请检查模型、接口地址和 API Key"}`);
+          const status = response.status >= 200 && response.status < 300 ? 0 : response.status;
+          throw new Error(status ? providerStatusCopy(status)[0] : ANSWER_FAILED, { cause: `HTTP ${response.status}: ${typeof providerError === "string" ? providerError : ""}` });
         }
         message.usage = usage(data.usage, responses);
         message.responseId = typeof data.id === "string" ? data.id : undefined;
         message.responseModel = typeof data.model === "string" ? data.model : undefined;
         if (responses) {
-          if (!Array.isArray(data.output)) throw new Error("Provider 未返回有效的 Responses 结果。");
+          if (!Array.isArray(data.output)) throw new Error(CAUSE.providerProtocolMismatch[0]);
           const output = records(data.output);
           message.mobileResponseItems = output.filter(item => item.type === "reasoning");
           for (const item of output) {
@@ -210,34 +219,36 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
               if (part.type === "refusal" && typeof part.refusal === "string") message.content.push({ type: "text", text: part.refusal });
             }
             if (item.type === "function_call") {
-              if (typeof item.call_id !== "string" || !item.call_id || typeof item.name !== "string" || !item.name) throw new Error("模型工具调用缺少标识。");
+              if (typeof item.call_id !== "string" || !item.call_id || typeof item.name !== "string" || !item.name) throw new Error(CAUSE.toolCallIncomplete[0]);
               message.content.push({ type: "toolCall", id: item.call_id, name: item.name, arguments: toolArguments(item.arguments) });
             }
           }
           if (data.status === "incomplete") message.stopReason = "length";
         } else {
           const choice = records(data.choices)[0];
-          if (!choice?.message) throw new Error("Provider 未返回有效的 Chat Completions 结果。");
+          if (!choice?.message) throw new Error(CAUSE.providerProtocolMismatch[0]);
           const content = record(choice.message);
           if (typeof content.content === "string" && content.content) message.content.push({ type: "text", text: content.content });
           if (typeof content.reasoning_content === "string") message.mobileReasoning = content.reasoning_content;
           if (typeof content.refusal === "string" && content.refusal) message.content.push({ type: "text", text: content.refusal });
           for (const call of records(content.tool_calls)) {
             const fn = record(call.function);
-            if (typeof call.id !== "string" || !call.id || typeof fn.name !== "string" || !fn.name) throw new Error("模型工具调用缺少标识。");
+            if (typeof call.id !== "string" || !call.id || typeof fn.name !== "string" || !fn.name) throw new Error(CAUSE.toolCallIncomplete[0]);
             message.content.push({ type: "toolCall", id: call.id, name: fn.name, arguments: toolArguments(fn.arguments) });
           }
           if (choice.finish_reason === "length") message.stopReason = "length";
-          if (choice.finish_reason === "content_filter") throw new Error("Provider 内容过滤，未完成本轮回答。");
+          if (choice.finish_reason === "content_filter") throw new Error(CAUSE.contentFiltered[0]);
         }
         if (message.content.some(c => c.type === "toolCall")) message.stopReason = "toolUse";
         stream.push({ type: "done", reason: message.stopReason as "stop" | "length" | "toolUse", message });
       } catch (error) {
         // Partial streamed output still counts toward usage.
-        if (observer && live && !outputTokens) outputTokens = live.tokens();
+        if (observer && live && !outputTokens) outputTokens = await live.tokens();
         message.content = [];
         message.stopReason = options?.signal?.aborted ? "aborted" : "error";
-        const detail = error instanceof Error ? error.message : String(error);
+        // Upstream wording goes to the run report; the answer keeps a plain sentence.
+        if (!options?.signal?.aborted && error instanceof Error && error.cause !== undefined) runErrors.record("mobile.provider", error);
+        const detail = userFacingErrorText(error, ANSWER_FAILED);
         message.errorMessage = provider.apiKey ? detail.split(provider.apiKey).join("[已隐藏]") : detail;
         stream.push({ type: "error", reason: message.stopReason, error: message });
       } finally { stream.end(message); }
@@ -274,7 +285,7 @@ async function streamedResponse(streamFetch: MobileStreamFetch, built: RequestUr
       try { chunk = await reader.read(); }
       catch (error) {
         if (signal?.aborted) throw new Error("已停止");
-        throw new Error(received ? "回答传输中断，请重试。" : MOBILE_STREAM_BLOCKED, { cause: error });
+        throw new Error(received ? TRANSFER_INTERRUPTED : MOBILE_STREAM_BLOCKED, { cause: error });
       }
       if (chunk.done) break;
       received = true;
@@ -295,11 +306,11 @@ function drainSse(buffer: string, emit: (data: string) => void): string {
   return rest;
 }
 function streamChunk(data: string): Record<string, unknown> {
-  try { return record(JSON.parse(data)); } catch { throw new Error("Provider 返回了无法解析的流式数据。"); }
+  try { return record(JSON.parse(data)); } catch { throw new Error("未能解析模型服务返回的流式内容。请在 设置 → 模型服务 的“参数”中关闭“流式输出”后重试。"); }
 }
 function streamFailure(value: unknown): Error {
   const message = record(value).message;
-  return new Error(`Provider 请求失败：${typeof message === "string" && message || "流式回答返回错误"}`);
+  return new Error(ANSWER_FAILED, { cause: typeof message === "string" ? message : "stream_error" });
 }
 /** Chat Completions deltas → the same object a `stream:false` call returns. */
 class ChatStream {
@@ -331,7 +342,7 @@ class ChatStream {
     }
   }
   result(): Record<string, unknown> {
-    if (!this.finish && !this.done) throw new Error("回答传输中断，请重试。");
+    if (!this.finish && !this.done) throw new Error(TRANSFER_INTERRUPTED);
     const toolCalls = [...this.calls].sort(([a], [b]) => a - b).map(([, call]) => ({ id: call.id, type: "function", function: { name: call.name, arguments: call.args || "{}" } }));
     const message: Record<string, unknown> = { role: "assistant", content: this.text, ...(this.reasoning !== undefined ? { reasoning_content: this.reasoning } : {}), ...(this.refusal ? { refusal: this.refusal } : {}), ...(toolCalls.length ? { tool_calls: toolCalls } : {}) };
     return { ...this.data, choices: [{ message, finish_reason: this.finish || "stop" }] };
@@ -350,7 +361,7 @@ class ResponsesStream {
     else if (type === "response.completed" || type === "response.incomplete" || type === "response.failed") this.final = record(event.response);
   }
   result(): Record<string, unknown> {
-    if (!this.final) throw new Error("回答传输中断，请重试。");
+    if (!this.final) throw new Error(TRANSFER_INTERRUPTED);
     return this.final;
   }
 }
@@ -379,8 +390,8 @@ class LiveAssistant {
     if (block.type === "thinking") this.stream.push({ type: "thinking_end", contentIndex: active.index, content: block.thinking, partial: this.partial });
     else if (block.type === "text") this.stream.push({ type: "text_end", contentIndex: active.index, content: block.text, partial: this.partial });
   }
-  tokens(): number {
-    return this.partial.content.reduce((total, block) => total + (block.type === "text" ? countTextTokens(block.text) : block.type === "thinking" ? countTextTokens(block.thinking) : 0), 0);
+  tokens(): Promise<number> {
+    return sumCounts(this.partial.content.map(block => block.type === "text" ? countTextTokensAsync(block.text) : block.type === "thinking" ? countTextTokensAsync(block.thinking) : 0));
   }
 }
 /** Reasoning text the UI may show for a stored or live assistant message. */
@@ -400,7 +411,7 @@ export async function mobileGenerateText(provider: ApiProviderConfig, model: Api
   const stream = await mobileStream(provider, request, observer, source, streamFetch)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
   const result = await stream.result();
   if (signal.aborted || result.stopReason === "aborted") throw new Error("已停止");
-  if (result.stopReason === "error") throw new Error(result.errorMessage || "模型请求失败");
-  if (result.stopReason === "length") throw new Error("模型输出未完整返回，请调整模型输出上限后重试。");
+  if (result.stopReason === "error") throw new Error(result.errorMessage || ANSWER_FAILED);
+  if (result.stopReason === "length") throw new Error("模型输出未完整返回。请在 设置 → 模型服务 中调高该模型的“单次输出上限”后重试。");
   return textContent(result);
 }

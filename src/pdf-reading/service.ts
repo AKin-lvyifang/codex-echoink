@@ -6,6 +6,12 @@ import { resolveKnowledgePathFromRoots } from "../knowledge-base/root-paths-core
 import { pdfAbort, pdfStem, type PdfFiles, type PdfJob, type PdfOptions, type PdfExtraction, type PdfArtifact, type PdfStartIntent, type PdfStartContext, type PdfHistory } from "./types";
 import { pdfNoteLink } from "./results";
 
+/** Original-PDF states. Callers test these with the helpers below, never by matching words. */
+export const PDF_ORIGINAL_MISSING = "原 PDF 已不存在，已有成果已保留。请恢复原文件后继续。";
+export const PDF_ORIGINAL_CHANGED = "原 PDF 已被修改，已有成果已保留。请核对原文件后继续。";
+export const isPdfOriginalMissing = (error: unknown): boolean => error instanceof Error && error.message === PDF_ORIGINAL_MISSING;
+export const isPdfOriginalChanged = (error: unknown): boolean => error instanceof Error && error.message === PDF_ORIGINAL_CHANGED;
+
 export interface PdfDependencies {
   access: CapabilityAccess; enabled(): boolean;
   sourceDirectory?(): string;
@@ -56,7 +62,7 @@ export class PdfReadingService {
   async historyWithErrors(): Promise<PdfHistory> {
     const jobs: PdfJob[] = [], errors: string[] = [];
     for (const [index, id] of [...new Set(await this.files.listJobs())].entries()) {
-      try { jobs.push(await this.load(id)); } catch { errors.push(`第 ${index + 1} 条 PDF 记录暂时读不到，请保留原文件后重试。`); }
+      try { jobs.push(await this.load(id)); } catch { errors.push(`第 ${index + 1} 条 PDF 记录暂时无法读取，请保留原文件后重试。`); }
     }
     return { jobs: jobs.sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)), errors };
   }
@@ -155,7 +161,7 @@ export class PdfReadingService {
   }
   async resume(id: string, signal?: AbortSignal, bytes?: Uint8Array, generation?: PdfDependencies["generator"], context?: PdfStartContext): Promise<PdfJob> {
     if (!this.deps.enabled()) throw new Error("请先启用 PDF 精读 · 提取。");
-    if (this.busy) throw new Error("已有 PDF 正在处理。");
+    if (this.busy) throw new Error("已有 PDF 正在处理。请等待完成后重试。");
     const job = await this.load(id);
     this.assertJobContext(job, context);
     const owned = bytes ? new Uint8Array(bytes) : undefined;
@@ -190,22 +196,22 @@ export class PdfReadingService {
     }
   }
   async readOriginal(job: PdfJob): Promise<Uint8Array> {
-    if (!job.original || !job.sourceFingerprint || !this.files.readBinary) throw new Error("这份历史记录没有可核对的原件。");
+    if (!job.original || !job.sourceFingerprint || !this.files.readBinary) throw new Error("该记录没有可核对的原 PDF。请重新选择 PDF 后处理。");
     const path = job.original.savedPath ?? job.original.plannedPath;
-    if (!await this.files.exists(path)) throw new Error("原 PDF 找不到了，请先核对；已有成果保留。");
+    if (!await this.files.exists(path)) throw new Error(PDF_ORIGINAL_MISSING);
     const bytes = new Uint8Array(await this.files.readBinary(path));
     if (bytes.length !== job.original.byteLength || await pdfFingerprint(bytes) !== job.sourceFingerprint) {
-      bytes.fill(0); throw new Error("原 PDF 已经改过，请先核对；已有成果保留。");
+      bytes.fill(0); throw new Error(PDF_ORIGINAL_CHANGED);
     }
     return bytes;
   }
   private async saveOriginal(job: PdfJob, bytes: Uint8Array | undefined, context: PdfStartContext | undefined, signal: AbortSignal): Promise<Uint8Array | undefined> {
     if (!job.original) return bytes; // Legacy jobs are never backfilled.
-    if (!this.files.readBinary) throw new Error("当前保存接口无法回读原 PDF，未开始解析。");
+    if (!this.files.readBinary) throw new Error("无法读取原 PDF，未开始解析。请重新选择文件后重试。");
     const original = job.original;
     await this.deps.validateOriginalDirectory?.(original.plannedPath.split("/").slice(0, -1).join("/"));
     if (!await this.files.exists(original.plannedPath)) {
-      if (original.savedPath) throw new Error("原 PDF 找不到了，请先核对；已有成果保留。");
+      if (original.savedPath) throw new Error(PDF_ORIGINAL_MISSING);
       if (!bytes) throw new Error("原 PDF 尚未保存，请重新提供本任务的同一文件。");
       await this.boundary(job, context, signal);
       await this.files.create(original.plannedPath, new Uint8Array(bytes));
@@ -308,7 +314,7 @@ export class PdfReadingService {
               `覆盖：第 ${chunk.page} 页，第 ${chunk.part} 段。持久来源：${sourceLink}\n<document>\n${chunk.source}\n</document>`, signal);
               await this.boundary(job, context, signal);
               for (const rename of (this.linkRenames.get(job.id) ?? []).slice(renameCount)) text = rename(text);
-              if (!text.trim()) throw new Error("模型未返回正文。");
+              if (!text.trim()) throw new Error("模型未返回正文。请重试。");
               if (kind === "translation") assertProtectedStructure(chunk.source, text);
               chunk[kind] = text.trim(); await this.persist(job);
             }
@@ -356,7 +362,7 @@ export class PdfReadingService {
 }
 
 function safePdfPath(value: string): string {
-  if (!value || value.startsWith("/") || /[\\:\p{Cc}]/u.test(value) || value.split("/").some(part => !part || part === "." || part === "..")) throw new Error("PDF 保存位置无效，请选择 Vault 内已绑定的位置。");
+  if (!value || value.startsWith("/") || /[\\:\p{Cc}]/u.test(value) || value.split("/").some(part => !part || part === "." || part === "..")) throw new Error("PDF 保存位置无效。请选择仓库内已绑定的位置。");
   return value;
 }
 function pdfRawBody(value: string): string { const index = value.indexOf("\n## 第 "); return index < 0 ? "" : value.slice(index).trim(); }
@@ -384,7 +390,7 @@ export function splitPdfSections(markdown: string, limit: number): string[] {
   if (block) blocks.push(block);
   const chunks: string[] = []; let current = "";
   for (const part of blocks) {
-    if (part.length > limit) throw new Error("单个段落、表格或代码块超过当前模型预算，请使用更大上下文模型后继续；未截断正文。");
+    if (part.length > limit) throw new Error("单个段落、表格或代码块超出当前模型的处理上限，正文未截断。请更换处理上限更高的模型后继续。");
     if (current && current.length + part.length > limit) { chunks.push(current.trim()); current = ""; }
     current += part;
   }

@@ -27,7 +27,9 @@ await esbuild.build({ banner: desktopNodeTestBanner,
   stdin: {
     contents: [
       'import { runDreamGrowthScenarios } from "./src/tests/dream-growth";',
-      "await runDreamGrowthScenarios();"
+      'import { runDreamReconciliationTests } from "./src/tests/dream-reconciliation";',
+      'if (process.env.ECHOINK_RECONCILE_ONLY !== "1") await runDreamGrowthScenarios();',
+      "await runDreamReconciliationTests();"
     ].join("\n"),
     resolveDir: rootDir,
     sourcefile: "dream-growth-test-entry.ts",

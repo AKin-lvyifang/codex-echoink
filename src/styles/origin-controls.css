@@ -51,6 +51,10 @@
 .echoink-origin-select-icon {display:inline-flex;align-items:center;justify-content:center;flex:0 0 16px;width:16px;height:16px}
 .echoink-origin-control .echoink-origin-select-icon svg {display:block;width:16px;height:16px;fill:none;stroke:none;stroke-width:initial;stroke-linecap:initial;stroke-linejoin:initial}
 .echoink-origin-select-text {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body:not(.is-mobile) .echoink-origin-select-label.is-xiaoecho-model {display:flex;width:100%}
+body:not(.is-mobile) .echoink-origin-control[data-slot=select-item].is-xiaoecho-model>span:last-child {flex:1;min-width:0}
+body:not(.is-mobile) .echoink-origin-select-label.is-xiaoecho-model .echoink-origin-select-text {flex:1;white-space:normal;overflow:visible;overflow-wrap:anywhere}
+body:not(.is-mobile) .echoink-origin-select-detail {flex:none;margin-left:auto;color:var(--origin-muted);font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right}
 .echoink-settings-demo .setting-item-control {display:flex;align-items:center;justify-content:flex-end;margin-right:0;padding-right:0}
 .echoink-settings-demo .setting-item-control>.echoink-origin-control[data-slot=input] {width:230px}
 .echoink-settings-demo input.echoink-origin-control.echoink-origin-control[data-slot=input] {height:auto;min-height:32px}
@@ -149,3 +153,65 @@ body:not(.is-mobile) .echoink-origin-control:not(.echoink-mobile-finance-setting
 .modal.echoink-capture-link-modal .echoink-capture-link-field .setting-item-info { margin-inline-end: 0; }
 .modal.echoink-capture-link-modal .echoink-capture-link-field .setting-item-control { width: 100%; justify-content: stretch; }
 .modal.echoink-capture-link-modal .echoink-capture-link-field input[data-slot=input] { width: 100%; max-width: 100%; }
+
+/* A form body owns section spacing; actions are not an empty settings row. */
+.echoink-capture-link-body { display: flex; flex-direction: column; gap: 16px; }
+.echoink-capture-link-body .echoink-capture-link-field { display: flex; }
+.echoink-capture-link-body .echoink-capture-link-types [data-slot=radio-group] { gap: 0; }
+.echoink-capture-link-type-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 12px 0; border-top: 1px solid transparent; }
+.echoink-capture-link-type-row + .echoink-capture-link-type-row { border-top-color: var(--background-modifier-border); }
+.echoink-capture-link-body .echoink-capture-link-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+
+/* Existing desktop press shading, scoped to the current product surfaces. */
+body:not(.is-mobile) [data-echoink-press-scope] [data-echoink-pressed="true"] {
+  filter: brightness(.9);
+  transition: none;
+}
+/* This primary action already uses the press shade on hover. Reuse the
+   existing Amicro one-pixel press so pressing remains a distinct state. */
+body:not(.is-mobile) [data-echoink-press-scope] .account-login-action[data-echoink-pressed="true"] {
+  transform: translateY(1px);
+}
+
+/* SYNC-FOLDERS-02: sync scope as a folder tree, shared by desktop, iPhone and iPad; the Origin checkbox stays compact. */
+.echoink-cloud-folder-list { display:flex; flex-direction:column; gap:12px; width:100%; min-width:0; color:var(--text-normal); font:calc(var(--font-text-size,16px) * .8125)/1.5 var(--font-interface); }
+.echoink-cloud-scope-head { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; min-height:26px; }
+.echoink-cloud-scope-summary { margin-right:auto; color:var(--text-muted); font-size:calc(var(--font-text-size,16px) * .75); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.echoink-cloud-folder-list button.echoink-cloud-scope-reset { appearance:none; width:auto; height:auto; min-height:26px; margin:0; padding:3px 8px; border:0; border-radius:6px; background:transparent; box-shadow:none; color:var(--text-muted); font-size:calc(var(--font-text-size,16px) * .75); cursor:pointer; }
+.echoink-cloud-folder-list button.echoink-cloud-scope-reset:is(:hover,:focus-visible) { background:var(--background-modifier-hover); color:var(--text-normal); outline:none; }
+.echoink-cloud-folder-list button.echoink-cloud-scope-reset[hidden] { display:none; }
+.echoink-cloud-scope-search { position:relative; color:var(--text-muted); }
+.echoink-cloud-scope-search-icon { position:absolute; inset-block:0; inset-inline-start:11px; display:inline-flex; align-items:center; pointer-events:none; }
+.echoink-cloud-scope-search-icon svg { width:15px; height:15px; }
+.echoink-cloud-folder-list .echoink-cloud-scope-search > input.echoink-cloud-scope-query[type=search] {
+  width:100%; min-width:0; height:auto; min-height:32px; margin:0; padding:7px 10px; padding-inline-start:32px;
+  border:1px solid var(--line,var(--background-modifier-border)); border-radius:6px;
+  background:var(--bg,var(--background-primary)); box-shadow:none; outline:none;
+  color:var(--text-normal); font-size:calc(var(--font-text-size,16px) * .75);
+}
+.echoink-cloud-scope-tree { min-width:0; max-height:min(420px,52vh); overflow-y:auto; border:1px solid var(--background-modifier-border); border-radius:10px; }
+.echoink-cloud-folder-choice { display:flex; align-items:center; gap:8px; min-height:38px; margin:0; padding:6px 18px 6px calc(12px + var(--echoink-cloud-depth,0) * 22px); }
+.echoink-cloud-folder-choice + .echoink-cloud-folder-choice { border-top:1px solid var(--background-modifier-border); }
+.echoink-cloud-folder-choice:hover { background:var(--background-modifier-hover); }
+.echoink-cloud-folder-list button.echoink-cloud-scope-twist { appearance:none; display:grid; place-items:center; flex:0 0 22px; width:22px; height:22px; min-height:0; margin:0; padding:0; border:0; border-radius:6px; background:transparent; box-shadow:none; color:var(--text-muted); cursor:pointer; }
+.echoink-cloud-folder-list button.echoink-cloud-scope-twist:is(:hover,:focus-visible) { background:var(--background-modifier-border); outline:none; }
+.echoink-cloud-scope-twist svg { width:15px; height:15px; transition:var(--echoink-motion-transition, transform .14s); }
+.echoink-cloud-scope-twist[aria-expanded=true] svg { transform:rotate(90deg); }
+.echoink-cloud-folder-list button.echoink-cloud-scope-twist.is-blank { visibility:hidden; }
+.echoink-cloud-folder-list .echoink-cloud-folder-choice .echoink-origin-control[data-slot=checkbox] { flex:0 0 16px; width:16px; min-width:16px; height:16px; min-height:16px; margin:0; padding:0; border-radius:4px; }
+.echoink-cloud-scope-label { display:flex; flex:1; flex-wrap:wrap; align-items:baseline; gap:0 8px; min-width:0; margin:0; cursor:pointer; }
+.echoink-cloud-scope-name { min-width:0; overflow-wrap:anywhere; }
+.echoink-cloud-folder-choice.is-excluded .echoink-cloud-scope-name { color:var(--text-muted); }
+.echoink-cloud-scope-path, .echoink-cloud-scope-state { color:var(--text-muted); font-size:calc(var(--font-text-size,16px) * .75); }
+.echoink-cloud-scope-path { min-width:0; overflow-wrap:anywhere; }
+.echoink-cloud-scope-state { flex:none; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.echoink-cloud-folder-list.is-mobile-cloud-folders { font-size:.88em; }
+.echoink-cloud-folder-list.is-mobile-cloud-folders .echoink-cloud-scope-tree { max-height:none; overflow:visible; }
+.echoink-cloud-folder-list.is-mobile-cloud-folders .echoink-cloud-folder-choice { min-height:44px; padding-right:12px; padding-left:calc(6px + var(--echoink-cloud-depth,0) * 18px); }
+.echoink-cloud-folder-list.is-mobile-cloud-folders button.echoink-cloud-scope-twist { flex-basis:32px; width:32px; height:32px; }
+.echoink-cloud-folder-list.is-mobile-cloud-folders input.echoink-cloud-scope-query[type=search] { min-height:36px; }
+.echoink-cloud-folder-list.is-mobile-cloud-folders button.echoink-cloud-scope-reset { min-height:32px; }
+.echoink-cloud-folder-empty { padding:22px 18px; color:var(--text-muted); font-size:calc(var(--font-text-size,16px) * .75); text-align:center; }
+.echoink-cloud-folder-empty[hidden] { display:none; }
+.cloud-sync-folder-field { padding:12px; border-bottom:1px solid var(--background-modifier-border); }
+.cloud-sync-folder-heading { color:var(--text-normal); font-size:.88em; font-weight:500; line-height:1.55; }

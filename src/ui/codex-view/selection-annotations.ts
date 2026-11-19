@@ -1,3 +1,4 @@
+import { bindPressFeedback } from "../press-feedback";
 import { ownedDiv } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import { Scope, setIcon, type App } from "obsidian";
@@ -42,6 +43,7 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
     remove.onclick = () => actions.onRemoveAll?.();
   }
   let timer: number | undefined, timerWindow: typeof win | undefined, observer: MutationObserver | undefined, suppressed = false;
+  let pressCleanup: (() => void) | undefined;
   let openDocument: Document | null = null, openWindow: typeof win | null = null, escapeScope: Scope | null = null;
   const activateEscapeScope = () => {
     if (escapeScope || !app?.keymap || !openDocument?.hasFocus() || panel.hidden) return;
@@ -70,6 +72,7 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
   const close = () => {
     cancel();
     if (!openDocument) return;
+    pressCleanup?.(); pressCleanup = undefined;
     panel.hidden = true; trigger.setAttribute("aria-expanded", "false");
     openWindow?.removeEventListener("resize", position); openDocument?.removeEventListener("scroll", position, true); openDocument?.removeEventListener("keydown", closeOnEscape, true);
     openWindow?.removeEventListener("focus", activateEscapeScope);
@@ -89,7 +92,9 @@ export function renderSelectionAnnotationSummary(host: HTMLElement, annotations:
     panel.style.fontFamily = style.fontFamily; panel.style.fontSize = style.fontSize;
     openDocument = doc; openWindow = win;
     activePopovers.set(doc, close);
-    doc.body.append(panel); panel.hidden = false; trigger.setAttribute("aria-expanded", "true"); position();
+    doc.body.append(panel);
+    pressCleanup = trigger.closest("[data-echoink-press-scope]") ? bindPressFeedback(panel) : undefined;
+    panel.hidden = false; trigger.setAttribute("aria-expanded", "true"); position();
     win.addEventListener("resize", position); doc.addEventListener("scroll", position, true);
     doc.addEventListener("keydown", closeOnEscape, true);
     // Relayed keys target main window directly; later capture listeners cannot

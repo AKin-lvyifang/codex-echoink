@@ -1,3 +1,4 @@
+import { renderMobileCorrections } from "../mobile/memory-feedback";
 import { getModuleOwner } from "../../agents/registry";
 import { AGENT_MODULE_NAMES, AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
@@ -33,7 +34,7 @@ function view(ctx: IPadSettingsContext, id: string, title: string) {
     dirty: () => false, discard: () => {}, beforeLeave: async () => {},
     changed: () => { allowLeave = false; error.hidden = true; },
     report: (failure: unknown) => { if (!disposed) {
-      body.querySelector(".pd-agent-loading")?.remove(); showSettingsError(error, failure);
+      body.querySelector(".pd-agent-loading")?.remove(); showSettingsError(error, failure, ctx);
       if (!loaded) error.append(settingsAction(ctx, "重试", () => refreshPage()));
     } },
     ready: () => { if (!loaded) error.hidden = true; loaded = true; body.querySelector(".pd-agent-loading")?.remove(); },
@@ -98,10 +99,10 @@ export function createAgentSettingsPage(ctx: IPadSettingsContext, editAgent: Edi
   v.dirty = () => limitDraft !== undefined && limitDraft !== String(settings.dreamRunsPerDay);
   v.discard = () => { limitDraft = undefined; signature = ""; render(); };
   const stopDream = async () => { if (section !== "memory") return; if (controller || api.dreamStatus().phase === "running") { controller?.abort(); await api.cancelDream(); } };
-  v.beforeLeave = stopDream;
+
   const background = () => { if (ctx.document.hidden) void stopDream().catch(v.report); }, pagehide = () => { void stopDream().catch(v.report); };
-  ctx.document.addEventListener("visibilitychange", background); ctx.document.defaultView?.addEventListener("pagehide", pagehide);
-  v.addCleanup(() => { generation++; controller?.abort(); if (controller) void api.cancelDream().catch(() => {}); ctx.document.removeEventListener("visibilitychange", background); ctx.document.defaultView?.removeEventListener("pagehide", pagehide); });
+
+  v.addCleanup(() => { generation++; ctx.document.removeEventListener("visibilitychange", background); ctx.document.defaultView?.removeEventListener("pagehide", pagehide); });
   const open = (page: MobileShellPage) => v.child(() => ctx.push(page));
   async function saveSetting(patch: Partial<MobileMemorySettingsSnapshot>): Promise<void> {
     if (v.busy) return;
@@ -285,6 +286,7 @@ function createMemoryListPage(ctx: IPadSettingsContext): MobileShellPage {
     const group = settingsGroup(ctx, list, t(ctx, "记忆")), start = pageIndex * 20;
     for (const record of snapshot.records.slice(start, start + 20)) settingsRow(ctx, group, record.title, t(ctx, record.basis === "explicit" ? "你确认的" : "系统观察 · 仅供参考"), () => v.child(() => ctx.push(createMemoryDetailPage(ctx, record.id))));
     if (!snapshot.records.length) empty(ctx, group, "还没有记忆");
+    renderMobileCorrections(list, (snapshot.corrections ?? []).filter(event=>event.action==='obsolete'), {language:ctx.host.settings().settingsLanguage ?? 'zh',service:api,reload:()=>load(),error:v.report});
     if (snapshot.records.length > 20) {
       const bar = actions(ctx, list), previous = settingsAction(ctx, "上一页", () => { pageIndex--; draw(); }), next = settingsAction(ctx, "下一页", () => { pageIndex++; draw(); });
       previous.disabled = !pageIndex; next.disabled = start + 20 >= snapshot.records.length; bar.append(previous, el(ctx.document, "span", "pd-agent-count", `${pageIndex + 1}/${Math.ceil(snapshot.records.length / 20)}`), next);
@@ -319,6 +321,7 @@ function createMemoryDetailPage(ctx: IPadSettingsContext, id: string): MobileShe
       const source = el(ctx.document, "details", "pd-agent-sources"); source.append(el(ctx.document, "summary", "", t(ctx, "来源")), el(ctx.document, "div", "pd-agent-prose", en(ctx) ? record.contentOrigin === "user_edit" ? "Records you edited" : "Records saved in a task" : record.contentOrigin === "user_edit" ? "你手动编辑的记录" : "任务中保存的记录")); card.append(source);
       if (!draft) {
         const text = el(ctx.document, "div", "pd-agent-prose markdown-rendered"); ctx.host.renderMarkdown(record.content, text, record.file); card.append(text);
+        renderMobileCorrections(card, snapshot!.corrections ?? [], {language:ctx.host.settings().settingsLanguage ?? 'zh',service:api,reload:async restoredId=>{if(restoredId)id=restoredId;snapshot=await api.read(id);draw();ctx.refresh();},error:v.report});
         if (record.recallWhen) card.append(el(ctx.document, "div", "pd-agent-recall", `${t(ctx, "何时想起")}：${record.recallWhen}`));
         const bar = actions(ctx, card), area = el(ctx.document, "div", "pd-agent-inline-confirm"); card.append(area);
         bar.append(settingsAction(ctx, "修正", () => { draft = { title: record.title, content: record.content, recallWhen: record.recallWhen }; draw(); }), settingsAction(ctx, "忘记", () => confirm(ctx, area, "忘记这条记忆？之后可以恢复。", "确认忘记", async () => {

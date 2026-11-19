@@ -32,7 +32,7 @@ export async function runEditorTranslationServiceTests(): Promise<void> {
     generateEnglishTranslation: async () => await pending
   });
   const first = singleFlight.translate("你好");
-  await assert.rejects(singleFlight.translate("世界"), /其他请求/u);
+  await assert.rejects(singleFlight.translate("世界"), /EchoInk 正在回答。请等待回答结束后重试。/u);
   release();
   assert.equal(await first, "Hello");
 }

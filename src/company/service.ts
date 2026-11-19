@@ -18,7 +18,11 @@ export interface CompanyHost {
   newId(prefix: string): string;
   agents(): readonly Readonly<{ id: string; name: string; position: string; hired: boolean }>[];
   moduleOwner?(moduleId: AgentModuleId): string | null;
+  /** This device's sync identity. Records owned by another device are shown, never run. */
+  deviceId?(): string;
   routerPermission(routerId: string): CompanyPermission;
+  /** The assistant's "open folders to workers" switch; on unless the user turned it off. */
+  folderGrantsEnabled?(): boolean;
   createWorker(input: Readonly<{ id: string; agentId: string; title: string; projectId?: string }>): Promise<void>;
   /** Starts one background turn on a conversation; resolves once accepted. */
   startTurn(conversationId: string, text: string, permission: CompanyPermission, inheritFrom?: string): Promise<void | "waiting">;
@@ -64,14 +68,32 @@ export class CompanyService implements CompanyToolPort {
   }
   dispatchOf(id: string): CompanyDispatch | undefined { return this.doc.dispatches.find(d => d.id === id); }
   projectOf(id: string): CompanyProject | undefined { return this.doc.projects.find(p => p.id === id); }
+  /** Where a worker may write beyond its own modules: the assistant's grants and the project folder. */
+  workerFolderGrants(id: string): string[] {
+    const d = this.dispatchOf(id), folder = d?.projectId ? this.projectOf(d.projectId)?.folder : undefined;
+    return [...(d?.folderGrants ?? []), ...(folder ? [folder] : [])];
+  }
   projectForRouter(routerId: string): CompanyProject | undefined { return [...this.doc.projects].reverse().find(p => p.routerConversationId === routerId); }
+  /** Legacy records carry no owner and belong to this device; a record stamped by another device is read-only here. */
+  owns(item: Readonly<{ ownerDeviceId?: string }>): boolean {
+    const self = this.host.deviceId?.();
+    return !item.ownerDeviceId || !self || item.ownerDeviceId === self;
+  }
+  private get deviceId(): string | undefined { return this.host.deviceId?.(); }
 
   async initialize(): Promise<void> {
     await this.store.load();
-    await this.store.mutate(doc => ({ ...doc, dispatches: doc.dispatches.map(d => (d.status === "running" || d.status === "waiting" && !d.report) && !this.host.isRunning(d.id)
-      ? { ...d, status: "queued" as const, wake: d.wake ?? { text: `${RESTART_NOTE}\n\n原任务：${workerBrief(d, d.projectId ? this.projectOf(d.projectId) : undefined)}`, byPerson: false } } : d) }));
+    const self = this.deviceId;
+    await this.store.mutate(doc => ({ ...doc,
+      // Stamp legacy records once. A "running" dispatch from another device is never requeued or started here.
+      projects: doc.projects.map(p => self && !p.ownerDeviceId ? { ...p, ownerDeviceId: self } : p),
+      dispatches: doc.dispatches.map(d => {
+        const stamped = self && !d.ownerDeviceId ? { ...d, ownerDeviceId: self } : d;
+        return this.owns(stamped) && (stamped.status === "running" || stamped.status === "waiting" && !stamped.report) && !this.host.isRunning(stamped.id)
+          ? { ...stamped, status: "queued" as const, wake: stamped.wake ?? { text: `${RESTART_NOTE}\n\n原任务：${workerBrief(stamped, stamped.projectId ? this.projectOf(stamped.projectId) : undefined)}`, byPerson: false } } : stamped;
+      }) }));
     await this.schedule(async () => {
-      for (const project of this.doc.projects) if (project.status === "running") await this.advanceNow(project.id);
+      for (const project of this.doc.projects) if (project.status === "running" && this.owns(project)) await this.advanceNow(project.id);
       await this.pumpNow();
       await this.flushReports();
     });
@@ -131,7 +153,7 @@ export class CompanyService implements CompanyToolPort {
     return this.dispatch(request.routerConversationId, { agentId, moduleId: request.moduleId, brief: request.brief, ...(request.title ? { title: request.title } : {}) }, plan);
   }
 
-  async dispatch(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none" }>, plan?: PlanDispatch): Promise<string> {
+  async dispatch(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none"; folders?: readonly string[] }>, plan?: PlanDispatch): Promise<string> {
     return this.schedule(async () => {
       const result = await this.reserve(routerId, input, plan);
       if (typeof result === "string") return result;
@@ -143,7 +165,10 @@ export class CompanyService implements CompanyToolPort {
         : `已派给${this.name(now.agentId)}，任务编号 ${now.id}。现在同时在做的活已满 ${this.limit} 件，这件排队，空出来就开工。`;
     });
   }
-  private async reserve(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none" }>, plan?: PlanDispatch): Promise<CompanyDispatch | string> {
+  private async reserve(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none"; folders?: readonly string[] }>, plan?: PlanDispatch): Promise<CompanyDispatch | string> {
+    const folderGrants = companyFolderGrants(input.folders);
+    if (typeof folderGrants === "string") return folderGrants;
+    if (folderGrants.length && this.host.folderGrantsEnabled?.() === false) return "用户关闭了「给员工开放文件夹」，这次不能附带 folders；去掉 folders 再派，或请用户在总助设置里打开。";
     if (input.moduleId && input.moduleId !== "none") {
       const owner = this.host.moduleOwner?.(input.moduleId);
       if (!owner) return this.missingOwner(routerId, input.moduleId, input.brief, input.title, undefined, plan ? { projectId: plan.projectId, planTaskId: plan.task.id } : undefined);
@@ -155,15 +180,18 @@ export class CompanyService implements CompanyToolPort {
     if (plan) {
       const existing = dispatchForPlanTask(this.doc, plan.projectId, plan.task.id);
       if (existing && !(existing.id === plan.replaces && existing.status === "stopped")) return existing;
-      if (this.projectOf(plan.projectId)?.status !== "running") return "项目还没有开工。";
+      const project = this.projectOf(plan.projectId);
+      if (project?.status !== "running") return "项目还没有开工。";
+      if (!this.owns(project)) return "这个项目在另一台设备上运行，只能在那台设备上推进。";
     }
     const open = this.doc.dispatches.filter(d => d.routerConversationId === routerId && !TERMINAL.has(d.status)).length;
     if (open >= COMPANY_MAX_OPEN_PER_ROUTER) return `这张卡片已有 ${open} 件活没做完，先等它们做完或停掉一些再派。`;
     const project = this.projectForRouter(routerId);
     const projectId = plan?.projectId ?? (project?.status === "running" ? project.id : undefined);
     const d: CompanyDispatch = { id: this.host.newId("conversation"), routerConversationId: routerId, agentId: agent.id, brief: input.brief,
-      ...(input.moduleId ? { moduleId: input.moduleId } : {}), status: "queued", workerPending: true, permission: this.host.routerPermission(routerId), createdAt: this.host.now(), turns: 0,
-      ...(projectId ? { projectId } : {}), ...(plan ? { planTaskId: plan.task.id } : {}) };
+      ...(input.moduleId ? { moduleId: input.moduleId } : {}), ...(this.deviceId ? { ownerDeviceId: this.deviceId } : {}),
+      status: "queued", workerPending: true, permission: this.host.routerPermission(routerId), createdAt: this.host.now(), turns: 0,
+      ...(projectId ? { projectId } : {}), ...(plan ? { planTaskId: plan.task.id } : {}), ...(folderGrants.length ? { folderGrants } : {}) };
     // Persist the plan-task claim before any host call can yield or fail.
     await this.store.mutate(doc => ({ ...doc, dispatches: [...doc.dispatches, d] }));
     await this.createWorker(d, input.title || plan?.task.label || input.brief);
@@ -245,7 +273,7 @@ export class CompanyService implements CompanyToolPort {
     if (existing && existing.status !== "proposed" && existing.status !== "cancelled") return `这张卡片已经绑定了项目「${existing.name}」，一张卡片只管一个项目。`;
     const id = existing?.status === "proposed" ? existing.id : this.host.newId("project");
     const project: CompanyProject = { id, name: input.name, background: input.background, goal: input.goal, criteria: input.criteria, folder: "",
-      routerConversationId: routerId, status: "proposed", plan: input.plan, roles: { sol: "牵头：派活、协调、验收", ...input.roles }, createdAt: this.host.now(),
+      routerConversationId: routerId, ...(this.deviceId ? { ownerDeviceId: this.deviceId } : {}), status: "proposed", plan: input.plan, roles: { sol: "牵头：派活、协调、验收", ...input.roles }, createdAt: this.host.now(),
       ...(input.dueLabel ? { dueLabel: input.dueLabel } : {}) };
     await this.store.mutate(doc => ({ ...doc, projects: [...doc.projects.filter(p => p.id !== id), project] }));
     const people = [...new Set(input.plan.map(t => this.name(t.agentId)))].join("、");
@@ -255,6 +283,7 @@ export class CompanyService implements CompanyToolPort {
     return this.schedule(async () => {
       const project = this.projectOf(projectId);
       if (!project || project.routerConversationId !== routerId) return "这张卡片没有这个开工卡。";
+      if (!this.owns(project)) return "这个项目属于另一台设备，只能在那台设备上开工。";
       if (project.status !== "proposed") return project.status === "cancelled" ? `项目「${project.name}」已取消。` : `项目「${project.name}」已经开工了。`;
       if (this.host.routerPermission(routerId) === "read-only") return "当前是只读模式，不能创建项目文件夹或开工。";
       const folder = await this.host.ensureFolder(projectFolderName(project.name, this.host.now()), routerId);
@@ -333,14 +362,14 @@ export class CompanyService implements CompanyToolPort {
   }
   async answerDecision(taskId: string, answer: string): Promise<void> {
     const d = this.dispatchOf(taskId);
-    if (!d || d.status !== "waiting" || d.answer) return;
+    if (!d || d.status !== "waiting" || d.answer || !this.owns(d)) return;
     await this.resume(taskId, `用户答：${answer}`, answer);
   }
 
   /* ===== 一轮结束：保存汇报、推进依赖、补空位、补投待交付汇报 ===== */
   async onWorkerSettled(id: string, outcome: "completed" | "waiting" | "interrupted" | "failed" | "cancelled", turnStartedAt: number): Promise<void> {
     const d = this.dispatchOf(id);
-    if (!d || d.status !== "running") return;
+    if (!d || d.status !== "running" || !this.owns(d)) return;
     const fresh = d.report && d.report.at >= turnStartedAt ? d.report : undefined;
     const report = fresh ?? fallbackReport(outcome === "completed" ? await this.host.lastAssistantText(id).catch(() => undefined) : undefined, outcome !== "completed", this.host.now());
     if (!await this.finish(id, report, d.turns)) return;
@@ -374,7 +403,7 @@ export class CompanyService implements CompanyToolPort {
     return applied;
   }
   private async advanceNow(projectId: string): Promise<void> {
-    const project = this.projectOf(projectId); if (!project) return;
+    const project = this.projectOf(projectId); if (!project || !this.owns(project)) return;
     for (const task of readyPlanTasks(this.doc, project)) {
       if (dispatchForPlanTask(this.doc, projectId, task.id)) continue;
       await this.reserve(project.routerConversationId, { agentId: task.agentId, brief: task.brief, title: task.label, moduleId: task.moduleId }, { projectId, task });
@@ -383,7 +412,7 @@ export class CompanyService implements CompanyToolPort {
   private async pumpNow(): Promise<void> {
     while (true) {
       // Pick again after every accepted or failed start; stale snapshots must never claim the same slot twice.
-      const candidate = startableQueued(this.doc, this.limit)[0];
+      const candidate = startableQueued(this.doc, this.limit).find(d => this.owns(d));
       if (!candidate) break;
       if (candidate.moduleId && candidate.moduleId !== "none") {
         const owner = this.host.moduleOwner?.(candidate.moduleId);
@@ -416,7 +445,7 @@ export class CompanyService implements CompanyToolPort {
   /** The host calls this after an approval-only router turn settles. */
   flushPendingReports(): Promise<void> { return this.schedule(() => this.flushReports()); }
   private async flushReports(): Promise<void> {
-    for (const snapshot of this.doc.dispatches.filter(d => d.reportPending && d.report)) {
+    for (const snapshot of this.doc.dispatches.filter(d => d.reportPending && d.report && this.owns(d))) {
       const d = this.dispatchOf(snapshot.id);
       if (!d?.report || !d.reportPending || d.status === "stopped") continue;
       const pending = d.reportPending;
@@ -451,4 +480,16 @@ function hasCycle(plan: readonly CompanyPlanTask[]): boolean {
   const visit = (id: string): boolean => { const s = state.get(id); if (s === 1) return true; if (s === 2) return false; state.set(id, 1);
     const task = plan.find(t => t.id === id); const bad = !!task && task.dependsOn.some(visit); state.set(id, 2); return bad; };
   return plan.some(t => visit(t.id));
+}
+
+/** Vault-relative folders only; the Obsidian/EchoInk configuration folders are never opened to workers. */
+export function companyFolderGrants(value: readonly string[] | undefined): string[] | string {
+  const result: string[] = [];
+  for (const raw of value ?? []) {
+    const folder = raw.trim().replace(/\\/gu, "/").replace(/^\/+|\/+$/gu, "");
+    const parts = folder.split("/");
+    if (!folder || parts.some(part => !part || part === "." || part === "..") || parts[0].startsWith(".")) return `folders 里的「${raw}」不是库内文件夹路径，请写成相对库根目录的路径，例如 02-Areas/个人财务。`;
+    if (!result.includes(folder)) result.push(folder);
+  }
+  return result.slice(0, 20);
 }

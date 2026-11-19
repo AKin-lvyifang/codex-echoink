@@ -41,6 +41,7 @@ async function collect(stream: ReturnType<PiProviderProtocolDispatcher["stream"]
   return { result: await stream.result(), events };
 }
 type Attempt = { status?: number; error?: string; content?: AssistantMessage["content"]; start?: boolean;
+  stopReason?: "stop" | "toolUse" | "length";
   onAttempt?: () => void | Promise<void>; detail?: AssistantProviderFailure["echoInkProviderFailure"] };
 function fixture(attempts: Attempt[]) {
   const calls: { model: Model<Api>; options: SimpleStreamOptions; payload: Record<string, unknown> }[] = [];
@@ -59,7 +60,10 @@ function fixture(attempts: Attempt[]) {
       if (attempt.start) stream.push({ type: "start", partial: assistant(m) });
       if (attempt.error) stream.push({ type: "error", reason: opts.signal?.aborted ? "aborted" : "error",
         error: Object.assign(message, attempt.detail ? { echoInkProviderFailure: attempt.detail } : {}) });
-      else stream.push({ type: "done", reason: "stop", message });
+      else {
+        message.stopReason = attempt.stopReason ?? "stop";
+        stream.push({ type: "done", reason: attempt.stopReason ?? "stop", message });
+      }
     })().catch(error => stream.push({ type: "error", reason: "error", error: assistant(m, String(error)) }));
     return stream;
   };
@@ -151,8 +155,8 @@ async function sdkRequests(): Promise<void> {
     assert.deepEqual(rejectedBodies.map(body => body.max_completion_tokens), [262144, 8192]);
     assertTerminalRejection(rejected.result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
     const text = assistantProviderFailureText(rejected.result as AssistantProviderFailure);
-    assert.match(text, /^服务商拒绝了这次请求\nHTTP 400/u);
-    assert.match(text, /The model fixture-model does not exist/u);
+    assert.equal(text, "模型服务拒绝了本次请求。请在 设置 → 模型服务 中点击“测试连接”查看原因。", "the bubble never shows the raw upstream reply");
+    assert.match(JSON.stringify(rejected.result), /The model fixture-model does not exist/u, "the raw reply is kept for the run report");
     assert.doesNotMatch(text, /上限|sk-fixture-output-limits-never-real/u);
     assert.doesNotMatch(JSON.stringify(rejected), new RegExp(key));
     assert.deepEqual(rejectedPolicy.writes, [], "model-not-found must not write autoLimits");
@@ -203,6 +207,22 @@ export async function runAutoOutputLimitTests(): Promise<void> {
     assert.deepEqual(p.writes, [{ maxOutputTokens: 8192 }]);
   }
   console.log("PASS auto output: explicit DeepSeek/Qwen/OpenAI/Anthropic/MiniMax limits and unnumbered 400/422 fallback");
+  {
+    const learned: { maxOutputTokens?: number } = {};
+    const writes: unknown[] = [];
+    const stateful: PiAutoOutputLimitPolicy = { read: () => learned,
+      remember: (_model, limits) => { Object.assign(learned, limits); writes.push(limits); } };
+    const f = fixture([{ status: 400, error: '400 {"error":{"code":"1214","message":"参数错误"}}' },
+      { stopReason: "toolUse", content: [{ type: "toolCall", id: "fixture-tool", name: "fixture_read", arguments: {} }] },
+      { stopReason: "length", content: [{ type: "thinking", thinking: "Synthetic reasoning consumes the budget" }] }]);
+    const d = new PiProviderProtocolDispatcher({ "openai-completions": f.adapter }, stateful);
+    await collect(send(d));
+    const next = await collect(send(d));
+    assert.deepEqual(f.calls.map(call => call.options.maxTokens), [262_144, 8_192, 8_192]);
+    assert.deepEqual(writes, [{ maxOutputTokens: 8_192 }]);
+    assert.equal(next.result.stopReason, "length");
+    console.log("PASS R-339FF4 fixture: 262144 -> ambiguous 400 -> 8192/toolUse -> learned 8192 -> reasoning-only length");
+  }
 
   for (const attempt of [
     { error: "401 invalid request", status: 401 }, { error: "403 forbidden", status: 403 },
@@ -291,8 +311,8 @@ export async function runAutoOutputLimitTests(): Promise<void> {
     const { result, events } = await sendTransport(dispatcher(failure, fp));
     assertTerminalRejection(result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
     const text = assistantProviderFailureText(result as AssistantProviderFailure);
-    assert.match(text, /^服务商拒绝了这次请求\nHTTP (?:400|422|503)/u);
-    assert.ok(text.includes(second));
+    assert.equal(text, "模型服务拒绝了本次请求。请在 设置 → 模型服务 中点击“测试连接”查看原因。", "the bubble never shows the raw upstream reply");
+    assert.ok(JSON.stringify(result).includes(second), "the raw reply is kept for the run report");
     assert.doesNotMatch(text, /上限/u);
     assert.deepEqual(failure.calls.map(call => call.options.maxTokens), [262144, 8192]);
     assert.equal(fp.writes.length, 0);
@@ -302,7 +322,7 @@ export async function runAutoOutputLimitTests(): Promise<void> {
     const failure = fixture([{ error: "400 invalid_request_error" }, { error: second }]), fp = policy();
     const { result } = await sendTransport(dispatcher(failure, fp));
     assertTerminalRejection(result, PI_OUTPUT_LIMIT_REJECTED);
-    assert.equal(providerFailureText(result.errorMessage), "服务商拒绝了输出上限，请到模型设置手动填写。");
+    assert.equal(providerFailureText(result.errorMessage), "模型服务不接受当前的“单次输出上限”。请在 设置 → 模型服务 中打开该模型，调低“单次输出上限”后重试。");
     assert.equal(fp.writes.length, 0);
     assert.equal(failure.calls.length, 2);
   }
@@ -315,7 +335,7 @@ export async function runAutoOutputLimitTests(): Promise<void> {
   const privateResult = await sendTransport(dispatcher(privateFailure, privatePolicy));
   assertTerminalRejection(privateResult.result, PI_AUTO_OUTPUT_REQUEST_REJECTED);
   const privateText = assistantProviderFailureText(privateResult.result as AssistantProviderFailure);
-  assert.equal(privateText, "服务商拒绝了这次请求\nHTTP 400 · invalid_request_error");
+  assert.equal(privateText, "模型服务拒绝了本次请求。请在 设置 → 模型服务 中点击“测试连接”查看原因。");
   assert.doesNotMatch(JSON.stringify(privateResult), /PRIVATE_REQUEST_CANARY|"request"|"prompt"|"api_key"|sk-fixture-output-limits-never-real/u);
   assert.deepEqual(privateFailure.calls.map(call => call.options.maxTokens), [262144, 8192]);
   assert.equal(privatePolicy.writes.length, 0);

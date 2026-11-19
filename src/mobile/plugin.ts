@@ -1,7 +1,13 @@
+import { settingsErrorText } from "../core/error-copy";
+import { createCloudSyncController } from "../sync/cloud/host";
+import type { CloudSyncController } from "../sync/cloud/controller";
+import { MOBILE_DEVICE_SETTING_KEYS, deviceSettingsSnapshot, mergeExternalSettings, overlayDeviceSettings, readDeviceSettings, writeDeviceSettings } from "../sync/device-settings";
 import type { AgentEditorCreationOptions } from "../ui/codex-view/agent-editor-contract";
 import { settingsReportNoticeContent } from "../run-reports/notice";
 import { openMobileRunReport } from "../run-reports/mobile-ui";
+import { RunReportLogin } from "../run-reports/login";
 import { runErrors } from "../run-reports/recent-errors";
+import { SETTINGS_FALLBACK } from "../core/error-copy/codes/settings";
 import { configuredReportSecrets } from "../run-reports/report";
 import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
@@ -35,6 +41,8 @@ import { IPadAgentPane } from "../ui/ipad/agent-pane";
 import type { IPadAgentRoute, IPadWorkbenchHost } from "../ui/ipad/workbench-contract";
 import type { AgentModuleId } from "../agents/types";
 import { webviewFetch, type MobileRequest, type MobileStreamFetch } from "./transport";
+import { DecisionClient, setDecisionClient } from "../membership/decision-client";
+import { createDecisionFetch, membershipApiUrl } from "../membership/transport";
 import { IPadSettings } from "../ui/ipad/settings-pages";
 import { ExpertHallView, EXPERT_HALL_VIEW_TYPE } from "../experts/view";
 import { registerWorkspacePreviewExtension, WorkspacePreviewView, WORKSPACE_PREVIEW_VIEW_TYPE } from "../workspace/view";
@@ -42,15 +50,20 @@ import { workspacePath } from "../workspace/service";
 
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
+  readonly reportLogin = new RunReportLogin();
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
   /** Null when the store is unavailable or the company record cannot load; the classic assistant keeps working. */
   company: MobileCompany | null = null;
+  /** EchoInk cloud sync; null until the company layer is up. */
+  cloudSync: CloudSyncController | null = null;
   usage!: MobileUsageStore;
   navigation!: MobileWorkspace;
   services!: MobileServices;
   accountService!: AccountService;
+  /** 智能判断（PRO）；没有会员服务地址时为 null，全部走原来的逻辑。 */
+  decisionClient: DecisionClient | null = null;
   getSkillAccountService(): AccountService | undefined { return this.accountService; }
   private appearance?: EchoInkAppearance;
   applyAppearanceTheme(doc?: Document): void { if (doc) this.appearance?.applyToDocument(doc); this.appearance?.refresh(); }
@@ -70,6 +83,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     try {
       const saved: unknown = await this.loadData();
       this.settings = loadMobileSettings(saved);
+      overlayDeviceSettings(this.settings, readDeviceSettings(this.app), MOBILE_DEVICE_SETTING_KEYS);
       const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
       const migratedOwners = JSON.stringify(savedRecord.agentRegistry) !== JSON.stringify(this.settings.agentRegistry);
       const migratedTheme = savedRecord.colorTheme !== this.settings.colorTheme;
@@ -107,7 +121,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       const usageWarning = () => { if (!usageWarningShown) { usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。"); } };
       if (!this.store.unavailableReason) await this.usage.initialize().catch(usageWarning);
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
-        (id, turn) => this.services.context(id, turn), () => this.saveSettings(), () => this.accountService);
+        (id, turn, preparation) => this.services.context(id, turn, preparation), () => this.saveSettings(), () => this.accountService);
       if (!this.store.unavailableReason) this.runtime.setUsage(this.usage);
       this.modelFetch ??= webviewFetch(); this.runtime.setStreamFetch(this.modelFetch);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
@@ -117,30 +131,45 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings || migratedTheme || migratedToolCalling || migratedOwners) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
+      this.register(this.accountService.onSignInReturned(() => this.reportLogin.returned()));
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
+      this.startDecisionClient();
       if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
       if (!this.store.unavailableReason) this.company = await startMobileCompany({ runtime: this.runtime, store: this.store, settings: () => this.settings,
         adapter: this.app.vault.adapter, file: `${mobileDirectory}/devices/${instanceId}/company.v1.json`,
+        sync: { fs: this.app.vault.adapter, deviceId: instanceId, deviceName: Platform.isTablet ? "iPad" : "iPhone", deviceKind: Platform.isTablet ? "tablet" : "phone", enabled: this.settings.syncMirrorEnabled !== false },
         folders: createMobileCompanyFolders(this.app, () => this.settings, () => this.saveSettings()),
         changed: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); this.runtime.onChange(); } });
       this.registerTaskLifecycle();
+      if (!this.store.unavailableReason) {
+        const cloud = createCloudSyncController({ app: this.app, pluginDir: this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`, deviceId: instanceId, deviceKind: Platform.isTablet ? "tablet" : "phone",
+          defaultDeviceName: Platform.isTablet ? "iPad" : "iPhone", account: () => this.accountService, settings: () => this.settings.cloudSync, saveSettings: () => this.saveSettings(), onLocalWrite: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); } });
+        this.cloudSync = cloud;
+        this.register(this.accountService.subscribe(() => { void cloud.accountChanged(); }));
+        this.registerDomEvent(window, "online", () => cloud.wake());
+        this.register(() => { cloud.dispose(); this.cloudSync = null; });
+        void cloud.start().catch(error => console.error("EchoInk cloud sync could not start", error));
+      }
+      const noteSync = (file: { path: string }, kind: "create" | "modify" | "delete" | "rename", oldPath?: string) => { this.company?.overview?.noteVaultChange(file.path); this.company?.requests?.noteVaultChange(file.path); this.cloudSync?.noteVaultChange(file.path, kind, oldPath); };
+      this.registerEvent(this.app.vault.on("create", file => noteSync(file, "create"))); this.registerEvent(this.app.vault.on("modify", file => noteSync(file, "modify")));
+      this.registerEvent(this.app.vault.on("delete", file => noteSync(file, "delete"))); this.registerEvent(this.app.vault.on("rename", (file, oldPath) => noteSync(file, "rename", oldPath)));
       await this.services.initializeFinance();
       this.applyAppearanceTheme();
       this.register(this.accountService.subscribe(() => { this.applyAppearanceTheme(); this.services.lifestyle.refresh(); this.services.notifyHomeSurfacesChanged(); }));
       this.addCommand({ id: "open-lifestyle-finance", name: "打开 财务", callback: () => void this.services.lifestyle.open("finance") });
       this.app.workspace.onLayoutReady(() => {
         if (this.settings.lifestyle.finance.enabled || this.services.lifestyle.store.snapshot().financeEntries.length)
-          void this.services.lifestyle.finance.initialize().catch(error => new Notice(`财务账本初始化未完成，原数据已保留：${String(error)}`));
+          void this.services.lifestyle.finance.initialize().catch(error => this.failureNotice(error, "财务账本未能初始化，原有数据未受影响。请重新打开“财务”后重试。", "The finance ledger could not be initialized; your data is unaffected. Reopen Finance and try again."));
       });
-      this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); });
+      this.registerDomEvent(window, "focus", () => { void this.accountService.refresh(); this.cloudSync?.wake(); });
       this.registerInterval(window.setInterval(() => { void this.accountService.refresh(); this.archiveMobileTasks(); }, 300000));
       registerGalleryFeature(this);
       this.registerWorkspaceViews();
       this.registerStartupWorkbench();
-      this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => new Notice(String(error))); }).classList.add("echoink-ribbon-icon");
+      this.addRibbonIcon("bot", "打开 EchoInk", () => { void this.open().catch(error => this.openFailureNotice(error)); }).classList.add("echoink-ribbon-icon");
       this.registerEvent(this.app.workspace.on("css-change", () => this.applyAppearanceTheme()));
-      this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => new Notice(String(error))); } });
-      this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void (Platform.isTablet ? this.navigation.openHome() : this.open()).catch(error => new Notice(String(error))); } });
+      this.addCommand({ id: "open-echoink-mobile", name: "打开移动对话", callback: () => { void this.open().catch(error => this.openFailureNotice(error)); } });
+      this.addCommand({ id: "open-echoink-mobile-home", name: "打开首页", callback: () => { void (Platform.isTablet ? this.navigation.openHome() : this.open()).catch(error => this.openFailureNotice(error)); } });
       this.addCommand({ id: "echoink-mobile-current-note", name: "在 EchoInk 中引用当前笔记", callback: () => {
         const file = this.app.workspace.getActiveFile();
         if (!Platform.isTablet) {
@@ -148,7 +177,7 @@ export default class EchoInkMobilePlugin extends Plugin {
             const draft = state.newTaskDrafts.sol ?? { text: "", attachments: [] };
             if (file?.extension === "md") draft.noteMentions = [{ vaultRelativePath: file.path, fileName: file.basename }];
             state.newTaskDrafts.sol = draft;
-          }).then(() => this.openIPhoneRoute({ kind: "agent", agentId: "sol" })).catch(error => new Notice(String(error)));
+          }).then(() => this.openIPhoneRoute({ kind: "agent", agentId: "sol" })).catch(error => this.openFailureNotice(error));
           return;
         }
         const page = this.store.state.page;
@@ -157,9 +186,19 @@ export default class EchoInkMobilePlugin extends Plugin {
           const draft = state.newTaskDrafts[agentId] ?? { text: "", attachments: [] };
           if (file?.extension === "md") draft.noteMentions = [{ vaultRelativePath: file.path, fileName: file.basename }];
           state.newTaskDrafts[agentId] = draft;
-        }).then(() => this.openIPadAgent({ kind: "agent", agentId })).catch(error => new Notice(String(error)));
+        }).then(() => this.openIPadAgent({ kind: "agent", agentId })).catch(error => this.openFailureNotice(error));
       } });
-    } catch (error) { new Notice(`EchoInk 无法加载：${error instanceof Error ? error.message : String(error)}`, 10000); throw error; }
+    } catch (error) { this.failureNotice(error, "EchoInk 未能启动。请在 Obsidian 设置 → 第三方插件 中关闭并重新开启 EchoInk；如问题持续，请重新安装插件。", "EchoInk could not start. In Obsidian Settings → Community plugins, turn EchoInk off and on again; if the problem persists, reinstall the plugin.", 10000); throw error; }
+  }
+  /** Fixed plain sentence for the user; the raw error goes to the run report. */
+  private failureNotice(error: unknown, zh: string, en: string, timeout?: number): void {
+    runErrors.record("mobile.plugin", error);
+    new Notice((this.settings as MobileSettings | undefined)?.settingsLanguage === "en" ? en : zh, timeout);
+  }
+  /** Opening a page: keep user-written reasons (e.g. a disabled module), hide raw exceptions. */
+  private openFailureNotice(error: unknown): void {
+    runErrors.record("mobile.plugin", error);
+    new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, (this.settings as MobileSettings | undefined)?.settingsLanguage));
   }
   private async initializeTaskData(initialize: () => Promise<void>): Promise<void> {
     try { await initialize(); }
@@ -173,7 +212,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       if (this.unloaded || !this.settings.autoOpenHome) return;
       void (Platform.isTablet ? this.ipadNavigation!.openHome() : this.iphoneNavigation!.open())
-        .catch(error => new Notice(`无法打开工作台：${String(error)}`));
+        .catch(error => this.failureNotice(error, "工作台未能打开。请点击 EchoInk 图标重试。", "The workbench could not be opened. Tap the EchoInk icon to try again."));
     });
   }
   /** Visibility belongs to the app document, never to a particular workspace tab. */
@@ -182,13 +221,13 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.taskLifecycleRegistered = true;
     const suspend = (reason: "app_backgrounded" | "app_closed") => {
       this.services?.suspendEnglishDiary();
-      void this.runtime.shutdown(reason).catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
+      void this.runtime.shutdown(reason).catch(error => this.failureNotice(error, "中断记录未能保存，原有内容未受影响。请重新打开 EchoInk。", "The interruption record could not be saved; your content is unaffected. Reopen EchoInk."));
     };
     const foreground = () => {
       this.applyAppearanceTheme();
       this.workbench?.invalidate();
       this.archiveMobileTasks();
-      void this.runtime.foreground().then(() => this.company?.service.initialize()).catch(error => new Notice(`中断记录尚未保存，请重新打开后再继续：${String(error)}`));
+      void this.runtime.foreground().then(() => this.company?.service.initialize()).catch(error => this.failureNotice(error, "中断记录尚未保存，原有内容未受影响。请重新打开 EchoInk 后点击“继续”。", "The interruption record has not been saved yet; your content is unaffected. Reopen EchoInk, then tap Continue."));
     };
     this.registerDomEvent(document, "visibilitychange", () => {
       if (document.visibilityState === "hidden") suspend("app_backgrounded");
@@ -197,10 +236,11 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.registerDomEvent(window, "pagehide", () => suspend("app_closed"));
     this.registerDomEvent(window, "pageshow", () => { if (document.visibilityState === "visible") foreground(); });
     if (document.visibilityState === "hidden") suspend("app_backgrounded");
+    else if (this.services) void this.services.memory.resumeDream().catch(() => {});
   }
   private archiveMobileTasks(): void {
     if (this.unloaded || !this.services || document.visibilityState !== "visible") return;
-    void this.services.memory.archiveCompleted().catch(error => new Notice(`自动归档未完成，原会话已保留：${String(error)}`));
+    void this.services.memory.archiveCompleted().catch(error => this.failureNotice(error, "自动归档未完成，原有会话未受影响。系统将稍后自动重试。", "Auto-archive could not be completed; your conversations are unaffected. It will be retried automatically."));
   }
   openRunReport(): void {
     const types = Platform.isTablet ? [IPAD_SHELL_AGENT_VIEW, IPAD_SHELL_HOME_VIEW] : [IPHONE_SHELL_VIEW];
@@ -213,7 +253,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       if (page && !page.closest("[hidden]")) { taskId = page.dataset.pageId?.slice(5); break; }
     }
     openMobileRunReport({ app: this.app, store: this.store, runtime: this.runtime, settings: () => this.settings,
-      version: this.manifest.version, accountService: this.accountService }, taskId, Platform.isTablet ? "ipad" : "iphone");
+      version: this.manifest.version, accountService: this.accountService, reportLogin: this.reportLogin, openLegacy: page => this.showPage(page) }, taskId, Platform.isTablet ? "ipad" : "iphone");
   }
   async saveSettings(candidateRegistry?: AgentRegistry): Promise<void> {
     const registry = candidateRegistry ? structuredClone(candidateRegistry) : undefined;
@@ -228,6 +268,7 @@ export default class EchoInkMobilePlugin extends Plugin {
       }
       const snapshot: unknown = JSON.parse(JSON.stringify(candidate));
       await this.saveData(snapshot);
+      writeDeviceSettings(this.app, deviceSettingsSnapshot(candidate, MOBILE_DEVICE_SETTING_KEYS));
       // Publish in the same queue slot: the next ordinary settings save must see
       // either this verified Registry or the previous one after a failed write.
       if (registry) { this.settings.agentRegistry = registry; this.retainedRegistry = undefined; }
@@ -239,12 +280,16 @@ export default class EchoInkMobilePlugin extends Plugin {
         this.reportedSettingsSaveFailure = true;
         const english = this.settings.settingsLanguage === "en";
         new Notice(settingsReportNoticeContent(this.app.workspace.containerEl?.ownerDocument ?? document,
-          english ? "EchoInk couldn't save settings. Check whether a sync or antivirus app is locking the plugin folder."
+          english ? "EchoInk could not save settings. Check whether a sync or antivirus app is locking the plugin folder."
             : "EchoInk 设置多次保存失败，请检查同步或杀毒软件是否占用了插件文件夹",
           () => this.openRunReport(), english, true), 15000);
       }
       throw error;
     }
+    this.refreshSettingsSurfaces();
+  }
+  /** Every open surface re-reads `this.settings`; used after a save and after an external data.json change. */
+  refreshSettingsSurfaces(): void {
     this.services?.settingsChanged();
     for (const leaf of this.app.workspace.getLeavesOfType(MOBILE_VIEW)) if (leaf.view instanceof EchoInkMobileView) leaf.view.refreshSettings();
     this.workbench?.invalidate();
@@ -357,8 +402,31 @@ export default class EchoInkMobilePlugin extends Plugin {
     const leaf = await this.iphoneNavigation!.open();
     if (leaf.view instanceof EchoInkIPhoneView) await leaf.view.showPage(page);
   }
+  /** A sync tool rewrote data.json: shared settings come in, the mobile look and this device's switches stay. */
+  async onExternalSettingsChange(): Promise<void> {
+    try {
+      const incoming = loadMobileSettings(await this.loadData());
+      if (!mergeExternalSettings(this.settings, incoming, MOBILE_DEVICE_SETTING_KEYS)) return;
+      overlayDeviceSettings(this.settings, readDeviceSettings(this.app), MOBILE_DEVICE_SETTING_KEYS);
+      this.applyAppearanceTheme();
+      this.refreshSettingsSurfaces();
+    } catch (error) { console.error("EchoInk external settings change could not be applied", error); }
+  }
+  private startDecisionClient(): void {
+    if (!membershipApiUrl) return;
+    const token = () => this.accountService?.apiToken() ?? null;
+    const client = new DecisionClient({ fetch: createDecisionFetch(membershipApiUrl), token, state: () => this.settings.smartJudgment,
+      saveState: async state => { this.settings.smartJudgment = state; await this.saveSettings(); } });
+    this.decisionClient = client;
+    setDecisionClient(client);
+    this.register(() => { setDecisionClient(null); this.decisionClient = null; });
+    let lastToken = token();
+    void client.refreshStatus();
+    this.register(this.accountService.subscribe(() => { const next = token(); if (next !== lastToken) { lastToken = next; void client.refreshStatus(); } }));
+  }
   onunload(): void {
     this.unloaded = true;
+    this.reportLogin.dispose();
     this.company?.dispose(); this.company = null;
     (this.app.workspace.containerEl?.ownerDocument ?? document).body.removeAttribute(ECHOINK_THEME_ATTRIBUTE);
     this.workbench?.dispose();
@@ -367,7 +435,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.accountService?.dispose();
     const stopped = this.runtime?.shutdown("plugin_disabled");
     this.runtime?.dispose();
-    void stopped?.catch(error => new Notice(`中断记录未保存，原资料已保留：${String(error)}`));
+    void stopped?.catch(error => this.failureNotice(error, "中断记录未能保存，原有内容未受影响。请重新打开 EchoInk。", "The interruption record could not be saved; your content is unaffected. Reopen EchoInk."));
     void this.services?.dispose();
   }
 }
@@ -390,8 +458,8 @@ export class EchoInkIPhoneView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
-      accountService: this.plugin.accountService, version: this.plugin.manifest.version,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
+      accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openNote: async path => {
@@ -438,8 +506,8 @@ export class EchoInkIPadView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
-      accountService: this.plugin.accountService, version: this.plugin.manifest.version,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
+      accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openHome: async (resetRoute = false) => {
@@ -496,8 +564,8 @@ export class EchoInkIPadSettingsView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPadSettings(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
-      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null,
-      accountService: this.plugin.accountService, version: this.plugin.manifest.version, modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
+      agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
+      accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version, modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
       settings: () => this.plugin.settings, saveSettings: () => this.plugin.saveSettings(),
       openHome: async () => { await this.plugin.ipadNavigation!.openHome(); },
       openAgent: route => this.plugin.openIPadAgent(route),

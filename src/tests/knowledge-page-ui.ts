@@ -177,7 +177,7 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   let scanFails = false;
   const upgradeCalls: string[] = [];
   const service = { getDashboardSnapshot: async () => snapshot.dashboard, getMaintenanceRecords: async () => [],
-    getUpgradeSnapshot: async () => { if (scanFails) throw new Error("旧目录暂时读不到"); return upgrade; },
+    getUpgradeSnapshot: async () => { if (scanFails) throw new Error("旧目录暂时无法读取"); return upgrade; },
     previewUpgrade: async () => { upgradeCalls.push("preview"); return preview; },
     confirmUpgrade: async (id: string) => { upgradeCalls.push(`confirm:${id}`); return upgrade = { status: "running", counts, recordId: "upgrade-record", taskId: "upgrade-task", preview }; },
     stopUpgrade: async () => { upgradeCalls.push("stop"); upgrade = { ...upgrade, status: "interrupted", completed: { sources: 1, links: 2, wiki: 1 }, message: "已停止，已补好的属性会保留。" }; },
@@ -187,15 +187,15 @@ export async function runKnowledgePageUiTests(): Promise<void> {
   assert.equal((await loadKnowledgePageData(dataHost, async () => snapshot.links)).upgrade?.status, "scanning");
   scanFails = true;
   const failedScan = await loadKnowledgePageData(dataHost, async () => snapshot.links);
-  assert.equal(failedScan.upgrade, null); assert.equal(failedScan.errors.upgrade, "旧目录暂时读不到");
+  assert.equal(failedScan.upgrade, null); assert.equal(failedScan.errors.upgrade, "旧目录暂时无法读取");
   scanFails = false;
   next = { ...snapshot, upgrade }; await view.refresh();
   assert.match(view.field("upgrade").textContent, /正在检查旧资料/u); assert.doesNotMatch(view.field("upgrade").textContent, /0 篇/u);
-  scanFails = true; await view.refreshUpgrade(); assert.match(view.field("upgrade").textContent, /旧目录暂时读不到.*重试/u);
+  scanFails = true; await view.refreshUpgrade(); assert.match(view.field("upgrade").textContent, /旧目录暂时无法读取.*重试/u);
   scanFails = false; upgrade = { status: "ready", counts, preview };
   (view.field("upgrade").querySelector("button") as HTMLButtonElement).click(); await tick(); await tick();
   assert.deepEqual(upgradeCalls, ["preview"], "Retry performs another read-only preview scan");
-  assert.equal(view.page, "upgrade"); assert.doesNotMatch(view.field("secondary").textContent, /旧目录暂时读不到/u);
+  assert.equal(view.page, "upgrade"); assert.doesNotMatch(view.field("secondary").textContent, /旧目录暂时无法读取/u);
   view.openPage("overview"); upgradeCalls.length = 0;
   assert.match(view.field("upgrade").textContent, /有 1 篇资料待补状态，2 篇资料待补链接，3 页 Wiki 待补类型/u);
   view.contentEl.scrollTop = 167;

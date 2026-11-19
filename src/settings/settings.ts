@@ -1,3 +1,5 @@
+import { emptyWorkbenchDismissals, normalizeWorkbenchDismissals, type WorkbenchDismissals } from "../home/workbench-dismissals";
+import { CAUSE, pickErrorCopy } from "../core/error-copy";
 import { normalizeEchoInkMcpServerSettings, type EchoInkMcpServerSettings } from "../mcp-server/settings";
 import { normalizeWorkbenchCheckin, type WorkbenchCheckinData } from "../home/workbench-checkin";
 import { normalizeWeatherCity, type WeatherCity } from "../home/weather-types";
@@ -9,6 +11,7 @@ import type { AgentRegistry } from "../agents/types";
 import { defaultTaskWorkspace, normalizeTaskWorkspace, type TaskWorkspace } from "../agents/task-workspace";
 import { normalizeConversationTaskMetadata } from "../agents/task-metadata";
 import { normalizeSelectionAskSettings } from "../selection-ask/settings";
+import { normalizeNoteCommentSettings } from "../note-comments/settings";
 import { DEFAULT_UNDECLARED_TOOL_CALLING, resolveStoredModelToolCalling } from "./provider-model-capabilities";
 import { normalizeInlineAgentSettings } from "../inline-agent/settings";
 import { newId } from "../core/new-id";
@@ -32,7 +35,7 @@ import {
   apiProviderMaxOutputReserve,
   getApiProviderPreset,
   getApiProviderModelPreset,
-  isLoopbackApiProviderUrl,
+  isLocalNetworkApiProviderUrl,
   isQwenTokenPlanApiProviderUrl,
   normalizeApiProviderId,
   normalizeApiProviderProtocol,
@@ -132,6 +135,7 @@ export interface PersonalMemorySourceReference {
 
 /** Identity of a primary Memory actually inserted into this turn's model context. */
 export interface InjectedPersonalMemorySourceReference extends PersonalMemorySourceReference {
+  readonly relatedFrom?: Readonly<{ id: string; title: string }>;
   revision?: number;
   readonly reason?: string;
 }
@@ -252,6 +256,8 @@ export interface ChatMessage {
   askSourceAttribution?: true;
   /** Reading-time source facts remain intact when final permission was revoked. */
   knowledgeVerificationSkipped?: "knowledge_permission_revoked";
+  /** Projection-only freshness identities; source snapshots stay immutable. */
+  knowledgeReferenceFreshness?: readonly string[];
   /** Display-only primary Memory ids and titles; never Memory bodies or prompts. */
   personalMemorySources?: readonly PersonalMemorySourceReference[];
   /** Session-owned identities only; original Memory content stays in its repository. */
@@ -302,6 +308,10 @@ export type SettingsLanguage = "zh-CN" | "en";
 
 export interface SetupSettings {
   knowledgeReminderDismissedAt?: number;
+  /** Workbench setup to-dos dismissed by key; a changed signature shows the item again. */
+  setupTodoDismissed?: Record<string, string>;
+  /** Getting-started steps the user started or dismissed. */
+  onboardingGuideDone?: string[];
   completedAt: number;
   paperGuideDismissedAt: number;
   lastCheckedAt: number;
@@ -546,11 +556,14 @@ export interface EchoInkTodoItem {
 export interface CodexForObsidianSettings {
   mcpServer: EchoInkMcpServerSettings;
   weatherCity: WeatherCity | null;
+  news: import("../news/settings").NewsSettings;
   workbenchCheckin: WorkbenchCheckinData;
+  workbenchDismissals: WorkbenchDismissals;
   workbenchOnboardingDismissed?: boolean;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
+  noteComments: import("../note-comments/types").NoteCommentSettings;
   inlineAgent: import("../inline-agent/settings").InlineAgentSettings;
   expertsEnabled?: boolean;
   englishDiary: import("../english-diary/types").EnglishDiarySettings;
@@ -574,6 +587,12 @@ export interface CodexForObsidianSettings {
   defaultMode: UiMode;
   autoOpen: boolean;
   autoOpenHome: boolean;
+  /** Mirror company records into the visible sync folder for other devices. Off = keep only the old local storage. */
+  syncMirrorEnabled: boolean;
+  /** EchoInk cloud sync (Max/PRO): which note folders travel besides the EchoInk mirror. The password never lives here. */
+  cloudSync: CloudSyncSettings;
+  /** 智能判断（PRO）：开关默认开；首次卡片与“本月用完”提示各只出一次。 */
+  smartJudgment: SmartJudgmentSettings;
   quickChat: QuickChatSettings;
   homeModules: Record<string, boolean>;
   lifestyle: LifestyleSettings;
@@ -603,13 +622,22 @@ export interface CodexForObsidianSettings {
 
 export const DEFAULT_REVIEW_OUTPUT_DIR = "outputs";
 
+import { normalizeCloudSyncSettings, type CloudSyncSettings } from "../sync/cloud/settings";
+import { normalizeNewsSettings } from "../news/settings";
+export { normalizeCloudSyncSettings, type CloudSyncSettings } from "../sync/cloud/settings";
+import { normalizeSmartJudgmentSettings, type DecisionPersistentState as SmartJudgmentSettings } from "../membership/decision-client";
+export { normalizeSmartJudgmentSettings, type SmartJudgmentSettings };
+
 export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   weatherCity: null,
+  news: { subscriptions: [], dismissedAnnouncement: "" },
   workbenchCheckin: { signedDates: [], agentDates: [] },
   workbenchOnboardingDismissed: false,
+  workbenchDismissals: emptyWorkbenchDismissals(),
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
   selectionAsk: { enabled: true, actions: [{ id: "default", name: "提问", template: "" }] },
+  noteComments: normalizeNoteCommentSettings(undefined),
   inlineAgent: { enabled: true, trigger: "@", nldConflictNoticeShown: false },
   expertsEnabled: undefined,
   englishDiary: { ...DEFAULT_ENGLISH_DIARY_SETTINGS },
@@ -633,6 +661,9 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   defaultMode: "agent",
   autoOpen: false,
   autoOpenHome: false,
+  syncMirrorEnabled: true,
+  cloudSync: { enabled: false, excludedFolders: [], includeAttachments: true, deviceName: "" },
+  smartJudgment: { enabled: true, introSeen: false },
   mcpServer: normalizeEchoInkMcpServerSettings(undefined),
   quickChat: {
     enabled: false,
@@ -789,8 +820,10 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     ...DEFAULT_SETTINGS,
     ...currentData,
     workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
+    workbenchDismissals: normalizeWorkbenchDismissals(data.workbenchDismissals),
     workbenchOnboardingDismissed: data.workbenchOnboardingDismissed === true,
     weatherCity: normalizeWeatherCity(data.weatherCity),
+    news: normalizeNewsSettings(data.news),
     // Plan is a conversation/draft choice, never a default for future tasks.
     defaultMode: "agent",
     productGeneration: DEFAULT_SETTINGS.productGeneration,
@@ -800,11 +833,15 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     settingsTab: normalizeSettingsTab(data?.settingsTab),
     tavily: normalizeTavilySettings(data.tavily),
     selectionAsk: normalizeSelectionAskSettings(data.selectionAsk),
+    noteComments: normalizeNoteCommentSettings(data.noteComments),
     inlineAgent: normalizeInlineAgentSettings(data.inlineAgent),
     expertsEnabled: typeof data.expertsEnabled === "boolean" ? data.expertsEnabled : undefined,
     autoArchiveDays: normalizeAutoArchiveDays(data.autoArchiveDays),
     providerMode: normalizeProviderMode(data?.providerMode),
     autoOpenHome: data?.autoOpenHome === true,
+    syncMirrorEnabled: data?.syncMirrorEnabled !== false,
+    cloudSync: normalizeCloudSyncSettings(data?.cloudSync),
+    smartJudgment: normalizeSmartJudgmentSettings(data?.smartJudgment),
     journalDirectory: normalizeJournalDirectory(data?.journalDirectory),
     diaryOrganizerEnabled: data?.diaryOrganizerEnabled === true,
     diaryOrganizerPromptDismissed: data?.diaryOrganizerPromptDismissed === true,
@@ -844,7 +881,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     workspaceResources: normalizeWorkspaceResources(data?.workspaceResources),
     workspaceResourceCache: normalizeWorkspaceResourceCache(data?.workspaceResourceCache),
     sessions: currentProductData ? normalizeStoredSessions(data?.sessions) : [],
-    agentRegistry: normalizeAgentRegistry(data.agentRegistry, Object.keys(data).length > 0),
+    agentRegistry: normalizeAgentRegistry(data.agentRegistry),
     taskWorkspace: normalizeTaskWorkspace(data.taskWorkspace),
     activeSessionId: currentProductData && typeof data?.activeSessionId === "string"
       ? data.activeSessionId
@@ -987,10 +1024,16 @@ export function apiProviderHasUsableApiKey(provider: ApiProviderConfig): boolean
     );
 }
 
+/** 小echo uses the EchoInk membership login; main.ts registers the live probe once the account service exists. */
+let echoInkAccountSignedIn: () => boolean = () => false;
+export function setEchoInkAccountCredentialProbe(probe: () => boolean): void {
+  echoInkAccountSignedIn = probe;
+}
 export function apiProviderHasUsableCredential(
   provider: ApiProviderConfig,
   openAICodexCredential: OAuthCredential | null
 ): boolean {
+  if (provider.authMode === "account") return echoInkAccountSignedIn();
   return provider.authMode === "oauth"
     ? normalizeApiProviderId(
         provider.providerId,
@@ -1164,9 +1207,15 @@ export function createDiscoveredApiProviderModelConfig(
   value: DiscoveredProviderModel,
   previous?: ApiProviderModelConfig
 ): ApiProviderModelConfig {
-  const discovery = normalizeDiscoveredProviderModel(value);
+  let discovery = normalizeDiscoveredProviderModel(value);
   const baseline = createApiProviderModelConfig(providerId, modelId, runtimeProviderId);
   if (!discovery || discovery.id !== baseline.id) return baseline;
+  // This model was previously unknown. Old discovery guesses must not override
+  // its documented limits; explicit limitsOverride is applied separately.
+  if (providerId === "glm" && modelId === "glm-5.3") {
+    discovery = { ...discovery, contextWindow: baseline.contextWindow, modelMaxTokens: baseline.modelMaxTokens,
+      reasoning: true, reasoningLevels: ["low", "high", "max"], defaultReasoningEffort: "max" };
+  }
   const model: ApiProviderModelConfig = {
     ...baseline,
     displayName: discovery.displayName ?? baseline.displayName,
@@ -1306,14 +1355,29 @@ export function getEnglishDiaryApiProviderModel(
   const { providerSettingsId, modelId } = settings.englishDiary;
   if (!providerSettingsId && !modelId) {
     const active = getActiveApiProviderModel(settings);
-    if (!active) throw new Error("尚未设置默认模型，请在 API Provider 或英文日记设置中选择模型。");
+    if (!active) throw new Error(CAUSE.providerNotConfigured[0]);
     return active;
   }
-  if (!providerSettingsId || !modelId) throw new Error("英文日记模型配置不完整，请重新选择 Provider 和模型。");
+  if (!providerSettingsId || !modelId) throw new Error("英文日记的模型选择不完整。请在英文日记设置中重新选择模型。");
   const provider = settings.apiProviders.find((candidate) => candidate.id === providerSettingsId);
-  if (!provider) throw new Error("英文日记所选的 API Provider 已不存在，请在英文日记设置中重新选择。");
+  if (!provider) throw new Error("英文日记所选的模型服务已删除。请在英文日记设置中重新选择模型。");
   const model = getApiProviderModel(provider, modelId);
-  if (!model) throw new Error("英文日记所选模型已不存在，请在英文日记设置中重新选择。");
+  if (!model) throw new Error("英文日记所选的模型已删除。请在英文日记设置中重新选择模型。");
+  return { provider, model };
+}
+
+export function getNoteCommentApiProviderModel(
+  settings: Pick<CodexForObsidianSettings, "noteComments" | "activeApiProviderId" | "apiProviders" | "defaultModel">
+): NonNullable<ReturnType<typeof getActiveApiProviderModel>> {
+  const { providerSettingsId, modelId } = settings.noteComments;
+  if (!providerSettingsId || !modelId) {
+    const active = getActiveApiProviderModel(settings);
+    if (!active) throw new Error(CAUSE.providerNotConfigured[0]);
+    return active;
+  }
+  const provider = settings.apiProviders.find((candidate) => candidate.id === providerSettingsId);
+  const model = provider && getApiProviderModel(provider, modelId);
+  if (!provider || !model) throw new Error("笔记评论所选的模型已删除。请在笔记评论设置中重新选择模型。");
   return { provider, model };
 }
 
@@ -1360,6 +1424,40 @@ export function activateApiProviderModel(
   settings.providerMode = "custom-api";
   settings.activeApiProviderId = provider.id;
   settings.defaultModel = modelId;
+}
+
+/**
+ * Signed-in EchoInk accounts always have 小echo listed. It becomes the default
+ * only when the current default cannot run (none chosen, or missing credential);
+ * a working user-chosen default is never replaced. Returns whether anything changed.
+ */
+export function ensureXiaoechoProvider(
+  settings: Pick<
+    CodexForObsidianSettings,
+    | "providerMode"
+    | "activeApiProviderId"
+    | "defaultModel"
+    | "apiProviders"
+    | "openAICodexCredential"
+  >
+): boolean {
+  let changed = false;
+  let xiaoecho = settings.apiProviders.find((provider) =>
+    normalizeApiProviderId(provider.providerId, provider.baseUrl, provider.name) === "xiaoecho");
+  if (!xiaoecho) {
+    xiaoecho = createApiProviderConfig("xiaoecho");
+    settings.apiProviders.push(xiaoecho);
+    changed = true;
+  }
+  const active = settings.apiProviders.find((provider) => provider.id === settings.activeApiProviderId);
+  const activeUsable = !!active
+    && apiProviderHasUsableCredential(active, settings.openAICodexCredential)
+    && !!getApiProviderModel(active, settings.defaultModel);
+  if (!activeUsable && active !== xiaoecho && getApiProviderModel(xiaoecho, xiaoecho.defaultModelId)) {
+    activateApiProviderModel(settings, xiaoecho, xiaoecho.defaultModelId);
+    changed = true;
+  }
+  return changed;
 }
 
 export function clearApiProviderApiKey(
@@ -1503,10 +1601,10 @@ export function validateApiProvider(provider: Pick<ApiProviderConfig,
     provider.name
   );
   if (provider.authMode !== apiProviderAuthMode(providerId)) {
-    errors.push(language === "en" ? "Authentication mode is invalid" : "认证方式无效");
+    errors.push(language === "en" ? "This model service's sign-in method does not match. Delete it and add it again." : "该模型服务的登录方式不匹配。请删除后重新添加。");
   }
-  if (!provider.name.trim()) errors.push(language === "en" ? "Name is required" : "名称不能为空");
-  if (!provider.baseUrl.trim()) errors.push(language === "en" ? "Base URL is required" : "Base URL 不能为空");
+  if (!provider.name.trim()) errors.push(language === "en" ? "Enter a name." : "请填写名称。");
+  if (!provider.baseUrl.trim()) errors.push(language === "en" ? "Enter the endpoint." : "请填写接口地址。");
   if (provider.baseUrl.trim()) {
     try {
       normalizeApiProviderBaseUrl(
@@ -1514,22 +1612,22 @@ export function validateApiProvider(provider: Pick<ApiProviderConfig,
         provider.apiProtocol
       );
     } catch {
-      errors.push(language === "en" ? "API URL must use HTTPS or exact loopback HTTP" : "API URL 必须使用 HTTPS；本地仅允许精确 loopback HTTP 地址");
+      errors.push(pickErrorCopy(CAUSE.providerUrlInvalid, language));
     }
   }
   if (
     providerId === "ollama"
     && provider.baseUrl.trim()
-    && !isLoopbackApiProviderUrl(provider.baseUrl)
+    && !isLocalNetworkApiProviderUrl(provider.baseUrl)
   ) {
     errors.push(language === "en"
-      ? "Ollama must use an exact local loopback address"
-      : "Ollama 只允许使用精确的本机 loopback 地址");
+      ? "Ollama supports only addresses on this computer or the local network. Change the endpoint."
+      : "Ollama 仅支持本机或局域网内的地址。请修改接口地址。");
   }
   if (provider.models.length === 0) {
     errors.push(language === "en"
-      ? "Select at least one model"
-      : "至少选择一个模型");
+      ? "Select at least one model."
+      : "请至少勾选一个模型。");
   }
   const seenModelIds = new Set<string>();
   for (const model of provider.models) {
@@ -1538,8 +1636,8 @@ export function validateApiProvider(provider: Pick<ApiProviderConfig,
       || seenModelIds.has(model.id)
     ) {
       errors.push(language === "en"
-        ? "Model metadata is invalid"
-        : "模型元数据无效");
+        ? `A model's settings are incomplete or its Model ID is duplicated (${typeof model.id === "string" && model.id.trim() ? model.id : "unnamed"}). Open the model, fix it, then save.`
+        : `模型参数无效或 Model ID 重复（${typeof model.id === "string" && model.id.trim() ? model.id : "未命名"}）。请打开该模型修改后重新保存。`);
       break;
     }
     seenModelIds.add(model.id);
@@ -1549,17 +1647,17 @@ export function validateApiProvider(provider: Pick<ApiProviderConfig,
     || !seenModelIds.has(provider.defaultModelId)
   ) {
     errors.push(language === "en"
-      ? "Choose a valid default model"
-      : "请选择有效的默认模型");
+      ? "Choose a default model."
+      : "请选择一个默认模型。");
   }
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u.test(provider.runtimeProviderId)) {
-    errors.push(language === "en" ? "Runtime Provider ID is invalid" : "Runtime Provider ID 无效");
+    errors.push(language === "en" ? "This model service's configuration is corrupted. Delete it and add it again." : "该模型服务的配置已损坏。请删除后重新添加。");
   }
   if (
     apiProviderApiKeyRequired(providerId)
     && !provider.apiKey.trim()
   ) {
-    errors.push(language === "en" ? "API key is required" : "API key 不能为空");
+    errors.push(language === "en" ? "Enter an API key." : "请填写 API Key。");
   }
   return errors;
 }
@@ -1669,7 +1767,7 @@ export function selectActiveConversationSession(
 
 export function providerConnectionLabel(settings: Pick<CodexForObsidianSettings, "providerMode" | "activeApiProviderId" | "apiProviders">, language: SettingsLanguage = "zh-CN"): string {
   const provider = getActiveApiProvider(settings);
-  if (!provider) return language === "en" ? "Provider not configured" : "Provider 未配置";
+  if (!provider) return language === "en" ? "Model service not set up" : "模型服务未配置";
   const providerId = normalizeApiProviderId(
     provider.providerId,
     provider.baseUrl,
@@ -1880,6 +1978,8 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
     completedAt: normalizeNonNegativeNumber(value?.completedAt),
     paperGuideDismissedAt: normalizeNonNegativeNumber(value?.paperGuideDismissedAt),
     knowledgeReminderDismissedAt: normalizeNonNegativeNumber(value?.knowledgeReminderDismissedAt),
+    ...normalizeSetupTodoDismissed(value?.setupTodoDismissed),
+    ...(Array.isArray(value?.onboardingGuideDone) ? { onboardingGuideDone: value.onboardingGuideDone.filter((key): key is string => typeof key === "string" && key.length <= 32).slice(0, 16) } : {}),
     lastCheckedAt: normalizeNonNegativeNumber(value?.lastCheckedAt),
     dismissedVersion: normalizeOptionalText(value?.dismissedVersion),
     tutorialVersion: normalizeOptionalText(value?.tutorialVersion),
@@ -1891,6 +1991,13 @@ function normalizeSetupSettings(input: unknown): SetupSettings {
       ? tutorialStep
       : "sidebar"
   };
+}
+
+function normalizeSetupTodoDismissed(value: unknown): Pick<SetupSettings, "setupTodoDismissed"> {
+  const raw = settingsRecord(value);
+  if (!raw) return {};
+  const entries = Object.entries(raw).filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[0].length <= 64 && entry[1].length <= 512).slice(0, 32);
+  return entries.length ? { setupTodoDismissed: Object.fromEntries(entries) } : {};
 }
 
 function normalizeWelcomeLine(value: unknown, fallback: string): string {
@@ -2696,10 +2803,10 @@ function normalizeApiProviderSelection(settings: Pick<
   settings.providerMode = "custom-api";
   if (
     active
-    && apiProviderHasUsableCredential(
-      active,
-      settings.openAICodexCredential
-    )
+    // Account restoration follows settings loading. Keep the saved xiaoecho
+    // selection here; authentication is checked when an inference is requested.
+    && (active.providerId === "xiaoecho" && active.authMode === "account"
+      || apiProviderHasUsableCredential(active, settings.openAICodexCredential))
   ) {
     settings.defaultModel = getApiProviderModel(active, settings.defaultModel)?.id
       ?? active.defaultModelId;
@@ -2774,7 +2881,7 @@ function normalizeApiProviders(
       baseUrl: baseUrl || preset.baseUrl,
       models: modelSelection.models,
       defaultModelId: modelSelection.defaultModelId,
-      apiKey: apiProviderAuthMode(providerId) === "oauth"
+      apiKey: apiProviderAuthMode(providerId) !== "api-key"
         ? ""
         : typeof record.apiKey === "string"
         ? record.apiKey.trim()

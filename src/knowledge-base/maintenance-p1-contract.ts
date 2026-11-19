@@ -81,7 +81,7 @@ export interface MaintenanceP1State {
   /** Host-owned generation increases only when fresh sections discard a stale uncommitted draft. */
   draftGenerations?: Record<string, number>;
   folderBindingsRevision?: number;
-  drafts: Record<string, { content: string; toolCallId: string }>;
+  drafts: Record<string, { content: string; toolCallId: string; copyFragments?: string[]; copySummary?: import("./maintenance-copy-guard").MaintenanceCopySummary }>;
   committedPages: Record<string, { path: string; contentRevision: string }>;
   finalizedSources: string[];
   /** Full-file revisions, separate from body-only sourceFingerprints. */

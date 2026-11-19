@@ -45,7 +45,7 @@ export function createDefaultModelPage(ctx: IPadSettingsContext): MobileShellPag
           if (busy) return; busy = true;
           content.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = true; });
           try { await ctx.models.selectDefault(provider.id, model.id); ctx.refresh(); await ctx.back(); }
-          catch (failure) { showSettingsError(error, failure); }
+          catch (failure) { showSettingsError(error, failure, ctx); }
           finally { busy = false; content.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; }); }
         }, settingsBrand(ctx, provider)); row.setAttribute("aria-pressed", String(selected)); attachNativeTooltip(row, model.displayName || model.id);
       }
@@ -98,8 +98,8 @@ export function createProviderPage(ctx: IPadSettingsContext, input: ApiProviderC
       provider.models = [...known.values()]; fetched = true; incomplete = response.incomplete;
       // Selection remains explicit: fetching alone never saves or selects newly discovered models.
       renderModels();
-      if (!response.models.length) showSettingsError(error, t(ctx, "模型列表为空，可在参数页手动添加 Model ID。"));
-    } catch (failure) { if (!disposed) showSettingsError(error, failure); }
+      if (!response.models.length) showSettingsError(error, t(ctx, "模型列表为空，可在参数页手动添加 Model ID。"), ctx);
+    } catch (failure) { if (!disposed) showSettingsError(error, failure, ctx); }
     finally { fetching = false; update(); }
   }); heading.append(fetch); fields.append(heading);
   const models = el(ctx.document, "div", "pd-model-choices"); fields.append(models); content.append(fields, error);
@@ -110,7 +110,7 @@ export function createProviderPage(ctx: IPadSettingsContext, input: ApiProviderC
     const allModels = provider.models; saving = true; error.hidden = true; update();
     provider.models = allModels.filter(model => picked.has(model.id));
     try { await ctx.models.save(provider); allowLeave = true; ctx.refresh(); if (!disposed) await ctx.shell.activePageShell?.backTo("ipad-settings-model"); }
-    catch (failure) { if (!disposed) showSettingsError(error, failure); }
+    catch (failure) { if (!disposed) showSettingsError(error, failure, ctx); }
     finally { provider.models = allModels; saving = false; update(); }
   }, true); actions.append(cancel, save);
   function renderModels(): void {
@@ -136,7 +136,7 @@ export function createProviderPage(ctx: IPadSettingsContext, input: ApiProviderC
       removeArea.append(settingsAction(ctx, "取消", () => { removeArea.replaceChildren(remove); }), settingsAction(ctx, "删除", async () => {
         if (saving || fetching) return; saving = true; update();
         try { await ctx.models.remove(provider.id); allowLeave = true; ctx.refresh(); await ctx.shell.activePageShell?.backTo("ipad-settings-model"); }
-        catch (failure) { showSettingsError(error, failure); } finally { saving = false; update(); }
+        catch (failure) { showSettingsError(error, failure, ctx); } finally { saving = false; update(); }
       }));
     }); removeArea.append(remove); fields.append(removeArea);
   }

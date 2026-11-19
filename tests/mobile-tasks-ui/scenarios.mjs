@@ -22,7 +22,7 @@ export async function runMobileTaskUIScenarios(api, win) {
   const { MobileUI, MobileStore, MobileRuntime, loadMobileSettings, mobileProvider, mobileModel } = api;
   let passed = 0;
   const test = async (name, work) => { await work(); passed++; console.log(`ok ${passed} - ${name}`); };
-  async function fixture(request, isTablet = false, services = undefined) {
+  async function fixture(request, isTablet = false, services = undefined, context = undefined) {
     const host = createHost({}); host.app.workspace.containerEl = win.document.body;
     const store = new MobileStore(host.adapter, "plugin/mobile", "task-ui-fixture"); await store.load();
     const provider = mobileProvider("custom"); Object.assign(provider, { apiProtocol: "openai-completions", name: "Synthetic", baseUrl: "https://provider.example/v1", apiKey: "synthetic-not-a-real-key",
@@ -30,11 +30,11 @@ export async function runMobileTaskUIScenarios(api, win) {
     const config = loadMobileSettings({ apiProviders: [provider], activeApiProviderId: provider.id, defaultModel: "synthetic-model", providerMode: "api" });
     config.agentRegistry.agents[0].name = "甲助";
     config.agentRegistry.agents.push({ ...structuredClone(config.agentRegistry.agents[0]), id: "agent-b", name: "乙助", capabilityIds: ["knowledge"] });
-    const runtime = new MobileRuntime(host.app, store, () => config, request);
-    const roots = [], views = [];
+    const runtime = new MobileRuntime(host.app, store, () => config, request, context);
+    const roots = [], views = [], openedNotes = [];
     const mount = (settingsOnly = false) => {
       const root = win.document.body.appendChild(win.document.createElement("div")); roots.push(root);
-      const ui = new MobileUI(root, { app: host.app, store, runtime, isTablet, settingsOnly, services, settings: () => config, async saveSettings() {}, async openNote() {}, beginRender() {}, renderMarkdown(value, element) { element.textContent = value; } });
+      const ui = new MobileUI(root, { app: host.app, store, runtime, isTablet, settingsOnly, services, settings: () => config, async saveSettings() {}, async openNote(path) { openedNotes.push(path); }, beginRender() {}, renderMarkdown(value, element) { element.textContent = value; } });
       ui.mount(); views.push(ui); return { root, ui };
     };
     const main = mount();
@@ -50,8 +50,38 @@ export async function runMobileTaskUIScenarios(api, win) {
     };
     const select = async id => { await store.selectSession(id); runtime.onChange(); };
     const close = async () => { views.forEach(ui => ui.destroy()); runtime.dispose(); await until(() => store.state.sessions.every(task => !runtime.isBusy(task.id)), "fixture runs stop during teardown"); roots.forEach(root => root.remove()); };
-    return { ...host, store, config, runtime, ...main, mount, click, send, select, close };
+    return { ...host, store, config, runtime, ...main, mount, click, send, select, close, openedNotes };
   }
+
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} accepted knowledge results keep zero notes noninteractive and unique note links expandable`, async () => {
+    const f = await fixture(async () => answer("openai-completions", "检索结束"), tablet);
+    try {
+      const id = f.store.session.id; await f.send("查找相关笔记");
+      await until(() => !f.runtime.isBusy(id) && f.store.session.runs.length === 1, "accepted search completes");
+      const zero = f.root.querySelector(".echoink-preparation-result");
+      assert.ok(zero); assert.equal(zero.textContent, "没有找到相关笔记"); assert.equal(zero.tagName, "DIV");
+      assert.equal(zero.querySelector("summary, button, [role=button], [tabindex]"), null); assert.equal(zero.tabIndex, -1);
+      zero.click(); assert.equal(zero.hasAttribute("open"), false);
+
+      const setPreparation = async preparation => {
+        await f.store.updateSession(id, session => { session.runs[0].preparation = preparation; }); f.runtime.onChange();
+      };
+      await setPreparation(undefined); assert.equal(f.root.querySelector(".echoink-preparation-result"), null);
+      await setPreparation([{ stage: "knowledge", status: "active" }, { stage: "memory", status: "completed" }]);
+      assert.equal(f.root.querySelector(".echoink-preparation-result"), null);
+      await setPreparation([{ stage: "knowledge", status: "completed", notePaths: [" ", ""] }]);
+      assert.equal(f.root.querySelector(".echoink-preparation-result").tagName, "DIV");
+      f.config.settingsLanguage = "en"; f.runtime.onChange();
+      assert.equal(f.root.querySelector(".echoink-preparation-result").textContent, "No related notes found");
+
+      await setPreparation([{ stage: "knowledge", status: "completed", notePaths: [" 笔记/甲.md ", "笔记\\甲.md", "笔记/乙.md"] }]);
+      const result = f.root.querySelector("details.echoink-preparation-result"); assert.ok(result); assert.equal(result.open, false);
+      assert.equal(result.querySelector("summary").textContent, "Read 2 relevant notes");
+      result.querySelector("summary").click(); assert.equal(result.open, true);
+      const links = [...result.querySelectorAll(".echoink-preparation-note")]; assert.deepEqual(links.map(link => link.textContent), ["甲", "乙"]);
+      links.forEach(link => link.click()); assert.deepEqual(f.openedNotes, ["笔记/甲.md", "笔记/乙.md"]);
+    } finally { await f.close(); }
+  });
 
   for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} task switch retains composer DOM, independent identity and late-result scope`, async () => {
     const provider = providerQueue(); const f = await fixture(provider.request, tablet);
@@ -69,6 +99,87 @@ export async function runMobileTaskUIScenarios(api, win) {
       assert.ok(f.root.querySelector(".em-messages").textContent.includes("B独立回答"));
       await f.select(a); assert.equal(f.root.querySelector(".em-input"), input); assert.equal(f.root.querySelector(".em-title").textContent, "甲助"); assert.ok(f.root.querySelector(".em-messages").textContent.includes("A独立回答"));
     } finally { await f.close(); }
+  });
+
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} new-chat and history clicks clear the departed task's scrolling before its first animation frame`, async () => {
+    const requestFrame = win.requestAnimationFrame, cancelFrame = win.cancelAnimationFrame;
+    const frames = new Map(); let frameId = 0;
+    // Keep every frame pending: leaving must work before the scroller adopts a sequence or measures layout.
+    win.requestAnimationFrame = callback => { frames.set(++frameId, callback); return frameId; };
+    win.cancelAnimationFrame = id => { frames.delete(id); };
+    const provider = providerQueue(); let f;
+    try {
+      f = await fixture(provider.request, tablet);
+      const historySelect = async id => {
+        f.click("历史对话");
+        const row = [...f.root.querySelectorAll(".em-sheet .em-session-row")].find(item => item.dataset.sessionId === id);
+        assert.ok(row, "history contains the requested task"); row.click();
+        await until(() => f.store.session.id === id && !f.root.querySelector('[role="dialog"]'), "history selection renders the requested task");
+      };
+      const a = f.store.session.id; await f.send("保持运行的历史任务A"); await until(() => provider.calls.length === 1, "A Provider is pending");
+      const firstTarget = f.runtime.composerScrollTarget(a); assert.ok(firstTarget); assert.ok(frames.size > 0);
+      f.click("新对话"); await until(() => f.store.session.id !== a && !f.root.querySelector(".em-user-message"), "new-chat click renders an empty task B");
+      const b = f.store.session.id;
+      assert.equal(f.runtime.isBusy(a), true); assert.equal(f.runtime.composerScrollTarget(a), undefined, "new-chat click clears A's unused scroll target");
+      await historySelect(a); f.runtime.onChange();
+      assert.equal(f.runtime.isBusy(a), true); assert.equal(f.runtime.composerScrollTarget(a), undefined, "returning to running A cannot re-arm auto positioning");
+      assert.ok(f.root.querySelector(".em-messages").textContent.includes("保持运行的历史任务A"));
+
+      await historySelect(b); await f.send("保持运行的历史任务B"); await until(() => provider.calls.length === 2, "B Provider is pending");
+      assert.ok(f.runtime.composerScrollTarget(b));
+      await historySelect(a);
+      assert.equal(f.runtime.isBusy(b), true); assert.equal(f.runtime.composerScrollTarget(b), undefined, "history click clears B's unused scroll target");
+      await historySelect(b); f.runtime.onChange();
+      assert.equal(f.runtime.composerScrollTarget(b), undefined, "returning to running B does not recreate scrolling");
+
+      provider.calls[0].resolve(answer("openai-completions", "A第一轮结束")); await until(() => !f.runtime.isBusy(a), "A completes in the background");
+      await historySelect(a); await f.send("A新的主动发送"); await until(() => provider.calls.length === 3, "A's fresh turn reaches Provider");
+      assert.ok(f.runtime.composerScrollTarget(a).sequence > firstTarget.sequence, "a fresh explicit send can start its own scrolling");
+      await historySelect(b); assert.equal(f.runtime.composerScrollTarget(a), undefined, "history A-to-B also clears A's fresh target");
+      await historySelect(a); f.runtime.onChange();
+      assert.equal(f.runtime.isBusy(a), true); assert.equal(f.runtime.composerScrollTarget(a), undefined); assert.equal(provider.calls.length, 3);
+    } finally {
+      provider.calls.forEach(call => call.resolve(answer("openai-completions", "teardown")));
+      if (f) await f.close(); win.requestAnimationFrame = requestFrame; win.cancelAnimationFrame = cancelFrame;
+    }
+  });
+
+  for (const tablet of [false, true]) await test(`${tablet ? "iPad" : "iPhone"} returning to a preparing task retains its pending message and active steps without restoring auto scrolling`, async () => {
+    let release, preparing = false;
+    const preparation = new Promise(resolve => { release = resolve; });
+    const provider = providerQueue();
+    const f = await fixture(provider.request, tablet, undefined, async (_taskId, _turn, report) => {
+      report({ stage: "judgment", status: "active" }); preparing = true; await preparation; return "";
+    });
+    try {
+      const a = f.store.session.id, question = "准备中离开后仍应保留的消息";
+      const input = f.root.querySelector(".em-input"); input.value = question; input.dispatchEvent(new win.Event("input"));
+      await f.store.flush(); f.click("发送消息"); await until(() => preparing, "A is held in real context preparation");
+      const target = f.runtime.composerScrollTarget(a); assert.ok(target); assert.equal(provider.calls.length, 0);
+      assert.equal(f.root.querySelector(".echoink-submission-text").textContent, question);
+      assert.equal(f.runtime.composerSubmissions.records.get(target.turnId).phase, "preparing");
+
+      f.click("新对话"); await until(() => f.store.session.id !== a && !f.root.querySelector(".echoink-submission-text"), "new chat leaves the preparing task");
+      assert.equal(f.runtime.composerScrollTarget(a), undefined); assert.equal(f.runtime.isBusy(a), true);
+      f.click("历史对话");
+      const row = [...f.root.querySelectorAll(".em-sheet .em-session-row")].find(item => item.dataset.sessionId === a);
+      assert.ok(row); row.click(); await until(() => f.store.session.id === a && !f.root.querySelector('[role="dialog"]'), "history returns to preparing A");
+      f.runtime.onChange();
+      assert.equal(f.runtime.composerScrollTarget(a), undefined, "rendering preparation cannot re-arm scrolling");
+      assert.equal(f.root.querySelector(".echoink-submission-text")?.textContent, question, "the running submission remains visible after its scroll target is cleared");
+      const active = f.root.querySelector('.echoink-submission-step.is-running[data-preparation-stage="judgment"]');
+      assert.ok(active); assert.ok(active.textContent.includes("智能判断中"));
+      assert.equal(f.store.getSession(a).messages.length, 0); assert.equal(provider.calls.length, 0);
+
+      release(); await until(() => provider.calls.length === 1, "A is admitted after preparation is released");
+      assert.equal(f.root.querySelectorAll(".echoink-submission-text").length, 0);
+      assert.equal(f.store.getSession(a).messages.filter(message => message.role === "user").length, 1);
+      assert.equal(f.root.querySelectorAll(".em-user-message").length, 1); assert.equal(f.root.querySelector(".em-user-message").textContent, question);
+      assert.equal(f.runtime.composerScrollTarget(a), undefined, "formal admission does not restore a cleared target");
+      provider.calls[0].resolve(answer("openai-completions", "离开后继续完成")); await until(() => !f.runtime.isBusy(a), "A completes normally");
+      assert.ok(f.root.querySelector(".em-messages").textContent.includes("离开后继续完成"));
+      assert.equal(f.store.getSession(a).messages.filter(message => message.role === "user").length, 1);
+    } finally { release(); provider.calls.forEach(call => call.resolve(answer("openai-completions", "teardown"))); await f.close(); }
   });
 
   await test("unmount/remount and a second subscriber do not own or stop execution", async () => {
@@ -106,20 +217,23 @@ export async function runMobileTaskUIScenarios(api, win) {
       const a = f.store.session.id; await f.send("A已受理问题"); await until(() => provider.calls.length === 1, "A request");
       const b = await f.store.createSession("agent-b"); f.runtime.onChange();
       provider.calls[0].reject(new Error("A_PROVIDER_FAILED")); await until(() => !f.runtime.isBusy(a), "A failure settles");
-      assert.equal(f.store.getSession(a).draft, ""); assert.equal(f.root.querySelector(".em-input").value, ""); assert.equal(f.root.querySelector(".em-error").textContent.includes("A_PROVIDER_FAILED"), false);
-      assert.equal(f.store.session.id, b.id); await f.select(a); assert.ok(f.root.querySelector(".em-error").textContent.includes("A_PROVIDER_FAILED")); assert.equal(f.root.querySelector(".em-input").value, "");
+      assert.equal(f.store.getSession(a).draft, ""); assert.equal(f.root.querySelector(".em-input").value, ""); assert.equal(f.root.querySelector(".em-error").textContent.includes("模型服务未正常响应"), false);
+      assert.equal(f.store.session.id, b.id); await f.select(a); assert.ok(f.root.querySelector(".em-error").textContent.includes("模型服务未正常响应")); assert.equal(f.root.querySelector(".em-input").value, "");
     } finally { await f.close(); }
   });
 
-  await test("draft save failure preserves input in the existing DOM through refresh and retry", async () => {
+  await test("draft-save failure keeps one failed bubble and edit restores it only after saving recovers", async () => {
     let calls = 0; const f = await fixture(async () => { calls++; return answer("openai-completions", "retry accepted"); });
     const write = f.adapter.write.bind(f.adapter); let fail = true;
     f.adapter.write = async (path, value) => { if (fail) throw new Error("DRAFT_FAILED"); return write(path, value); };
     try {
       const input = f.root.querySelector(".em-input"); input.value = "保存失败的未受理输入"; f.click("发送消息");
-      await until(() => f.root.querySelector(".em-error").textContent.includes("DRAFT_FAILED"), "actual save error visible");
-      assert.equal(calls, 0); f.runtime.onChange(); assert.equal(f.root.querySelector(".em-input"), input); assert.equal(input.value, "保存失败的未受理输入");
-      fail = false; f.click("发送消息"); await until(() => calls === 1 && !f.runtime.busy, "retry reaches provider once");
+      await until(() => f.root.querySelector(".echoink-submission-error"), "failed bubble visible");
+      assert.equal(calls, 0); assert.equal(f.root.querySelector(".echoink-submission-text").textContent, "保存失败的未受理输入");
+      assert.equal(input.value, ""); assert.equal(f.runtime.composerSubmissions.records.size, 1);
+      fail = false; f.click("编辑"); await until(() => input.value === "保存失败的未受理输入", "edit restores the snapshot");
+      assert.equal(f.root.querySelectorAll(".echoink-submission").length, 0);
+      f.click("发送消息"); await until(() => calls === 1 && !f.runtime.busy, "explicit resend reaches provider once");
       assert.equal(input.value, ""); assert.equal(f.store.session.messages.filter(message => message.role === "user").length, 1);
     } finally { f.adapter.write = write; await f.close(); }
   });
@@ -133,7 +247,7 @@ export async function runMobileTaskUIScenarios(api, win) {
     };
     try {
       const input = f.root.querySelector(".em-input"); input.value = "已受理的问题"; f.click("发送消息");
-      await until(() => calls === 1 && !f.runtime.busy && f.root.querySelector(".em-error").textContent.includes("RESULT_SAVE_FAILED"), "accepted persistence error visible");
+      await until(() => calls === 1 && !f.runtime.busy && f.root.querySelector(".em-error").textContent.includes("内容已保留") && !f.root.querySelector(".em-error").textContent.includes("RESULT_SAVE_FAILED"), "accepted persistence error visible in plain words");
       assert.equal(failed, true); assert.equal(f.root.querySelector(".em-input"), input); assert.equal(input.value, ""); assert.equal(f.store.session.draft, "");
       assert.equal(f.store.session.messages.filter(message => message.role === "user").length, 1);
     } finally { f.adapter.write = write; await f.close(); }
@@ -206,7 +320,7 @@ export async function runMobileTaskUIScenarios(api, win) {
       f.click("等你回应"); f.root.querySelector('[data-option-id="self"]').click(); f.root.querySelector('[data-option-id="chat"]').click();
       let failed = false;
       f.adapter.write = async (path, value) => { if (!failed && JSON.parse(value).sessions.some(task => task.interaction?.status === "answered")) { failed = true; throw new Error("ANSWER_SAVE_FAILED"); } return write(path, value); };
-      f.click("提交回答"); await until(() => f.root.querySelector(".em-sheet-error").textContent.includes("ANSWER_SAVE_FAILED"), "answer persistence error");
+      f.click("提交回答"); await until(() => f.root.querySelector(".em-sheet-error").textContent.includes("本次操作未完成"), "answer persistence error");
       assert.equal(f.root.querySelector('[data-option-id="self"]').getAttribute("aria-pressed"), "true"); assert.equal(f.runtime.stateFor(a).interaction.status, "pending");
       f.adapter.write = write;
       await f.runtime.stopTask(a); f.click("提交回答"); await until(() => f.root.querySelector(".em-sheet-error").textContent.includes("过期"), "stale IDs rejected");
@@ -254,8 +368,9 @@ export async function runMobileTaskUIScenarios(api, win) {
       for (const draftContext of [{ attachments: [], selectedProviderSettingsId: "missing-provider" }, { attachments: [], selectedModel: "missing-model" }]) {
         await f.store.patchSession(a, { draftContext }); f.ui.refreshSettings();
         assert.equal(f.root.querySelector(".em-model-label").textContent, "配置模型"); assert.equal(f.root.querySelector(".em-model .em-brand"), null);
-        await f.send("无效选择保留输入"); await until(() => f.root.querySelector(".em-error").textContent.includes("失效"), "explicit invalid selection rejected");
-        assert.equal(calls, 0); assert.equal(f.root.querySelector(".em-input").value, "无效选择保留输入");
+        await f.send("无效选择保留输入"); await until(() => f.root.querySelector(".echoink-submission-error")?.textContent.includes("已被删除"), "explicit invalid selection rejected");
+        assert.equal(calls, 0); assert.equal(f.root.querySelector(".em-input").value, "");
+        f.click("编辑"); await until(() => f.root.querySelector(".em-input").value === "无效选择保留输入", "edit retains the original selection");
       }
       f.click("选择模型"); const globalModelRow = [...f.root.querySelectorAll(".em-sheet .em-row")].find(row => row.querySelector("strong")?.textContent === "synthetic-model");
       assert.equal(globalModelRow.getAttribute("aria-pressed"), "false"); globalModelRow.click(); await f.store.flush(); await settle();
@@ -340,7 +455,7 @@ export async function runMobileTaskUIScenarios(api, win) {
       if (tablet) await f.send("核对前保留的输入"); else f.click("从这里继续");
       await until(() => !!f.root.querySelector(".em-task-resume-review"), "actual S5 review from continue or interrupted submit");
       assert.equal(requests, 0); assert.ok(f.root.querySelector(".em-task-resume-review").textContent.includes(target)); assert.equal(f.root.querySelector('[role="dialog"]').textContent.includes("old-private-tool-id"), false);
-      f.click("关闭弹层"); await until(() => !f.runtime.stateFor(id).resumeReview, "close clears pending review without a request"); assert.equal(requests, 0);
+      f.click("关闭弹层"); await until(() => !f.runtime.stateFor(id).resumeReview && input.value === "核对前保留的输入", "close clears review and restores the unaccepted snapshot"); assert.equal(requests, 0);
       f.click("从这里继续"); await until(() => !!f.runtime.stateFor(id).resumeReview && !!f.root.querySelector(".em-task-resume-review"), "review can be reopened after cancel");
       const firstFingerprint = f.runtime.stateFor(id).resumeReview.fingerprint; f.files.set(target, "核对期间外部变更后的内容");
       f.click("我已核对，请基于现状继续"); await until(() => f.runtime.stateFor(id).resumeReview?.fingerprint !== firstFingerprint && !!f.root.querySelector(".em-task-resume-review"), "changed target requires a fresh fingerprint");

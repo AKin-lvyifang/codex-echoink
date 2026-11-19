@@ -2,6 +2,8 @@ import { OriginSetting } from "./origin-setting";
 import { createOriginButton, disposeOriginControls } from "./origin-controls";
 import type { DeveloperAction, DeveloperModeService, DeveloperResult, DeveloperStatus } from "../plugin/developer-mode/service";
 import { applySettingsRow } from "./settings-v2";
+import { NEXT, failureText, type ErrorCopy, CAUSE } from "../core/error-copy";
+import { SETTINGS_SCENE, joinCopyPair } from "../core/error-copy/codes/settings";
 
 export class DeveloperModePanel {
   private running = false;
@@ -198,15 +200,15 @@ export class DeveloperModePanel {
 
   private errorText(error: unknown): string {
     const message = error instanceof Error ? error.message : String(error);
-    const known: Record<string, [string, string]> = {
-      developer_mode_locked: ["开发者模式已关闭，请先在基础设置中打开开关。", "Developer mode is off. Enable it in General settings first."],
-      developer_mode_busy: ["会话、做梦或本地数据正在执行，请结束后重试。", "A conversation, Dream, or local data operation is busy. Retry when it finishes."],
-      developer_mode_read_only: ["当前工作区为只读，不能执行数据写入。", "The workspace is read-only; data changes are disabled."],
-      developer_dream_unavailable: ["Dream 未运行：请检查长期记忆、做梦开关及忙碌状态。", "Dream did not run. Check the Memory and Dream switches and busy state."],
+    const known: Record<string, ErrorCopy> = {
+      developer_mode_locked: ["开发者模式已关闭。请先在基础设置中打开开关。", "Developer mode is off. Turn it on in General settings first."],
+      developer_mode_busy: ["会话、做梦或本地数据操作正在进行。请结束后重试。", "A conversation, Dream, or local data operation is in progress. Try again when it finishes."],
+      developer_mode_read_only: CAUSE.workspaceReadOnly,
+      developer_dream_unavailable: ["做梦未能运行。请检查长期记忆、做梦开关及忙碌状态。", "Dream did not run. Check the long-term memory and Dream switches and the busy state."],
       developer_backup_missing: ["没有可恢复的重置备份。", "No reset backup is available."],
-      developer_memory_changing: ["记忆正在重置或恢复，请稍后重试。", "Memory is being reset or restored. Retry shortly."]
+      developer_memory_changing: joinCopyPair(["记忆正在重置或恢复。", "Memory is being reset or restored."], NEXT.retryLater)
     };
-    const localized = known[message];
-    return localized ? localized[this.zh ? 0 : 1] : `${this.t("操作失败", "Operation failed")}: ${message}`;
+    const localized = Object.hasOwn(known, message) ? known[message] : undefined;
+    return localized ? localized[this.zh ? 0 : 1] : failureText(error, SETTINGS_SCENE.actionIncomplete, NEXT.retryLater, this.zh ? "zh" : "en");
   }
 }

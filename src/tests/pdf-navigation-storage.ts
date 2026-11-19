@@ -134,7 +134,7 @@ async function serviceBoundaries(): Promise<void> {
     const bad = fixture();
     bad.files.hook = (event, target, value) => { if (event === "after-create" && value instanceof Uint8Array) { const wrong = new Uint8Array(value); wrong[wrong.length - 1] ^= 1; bad.files.data.set(target, wrong); } };
     const mismatch = await bad.service.start("Bad.pdf", pdf, base, undefined, "bad-readback");
-    assert.equal(mismatch.state, "failed"); assert.match(mismatch.error!, /改过/u); assert.equal(bad.counts().parses, 0);
+    assert.equal(mismatch.state, "failed"); assert.match(mismatch.error!, /已被修改/u); assert.equal(bad.counts().parses, 0);
     assert.equal(mismatch.original!.savedPath, undefined); assert.equal([...bad.files.data.keys()].filter(target => target.endsWith(".pdf")).length, 1);
   }
   // Changes while parsing or generating are detected after the actual awaited operation returns.
@@ -146,7 +146,7 @@ async function serviceBoundaries(): Promise<void> {
     const original = f.service.current!.original!.savedPath!;
     f.files.data.set(original, new TextEncoder().encode("%PDF- modified during parse")); finish!();
     const stopped = await flight;
-    assert.match(stopped.error!, /改过/u); assert.equal(stopped.artifacts.length, 0); assert.equal(f.counts().generations, 0);
+    assert.match(stopped.error!, /已被修改/u); assert.equal(stopped.artifacts.length, 0); assert.equal(f.counts().generations, 0);
     for (const target of ["original", "raw"] as const) {
       const g = fixture(); let complete: ((text: string) => void) | undefined;
       g.deps.generator = () => ({ maxSourceCharacters: 1000, generate: async () => new Promise<string>(resolve => { complete = resolve; }) });
@@ -162,7 +162,7 @@ async function serviceBoundaries(): Promise<void> {
       const result = await generating;
       assert.equal(result.state, "partial"); assert.equal(result.artifacts.some(item => item.kind === "translation"), false);
       assert.equal(result.chunks[0].translation, undefined);
-      assert.match(result.error!, target === "original" ? /找不到/u : /正文已编辑/u);
+      assert.match(result.error!, target === "original" ? /已不存在/u : /正文已编辑/u);
     }
   }
   // Same-name unrelated files, changed originals and missing originals never get overwritten/recreated.
@@ -174,9 +174,9 @@ async function serviceBoundaries(): Promise<void> {
     const saved = await f.service.start("Same.pdf", pdf, base, undefined, "different-job");
     assert.notEqual(saved.original!.plannedPath, intent.original!.plannedPath);
     f.files.data.set(saved.original!.savedPath!, unrelated);
-    const changed = await f.service.resume(saved.id); assert.match(changed.error!, /改过/u); assert.equal(f.counts().parses, 1);
+    const changed = await f.service.resume(saved.id); assert.match(changed.error!, /已被修改/u); assert.equal(f.counts().parses, 1);
     f.files.data.delete(saved.original!.savedPath!);
-    const missing = await f.service.resume(saved.id, undefined, pdf); assert.match(missing.error!, /找不到/u);
+    const missing = await f.service.resume(saved.id, undefined, pdf); assert.match(missing.error!, /已不存在/u);
     assert.equal(f.files.data.has(saved.original!.savedPath!), false);
   }
   // Confirmation freezes the directory; capability/cancellation rechecks stop later side effects.

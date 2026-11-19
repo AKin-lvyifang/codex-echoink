@@ -13,6 +13,7 @@ import { normalizeSettingsData, DEFAULT_SETTINGS, createApiProviderConfig, creat
 import type { ConversationRunService } from "../plugin/conversation-run-service";
 import type { QueuedTurnItem } from "../ui/turn-queue";
 import { applyConversationTaskMetadata } from "../agents/task-metadata";
+import { settingsForDataSave } from "../plugin/settings-store";
 
 export async function runAgentRunTests(root: string, createHost: (catalog: any, runtime: any, settings: any) => any, createView: (plugin: any, detach: () => void) => any): Promise<void> {
   const fixture = await createAgentRunFixture(root, createHost);
@@ -140,8 +141,10 @@ type Fixture = Awaited<ReturnType<typeof createAgentRunFixture>>;
 async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
   const refreshed: { id: string; status: string | undefined; question?: string; answer?: string }[] = [];
   let rebuiltRows = 0;
-  const detach = f.service.subscribe({ clearAcceptedDraft() {}, isTaskVisible: () => false, refresh: id => {
-    rebuiltRows += f.settings.sessions.length;
+  const shellRefreshes: boolean[] = [];
+  const detach = f.service.subscribe({ clearAcceptedDraft() {}, isTaskVisible: () => false, refresh: (id, _message, shellChanged) => {
+    shellRefreshes.push(shellChanged !== false);
+    if (shellChanged !== false) rebuiltRows += f.settings.sessions.length;
     const session = f.settings.sessions.find(session => session.id === id)!;
     const interaction = f.service.pendingInteractions.get(id);
     refreshed.push({ id, status: session.taskStatus, question: interaction?.kind === "question" ? interaction.questions[0]?.prompt : undefined,
@@ -154,7 +157,7 @@ async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
   assert.equal(JSON.parse(await readFile(f.dataPath, "utf8")).workbenchOnboardingDismissed, true, "the acceptance marker is saved before returning to the composer");
   await Promise.all(["burst-A", "burst-B"].map(id => f.started.get(id)!.promise));
   await new Promise(resolve => setTimeout(resolve, 40));
-  refreshed.length = 0; rebuiltRows = 0;
+  refreshed.length = 0; rebuiltRows = 0; shellRefreshes.length = 0;
   const a = f.service.runs.get("burst-A")!;
   const b = f.service.runs.get("burst-B")!;
   const aContext = a.context!;
@@ -174,7 +177,49 @@ async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
   assert.equal(refreshed.length, 0, "A Pi replay burst must yield to a timer before rebuilding a 36-task list; microtask flushing still starves the UI");
   await new Promise(resolve => setTimeout(resolve, 40));
   assert.deepEqual(refreshed.map(item => item.id).sort(), ["burst-A", "burst-B"], "One batch must retain both task updates");
-  assert.equal(rebuiltRows, 72, "Thousands of callbacks rebuild the 36-task list once per changed task");
+  assert.equal(rebuiltRows, 0, "body-only callbacks update messages without rebuilding the 36-task shell");
+  assert.ok(shellRefreshes.every(changed => !changed));
+  const session = f.settings.sessions.find(session => session.id === "burst-A")!;
+  const diskBefore = settingsForDataSave(f.settings), originalMessages = session.messages;
+  let saveRequests = 0;
+  const originalScheduleSave = f.service.scheduleSave.bind(f.service);
+  f.service.scheduleSave = () => { saveRequests++; originalScheduleSave(); };
+  const title = session.title, originalLedger = session.contextLedger;
+  try {
+    for (let index = 0; index < 100; index++) {
+      session.messages = [...originalMessages, { id: "display-only-delta", role: "assistant", itemType: "assistant", text: `stream ${index}`, status: "running", createdAt: 1 }];
+      a.context!.renderMessagesIfActive(session, session.messages.at(-1));
+    }
+    assert.equal(saveRequests, 0, "Pi display deltas do not schedule unchanged settings");
+    assert.deepEqual(settingsForDataSave(f.settings), diskBefore, "the persisted settings content stays exactly the same");
+    const carrier = session.messages.at(-1)!;
+    carrier.assistantTurn = { processNodes: [{ nodeId: "visible-progress", status: "running", title: "Step", summary: "First visible summary" }] };
+    a.context!.renderMessagesIfActive(session, carrier);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    carrier.assistantTurn.processNodes[0].summary = "Second visible summary";
+    a.context!.renderMessagesIfActive(session, carrier);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(shellRefreshes.at(-1), true, "a changed visible task summary still refreshes the shell");
+    assert.equal(saveRequests, 0, "display-only task progress does not save unchanged settings");
+    carrier.text += " more body";
+    a.context!.renderMessagesIfActive(session, carrier);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(shellRefreshes.at(-1), false, "body text does not refresh an unchanged visible summary");
+    session.contextLedger = { contextWindowTokens: 1000, usedTokens: 100 };
+    a.context!.renderMessagesIfActive(session, carrier);
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(shellRefreshes.at(-1), true, "visible context usage updates still refresh the composer toolbar");
+    assert.equal(saveRequests, 1, "a changed context ledger is still persisted");
+    session.contextLedger = originalLedger;
+    session.title = `${title} changed`;
+    a.context!.renderTabs();
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(saveRequests, 2, "a real persisted title change still uses the original save schedule");
+    assert.equal(shellRefreshes.at(-1), true, "title changes still refresh the task shell");
+  } finally {
+    session.title = title; session.contextLedger = originalLedger; session.messages = originalMessages;
+    f.service.scheduleSave = originalScheduleSave;
+  }
 
   const setMetadata = f.plugin.setPiConversationTaskMetadata.bind(f.plugin);
   const writes: any[] = [];
@@ -228,7 +273,7 @@ async function batchedRefreshAndPendingWrites(f: Fixture): Promise<void> {
   assert.equal(f.service.pendingInteractions.get("burst-A")!.interactionId, question.interactionId);
   aContext.setPendingInteraction("burst-A", { ...question, status: "answered" });
   await setMetadata("burst-A", { taskStage: "final-answer-barrier" });
-  console.log(`Agent runs batching: 36 tasks, 6000 burst callbacks -> 2 refreshes / 72 rows; real Pi completion -> ${completed.length} refreshes; pending empty=0 writes, repeated question=1 write`);
+  console.log(`Agent runs batching: 36 tasks, 6000 burst callbacks -> 2 message refreshes / 0 shell rebuilds; real Pi completion -> ${completed.length} refreshes; pending empty=0 writes, repeated question=1 write`);
   f.gates.get("burst-A")!.resolve();
   assert.equal(await a.flight, "completed");
   const settledWrites: any[] = [];

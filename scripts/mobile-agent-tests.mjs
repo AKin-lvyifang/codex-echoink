@@ -12,7 +12,7 @@ for (const forbidden of ["src/settings/settings.ts", "src/agents/migration.ts", 
 }
 assert.ok(!inputs.some(file => /(?:^|\/)node:|file-conversation-catalog/u.test(file)));
 const module = { exports: {} };
-const context = vm.createContext({ module, exports: module.exports, TextEncoder, Uint8Array, structuredClone, console });
+const context = vm.createContext({ URL, module, exports: module.exports, TextEncoder, Uint8Array, structuredClone, console });
 vm.runInContext(build.outputFiles[0].text, context, { filename: "mobile-agents-browser.cjs" });
 assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer + ':' + typeof require", context), "undefined:undefined:undefined");
 await runAgentScenarios(module.exports);

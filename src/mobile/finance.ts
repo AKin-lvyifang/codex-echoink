@@ -5,6 +5,7 @@ import { LIFE_VIEW_TYPES } from "../lifestyle/view";
 import type { LifestyleHost, LifestylePluginHost, LifestyleViewPort } from "../lifestyle/host";
 import { mobileLifestyleStore } from "./finance-store";
 import type { LifestyleStoreCore } from "../lifestyle/store-core";
+import { NEXT, userFacingErrorText } from "../core/error-copy";
 
 export class MobileLifestyleService implements LifestyleHost {
   readonly store: LifestyleStoreCore;
@@ -32,7 +33,7 @@ export class MobileLifestyleService implements LifestyleHost {
       const leaf = workspace.getLeavesOfType(LIFE_VIEW_TYPES.finance).find(item => item.getRoot() === workspace.rootSplit) ?? workspace.getLeaf("tab");
       await leaf.setViewState({ type: LIFE_VIEW_TYPES.finance, active: true });
       await workspace.revealLeaf(leaf);
-    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { new Notice(userFacingErrorText(error, `未能打开财务页面。${NEXT.retryOrReopen[0]}`)); }
   }
   async setEnabled(_kind: "finance", enabled: boolean) {
     requireProPluginAction(this.finance.access, this.plugin.settings.lifestyle.finance.enabled, "toggle");

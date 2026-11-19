@@ -1,3 +1,7 @@
+import { normalizeWorkbenchDismissals, type WorkbenchDismissals } from "../home/workbench-dismissals";
+import { CAUSE } from "../core/error-copy";
+import { normalizeCloudSyncSettings, type CloudSyncSettings } from "../sync/cloud/settings";
+import { normalizeSmartJudgmentSettings, type DecisionPersistentState } from "../membership/decision-client";
 import { normalizeEchoInkColorTheme } from "../ui/appearance-theme";
 import { DEFAULT_UNDECLARED_TOOL_CALLING, resolveStoredModelToolCalling } from "../settings/provider-model-capabilities";
 import { normalizeKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
@@ -35,6 +39,12 @@ export interface MobileSettings extends Record<string, unknown>, MobileHomeSetti
   activeApiProviderId: string;
   defaultModel: string;
   autoOpenHome: boolean;
+  workbenchDismissals: WorkbenchDismissals;
+  /** Mirror company records into the visible sync folder for other devices. */
+  syncMirrorEnabled: boolean;
+  cloudSync: CloudSyncSettings;
+  /** 智能判断（PRO）：开关与首次 / 用完提示是否已出现；与桌面同一份规则。 */
+  smartJudgment: DecisionPersistentState;
   mobileUi: MobileAppearance;
   agentRegistry: AgentRegistry;
   tavily: TavilySettings;
@@ -71,7 +81,11 @@ export function loadMobileSettings(value: unknown): MobileSettings {
     activeApiProviderId: typeof raw?.activeApiProviderId === "string" ? raw.activeApiProviderId : "",
     defaultModel: typeof raw?.defaultModel === "string" ? raw.defaultModel : "",
     autoOpenHome: raw?.autoOpenHome === true,
-    agentRegistry: normalizeAgentRegistry(raw?.agentRegistry, !!raw && Object.keys(raw).length > 0),
+    workbenchDismissals: normalizeWorkbenchDismissals(raw?.workbenchDismissals),
+    syncMirrorEnabled: raw?.syncMirrorEnabled !== false,
+    cloudSync: normalizeCloudSyncSettings(raw?.cloudSync),
+    smartJudgment: normalizeSmartJudgmentSettings(raw?.smartJudgment),
+    agentRegistry: normalizeAgentRegistry(raw?.agentRegistry),
     tavily: { ...(raw?.tavily as object), ...normalizeTavilySettings(raw?.tavily) },
     mobileMemory: {
       ...savedMemory, dreamEnabled: savedMemory.dreamEnabled !== false,
@@ -115,9 +129,12 @@ export function selectedModel(settings: MobileSettings) {
   const model = provider?.models.find(m => m.id === settings.defaultModel) ?? provider?.models.find(m => m.id === provider.defaultModelId);
   return provider && model ? { provider, model } : null;
 }
+export const MOBILE_PROVIDER_UNSUPPORTED = "该模型服务仅支持电脑端。请选择移动端可用的 API Key 模型服务。";
+export const MOBILE_PROVIDER_URL_INVALID = CAUSE.providerUrlInvalid[0];
 export function validateMobileProvider(provider: ApiProviderConfig): void {
-  if (!supportedProvider(provider)) throw new Error("手机首版支持 Chat Completions 和 Responses API Key 接口。");
-  normalizeApiProviderBaseUrl(provider.baseUrl, provider.apiProtocol);
-  if (!provider.apiKey.trim() && provider.providerId !== "ollama") throw new Error("请填写 API Key。");
-  if (!provider.models.length || provider.models.some(m => !m.id.trim())) throw new Error("请填写模型 ID。");
+  if (!supportedProvider(provider)) throw new Error(MOBILE_PROVIDER_UNSUPPORTED);
+  try { normalizeApiProviderBaseUrl(provider.baseUrl, provider.apiProtocol); }
+  catch { throw new Error(MOBILE_PROVIDER_URL_INVALID); }
+  if (!provider.apiKey.trim() && provider.providerId !== "ollama") throw new Error("API Key 未填写。请在 设置 → 模型服务 中填写。");
+  if (!provider.models.length || provider.models.some(m => !m.id.trim())) throw new Error("Model ID 未填写。请在 设置 → 模型服务 中填写。");
 }

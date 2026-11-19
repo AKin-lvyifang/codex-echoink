@@ -115,7 +115,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test, FileView
     await plugin.services.getTodoStore().addTodo({ title: "冲突后独立待办仍可保存" });
     plugin.settings.mobileUi.largeText = true; await plugin.saveSettings();
     assert.equal(f.saved.mobileUi.largeText, true);
-    assert.equal(f.notices.some(message => message.startsWith("EchoInk 无法加载")), false);
+    assert.equal(f.notices.some(message => message.startsWith("EchoInk 未能启动")), false);
   }
   const modes = ["store-json", "store-schema", "store-runtime", "store-recovery", "legacy-version", "m2-backup", "m3-backup",
     "memory-manifest", "memory-user", "memory-profile", "memory-record", "memory-recovery-conflict", "desktop-transaction", "foreign-transaction", "dream-ledger", "dream-ledger-race", "agent-registry", "legacy-agent"];
@@ -227,7 +227,7 @@ export async function mobileStartupConflictScenarios({ code, dom, test, FileView
     try {
       await assert.rejects(plugin.onload(), /UNEXPECTED_IO_FAILURE/u);
       assert.equal(plugin.store.unavailableReason, undefined, "unrecognized failures must not masquerade as safe data conflicts");
-      assert.ok(f.notices.some(message => message.startsWith("EchoInk 无法加载")));
+      assert.ok(f.notices.some(message => message.startsWith("EchoInk 未能启动")));
     } finally {
       f.adapter.read = read; f.adapter.write = write;
       plugin.onunload(); dom.window.clearInterval(plugin.interval); await plugin.services?.dispose();

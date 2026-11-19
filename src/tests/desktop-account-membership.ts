@@ -4,7 +4,7 @@ import { installProviderBrowserHost } from "./provider-discovery-dom-host";
 import { mountDesktopAccountMembership } from "../settings/desktop-account-membership";
 import { mountAccountMembership } from "../settings/account-membership";
 import { createUnavailableAccountAdapter, type AccountActions, type AccountMembershipViewModel, type MembershipState } from "../settings/account-membership-model";
-import { pricingProducts } from "./account-membership-pricing";
+import { lifetimeMaxQuote, pricingProducts } from "./account-membership-pricing";
 
 const tick = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setTimeout(resolve, 0)); };
 async function until(condition: () => boolean) { for (let i = 0; i < 180; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail("Account UI did not settle"); }
@@ -17,10 +17,10 @@ function initial(state: MembershipState = "free"): AccountMembershipViewModel {
   return { ...empty, products: pricingProducts, identity: { name: "测试账号", email: "fixture@example.invalid", joinedAt: "2026-10-01", avatar: "initial", passwordSet: false }, serviceAvailable: true,
     membership: { ...empty.membership, state, devices: [{ id: "device-a", name: "测试设备", description: "本地测试", current: true }], deviceLimit: 2 } };
 }
-function fixture(value = initial(), actions: AccountActions = {}) {
+function fixture(value = initial(), actions: AccountActions = {}, language = "zh-CN", onSignInReturned?: () => Promise<void>) {
   let vm = value; const listeners = new Set<() => void>();
   const host = document.body.createDiv();
-  const controller = mountDesktopAccountMembership(host, { app: new App(), viewModel: vm, read: () => vm, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, actions, language: "zh-CN", openProviders() {} });
+  const controller = mountDesktopAccountMembership(host, { app: new App(), viewModel: vm, read: () => vm, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); }, actions, language, onSignInReturned, openProviders() {} });
   return { host, controller, get vm() { return vm; }, set(next: AccountMembershipViewModel) { vm = next; listeners.forEach(listener => listener()); }, detail() { const detail = host.querySelector<HTMLElement>(".desktop-account-detail")!; assert(!detail.hidden); return detail; }, dispose() { controller.dispose(); host.remove(); assert.equal(listeners.size, 0); } };
 }
 
@@ -30,8 +30,181 @@ export async function runDesktopAccountMembershipTests() {
   const ordersFixture = fixture(initial(), { openOrders: async () => { opened++; } });
   try { button(ordersFixture.host, "我的订单").click(); await Promise.resolve(); assert.equal(opened, 1); assert.equal(ordersFixture.host.querySelector(".desktop-account-detail")!.hasAttribute("hidden"), true); }
   finally { ordersFixture.dispose(); }
-  await structure(); await anonymousOverview(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
+  await reportLoginReturn(); await syncUsageCards(); await structure(); await maxCardPricing(); await maxSalesVisibility(); await benefitsComparison(); await anonymousOverview(); await sourceFocus(); await forms(); await accountSwitch(); await redemption(); await confirmations(); await mobileDefault();
   console.log("P14 desktop account real controls: structure, states, drafts, suspend, identity, redemption and confirmation PASS");
+}
+
+async function syncUsageCards() {
+  let usage: { usedBytes: number; quotaBytes: number } | null = null;
+  const listeners = new Set<() => void>();
+  const vm = initial("active");
+  vm.entitlements = {
+    tier: "max", lifetime: false, isPro: true, subscription: null, next: null,
+    sync: { status: "active", plan: "max", quotaBytes: 5 * 1024 ** 3, readOnly: false, graceUntil: null, deviceLimit: 3 },
+    devices: { limit: 3, active: 1, remaining: 2 },
+    points: { balanceMilli: 123000, balance: "123", nextExpiry: null, monthly: 3000 },
+    maxCoupon: false, serverTime: 0
+  };
+  const host = document.body.createDiv();
+  const controller = mountDesktopAccountMembership(host, {
+    app: new App(), viewModel: vm, language: "zh-CN", openProviders() {},
+    syncUsage: { read: () => usage, subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); } }
+  });
+  try {
+    const sync = host.querySelectorAll<HTMLElement>(".desktop-account-meter")[1]!;
+    const bar = sync.querySelector<HTMLElement>(".desktop-account-meter-bar")!;
+    assert.equal(sync.querySelector("strong")!.textContent, "5 GB");
+    assert.equal(bar.hidden, true, "unknown usage never invents a zero reading");
+    for (const [bytes, value, unit, percent, warning] of [
+      [97837, "0.1", "MB / 5 GB", 0, false],
+      [1024 ** 3 - 1, "1024.0", "MB / 5 GB", 20, false],
+      [1024 ** 3, "1.00", "GB / 5 GB", 20, false],
+      [4.75 * 1024 ** 3, "4.75", "GB / 5 GB", 95, true]
+    ] as const) {
+      usage = { usedBytes: bytes, quotaBytes: 5 * 1024 ** 3 }; listeners.forEach(listener => listener());
+      assert.equal(sync.querySelector("strong")!.textContent, value);
+      assert.equal(sync.querySelector(".desktop-account-meter-value > span")!.textContent, unit);
+      assert.equal(bar.hidden, false);
+      assert.equal(bar.querySelector("i")!.style.width, `${percent}%`);
+      assert.equal(bar.classList.contains("is-warning"), warning);
+    }
+    usage = null; listeners.forEach(listener => listener());
+    assert.equal(sync.querySelector("strong")!.textContent, "5 GB");
+    assert.equal(bar.hidden, true);
+    const entry = host.querySelector(".desktop-account-device-navigation")!;
+    assert.equal(entry.querySelector(".echoink-settings-navigation-trailing .echoink-settings-navigation-value")!.textContent, "1 / 2");
+    assert(entry.querySelector(".echoink-settings-navigation-trailing > :last-child")!.classList.contains("echoink-settings-navigation-icon"));
+  } finally { controller.dispose(); host.remove(); }
+  assert.equal(listeners.size, 0, "usage subscriptions are released with the account page");
+}
+
+async function maxCardPricing() {
+  for (const language of ["zh-CN", "en"]) {
+    const en = language === "en";
+    const f = fixture({ ...initial(), maxSalesOpen: false }, {}, language);
+    const family = (key: string) => f.host.querySelector<HTMLButtonElement>(`.plan-series-button[data-series="${key}"]`)!.click();
+    const card = (id: string) => f.host.querySelector<HTMLElement>(`[data-plan-id="${id}"]`)!;
+    try {
+      const rows = Array.from(card("month").children).map(node => node.className);
+      family("max");
+      for (const [id, daily] of [["max-month", "1.30"], ["max-quarter", "1.21"], ["max-year", "1.09"]]) {
+        assert.deepEqual(Array.from(card(id).children).map(node => node.className), rows, "PRO and Max share every row slot");
+        assert.ok(card(id).querySelector(".plan-daily")!.textContent!.includes(daily));
+        assert.equal(card(id).querySelector(".plan-benefits")!.textContent, en ? "3,000 AI points/30 days · 5 GB cloud sync" : "每30天 3000 AI 点数 · 5 GB 云同步");
+        assert.doesNotMatch(card(id).textContent!, /自然月|calendar|PRO 全部|All of PRO/);
+      }
+      assert.deepEqual(["max-month", "max-quarter", "max-year"].map(id => card(id).querySelector(".price-term")!.textContent), en ? ["30 days", "90 days", "365 days"] : ["30 天", "90 天", "365 天"]);
+      assert.equal(card("max-quarter").querySelector(".plan-offer")!.textContent, en ? "Save 7%" : "省 7%");
+      assert.match(card("max-year").querySelector(".plan-comparison")!.textContent!, en ? /365 days at the Max Monthly daily rate.*Save ¥75.50-16%/ : /365 天.*省 ¥75.50-16%/);
+      f.set({ ...f.vm, products: pricingProducts.map(product => product.kind === "max" ? lifetimeMaxQuote(product) : product) }); await tick(); family("max");
+      assert.equal(card("max-year").querySelector(".plan-offer")!.textContent, en ? "50% off" : "5 折");
+      assert.match(card("max-year").querySelector(".plan-daily")!.textContent!, /0\.55/);
+      assert.match(card("max-year").querySelector(".plan-saving-amount")!.textContent!, /75\.50/);
+      f.set({ ...f.vm, products: pricingProducts.map(product => product.id === "max-year" ? { ...product, quote: { listMinor: 39900, amountMinor: 0, coupon: null, proCredit: { minor: 39900 }, endsAt: 0 } } : product) }); await tick(); family("max");
+      assert.equal(card("max-year").querySelector(".plan-offer")!.textContent, en ? "PRO balance credited" : "已抵扣 PRO 余额");
+      assert.match(card("max-year").querySelector(".plan-daily")!.textContent!, /0\.00/);
+      f.set({ ...f.vm, membership: { ...f.vm.membership, state: "active", planId: "max-year", expiresAt: "2027-11-30" } }); await tick(); family("max");
+      assert.equal(card("max-year").querySelector(".plan-offer")!.textContent, en ? "Current" : "使用中");
+      assert.match(card("max-year").querySelector(".plan-comparison")!.textContent!, /2027-11-30/);
+    } finally { f.dispose(); }
+  }
+}
+
+async function maxSalesVisibility() {
+  for (const language of ["zh-CN", "en"]) {
+    const en = language === "en";
+    let selected = 0;
+    const f = fixture({ ...initial(), salesOpen: true, maxSalesOpen: false, products: pricingProducts }, { selectPlan: async () => { selected++; } }, language);
+    const series = (key: string) => f.host.querySelector<HTMLButtonElement>(`.plan-series-button[data-series="${key}"]`)!;
+    const plan = (id: string) => f.host.querySelector<HTMLButtonElement>(`[data-plan-id="${id}"] button`)!;
+    try {
+      const gift = f.host.querySelector<HTMLElement>('[data-plan-id="early"] .plan-gift')!;
+      assert.deepEqual(Array.from(gift.querySelectorAll(".plan-gift-line")).map(line => line.textContent), en ? ["2000 AI points", "90 days of 1 GB cloud sync"] : ["赠 2000 AI 点数", "90 天 1 GB 云同步"]);
+      assert.equal(gift.querySelectorAll(".plan-gift-copy").length, 1);
+      assert.doesNotMatch(gift.textContent!, /·/);
+      assert.equal(gift.querySelector('[data-icon="crown"]')?.getAttribute("aria-hidden"), "true");
+      const scope = f.host.querySelector(".plan-scope")!.textContent!;
+      assert.match(scope, en ? /2000 AI points.*180 days.*90 days of 1 GB cloud sync.*separate purchases.*online verification/ : /2000 AI 点数（180 天有效）.*90 天 1 GB 云同步.*需另购.*联网/);
+      assert.doesNotMatch(scope, /不含模型调用额度|Model credits are not included/);
+      for (const [pro, max] of [[true, false], [false, true], [true, true], [false, false], [true, false]] as const) {
+        f.set({ ...f.vm, salesOpen: pro, maxSalesOpen: max, products: pricingProducts.map(product => product.kind === "max" && !max ? { ...product, available: false, availability: "paused" as const } : product) }); await tick();
+        assert.equal(f.host.querySelector<HTMLElement>(".plan-series")!.hidden, false);
+        assert.equal(f.host.querySelectorAll(".benefits-table thead th").length, 4);
+        series("pro").click(); assert.equal(plan("month").disabled, !pro);
+        series("max").click();
+        assert.equal(f.host.querySelectorAll(".plan.is-max").length, 3);
+        for (const id of ["max-month", "max-quarter", "max-year"]) {
+          assert.equal(plan(id).disabled, !max);
+          assert.equal(plan(id).textContent, max ? (en ? "Subscribe now" : "立即订阅") : (en ? "Coming soon" : "即将开放"));
+          if (!max) plan(id).click();
+        }
+        assert.equal(selected, 0, "disabled buttons never dispatch purchase");
+      }
+      f.set({ ...f.vm, maxSalesOpen: true, products: pricingProducts }); await tick(); series("max").click(); plan("max-year").click(); await tick(); assert.equal(selected, 1);
+      f.set({ ...f.vm, products: pricingProducts.filter(product => !product.id.startsWith("max-")) }); await tick();
+      assert.equal(f.host.querySelector<HTMLElement>(".plan-series")!.hidden, true);
+      assert.equal(f.host.querySelectorAll(".benefits-table thead th").length, 3);
+      assert.equal(f.host.querySelectorAll(".plan.is-max").length, 0);
+      assert.ok(plan("month"), "missing Max catalogue falls back to PRO");
+    } finally { f.dispose(); }
+  }
+}
+
+async function benefitsComparison() {
+  const proProducts = pricingProducts.filter(product => !product.id.startsWith("max-"));
+  const entitlements: NonNullable<AccountMembershipViewModel["entitlements"]> = {
+    tier: "max", lifetime: false, isPro: true, subscription: null, next: null,
+    sync: { status: "active", plan: "max", quotaBytes: 5 * 1024 ** 3, readOnly: false, graceUntil: null, deviceLimit: 3 },
+    devices: { limit: 3, active: 1, remaining: 2 },
+    points: { balanceMilli: 123000, balance: "123", nextExpiry: null, monthly: 3000 },
+    maxCoupon: false, serverTime: 0
+  };
+  for (const language of ["zh-CN", "en"]) {
+    const en = language === "en";
+    const f = fixture({ ...initial("active"), products: proProducts, proMonthlyPoints: 500, entitlements }, {}, language);
+    const table = () => f.host.querySelector<HTMLTableElement>(".benefits-table")!;
+    const rows = () => Array.from(table().querySelectorAll<HTMLTableRowElement>("tbody tr:not(.benefits-group)"));
+    const named = (name: string) => rows().find(row => row.querySelector(".benefit-feature > span")?.textContent === name)!;
+    const shape = (count: number, groups: number, rowCount: number) => {
+      assert.equal(table().querySelectorAll("thead th").length, count);
+      assert.equal(table().querySelectorAll(".benefits-group").length, groups);
+      assert.equal(rows().length, rowCount);
+      for (const row of rows()) assert.equal(row.cells.length, count);
+      for (const cell of table().querySelectorAll<HTMLTableCellElement>(".benefits-group td")) assert.equal(cell.colSpan, count);
+      for (const mark of table().querySelectorAll("td > [data-icon]")) {
+        assert.equal(mark.getAttribute("aria-hidden"), "true");
+        assert.ok(mark.nextElementSibling?.classList.contains("account-visually-hidden"));
+      }
+    };
+    try {
+      const headerBefore = f.host.querySelector(".desktop-account-header")!.textContent;
+      shape(3, 3, 13);
+      assert.equal(table().textContent?.includes(en ? "Cloud services" : "云端服务"), false);
+      const comments = named(en ? "Note comments" : "笔记评论");
+      assert.equal(comments.cells[1].querySelector("[data-icon]")?.getAttribute("data-icon"), "minus");
+      assert.equal(comments.cells[2].querySelector("[data-icon]")?.getAttribute("data-icon"), "check");
+      // Visibility follows catalogue presence, even when purchasing is paused.
+      f.set({ ...f.vm, products: pricingProducts.map(product => ({ ...product, available: false, availability: "paused" as const })), proMonthlyPoints: 0 });
+      await tick(); shape(4, 4, 15);
+      assert.deepEqual(Array.from(table().querySelectorAll("thead th")).map(cell => cell.textContent), en ? ["Feature", "Free", "PRO", "Max"] : ["功能", "免费", "PRO", "Max"]);
+      const monthlyName = en ? "AI points per 30 days" : "每30天 AI 点数";
+      assert.equal(named(monthlyName).cells[2].querySelector("[data-icon]")?.getAttribute("data-icon"), "minus", "personal Max monthly points cannot enable the public PRO allowance");
+      assert.equal(named(monthlyName).cells[3].textContent, en ? "3000 AI points/30 days" : "每30天 3000 AI 点数");
+      assert.deepEqual(Array.from(named(en ? "Cloud sync" : "云同步").cells).slice(2).map(cell => cell.textContent), [en ? "Subscription: 1 GB" : "订阅 1 GB", "5 GB"]);
+      for (const row of rows().slice(0, 13)) assert.equal(row.cells[3].querySelector("[data-icon]")?.getAttribute("data-icon"), "check");
+      for (const row of rows().slice(0, 6)) assert.equal(row.cells[1].querySelector("[data-icon]")?.getAttribute("data-icon"), "check");
+      for (const row of rows().slice(6, 13)) assert.equal(row.cells[1].querySelector("[data-icon]")?.getAttribute("data-icon"), "minus");
+      f.set({ ...f.vm, proMonthlyPoints: 500 }); await tick();
+      assert.equal(named(monthlyName).cells[2].textContent, en ? "Paid subscription: 500 AI points/30 days" : "付费订阅每30天 500 AI 点数");
+      assert.equal(named(monthlyName).cells[2].querySelector("[data-icon]"), null);
+      f.set({ ...f.vm, proMonthlyPoints: undefined }); await tick();
+      assert.equal(named(monthlyName).cells[2].querySelector("[data-icon]")?.getAttribute("data-icon"), "minus");
+      f.set({ ...f.vm, products: proProducts, proMonthlyPoints: 500 }); await tick(); shape(3, 3, 13);
+      assert.equal(f.host.querySelector(".desktop-account-header")!.textContent, headerBefore, "hiding the comparison column never removes personal Max, points or sync facts");
+      assert.match(headerBefore!, /Max/); assert.match(headerBefore!, /123/); assert.match(headerBefore!, /5 GB/);
+      f.set({ ...f.vm, products: undefined }); await tick(); shape(3, 3, 13);
+    } finally { f.dispose(); }
+  }
 }
 
 async function anonymousOverview() {
@@ -40,7 +213,7 @@ async function anonymousOverview() {
     const header = f.host.querySelector<HTMLElement>(".desktop-account-header")!;
     assert.equal((header.textContent!.match(/未登录/g) ?? []).length, 1);
     assert.equal(header.querySelector(".profile-copy h2")?.textContent, "未登录");
-    assert.match(header.querySelector(".profile-copy .membership-copy p")!.textContent!, /财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO/);
+    assert.equal(header.querySelector(".profile-copy .membership-copy p"), null, "the free-state header carries no explanatory sentence (方哥 11-08: facts only)");
     assert.equal(header.querySelector(".desktop-account-plan-status"), null);
     assert.equal(header.querySelectorAll(".profile-actions button").length, 1);
     const login = button(header, "登录 / 注册");
@@ -92,7 +265,7 @@ async function structure() {
   assert(f.host.querySelector<HTMLDetailsElement>(".plan-scope") && !f.host.querySelector<HTMLDetailsElement>(".plan-scope")!.open);
   assert(Array.from(f.host.querySelectorAll<HTMLButtonElement>(".plan button")).every(node => node.disabled));
   button(f.host, "查看统计口径").click();
-  assert.match(f.host.querySelector(".desktop-account-statistics-notes")!.textContent!, /不代表厂商计费账单/);
+  assert.match(f.host.querySelector(".desktop-account-statistics-notes")!.textContent!, /不代表模型服务的计费账单/);
   const models = { models: [{ name: "真实模型 A", count: 4 }], skills: [{ name: "不应出现的 Skill", count: 7 }] };
   f.set({ ...f.vm, products: [{ id: "month", prices: { CNY: 1200, USD: 450 }, days: 40 }], statistics: { ...f.vm.statistics, totalTokens: 0, rankings: { 30: models, 90: { ...models, models: [{ name: "真实模型 B", count: 9 }] }, all: models } } });
   assert.equal(f.host.querySelector(".metrics strong")?.textContent, "0");
@@ -115,6 +288,22 @@ async function structure() {
   for (const state of ["anonymous", "unavailable", "free", "active", "lifetime", "offline-valid", "verification-required", "expired", "revoked", "scheduled", "device-limit", "device-required"] as const) {
     const g = fixture({ ...initial(state), membership: { ...initial(state).membership, startsAt: "2026-11-01" } }, { verify: async () => {}, activateDevice: async () => {} });
     assert.equal(!!g.host.querySelector('.desktop-account-header [data-plugin-edition="pro"]'), ["active", "lifetime", "offline-valid"].includes(state), state);
+    const signedIn = !["anonymous", "unavailable"].includes(state), header = g.host.querySelector<HTMLElement>(".desktop-account-header")!;
+    if (signedIn) {
+      assert.equal(header.querySelectorAll(".desktop-account-entries > button").length, 2, `${state}: devices and orders share one group`);
+      const alert = header.querySelector<HTMLElement>(".desktop-account-authorization.is-alert"), normal = ["free", "active", "lifetime", "offline-valid"].includes(state);
+      assert.equal(!!alert, !normal, `${state}: only abnormal states show the single notice`);
+      if (alert) {
+        const label = alert.querySelector(".desktop-account-plan-status")!.textContent!;
+        assert.equal(header.querySelector(".name-line .badge"), null, `${state}: no repeated state badge beside the name`);
+        assert.equal(header.querySelector(".desktop-account-membership-line")?.textContent?.includes(label) ?? false, false, `${state}: the state name is not repeated in the identity line`);
+        const alertButtons = Array.from(alert.querySelectorAll<HTMLButtonElement>(".membership-actions button"));
+        if (alertButtons.some(node => node.classList.contains("primary"))) assert(alertButtons.at(-1)!.classList.contains("primary"), `${state}: a primary action stays last`);
+      }
+      const actionButtons = Array.from(header.querySelectorAll<HTMLButtonElement>(".profile-actions button"));
+      assert.deepEqual(actionButtons.slice(0, 2).map(node => node.textContent), ["退出登录", "编辑资料"]);
+      assert.equal(actionButtons.findIndex(node => node.classList.contains("primary")), actionButtons.some(node => node.classList.contains("primary")) ? actionButtons.length - 1 : -1, `${state}: header primary is last`);
+    }
     if (state === "verification-required") assert.match(g.host.textContent!, /账号权益仍保留，请联网刷新验证/);
     if (state === "revoked") assert.match(g.host.textContent!, /授权已撤销/);
     if (state === "scheduled") assert.match(g.host.textContent!, /2026-11-01/);
@@ -228,4 +417,19 @@ async function mobileDefault() {
   const host = document.body.createDiv(); const handle = mountAccountMembership(host, { app: new App(), viewModel: { ...initial("anonymous"), identity: null }, language: "zh-CN", openProviders() {} });
   assert.equal(host.querySelector('[data-echoink-focus-key="account:login"], [data-echoink-focus-key="account:benefits"]'), null, "desktop route anchors do not change mobile DOM");
   assert.equal(host.querySelectorAll(".heat-cell").length, 365); assert.equal(host.querySelector(".echoink-desktop-account-settings"), null); button(host, "登录 / 注册").click(); assert.equal(openTestModals.length, 1); handle.dispose(); assert.equal(openTestModals.length, 0); host.remove();
+}
+
+async function reportLoginReturn(): Promise<void> {
+  let returns = 0;
+  const f = fixture({ ...initial("anonymous"), identity: null }, { signIn: async input => { f.set({ ...initial(), identity: { ...initial().identity!, email: input.email } }); } }, "zh-CN", async () => {
+    assert.equal(f.host.querySelector("form"), null, "login closes before report resume");
+    assert.equal(f.controller.submitting, false, "login releases its busy guard before report resume"); returns++;
+  });
+  try {
+    button(f.host, "登录 / 注册").click();
+    const detail = f.detail(); fill(detail.querySelector<HTMLInputElement>('input[type="email"]')!, "fixture@example.invalid");
+    fill(detail.querySelector<HTMLInputElement>('input[inputmode="numeric"]')!, "123456");
+    submit(detail.querySelector("form")!); await until(() => returns === 1);
+    assert.equal(returns, 1);
+  } finally { f.dispose(); }
 }

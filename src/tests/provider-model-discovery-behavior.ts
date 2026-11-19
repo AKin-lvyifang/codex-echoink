@@ -208,6 +208,23 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
     const dispatcher = new PiProviderProtocolDispatcher();
     const tool = { name: "fixture_read", description: "Read fixture", parameters: { type: "object", properties: {} } };
     const context: Context = { messages: [{ role: "user", content: "fixture", timestamp: 1 }], tools: [tool] };
+    const glm = createApiProviderConfig("glm");
+    glm.apiKey = key;
+    glm.models = [createApiProviderModelConfig("glm", "glm-5.3")];
+    glm.defaultModelId = "glm-5.3";
+    const glmModel = createPiProductionModelDefinition(settings(glm));
+    assert.equal(resolveEchoInkPiModelReasoningCapabilities(glmModel).supportsOff, false);
+    for (const reasoning of ["low", "high", "max", "off"] as const) {
+      const result = await dispatcher.streamSimple({ model: glmModel, context, apiKey: key,
+        options: { reasoning, maxRetries: 0, timeoutMs: 1000 } }).result();
+      assert.equal(result.stopReason, "stop");
+      const payload = captured.at(-1)!;
+      assert.equal(payload.max_tokens, 131_072);
+      assert.equal(payload.thinking.type, "enabled");
+      assert.equal(payload.reasoning_effort, reasoning === "off" ? "low" : reasoning);
+      assert.equal(Object.hasOwn(payload, "enable_thinking"), false);
+    }
+    console.log("PASS GLM-5.3 SDK wire: 131072 output, enabled thinking, low/high/max and stale off normalization");
     for (const modelId of ["deepseek-v4-flash", "deepseek-flash"]) {
       const model = modelId === "deepseek-flash" ? production : createPiProductionModelDefinition(settings(provider));
       for (const reasoning of ["off", "high"] as const) {
@@ -240,7 +257,7 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
     assert.equal(authResult.echoInkProviderFailure?.status, 401);
     assert.equal(authResult.echoInkProviderFailure?.code, "invalid_request_error");
     assert.equal(authRequests, 1);
-    assert.match(assistantProviderFailureText(authResult), /API Key 无效/u);
+    assert.match(assistantProviderFailureText(authResult), /API Key 无效或未填写/u);
     assert.doesNotMatch(assistantProviderFailureText(authResult), /参数无效|模型或参数设置/u);
     assert.doesNotMatch(JSON.stringify(authResult), /FAKE_DISCOVERY_KEY/u);
     assert.match(authResult.echoInkProviderFailure?.message ?? "", /Authentication Fails/u);
@@ -271,7 +288,7 @@ export async function runProviderModelDiscoveryRegression(installDom: () => void
     assert.doesNotMatch(JSON.stringify(result), /FAKE_DISCOVERY_KEY|PRIVATE_REQUEST_CANARY|Authorization|Bearer/u);
     reasons.push(assistantProviderFailureText(result));
   }
-  assert.notEqual(reasons[0], reasons[1]);
+  assert.equal(reasons[0], reasons[1], "different upstream params share one plain sentence; the param stays in the run report");
   assert.deepEqual(sanitizeProviderFailureDetail(400, { error: { param: key, code: key } }, [key]), { status: 400 });
   assert.deepEqual(sanitizeProviderFailureDetail(null, '400 {"error":{"code":"invalid_request_error","param":"max_tokens","message":"Unsupported parameter max_tokens"}}', [key]), { status: 400, code: "invalid_request_error", param: "max_tokens", message: "Unsupported parameter max_tokens", reason: "unsupported" });
   console.log("PASS errors: distinct actionable parameters and HTTP status; no raw body/Key/Authorization; stable retry category");

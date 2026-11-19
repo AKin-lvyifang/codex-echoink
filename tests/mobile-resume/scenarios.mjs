@@ -130,7 +130,7 @@ export async function resumeScenarios({ MobileRuntime, MobileStore, loadMobileSe
     for (const kind of ["permission", "model"]) {
       const wait = gate(); let started = false, calls = 0;
       const state = await fixture(async () => { calls++; return answer("openai-completions", "bad"); }, { context: async () => { started = true; return wait.promise; } });
-      const id = await interrupted(state), pending = state.runtime.resumeTask(id, "retain on rejection"), rejected = assert.rejects(pending, /权限|资源|失效/u);
+      const id = await interrupted(state), pending = state.runtime.resumeTask(id, "retain on rejection"), rejected = assert.rejects(pending, /权限|资源|失效|已删除|已被删除/u);
       await waitFor(() => started); if (kind === "permission") await state.store.setPermission("read-only"); else state.settings.apiProviders[0].models = [];
       wait.resolve(""); await rejected; assert.equal(calls, 0); assert.equal(state.store.session.draft, "retain on rejection"); assert.equal(state.store.session.interruption.at, 10); assert.equal(state.store.session.runs?.length ?? 0, 0); state.runtime.dispose();
     }

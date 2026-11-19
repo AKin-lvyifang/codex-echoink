@@ -88,7 +88,7 @@ function testCompletedSourceReview() {
   const plan = buildMaintenanceUpgradePlan({ files, bindingRevision: 1, now: 1 });
   const missingResultPaths = plan.issues.filter(issue => issue.kind === "review" && issue.message === missingMessage).map(issue => issue.path).sort();
   assert.deepEqual(missingResultPaths, [changed.path, noFingerprint.path, emptyFingerprint.path, missingLinked.path, ...sameName.map(source => source.path)].sort(), "missing outcomes are reported for each completed source, including both ambiguous candidates and a stale target link");
-  assert.equal(plan.issues.find(issue => issue.path === missingLinked.path && issue.kind === "review" && issue.message.includes("已删除.md"))?.message, "“提炼到”里的 Wiki 页面“Wiki/已删除.md”找不到了，原链接先保留，请你核对。", "a syntactically valid link to an absent scanned Wiki page requires review");
+  assert.equal(plan.issues.find(issue => issue.path === missingLinked.path && issue.kind === "review" && issue.message.includes("已删除.md"))?.message, "“提炼到”指向的 Wiki 页面“Wiki/已删除.md”已不存在，原链接已保留。请核对该链接。", "a syntactically valid link to an absent scanned Wiki page requires review");
   assert.equal(missingLinked.content, missingLinkedOriginal);
   assert.deepEqual(readMaintenanceFrontmatterProperty(missingLinked.content, "提炼到").value, ["[[Wiki/已删除.md]]"], "the old missing-page target remains byte-for-byte in place");
   assert.equal(plan.issues.find(issue => issue.path === "Wiki/歧义来源.md")?.message, "来源“同名”有 2 篇同名资料，分不清是哪一篇，原链接先保留。");

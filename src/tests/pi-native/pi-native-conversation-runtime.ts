@@ -1,4 +1,5 @@
 import { knowledgeMaintenanceBatchPrompt } from "../../knowledge-base/initializer";
+import { DEFAULT_DECISION_THRESHOLDS } from "../../membership/decision-client";
 import { runOutputContinuationProjectionTests } from "./output-continuation-projection";
 import { runPiKnowledgeResilienceTests } from "./knowledge-resilience";
 import { resolveAnswerMarkdown } from "../../ui/codex-view/answer-copy";
@@ -207,6 +208,30 @@ export async function runPiAnswerSaveStateTests(): Promise<void> {
   console.log("PASS answer-save state: active and offline Session receipts, changed-leaf cold reopen, read-only, idempotence and conversation isolation");
 }
 
+/** Continuing another device's conversation seeds its transcript as ordinary history: shown in the panel, read by the model. */
+export async function runPiSeededHistoryTests(): Promise<void> {
+  await withFixture(["seeded-history"], async fixture => {
+    const conversationId = "seeded-history";
+    await assert.rejects(createPiLocalConversation({ catalog: fixture.catalog, sessionApi: API },
+      { conversationId: "seed-without-answer", title: "无回答", cwd: fixture.root, seedMessages: [{ role: "user", text: "只有提问", at: 1 }] }), /seed_history_requires_assistant/u);
+    await createPiLocalConversation({ catalog: fixture.catalog, sessionApi: API }, { conversationId, title: "最近在忙什么", cwd: fixture.root,
+      seedMessages: [{ role: "user", text: "我最近在忙些啥？", at: 1 }, { role: "assistant", text: "主要在忙三件事", at: 2 }, { role: "user", text: "同步卡在哪", at: 3 }] });
+    const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId,
+      resolveConversationCwd: () => fixture.root });
+    assert.deepEqual(cold.messages.map(message => [message.role, message.text]), [["user", "我最近在忙些啥？"], ["assistant", "主要在忙三件事"], ["user", "同步卡在哪"]],
+      "the transcript reads back as the conversation's history without activating a Provider");
+    await fixture.runtime.activateConversation(conversationId);
+    const run = await fixture.submit({ conversationId, text: "接着说", submittedAt: 4 });
+    const context = fixture.latestSession().sessionManager.buildSessionContext().messages;
+    assert.deepEqual(context.slice(0, 3).map(message => message.role), ["user", "assistant", "user"], "the model receives the seeded turns as earlier context");
+    fixture.latestSession().finishSuccessful("卡在首次全量同步"); await run.result;
+    const warm = await fixture.runtime.readProjection(conversationId);
+    assert.deepEqual(warm.messages.filter(message => message.role === "user" || (message.role === "assistant" && !message.itemType?.match(/reasoning|thinking/u))).map(message => message.text).slice(-2),
+      ["接着说", "卡在首次全量同步"]);
+  });
+  console.log("PASS seeded history: transcript persists as Pi history, reads cold, and feeds the next turn");
+}
+
 export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
   for (const memoryMode of ["normal", "no_memory"] as const) {
     await withFixture([`memory-sources-${memoryMode}`], async fixture => {
@@ -218,9 +243,12 @@ export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
         { id: "mem_second", title: "第二条", revision: 3, reason: "title_or_trigger" }];
       await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
       await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources });
+      const read = { id: "mem_read", title: "主动读到", revision: 4, reason: "tool_read" };
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources: [read] });
+      await fixture.reportInjectedMemorySources({ productRunId: run.productRunId, sources: [read] });
       fixture.latestSession().finishSuccessful("回答完成"); await run.result;
       const warm = await fixture.runtime.readProjection(conversationId);
-      const expected = memoryMode === "normal" ? sources.map(({ id, title, revision, reason }) => ({ id, title, revision, reason })) : undefined;
+      const expected = memoryMode === "normal" ? [...sources.map(({ id, title, revision, reason }) => ({ id, title, revision, reason })), read] : undefined;
       assert.deepEqual(warm.messages.find(message => message.injectedMemorySources)?.injectedMemorySources, expected);
       await fixture.runtime.releaseConversation(conversationId);
       const cold = await fixture.runtime.readProjection(conversationId);
@@ -229,7 +257,7 @@ export async function runPiMemorySourcesRuntimeTests(): Promise<void> {
       const text = await readFile(file, "utf8");
       assert.equal(text.includes("BODY_MUST_STAY_IN_REPOSITORY"), false);
       assert.equal(text.trim().split("\n").map(line => JSON.parse(line)).filter(entry => entry.customType === PI_MEMORY_SOURCES_ENTRY_TYPE).length,
-        memoryMode === "normal" ? 1 : 0);
+        memoryMode === "normal" ? 2 : 0);
     });
   }
   console.log("PASS memory sources runtime: actual injection metadata, idempotence, warm/cold projection, no_memory exclusion, no copied body");
@@ -775,6 +803,32 @@ export async function runOutputContinuationRuntimeTests(): Promise<void> {
     try { await test(); console.log(`PASS output/Knowledge runtime: ${name}`); }
     catch (error) { failures.push(error); console.error(`FAIL output/Knowledge runtime: ${name}`, error); }
   };
+  for (const provider of ["zai-coding-cn", "openai"] as const) {
+    await run(`${provider}: reasoning-only length has durable specific feedback and provider-scoped stop`, async () => {
+      const id = `reasoning-exhausted-${provider}`;
+      await withFixture([id], async f => {
+        const handle = await f.submit({ conversationId: id, text: "Explain the fixture", submittedAt: 1 });
+        const session = f.latestSession();
+        session.finishResilientResponse("", "length", undefined, provider);
+        if (provider !== "zai-coding-cn") {
+          for (let index = 1; index <= 2; index++) {
+            await waitForTestCondition(() => session.continuationMessages.length === index);
+            session.finishResilientResponse("", "length", undefined, provider);
+          }
+        }
+        assert.equal((await handle.result).terminalState, "failed");
+        assert.equal(session.continuationMessages.length, provider === "zai-coding-cn" ? 0 : 2);
+        const assertFeedback = (projection: { messages: readonly { details?: string; text?: string }[] }) =>
+          assert.ok(projection.messages.some(message => (message.details ?? message.text)?.includes("模型的本次输出额度已全部用于思考")));
+        assertFeedback(await f.runtime.readProjection(id));
+        await f.runtime.releaseConversation(id);
+        assertFeedback(await f.runtime.activateConversation(id));
+        await f.runtime.shutdown();
+        assertFeedback(await readDurablePiConversationProjection({ catalog: f.catalog, productRuns: f.productRuns,
+          sessionApi: API, conversationId: id, resolveConversationCwd: () => f.root }));
+      });
+    });
+  }
   await run("more than three progressing continuations settle once and reopen as one answer", async () => {
     await withFixture(["continued-report"], async f => {
       const id = "continued-report";
@@ -910,12 +964,12 @@ export async function runOutputContinuationRuntimeTests(): Promise<void> {
         assert.ok(projection.messages.some(message => message.role === "assistant" && message.text.includes(call)));
         if (!fenced) {
           const answer = projection.messages.find(message => message.role === "assistant" && message.text.includes(call));
-          assert.match(answer?.details ?? "", /本轮没有执行工具/u);
+          assert.match(answer?.details ?? "", /未实际执行工具调用/u);
           assert.doesNotMatch(answer?.details ?? "", /达到输出上限/u);
           f.runtime.releaseProductRun(handle.productRunId);
           await f.runtime.releaseConversation(handle.conversationId);
           const reopened = await f.runtime.activateConversation(handle.conversationId);
-          assert.match(reopened.messages.find(message => message.role === "assistant" && message.text.includes(call))?.details ?? "", /本轮没有执行工具/u);
+          assert.match(reopened.messages.find(message => message.role === "assistant" && message.text.includes(call))?.details ?? "", /未实际执行工具调用/u);
         }
       });
     }
@@ -941,13 +995,13 @@ export async function runCustomToolCallingRuntimeTests(): Promise<void> {
       if (failed) assert.equal(result.error, scenario === "disabled" ? "model_tool_call_text_disabled" : "model_tool_call_text_incompatible");
       const live = await fixture.runtime.readProjection(conversationId);
       assert.ok(live.messages.some(message => message.role === "assistant" && message.text === text), "original answer survives");
-      if (failed) assert.ok(live.messages.some(message => message.itemType === "error" && /本轮没有执行工具/u.test(message.text)));
-      if (failed) assert.match(live.messages.find(message => message.itemType === "assistant")!.details!, /本轮没有执行工具/u, "the existing answer failure component receives the specific reason");
+      if (failed) assert.ok(live.messages.some(message => message.itemType === "error" && /未实际执行工具调用/u.test(message.text)));
+      if (failed) assert.match(live.messages.find(message => message.itemType === "assistant")!.details!, /未实际执行工具调用/u, "the existing answer failure component receives the specific reason");
       await fixture.runtime.shutdown();
       const cold = await readDurablePiConversationProjection({ catalog: fixture.catalog, productRuns: fixture.productRuns, sessionApi: API, conversationId, resolveConversationCwd: () => fixture.root });
       assert.equal((await fixture.productRuns.read(handle.productRunId))?.terminalState, failed ? "failed" : "completed");
-      assert.equal(cold.messages.some(message => message.itemType === "error" && /本轮没有执行工具/u.test(message.text)), failed, "cold read restores specific failure");
-      if (failed) assert.match(cold.messages.find(message => message.itemType === "assistant")!.details!, /本轮没有执行工具/u);
+      assert.equal(cold.messages.some(message => message.itemType === "error" && /未实际执行工具调用/u.test(message.text)), failed, "cold read restores specific failure");
+      if (failed) assert.match(cold.messages.find(message => message.itemType === "assistant")!.details!, /未实际执行工具调用/u);
       if (failed) {
         const persisted = await fixture.productRuns.read(handle.productRunId);
         assert.equal(persisted!.interruption!.toolCallTextFailure, result.error);
@@ -1046,7 +1100,53 @@ export async function runPiNativeConversationRuntimeTests(): Promise<void> {
   await runPiNativeTaskPlanRuntimeTests();
 }
 
+/** Actual submit path: low /turn must never wait for speculative collection. */
+export async function runPiKnowledgePickRuntimeTests(): Promise<void> {
+  let probability = 0.2, capturedTurnId = "", collectorSignal: AbortSignal | undefined;
+  let recent: readonly string[] = [], retrievals = 0;
+  const entered = deferred();
+  const observations: import("../../types/composer-submission").PreparationUpdate[] = [];
+  await withFixture(["pick-low", "pick-high"], async fixture => {
+    const conversationId = "knowledge-pick-runtime";
+    await fixture.runtime.createConversation({ conversationId, title: "Pick runtime", cwd: fixture.root });
+    await fixture.runtime.activateConversation(conversationId);
+    const low = await withTimeout(fixture.submit({ conversationId, text: "你还在吗", submittedAt: 1 }), "low judgment bypasses pending candidates");
+    assert.equal(collectorSignal?.aborted, true, "discard the pending collector without awaiting it");
+    assert.equal(retrievals, 0);
+    fixture.latestSession().finishSuccessful("我在。"); await low.result;
+    probability = 0.9;
+    const high = await fixture.submit({ conversationId, text: "我的笔记里提过什么？", submittedAt: 2,
+      onPreparationStage: value => { observations.push(value); } });
+    assert.equal(retrievals, 1);
+    assert.deepEqual(recent, ["你还在吗", "我在。"]);
+    assert.ok(observations.some(value => value.stage === "knowledge" && value.detail === "selecting_knowledge" && value.status === "active"));
+    assert.equal(observations.filter(value => value.stage === "knowledge" && value.status === "completed").length, 1);
+    fixture.latestSession().finishSuccessful("没有可引用资料。"); await high.result;
+    const projection = await fixture.runtime.activateConversation(conversationId);
+    const activities = projection.messages.flatMap(message => message.reasoningSummary?.activities ?? []);
+    assert.equal(activities.filter(activity => activity.id === "knowledge:retrieval").length, 1, "one stable retrieval row across selecting/completed");
+  }, { decisions: { ready: () => true, thresholds: () => ({ ...DEFAULT_DECISION_THRESHOLDS }),
+    judgeTurn: async input => { capturedTurnId = input.turnId; await entered.promise; return { knowledge: probability }; } },
+    knowledge: {
+      collectChatCandidates: async input => {
+        collectorSignal = input.signal; entered.resolve();
+        if (probability < 0.5) return await new Promise<never>(() => {});
+        return { candidates: [], scannedHits: 0, pages: 1, stopReason: "exhausted" };
+      },
+      retrieveChat: async input => {
+        retrievals++; assert.equal(input.decisionTurnId, capturedTurnId); assert.notEqual(input.productRunId, capturedTurnId);
+        assert.equal(input.knowledgePickApproved, true); assert.ok(input.candidates); await input.candidates;
+        recent = input.recent ?? []; await input.onStage?.("selecting_knowledge");
+        return { status: "no_evidence", references: [], providerResourceText: "No evidence" };
+      },
+      retrieveAsk: async () => { throw new Error("ask must not be used"); },
+      verifyAskReferences: async input => ({ status: "valid", references: input.references })
+    } });
+  console.log("PASS knowledge pick actual submit: parallel collection, low judgment does not wait, shared turnId/recent, one progress row");
+}
+
 export async function runBufferedModelProgressTests(): Promise<void> {
+  await assertSnapshotStreamingPublication();
   await withFixture(["buffered-model-progress"], async fixture => {
     const conversationId = "buffered-model-progress";
     await fixture.runtime.createConversation({ conversationId, title: "Buffered model progress", cwd: fixture.root });
@@ -1069,6 +1169,44 @@ export async function runBufferedModelProgressTests(): Promise<void> {
     async verifyAskReferences(input) { return { status: "valid", references: input.references }; }
   } });
   console.log("PASS idle watchdog: buffered model progress contains no answer content");
+}
+
+async function assertSnapshotStreamingPublication(): Promise<void> {
+  const reference: PiKnowledgeReference = { referenceId: `knowledge-reference:${"f".repeat(64)}`,
+    vaultRelativePath: "wiki/snapshot.md", title: "Snapshot", excerpt: "exact delivered text",
+    contentRevision: `sha256:${"a".repeat(64)}`, lineStart: 1, lineEnd: 1, verificationStatus: "local_revision_verified" };
+  for (const scenario of ["zero", "changed", "revoked", "tool-added"] as const) {
+    const initial = scenario === "changed" || scenario === "revoked" ? [reference] : [];
+    let verified = false;
+    await withFixture([`snapshot-stream-${scenario}`], async fixture => {
+      const handle = await fixture.submit({ conversationId: `snapshot-stream-${scenario}`, text: "/ask 查找资料", submittedAt: 1 });
+      const events: PiChatRuntimeEvent[] = [];
+      const subscription = fixture.runtime.subscribeProductRun(handle.productRunId, event => events.push(event));
+      const session = fixture.latestSession();
+      if (scenario === "tool-added") session.finishTool("late-source", "knowledge_search", {
+        details: { type: "echoink.knowledge-references.v1", schemaVersion: 1, references: [reference], status: "completed" }
+      }, false);
+      session.emitAssistantText("先显示的正文。");
+      await waitForTestCondition(() => events.some(event => event.type === "message_update" && event.textDelta === "先显示的正文。"));
+      assert.equal(verified, false, "exact-snapshot text is visible before the terminal freshness check");
+      session.finishSuccessful("先显示的正文。");
+      assert.equal((await handle.result).terminalState, "completed");
+      assert.equal(verified, true);
+      assert.ok((await fixture.runtime.readProjection(handle.conversationId)).messages.some(message => message.text === "先显示的正文。"));
+      if (scenario === "revoked") assert.ok((await fixture.runtime.readProjection(handle.conversationId)).messages.some(message => message.knowledgeVerificationSkipped === "knowledge_permission_revoked"));
+      subscription.unsubscribe();
+    }, { knowledge: {
+      referenceVerificationMode: "annotate-delivered-snapshots",
+      retrieveAsk: async () => ({ status: initial.length ? "ready" : "no_evidence", references: initial, providerResourceText: "exact snapshot",
+        retrieval: { elapsedMs: 1, total: initial.length, returned: initial.length, remaining: 0, hasMore: false, exhausted: true } }),
+      verifyAskReferences: async input => {
+        verified = true;
+        assert.deepEqual(input.references.map(item => item.referenceId), scenario === "zero" ? [] : [reference.referenceId]);
+        return scenario === "revoked" ? { status: "verification_skipped", reason: "knowledge_permission_revoked", references: input.references }
+          : { status: "valid", references: input.references.map(item => scenario === "changed" ? { ...item, verificationStatus: "source_link_changed" } : item) };
+      }, recordUsage: async () => undefined
+    } as PiKnowledgeRuntimePort });
+  }
 }
 
 async function assertConversationDefaultSkillPriorityAndTurnContext(): Promise<void> {
@@ -2967,7 +3105,7 @@ Promise<void> {
     assert.equal(durableFailedAnswer?.status, "failed");
     assert.equal(
       durableFailedAnswer?.details,
-      "模型服务返回的流数据格式损坏，回答未完成。"
+      "模型服务返回的内容不完整，回答未能生成完毕。请重新发送；如问题持续，请更换模型。"
     );
 
     await fixture.runtime.releaseConversation(conversationId);
@@ -3416,7 +3554,7 @@ async function assertInvalidMaintenanceResultSurvivesReopen(
     assert.equal(
       projection.messages.some((message) =>
         message.runId === currentRunId
-        && message.title === "知识整理没做完"
+        && message.title === "知识整理尚未完成"
       ),
       false,
       `${label} must not rewrite Agent messages as repeated failure cards`
@@ -3479,8 +3617,8 @@ Promise<void> {
           ? "revision_conflict: wiki/间隔复习.md expectedTarget=sha256:fixture recordId=r9-known toolCallId=write-1"
           : `${testCase.status} opaque diagnostic recordId=r9-unknown toolCallId=write-2 stage=write`;
         const expectedIssueDescription = testCase.status === "partial"
-          ? "《间隔复习》在整理时被改过。为了不覆盖你的修改，这一页先跳过了；点继续会重新读取后再写。"
-          : "这一步还没做完。已写好的内容会保留，点继续会重新核对后处理。";
+          ? "《间隔复习》在整理期间已被修改，为保留您的修改，已跳过该页面。请点击“继续”重新读取后再写入。"
+          : "此步骤尚未完成，已写入的内容已保留。请点击“继续”重新核对后处理。";
         const issues = [{ code: `${testCase.status}_issue`, message: internalDiagnostic, path: issuePath }];
         const envelope = createKnowledgeMaintenanceResultEnvelope({
           status: testCase.status,
@@ -3506,10 +3644,10 @@ Promise<void> {
           conversationId,
           productRunId: handle.productRunId,
           expectedTitle: testCase.status === "partial"
-            ? "知识整理没做完"
+            ? "知识整理尚未完成"
             : testCase.status === "write_uncertain"
               ? "知识写入状态不确定"
-              : "知识整理没做完",
+              : "知识整理尚未完成",
           expectedStatus: "failed",
           expectedNotePath: `wiki/${testCase.status}.md`,
           expectedNoteDescription: `${testCase.status} 回读摘要`,
@@ -6182,7 +6320,7 @@ async function withFixture(
   assertion: (fixture: RuntimeFixture) => Promise<void>,
   runtimeOptions: Pick<
     PiNativeConversationRuntimeOptions,
-    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills" | "generation"
+    "hasPendingProductWork" | "knowledge" | "now" | "recordDreamExperience" | "skills" | "generation" | "decisions"
   > = {}
 ): Promise<void> {
   const root = await realpath(await mkdtemp(
@@ -6570,10 +6708,11 @@ class ControlledAgentSession {
     return flight;
   }
 
-  finishResilientResponse(text: string, stopReason: AssistantMessage["stopReason"], errorMessage?: string): void {
+  finishResilientResponse(text: string, stopReason: AssistantMessage["stopReason"], errorMessage?: string, reasoningProvider?: string): void {
     const resolve = this.resolvePrompt;
     assert.ok(resolve, "expected a pending model response");
-    const message = { ...assistantMessage(text, 300_000 + this.promptSequence), stopReason, ...(errorMessage ? { errorMessage } : {}) };
+    const message = { ...assistantMessage(text, 300_000 + this.promptSequence), stopReason, ...(errorMessage ? { errorMessage } : {}),
+      ...(reasoningProvider ? { provider: reasoningProvider, content: [{ type: "thinking" as const, thinking: "Synthetic reasoning" }] } : {}) };
     this.emit({ type: "message_start", message });
     this.sessionManager.appendMessage(message);
     this.emit({ type: "message_end", message });
@@ -7097,7 +7236,7 @@ export async function runGenerationRuntimeTests(): Promise<void> {
       // Provider. A hard runtime preflight must never enter this prompt path.
       session.prompt = async (...args) => { promptCalls++; try { throw new Error("extension budget error swallowed by runner"); } catch { /* real runner behavior */ } providerCalls++; return originalPrompt(...args); };
       const request = createGenerationRequest({ id: "brief", name: "简报", description: "重点", instructions: "生成简报", outputKind: "markdown" }, ["资料/原文.md"], "输出");
-      await assert.rejects(fixture.submit({ conversationId: id, text: generationRequestSummary(request), generationRequest: request, submittedAt: 1 }), failure === "source_deleted" ? /均未读到正文/u : failure === "read_denied" ? /读取准入拒绝/u : failure === "outputs_rebound" ? /换绑/u : /本轮预算/u);
+      await assert.rejects(fixture.submit({ conversationId: id, text: generationRequestSummary(request), generationRequest: request, submittedAt: 1 }), failure === "source_deleted" ? /均未读到正文/u : failure === "read_denied" ? /读取准入拒绝/u : failure === "outputs_rebound" ? /换绑/u : /处理上限/u);
       assert.equal(promptCalls, 0); assert.equal(providerCalls, 0);
       const live = await fixture.runtime.readProjection(id);
       assert.equal(live.messages.some(message => message.itemType === "generationProgress" || message.generationResult || message.status === "running"), false);
@@ -7230,7 +7369,7 @@ async function assertCanvasGenerationAttempts(): Promise<void> {
         assert.match(result.error!, /单次输出上限/u);
         assert.match(result.error!, /调低思考/u);
       }
-      if (mode === "budget") assert.match(result.error!, /本轮预算/u);
+      if (mode === "budget") assert.match(result.error!, /处理上限/u);
       if (mode === "uncertain") assert.equal(result.writeState, "unconfirmed");
       assert.equal(projection.messages.filter(message => message.role === "user" && message.generationRequest).length, 1);
       assert.equal(projection.messages.filter(message => message.generationResult).length, 1);

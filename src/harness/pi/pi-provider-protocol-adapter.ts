@@ -1,8 +1,12 @@
+import { xiaoechoFailureCode } from "../../membership/xiaoecho-catalog";
+import { publishXiaoechoModelSignal } from "../../membership/xiaoecho-model-signal";
+import { XIAOECHO_RETRY_DELAY_MS, xiaoechoBusyCode } from "./xiaoecho-retry";
 import {
   createAssistantMessageEventStream,
   type AssistantMessage,
-  type Api,
+  type AssistantMessageEvent,
   type AssistantMessageEventStream,
+  type Api,
   type Context,
   type Model,
   type ModelThinkingLevel,
@@ -133,7 +137,11 @@ export class PiProviderProtocolDispatcher {
         ),
         apiKey: input.apiKey
       },
-      start: (model, options) => this.adapters[protocol].stream(model, input.context, options)
+      start: (model, options) => streamWithXiaoechoModelSignals(
+        model,
+        options,
+        (requestOptions) => this.adapters[protocol].stream(model, input.context, requestOptions)
+      )
     });
   }
 
@@ -162,9 +170,119 @@ export class PiProviderProtocolDispatcher {
         ),
         apiKey: input.apiKey
       },
-      start: (model, options) => this.adapters[protocol].streamSimple(model, input.context, options)
+      start: (model, options) => streamWithXiaoechoModelSignals(
+        model,
+        options,
+        (requestOptions) => this.adapters[protocol].streamSimple(model, input.context, requestOptions)
+      )
     });
   }
+}
+
+/** Scope fallback attribution to the actual HTTP request, including existing retries. */
+function streamWithXiaoechoModelSignals<T extends StreamOptions>(
+  model: Model<Api>,
+  options: T,
+  start: (options: T) => AssistantMessageEventStream
+): AssistantMessageEventStream {
+  if (model.provider !== "xiaoecho") return start(options);
+  const requestedModelId = model.id;
+  const baseUrl = model.baseUrl;
+  const requestId = crypto.randomUUID();
+  let fallback = false;
+  let reported = false;
+  const report = (kind: "fallback" | "retired") => {
+    if (reported) return;
+    reported = true;
+    publishXiaoechoModelSignal({ kind, requestedModelId, baseUrl, requestId });
+  };
+  const observeFailure = (value: unknown) => {
+    const error = value && typeof value === "object"
+      ? value as Partial<AssistantProviderFailure> & { message?: unknown; code?: unknown }
+      : undefined;
+    if ([
+      typeof value === "string" ? value : undefined,
+      error?.message,
+      error?.code,
+      error?.errorMessage,
+      error?.echoInkProviderFailure?.code,
+      error?.echoInkProviderFailure?.message
+    ].some((text) => typeof text === "string" && /\bMODEL_(?:UNKNOWN|UNAVAILABLE)\b/u.test(text))) {
+      report("retired");
+    }
+  };
+  try {
+    const upstream = start({
+      ...options,
+      onResponse: async (response, responseModel) => {
+        const headers = Object.fromEntries(Object.entries(response.headers).map(
+          ([name, value]) => [name.toLowerCase(), value]
+        ));
+        if (
+          response.status >= 200 && response.status < 300
+          && headers["x-xiaoecho-fallback"] === "auto"
+          && headers["x-xiaoecho-requested-model"] === requestedModelId
+        ) {
+          fallback = true;
+          report("fallback");
+        }
+        await options.onResponse?.(response, responseModel);
+      }
+    });
+    return xiaoechoModelResponseStream(
+      upstream,
+      (message) => fallback ? { ...message, model: "auto" } : message,
+      observeFailure
+    );
+  } catch (error) {
+    observeFailure(error);
+    throw error;
+  }
+}
+
+/** Preserve the adapter's iterator/result error behavior while mapping every message. */
+function xiaoechoModelResponseStream(
+  upstream: AssistantMessageEventStream,
+  mapMessage: (message: AssistantMessage) => AssistantMessage,
+  observeFailure: (error: unknown) => void
+): AssistantMessageEventStream {
+  const iterate = async function* (): AsyncGenerator<AssistantMessageEvent> {
+    try {
+      for await (const event of upstream) {
+        if (event.type === "error") observeFailure(event.error);
+        if ("partial" in event) {
+          yield { ...event, partial: mapMessage(event.partial) };
+        } else if (event.type === "done") {
+          yield { ...event, message: mapMessage(event.message) };
+        } else {
+          yield { ...event, error: mapMessage(event.error) };
+        }
+      }
+    } catch (error) {
+      observeFailure(error);
+      throw error;
+    }
+  };
+  const result = async (): Promise<AssistantMessage> => {
+    try {
+      const message = await upstream.result();
+      if (message.stopReason === "error") observeFailure(message);
+      return mapMessage(message);
+    } catch (error) {
+      observeFailure(error);
+      throw error;
+    }
+  };
+  return new Proxy(upstream, {
+    get(target, property) {
+      if (property === Symbol.asyncIterator) return iterate;
+      if (property === "result") return result;
+      if (property === "push") return target.push.bind(target);
+      if (property === "end") return target.end.bind(target);
+      const value: unknown = Reflect.get(target, property, target);
+      return value;
+    }
+  });
 }
 
 function composeReasoningPayloadTransform(
@@ -194,7 +312,7 @@ implements ControlledPiStreamPort {
     resolveAuthToken(): string | Promise<string>;
     dispatcher?: PiProviderProtocolDispatcher;
     recordUsage?(event: UsageRequestEvent): void | Promise<void>;
-    observeRequest?(context: Readonly<Context>, execution: ControlledPiStreamInput, additionalInputTokens: number): void;
+    observeRequest?(context: Readonly<Context>, execution: ControlledPiStreamInput, additionalInputTokens: number): void | Promise<void>;
     documentInput?: Readonly<{
       currentDocuments(): readonly Readonly<PiChatPreparedDocument>[];
       capabilityTarget: Readonly<PiDocumentCapabilityTarget>;
@@ -217,8 +335,10 @@ implements ControlledPiStreamPort {
       return failedStream(
         input.model,
         providerFailureCodeFromError(error)
-          ?? (input.provider.authMode === "oauth"
-            ? (error instanceof Error && /授权已失效/u.test(error.message)
+          ?? (input.provider.authMode === "account"
+            ? "provider_account_login_required"
+            : input.provider.authMode === "oauth"
+            ? (error instanceof Error && /授权已失效|登录状态已失效/u.test(error.message)
               ? "provider_oauth_relogin_required"
               : thrownProviderFailureCode(null, error instanceof Error ? error.message : ""))
             : "provider_api_key_missing")
@@ -247,11 +367,11 @@ implements ControlledPiStreamPort {
       const dispatchRequest = (
         context: Context,
         injectNativeDocuments: boolean
-      ): AssistantMessageEventStream => {
+      ): AssistantMessageEventStream => deferredStream(input.model, async () => {
         const additionalInputTokens = injectNativeDocuments
           ? nativeDocuments.reduce((sum, document) => sum + Math.max(1_200, estimateTokenValue(document.text ?? "")), 0)
           : 0;
-        this.options.observeRequest?.(context, input, additionalInputTokens);
+        await this.options.observeRequest?.(context, input, additionalInputTokens);
         const upstream = dispatcher.streamSimple({
         model: input.model,
         context,
@@ -293,7 +413,7 @@ implements ControlledPiStreamPort {
           additionalInputTokens,
           onRecordError: () => console.error("EchoInk request usage could not be recorded")
         }) : upstream;
-      };
+      });
       let requestContext = providerContext;
       if (fallbackLocked) {
         if (nativeDocuments.some((document) => !document.text?.trim())) {
@@ -310,16 +430,18 @@ implements ControlledPiStreamPort {
           );
         }
       }
-      const upstream = dispatchRequest(
-        requestContext,
-        nativeDocuments.length > 0 && !fallbackLocked
-      );
-      return sanitizeProviderStream(
-        upstream,
-        input.model,
-        () => responseStatus,
-        nativeDocuments.length > 0 && !fallbackLocked
-          ? (event, status) => {
+      const injectDocuments = nativeDocuments.length > 0 && !fallbackLocked;
+      const upstream = dispatchRequest(requestContext, injectDocuments);
+      // 小echo: the server's concurrency gate says "busy" → wait 2 s and send the same request once more, silently.
+      let busyRetried = false;
+      const busyRetry = (event: AssistantMessage, status: number | null): AssistantMessageEventStream | null => {
+        if (busyRetried || !xiaoechoBusyCode(input.model.provider, status, event.errorMessage ?? "")) return null;
+        busyRetried = true;
+        responseStatus = null;
+        return delayedStream(input.model, XIAOECHO_RETRY_DELAY_MS, () => dispatchRequest(requestContext, injectDocuments));
+      };
+      const documentFallback = nativeDocuments.length > 0 && !fallbackLocked
+          ? (event: AssistantMessage, status: number | null) => {
               if (!isExplicitDocumentUnsupported(status, event.errorMessage ?? "")) {
                 return null;
               }
@@ -340,7 +462,12 @@ implements ControlledPiStreamPort {
               responseStatus = null;
               return dispatchRequest(fallbackContext, false);
             }
-          : undefined,
+          : undefined;
+      return sanitizeProviderStream(
+        upstream,
+        input.model,
+        () => responseStatus,
+        (event, status) => busyRetry(event, status) ?? documentFallback?.(event, status) ?? null,
         [apiKey]
       );
     } catch (error) {
@@ -486,8 +613,10 @@ function sanitizeProviderStream(
             type: "error",
             reason: event.reason,
             error: Object.assign({}, event.error, {
-              echoInkProviderFailure: sanitizeProviderFailureDetail(responseStatus(),
-                (event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage, secrets),
+              echoInkProviderFailure: model.provider === "xiaoecho"
+                ? { message: xiaoechoFailureCode((event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage) }
+                : sanitizeProviderFailureDetail(responseStatus(),
+                    (event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage, secrets),
               errorMessage: runtimeProviderFailureCode(
                 responseStatus(),
                 event.error.errorMessage ?? "",
@@ -669,6 +798,31 @@ function isStatusContextOverflow(
   );
 }
 
+/** Starts the real request only after `delayMs`; events then flow through unchanged. */
+function deferredStream(model: Model<Api>, start: () => Promise<AssistantMessageEventStream>): AssistantMessageEventStream {
+  const stream = createAssistantMessageEventStream();
+  void (async () => {
+    try { for await (const event of await start()) stream.push(event); }
+    catch (error) { stream.push({ type: "error", reason: "error", error: errorMessage(model, thrownProviderFailureCode(null, error instanceof Error ? error.message : "")) }); }
+    finally { stream.end(); }
+  })();
+  return stream;
+}
+
+function delayedStream(
+  model: Model<Api>,
+  delayMs: number,
+  start: () => AssistantMessageEventStream
+): AssistantMessageEventStream {
+  const stream = createAssistantMessageEventStream();
+  window.setTimeout(() => {
+    void (async () => {
+      try { for await (const event of start()) stream.push(event); }
+      catch (error) { stream.push({ type: "error", reason: "error", error: errorMessage(model, thrownProviderFailureCode(null, error instanceof Error ? error.message : "")) }); }
+    })();
+  }, delayMs);
+  return stream;
+}
 function failedStream(
   model: Model<Api>,
   safeCode: string

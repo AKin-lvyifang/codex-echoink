@@ -120,7 +120,7 @@ export class EchoInkTodoStore {
   async readOnlySnapshot(): Promise<TodoReadSnapshot> {
     const sourcePath = this.sourcePath, file = this.plugin.app.vault.getAbstractFileByPath(sourcePath);
     if (!file) return { sourcePath, exists: false, contentVersion: null, records: [], warnings: [] };
-    if (!(file instanceof TFile)) throw new Error("待办源文件位置不是文件。");
+    if (!(file instanceof TFile)) throw new Error("待办源文件路径已被文件夹占用。请更换待办源文件位置后重试。");
     const content = await this.plugin.app.vault.read(file);
     const contentVersion = await todoContentVersion(content, sourcePath);
     if (this.sourcePath !== sourcePath) throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
@@ -170,7 +170,7 @@ export class EchoInkTodoStore {
       return { content: appendRecordBlock(content, serializeTodoRecord(record)) };
     }, undefined, sourcePath, { guard, verify: content => {
       const saved = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
-      if (!saved || (created && (saved.id !== record.id || serializeTodoRecord({ ...saved, sourceBlock: undefined }) !== serializeTodoRecord(record)))) throw new Error("日记待办写后核对失败。");
+      if (!saved || (created && (saved.id !== record.id || serializeTodoRecord({ ...saved, sourceBlock: undefined }) !== serializeTodoRecord(record)))) throw new Error("日记待办写入后内容与预期不一致。请打开待办源文件确认内容。");
       result = { record: saved, version: diaryVersion(saved), created };
     } });
     return result!;
@@ -185,12 +185,12 @@ export class EchoInkTodoStore {
 
   private validateDiaryInput(input: TodoInput): void {
     for (const field of [input.title, input.people, input.categoryName, input.project]) {
-      if (field && /[\r\n]|<!--/u.test(field)) throw new Error("待办字段不能包含换行或内部标记。");
+      if (field && /[\r\n]|<!--/u.test(field)) throw new Error("待办内容不能包含换行或“<!--”。请修改后重试。");
     }
-    if (!input.title.trim()) throw new Error("待办事项不能为空。");
-    if (input.dueDate && !validTodoDate(input.dueDate)) throw new Error("待办截止日期无效。");
+    if (!input.title.trim()) throw new Error("待办事项不能为空。请填写标题后重试。");
+    if (input.dueDate && !validTodoDate(input.dueDate)) throw new Error("待办截止日期无效。请重新选择日期。");
     this.validateDueTime(input.dueTime);
-    if (input.dueTime && !input.dueDate) throw new Error("待办截止时间需要截止日期。");
+    if (input.dueTime && !input.dueDate) throw new Error("设置截止时间前需先选择截止日期。请补充截止日期后重试。");
   }
 
   /** Apply a user-confirmed diary correction to the same task, never add a replacement. */
@@ -217,7 +217,7 @@ export class EchoInkTodoStore {
       return { content: replaceRecordLines(content, current, expected) };
     }, undefined, sourcePath, { guard, verify: content => {
       const saved = findDiaryRecord(parseTodoMarkdown(content).records, entryId);
-      if (!saved || diaryVersion(saved) !== expected) throw new Error("日记待办修改后核对失败。");
+      if (!saved || diaryVersion(saved) !== expected) throw new Error("日记待办修改后内容与预期不一致。请打开待办源文件确认内容。");
       result = { record: saved, version: diaryVersion(saved) };
     } });
     return result!;
@@ -242,7 +242,7 @@ export class EchoInkTodoStore {
       removed = true;
       return { content: replaceRecordLines(content, current, null) };
     }, undefined, sourcePath, { guard, verify: content => {
-      if (findDiaryRecord(parseTodoMarkdown(content).records, entryId)) throw new Error("日记待办撤销后核对失败。");
+      if (findDiaryRecord(parseTodoMarkdown(content).records, entryId)) throw new Error("日记待办未能撤销。请打开待办源文件确认内容。");
     } });
     return { removed };
   }
@@ -634,7 +634,7 @@ export class EchoInkTodoStore {
       if (this.sourcePath !== expectedSourcePath) throw new TodoConflictError("todo_source_changed", "待办数据文件已切换，请返回后重新打开；输入已保留。");
       const vault = this.plugin.app.vault;
       const abstract = vault.getAbstractFileByPath(this.sourcePath);
-      if (abstract && !(abstract instanceof TFile)) throw new Error("待办源文件位置不是文件。");
+      if (abstract && !(abstract instanceof TFile)) throw new Error("待办源文件路径已被文件夹占用。请更换待办源文件位置后重试。");
       const expectedContent = expectedVersion !== undefined && abstract instanceof TFile ? await vault.read(abstract) : undefined;
       if (expectedVersion !== undefined && (abstract instanceof TFile ? await todoContentVersion(expectedContent!, this.sourcePath) !== expectedVersion : expectedVersion !== null)) {
         throw new TodoConflictError("todo_source_changed", "待办源文件已变化，请重新读取后重试。");
@@ -679,15 +679,15 @@ export class EchoInkTodoStore {
         console.error("[EchoInk] To-do source was saved but could not be refreshed:", error);
         new Notice(this.plugin.settings.settingsLanguage === "en"
           ? "To-do saved. Could not refresh the list; reopen the home page."
-          : "待办已保存，但列表刷新失败，请重新打开首页。");
+          : "待办已保存，但列表未能刷新。请重新打开首页。");
       }
     });
     this.writeQueue = run.catch((error) => {
       console.error("[EchoInk] To-do source write failed:", error);
       new Notice(
         this.plugin.settings.settingsLanguage === "en"
-          ? "Could not write the to-do source file."
-          : "待办源文件写入失败。"
+          ? "The to-do could not be saved to its source file. Try again later."
+          : "待办未能写入源文件。请稍后重试。"
       );
     });
     // Recover the internal queue, but let the caller keep its draft on failure.

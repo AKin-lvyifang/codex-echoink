@@ -138,17 +138,21 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     this.allowed(canonicalPath);
     return canonicalPath;
   }
-  async read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string }>): Promise<KnowledgeAgentReadResult> {
+  async read(input: Readonly<{ vaultRelativePath: string; expectedContentRevision?: string; check?: () => void }>): Promise<KnowledgeAgentReadResult> {
+    input.check?.();
     const scope = this.scopeKey();
     const file = this.file(input.vaultRelativePath);
     const canonicalPath = this.options.resolveSourcePath ? await this.sourcePath(file.path) : file.path;
+    input.check?.();
     const version = JSON.stringify([file.stat.mtime, file.stat.size, file.basename]);
     const reading = { path: input.vaultRelativePath, invalidated: false };
     this.activeReads.add(reading);
     try {
       const content = await this.app.vault.read(file);
+      input.check?.();
       this.assertOpen();
       if (this.options.resolveSourcePath && await this.sourcePath(file.path) !== canonicalPath) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
+      input.check?.();
       if (scope !== this.scopeKey() || reading.invalidated || file.path !== input.vaultRelativePath) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
       const current = this.file(input.vaultRelativePath);
       if (version !== JSON.stringify([current.stat.mtime, current.stat.size, current.basename])) throw Object.assign(new Error("Source changed"), { code: "source_changed" });
@@ -160,7 +164,23 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     } finally { this.activeReads.delete(reading); }
   }
   async search(request: Readonly<KnowledgeAgentSearchRequest>): Promise<KnowledgeAgentSearchResult> {
+    if (!request.candidateSearch) return this.searchPage(request);
     const scope = this.ensureScope();
+    const generation = this.generation;
+    try {
+      if (request.mode && request.mode !== "search" || request.cursor) throw Object.assign(new Error("Candidate collection requires one keyword ranking"), { code: "invalid_query" });
+      request.candidateSearch.check();
+      return await this.searchPage(request);
+    } catch (error) {
+      if ((error as { name?: string })?.name !== "AbortError" || !request.candidateSearch.timedOut()) throw error;
+      this.assertCurrent(scope, generation, false);
+      return { generation, total: 0, returned: 0, remaining: 0, hasMore: false, exhausted: false, hits: [],
+        candidateSearch: { scannedHits: 0, stopReason: "time_budget" } };
+    }
+  }
+  private async searchPage(request: Readonly<KnowledgeAgentSearchRequest>): Promise<KnowledgeAgentSearchResult> {
+    const scope = this.ensureScope();
+    request.candidateSearch?.check();
     if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
     const generation = this.generation;
     const bindingSignature = JSON.stringify([this.bindings(), this.journal()]);
@@ -173,9 +193,15 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
       // Check filesystem identity before metadata/cache reuse, without reading
       // bodies. Bound concurrent metadata operations for large Vaults.
       for (let offset = 0; offset < eligible.length; offset += 32) {
+        request.candidateSearch?.check();
         if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
-        await Promise.all(eligible.slice(offset, offset + 32).map(async file => {
-          try { canonicalPaths.set(file.path, await this.sourcePath(file.path)); }
+        const batch = eligible.slice(offset, offset + 32).map(async file => {
+          try {
+            request.candidateSearch?.check();
+            const canonical = await this.sourcePath(file.path);
+            request.candidateSearch?.check();
+            canonicalPaths.set(file.path, canonical);
+          }
           catch (error) {
             const code = String((error as { code?: string })?.code);
             if (request.signal?.aborted) throw Object.assign(new Error("Knowledge search aborted"), { name: "AbortError" });
@@ -183,10 +209,19 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
             if (!["invalid_path", "not_found", "ENOENT", "ENOTDIR", "path_traversal", "absolute_path"].includes(code)
               && (!request.kinds?.length || request.kinds.includes(this.allowed(file.path))) && !request.excludePaths?.includes(file.path)) failedSourcePaths.add(file.path);
           }
-        }));
+        });
+        if (request.candidateSearch) {
+          // Drain the bounded I/O batch before returning; no abandoned metadata
+          // continuations should run after a deadline result has been delivered.
+          const settled = await Promise.allSettled(batch);
+          const failed = settled.find((item): item is PromiseRejectedResult => item.status === "rejected");
+          if (failed) throw failed.reason;
+          request.candidateSearch.check();
+        } else await Promise.all(batch);
       }
     }
     const documents: BodySearchDocument[] = files.flatMap(file => {
+      request.candidateSearch?.check();
       const kind = knowledgeSearchPathKind(file.path, this.bindings(), excludedRoots, this.journal());
       if (!kind || this.options.resolveSourcePath && !canonicalPaths.has(file.path)) return [];
       let cache: ReturnType<App["metadataCache"]["getFileCache"]> = null;
@@ -201,14 +236,15 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
           ...(canonicalPaths.has(file.path) ? [canonicalPaths.get(file.path)] : [])]),
         aliases, tags, headings,
         journalDate: kind === "journal" ? this.journalDate(file.path) : undefined,
-        read: () => this.read({ vaultRelativePath: file.path }) }];
+        read: () => this.read({ vaultRelativePath: file.path, ...(request.candidateSearch ? { check: request.candidateSearch.check } : {}) }) }];
     });
     const sourceFailures = failedSourcePaths.size;
     this.observedPaths = new Set(documents.map(document => document.vaultRelativePath));
     if (documents.some(document => document.kind === "journal")) await this.options.onJournalSearch?.();
+    request.candidateSearch?.check();
     const activePath = this.app.workspace?.getActiveFile()?.path;
     const recentPaths = [...(this.app.workspace?.getLastOpenFiles?.() ?? [])];
-    const queryKey = request.mode === "related" ? this.relatedKey(request.vaultRelativePath ?? "", documents) : sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
+    const queryKey = request.candidateSearch ? "" : request.mode === "related" ? this.relatedKey(request.vaultRelativePath ?? "", documents) : sha256Hex(JSON.stringify({ mode: request.mode, query: request.query, queries: request.queries, kinds: request.kinds,
       dateFrom: request.dateFrom, dateTo: request.dateTo, excludePaths: request.excludePaths, bindingSignature,
       ...(explicitNoteReferenceScope(request, documents) ? { referenceContext: [activePath ?? null, recentPaths] } : {}),
       excludedRoots, files: documents.map(d => [d.vaultRelativePath, d.revisionKey]) }));
@@ -280,6 +316,14 @@ export class VaultBodySearch implements KnowledgeBodySearchPort {
     this.assertCurrent(scope, generation, Boolean(request.cursor));
     let hits = result.hits.map(hit => ({ ...hit, entryId: `body:${hit.vaultRelativePath}:${hit.lineStart}`,
       verificationStatus: "local_revision_verified" as const, rawSources: [] }));
+    if (result.candidateSearch) {
+      // Internal candidates already came from one complete ordering; no source
+      // rereads, navigation expansion, JSON fitting, or pagination is needed.
+      return { generation, total: result.total, returned: hits.length,
+        remaining: Math.max(0, result.total - result.candidateSearch.scannedHits), hasMore: false,
+        exhausted: result.candidateSearch.stopReason === "exhausted" && result.coverage.complete,
+        coverage: result.coverage, hits, candidateSearch: result.candidateSearch };
+    }
     const snapshots = new Map<string, Promise<KnowledgeAgentReadResult>>();
     for (let index = 0; index < hits.length; index++) {
       const hit = hits[index];

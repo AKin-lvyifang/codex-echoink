@@ -41,6 +41,7 @@ import { confirmAndConsumeApprovalTicket, createOperationIdentity, type Approval
 import { classifyKnowledgeUpgradePage, KnowledgeUpgradeClassificationError } from "./pi-production-runtime-composition";
 import { isUnknownArray } from "../utils/unknown-array";
 import { knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
+import { userFacingErrorText } from "../core/error-copy";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 
@@ -152,7 +153,7 @@ export class KnowledgeUpgradeService {
       }
     }
     const plan = this.record?.upgrade?.plan ?? this.plan;
-    if (!plan || this.error) throw new Error(this.error || "旧资料暂时读不到，请重试。");
+    if (!plan || this.error) throw new Error(this.error || "旧资料暂时无法读取，请重试。");
     return this.preview(plan);
   }
   async prepareRepairs(
@@ -265,14 +266,14 @@ export class KnowledgeUpgradeService {
           // count time spent offline or project a phantom running task.
           progress.status = "interrupted";
           delete progress.completedAt;
-          if (!progress.failures.length) progress.failures = [{ key: "upgrade", message: "升级上次停下了，已补好的内容会保留，点继续接着处理。", at: Date.now() }];
+          if (!progress.failures.length) progress.failures = [{ key: "upgrade", message: "升级上次已中断，已补全的内容已保留。请点击“继续”接着处理。", at: Date.now() }];
           this.host.changed(this.record); return;
         }
         const { files, additions } = await this.discover();
         const registry = await readRawDigestRegistry(this.host.vaultRoot, true), latest = latestMaintenanceSourceStates(records);
         const evidence = Object.fromEntries(files.filter(file => file.role !== "wiki").map(file => [file.path, { registry: registry.entries[file.path], maintenance: latest.get(file.path), fingerprint: () => file.fingerprint ?? "" }]));
         this.plan = buildMaintenanceUpgradePlan({ files, evidence, rootAdditions: additions, bindingRevision: this.host.bindings()?.revision ?? 0, id: `upgrade-preview-${randomUUID()}` });
-      } catch { this.error = "旧资料检查没完成，请重试；原有文件没有改动。"; }
+      } catch { this.error = "旧资料检查未能完成，原有文件未改动。请重试。"; }
     })();
     this.scanFlight = flight;
     try { await flight; } finally { this.scanFlight = null; }
@@ -312,7 +313,7 @@ export class KnowledgeUpgradeService {
     return path.join(this.host.vaultRoot, relative);
   }
   private async read(relative: string): Promise<string> {
-    if (!(await this.safeStat(relative))?.isFile()) throw new Error("旧资料文件暂时读不到。");
+    if (!(await this.safeStat(relative))?.isFile()) throw new Error("旧资料文件暂时无法读取。");
     return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await fs.readFile(this.absolute(relative)));
   }
   private async safeStat(relative: string) {
@@ -386,7 +387,7 @@ export class KnowledgeUpgradeService {
           if (signal.aborted) throw new Error("stopped");
           const controlled = error instanceof KnowledgeUpgradeClassificationError;
           (state.classificationFailures ??= {})[item.path] = controlled ? { reason: error.reason, stopReason: error.stopReason } : { reason: "provider-or-settings" };
-          fail(item.path, controlled ? error.message : "这页的类型判断没完成，原文件会保留，点继续重试。");
+          fail(item.path, controlled ? error.message : "该页面的类型未能判断，原文件已保留。请点击“继续”重试。");
         }
         await this.persist();
       }
@@ -437,11 +438,11 @@ export class KnowledgeUpgradeService {
                   ? patchKnowledgeProperties(current, { 类型待确认: false })
                   : appendMaintenancePageType(current, state.classifications[item.path]);
             if (missing === current && current !== write.content) preserve(item.path);
-            else fail(item.path, outcome.reason || "这页尚未核对，已保留现状，点继续重试。");
+            else fail(item.path, outcome.reason || "该页面尚未核对，已保留现状。请点击“继续”重试。");
           }
         } catch {
           if (signal.aborted) throw new Error("stopped");
-          fail(item.path, "这页的属性没补完，原文件会保留，点继续重试。");
+          fail(item.path, "该页面的属性尚未补全，原文件已保留。请点击“继续”重试。");
         }
         await this.persist();
       }
@@ -459,12 +460,12 @@ export class KnowledgeUpgradeService {
               if (!this.host.repairMove) throw new Error("归档操作不可用。");
               await serializeMaintenancePage(this.host.vaultRoot, move.from, () => this.host.repairMove!(move.from, move.to));
             } else if (await this.readOptional(move.from) !== null) throw new Error("归档目标已存在，原文件保留。");
-            if (version(await this.read(move.to)) !== move.revision) throw new Error("归档后回读不一致，已停下。");
+            if (version(await this.read(move.to)) !== move.revision) throw new Error("归档后的文件内容与预期不一致，修复已停止。请核对该文件后点击“继续”。");
             if (target !== null) await this.host.repairMove?.(move.from, move.to);
             state.repairOperations[move.id] = { done: true };
             await this.persist();
           } catch (error) {
-            fail(move.id, error instanceof Error ? error.message : "归档未完成。");
+            fail(move.id, userFacingErrorText(error, "文件未能归档，原文件已保留。请点击“继续”重试。"));
             throw error;
           }
         }
@@ -472,12 +473,12 @@ export class KnowledgeUpgradeService {
           if (signal.aborted) throw new Error("stopped");
           if (state.repairOperations[decision.id]?.done) continue;
           try {
-            if (!this.host.repairDecision) throw new Error("领域决定暂时无法保存。");
+            if (!this.host.repairDecision) throw new Error("领域决定暂时无法保存。请点击“继续”重试。");
             await this.host.repairDecision(decision.domains);
             state.repairOperations[decision.id] = { done: true };
             await this.persist();
           } catch (error) {
-            fail(decision.id, error instanceof Error ? error.message : "领域决定未保存。");
+            fail(decision.id, userFacingErrorText(error, "领域决定未能保存。请点击“继续”重试。"));
             throw error;
           }
         }
@@ -485,7 +486,7 @@ export class KnowledgeUpgradeService {
       await stage("finalize");
       if (Object.keys(state.skipped).length) {
         progress.status = "interrupted"; delete progress.completedAt;
-        progress.failures = [{ key: "upgrade", message: "有些资料没补完，已补好的内容会保留；查看清单后点继续重试。", at: Date.now() }];
+        progress.failures = [{ key: "upgrade", message: "部分资料尚未补全，已补全的内容已保留。请查看清单后点击“继续”重试。", at: Date.now() }];
         record.result = createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "upgrade_incomplete", message: "旧知识升级尚未完成。" }] });
         await this.persist(); await this.host.taskStatus(record.originConversationId!, "interrupted"); return;
       }
@@ -499,7 +500,7 @@ export class KnowledgeUpgradeService {
       }
     } catch (error) {
       const stopped = signal.aborted || (error instanceof Error && error.message === "stopped");
-      progress.status = "interrupted"; delete progress.completedAt; progress.failures = [{ key: "upgrade", message: stopped ? "修复已停下，已完成的步骤会保留，点继续接着处理。" : error instanceof Error ? error.message : "修复没做完，已完成的步骤会保留。", at: Date.now() }];
+      progress.status = "interrupted"; delete progress.completedAt; progress.failures = [{ key: "upgrade", message: stopped ? "修复已停止，已完成的步骤已保留。请点击“继续”接着处理。" : error instanceof Error ? error.message : "修复尚未完成，已完成的步骤已保留。请点击“继续”接着处理。", at: Date.now() }];
       await this.persist(); await this.host.taskStatus(record.originConversationId!, "interrupted");
     } finally { progress.elapsedMs[progress.stage] = (progress.elapsedMs[progress.stage] ?? 0) + Date.now() - tick; await this.persist(); }
   }
@@ -589,7 +590,7 @@ export function createProductionKnowledgeUpgradeService(plugin: CodexForObsidian
       if (record.upgrade?.plan.purpose === "checkup" && (plugin.settings.defaultPermission === "read-only" || plugin.settings.defaultMode !== "agent"))
         throw new Error("当前工作区只读，请允许写入后再修复。");
       const data = await local(), vaultId = data.deviceScope.vaultIdDigest, task = await data.catalog.get(record.originConversationId!);
-      if (!task) throw new Error("升级任务会话暂时读不到。");
+      if (!task) throw new Error("升级任务会话暂时无法读取。");
       domain ??= new VaultDomainService(new ObsidianVaultDomainAdapter(plugin.app, vaultId, root));
       const contract: ApprovalOperationContract = { productRunId: record.runId, toolCallId: `${write.operationId}:attempt-${write.attempt ?? 0}`, conversationId: task.conversationId, piSessionId: task.piSessionId,
         userId: `local-${data.deviceScope.deviceIdDigest}`, deviceId: data.deviceScope.deviceIdDigest, vaultId, toolId: "note_update", toolVersion: "1", policyVersion: "echoink-knowledge-upgrade-v1",

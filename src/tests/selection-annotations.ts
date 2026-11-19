@@ -550,7 +550,7 @@ async function settingsBehavior(win: Window & typeof globalThis): Promise<void> 
   input.dispatchEvent(new win.CompositionEvent("compositionend")); assert.equal(input.getAttribute("aria-invalid"), "true");
   input.value = "解释"; input.dispatchEvent(new win.InputEvent("input"));
   const template = host.querySelector<HTMLTextAreaElement>("textarea")!; template.value = "请解释"; template.dispatchEvent(new win.Event("input"));
-  await (find("保存").onclick as any)(new win.MouseEvent("click")); assert.equal(template.value, "请解释"); assert.match(host.textContent!, /disk failure/);
+  await (find("保存").onclick as any)(new win.MouseEvent("click")); assert.equal(template.value, "请解释"); assert.match(host.textContent!, /设置未能保存，已恢复原设置。/); assert.doesNotMatch(host.textContent!, /disk failure/);
   assert.equal(plugin.settings.selectionAsk.actions.length, 1, "save failure restores applied settings and retains form content");
   fail = false; await (find("保存").onclick as any)(new win.MouseEvent("click"));
   assert.equal(saved[0].actions.length, 3); assert.equal(saved[0].actions[0].template, "请解释");

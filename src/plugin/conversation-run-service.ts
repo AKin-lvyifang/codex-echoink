@@ -1,3 +1,10 @@
+import { CONVERSATION_TASK_METADATA_KEYS } from "../agents/task-metadata";
+import { parseSyncForkSource } from "../sync/conversations";
+import { sessionForDataSave } from "./settings-store";
+import { ComposerSubmissions, submissionFailureText } from "../types/composer-submission";
+import { CAUSE, errorText, joinErrorCopy, NEXT, pickErrorCopy } from "../core/error-copy";
+import type { DesktopComposerDraft } from "../ui/codex-view/composer-submission";
+import { emptySelectionDraft } from "../selection-ask/draft";
 import type { ConversationTaskLifecycle } from "./conversation-task-lifecycle";
 import type { TaskInterruptionReason, TaskResumeContext } from "../agents/task-resume";
 import type { ConversationTaskMetadataPatch } from "../agents/task-metadata";
@@ -10,6 +17,7 @@ import { diagnoseProviderError } from "../core/provider-diagnostics";
 import { RuntimeTurnQueue, cloneQueuedTurnItem, type QueuedTurnItem } from "../ui/turn-queue";
 import type { CodexViewTurnContext, QueuedTurnOutcome, QueuedTurnSource } from "../ui/codex-view/runner-context";
 import { startQueuedTurnItemSafely, startQueuedTurnItem, startChatTurn } from "../ui/codex-view/turn-runner";
+import { repairQueuedXiaoechoModelSelection } from "../ui/xiaoecho-selection";
 import { SessionMessageStore } from "../ui/codex-view/session-message-store";
 import type { ChatMessage, StoredSession } from "../settings/settings";
 import { cloneEchoInkTurnInteraction, type EchoInkTurnInteraction } from "../types/conversation-turn";
@@ -31,13 +39,15 @@ export interface ConversationRunState {
 }
 
 export interface ConversationRunSubscriber {
-  refresh(taskId: string, message?: ChatMessage): void;
+  turnStarting?(item: Readonly<QueuedTurnItem>): void;
+  refresh(taskId: string, message?: ChatMessage, shellChanged?: boolean): void;
   clearAcceptedDraft(item: Readonly<QueuedTurnItem>): void;
   isTaskVisible(taskId: string): boolean;
 }
 
 /** Plugin-owned runtime. No run host or queued item retains a View or its DOM. */
 export class ConversationRunService {
+  readonly composerSubmissions = new ComposerSubmissions<QueuedTurnItem, DesktopComposerDraft>();
   readonly runs = new Map<string, ConversationRunState>();
   readonly turnQueue = new RuntimeTurnQueue();
   readonly pendingInteractions = new Map<string, Readonly<EchoInkTurnInteraction>>();
@@ -50,6 +60,9 @@ export class ConversationRunService {
   private readonly resumeContexts = new Map<string, Readonly<TaskResumeContext>>();
   private readonly blockedAgents = new Set<string>();
   private readonly pendingRefreshes = new Map<string, ChatMessage | undefined>();
+  private readonly pendingShellRefreshes = new Set<string>();
+  private readonly persistedShellInputs = new Map<string, string>();
+  private readonly runtimeShellInputs = new Map<string, string>();
   private readonly pendingInteractionWrites = new Map<string, { key: string }>();
   private refreshTimer: number | null = null;
   private saveTimer: number | null = null;
@@ -88,11 +101,38 @@ export class ConversationRunService {
     };
   }
   isTaskVisible(id: string): boolean { return [...this.subscribers].some(subscriber => subscriber.isTaskVisible(id)); }
-  refreshTask(id: string): void { this.notify(id); }
-  private notify(id: string, message?: ChatMessage): void {
-    if (this.disposed) return;
+  refreshTask(id: string): void { this.notify(id, undefined, true); }
+  private scheduleConversationSave(id: string): boolean {
+    const session = this.plugin.settings.sessions.find(session => session.id === id);
+    if (!session || session.bodyAuthority !== "pi_session_only") { this.scheduleSave(); return true; }
+    const input = JSON.stringify(sessionForDataSave(session));
+    if (input === this.persistedShellInputs.get(id)) return false;
+    this.persistedShellInputs.set(id, input);
     this.scheduleSave();
+    return true;
+  }
+  private notify(id: string, message?: ChatMessage, forceShell = false): void {
+    if (this.disposed) return;
+    this.scheduleConversationSave(id);
+    const session = this.plugin.settings.sessions.find(session => session.id === id);
+    const visibleMetadata = session && [session.title, session.createdAt, session.updatedAt, session.tokenUsage, session.contextLedger,
+      CONVERSATION_TASK_METADATA_KEYS.filter(key => key !== "taskMetadataUpdatedAt").map(key => session[key])];
+    let progress: (string | undefined)[][] | undefined;
+    for (let index = (session?.messages.length ?? 0) - 1; index >= 0; index--) {
+      const turn = session!.messages[index].assistantTurn;
+      if (!turn) continue;
+      progress = turn.processNodes.filter(node => node.status === "running" || node.status === "waiting")
+        .map(node => [node.nodeId, node.status, node.title, node.summary]);
+      break;
+    }
+    const state = this.runs.get(id);
+    const input = JSON.stringify([visibleMetadata, progress, this.pendingInteractions.get(id), state?.running, state?.activeRunId, state?.queueStartInProgress, !!state?.flight, this.plugin.settings.workbenchOnboardingDismissed,
+      this.turnQueue.itemsForSession(id).map(item => item.id), this.turnQueue.isSessionQueuePaused(id),
+      this.turnQueue.isSessionRecoveryRequired(id), this.resumeFlights.has(id), this.resumeErrors.get(id)]);
+    const shellChanged = forceShell || session?.bodyAuthority !== "pi_session_only" || input !== this.runtimeShellInputs.get(id);
+    this.runtimeShellInputs.set(id, input);
     if (!this.subscribers.size) return;
+    if (shellChanged) this.pendingShellRefreshes.add(id);
     // A full refresh, or updates to different messages, must retain a full render.
     const previous = this.pendingRefreshes.get(id);
     this.pendingRefreshes.set(id, !this.pendingRefreshes.has(id) || previous && message && previous.id === message.id ? message : undefined);
@@ -102,10 +142,12 @@ export class ConversationRunService {
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
       const updates = [...this.pendingRefreshes];
+      const shells = new Set(this.pendingShellRefreshes);
       this.pendingRefreshes.clear();
+      this.pendingShellRefreshes.clear();
       for (const [taskId, changedMessage] of updates) {
         for (const subscriber of this.subscribers) {
-          try { subscriber.refresh(taskId, changedMessage); } catch (error) { console.error("Conversation subscriber refresh failed", error); }
+          try { subscriber.refresh(taskId, changedMessage, shells.has(taskId)); } catch (error) { console.error("Conversation subscriber refresh failed", error); }
         }
       }
     }, 16);
@@ -114,6 +156,7 @@ export class ConversationRunService {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = null;
     this.pendingRefreshes.clear();
+    this.pendingShellRefreshes.clear();
   }
   stateFor(id: string): ConversationRunState {
     let state = this.runs.get(id);
@@ -140,7 +183,7 @@ export class ConversationRunService {
     const existing = this.resumeFlights.get(id);
     if (existing) return existing;
     if (this.disposed) return Promise.reject(new Error("插件已停用，请重新启用后继续。"));
-    if (this.runs.get(id)?.flight || this.runs.get(id)?.running) return Promise.reject(new Error("这个任务正在运行，请等待本轮完成。"));
+    if (this.runs.get(id)?.flight || this.runs.get(id)?.running) return Promise.reject(new Error(pickErrorCopy(CAUSE.busyAnswering, this.plugin.settings.settingsLanguage)));
     const submitted = item ? cloneQueuedTurnItem(item) : undefined;
     const controller = new AbortController();
     this.resumeControllers.set(id, controller);
@@ -148,9 +191,10 @@ export class ConversationRunService {
     const flight = Promise.resolve().then(async () => {
       await this.taskLifecycle?.ready;
       if (!(Platform.isDesktopApp && (this.session(id).agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID) && this.taskLifecycle?.ownsConversation(id) && await this.taskLifecycle.resume(id) === "restored") return "completed";
+      if (submitted) repairQueuedXiaoechoModelSelection(this.plugin.settings, submitted);
       const prepared = await this.plugin.prepareTaskResume(id, message, submitted, controller.signal);
       if (controller.signal.aborted) return "cancelled";
-      if (this.disposed) throw new Error("插件已停用，本次没有继续。文字和附件已保留。");
+      if (this.disposed) throw new Error("插件已停用，任务未继续执行。文字和附件已保留。");
       this.resumeContexts.set(id, prepared.resumeContext!);
       let accepted!: (outcome: QueuedTurnOutcome) => void;
       let wasAccepted = false;
@@ -161,7 +205,7 @@ export class ConversationRunService {
       });
       void completion.catch(error => { if (wasAccepted) console.error("Resumed task could not finalize", error); });
       const outcome = await Promise.race([acceptance, completion]);
-      if (outcome === "failed" && !wasAccepted) throw new Error(this.resumeErrors.get(id) ?? "任务暂时无法继续，请检查模型和附件后重试。文字和附件已保留。");
+      if (outcome === "failed" && !wasAccepted) throw new Error(this.resumeErrors.get(id) ?? "任务暂时无法继续，文字和附件已保留。请检查模型和附件后重试。");
       return outcome;
     }).catch(error => {
       if (controller.signal.aborted) return "cancelled" as const;
@@ -189,11 +233,13 @@ export class ConversationRunService {
     void completion.catch(error => {
       if (!wasAccepted) return;
       console.error("Accepted conversation could not finalize", error);
-      new Notice(error instanceof Error ? error.message : String(error));
+      new Notice(errorText(error, ["任务结束时记录未能完整保存。请重新打开该会话核对结果。", "The task record could not be saved completely. Reopen this conversation to check the result."], this.plugin.settings.settingsLanguage));
     });
     return await Promise.race([acceptance, completion]).catch(error => {
       console.error("Conversation could not start or finalize", error);
-      new Notice(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      // A captured failure is shown through submissionFailureText; a bare Notice needs the same plain words.
+      if (!this.composerSubmissions.captureFailure(item.id, message)) new Notice(submissionFailureText(error, this.plugin.settings.settingsLanguage));
       return "failed" as const;
     });
   }
@@ -201,12 +247,20 @@ export class ConversationRunService {
   async run(item: QueuedTurnItem, source: QueuedTurnSource = "composer", onAccepted?: () => void): Promise<QueuedTurnOutcome> {
     const session = this.session(item.sessionId);
     if (this.disposed || this.blockedAgents.has(session.agentId ?? "sol")) return "cancelled";
-    if (this.resumeFlights.has(session.id) && !item.resumeContext) throw new Error("这个任务正在核对恢复信息，请稍候。");
-    if (source === "queue" && session.taskStatus === "interrupted" && !item.resumeContext) throw new Error("任务已中断，请先核对恢复信息后继续队列。");
+    if (this.resumeFlights.has(session.id) && !item.resumeContext) throw new Error("该任务正在核对恢复信息。请稍候。");
+    if (source === "queue" && session.taskStatus === "interrupted" && !item.resumeContext) throw new Error("任务已中断，排队的消息未发送。请先核对恢复信息，再点击“继续”。");
     const state = this.stateFor(session.id);
     if (state.flight || state.running) throw new Error("conversation_already_running");
     this.resumeErrors.delete(session.id);
     const frozen = cloneQueuedTurnItem(item);
+    repairQueuedXiaoechoModelSelection(this.plugin.settings, frozen);
+    if (source === "queue" && !this.composerSubmissions.records.has(item.id)) {
+      const queued = this.composerSubmissions.begin(item.id, session.id, frozen, { text: item.composerTextSnapshot ?? item.text,
+        attachments: item.attachments, selectedSkill: item.skill, annotations: { ...emptySelectionDraft(item.text), annotations: [...item.selectionAnnotations ?? []] }, noteMentions: item.noteMentions ?? [] });
+      queued.queued = true;
+    }
+    const submission = this.composerSubmissions.records.get(item.id);
+    if (submission) submission.snapshot = cloneQueuedTurnItem(frozen);
     this.lastTurnOptions.set(session.id, frozen.turnOptions);
     const context = this.createHost(state, frozen, onAccepted);
     state.context = context;
@@ -244,13 +298,22 @@ export class ConversationRunService {
           if (Platform.isDesktopApp && outcome === "completed" && !waiting && !queued && businessComplete && session.businessKey) {
             await getWorkbenchDataService(this.plugin).recordTaskCompleted(session.id).catch(error => {
               console.warn("EchoInk workbench could not record the task result.", error);
-              new Notice("任务已完成，但工作台事项尚未更新，请稍后重试。");
+              new Notice(joinErrorCopy(["任务已完成，但工作台事项尚未更新。", "The task finished, but the workbench item was not updated."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
             });
           }
         }
         return outcome;
+      } catch (error) {
+        this.resumeErrors.set(session.id, error instanceof Error ? error.message : String(error));
+        throw error;
       } finally {
         item.piUserEntryAccepted = frozen.piUserEntryAccepted;
+        item.piUserEntryId = frozen.piUserEntryId;
+        item.piProductRunId = frozen.piProductRunId;
+        if (submission) submission.snapshot = cloneQueuedTurnItem(frozen);
+        if (frozen.piUserEntryAccepted) this.composerSubmissions.accept(item.id, { userEntryId: frozen.piUserEntryId, turnId: frozen.piProductRunId });
+        else if (outcome === "failed") this.composerSubmissions.fail(item.id, this.resumeErrors.get(session.id) ?? joinErrorCopy(["消息未能发送。", "The message could not be sent."], NEXT.resendOrTest, this.plugin.settings.settingsLanguage));
+        if (source === "queue" && !frozen.piUserEntryAccepted) this.composerSubmissions.remove(item.id);
         state.running = false; state.queueStartInProgress = false;
         const settledTurnStartedAt = state.turnStartedAt;
         state.flight = undefined;
@@ -265,7 +328,7 @@ export class ConversationRunService {
           && !this.disposed && state.stopReason !== "app_closed" && state.stopReason !== "plugin_disabled") {
           await Promise.resolve().then(() => getWorkbenchDataService(this.plugin).recordTaskEnded?.(session.id)).catch(error => {
             console.warn("Workbench handoff could not settle", error);
-            new Notice("任务已结束，但提醒状态未保存，请稍后重试。");
+            new Notice(joinErrorCopy(["任务已结束，但提醒状态未能保存。", "The task ended, but its reminder status was not saved."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
           });
         }
         await this.flushSave();
@@ -279,6 +342,9 @@ export class ConversationRunService {
       }
     });
     state.flight = flight;
+    if (source === "queue") for (const subscriber of this.subscribers) {
+      try { subscriber.turnStarting?.(frozen); } catch (error) { console.error("Queued turn scroll failed", error); }
+    }
     return await flight;
   }
   async startNextQueuedTurn(id: string): Promise<void> {
@@ -288,7 +354,7 @@ export class ConversationRunService {
     if (item) await this.run(item, "queue");
   }
   async resumeQueuedTurns(id: string): Promise<void> {
-    if (this.turnQueue.isSessionRecoveryRequired(id)) throw new Error("当前任务记录需要先恢复，请检查中断信息。队列已保留。");
+    if (this.turnQueue.isSessionRecoveryRequired(id)) throw new Error("当前任务记录需要先恢复，队列已保留。请检查中断信息后点击“继续”。");
     if (this.session(id).taskStatus === "interrupted") {
       this.turnQueue.pauseSessionQueue(id);
       const head = this.turnQueue.itemsForSession(id)[0];
@@ -323,6 +389,8 @@ export class ConversationRunService {
       this.runs.clear();
       this.pendingInteractions.clear();
       this.pendingInteractionWrites.clear();
+      this.persistedShellInputs.clear();
+      this.runtimeShellInputs.clear();
     });
     this.disposalFlight = flight;
     return flight;
@@ -336,7 +404,7 @@ export class ConversationRunService {
     if (this.disposed || this.saveTimer) return;
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
-      void this.plugin.saveSettings(true).catch(error => console.error("Conversation projection save failed", error));
+      void this.plugin.saveSettings(true).catch(error => { this.persistedShellInputs.clear(); console.error("Conversation projection save failed", error); });
     }, 500);
   }
   async flushSave(): Promise<void> {
@@ -346,6 +414,7 @@ export class ConversationRunService {
     } catch (error) {
       // Only the settings projection is best-effort. Catalog and task metadata
       // writes retain their existing failure handling at their call sites.
+      this.persistedShellInputs.clear();
       console.error("Conversation projection save failed", error);
     }
   }
@@ -360,9 +429,12 @@ export class ConversationRunService {
       getActiveRunId: () => state.activeRunId, getActiveTurnId: () => state.activeTurnId,
       getVaultPath: () => plugin.getVaultPath(), getSettingsLanguage: () => plugin.settings.settingsLanguage,
       externalizeMessageText: (message, text) => plugin.externalizeMessageText(message, text),
-      renderMessagesIfActive: (_session, message) => refresh(message), scheduleSessionSave: () => this.scheduleSave()
+      renderMessagesIfActive: (_session, message) => refresh(message), scheduleSessionSave: () => { this.scheduleConversationSave(id); }
     });
     const context: CodexViewTurnContext = {
+      onPreparationStage: update => this.composerSubmissions.stage(item.id, update),
+      onPiUserEntryAccepted: accepted => this.composerSubmissions.accept(item.id, { userEntryId: accepted.piUserEntryId, turnId: accepted.piProductRunId }),
+      onComposerTransferError: (_id, message) => { this.resumeErrors.set(id, message); },
       onPiRunAccepted: async () => {
         if (!plugin.settings.workbenchOnboardingDismissed) {
           plugin.settings.workbenchOnboardingDismissed = true;
@@ -370,6 +442,8 @@ export class ConversationRunService {
           this.notify(id);
         }
         void plugin.onWorkbenchMessageAccepted?.(item).catch(() => undefined);
+        const fork = parseSyncForkSource(item.prefillSource);
+        if (fork) void plugin.setPiConversationTaskMetadata(id, { syncForkOf: `${fork.deviceId}:${fork.conversationId}` }).catch(error => console.warn("EchoInk fork origin could not be saved", error));
         const origin = Platform.isDesktopApp ? parseWorkbenchTaskSource(item.prefillSource) : null;
         if (origin) {
           try {
@@ -381,12 +455,12 @@ export class ConversationRunService {
             if (failures.length) throw new AggregateError(failures.map((result): unknown => result.reason), "workbench_task_source_save_failed");
           } catch (error) {
             console.warn("EchoInk accepted task could not save its workbench source.", error);
-            new Notice("任务已开始，但提醒来源记录未保存；请勿重复发送。");
+            new Notice("任务已开始，但提醒来源记录未能保存。请勿重复发送。");
           }
         }
         onAccepted?.();
       },
-      onPiRunFailure: message => { this.resumeErrors.set(id, message); },
+      onPiRunFailure: message => { this.resumeErrors.set(id, message); return this.composerSubmissions.captureFailure(item.id, message); },
       get lifecycleSignal() { return state.controller.signal; }, get app() { return plugin.app; }, plugin,
       get running() { return state.running; }, set running(value) { state.running = value; },
       get activeRunId() { return state.activeRunId; }, set activeRunId(value) { state.activeRunId = value; },

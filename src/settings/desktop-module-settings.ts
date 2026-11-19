@@ -5,8 +5,10 @@ import { createOriginButton, createOriginSwitch, disposeOriginControls, type Ori
 import { createSettingsSection } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import { expertModuleEnabled } from "../experts/module";
+import { NEXT, failureText, joinErrorCopy } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 
-export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf" | "inline-agent" | "experts";
+export type DesktopModuleId = "knowledge" | "journal" | "review" | "todo" | "selection" | "finance" | "english" | "pdf" | "inline-agent" | "note-comments" | "experts";
 export interface DesktopModuleSettingsOptions {
   plugin: CodexForObsidianPlugin;
   expanded: Set<DesktopModuleId>;
@@ -27,6 +29,7 @@ const modules: readonly { id: DesktopModuleId; zh: string; en: string; icon: str
   { id: "english", zh: "英文日记", en: "English diary", icon: "languages", pro: true },
   { id: "pdf", zh: "PDF 精读 · 提取", en: "PDF reading and extraction", icon: "file-text", pro: true },
   { id: "inline-agent", zh: "@Agent 正文管家", en: "@Agent in notes", icon: "at-sign", pro: true },
+  { id: "note-comments", zh: "笔记评论", en: "Note comments", icon: "message-square-text", pro: true },
   { id: "experts", zh: "专家", en: "Experts", icon: "sparkles", pro: true }
 ];
 
@@ -72,7 +75,7 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
       let animation: Animation | null = null;
       let wasOpen: boolean | undefined;
       disposers.push(() => animation?.cancel());
-      const enabled = () => module.id === "experts" ? expertModuleEnabled(plugin) : module.id === "inline-agent" ? plugin.settings.inlineAgent.enabled : module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
+      const enabled = () => module.id === "experts" ? expertModuleEnabled(plugin) : module.id === "inline-agent" ? plugin.settings.inlineAgent.enabled : module.id === "note-comments" ? plugin.settings.noteComments.enabled : module.id === "selection" ? plugin.settings.selectionAsk.enabled : module.id === "finance" ? plugin.settings.lifestyle.finance.enabled : module.id === "english" ? plugin.settings.englishDiary.enabled : module.id === "pdf" ? plugin.settings.pdfReading.enabled : true;
       const setExpanded = (value: boolean) => {
         if (value) options.expanded.add(module.id); else options.expanded.delete(module.id);
         options.onExpandedChange?.(module.id, value);
@@ -88,20 +91,24 @@ export function renderDesktopModuleSettings(host: HTMLElement, options: DesktopM
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.expertsEnabled = previous; throw error; }
             plugin.notifyHomeSurfacesChanged();
           } else if (module.id === "finance") await plugin.lifestyle.setEnabled("finance", value);
-          else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error("PDF 精读尚未就绪"); await plugin.pdfReading.setEnabled(value); }
-          else if (module.id === "english") { if (!plugin.englishDiary) throw new Error("英文日记尚未就绪"); await plugin.englishDiary.setEnabled(value); }
+          else if (module.id === "pdf") { if (!plugin.pdfReading) throw new Error(joinErrorCopy(["PDF 精读尚未就绪。", "PDF reading is not ready yet."], NEXT.retryLater, english ? "en" : "zh")); await plugin.pdfReading.setEnabled(value); }
+          else if (module.id === "english") { if (!plugin.englishDiary) throw new Error(joinErrorCopy(["英文日记尚未就绪。", "English Diary is not ready yet."], NEXT.retryLater, english ? "en" : "zh")); await plugin.englishDiary.setEnabled(value); }
           else if (module.id === "inline-agent") {
             const previous = plugin.settings.inlineAgent.enabled;
             plugin.settings.inlineAgent.enabled = value; plugin.inlineAgent?.refreshAccess();
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.inlineAgent.enabled = previous; throw error; }
             finally { plugin.inlineAgent?.refreshAccess(); }
+          } else if (module.id === "note-comments") {
+            const previous = plugin.settings.noteComments.enabled;
+            plugin.settings.noteComments.enabled = value;
+            try { await plugin.saveSettings(true); } catch (error) { plugin.settings.noteComments.enabled = previous; throw error; }
           } else {
             const previous = plugin.settings.selectionAsk.enabled;
             plugin.settings.selectionAsk.enabled = value;
             try { await plugin.saveSettings(true); } catch (error) { plugin.settings.selectionAsk.enabled = previous; throw error; }
           }
           if (!detail && configurable) setExpanded(value);
-        })().catch(error => { if (!disposed) new Notice(error instanceof Error ? error.message : String(error)); })
+        })().catch(error => { if (!disposed) new Notice(failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, plugin.settings.settingsLanguage)); })
           .finally(() => { pending = false; refresh(true); });
       };
       const refresh = (animate = false) => {

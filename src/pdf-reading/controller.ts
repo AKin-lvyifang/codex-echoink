@@ -5,7 +5,7 @@ import type CodexForObsidianPlugin from "../main";
 import { getProPluginAccess, requireProPluginAction, unavailableCapabilityAccess } from "../membership/access";
 import { extractLocalPdf } from "./local-extractor";
 import { extractMinerPdf } from "./mineru";
-import { PdfReadingService, type PdfDependencies } from "./service";
+import { PdfReadingService, isPdfOriginalChanged, type PdfDependencies } from "./service";
 import { PdfVaultFiles } from "./vault-files";
 import type { PdfJob, PdfOptions, PdfStartContext, PdfNavigationData, PdfNavigationArtifact, PdfNavigationEntry } from "./types";
 
@@ -76,7 +76,7 @@ export class PdfReadingController {
       if (jobId) jobs = [await this.api.load(jobId)];
       else { const history = await this.api.historyWithErrors(); jobs = history.jobs; errors.push(...history.errors); }
     }
-    catch { errors.push("暂时读不到 PDF 记录，请重试。"); }
+    catch { errors.push("暂时无法读取 PDF 记录，请重试。"); }
     const current = this.api.current;
     if (current && (!jobId || current.id === jobId)) jobs = [structuredClone(current), ...jobs.filter(job => job.id !== current.id)].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const entries: PdfNavigationEntry[] = [];
@@ -96,8 +96,8 @@ export class PdfReadingController {
             originalState = job.original.savedPath ? "available" : "pending";
           }
         } catch (error) {
-          if (error instanceof Error && error.message.includes("已经改过")) originalState = "changed";
-          else errors.push(`${job.name}：原 PDF 暂时读不到，请重试。`);
+          if (isPdfOriginalChanged(error)) originalState = "changed";
+          else errors.push(`${job.name}：暂时无法读取原 PDF。请重试。`);
         }
         artifacts.push({ kind: "original", path, label: "原文件", ...(originalState !== "available" ? { missing: true } : {}) });
       }
@@ -105,7 +105,7 @@ export class PdfReadingController {
         if (artifact.kind === "reading" && !job.options.reading) continue;
         let missing = true;
         try { missing = !await this.api.files.exists(artifact.path) || !(await this.api.files.read(artifact.path)).trim(); }
-        catch { errors.push(`${job.name}：部分成果暂时读不到，请重试。`); }
+        catch { errors.push(`${job.name}：部分成果暂时无法读取，请重试。`); }
         artifacts.push({ ...artifact, label: { raw: "提取原文", translation: "译文", reading: "精读", wiki: "知识成果" }[artifact.kind], ...(missing ? { missing: true } : {}) });
       }
       const raw = job.artifacts.find(artifact => artifact.kind === "raw");
@@ -117,14 +117,14 @@ export class PdfReadingController {
             const missing = artifact.missing || !await this.api.files.exists(filePath) || !(await this.api.files.read(filePath)).trim();
             artifacts.push({ ...artifact, ...(missing ? { missing: true } : {}) });
           }
-        } catch { errors.push(`${job.name}：知识成果关联暂时读不到，请重试。`); }
-      } else if (raw && (job.options.reading || job.options.summary || job.options.wiki)) errors.push(`${job.name}：知识成果关联暂时读不到，请重试。`);
+        } catch { errors.push(`${job.name}：知识成果关联暂时无法读取，请重试。`); }
+      } else if (raw && (job.options.reading || job.options.summary || job.options.wiki)) errors.push(`${job.name}：知识成果关联暂时无法读取，请重试。`);
       const entry: PdfNavigationEntry = { job, artifacts: [...new Map(artifacts.map(artifact => [`${artifact.kind}:${artifact.path}`, artifact])).values()], originalState };
       if (job.conversationId) {
         try {
           const task = await this.plugin.readPiConversationCatalogEntry(job.conversationId);
           if (task) Object.assign(entry, { taskId: job.conversationId, ...(task.taskStatus ? { taskStatus: task.taskStatus } : {}) });
-        } catch { errors.push(`${job.name}：关联任务状态暂时读不到，请重试。`); }
+        } catch { errors.push(`${job.name}：关联任务状态暂时无法读取，请重试。`); }
       }
       entries.push(entry);
     }

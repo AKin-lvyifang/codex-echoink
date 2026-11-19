@@ -8,11 +8,127 @@ import { prepareDocument, fixture, mountDefinitions } from "./settings-search-do
 import { pricingProducts, runAccountMembershipPricingTests } from "./account-membership-pricing";
 import { runAccountMembershipSubscriptionTests } from "./account-membership-subscription";
 import { displayedTooltipsForTests } from "./obsidian-shim";
+import { renderDesktopCloudSync } from "../settings/cloud-sync-settings";
+import { mountWorkbenchCloudSync } from "../home/cloud-sync-status";
+import { syncLastSeen, syncUsagePresentation, syncDeviceIcon } from "../settings/cloud-sync-presentation";
+import type CodexForObsidianPlugin from "../main";
+import { cloudSyncStatusText } from "../ui/mobile/cloud-sync-settings";
+import type { CloudSyncView } from "../sync/cloud/controller";
+
+async function cloudSyncPresentationTests(win: Window & typeof globalThis) {
+  const gib = 1_073_741_824;
+  assert.equal(syncUsagePresentation(.8999 * gib, gib).warning, false, "rounding to 90% must not prematurely warn");
+  assert.equal(syncUsagePresentation(.9 * gib, gib).warning, true);
+  assert.equal(syncUsagePresentation(6 * gib, 5 * gib).percent, 100);
+  assert.equal(syncUsagePresentation(0, 0).label, "—");
+  assert.equal(syncUsagePresentation(.2 * 1_048_576, 5 * gib).label, "0.2 MB / 5 GB");
+  assert.equal(syncUsagePresentation(gib, 5 * gib).label, "1.00 GB / 5 GB");
+  assert.deepEqual(["desktop", "phone", "tablet"].map(syncDeviceIcon), ["laptop", "smartphone", "tablet"]);
+  assert.equal(syncLastSeen(0, false), "Not synced yet");
+  assert.equal(syncLastSeen(120_000, false, 300_000), "Last synced 3 min ago");
+  const listeners = new Set<() => void>(), accountListeners = new Set<() => void>();
+  let view: CloudSyncView = { enabled: true, signedIn: true, passwordSet: true, deviceReady: true, keyReady: true, enableRateLimited: false,
+    status: { phase: "idle", lastError: null, retryAt: null, usedBytes: 1.8 * gib, quotaBytes: 5 * gib, pending: 0, lastSyncAt: Date.now(), cursor: 1, live: true, conflicts: 0, nearQuota: false, activePath: null, activeDirection: null },
+    devices: [{ deviceId: "local", name: "My laptop", kind: "desktop", lastSeenAt: Date.now() }, { deviceId: "other", name: "Phone", kind: "phone", lastSeenAt: Date.now() - 180_000 }] };
+  let linkedDevices = view.devices.map(d => ({ id: d.deviceId, name: d.name, description: d.deviceId === "other" ? "iPhone" : "macOS", current: d.deviceId === "local" }));
+  let failNextSave = false;
+  let removals = 0, settingsOpened = 0, releaseRemoval: (() => void) | undefined;
+  const settings = { cloudSync: { enabled: true, excludedFolders: [], includeAttachments: false, deviceName: "" } };
+  const controller = { deviceId: "local", view: () => view, subscribe: (fn: () => void) => { listeners.add(fn); return () => listeners.delete(fn); }, refreshDevices: async () => {}, folderChoices: async () => ["notes", "Inbox"], foldersRevision: 0, folderChildren: async (parent: string) => parent ? parent === "notes" ? ["notes/private"] : [] : ["notes", "Inbox"], allFolders: async () => ["Inbox", "notes", "notes/private"],
+    revokeDevice: async () => { removals++; await new Promise<void>(resolve => { releaseRemoval = resolve; }); view = { ...view, devices: view.devices.slice(0, 1) }; linkedDevices = linkedDevices.slice(0, 1); listeners.forEach(fn => fn()); },
+    enable: async () => { throw new Error("rendering must not start sync"); }, disable: async () => {}, scopeChanged() {} };
+  const plugin = { settings, cloudSync: controller, accountService: { read: () => ({ membership: { devices: linkedDevices, deviceLimit: 3 }, entitlements: { sync: { quotaBytes: 5 * gib, deviceLimit: 3, status: "active" } } }), subscribe: (fn: () => void) => { accountListeners.add(fn); return () => accountListeners.delete(fn); } }, saveSettings: async (force?: boolean) => { assert.equal(force, true, "cloud controls await durable settings writes"); if (failNextSave) { failNextSave = false; throw new Error("injected save failure"); } }, openEchoInkAccountSettings: async () => { settingsOpened++; } } as unknown as CodexForObsidianPlugin;
+  const host = win.document.createElement("div"); win.document.body.append(host);
+  let closeScope = () => {}; const scopePage = win.document.createElement("div"); win.document.body.append(scopePage);
+  const dispose = renderDesktopCloudSync(plugin, host, false, (title, render) => { assert.equal(title, "Sync scope"); closeScope = render(scopePage); });
+  const section = host.querySelector(".echoink-cloud-sync-settings")!;
+  assert.ok(section.querySelector(".echoink-settings-section-header .echoink-cloud-sync-status"));
+  assert.equal(section.querySelectorAll(".setting-item").length, 3);
+  const scopeRow = section.querySelector<HTMLButtonElement>("button.echoink-cloud-sync-scope-row")!;
+  assert.equal(scopeRow.querySelector(".echoink-settings-navigation-value")!.textContent, "Whole vault");
+  assert.equal(section.querySelector(".echoink-cloud-folder-choice"), null, "the overview shows one summary row, not the folder list");
+  scopeRow.click();
+  const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+  await tick(); await tick();
+  assert.equal(scopePage.querySelectorAll(".echoink-cloud-folder-choice").length, 2);
+  assert.equal(section.querySelector("textarea"), null);
+  const firstFolder = scopePage.querySelector<HTMLButtonElement>('[role="checkbox"]')!;
+  assert.equal(firstFolder.getAttribute("aria-checked"), "true");
+  firstFolder.click(); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(settings.cloudSync.excludedFolders, ["notes"]);
+  failNextSave = true; firstFolder.click(); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(settings.cloudSync.excludedFolders, ["notes"]);
+  assert.equal(firstFolder.getAttribute("aria-checked"), "false", "failed save restores the checkbox");
+  assert.equal(scopePage.querySelector(".echoink-cloud-scope-summary")!.textContent, "Whole vault, except 1 folder");
+  // 展开到子文件夹：父级已排除时子级显示为不同步；勾回子级只恢复这一支。
+  const notesRow = scopePage.querySelector<HTMLElement>('.echoink-cloud-folder-choice[data-path="notes"]')!;
+  assert.equal(notesRow.querySelector(".echoink-cloud-scope-state")!.textContent, "Not synced");
+  notesRow.querySelector<HTMLButtonElement>(".echoink-cloud-scope-twist")!.click(); await tick(); await tick();
+  const child = scopePage.querySelector<HTMLElement>('.echoink-cloud-folder-choice[data-path="notes/private"]')!;
+  assert.equal(child.querySelector('[role="checkbox"]')!.getAttribute("aria-checked"), "false");
+  const query = scopePage.querySelector<HTMLInputElement>(".echoink-cloud-scope-query")!;
+  query.value = "priv"; query.dispatchEvent(new win.Event("input", { bubbles: true })); await tick(); await tick();
+  assert.deepEqual([...scopePage.querySelectorAll<HTMLElement>(".echoink-cloud-folder-choice")].map(row => row.dataset.path), ["notes/private"], "search finds nested folders by name");
+  assert.equal(scopePage.querySelector(".echoink-cloud-scope-path")!.textContent, "notes");
+  query.value = ""; query.dispatchEvent(new win.Event("input", { bubbles: true })); await tick();
+  scopePage.querySelector<HTMLButtonElement>(".echoink-cloud-scope-reset")!.click(); await tick(); await tick();
+  assert.deepEqual(settings.cloudSync.excludedFolders, []);
+  assert.equal(scopePage.querySelector<HTMLButtonElement>(".echoink-cloud-scope-reset")!.hidden, true);
+  scopePage.querySelector<HTMLButtonElement>('.echoink-cloud-folder-choice[data-path="notes"] [role="checkbox"]')!.click(); await tick(); await tick();
+  assert.deepEqual(settings.cloudSync.excludedFolders, ["notes"]);
+  const keptCheck = scopePage.querySelector<HTMLButtonElement>('.echoink-cloud-folder-choice[data-path="notes"] [role="checkbox"]')!;
+  assert.equal(section.querySelectorAll('.echoink-settings-group .echoink-cloud-sync-status').length, 0);
+  assert.match(section.textContent!, /Usage.*1.80 GB \/ 5 GB/s);
+  assert.equal(host.querySelectorAll(".echoink-cloud-sync-device").length, 2);
+  assert.match(host.querySelector(".echoink-cloud-sync-device-name")!.textContent!, /this device/);
+  assert.equal(host.querySelector(".echoink-cloud-sync-device-count")!.textContent, "2 / 3");
+  assert.equal(host.querySelectorAll(".echoink-cloud-sync-remove").length, 1);
+  assert.match(host.textContent!, /Last synced 3 min ago/);
+  const home = win.document.createElement("div"); win.document.body.append(home);
+  const stopHome = mountWorkbenchCloudSync(home, plugin, false);
+  assert.equal(home.querySelector(".wb-cloud-sync-percent")!.textContent, "36%");
+  assert.ok(home.querySelector(".wb-cloud-sync-status")!.textContent!.includes("1.80 GB / 5 GB"));
+  assert.ok(cloudSyncStatusText(view, false).includes("1.80 GB / 5 GB"));
+  const synced = view, now = Date.now();
+  view = { ...view, status: { ...view.status!, phase: "rate-limited", lastError: "RATE_LIMITED", retryAt: now + 230_000 } };
+  listeners.forEach(fn => fn());
+  assert.equal(cloudSyncStatusText(view, true, now), "同步请求过多，约 4 分钟后自动继续");
+  assert.equal(cloudSyncStatusText(view, true, now + 171_000), "同步请求过多，稍后自动继续");
+  assert.equal(cloudSyncStatusText(view, true, now + 170_000), "同步请求过多，约 1 分钟后自动继续");
+  for (const text of [section.querySelector(".echoink-cloud-sync-status")!.textContent, home.querySelector(".wb-cloud-sync-status")!.textContent]) {
+    assert.equal(text, "Too many sync requests. Sync will resume in about 4 minutes.");
+  }
+  view = { ...view, enabled: false, status: null, enableRateLimited: true };
+  assert.equal(cloudSyncStatusText(view), "同步请求过多，请稍后重新开启");
+  view = synced;
+  const clock = Date.now;
+  try { Date.now = () => clock() + 60_000; listeners.forEach(fn => fn()); assert.match(host.textContent!, /Last synced 4 min ago/); } finally { Date.now = clock; }
+  home.querySelector<HTMLButtonElement>(".wb-cloud-sync-settings")!.click(); await Promise.resolve(); assert.equal(settingsOpened, 1);
+  view = { ...view, status: { ...view.status!, usedBytes: 4.5 * gib, nearQuota: true, phase: "syncing", pending: 3 } }; listeners.forEach(fn => fn());
+  assert.ok(section.querySelector(".echoink-cloud-sync-meter.is-warning"));
+  assert.equal(scopePage.querySelector('.echoink-cloud-folder-choice[data-path="notes"] [role="checkbox"]'), keptCheck, "status refresh preserves choice identity");
+    closeScope();
+  assert.equal(scopeRow.querySelector(".echoink-settings-navigation-value")!.textContent, "Whole vault, except 1 folder", "returning refreshes the summary");
+  assert.ok(home.querySelector(".wb-cloud-sync-row.is-warning"));
+  assert.match(home.textContent!, /3 uploads pending/);
+  host.querySelector<HTMLButtonElement>(".echoink-cloud-sync-remove")!.click();
+  assert.equal(removals, 1); assert.equal(host.querySelector<HTMLButtonElement>(".echoink-cloud-sync-remove")!.disabled, true);
+  releaseRemoval!(); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(host.querySelectorAll(".echoink-cloud-sync-device").length, 1);
+  assert.equal(host.querySelector(".echoink-cloud-sync-device-count")!.textContent, "1 / 3");
+  view = { ...view, enabled: false, status: null, devices: [] }; listeners.forEach(fn => fn());
+  assert.equal(host.querySelector(".echoink-cloud-sync-device-count")!.textContent, "1 / 3", "bound devices remain visible when synchronization is off");
+  assert.match(section.textContent!, /— \/ 5 GB/);
+  assert.equal(home.querySelector<HTMLElement>(".wb-cloud-sync-percent")!.hidden, true, "unknown/off usage must not claim a measured zero");
+  stopHome(); dispose(); host.remove(); home.remove();
+  assert.equal(listeners.size, 0); assert.equal(accountListeners.size, 0);
+}
 
 export async function runAccountMembershipTests(win: Window & typeof globalThis) {
   installObsidianDom(win);
   runAccountMembershipPricingTests();
   const scheduler = prepareDocument(win);
+  await cloudSyncPresentationTests(win);
   const adapter = createUnavailableAccountAdapter();
   const vm = adapter.read();
   assert.equal(vm.identity, null);
@@ -40,7 +156,7 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   const statisticsDialog = openTestModals.at(-1)!;
   assert.match(statisticsDialog.contentEl.textContent ?? "", /o200k/);
   assert.match(statisticsDialog.contentEl.textContent ?? "", /每次追加调用分别累加/);
-  assert.match(statisticsDialog.contentEl.textContent ?? "", /不代表厂商计费账单/);
+  assert.match(statisticsDialog.contentEl.textContent ?? "", /不代表模型服务的计费账单/);
   assert.match(statisticsDialog.contentEl.textContent ?? "", /此前历史不补算/);
   assert.match(statisticsDialog.contentEl.textContent ?? "", /多次模型调用仍只算一轮/);
   statisticsDialog.close();

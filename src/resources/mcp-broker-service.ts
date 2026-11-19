@@ -69,17 +69,17 @@ export class EchoInkMcpBrokerService {
     signal?: AbortSignal
   ): Promise<unknown[]> {
     const resource = await this.currentResource(resourceId);
-    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
+    if (!resource || resource.kind !== "mcp-server") throw new Error("mcp_server_not_found");
     const broker = this.createBroker(this.plugin.settings.resources.mcpConnections);
     return (await broker.listTools(resource, timeoutMs, signal)).tools;
   }
 
   async callTool(input: CallEchoInkMcpToolInput): Promise<unknown> {
     if (input.backend !== "pi-native") {
-      throw new Error("MCP protocol calls are only available to the Pi-native Chat runtime.");
+      throw new Error("mcp_request_failed");
     }
     const resource = await this.currentResource(input.resourceId);
-    if (!resource || resource.kind !== "mcp-server") throw new Error("找不到 EchoInk MCP 资源。");
+    if (!resource || resource.kind !== "mcp-server") throw new Error("mcp_server_not_found");
     const broker = this.createBroker(this.plugin.settings.resources.mcpConnections);
     return (await broker.callTool({
       resource,
@@ -95,12 +95,12 @@ export class EchoInkMcpBrokerService {
     snapshot: Readonly<EchoInkResourceSettings>
   ): Promise<unknown> {
     if (input.backend !== "pi-native") {
-      throw new Error("MCP protocol calls are only available to the Pi-native Chat runtime.");
+      throw new Error("mcp_request_failed");
     }
     const resource = snapshot.catalog.find((candidate) =>
       candidate.id === input.resourceId && candidate.kind === "mcp-server"
     );
-    if (!resource) throw new Error("找不到 EchoInk MCP 资源。");
+    if (!resource) throw new Error("mcp_server_not_found");
     const broker = this.createBroker(snapshot.mcpConnections);
     return (await broker.callTool({
       resource,

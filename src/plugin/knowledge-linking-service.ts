@@ -5,6 +5,7 @@ import type { KnowledgeLinkingDocument, KnowledgeLinkingMention, KnowledgeLinkin
 import type { KnowledgeLinkingStateStore } from "../knowledge-base/knowledge-linking-state";
 import { rebaseKnowledgeLinkingMove } from "../knowledge-base/knowledge-linking-state";
 import type { KnowledgeSystemMoveFile } from "../knowledge-base/knowledge-system-move";
+import { userFacingErrorText } from "../core/error-copy";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 
@@ -263,7 +264,7 @@ export class KnowledgeLinkingService {
     this.controller = new AbortController();
     this.flight = work(this.controller.signal).catch(async error => {
       if (this.controller?.signal.aborted) return;
-      if (this.task) { this.task.phase = "failed"; this.task.error = error instanceof Error ? error.message : String(error); await this.persist(); this.publish(structuredClone(this.task)); }
+      if (this.task) { this.task.phase = "failed"; this.task.error = userFacingErrorText(error, "知识关联未能补全，已完成的部分会保留。请稍后重试。"); await this.persist(); this.publish(structuredClone(this.task)); }
       await this.host.release?.();
     }).finally(() => {
       this.flight = null; this.controller = null; this.notify();
@@ -307,7 +308,7 @@ export class KnowledgeLinkingService {
           const proposals = await this.host.judge({ ...this.originOf(task), taskId: task.id, documents: [document], targets: [], candidates: [], allowAliases: true, signal });
           const proposal = proposals.find(item => item.path === document.path);
           if (proposal?.aliases?.length) merged.set(document.path, { path: document.path, version: document.version, mentions: [], aliases: proposal.aliases });
-        } catch (error) { task.results.push({ path: document.path, status: "failed", links: 0, aliases: 0, message: `别名判断：${error instanceof Error ? error.message : String(error)}` }); }
+        } catch (error) { task.results.push({ path: document.path, status: "failed", links: 0, aliases: 0, message: `别名判断：${userFacingErrorText(error, "模型未能完成判断。请稍后重试。")}` }); }
         task.processed++; this.notify(); await yieldUI();
       }
     }
@@ -332,11 +333,11 @@ export class KnowledgeLinkingService {
         const proposals = await this.host.judge({ ...this.originOf(task), taskId: task.id, ...batch, allowAliases: false, signal });
         for (const proposal of proposals) {
           const document = batch.documents.find(doc => doc.path === proposal.path);
-          if (!document) throw new Error("模型返回了本批范围之外的笔记。");
+          if (!document) throw new Error("模型返回了本批范围之外的笔记，本批未写入。请稍后重试。");
           const previous = merged.get(proposal.path) ?? { path: proposal.path, version: document.version, mentions: [] };
           previous.mentions.push(...proposal.mentions); merged.set(proposal.path, previous);
         }
-      } catch (error) { task.results.push({ path: batch.documents[0].path, status: "failed", links: 0, aliases: 0, message: `关联判断：${error instanceof Error ? error.message : String(error)}` }); }
+      } catch (error) { task.results.push({ path: batch.documents[0].path, status: "failed", links: 0, aliases: 0, message: `关联判断：${userFacingErrorText(error, "模型未能完成判断。请稍后重试。")}` }); }
       task.processed++; await this.persist(); await yieldUI();
     }
     if (signal.aborted) return;
@@ -387,7 +388,7 @@ export class KnowledgeLinkingService {
         // Stopping cannot erase a write that has already passed readback.
         task.results.push({ path: patch.path, status: "written", links: patch.mentions.length, aliases: patch.addedAliases.length });
         }, signal);
-      } catch (error) { task.results.push({ path: patch.path, status: "failed", links: 0, aliases: 0, message: error instanceof Error ? error.message : String(error) }); }
+      } catch (error) { task.results.push({ path: patch.path, status: "failed", links: 0, aliases: 0, message: userFacingErrorText(error, "关联未能写入，原笔记未修改。请稍后重试。") }); }
       task.processed++; await this.persist(); await yieldUI();
     }
     if (!signal.aborted) await this.finish();

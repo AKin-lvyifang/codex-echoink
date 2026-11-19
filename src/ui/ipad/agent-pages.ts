@@ -12,9 +12,10 @@ export function createAgentPage(ctx: IPadPageContext, agentId: string): MobileSh
   }
   const content = el(document, "div", "pd-agent-page");
   const identity = el(document, "header", "pd-agent-identity");
-  const list = el(document, "div", "pd-agent-tasks");
+  const scroller = el(document, "div", "pd-agent-tasks");
+  const list = el(document, "div", "pd-agent-task-rows");
   const composer = createIPadComposer(ctx, { agentId });
-  content.append(identity, list);
+  scroller.append(list, composer.submissions); content.append(identity, scroller);
   let disposed = false, signature = "", day = new Date().toDateString();
   const projections = new Map<string, string>();
   const page: MobileShellPage = { id: `ipad-agent-${agentId}`, title: "Agent", header: "content", content, footer: composer.element, canLeave: composer.canLeave };
@@ -24,6 +25,7 @@ export function createAgentPage(ctx: IPadPageContext, agentId: string): MobileSh
     const tasks = ipadTasks(host.store.state.sessions).filter(task => task.agentId === agentId);
     const next = day + JSON.stringify(agent) + ipadTaskProjection(tasks);
     if (!force && next === signature) return;
+    composer.scroll.capture(); composer.scroll.refresh();
     signature = next; projections.clear();
     for (const task of tasks) projections.set(task.id, ipadTaskProjection([task]));
     identity.replaceChildren(); list.replaceChildren();

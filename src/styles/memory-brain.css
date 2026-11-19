@@ -12,44 +12,47 @@
   stroke-dashoffset: 1;
 }
 
+/* Receipt icons keep the same resting vector on every platform and state. */
+.codex-answer-sources button.codex-memory-receipt { transition: none; }
+
 @media (prefers-reduced-motion: no-preference) {
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-group,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-group,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-group,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-group,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-group {
     animation: echoink-brain-tilt 700ms ease-in-out, echoink-brain-breathe 700ms ease-in-out;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 0ms);
   }
 
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spine,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spine,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-spine,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-spine,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spine {
     animation: echoink-brain-spine 500ms ease-in-out 60ms both;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 60ms);
   }
 
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-a,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-lobe-a {
     animation: echoink-brain-draw 600ms ease-in-out 120ms both, echoink-brain-lobe-a 600ms ease-in-out 120ms both;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 120ms);
   }
 
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-lobe-b,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-lobe-b {
     animation: echoink-brain-draw 620ms ease-in-out 180ms both, echoink-brain-lobe-b 620ms ease-in-out 180ms both;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 180ms);
   }
 
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-spark-left,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spark-left {
     animation: echoink-brain-spark 550ms ease-in-out 260ms both;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 260ms);
   }
 
-  button:not(.codex-settings-tab):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
-  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
+  button:not(.codex-settings-tab, .codex-memory-receipt):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
+  .echoink-animate-icon-host.is-brain-icon:not(.codex-settings-tab *, .codex-memory-receipt *):is(:hover, :focus-visible) .echoink-animate-brain-spark-right,
   .echoink-settings-desktop .settings-motion-icon.is-animating .echoink-animate-brain-spark-right {
     animation: echoink-brain-spark 550ms ease-in-out 340ms both;
     animation-delay: calc(var(--echoink-tab-icon-delay, 0ms) + 340ms);

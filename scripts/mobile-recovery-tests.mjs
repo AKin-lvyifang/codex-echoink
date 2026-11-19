@@ -11,7 +11,7 @@ const build = await esbuild.build({ ...mobileBuildOptions("tests/mobile-recovery
   platform: "browser", target: "es2022", format: "cjs", metafile: true, loader: { ".md": "text" } });
 for (const file of Object.keys(build.metafile.inputs)) assert.ok(!["src/settings/settings.ts", "src/plugin/task-resume-safety.ts", "src/agents/capability-policy.ts"].includes(file), `desktop import: ${file}`);
 const module = { exports: {} };
-const context = vm.createContext({ module, exports: module.exports, TextEncoder, TextDecoder, Uint8Array, structuredClone, crypto: webcrypto, console, AbortController, setTimeout, clearTimeout, require(id) { assert.equal(id, "obsidian"); return { TFile: FixtureTFile, TFolder: class {}, moment }; } });
+const context = vm.createContext({ URL, module, exports: module.exports, TextEncoder, TextDecoder, Uint8Array, structuredClone, crypto: webcrypto, console, AbortController, setTimeout, clearTimeout, require(id) { assert.equal(id, "obsidian"); return { TFile: FixtureTFile, TFolder: class {}, moment }; } });
 context.self = context;
 vm.runInContext(build.outputFiles[0].text, context, { filename: "mobile-recovery-browser.cjs" });
 assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer", context), "undefined:undefined");

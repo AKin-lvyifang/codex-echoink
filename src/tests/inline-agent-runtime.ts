@@ -65,7 +65,7 @@ function assertProtocol(): void {
   const tooLarge = createInlineProposalDispatchGuard({ currentRequest: () => request, effectiveInputBudget: 1_000 });
   assert.throws(() => tooLarge(context, { runId: "budget" }), /全文与记忆/u);
   assert.throws(() => createInlineProposalDispatchGuard({ currentRequest: () => request, effectiveInputBudget: 30_000 })({ ...context,
-    messages: [...context.messages, { role: "user", content: annotations[0].selectedText.repeat(40_000), timestamp: 2 }] }, { runId: "annotation-budget" }), /预算/u);
+    messages: [...context.messages, { role: "user", content: annotations[0].selectedText.repeat(40_000), timestamp: 2 }] }, { runId: "annotation-budget" }), /处理上限/u);
   guard(context, { runId: "guard" });
   assert.throws(() => guard(context, { runId: "guard" }), /不能自动/u);
   console.log("PASS inline protocol: strict complete JSON, bounded candidate/original, insert, clarification, immutable request");
@@ -165,7 +165,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
       const submit = () => runtime.submit({ conversationId: scenario, text, selectionAnnotations: annotations, submittedAt: Date.now(), inlineProposalRequest: request,
         memoryMode: scenario === "no_memory" ? "no_memory" : "normal", permission: "read-only", runtimeProviderId: "inline-offline", modelId: "inline-model", reasoning: "none" });
       if (scenario === "oversize") {
-        await assert.rejects(submit(), /正文全文超出/u);
+        await assert.rejects(submit(), /正文长度已超出/u);
         assert.equal(providerCalls, 0);
         assert.equal((await productRuns.list(scenario)).length, 0);
         assert.deepEqual(compaction, [false, true]);

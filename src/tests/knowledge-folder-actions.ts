@@ -99,7 +99,7 @@ export async function runKnowledgeFolderActionsTests(host: HTMLElement, win: { E
     assert.equal(displayedTooltipsForTests.get(updated), updatedValue.textContent, "the native tooltip uses the latest restore record");
     updated.blur();
     recordFails = true; draw(); await flush();
-    assert(button("复原仓库").querySelector(".echoink-settings-navigation-description")?.textContent?.includes("复原记录读取失败"));
+    assert(button("复原仓库").querySelector(".echoink-settings-navigation-description")?.textContent?.includes("复原记录未能读取"));
     assert.equal(button("复原仓库").querySelector(".echoink-settings-navigation-value"), null, "read failures never enter the ellipsis field");
     recordFails = false; restoreFailure = "需要完整展示的复原失败原因".repeat(20); draw(); await flush();
     button("复原仓库").click(); modal = openTestModals.at(-1)!;

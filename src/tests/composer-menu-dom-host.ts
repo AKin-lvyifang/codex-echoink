@@ -2,6 +2,14 @@
 export class Menu {}
 export class Notice {}
 export function setIcon(container: HTMLElement, icon: string): void { container.dataset.icon = icon; }
+export const Platform = { isDesktopApp: true, isMobileApp: false };
+export function getIcon(icon: string): SVGSVGElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.dataset.icon = icon; return svg;
+}
+export function displayTooltip(element: HTMLElement, content: string | DocumentFragment): void {
+  element.setAttribute("title", typeof content === "string" ? content : content.textContent ?? "");
+}
 
 export function installComposerMenuDomHelpers(owner: Document): void {
   const prototype = owner.defaultView!.HTMLElement.prototype;

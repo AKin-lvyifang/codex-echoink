@@ -121,7 +121,7 @@ async function assertContextIsolation(request: ReturnType<typeof createGeneratio
   const context = await handlers.get("context")!({ messages: [{ role: "user", content: "UNRELATED_OLD_CHAT", timestamp: 1 }, { role: "custom", customType: "memory", content: "OLD_MEMORY" }, user] });
   assert.ok(!JSON.stringify(context.messages).includes("EXPERT_PRIVATE_GENERATION_CONTEXT"));
   assert.equal(context.messages.length, 2); assert.equal(context.messages[1], user); assert.equal(JSON.stringify(context).includes("UNRELATED_OLD_CHAT"), false); assert.equal(JSON.stringify(context).includes("OLD_MEMORY"), false);
-  assert.throws(() => assertGenerationInputBudget(request, assessment.sources, 1), /本轮预算/u);
+  assert.throws(() => assertGenerationInputBudget(request, assessment.sources, 1), /处理上限/u);
   let attempt: GenerationAttempt = { kind: "repair", failedOutput: "FAILED_THIS_TURN_ONLY", validationError: "节点重叠" };
   const canvasRequest = { ...request, outputKind: "canvas" as const, outputDirectory: "输出/导图", template: { ...request.template, outputKind: "canvas" as const } };
   const canvasHandlers = new Map<string, (...args: any[]) => any>();

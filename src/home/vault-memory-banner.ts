@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { userFacingErrorText } from "../core/error-copy";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { showSettingsInlineConfirmation } from "../settings/settings-v2";
@@ -18,9 +19,12 @@ export function renderVaultMemoryBanner(host: HTMLElement, notice: VaultMemoryNo
   setIcon(icon, "circle-alert");
   const copy = row.createDiv({ cls: "wb-grow" });
   copy.createDiv({ text: t("这份记忆不属于当前库，暂时没有读取。", "This memory does not belong to this vault and has not been loaded.") });
-  const details = copy.createEl("details");
-  details.createEl("summary", { text: t("查看原因", "Details") });
-  details.createDiv({ text: notice.reason });
+  const reason = userFacingErrorText(notice.reason, "", language === "en" ? "en" : "zh");
+  if (reason) {
+    const details = copy.createEl("details");
+    details.createEl("summary", { text: t("查看原因", "Details") });
+    details.createDiv({ text: reason });
+  }
   const controls = row.createDiv({ cls: "wb-memory-notice-actions" });
   let busy = false;
   const run = async (trigger: HTMLButtonElement, pending: string, operation: () => Promise<void>): Promise<void> => {

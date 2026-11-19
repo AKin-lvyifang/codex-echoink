@@ -18,6 +18,7 @@ import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "..
 import { applySettingsBackButton, showSettingsInlineConfirmation } from "../../settings/settings-v2";
 import { resolveMcpConnectionRecord } from "../../resources/mcp-connections";
 import type { EchoInkResource } from "../../resources/types";
+import { userFacingErrorText } from "../../core/error-copy";
 
 const MODULE_NAMES: Record<AgentModuleId, string> = { journal: "日记", todos: "待办", finance: "财务", "knowledge-base": "知识库", "english-diary": "英文日记", "pdf-reading": "PDF 精读", review: "复盘" };
 const MODULE_CAPABILITY = (id: AgentModuleId) => id === "knowledge-base" ? "knowledge" : id;
@@ -120,7 +121,6 @@ export class AgentEditorController {
     // user identity fields and arbitrary source/error text remain verbatim.
     const copy: Record<string, string> = {
       "对应功能尚未启用": "This feature is not enabled",
-      "需要有效 PRO，已有资料仍可查看": "A valid PRO membership is required; existing data remains readable",
       "资源已禁用或不可用": "Resource disabled or unavailable",
       "资源不可用": "Resource unavailable",
       "PRO 已到期": "PRO membership has expired"
@@ -278,6 +278,13 @@ export class AgentEditorController {
       const copy = this.el(row, "span", "", label);
       if (value === "assistant") this.el(copy, "div", "echoink-agent-editor-availability", this.t("删除仍由你来批", "You still approve deletions"));
     }
+    const name = this.t("派活时可给员工开放文件夹", "Open folders to staff when dispatching");
+    const row = this.el(section, "label", "echoink-agent-editor-choice echoink-agent-company-folders");
+    const check = createOriginCheck(row, { attr: { "aria-label": name } });
+    check.checked = agent.companyFolderGrants !== false;
+    this.el(this.el(row, "span", "echoink-agent-editor-choice-copy"), "span", "", name);
+    attachNativeTooltip(row, () => this.t("员工本来就能读整个库、写自己模块的文件夹；打开后，总助派活时还能让员工写到指定文件夹，只对那件活有效。", "Staff can read the whole vault and write their own module folders. When on, the assistant can also let a dispatched task write to named folders."));
+    check.onchange = () => { if (check.checked) delete agent.companyFolderGrants; else agent.companyFolderGrants = false; this.changed(); };
   }
 
   private renderPresets(parent: HTMLElement): void {
@@ -501,7 +508,7 @@ export class AgentEditorController {
       this.resources = resources;
     } catch (error) {
       if (this.disposed || generation !== this.generation) return;
-      this.resourceError = error instanceof Error ? error.message : this.t("资源读取失败，请重试。", "Could not load resources. Please retry.");
+      this.resourceError = userFacingErrorText(error, this.t("资源读取失败，请重试。", "Could not load resources. Please retry."), this.host.settings.settingsLanguage === "en" ? "en" : "zh");
     } finally {
       if (!this.disposed && generation === this.generation) { this.loadingResources = false; this.submittedWhileLoading = false; this.renderResources(); this.refresh(); }
     }
@@ -581,7 +588,7 @@ export class AgentEditorController {
       if (formDrafts.get(this.host.draftCacheKey)?.get(key)?.revision === revision) formDrafts.get(this.host.draftCacheKey)?.delete(key);
       if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(agent.id); }
     } catch (error) {
-      if (!this.disposed && generation === this.generation) this.error = error instanceof Error ? error.message : this.isOnboardingCreation() ? this.t("创建失败，请重试。", "Could not create. Please retry.") : this.t("保存失败，请重试。", "Could not save. Please retry.");
+      if (!this.disposed && generation === this.generation) this.error = userFacingErrorText(error, this.isOnboardingCreation() ? this.t("创建失败，请重试。", "Could not create. Please retry.") : this.t("保存失败，请重试。", "Could not save. Please retry."), this.host.settings.settingsLanguage === "en" ? "en" : "zh");
     } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.refresh(); } }
   }
 
@@ -625,7 +632,7 @@ export class AgentEditorController {
       if (this.disposed || generation !== this.generation) return;
       if (!Number.isSafeInteger(counts.total) || counts.total < 0 || !Number.isSafeInteger(counts.running) || counts.running < 0 || counts.running > counts.total) throw new Error(this.t("任务数量读取失败，请重试。", "Could not load task counts. Please retry."));
       this.deleteCounts = counts;
-    } catch (error) { if (!this.disposed && generation === this.generation) this.deleteError = error instanceof Error ? error.message : this.t("任务数量读取失败，请重试。", "Could not load task counts. Please retry."); }
+    } catch (error) { if (!this.disposed && generation === this.generation) this.deleteError = userFacingErrorText(error, this.t("任务数量读取失败，请重试。", "Could not load task counts. Please retry."), this.host.settings.settingsLanguage === "en" ? "en" : "zh"); }
     finally { if (!this.disposed && generation === this.generation) { this.deleteLoading = false; this.renderDelete(); this.refresh(); } }
   }
   private async dismissExpert(): Promise<void> {
@@ -636,7 +643,7 @@ export class AgentEditorController {
       formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey);
       if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(GENERAL_ASSISTANT_ID); }
     } catch (error) {
-      if (!this.disposed && generation === this.generation) this.error = error instanceof Error ? error.message : this.t("解聘失败，请重试。", "Could not dismiss. Please retry.");
+      if (!this.disposed && generation === this.generation) this.error = userFacingErrorText(error, this.t("解聘失败，请重试。", "Could not dismiss. Please retry."), this.host.settings.settingsLanguage === "en" ? "en" : "zh");
     } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.refresh(); } }
   }
   private async delete(): Promise<void> {
@@ -647,7 +654,7 @@ export class AgentEditorController {
       formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey);
       if (!this.disposed && generation === this.generation) { this.draft = null; this.dispose(); this.host.onClose(GENERAL_ASSISTANT_ID); }
     } catch (error) {
-      if (!this.disposed && generation === this.generation) { this.deleteError = error instanceof Error ? error.message : this.t("删除失败，请重试。", "Could not delete this Agent. Please retry."); this.deleteCounts = null; }
+      if (!this.disposed && generation === this.generation) { this.deleteError = userFacingErrorText(error, this.t("删除失败，请重试。", "Could not delete this Agent. Please retry."), this.host.settings.settingsLanguage === "en" ? "en" : "zh"); this.deleteCounts = null; }
     } finally { if (!this.disposed && generation === this.generation) { this.busy = null; this.renderDelete(); this.refresh(); } }
   }
 }

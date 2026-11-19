@@ -2,6 +2,7 @@ import { Modal, Notice } from "obsidian";
 import type { EchoInkKnowledgeSurfaceService } from "../plugin/knowledge-surface-service";
 import { createOriginButton, createOriginCheck, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
+import { NEXT, failureText, joinErrorCopy, userFacingErrorText, type ErrorCopy } from "../core/error-copy";
 import { createSettingsGroup, createSettingsNavigationRow, replaceSettingsNavigationRow, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 
 type Operation = "optimize" | "restore";
@@ -59,7 +60,7 @@ export function renderKnowledgeFolderActions(
   };
   syncControls();
   void service.getOriginalDirectoryStatus().then(result => { record = result; })
-    .catch(() => { recordError = zh ? "复原记录读取失败，请重新打开设置重试" : "Could not read the restore record. Reopen settings to retry."; })
+    .catch(() => { recordError = joinErrorCopy(["复原记录未能读取。", "The restore record could not be read."], ["请重新打开设置后重试。", "Reopen settings and try again."], zh ? "zh" : "en"); })
     .finally(() => { recordLoading = false; syncControls(); });
 
   const run = async (operation: Operation, action: () => Promise<string>) => {
@@ -70,11 +71,10 @@ export function renderKnowledgeFolderActions(
     try {
       new Notice(await action());
     } catch (error: unknown) {
-      const detail = (error instanceof Error ? error.message : typeof error === "string" ? error : "").replace(/\s+/gu, " ").trim();
-      const summary = operation === "optimize"
-        ? (zh ? "名称优化未完成" : "Folder name optimization did not complete")
-        : (zh ? "仓库复原未完成" : "Vault restoration did not complete");
-      const message = detail ? `${summary}${zh ? "：" : ": "}${detail}` : summary;
+      const lead: ErrorCopy = operation === "optimize"
+        ? ["文件夹名称未能优化。", "Folder names could not be optimized."]
+        : ["仓库未能复原。", "The vault could not be restored."];
+      const message = failureText(error, lead, NEXT.retryLater, zh ? "zh" : "en");
       state.error = { operation, message };
       new Notice(message);
     } finally {
@@ -126,7 +126,7 @@ export function renderKnowledgeFolderActions(
           apply.disabled = !plan.result.renamed.length || !service.directoryWritable;
           apply.onclick = () => { if (pending || state.running) return; apply.disabled = true; void run("optimize", async () => { const result = await service.applyFolderNamePreview(plan); modal.close(); return zh ? `已改名 ${result.renamed.length} 个目录，${result.skipped.length} 项未改动。` : `Renamed ${result.renamed.length} folders; ${result.skipped.length} unchanged.`; }).finally(() => { apply.disabled = !service.directoryWritable; }); };
           preview.hidden = true;
-        } catch (failure) { error.setText(failure instanceof Error ? failure.message : String(failure)); preview.disabled = !selected.size || !service.directoryWritable; }
+        } catch (failure) { error.setText(userFacingErrorText(failure, zh ? "未能生成改名预览。请重新选择文件夹后重试。" : "Could not preview the new names. Select the folders again and retry.", zh ? "zh" : "en")); preview.disabled = !selected.size || !service.directoryWritable; }
         finally { pending = false; body.removeAttribute("aria-busy"); preview.setText(zh ? "预览改名" : "Preview names"); checks.forEach(check => { check.disabled = preview.hidden; }); }
       };
       modal.onClose = () => disposeOriginControls(body);

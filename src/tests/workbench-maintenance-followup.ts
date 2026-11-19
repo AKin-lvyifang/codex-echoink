@@ -130,7 +130,7 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
     await f.run("/maintain 星系专题");
     const searches = f.rawQueries.length;
     const before = await f.wiki();
-    await assert.rejects(f.run("/maintain 继续原维护清单，但改为整理第二范围这篇资料", {}, other), /没有找到可可靠匹配/u);
+    await assert.rejects(f.run("/maintain 继续原维护清单，但改为整理第二范围这篇资料", {}, other), /未找到可准确匹配/u);
     assert.ok(f.rawQueries.length > searches, "an explicit replacement query still resolves a fresh selection");
     assert.equal(await f.wiki(), before, "an unmatched new query fails closed instead of silently inheriting the old source");
   });

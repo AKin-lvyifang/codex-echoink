@@ -1,5 +1,8 @@
+import { membershipWebsiteLink } from "../membership/website-links";
+
 export const API_PROVIDER_IDS = [
   "openai-codex",
+  "xiaoecho",
   "glm",
   "kimi",
   "minimax",
@@ -26,7 +29,14 @@ export const API_PROVIDER_PROTOCOLS = [
 export type ApiProviderProtocol =
   typeof API_PROVIDER_PROTOCOLS[number];
 
-export type ApiProviderAuthMode = "api-key" | "oauth";
+/** "account": the EchoInk membership login token is the credential (小echo). */
+export type ApiProviderAuthMode = "api-key" | "oauth" | "account";
+declare const __ECHOINK_MEMBERSHIP_API_URL__: string;
+const ECHOINK_MEMBERSHIP_API_URL = typeof __ECHOINK_MEMBERSHIP_API_URL__ === "undefined" ? "https://echoink.cn" : __ECHOINK_MEMBERSHIP_API_URL__;
+export const XIAOECHO_PROVIDER_ID = "xiaoecho";
+/** Pi base URL; the runtime appends /chat/completions and /models. */
+export const XIAOECHO_API_BASE_URL = `${ECHOINK_MEMBERSHIP_API_URL.replace(/\/$/u, "")}/api/xiaoecho`;
+export const XIAOECHO_AUTO_MODEL_ID = "auto";
 
 export type ApiProviderGroupId =
   | "account"
@@ -58,6 +68,7 @@ export interface ApiProviderModelPreset {
 export interface ApiProviderPreset {
   readonly id: Extract<ApiProviderId,
     | "openai-codex"
+    | "xiaoecho"
     | "anthropic"
     | "glm"
     | "kimi"
@@ -95,6 +106,23 @@ export interface ApiProviderPreset {
  */
 export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
   Object.freeze([
+    // 小echo：EchoInk 账号登录、按点数计费的云端 AI。模型目录来自服务端，这里只放默认档 auto。
+    preset({
+      id: "xiaoecho",
+      name: "小echo / xiaoecho",
+      group: "account",
+      runtimeProviderId: "xiaoecho",
+      baseUrl: XIAOECHO_API_BASE_URL,
+      docsUrl: membershipWebsiteLink("plugin.settings.provider"),
+      apiProtocol: "openai-completions",
+      authMode: "account",
+      apiKeyRequired: false,
+      modelDiscovery: "supported",
+      mobileStreaming: true,
+      models: [
+        model(XIAOECHO_AUTO_MODEL_ID, 1_000_000, 16_384, true, true, false, "auto")
+      ]
+    }),
     preset({
       id: "openai-codex",
       name: "OpenAI Codex Beta",
@@ -153,6 +181,7 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       apiKeyRequired: true,
       modelDiscovery: "provider_dependent",
       models: [
+        model("glm-5.3", 1_000_000, 131_072, true, false, true),
         model("glm-4.7", 204_800, 131_072, true, false, true),
         model("glm-5-turbo", 200_000, 131_072, true, false, true),
         model("glm-5v-turbo", 200_000, 131_072, true, true, true)
@@ -385,6 +414,11 @@ export function normalizeApiProviderId(
     || normalizedName === "ollama"
   ) return "ollama";
   if (
+    normalizedBaseUrl.includes("/api/xiaoecho")
+    || normalizedName === "xiaoecho"
+    || normalizedName === "小echo"
+  ) return "xiaoecho";
+  if (
     normalizedBaseUrl.includes("deepseek")
     || normalizedName === "deepseek"
   ) return "deepseek";
@@ -449,10 +483,10 @@ export function normalizeApiProviderBaseUrl(
   apiProtocol: ApiProviderProtocol
 ): string {
   const parsed = new URL(baseUrl.trim());
-  const loopbackHttp = parsed.protocol === "http:"
-    && isLoopbackHostname(parsed.hostname);
+  const localNetworkHttp = parsed.protocol === "http:"
+    && isLocalNetworkHostname(parsed.hostname);
   if (
-    (parsed.protocol !== "https:" && !loopbackHttp)
+    (parsed.protocol !== "https:" && !localNetworkHttp)
     || parsed.username
     || parsed.password
     || parsed.search
@@ -474,10 +508,11 @@ export function normalizeApiProviderBaseUrl(
   return parsed.toString().replace(/\/$/u, "");
 }
 
-export function isLoopbackApiProviderUrl(baseUrl: string): boolean {
+/** Plain HTTP on this machine or the user's private network (self-hosted models). */
+export function isLocalNetworkApiProviderUrl(baseUrl: string): boolean {
   try {
     const parsed = new URL(baseUrl);
-    return parsed.protocol === "http:" && isLoopbackHostname(parsed.hostname);
+    return parsed.protocol === "http:" && isLocalNetworkHostname(parsed.hostname);
   } catch {
     return false;
   }
@@ -566,9 +601,26 @@ function model(
   });
 }
 
-function isLoopbackHostname(hostname: string): boolean {
+/** Loopback, RFC 1918 / link-local IPv4, IPv6 ULA / link-local, and mDNS `.local` names. */
+function isLocalNetworkHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, "");
-  return normalized === "localhost"
-    || normalized === "127.0.0.1"
-    || normalized === "::1";
+  if (normalized === "localhost" || normalized === "::1") return true;
+  if (/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.local$/u.test(normalized)) return true;
+  if (/^f[cd][0-9a-f]{2}:/u.test(normalized) || /^fe[89ab][0-9a-f]:/u.test(normalized)) return true;
+  const octets = normalized.split(".");
+  if (octets.length !== 4 || !octets.every(octet => /^\d{1,3}$/u.test(octet) && Number(octet) <= 255)) {
+    return false;
+  }
+  const [a, b] = octets.map(Number);
+  return a === 127
+    || a === 10
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 169 && b === 254);
+}
+
+/** Brand follows the selected service identity, never its model or upstream vendor. */
+export function providerBrandForIdentity(value: unknown, baseUrl = "", name = ""): ApiProviderPreset["id"] {
+  const id = getApiProviderPreset(normalizeApiProviderId(value, baseUrl, name)).id;
+  return id === "qwen-token-plan" ? "qwen" : id;
 }

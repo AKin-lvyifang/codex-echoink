@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { FileView, type TFile, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import { WORKSPACE_ROOT, workspacePath, type WorkspaceService } from "./service";
 import { renderWorkspacePreview, type WorkspacePreviewController, type WorkspacePreviewRenderOptions } from "./preview";
@@ -45,7 +46,7 @@ export class WorkspacePreviewView extends FileView {
     } catch (error) {
       const message = ownedDiv(this.contentEl.ownerDocument);
       message.className = "echoink-workspace-preview__error"; message.setAttribute("role", "alert");
-      message.textContent = error instanceof Error ? error.message : String(error);
+      message.textContent = userFacingErrorText(error, "无法预览该 HTML 文件。请稍后重试。");
       this.contentEl.append(message);
     }
   }

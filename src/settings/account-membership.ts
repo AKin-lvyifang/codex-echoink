@@ -5,17 +5,20 @@ import { ownedEl } from "../ui/owned-dom";
 // Scope and preserved rights: ../../LICENSE
 import { Modal, Notice, setIcon, type App } from "obsidian";
 import { createOriginButton, createOriginInput, disposeOriginControls } from "./origin-controls";
-import { membershipPlanAction, registrationGiftLabel } from "./account-membership-model";
+import { membershipPlanAction, membershipPrimaryAction, registrationGiftLabel } from "./account-membership-model";
 import type { AccountActions, AccountAvatar, AccountMembershipViewModel, AccountRank, MembershipState } from "./account-membership-model";
-import { formatEarlyOfferEndDate, getMembershipPlanPricing } from "./account-membership-pricing";
+import { formatEarlyOfferEndDate, getMaxPlanPricing, getMembershipPlanPricing, isMaxPlanId, type MembershipPlanId } from "./account-membership-pricing";
 import { MobileViewport } from "../ui/mobile/viewport";
 import { createSettingsNavigationRow, showSettingsInlineConfirmation } from "./settings-v2";
 import { createPluginEditionBadge } from "./plugin-edition-badge";
 import type { DesktopAccountHooks, AccountFormHandle } from "./desktop-account-membership";
 import { applyDeleteButton } from "./amicro-buttons";
 import { attachNativeTooltip } from "../ui/native-tooltip";
+import { formatSyncUsedBytes, syncUsagePresentation } from "./cloud-sync-presentation";
+import { CAUSE, NEXT, failureText, joinErrorCopy, pickErrorCopy, type ErrorCopy } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 
-export type AccountMembershipPageOptions = { app: App; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks };
+export type AccountMembershipPageOptions = { app: App; onSignInReturned?: () => Promise<void>; viewModel: AccountMembershipViewModel; actions?: AccountActions; language: string; openProviders: () => void; subscribe?: (listener:()=>void)=>()=>void; read?:()=>AccountMembershipViewModel; beginAction?:()=>()=>void; activationNotice?: string; desktopHooks?: DesktopAccountHooks; mountCloudSync?: (parent: HTMLElement, openPage: (title: string, render: (body: HTMLElement) => () => void) => void) => () => void; syncUsage?: { read(): { usedBytes: number; quotaBytes: number } | null; subscribe(listener: () => void): () => void }; mountSmartJudgment?: (parent: HTMLElement) => () => void };
 type PageOptions = AccountMembershipPageOptions;
 type Tag = keyof HTMLElementTagNameMap;
 function el<K extends Tag>(parent: HTMLElement, tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
@@ -33,15 +36,16 @@ function button(parent: HTMLElement, text: string, cls: string, action?: () => v
 }
 type ProfileDraft = { name: string; avatar?: File | null; imageUrl: string | null; ownedUrl: string | null };
 const plans = [
-  { id: "early", zh: "早鸟终生买断", en: "Early lifetime", months: 0, zhTerm: "一次购买", enTerm: "one payment" },
-  { id: "month", zh: "月卡", en: "Monthly", months: 1, zhTerm: "/ 月", enTerm: "/ month" },
-  { id: "quarter", zh: "季卡", en: "Quarterly", months: 3, zhTerm: "/ 季", enTerm: "/ quarter" },
-  { id: "year", zh: "年卡", en: "Annual", months: 12, zhTerm: "/ 年", enTerm: "/ year" }
+  { id: "early", zh: "早鸟终生买断", en: "Early lifetime" },
+  { id: "month", zh: "PRO 月卡", en: "PRO Monthly" },
+  { id: "quarter", zh: "PRO 季卡", en: "PRO Quarterly" },
+  { id: "year", zh: "PRO 年卡", en: "PRO Annual" }
 ];
+const MAX_WORDS: Record<"max-month" | "max-quarter" | "max-year", [string, string]> = { "max-month": ["月卡", "Monthly"], "max-quarter": ["季卡", "Quarterly"], "max-year": ["年卡", "Annual"] };
 const subscriptionLabels: Record<string, [string, string]> = {
   beta: ["内测 PRO", "Beta PRO"],
-  early: ["买断订阅", "Lifetime plan"], month: ["月卡订阅", "Monthly subscription"],
-  quarter: ["季卡订阅", "Quarterly subscription"], year: ["年卡订阅", "Annual subscription"]
+  early: ["早鸟终生买断", "Early lifetime"], month: ["PRO 月卡", "PRO Monthly"],
+  quarter: ["PRO 季卡", "PRO Quarterly"], year: ["PRO 年卡", "PRO Annual"]
 };
 const stateLabels: Record<MembershipState, [string, string]> = {
   unavailable: ["未开通 PRO", "Free plan"], anonymous: ["未登录", "Signed out"], free: ["未开通 PRO", "Free plan"],
@@ -84,6 +88,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const actions = options.actions ?? {};
   const zh = options.language !== "en";
   const t = (cn: string, en: string) => zh ? cn : en;
+  const failText = (error: unknown, lead: ErrorCopy, next: ErrorCopy) => failureText(error, lead, next, zh ? "zh" : "en");
   const page = el(parent, "div", "echoink-account");
   const heatTooltips: ReturnType<typeof attachNativeTooltip>[] = [];
   const actionTooltips: ReturnType<typeof attachNativeTooltip>[] = [];
@@ -113,7 +118,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     showSettingsInlineConfirmation(host, trigger, { message, deleteAction, confirmLabel: label, cancelLabel: t("取消", "Cancel"), onConfirm: async () => {
       const release = beginAction();
       try { await action(); if (!disposed) saved?.(); }
-      catch (error) { if (!disposed) { const status = el(host, "p", "activation-feedback"); feedbackState(status, "error", error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action")); } }
+      catch (error) { if (!disposed) { const status = el(host, "p", "activation-feedback"); feedbackState(status, "error", failText(error, SETTINGS_SCENE.actionIncomplete, NEXT.retryLater)); } }
       finally { release(); }
     } });
     host.querySelector(".echoink-settings-inline-confirm")?.scrollIntoView?.({ block: "nearest" });
@@ -123,7 +128,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const number = (n: number | null | undefined) => n == null ? "—" : n.toLocaleString(zh ? "zh-CN" : "en-US");
   const wireCode=(send:HTMLButtonElement,address:()=>string,purpose:"login"|"password-set"|"password-reset",parent:HTMLElement)=>{
     const feedback=el(parent,"div","activation-feedback");feedbackState(feedback,"status","");
-    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));const timer=window.setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,"error",error instanceof Error?error.message:t("发送失败，请重试。","Could not send. Try again."));send.disabled=false;}};
+    send.onclick=async()=>{if(send.disabled||!actions.requestCode)return;send.disabled=true;feedbackState(feedback,"loading","");try{await actions.requestCode({email:address().trim(),purpose});feedbackState(feedback,"success",t("验证码已发送，请查收邮箱。","Code sent. Check your email."));const timer=window.setTimeout(()=>{codeTimers.delete(timer);if((desktop||send.isConnected)&&!disposed)send.disabled=false;},60000);if(desktop)codeTimers.add(timer);}catch(error){feedbackState(feedback,"error",failText(error,["验证码未能发送。","The code could not be sent."],["请检查邮箱地址后重试。","Check the email address and try again."]));send.disabled=false;}};
   };
   const unavailable = desktop && !vm.serviceAvailable ? t("服务暂不可用", "Service unavailable") : t("即将开放", "Coming soon");
   const missing = t("暂无统计", "No statistics");
@@ -164,7 +169,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     input.id = `echoink-account-field-${++fieldSequence}`; inputLabel.htmlFor = input.id;
     return input;
   };
-  const submit = (form: HTMLFormElement, label: string, callback: (() => Promise<void>) | undefined, modal: AccountFormHandle) => {
+  const submit = (form: HTMLFormElement, label: string, callback: (() => Promise<void>) | undefined, modal: AccountFormHandle, returned?: () => Promise<void>) => {
     const status = el(form, "p", "dialog-footnote");
     status.setAttribute("role", "status");
     const controls = el(form, "div", "dialog-actions");
@@ -179,8 +184,9 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
       const release = beginAction();
       let succeeded = false;
       try { await callback(); succeeded = true; if (!disposed && (desktop || form.isConnected)) { desktop?.committed(); modal.close(); } }
-      catch (error) { if (!disposed && (desktop || form.isConnected)) { status.classList.add("form-error"); status.textContent = error instanceof Error ? error.message : t("操作失败，请重试", "Unable to complete the action"); save.disabled = false; } }
+      catch (error) { if (!disposed && (desktop || form.isConnected)) { status.classList.add("form-error"); status.textContent = failText(error, SETTINGS_SCENE.actionIncomplete, NEXT.retryLater); save.disabled = false; } }
       finally { if (!desktop || succeeded) form.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(input => input.value = ""); release(); }
+      if (succeeded) await returned?.();
     };
   };
   const password = (reset: boolean, draft?: ProfileDraft, emailValue = vm.identity?.email ?? "") => show(
@@ -220,7 +226,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         if (image) image.onerror = () => {
           if (profileDraft !== selected || selected.imageUrl !== url) return;
           revokeImage(selected); selected.imageUrl = null; selected.avatar = null;
-          error.textContent = t("无法读取图片，请重新选择", "Unable to read this image. Choose another."); paint();
+          error.textContent = t("无法读取该图片。请重新选择图片。", "Could not read this image. Choose another image."); paint();
         };
       };
       button(controls, t("选择图片", "Choose image"), "secondary", () => file.click());
@@ -230,7 +236,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         const image = file.files?.[0]; file.value = "";
         if (!image) return;
         if (!["image/png", "image/jpeg", "image/webp"].includes(image.type) || !image.size || image.size > 5 * 1024 * 1024) {
-          error.textContent = t("请选择不超过 5MB 的 PNG、JPEG 或 WebP 图片", "Choose a PNG, JPEG or WebP image up to 5MB"); return;
+          error.textContent = t("图片格式或大小不符合要求。请选择不超过 5MB 的 PNG、JPEG 或 WebP 图片。", "The image format or size is not supported. Choose a PNG, JPEG or WebP image up to 5MB."); return;
         }
         const url = page.ownerDocument.defaultView!.URL.createObjectURL(image);
         revokeImage(selected); selected.avatar = image; selected.imageUrl = selected.ownedUrl = url; error.textContent = ""; desktop?.draftChanged(); paint();
@@ -264,7 +270,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     };
     change("code");
     button(form, t("忘记密码", "Forgot password"), "quiet", () => password(true, undefined, email.value));
-    submit(form, t("登录", "Sign in"), actions.signIn && (() => actions.signIn!({ email: email.value.trim(), method, credential: method === "code" ? code.value : secret.value })), modal);
+    submit(form, t("登录", "Sign in"), actions.signIn && (() => actions.signIn!({ email: email.value.trim(), method, credential: method === "code" ? code.value : secret.value })), modal, options.onSignInReturned);
   });
   const devices = () => show(t("设备管理", "Devices"), (body, modal) => {
     if (vm.membership.devices == null) copy(body, t("设备信息暂不可用", "Device information unavailable"));
@@ -287,7 +293,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   if (desktop) { profileSection.classList.add("desktop-account-header"); profileSection.dataset.accountSection = "identity"; }
   if (desktop && !vm.serviceAvailable) {
     const status = el(profileSection, "p", "activation-feedback");
-    feedbackState(status, "error", t("账号服务暂时不可用，请稍后重试。", "Account service is unavailable. Try again later."));
+    feedbackState(status, "error", joinErrorCopy(["账号服务暂时不可用。", "The account service is temporarily unavailable."], NEXT.retryLater, zh ? "zh" : "en"));
   }
   const profileCopy = el(profileSection, "div", "profile-copy");
   const profileActions = el(profileSection, "div", "profile-actions");
@@ -298,12 +304,14 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     el(line, "h2", "", vm.identity.name);
     const hasPro = desktop ? valid : retainedMembership || vm.membership.state === "scheduled";
     const expired = ["expired", "revoked"].includes(vm.membership.state);
-    if (desktop && valid) createPluginEditionBadge(line, "pro", zh ? "zh-CN" : "en");
-    else el(line, "span", `badge${expired ? " expired" : hasPro ? " pro" : ""}`, expired ? stateLabels[vm.membership.state][zh ? 0 : 1] : hasPro ? "✧ PRO" : desktop && !["free", "anonymous"].includes(vm.membership.state) ? stateLabels[vm.membership.state][zh ? 0 : 1] : t("基础版", "Free"));
+    const max = vm.entitlements?.tier === "max";
+    if (desktop && valid) createPluginEditionBadge(line, max ? "max" : "pro", zh ? "zh-CN" : "en");
+    else if (!desktop) el(line, "span", `badge${expired ? " expired" : hasPro ? " pro" : ""}`, expired ? stateLabels[vm.membership.state][zh ? 0 : 1] : hasPro ? max ? "✧ Max" : "✧ PRO" : desktop && !["free", "anonymous"].includes(vm.membership.state) ? stateLabels[vm.membership.state][zh ? 0 : 1] : t("基础版", "Free"));
     el(identity, "p", "", vm.identity.email);
     if (vm.identity.joinedAt && !desktop) el(identity, "span", "muted", vm.identity.joinedAt);
-    button(profileActions, t("编辑资料", "Edit profile"), "secondary", () => profile());
+    if (!desktop) button(profileActions, t("编辑资料", "Edit profile"), "secondary", () => profile());
     const signOut = button(profileActions, t("退出登录", "Sign out"), "quiet");
+    if (desktop) button(profileActions, t("编辑资料", "Edit profile"), "secondary", () => profile());
     signOut.disabled = !actions.signOut || !vm.serviceAvailable;
     signOut.onclick = () => {
       if (signOut.disabled) return;
@@ -332,7 +340,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const renderStatistics = (body: HTMLElement) => {
     copy(body, t("统计保存在当前知识库，不依赖登录或会员。从启用统计之日起记录，此前历史不补算。", "Statistics stay in this vault and work without an account or membership. Recording starts when statistics are enabled; earlier activity is not reconstructed."));
     copy(body, t("所有模型调用统一按 EchoInk 的 o200k 标准估算实际输入与可见输出。工具往返产生的每次追加调用分别累加。", "EchoInk uses the same o200k standard to estimate the actual input and visible output of every model call. Each additional call in a tool exchange is counted separately."));
-    copy(body, t("图片和文档按可见内容近似估算，不含厂商未返回的隐藏思考；这里的数字不代表厂商计费账单。", "Images and documents are approximated from available content. Hidden reasoning that the provider does not return is excluded. These estimates are not a provider billing statement."));
+    copy(body, t("图片和文档按可见内容近似估算，不含模型服务未返回的隐藏思考；这里的数字不代表模型服务的计费账单。", "Images and documents are approximated from available content. Hidden reasoning that the model service does not return is excluded. These estimates are not a model service billing statement."));
     copy(body, t("完成的对话轮次按已完成的用户对话统计，一轮中的多次模型调用仍只算一轮。连续使用按完成对话的日期统计。", "Completed turns count finished user turns. Multiple model calls within one turn still count as one turn. Streaks are based on days with completed conversations."));
   };
   const statisticsNotes = desktop ? el(usage, "div", "desktop-account-statistics-notes") : null;
@@ -430,6 +438,9 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     const asset = button(assetGrid, "", "asset", () => show(t(name, nameEn), body => copy(body, t("请从对应功能入口查看已有内容。", "View your content through its feature entry.")))); icon(asset, symbol); const label = el(asset, "span"); el(label, "strong", "", number(stats.assets[key])); el(label, "small", "", t(name, nameEn)); icon(asset, "chevron-right", "chevron"); asset.setAttribute("aria-label", `${t(name, nameEn)} · ${stats.assets[key] == null ? t("暂无统计", "No statistics") : number(stats.assets[key])}`);
   }
   }
+  // 智能判断放在云同步之前（方哥 11-09 认可的 Demo）。
+  const disposeSmartJudgment = vm.identity ? options.mountSmartJudgment?.(page) : undefined;
+  const disposeCloudSync = desktop && vm.identity ? options.mountCloudSync?.(page, (title, render) => show(title, (body, modal) => { modal.afterClose = render(body); })) : undefined;
   const membership = el(page, "section", desktop ? "desktop-account-plans" : "membership-section");
   if (desktop) membership.dataset.accountSection = "plans";
   const plansHeading = heading(membership, desktop ? t("购买方案", "Plans") : t("订阅管理", "Subscription"));
@@ -438,29 +449,98 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const compactAuthorization = !!desktop && !!vm.identity && (valid || vm.membership.state === "free") && !vm.verificationError;
   const anonymousAuthorization = !!desktop && !vm.identity;
   const inlineAuthorization = compactAuthorization || anonymousAuthorization;
-  const summary = el(desktop ? inlineAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${inlineAuthorization ? " is-compact" : ""}` : "membership-summary");
+  // 桌面：事实行进身份区；异常只出一块提示（状态、原因、解决按钮在一起）；点数与云同步是数据卡。
+  const summary = el(desktop ? anonymousAuthorization ? identityCopy! : profileSection : panel, "div", desktop ? `desktop-account-authorization${inlineAuthorization ? " is-compact" : " is-alert"}` : "membership-summary");
+  if (desktop && !inlineAuthorization) icon(summary, "triangle-alert", "desktop-account-alert-icon");
   if (!desktop) icon(summary, "feather", "membership-symbol");
   const memberCopy = el(summary, "div", "membership-copy");
-  if (compactAuthorization) el(memberCopy, "div", "desktop-account-membership-line", [valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1], vm.membership.expiresAt && `${t("有效至", "Valid until")} ${vm.membership.expiresAt}`, vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · "));
-  else if (desktop) { if (!anonymousAuthorization) el(memberCopy, "div", "desktop-account-plan-status", valid ? currentPlanLabel : stateLabels[vm.membership.state][zh ? 0 : 1]); }
+  // 头部只留事实：身份 · 到期日或验证时间（方哥 11-08 定，Demo d7353ff8）；长说明句不进头部。
+  const currentPlan = plans.find(item => item.id === currentPlanId);
+  const planWord = currentPlanId === "early" ? t("早鸟终生买断", "Early lifetime") : currentPlanId === "beta" ? t("内测", "Beta")
+    : isMaxPlanId(currentPlanId ?? "") ? `Max ${t(...MAX_WORDS[currentPlanId as keyof typeof MAX_WORDS])}` : currentPlan ? t(currentPlan.zh, currentPlan.en) : currentPlanLabel;
+  // 桌面日期只到天；时分秒留给排查场景。
+  const dayOnly = (value: string) => desktop ? value.replace(/[\sT,]+\d{1,2}:\d{2}(?::\d{2})?.*$/, "") : value;
+  const expiresDay = vm.membership.expiresAt ? dayOnly(vm.membership.expiresAt) : "";
+  const factTail = expiresDay ? t(`至 ${expiresDay}`, `until ${expiresDay}`) : vm.membership.verifiedAt ? t(`${vm.membership.verifiedAt} 已验证`, `verified ${vm.membership.verifiedAt}`) : "";
+  const factLine = valid ? [planWord, factTail].filter(Boolean).join(" · ") : stateLabels[vm.membership.state][zh ? 0 : 1];
+  if (desktop) { if (vm.identity && identityCopy) {
+    const retainedFact = [currentPlanId ? planWord : "", vm.membership.verifiedAt ? `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}` : ""].filter(Boolean).join(" · ");
+    // 状态只说一次：异常时状态名在提示块里，身份区只留计划与最近验证。
+    const identityFact = compactAuthorization ? factLine : retainedMembership ? retainedFact : "";
+    if (identityFact) el(identityCopy, "div", "desktop-account-membership-line", identityFact);
+    if (!compactAuthorization) el(memberCopy, "strong", "desktop-account-plan-status", stateLabels[vm.membership.state][zh ? 0 : 1]);
+  } }
   else { const nameLine = el(memberCopy, "div", "name-line"); el(nameLine, "h3", "", retainedMembership ? "EchoInk PRO" : t("EchoInk 基础版", "EchoInk Free")); el(nameLine, "span", `badge${valid ? " pro" : ["expired", "revoked"].includes(vm.membership.state) ? " expired" : ""}`, (stateLabels[vm.membership.state] ?? stateLabels["verification-required"])[zh ? 0 : 1]); }
   const descriptions: Partial<Record<MembershipState, string>> = {
-    scheduled: vm.membership.startsAt ? `${t("权益开始于", "Access starts on")} ${vm.membership.startsAt}` : t("权益尚未生效。", "Access has not started yet."),
+    scheduled: vm.membership.startsAt ? t(`将于 ${vm.membership.startsAt} 生效`, `Starts ${vm.membership.startsAt}`) : t("权益尚未生效。", "Access has not started yet."),
     "verification-required": t("账号权益仍保留，请联网刷新验证。", "Your account access is retained. Refresh verification online."),
     "device-limit": t("账号权益仍保留，请先管理旧设备名额。", "Your account access is retained. Manage existing devices first."),
     revoked: t("授权已撤销，请联系支持核实；已有资料保留。", "Authorization was revoked. Contact support; saved content is retained."),
     expired: t("订阅已到期，已有资料仍可查看。", "Subscription expired. Saved content remains accessible.")
   };
-  if (!compactAuthorization) el(memberCopy, "p", "", descriptions[vm.membership.state] ?? (vm.membership.expiresAt ? `${t("有效至", "Valid until")} ${vm.membership.expiresAt}` : valid && currentPlanId === "early" ? t("一次买断，覆盖以后所有版本的 PRO，模型调用费另计。", "One payment for lifetime PRO access, including all future versions. Model costs are separate.") : valid ? t("已解锁 PRO 功能。", "PRO features unlocked.") : t("财务、英文日记、PDF 精读和 @Agent 正文管家需要 PRO，AI 需配置自己的模型服务。", "Finance, English Diary, PDF reading and @Agent in notes require PRO. Bring your own model provider.")));
+  if (!compactAuthorization) { const fact = descriptions[vm.membership.state] ?? (valid && !desktop ? [planWord, factTail].filter(Boolean).join(" · ") : ""); if (fact) el(memberCopy, "p", "", fact); }
+  // 点数、云同步、首次 Max 优惠：只摆事实，不加说明文字；没有数据就不画。
+  const ent = vm.identity ? vm.entitlements ?? null : null;
+  let disposeSyncUsage: (() => void) | undefined;
+  if (ent && desktop) {
+    const meters = el(profileSection, "div", "desktop-account-meters");
+    const meter = (label: string, value: string, unit: string, percent: number | null, low: boolean, foot: string) => {
+      const card = el(meters, "div", "desktop-account-meter");
+      el(card, "span", "metric-label", label);
+      const line = el(card, "div", "desktop-account-meter-value"); const strong = el(line, "strong", "", value); const unitNode = el(line, "span", "", unit); unitNode.hidden = !unit;
+      const bar = el(card, "div", "desktop-account-meter-bar"); bar.setAttribute("role", "img"); const fill = el(bar, "i");
+      const footNode = el(card, "div", "desktop-account-meter-foot", foot); footNode.hidden = !foot;
+      const setBar = (next: number | null, warn: boolean) => { bar.hidden = next == null; bar.classList.toggle("is-warning", warn); fill.style.width = `${next ?? 0}%`; if (next != null) bar.setAttribute("aria-label", `${label} ${next}%`); };
+      setBar(percent, low);
+      return { strong, unitNode, setBar };
+    };
+    const balance = Number(String(ent.points.balance).replace(/,/g, ""));
+    const pointsPercent = ent.points.monthly > 0 && Number.isFinite(balance) ? Math.min(100, Math.max(0, Math.round(balance / ent.points.monthly * 100))) : null;
+    const pointsFoot = [ent.points.monthly > 0 ? t(`每 30 天发放 ${ent.points.monthly}`, `${ent.points.monthly} every 30 days`) : "",
+      ent.points.nextExpiry ? t(`${ent.points.nextExpiry.points} 点 ${new Date(ent.points.nextExpiry.at).toLocaleDateString()} 到期`, `${ent.points.nextExpiry.points} expire ${new Date(ent.points.nextExpiry.at).toLocaleDateString()}`) : ""].filter(Boolean).join(" · ");
+    meter(t("AI 点数", "AI points"), String(ent.points.balance), ent.points.monthly > 0 ? `/ ${ent.points.monthly}` : "", pointsPercent, pointsPercent != null && pointsPercent < 10, pointsFoot);
+    const quotaGb = Number((ent.sync.quotaBytes / 1024 ** 3).toFixed(2));
+    const syncFoot = ent.sync.status === "active" ? `${ent.devices.active} / ${ent.sync.deviceLimit} ${t("台设备", "devices")}`
+      : ent.sync.status === "grace" && ent.sync.graceUntil ? t(`保留至 ${new Date(ent.sync.graceUntil).toLocaleDateString()}`, `Kept until ${new Date(ent.sync.graceUntil).toLocaleDateString()}`) : "";
+    const syncCard = meter(t("云同步", "Cloud sync"), ent.sync.status === "active" ? `${quotaGb} GB` : ent.sync.status === "grace" ? t("只读", "Read-only") : t("未开通", "Not included"), "", null, false, syncFoot);
+    if (ent.sync.status === "active" && options.syncUsage) {
+      // 已用空间只来自同步引擎的真实状态；没有状态时只显示配额，不画进度条。
+      const paint = () => {
+        const usage = options.syncUsage!.read(); const quota = usage?.quotaBytes || ent.sync.quotaBytes;
+        if (!usage || quota <= 0) { syncCard.strong.textContent = `${quotaGb} GB`; syncCard.unitNode.hidden = true; syncCard.setBar(null, false); return; }
+        const presentation = syncUsagePresentation(usage.usedBytes, quota);
+        const [usedValue, usedUnit] = formatSyncUsedBytes(usage.usedBytes).split(" ");
+        syncCard.strong.textContent = usedValue; syncCard.unitNode.textContent = `${usedUnit} / ${Number((quota / 1024 ** 3).toFixed(2))} GB`; syncCard.unitNode.hidden = false;
+        syncCard.setBar(presentation.percent, presentation.warning);
+      };
+      paint(); disposeSyncUsage = options.syncUsage.subscribe(() => { if (!disposed) paint(); });
+    }
+  } else if (ent) {
+    const lines = el(memberCopy, "div", "membership-entitlements");
+    const points = el(lines, "div", "membership-entitlement-line");
+    el(points, "span", "entitlement-label", t("AI 点数", "AI points"));
+    el(points, "strong", "", ent.points.balance);
+    if (ent.points.monthly > 0) el(points, "span", "entitlement-note", t(`每30天 ${ent.points.monthly}`, `${ent.points.monthly} / 30 days`));
+    // 批次到期放悬停提示，不出「明细」（方哥 11-08 定）。
+    const expiryNote = ent.points.nextExpiry ? t(`${ent.points.nextExpiry.points} AI 点数 ${new Date(ent.points.nextExpiry.at).toLocaleDateString()} 到期`, `${ent.points.nextExpiry.points} AI points expire ${new Date(ent.points.nextExpiry.at).toLocaleDateString()}`) : "";
+    const batchNote = [expiryNote, ent.points.monthly > 0 ? t("订阅 AI 点数每30天发放，有效期见批次到期时间", "Subscription AI points are granted every 30 days; expiry follows each batch") : ""].filter(Boolean).join(" · ");
+    if (batchNote) { points.dataset.pointsNote = batchNote; heatTooltips.push(attachNativeTooltip(points, batchNote)); }
+    const sync = el(lines, "div", "membership-entitlement-line");
+    el(sync, "span", "entitlement-label", t("云同步", "Cloud sync"));
+    const gb = Math.round(ent.sync.quotaBytes / 1024 ** 3);
+    el(sync, "strong", "", ent.sync.status === "active" ? `${gb} GB` : ent.sync.status === "grace" ? t("只读", "Read-only") : t("未开通", "Not included"));
+    if (ent.sync.status === "active") el(sync, "span", "entitlement-note", `${ent.devices.active} / ${ent.sync.deviceLimit} ${t("台设备", "devices")}`);
+    if (ent.sync.status === "grace" && ent.sync.graceUntil) el(sync, "span", "entitlement-note", t(`保留至 ${new Date(ent.sync.graceUntil).toLocaleDateString()}`, `Kept until ${new Date(ent.sync.graceUntil).toLocaleDateString()}`));
+  }
   const verificationNote = [vm.membership.verifiedAt && `${t("最近验证", "Last verified")} ${vm.membership.verifiedAt}`, vm.membership.offlineUntil && `${t("凭证有效至", "Offline until")} ${vm.membership.offlineUntil}`].filter(Boolean).join(" · ");
-  if (verificationNote && !compactAuthorization) el(memberCopy, "div", "verification-note", verificationNote);
+  if (verificationNote && !compactAuthorization && !desktop) el(memberCopy, "div", "verification-note", verificationNote);
   const memberActions = el(summary, "div", "membership-actions");
   if(vm.identity&&["device-required","device-limit"].includes(vm.membership.state)&&actions.activateDevice) button(memberActions,t("在此设备启用","Activate this device"),"primary",()=>show(t("启用本机","Activate device"),(body,modal)=>{const form=el(body,"form");if(options.activationNotice)copy(form,options.activationNotice);const name=field(form,t("设备名称","Device name"),"text",t("我的 Obsidian","My Obsidian"));name.maxLength=80;submit(form,t("启用","Activate"),()=>actions.activateDevice!(name.value),modal);}));
   const details = el(membership, "details", "plans-details"); const planSummary = el(details, "summary", "", t("查看订阅计划", "View subscription plans")); icon(planSummary, "chevron-right");
   details.open = desktop ? true : valid; if (desktop) planSummary.hidden = true;
   const openPlans = () => { details.open = true; details.scrollIntoView?.({ block: "nearest" }); };
   const needsVerification = !!vm.identity && (!!vm.verificationError || ["offline-valid", "verification-required", "revoked", "device-required", "device-limit", "scheduled"].includes(vm.membership.state));
-  const refreshStatus = el(memberActions, "div", "activation-feedback");
+  const refreshStatus = el(desktop ? memberCopy : memberActions, "div", "activation-feedback");
   feedbackState(refreshStatus, vm.verificationError ? "error" : "status", vm.verificationError ?? "");
   let verifying = false;
   let verifyButton: HTMLButtonElement | undefined;
@@ -478,7 +558,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         await shortFeedback();
       }
     } catch (error) {
-      if (!disposed) feedbackState(refreshStatus, "error", error instanceof Error ? error.message : t("验证失败，请重试。", "Verification failed. Try again."));
+      if (!disposed) feedbackState(refreshStatus, "error", failText(error, ["会员状态未能验证。", "Could not verify your membership."], NEXT.checkNetwork));
     } finally {
       verifying = false;
       if (!disposed && verifyButton) { verifyButton.disabled = false; buttonState(verifyButton, "idle", t("刷新验证", "Refresh verification")); }
@@ -489,11 +569,38 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     ? { label: t("管理设备", "Manage devices"), action: devices }
     : vm.identity && vm.membership.state === "revoked" ? { label: t("联系支持", "Contact support"), action: () => show(t("联系支持", "Contact support"), body => copy(body, t("请提供账号邮箱，联系支持核实授权状态。", "Contact support with your account email to check your access."))) }
     : { label: vm.membership.state === "expired" ? t("查看权益", "View benefits") : valid ? t("查看权益", "View benefits") : t("查看订阅计划", "View subscription plans"), action: openPlans };
-  if (!desktop || vm.identity && ["revoked", "device-limit"].includes(vm.membership.state)) button(memberActions, valid ? currentPlanLabel : recovery.label, "primary", valid ? openPlans : recovery.action);
-  if (needsVerification) {
-    verifyButton = button(memberActions, t("刷新验证", "Refresh verification"), "quiet", () => void verify());
-    verifyButton.disabled = !vm.serviceAvailable || !actions.verify;
+  // 主按钮是动作（方哥 11-08 定）：订阅 / Max → 续费，内测 → 升级 PRO，免费 → 开通 PRO，买断不出主按钮。
+  let showSeries: (series: "pro" | "max") => void = () => {};
+  const abnormal = !!vm.identity && ["revoked", "device-limit", "device-required", "verification-required", "scheduled"].includes(vm.membership.state);
+  const primary = membershipPrimaryAction({ state: vm.membership.state, planId: currentPlanId, signedIn: !!vm.identity });
+  if (abnormal) { if (!desktop || ["revoked", "device-limit"].includes(vm.membership.state)) button(memberActions, recovery.label, "primary", recovery.action); }
+  else if (primary) {
+    const primaryButton = button(desktop && vm.identity ? profileActions : memberActions, t(primary.zh, primary.en), "primary", () => {
+      const planId = currentPlanId as MembershipPlanId | null;
+      if (primary.kind === "renew" && planId && actions.selectPlan && membershipPlanAction(options.read?.() ?? vm, planId, "CNY", true, true).purchasable) {
+        primaryButton.disabled = true;
+        void actions.selectPlan({ planId, currency: "CNY" }).catch(error => new Notice(failText(error, ["未能打开购买页面。", "Could not open the purchase page."], NEXT.checkNetwork))).finally(() => { primaryButton.disabled = false; });
+        return;
+      }
+      showSeries(isMaxPlanId(planId ?? "") ? "max" : "pro"); openPlans();
+    });
+    primaryButton.dataset.track = `account.primary.${primary.kind}`;
+  } else if (!desktop && !vm.identity) button(memberActions, recovery.label, "primary", recovery.action);
+  if (vm.maxSalesOpen === true && ent?.maxCoupon && getMaxPlanPricing(vm.products).length && actions.selectPlan) {
+    const coupon = button(desktop ? profileActions : memberActions, t("Max 首次 5 折", "First Max 50% off"), "quiet", () => {
+      coupon.disabled = true;
+      void actions.selectPlan!({ planId: "max-year", currency: "CNY" }).catch(error => new Notice(failText(error, ["未能打开购买页面。", "Could not open the purchase page."], NEXT.checkNetwork))).finally(() => { coupon.disabled = false; });
+    });
+    coupon.dataset.track = "account.max.coupon";
+    if (desktop) profileActions.querySelector("button.primary")?.before(coupon);
   }
+  if (needsVerification) {
+    verifyButton = button(memberActions, t("刷新验证", "Refresh verification"), desktop && !inlineAuthorization ? "secondary" : "quiet", () => void verify());
+    verifyButton.disabled = !vm.serviceAvailable || !actions.verify;
+    if (desktop) memberActions.prepend(verifyButton);
+  }
+  // 正常状态没有需要处理的事时，这一块不占位置。
+  if (desktop && compactAuthorization) summary.hidden = !memberActions.querySelector("button");
   if (vm.identity && ["free", "expired"].includes(vm.membership.state)) {
     let inlineRedemption: HTMLElement | null = null;
     const renderRedemption = (body: HTMLElement, modal: AccountFormHandle) => {
@@ -513,7 +620,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
         event.preventDefault();
         if (submitting || disposed || !actions.redeem || !vm.serviceAvailable) return;
         if (options.read && options.read().identity?.email !== vm.identity?.email) { modal.close(); return; }
-        if (!code.value.trim()) { feedbackState(feedback, "error", t("请输入兑换码", "Enter a redemption code")); return; }
+        if (!code.value.trim()) { feedbackState(feedback, "error", t("尚未填写兑换码。请输入兑换码。", "No redemption code was entered. Enter a code.")); return; }
         submitting = true; redeem.disabled = true; code.readOnly = true; if (desktop) cancel.disabled = true;
         feedbackState(feedback, "loading", t("正在兑换并验证本机授权…", "Redeeming and verifying device access…"));
         buttonState(redeem, "loading", t("兑换中", "Redeeming"));
@@ -522,7 +629,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
           await actions.redeem(code.value.trim());
           const latest = options.read?.() ?? vm;
           if (!["active", "lifetime", "offline-valid"].includes(latest.membership.state))
-            throw new Error(t("兑换后本机授权尚未生效，请在账号与会员中恢复授权。", "Device access is not active yet. Restore authorization in Account."));
+            throw new Error(t("兑换已完成，但本机授权尚未生效。请在 设置 → 账号与会员 中恢复授权。", "The code was redeemed, but this device is not authorized yet. Restore authorization in Settings → Account."));
           if (!disposed && (desktop || form.isConnected)) {
             feedbackState(feedback, "success", t("兑换码使用成功", "Redemption successful"));
             buttonState(redeem, "success", t("兑换成功", "Redeemed"));
@@ -531,7 +638,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
           }
         } catch (error) {
           if (!disposed && (desktop || form.isConnected)) {
-            feedbackState(feedback, "error", error instanceof Error ? error.message : t("兑换失败，请重试。", "Redemption failed. Try again."));
+            feedbackState(feedback, "error", failText(error, ["兑换码未能兑换。", "Could not redeem the code."], ["请检查兑换码后重试。", "Check the code and try again."]));
             buttonState(redeem, "idle", t("兑换", "Redeem")); redeem.disabled = false; code.readOnly = false; cancel.disabled = false;
           }
         } finally { submitting = false; release(); }
@@ -554,10 +661,11 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   const memberFooter = el(desktop ? profileSection : panel, "div", "membership-footer");
   if (vm.identity) {
     if (desktop) createSettingsNavigationRow(memberFooter, { title: t("设备管理", "Devices"), value: vm.membership.devices == null ? undefined : `${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`, onActivate: devices }).addClass("desktop-account-device-navigation");
+    if (desktop) memberFooter.classList.add("desktop-account-entries");
     else { const devicesButton = button(memberFooter, "", "quiet", devices); icon(devicesButton, "layers");
       el(devicesButton, "span", "", vm.membership.devices == null ? t("设备管理", "Devices") : `${t("设备管理", "Devices")} · ${vm.membership.devices.length} / ${number(vm.membership.deviceLimit)}`); icon(devicesButton, "chevron-right"); }
   }
-  const openOrders = () => { void actions.openOrders?.().catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+  const openOrders = () => { void actions.openOrders?.().catch(error => new Notice(failText(error, ["未能打开订单页面。", "Could not open your orders."], NEXT.checkNetwork))); };
   if (desktop) { const orders = createSettingsNavigationRow(memberFooter, { title: t("我的订单", "My orders"), onActivate: openOrders }); orders.disabled = !actions.openOrders; }
   else { const orders = button(memberFooter, t("我的订单", "My orders"), "quiet", openOrders); orders.disabled = !actions.openOrders; }
   if (!desktop) el(memberFooter, "span", "", t("AI 需自备 API Key，模型调用费另计", "Bring your own API key; model costs are separate"));
@@ -566,74 +674,171 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     if (!valid) el(intro, "p", "", t("升级 PRO，使用财务、英文日记、PDF 精读和 @Agent 正文管家。", "Upgrade to PRO for Finance, English Diary, PDF reading and @Agent in notes."));
     el(intro, "p", "", t("详细功能见下方 PRO 版本功能权益介绍。", "Explore PRO features in the benefits section below."));
   }
-  const planGrid = el(details, "div", "plan-grid");
+  // 购买卡片区：PRO / Max 两个系列（方哥 11-08 定，Demo d7353ff8）；默认停在用户所属系列，免费和内测停 PRO。
+  const hasMaxProducts = getMaxPlanPricing(vm.products).length > 0;
+  const seriesRow = el(details, "div", "plan-series"); seriesRow.setAttribute("role", "group"); seriesRow.setAttribute("aria-label", t("套餐系列", "Plan family"));
+  const planGrid = el(details, "div", "plan-grid"); planGrid.lang = zh ? "zh-CN" : "en";
+  // Keep room for the current Max expiry in either family, including after a narrow-window wrap.
+  if (desktop && valid && (isMaxPlanId(currentPlanId ?? "") || isMaxPlanId(vm.entitlements?.subscription?.planId)) && (vm.entitlements?.subscription?.endsAt || vm.membership.expiresAt)) planGrid.classList.add("has-max-expiry");
+  seriesRow.hidden = !hasMaxProducts;
+  let series: "pro" | "max" = hasMaxProducts && (vm.entitlements?.tier === "max" || isMaxPlanId(currentPlanId ?? "")) ? "max" : "pro";
+  const seriesButtons = (["pro", "max"] as const).map(key => { const node = button(seriesRow, key === "pro" ? "PRO" : "Max", "plan-series-button", () => showSeries(key)); node.dataset.series = key; return node; });
+  const currency = "CNY", currencySymbol = "¥";
+  const money = (amountMinor: number, savings = false) => (amountMinor / 100).toLocaleString(zh ? "zh-CN" : "en-US", {
+    minimumFractionDigits: savings && amountMinor % 100 !== 0 ? 2 : 0,
+    maximumFractionDigits: 2
+  });
+  const planButton = (card: HTMLElement, planId: MembershipPlanId, current: boolean) => {
+    const planAction = () => membershipPlanAction(options.read?.() ?? vm, planId, currency, current, !!actions.selectPlan);
+    const { purchasable, zh: zhLabel, en: enLabel } = planAction();
+    const purchase = button(card, t(zhLabel, enLabel), current ? "secondary is-current" : "secondary", purchasable ? () => {
+      if (purchase.disabled || !planAction().purchasable) return;
+      purchase.disabled = true;
+      void actions.selectPlan!({ planId, currency: "CNY" }).catch(error => new Notice(failText(error, ["未能打开购买页面。", "Could not open the purchase page."], NEXT.checkNetwork))).finally(() => { purchase.disabled = !planAction().purchasable; });
+    } : undefined);
+    purchase.disabled = !purchasable;
+    if (current) purchase.setAttribute("aria-current", "true");
+  };
+  const planOffer = (card: HTMLElement, text: string) => {
+    if (text || desktop) {
+      const offer = el(card, "span", "plan-offer", text);
+      if (!text) offer.setAttribute("aria-hidden", "true");
+    }
+  };
+  const dailyPrice = (minor: number) => t(`约 ¥${(minor / 100).toFixed(2)} / 天`, `≈ ¥${(minor / 100).toFixed(2)} / day`);
+  const renderMaxPlans = () => {
+    for (const pricing of getMaxPlanPricing(vm.products)) {
+      const current = valid && (currentPlanId === pricing.id || vm.entitlements?.subscription?.planId === pricing.id);
+      const card = el(planGrid, "article", `plan is-max${current ? " is-current" : ""}`);
+      card.dataset.planId = pricing.id;
+      el(card, "strong", "plan-title", `Max ${t(...MAX_WORDS[pricing.id])}`);
+      const offer = current ? t("使用中", "Current") : pricing.coupon ? t(`${Math.round(pricing.coupon.rate * 10)} 折`, `${Math.round((1 - pricing.coupon.rate) * 100)}% off`) : pricing.proCreditMinor > 0 ? t("已抵扣 PRO 余额", "PRO balance credited") : desktop && pricing.savingsPercent != null && pricing.savingsPercent > 0 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "";
+      planOffer(card, offer);
+      const price = el(card, "div", "price");
+      const amount = el(price, "span", "price-amount");
+      el(amount, "span", "", currencySymbol); el(amount, "span", "", money(pricing.amountMinor, true));
+      if (pricing.amountMinor < pricing.listMinor) el(amount, "s", "price-list", `${currencySymbol}${money(pricing.listMinor)}`);
+      el(price, "small", "price-term", t(`${pricing.days} 天`, `${pricing.days} days`));
+      if (desktop) {
+        el(card, "p", "plan-daily", dailyPrice(pricing.dailyAmountMinor));
+        el(card, "p", "plan-benefits", t("每30天 3000 AI 点数 · 5 GB 云同步", "3,000 AI points/30 days · 5 GB cloud sync"));
+      } else el(card, "p", "plan-daily", t("PRO 全部 · 每30天 3000 AI 点数 · 云同步 5 GB", "All of PRO · 3000 AI points / 30 days · 5 GB cloud sync"));
+      const ends = current ? (vm.entitlements?.subscription?.endsAt ? new Date(vm.entitlements.subscription.endsAt).toLocaleDateString() : vm.membership.expiresAt) : null;
+      if (desktop) {
+        const comparison = el(card, "p", "plan-comparison");
+        if (pricing.savingsAmountMinor != null && pricing.savingsAmountMinor > 0) {
+          el(comparison, "span", "", t(`比按 Max 月卡单价买 ${pricing.days} 天`, `vs. ${pricing.days} days at the Max Monthly daily rate`));
+          const saving = el(comparison, "strong", "plan-saving");
+          el(saving, "span", "plan-saving-amount", `${t("省 ", "Save ")}${currencySymbol}${money(pricing.savingsAmountMinor, true)}`);
+          el(saving, "span", "plan-saving-percent", `-${pricing.savingsPercent}%`);
+        } else if (pricing.id === "max-month") comparison.textContent = t("30 天，轻松开始", "Start with 30 days");
+        if (ends) el(comparison, "span", "", t(`${ends} 到期`, `Ends ${ends}`));
+      } else if (ends) el(card, "p", "plan-comparison", t(`${ends} 到期`, `Ends ${ends}`));
+      planButton(card, pricing.id, current);
+    }
+  };
   const pricingRows = getMembershipPlanPricing("CNY", vm.products);
-  for (const pricing of pricingRows) {
-    const currency = "CNY", currencySymbol = "¥";
-    const money = (amountMinor: number, savings = false) => (amountMinor / 100).toLocaleString(zh ? "zh-CN" : "en-US", {
-      minimumFractionDigits: savings && amountMinor % 100 !== 0 ? 2 : 0,
-      maximumFractionDigits: 2
-    });
+  const renderProPlans = () => { for (const pricing of pricingRows) {
     const plan = plans.find(item => item.id === pricing.id)!;
     const card = el(planGrid, "article", `plan${plan.id === "early" ? " is-early" : ""}`);
     card.dataset.planId = plan.id;
     el(card, "strong", "plan-title", zh ? plan.zh : plan.en);
-    const badge = desktop ? pricing.savingsPercent && pricing.savingsPercent > 0 && plan.months > 1 ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : plan.months > 1 && pricing.savingsPercent != null && pricing.savingsPercent > 0
+    const badge = desktop ? pricing.savingsPercent && pricing.savingsPercent > 0 && pricing.savingsAmountMinor != null ? t(`省 ${pricing.savingsPercent}%`, `Save ${pricing.savingsPercent}%`) : "" : pricing.savingsAmountMinor != null && pricing.savingsPercent != null && pricing.savingsPercent > 0
       ? t(`约 ${(pricing.amountMinor / pricing.comparisonAmountMinor! * 10).toFixed(1).replace(/\.0$/, "")} 折`, `Save ${pricing.savingsPercent}%`)
       : plan.id === "early" ? t("早鸟专享", "Early bird") : t("灵活体验", "Flexible access");
-    if (badge) el(card, "span", "plan-offer", badge);
+    planOffer(card, badge);
     const price = el(card, "div", "price");
     const amount = el(price, "span", "price-amount");
     el(amount, "span", "", currencySymbol);
     el(amount, "span", "", money(pricing.amountMinor));
-    if (!desktop || plan.id !== "early") el(price, "small", "price-term", desktop ? t(`${pricing.days} 天`, `${pricing.days} days`) : zh ? plan.zhTerm : plan.enTerm);
-    el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
+    if (!desktop || plan.id !== "early") el(price, "small", "price-term", plan.id === "early" ? t("一次购买", "one payment") : t(`${pricing.days} 天`, `${pricing.days} days`));
+    else el(price, "small", "price-term").setAttribute("aria-hidden", "true");
+    if (desktop) el(card, "p", "plan-daily", pricing.dailyAmountMinor == null ? "" : dailyPrice(pricing.dailyAmountMinor));
+    if (plan.id === "early") {
+      const gift = el(card, "p", desktop ? "plan-benefits plan-gift" : "plan-daily plan-gift");
+      icon(gift, "crown");
+      const giftCopy = el(gift, "span", "plan-gift-copy");
+      el(giftCopy, "span", "plan-gift-line", t("赠 2000 AI 点数", "2000 AI points"));
+      el(giftCopy, "span", "plan-gift-line", t("90 天 1 GB 云同步", "90 days of 1 GB cloud sync"));
+    } else if (!desktop) el(card, "p", "plan-daily", pricing.dailyAmountMinor != null
       ? t(`约 ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / 天`, `≈ ¥${(pricing.dailyAmountMinor / 100).toFixed(2)} / day`)
       : t("一次买断，终生可用", "One payment, lifetime access"));
+    if (desktop && plan.id !== "early") el(card, "p", "plan-benefits").setAttribute("aria-hidden", "true");
     const offerEndDate = plan.id === "early" ? formatEarlyOfferEndDate(vm.earlyOffer?.endsAt) : null;
     if (offerEndDate) el(card, "p", "plan-comparison plan-end-date", t(offerEndDate.zh, offerEndDate.en));
     if (pricing.savingsAmountMinor != null && pricing.savingsAmountMinor > 0) {
       const comparison = el(card, "p", "plan-comparison");
-      el(comparison, "span", "", t(`比连续买 ${plan.months} 个月月卡`, `vs. ${plan.months} monthly passes`));
+      el(comparison, "span", "", t(`比按 PRO 月卡单价买 ${pricing.days} 天`, `vs. ${pricing.days} days at the PRO Monthly daily rate`));
       const saving = el(comparison, "strong", "plan-saving");
       el(saving, "span", "plan-saving-amount", `${t("省 ", "Save ")}${currencySymbol}${money(pricing.savingsAmountMinor, true)}`);
       el(saving, "span", "plan-saving-percent", `-${pricing.savingsPercent}%`);
     } else if (plan.id === "month") {
-      el(card, "p", "plan-comparison", t("按月购买，轻松开始", "Start with one month"));
+      el(card, "p", "plan-comparison", t("30 天，轻松开始", "Start with 30 days"));
     }
+    if (desktop && !card.querySelector(".plan-comparison")) el(card, "p", "plan-comparison").setAttribute("aria-hidden", "true");
     const current = valid && currentPlanId === plan.id;
-    const planAction = () => membershipPlanAction(options.read?.() ?? vm, pricing.id, currency, current, !!actions.selectPlan);
-    const { purchasable, zh: zhLabel, en: enLabel } = planAction();
-    const label = t(zhLabel, enLabel);
-    const purchase = button(card, label, current ? "secondary is-current" : "secondary", purchasable ? () => {
-      if (purchase.disabled || !planAction().purchasable) return;
-      purchase.disabled = true;
-      void actions.selectPlan!({ planId: pricing.id, currency: "CNY" }).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { purchase.disabled = !planAction().purchasable; });
-    } : undefined);
-    purchase.disabled = !purchasable;
-    if (current) purchase.setAttribute("aria-current", "true");
-  }
+    planButton(card, pricing.id, current);
+  } };
+  const renderPlans = () => {
+    disposeOriginControls(planGrid); planGrid.replaceChildren();
+    planGrid.classList.toggle("is-three", series === "max");
+    planGrid.classList.toggle("has-lifetime-gift", series === "pro" && pricingRows.some(plan => plan.id === "early"));
+    for (const node of seriesButtons) { const on = node.dataset.series === series; node.setAttribute("aria-pressed", String(on)); node.classList.toggle("is-on", on); }
+    if (series === "max") renderMaxPlans(); else renderProPlans();
+  };
+  showSeries = key => { if (key === "max" && !hasMaxProducts) key = "pro"; if (series !== key) { series = key; renderPlans(); } };
+  renderPlans();
   if (desktop) {
     const scope = el(membership, "details", "plan-scope"); el(scope, "summary", "", t("买断包含什么", "What lifetime access includes"));
-    el(scope, "p", "", t("一次买断，覆盖以后所有版本的 PRO；不含模型调用额度，需要定期联网更新授权。", "One payment for lifetime PRO access, including all future versions. Model credits are not included. Periodic online verification is required."));
+    el(scope, "p", "", t("一次买断，覆盖以后所有版本的 PRO；赠 2000 AI 点数（180 天有效）和 90 天 1 GB 云同步；之后的 AI 点数和云同步需另购；需要定期联网更新授权。", "One payment for lifetime PRO access, including all future versions; includes 2000 AI points (valid for 180 days) and 90 days of 1 GB cloud sync. Additional AI points and cloud sync require separate purchases. Periodic online verification is required."));
     const benefits = el(page, "section", "desktop-account-benefits"); benefits.dataset.accountSection = "benefits";
     benefits.dataset.echoinkFocusKey = "account:benefits"; benefits.tabIndex = -1;
     heading(benefits, t("权益对比", "Benefits"));
-    const table = el(el(benefits, "div", "desktop-account-benefits-group"), "table", "benefits-table"); const header = el(el(table, "thead"), "tr");
-    for (const title of [t("功能", "Feature"), t("免费", "Free"), "PRO"]) el(header, "th", "", title).scope = "col";
+    const table = el(el(benefits, "div", "desktop-account-benefits-group"), "table", `benefits-table${hasMaxProducts ? " has-max" : ""}`); const header = el(el(table, "thead"), "tr");
+    const columns = hasMaxProducts ? [t("免费", "Free"), "PRO", "Max"] : [t("免费", "Free"), "PRO"];
+    for (const title of [t("功能", "Feature"), ...columns]) el(header, "th", "", title).scope = "col";
     const body = el(table, "tbody");
-    const groups: { title: string; pro: boolean; rows: [string, string][] }[] = [
-      { title: t("基础能力", "Core features"), pro: false, rows: [[t("Agent 对话", "Agent conversations"), t("多会话与任务继续", "Conversations and task continuation")], [t("知识库", "Knowledge"), t("整理、检索与补链", "Organization, retrieval and linking")], [t("长期记忆", "Long-term memory"), ""], [t("日记、复盘、待办", "Journal, reviews and to-dos"), ""], [t("选文提问", "Selection Ask"), ""], [t("Skills 与 MCP", "Skills and MCP"), ""]] },
-      { title: t("官方 Skill", "Official Skills"), pro: true, rows: [[t("7 个方法论 Skill", "7 methodology Skills"), t("联网下发与持续更新", "Downloads and ongoing updates")], [t("知识复盘增强版", "Enhanced knowledge review"), t("基础复盘保持免费", "Basic knowledge review stays free")]] },
-      { title: t("PRO 插件", "PRO plugins"), pro: true, rows: [[t("财务", "Finance"), t("记账、导入账单、预算与分析", "Records, import, budgets and analysis")], [t("英文日记", "English Diary"), t("英文稿与表达库", "English drafts and expressions")], [t("PDF 精读 · 提取", "PDF reading and extraction"), t("原文、译文、精读、摘要", "Originals, translation, reading and summaries")], [t("@Agent 正文管家", "@Agent in notes"), t("正文提问、就地提议与确认写回", "Ask in notes, review proposed edits and confirm changes")]] }
+    type BenefitValue = boolean | string;
+    type BenefitRow = [name: string, description: string, free: BenefitValue, pro: BenefitValue, max: BenefitValue];
+    const groups: { title: string; pro: boolean; rows: BenefitRow[] }[] = [
+      { title: t("基础能力", "Core features"), pro: false, rows: [
+        [t("Agent 对话", "Agent conversations"), t("多会话、总助调度与项目审批", "Conversations, assistant dispatch and project approvals"), true, true, true],
+        [t("知识库", "Knowledge"), t("领域地图、整理补链与体检修复", "Domain maps, organizing, linking and checkups"), true, true, true],
+        [t("长期记忆", "Long-term memory"), t("记忆星图与相关记忆优先", "Memory constellation and relevant recall"), true, true, true],
+        [t("日记、复盘、待办", "Journal, reviews and to-dos"), "", true, true, true],
+        [t("选文提问", "Selection Ask"), "", true, true, true],
+        [t("Skills 与 MCP", "Skills and MCP"), "", true, true, true]
+      ] },
+      { title: t("官方 Skill", "Official Skills"), pro: true, rows: [
+        [t("7 个方法论 Skill", "7 methodology Skills"), t("联网下发与持续更新", "Downloads and ongoing updates"), false, true, true],
+        [t("知识复盘增强版", "Enhanced knowledge review"), t("基础复盘保持免费", "Basic knowledge review stays free"), false, true, true]
+      ] },
+      { title: t("PRO 插件", "PRO plugins"), pro: true, rows: [
+        [t("财务", "Finance"), t("记账、自动分类、导入账单、预算与分析", "Records, auto categories, bill import, budgets and analysis"), false, true, true],
+        [t("英文日记", "English Diary"), t("英文稿与表达库", "English drafts and expressions"), false, true, true],
+        [t("PDF 精读 · 提取", "PDF reading and extraction"), t("原文、译文、精读、摘要", "Originals, translation, reading and summaries"), false, true, true],
+        [t("@Agent 正文管家", "@Agent in notes"), t("正文提问、就地提议与确认写回", "Ask in notes, review proposed edits and confirm changes"), false, true, true],
+        [t("笔记评论", "Note comments"), t("选文评论、解释、翻译与找关联", "Passage comments, explanations, translation and related notes"), false, true, true]
+      ] }
     ];
+    if (hasMaxProducts) groups.push({ title: t("云端服务", "Cloud services"), pro: false, rows: [
+      [t("每30天 AI 点数", "AI points per 30 days"), t("云端 AI，无需自备 Key", "Cloud AI, no API key needed"), false,
+        (vm.proMonthlyPoints ?? 0) > 0 ? t(`付费订阅每30天 ${vm.proMonthlyPoints} AI 点数`, `Paid subscription: ${vm.proMonthlyPoints} AI points/30 days`) : false,
+        t("每30天 3000 AI 点数", "3000 AI points/30 days")],
+      [t("云同步", "Cloud sync"), t("笔记文件夹、端到端加密", "Note folders and end-to-end encryption"), false, t("订阅 1 GB", "Subscription: 1 GB"), "5 GB"]
+    ] });
     for (const group of groups) {
-      const title = el(el(body, "tr", "benefits-group"), "td", "", group.title); title.colSpan = 3;
+      const title = el(el(body, "tr", "benefits-group"), "td", "", group.title); title.colSpan = columns.length + 1;
       if (group.pro) createPluginEditionBadge(title, "pro", zh ? "zh-CN" : "en");
-      for (const [name, description] of group.rows) {
-        const row = el(body, "tr"), feature = el(row, "td", "", name);
+      for (const [name, description, ...values] of group.rows) {
+        const row = el(body, "tr"), feature = el(el(row, "td"), "div", "benefit-feature");
+        el(feature, "span", "", name);
         if (description) el(feature, "span", "benefit-description", description);
-        for (const included of [!group.pro, true]) { const cell = el(row, "td"); icon(cell, included ? "check" : "minus"); el(cell, "span", "account-visually-hidden", included ? t("包含", "Included") : t("不含", "Not included")); }
+        for (const value of values.slice(0, columns.length)) {
+          const cell = el(row, "td");
+          if (typeof value === "string") cell.textContent = value;
+          else { icon(cell, value ? "check" : "minus"); el(cell, "span", "account-visually-hidden", value ? t("包含", "Included") : t("不含", "Not included")); }
+        }
       }
     }
     page.insertBefore(benefits, membership);
@@ -652,7 +857,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     for (const [rowIndex, [name, pro, actionLabel]] of group.rows.entries()) {
       const needsProvider = group.symbol === "folder-kanban" ? rowIndex === 0 || rowIndex === 2 : [1, 2, 3].includes(rowIndex);
       const blocked = Boolean(pro) && !valid || needsProvider && vm.provider !== "configured";
-      const reason = Boolean(pro) && !valid ? t("需要有效的 PRO 权益。", "An active PRO plan is required.") : t("需先配置自己的模型服务。", "Configure your model provider first.");
+      const reason = pickErrorCopy(Boolean(pro) && !valid ? CAUSE.proRequired : CAUSE.providerNotConfigured, zh ? "zh" : "en");
       const row = el(card, "div", `feature-row${blocked ? " locked" : ""}`); const label = el(row, "div", "label-group"); el(label, "strong", "", String(name)); if (pro) el(label, "span", "badge pro", "PRO");
       const action = button(row, String(actionLabel), "secondary", () => show(String(name), body => copy(body, t("请从对应插件入口使用此功能。", "Use this feature through its plugin entry."))));
       action.disabled = blocked;
@@ -660,14 +865,17 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
     }
     const hint = el(card, "div", "feature-hint");
     const providerMissing = vm.provider !== "configured" && (valid || vm.membership.state === "free");
-    el(hint, "span", "", providerMissing ? t("AI 功能需配置模型", "Configure a provider for AI") : valid ? t("PRO 权益有效", "PRO active") : descriptions[vm.membership.state] ?? t("PRO 功能", "PRO features"));
-    button(hint, providerMissing ? t("配置模型", "Configure provider") : recovery.label, "quiet", providerMissing ? openProviders : recovery.action);
+    el(hint, "span", "", providerMissing ? t("AI 功能需配置模型服务", "AI needs a model service") : valid ? t("PRO 权益有效", "PRO active") : descriptions[vm.membership.state] ?? t("PRO 功能", "PRO features"));
+    button(hint, providerMissing ? t("配置模型服务", "Set up model service") : recovery.label, "quiet", providerMissing ? openProviders : recovery.action);
   }
   appendAccountComingSoon(featureGrid, groups.length, zh);
-  if (vm.provider !== "configured") { const provider = el(page, "div", "provider-note"); el(provider, "span", "muted", vm.provider === "missing" ? t("AI 功能需配置自己的模型服务", "AI requires your own model provider") : t("模型配置状态未知", "Model provider status unknown")); button(provider, t("配置模型", "Configure provider"), "quiet", openProviders); }
+  if (vm.provider !== "configured") { const provider = el(page, "div", "provider-note"); el(provider, "span", "muted", vm.provider === "missing" ? t("AI 功能需配置自己的模型服务", "AI requires your own model service") : t("模型服务状态未知", "Model service status unknown")); button(provider, t("配置模型服务", "Set up model service"), "quiet", openProviders); }
   }
   return { dispose: () => {
     if (disposed) return; disposed = true;
+    disposeCloudSync?.();
+    disposeSyncUsage?.();
+    disposeSmartJudgment?.();
     if (feedbackTimer !== null) window.clearTimeout(feedbackTimer);
     for (const timer of codeTimers) window.clearTimeout(timer); codeTimers.clear();
     finishFeedback?.(); finishFeedback = null;

@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { isUndeletableAgent } from "../agents/types";
 import { JournalFormatService } from "../home/journal-format-service";
 import { loadNativeJournalSettings } from "../home/native-journal";
@@ -38,6 +39,9 @@ import { MobileLifestyleService } from "./finance";
 import type { MobileSettingsRoute } from "../ui/mobile/settings-pages";
 import type { MobileAgentProfile } from "../harness/memory/mobile-profile-protocol";
 import { MobileAgentRegistryService } from "./agent-registry-service";
+import { getDecisionClient } from "../membership/decision-client";
+import { judgeMobileTurn, mobileSkillDecision, recentMessageTexts } from "./decision-turn";
+import { reportPreparation, type PreparationObserver } from "../types/composer-submission";
 import type { AgentTemplateId } from "../harness/memory/agent-templates";
 import type { AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { defaultAgentIdentityState } from "../harness/memory/agent-identity-model";
@@ -154,7 +158,11 @@ export class MobileServices implements HomeHost {
       if (!isExpertAgent(latest) || !isAgentHired(latest) || latest.expert.expertId !== pack.id || latest.expert.packageVersion !== pack.version) throw new Error("专家身份、版本或聘用状态已变化，本次任务已停止。");
     };
     assertAvailable();
-    return { prompt: `${pack.buildTransientPrompt({ text: turn.text })}\n首次视角声明由产品在会话中展示，不重复声明。`, packageVersion: pack.version, assertAvailable,
+    // 专家对话的 /turn 带专家技能清单（只有名称和说明）；拿不到时按关键词选。
+    const judged = getDecisionClient()?.ready() ? await judgeMobileTurn({ turnId: turn.id, sessionId, text: turn.text,
+      recent: this.decisionRecent(this.host.store.getSession(sessionId)?.messages ?? [], turn.text), skills: pack.skillOptions() }) : null;
+    const decision = judged?.skill ? { decidedSkillId: judged.skill.id } : {};
+    return { prompt: `${pack.buildTransientPrompt({ text: turn.text, ...decision })}\n首次视角声明由产品在会话中展示，不重复声明。`, packageVersion: pack.version, assertAvailable,
       recordConversation: async () => {
         assertAvailable(); const snapshot = await this.profileProtocol.snapshot();
         await this.profileProtocol.updateExpert(registry => { assertAvailable(); rememberExpertConversation(registry, agent.id, sessionId, turn.createdAt); }, snapshot.version);
@@ -229,7 +237,7 @@ export class MobileServices implements HomeHost {
   get journalFormats(): JournalFormatService {
     return this.journalFormatService ??= new JournalFormatService(this.app, {
       directory: this.preferenceRoot, settings: () => this.settings,
-      model: () => { const active = selectedModel(this.settings); return active && (active.provider.apiKey || active.provider.authMode === "oauth") ? active.model.displayName || active.model.id : null; },
+      model: () => { const active = selectedModel(this.settings); return active && (active.provider.apiKey || active.provider.authMode !== "api-key") ? active.model.displayName || active.model.id : null; },
       generate: (system, user, signal) => this.generateLifestyleText(system, user, 1200, signal),
       changed: () => { this.settingsChanged(); this.notifyHomeSurfacesChanged(); }
     });
@@ -279,7 +287,7 @@ export class MobileServices implements HomeHost {
   async readEchoInkBuiltinSkill(id: string) { return { fileStatus: "ready", content: await this.requireAvailableEchoInkSkill(id) }; }
   async generateLifestyleText(system: string, user: string, maxTokens: number, signal: AbortSignal) {
     const selected = selectedModel(this.settings);
-    if (!selected) throw new Error("尚未配置当前 EchoInk Provider");
+    if (!selected) throw new Error(CAUSE.providerNotConfigured[0]);
     return mobileGenerateText(selected.provider, selected.model, this.host.capabilityRequest ?? requestUrl, system, user, maxTokens, signal, this.usage);
   }
   async saveFinanceCsv(name: string, content: string, guard: () => void = () => {}) {
@@ -415,7 +423,13 @@ export class MobileServices implements HomeHost {
     await this.app.vault.adapter.remove(this.preferencesPath);
   }
   readonly defaultPreferences = ECHOINK_DEFAULT_KNOWLEDGE_MAINTENANCE_PREFERENCES;
-  async context(sessionId = this.host.store.session.id, turn?: MobileQueuedTurn): Promise<string> {
+  /** Previous lines only: the queued text itself may already be the last message. */
+  private decisionRecent(messages: readonly unknown[], text: string): string[] {
+    const recent = recentMessageTexts(messages, 4);
+    if (recent.at(-1) === text.trim()) recent.pop();
+    return recent.slice(-3);
+  }
+  async context(sessionId = this.host.store.session.id, turn?: MobileQueuedTurn, preparation?: PreparationObserver): Promise<string> {
     await this.memory.initialize();
     const session = this.host.store.getSession(sessionId);
     if (!session && !turn) throw new Error("会话不存在，未读取运行上下文。");
@@ -429,10 +443,18 @@ export class MobileServices implements HomeHost {
     const skillId = turn ? turn.skillId : session?.skillId;
     if (skillId && !expert) policy.assertSkill(skillId);
     const identity = await this.profileProtocol.context(false, agentId, turn?.agentSnapshot);
-    const memory = memoryAllowed ? await this.memory.contextForRuntime() : "";
+    // 智能判断：/turn 与 /memory 同时发、带同一个 turnId；拿不到时下面全部走原来的规则。
+    const recent = turn ? this.decisionRecent(session?.messages ?? [], turn.text) : [];
+    if (turn && (getDecisionClient()?.ready() || memoryAllowed)) reportPreparation(preparation, { stage: "thinking", status: "completed" });
+    if (turn && getDecisionClient()?.ready()) reportPreparation(preparation, { stage: "judgment", status: "active" });
+    const judging = turn ? (async () => judgeMobileTurn({ turnId: turn.id, sessionId, text: turn.text, recent,
+      skills: expert || skillId || !getDecisionClient()?.ready() ? [] : await this.capabilities.skillDecisionOptions(agentId).catch(() => []) }))() : Promise.resolve(null);
+    const judged = await judging;
+    if (turn && getDecisionClient()?.ready()) reportPreparation(preparation, { stage: "judgment", status: "completed" });
+    reportPreparation(preparation, { stage: "thinking", status: "active" });
     if (memoryAllowed) policy.assertTool("memory_search");
-    const profile = `${identity}${memory}`;
-    const skills = expert ? [] : await this.capabilities.resolveRunSkills(sessionId, agentId, turn?.text ?? "", skillId, !!turn);
+    const profile = identity;
+    const skills = expert ? [] : await this.capabilities.resolveRunSkills(sessionId, agentId, turn?.text ?? "", skillId, !!turn, mobileSkillDecision(judged));
     const skill = skills.map(item => `<skill id="${item.id}" version="${item.version}" revision="${item.revision}">\n${item.content}\n</skill>`).join("\n");
     const preference = await this.readPreferences() ?? this.defaultPreferences;
     return `${profile}\n${SKILL_PRODUCT_RULES}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;

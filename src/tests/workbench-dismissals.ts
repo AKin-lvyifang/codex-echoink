@@ -1,0 +1,48 @@
+import assert from "node:assert/strict";
+import { calculateWorkbenchSignals, type WorkbenchFacts } from "../home/workbench-signals";
+import { emptyWorkbenchDismissals, isWorkbenchSignalDismissed, normalizeWorkbenchDismissals, saveWorkbenchDismissal, workbenchBodyFingerprint } from "../home/workbench-dismissals";
+import { loadMobileSettings } from "../mobile/settings";
+import { normalizeSettingsData } from "../settings/settings";
+
+export async function runWorkbenchDismissalTests(): Promise<void> {
+  const now = new Date(2026, 10, 17, 18).getTime();
+  const raw = Array.from({ length: 5 }, (_, i) => ({ path: `raw/synthetic-${i}.md`, fingerprint: `stat-${i}`, bodyFingerprint: `body-${i}` }));
+  const facts: WorkbenchFacts = { now, modules: ["knowledge-base"], tasks: [], todos: [], journals: [], englishMissing: null, inbox: [], inboxScope: "inbox", raw, rawScope: "raw", pdfJobs: [], reviewComplete: true, isolated: null, knowledgeScope: "wiki" };
+  const signal = () => calculateWorkbenchSignals(facts).find(item => item.id === 7)!;
+  const settings = { workbenchDismissals: emptyWorkbenchDismissals(), settingsLanguage: "zh-CN" };
+  let writes = 0;
+  await saveWorkbenchDismissal(settings, signal(), async () => { writes++; });
+  assert.equal(writes, 1);
+  assert.ok(isWorkbenchSignalDismissed(signal(), settings.workbenchDismissals));
+  const persisted = JSON.parse(JSON.stringify(settings));
+  assert.deepEqual(loadMobileSettings(persisted).workbenchDismissals, normalizeSettingsData(persisted).settings.workbenchDismissals);
+  facts.now += 86_400_000;
+  facts.raw = [...raw].reverse().map(file => ({ ...file, fingerprint: "metadata-rewrite" }));
+  assert.ok(isWorkbenchSignalDismissed(signal(), persisted.workbenchDismissals), "restart, midnight, order and transport versions never wake unchanged bodies");
+  facts.raw = facts.raw.slice(0, 3);
+  assert.ok(isWorkbenchSignalDismissed(signal(), persisted.workbenchDismissals), "shrinking scope remains dismissed");
+  facts.raw = [...facts.raw, { path: "raw/new.md", fingerprint: "v", bodyFingerprint: "new-body" }];
+  assert.ok(!isWorkbenchSignalDismissed(signal(), persisted.workbenchDismissals), "a new source wakes even below the previous count");
+  facts.raw = raw.map((file, i) => i ? file : { ...file, bodyFingerprint: "edited-body" });
+  assert.ok(!isWorkbenchSignalDismissed(signal(), persisted.workbenchDismissals));
+  assert.equal(workbenchBodyFingerprint("---\n提炼状态: 未提炼\n---\n正文\n", "a.md"), workbenchBodyFingerprint("---\n提炼状态: 已提炼\n提炼到: [成果]\n---\n正文\n", "a.md"));
+  assert.notEqual(workbenchBodyFingerprint("正文", "a.md"), workbenchBodyFingerprint("新正文", "a.md"));
+  facts.raw = []; facts.isolated = ["a", "b", "c", "d", "e"];
+  const isolated = () => calculateWorkbenchSignals(facts).find(item => item.id === 14)!;
+  await saveWorkbenchDismissal(settings, isolated(), async () => {});
+  facts.isolated = ["a", "b", "c", "d", "f"];
+  assert.ok(!isWorkbenchSignalDismissed(isolated(), settings.workbenchDismissals));
+  facts.knowledgeSystems = [{ mapPath: "wiki/map.md", domain: "合成领域", mode: "list", count: 15, threshold: 15 }];
+  const system = () => calculateWorkbenchSignals(facts).find(item => item.id === 15)!;
+  await saveWorkbenchDismissal(settings, system(), async () => {});
+  facts.knowledgeSystems[0].count = 24; assert.ok(isWorkbenchSignalDismissed(system(), settings.workbenchDismissals));
+  facts.knowledgeSystems[0].count = 25; assert.ok(!isWorkbenchSignalDismissed(system(), settings.workbenchDismissals));
+  const before = JSON.stringify(settings.workbenchDismissals);
+  await assert.rejects(saveWorkbenchDismissal(settings, null, async () => { throw Error("synthetic write failure"); }), /建议已保留/u);
+  assert.equal(JSON.stringify(settings.workbenchDismissals), before);
+  await saveWorkbenchDismissal(settings, null, async () => {});
+  assert.deepEqual(settings.workbenchDismissals, emptyWorkbenchDismissals());
+  assert.deepEqual(normalizeWorkbenchDismissals(undefined), emptyWorkbenchDismissals());
+  assert.deepEqual(normalizeWorkbenchDismissals({ version: 2, entries: {} }), emptyWorkbenchDismissals());
+  console.log("Workbench dismissal: PASS (persist/reopen/midnight/subsets/new objects/body edits/system +10/save rollback/settings parity)");
+}

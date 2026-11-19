@@ -1,3 +1,4 @@
+import { CAUSE, pickErrorCopy } from "../../core/error-copy";
 import { FinanceWorkspace } from "../../lifestyle/finance-view";
 import type { LifestyleViewPort } from "../../lifestyle/host";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -26,7 +27,7 @@ export function createFinancePage(ctx: IPadPageContext): MobileShellPage {
     const top = scroll.scrollTop, policy = finance.accessState();
     workspace.detach(); body.replaceChildren(); view.status("");
     if (!lifestyle.plugin.settings.lifestyle.finance.enabled) moduleEmpty(ctx, body, t(ctx, "财务插件已关闭", "Finance is disabled"));
-    else if (!policy.canEnter) view.report(policy.reason ?? t(ctx, "需要有效 PRO", "An active PRO membership is required"));
+    else if (!policy.canEnter) view.report(policy.reason ?? pickErrorCopy(CAUSE.proRequired, ctx.host.settings().settingsLanguage));
     else if (!initialized) moduleEmpty(ctx, body, t(ctx, "正在加载…", "Loading…"));
     else { if (policy.reason) view.status(policy.reason); workspace.render(body); }
     scroll.scrollTop = top;

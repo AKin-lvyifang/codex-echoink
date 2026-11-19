@@ -363,11 +363,11 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     await assert.rejects(finance.analyze("2026-09", true), /已停用/u);
     assert.equal(finance.latestReport("2026-09"), null, "forced refresh retires the prior report before provider work");
     available = true; skill = "";
-    await assert.rejects(finance.analyze("2026-09", true), /不可读取/u);
+    await assert.rejects(finance.analyze("2026-09", true), /^Error: 财务分析技能无法读取。请重新加载 EchoInk 插件后重试。$/u);
     assert.equal(calls, 2);
     skill = FINANCE_ANALYSIS_SKILL;
     responseText = "  ";
-    await assert.rejects(finance.analyze("2026-09", true), /没有返回/u);
+    await assert.rejects(finance.analyze("2026-09", true), /^Error: 模型未返回分析结果。请重新生成分析。$/u);
     assert.equal(finance.latestReport("2026-09"), null, "empty response cannot restore a retired report");
     responseText = JSON.stringify({ version: 8, sections: [{ title: "未完成的报告", blocks: [{ type: "text" }] }] });
     await assert.rejects(finance.analyze("2026-09", true), /暂时无法显示/u);

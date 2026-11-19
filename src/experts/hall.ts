@@ -1,6 +1,7 @@
 import type { ExpertMetadata } from "./contracts";
 import type { ExpertContentService } from "./service";
 import { ownedEl } from "../ui/owned-dom";
+import { userFacingErrorText } from "../core/error-copy";
 
 export interface ExpertHallOptions {
   document?: Document;
@@ -29,7 +30,7 @@ function element<K extends keyof HTMLElementTagNameMap>(document: Document, pare
   if (text !== undefined) node.textContent = text;
   parent.appendChild(node); return node;
 }
-function errorText(error: unknown): string { return error instanceof Error ? error.message : "操作未完成，请重试。"; }
+function errorText(error: unknown): string { return userFacingErrorText(error, "专家操作未能完成。请稍后重试；如问题持续，请点击“上报问题”。"); }
 
 /** Both pages render catalog metadata only; no private package is loaded for browsing. */
 export function renderExpertHall(container: HTMLElement, options: ExpertHallOptions): ExpertHallHandle {
@@ -108,7 +109,7 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
       if (loadError) button(root, "重试", "secondary", () => refresh(true));
     } else if (view !== null) {
       const expert = catalog.find(item => item.id === view);
-      if (!expert) status(root, "此专家已不在当前目录中，请返回后刷新。", true);
+      if (!expert) status(root, "此专家已不在当前目录中。请返回后刷新列表。", true);
       else {
         const detail = element(document, root, "article", "echoink-expert-detail"); detail.dataset.expertId = expert.id;
         identity(detail, expert, true);

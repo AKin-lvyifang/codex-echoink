@@ -16,11 +16,12 @@ function defaultGeneralist(): AgentDefinition {
   return { id: GENERALIST_AGENT_ID, name: "通才", avatar: { kind: "preset", presetId: "bo" }, position: "", positionDescription: "没有专属模块的杂活都归我", styleId: "execution", disabledCapabilityIds: [] };
 }
 
-export function normalizeAgentRegistry(value: unknown, existingSettings = !!record(value)): AgentRegistry {
+export function normalizeAgentRegistry(value: unknown): AgentRegistry {
   const fallback = defaultAgentRegistry();
   const raw = record(value);
   if (!raw || raw.schemaVersion !== 1) {
-    if (existingSettings) for (const id of AGENT_MODULE_IDS) fallback.moduleOwners[id] = GENERALIST_AGENT_ID;
+    // New installs and pre-registry users both start every module on the generalist; a cleared owner later has no fallback.
+    for (const id of AGENT_MODULE_IDS) fallback.moduleOwners[id] = GENERALIST_AGENT_ID;
     return fallback;
   }
   const seen = new Set<string>();
@@ -35,7 +36,7 @@ export function normalizeAgentRegistry(value: unknown, existingSettings = !!reco
     // Keep malformed expert markers locked and unavailable, rather than downgrading to editable Agents.
     const expert = normalizeExpertAgentState(agent.expert) ?? (expertKind ? { expertId: id.replace(/^expert-/u, ""), hired: false, packageVersion: "", summary: "", disclosureShown: false, events: [] } : undefined);
     if (expert && (id !== `expert-${expert.expertId}` || !expert.packageVersion.trim())) expert.hired = false;
-    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, ...normalizeAgentPosition(agent, expertKind ? expert?.summary ?? "" : undefined), ...(agent.identityEdited === true ? { identityEdited: true } : {}), ...(id === GENERAL_ASSISTANT_ID ? { companyApprovalMode: agent.companyApprovalMode === "assistant" ? "assistant" as const : "user" as const } : {}), styleId: normalizeAgentStyleId(agent.styleId),
+    agents.push({ id, name, avatar: normalizeAgentAvatar(agent.avatar) ?? { kind: "default" }, ...normalizeAgentPosition(agent, expertKind ? expert?.summary ?? "" : undefined), ...(agent.identityEdited === true ? { identityEdited: true } : {}), ...(id === GENERAL_ASSISTANT_ID ? { companyApprovalMode: agent.companyApprovalMode === "assistant" ? "assistant" as const : "user" as const, ...(agent.companyFolderGrants === false ? { companyFolderGrants: false } : {}) } : {}), styleId: normalizeAgentStyleId(agent.styleId),
       ...(expertKind ? { kind: "expert" as const, ...(expert ? { expert } : {}) } : { ...(agent.kind === "custom" ? { kind: "custom" as const } : {}), ...(typeof agent.persona === "string" ? { persona: normalizeAgentPersona(agent.persona) } : {}) }),
       ...(usesDisabledCapabilityList(id)
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }

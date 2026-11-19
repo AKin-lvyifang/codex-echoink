@@ -186,7 +186,12 @@ export interface CreatePiVaultToolDefinitionsOptions {
   readonly domainService: VaultDomainService;
   readonly security: PiVaultToolExecutionSecurityPort;
   readonly writeExecution: PiVaultToolWriteExecutionPort;
-  readonly assertToolAllowed?: (toolName: string, args: Readonly<Record<string, unknown>>) => Promise<void>;
+  readonly assertToolAllowed?: (
+    toolName: string,
+    args: Readonly<Record<string, unknown>>,
+    resolvedTarget?: unknown,
+    currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>
+  ) => Promise<void>;
 }
 
 export const PI_VAULT_TOOL_POLICIES: Readonly<
@@ -288,14 +293,14 @@ export function normalizePiVaultToolArguments<T extends PiVaultToolId>(
       ]);
       return freeze({
         relativePath: requireNonEmptyString(input.relativePath),
-        expectedVersion: requireNonEmptyString(input.expectedVersion),
+        expectedVersion: normalizeExpectedVaultVersion(input.expectedVersion),
         content: requireString(input.content)
       }) as Readonly<PiVaultToolArgumentsById[T]>;
     case "metadata_update":
       requireExactKeys(input, ["relativePath", "expectedVersion", "patch"]);
       return freeze({
         relativePath: requireNonEmptyString(input.relativePath),
-        expectedVersion: requireNonEmptyString(input.expectedVersion),
+        expectedVersion: normalizeExpectedVaultVersion(input.expectedVersion),
         patch: normalizeMetadataPatch(input.patch)
       }) as Readonly<PiVaultToolArgumentsById[T]>;
     case "note_move":
@@ -307,15 +312,21 @@ export function normalizePiVaultToolArguments<T extends PiVaultToolId>(
       return freeze({
         sourcePath: requireNonEmptyString(input.sourcePath),
         targetPath: requireNonEmptyString(input.targetPath),
-        expectedVersion: requireNonEmptyString(input.expectedVersion)
+        expectedVersion: normalizeExpectedVaultVersion(input.expectedVersion)
       }) as Readonly<PiVaultToolArgumentsById[T]>;
     case "note_delete":
       requireExactKeys(input, ["relativePath", "expectedVersion"]);
       return freeze({
         relativePath: requireNonEmptyString(input.relativePath),
-        expectedVersion: requireNonEmptyString(input.expectedVersion)
+        expectedVersion: normalizeExpectedVaultVersion(input.expectedVersion)
       }) as Readonly<PiVaultToolArgumentsById[T]>;
   }
+}
+
+/** Knowledge reads prefix the same full-file hash used by desktop Vault writes. */
+function normalizeExpectedVaultVersion(value: unknown): string {
+  const version = requireNonEmptyString(value);
+  return /^sha256:([a-f0-9]{64})$/u.exec(version)?.[1] ?? version;
 }
 
 export function createPiVaultToolDefinitions(
@@ -445,9 +456,10 @@ async function executeControlledWrite(
           // Domain has now resolved both move endpoints and checked versions.
           // Revalidate current Agent/global/PRO rights around the existing
           // receipt/folder preflight, immediately before its actual mutation.
-          await options.assertToolAllowed?.(toolId, args);
+          const currentOperation = { productRunId: authorization.productRunId, toolCallId: authorization.toolCallId };
+          await options.assertToolAllowed?.(toolId, args, authorization.resolvedTarget, currentOperation);
           await beforeSideEffect();
-          await options.assertToolAllowed?.(toolId, args);
+          await options.assertToolAllowed?.(toolId, args, authorization.resolvedTarget, currentOperation);
         }
       );
       return requireVaultOperationResult(value, authorization.operationIdentity);

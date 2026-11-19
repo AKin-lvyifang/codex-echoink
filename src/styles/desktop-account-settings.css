@@ -70,14 +70,15 @@
 
 .echoink-desktop-account-settings .echoink-account .desktop-account-header.profile-section {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 14px;
   padding: 2px 0 0;
 }
 
 .echoink-desktop-account-settings .echoink-account .profile-copy {
-  flex: 1;
+  flex: 1 1 260px;
+  align-items: flex-start;
   min-width: 0;
   gap: 14px;
 }
@@ -122,8 +123,147 @@
 }
 
 .echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-compact {
-  flex-basis: auto;
-  margin-top: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px 16px;
+}
+
+.echoink-desktop-account-settings .echoink-account .profile-section > .desktop-account-authorization[hidden] {
+  display: none;
+}
+
+/* 必读提示：状态、原因和解决它的按钮在同一块；窄了按钮掉到文字下方靠右。 */
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-alert {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-alert-icon {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  margin-top: 2px;
+  color: var(--echoink-theme-warn, var(--text-warning));
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-alert-icon > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-alert .membership-copy {
+  flex: 1 1 240px;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-plan-status {
+  display: block;
+  color: var(--text);
+  font-size: var(--f13);
+  font-weight: 600;
+  line-height: 1.6;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization :is(.membership-copy p, .activation-feedback) {
+  max-width: 62ch;
+  margin: 0;
+  font-size: var(--f12);
+  line-height: 1.7;
+  text-align: left;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization .activation-feedback:empty {
+  display: none;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization .membership-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-authorization .membership-actions:empty {
+  display: none;
+}
+
+/* 权益数据卡：标签 → 主数字 → 进度 → 一行脚注；放不下减列，不缩字。 */
+.echoink-desktop-account-settings .echoink-account .desktop-account-meters {
+  display: grid;
+  flex-basis: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 18px 21px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 5px;
+  margin-top: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-value > strong {
+  color: var(--text);
+  font-size: var(--f22);
+  font-weight: 500;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-value > span {
+  color: var(--muted);
+  font-size: var(--f12);
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-bar {
+  height: 6px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text);
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-bar.is-warning > i {
+  background: var(--echoink-theme-warn, var(--text-warning));
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meter-foot {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: var(--f12);
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-meters [hidden] {
+  display: none;
 }
 
 .echoink-desktop-account-settings .echoink-account .desktop-account-authorization.is-compact .membership-copy p {
@@ -146,7 +286,28 @@
   border: 0;
 }
 
+/* 入口是一个连续分组：共用边框和左边线，行间一条分隔线。 */
+.echoink-desktop-account-settings .echoink-account .desktop-account-header .membership-footer.desktop-account-entries {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-entries > button.echoink-settings-navigation-row {
+  width: 100%;
+  min-height: 52px;
+  margin: 0;
+  padding: 13px 18px;
+  border: 0;
+  border-radius: 0;
+}
+
+.echoink-desktop-account-settings .echoink-account .desktop-account-entries > button.echoink-settings-navigation-row ~ button.echoink-settings-navigation-row {
+  border-top: 1px solid var(--line);
+}
+
 .echoink-desktop-account-settings .echoink-account .profile-actions {
+  align-items: center;
   flex-direction: row;
   justify-content: flex-end;
   flex-wrap: wrap;
@@ -211,11 +372,13 @@
   border-collapse: collapse;
   font-size: var(--f13);
   text-align: left;
+  white-space: normal;
 }
 
 .echoink-desktop-account-settings .echoink-account .benefits-table :is(th, td) {
+  box-sizing: border-box;
   border: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .echoink-desktop-account-settings .echoink-account .benefits-table :is(th, td):first-child {
@@ -240,6 +403,29 @@
   text-align: center;
 }
 
+.echoink-desktop-account-settings .echoink-account .benefits-table.has-max {
+  min-width: 640px;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table.has-max :is(th, td):nth-child(2) {
+  width: 72px;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table.has-max :is(th, td):nth-child(3) {
+  width: 168px;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefits-table.has-max :is(th, td):nth-child(4) {
+  width: 130px;
+}
+
+.echoink-desktop-account-settings .echoink-account .benefit-feature {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 10px;
+}
+
 .echoink-desktop-account-settings .echoink-account .benefits-table .benefits-group > td {
   padding: 22px 18px 8px;
   border: 0;
@@ -254,8 +440,6 @@
 }
 
 .echoink-desktop-account-settings .echoink-account .benefit-description {
-  display: inline;
-  margin-left: 10px;
   color: var(--secondary);
   font-size: var(--f12);
   font-weight: 400;
@@ -278,11 +462,59 @@
   padding: 18px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-row: span 7;
+  grid-template-rows: subgrid;
+  justify-items: start;
   gap: 12px;
   background: var(--bg);
+}
+
+/* Both families reserve the same content rows; long copy can grow without clipping. */
+.echoink-desktop-account-settings .echoink-account .plan > .plan-offer {
+  min-height: calc(var(--f12) * 1.5 + 6px);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan > .plan-offer:empty {
+  visibility: hidden;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan .price-term {
+  min-height: 1.5em;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan > .plan-daily {
+  min-height: 1.6em;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-benefits {
+  min-height: 3.2em;
+  color: var(--gold);
+  font-size: var(--f13);
+  line-height: 1.6;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan > .plan-comparison {
+  min-height: calc(1.7em + 4px + var(--f12) * 1.6 + 4px + 6px);
+  line-height: 1.7;
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-grid[lang="en"] .plan > .plan-comparison {
+  min-height: calc(3.4em + 4px + var(--f12) * 1.6 + 4px + 6px);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-grid.has-max-expiry .plan > .plan-comparison {
+  min-height: calc(3.4em + 8px + var(--f12) * 1.6 + 4px + 6px);
+}
+
+.echoink-desktop-account-settings .echoink-account .plan-grid.has-max-expiry[lang="en"] .plan > .plan-comparison {
+  min-height: calc(5.1em + 8px + var(--f12) * 1.6 + 4px + 6px);
+}
+
+@container account (min-width: 761px) {
+  .echoink-desktop-account-settings .echoink-account.echoink-account .plan-grid.is-three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .echoink-desktop-account-settings .echoink-account .plan.is-early {
@@ -536,4 +768,70 @@
   .echoink-desktop-account-settings .echoink-account :is(.registration-gift-tag, .account-action-spinner svg) {
     animation: none;
   }
+}
+
+/* Cloud groups follow the approved account Paper artboards; no per-device cards. */
+.echoink-desktop-account-settings .echoink-account :is(.echoink-cloud-sync-settings, .echoink-cloud-sync-device-section) {
+  padding: 0;
+  margin: 0 0 12px;
+  border: 0;
+  background: transparent;
+  min-width: 0;
+}
+.echoink-desktop-account-settings .echoink-account :is(.echoink-cloud-sync-settings, .echoink-cloud-sync-device-section) .echoink-settings-section-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0;
+  margin: 0 0 8px;
+}
+.echoink-desktop-account-settings .echoink-account :is(.echoink-cloud-sync-settings, .echoink-cloud-sync-device-section) h3 {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-status { margin-left: auto; color: var(--secondary, var(--text-muted)); font-size: 12px; line-height: 1.5; text-align: right; overflow-wrap: anywhere; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-count { color: var(--secondary, var(--text-faint)); font-size: 11px; font-variant-numeric: tabular-nums; }
+.echoink-desktop-account-settings .echoink-account :is(.echoink-cloud-sync-settings, .echoink-cloud-sync-device-section) .echoink-settings-group { display: block; padding: 0; gap: 0; border: 1px solid var(--line, var(--background-modifier-border)); border-radius: 10px; overflow: hidden; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item { display: flex; align-items: center; gap: 12px; margin: 0; padding: 13px 18px; border: 0; min-width: 0; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item + .setting-item { border-top: 1px solid var(--line, var(--background-modifier-border)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-info { flex: 1; min-width: 0; margin: 0; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-name { font-size: 13px; font-weight: 500; line-height: 1.5; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-description { margin-top: 1px; color: var(--secondary, var(--text-muted)); font-size: 12px; line-height: 1.5; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-control { display: flex; flex: 0 0 auto; gap: 0; padding: 0; min-width: 0; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item.echoink-cloud-sync-folder-row { flex-direction: column; align-items: stretch; gap: 8px; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-control.echoink-cloud-sync-folder-control { display: block; flex: none; width: 100%; max-width: 100%; }
+/* 同步范围是进入下一页的一行：和上下设置行同内距、同分隔线。 */
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings button.echoink-cloud-sync-scope-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; margin: 0; padding: 13px 18px; border: 0; border-top: 1px solid var(--line, var(--background-modifier-border)); border-radius: 0; text-align: left; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings button.echoink-cloud-sync-scope-row + .setting-item { border-top: 1px solid var(--line, var(--background-modifier-border)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .echoink-cloud-sync-scope-row .echoink-settings-navigation-title { font-size: 13px; font-weight: 500; line-height: 1.5; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .echoink-cloud-sync-scope-row .echoink-settings-navigation-value { flex: 0 1 auto; min-width: 0; font-size: 12px; white-space: normal; overflow-wrap: anywhere; text-align: right; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-control.echoink-cloud-sync-usage-control { flex: 0 1 200px; max-width: 40%; width: 200px; }
+.echoink-desktop-account-settings .echoink-account .echoink-smart-judgment-settings .setting-item-control.echoink-smart-judgment-usage-control { flex: 0 1 200px; max-width: 40%; width: 200px; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-meter { width: 100%; height: 4px; border-radius: 2px; overflow: hidden; background: var(--line, var(--background-modifier-border)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-meter-fill { height: 100%; background: var(--text, var(--text-normal)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-meter.is-warning .echoink-cloud-sync-meter-fill { background: var(--text-warning); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-status.is-warning { color: var(--text-warning); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device { display: flex; align-items: center; gap: 10px; padding: 9px 18px; min-width: 0; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device + .echoink-cloud-sync-device { border-top: 1px solid var(--line, var(--background-modifier-border)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-icon { flex: 0 0 15px; width: 15px; height: 15px; color: var(--text, var(--text-normal)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-icon svg { width: 15px; height: 15px; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-copy { flex: 1; min-width: 0; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-name { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-device-seen { font-size: 12px; line-height: 1.5; color: var(--secondary, var(--text-muted)); }
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-remove[data-slot=button] { flex: 0 0 auto; width: auto; min-height: 24px; height: auto; padding: 3px 6px; border: 0; border-radius: 6px; color: var(--secondary, var(--text-muted)); }
+@container desktop-account (max-width: 520px) {
+  .echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item.echoink-cloud-sync-folder-row { flex-wrap: wrap; }
+  .echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item.echoink-cloud-sync-folder-row .setting-item-info { flex-basis: 100%; }
+  .echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item-control.echoink-cloud-sync-folder-control { flex-basis: 100%; max-width: 100%; }
+}
+.echoink-desktop-account-settings .echoink-account .echoink-cloud-sync-settings .setting-item [data-slot=button] { width: auto; min-height: 32px; height: 32px; padding: 0 12px; font-size: 12px; line-height: 1.5; }
+
+/* Account entries use an intrinsic grid column, not the generic 50% flex summary cap. */
+.echoink-settings-demo.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-entries .echoink-settings-navigation-row.has-value-summary > .echoink-settings-navigation-trailing {
+  min-width: max-content;
+  max-width: none;
 }

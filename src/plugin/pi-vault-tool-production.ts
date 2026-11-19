@@ -56,7 +56,8 @@ import type { LifestyleFinanceService } from "../lifestyle/finance-service";
 import { financeBudgetSnapshot, financeValueVersion } from "../lifestyle/finance-operation-types";
 import { isFinanceTool } from "../harness/pi-native/finance-tool-policy";
 import { getKnowledgeFolderBindings, knowledgePathRole } from "../knowledge-base/root-paths";
-import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove } from "../knowledge-base/folder-organization";
+import { knowledgeMayCreateCategoryDirectory, knowledgeMayOrganizeMove, knowledgeOrganizationBinding } from "../knowledge-base/folder-organization";
+import { knowledgeFolderConflicts, knowledgeOrganizationSettings } from "../knowledge-base/folder-bindings";
 import { canonicalRawMarkdownForDigest } from "../knowledge-base/raw-digest";
 import { normalizeVaultRelativePath } from "../harness/pi-native/vault-target-resolver";
 import type { PiWorkspaceAccess } from "../harness/pi-native/pi-workspace-access";
@@ -154,7 +155,7 @@ export function createPiVaultProductionAuthorizationPort(
       }
       if (input.policy.effectType !== "read" && options.currentWorkspaceAccess) {
         const access = options.currentWorkspaceAccess();
-        if (!access || access.permission === "read-only" || access.mode === "plan") throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+        if (!access || access.permission === "read-only" || access.mode === "plan") throw new PiVaultToolAuthorizationError(access?.mode === "plan" ? "vault_write_plan_only" : "vault_write_read_only");
       }
       let target: ResolvedAuthorizationTarget;
       try {
@@ -480,8 +481,12 @@ async function assertProductionFolderPolicy(
   args: Readonly<Record<string, unknown>>
 ): Promise<void> {
   const config = getKnowledgeFolderBindings(adapter.vaultRootPath);
+  const denied = (code: ConstructorParameters<typeof PiVaultToolAuthorizationError>[0]): never => {
+    throw new PiVaultToolAuthorizationError(code, config ? Object.fromEntries((["wiki", "raw", "inbox", "projects"] as const).map(role => [role, config.roles[role].enabled ? config.roles[role].writePath : null])) : undefined);
+  };
   if (toolId === "note_move" && config && !knowledgeMayOrganizeMove(config, requireString(args.sourcePath), requireString(args.targetPath))) {
-    throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+    const policy = knowledgeOrganizationSettings(config);
+    denied(!policy.enabled ? "vault_organization_disabled" : "vault_organization_out_of_scope");
   }
   if ((toolId === "note_create" || toolId === "note_move") && config) {
     const target = normalizeVaultRelativePath(requireString(toolId === "note_move" ? args.targetPath : args.relativePath));
@@ -490,7 +495,14 @@ async function assertProductionFolderPolicy(
     for (let depth = 1; depth <= segments.length; depth++) {
       const directory = segments.slice(0, depth).join("/");
       const parent = await resolver.resolve({ vaultId: adapter.vaultId, relativePath: directory, mustExist: false, allowMissingParentDirectories: true, expectedKind: "directory" });
-      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory)) throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      if (!parent.exists && !knowledgeMayCreateCategoryDirectory(config, directory)) {
+        if (knowledgeFolderConflicts(config).some(conflict => directory === conflict.path || directory.startsWith(`${conflict.path}/`))) denied("vault_directory_conflict");
+        const owner = knowledgeOrganizationBinding(config, directory);
+        if (!owner) return denied("vault_directory_unbound");
+        if (directory === owner.root) denied("vault_directory_missing");
+        if (!knowledgeOrganizationSettings(config).enabled) denied("vault_organization_disabled");
+        denied("vault_organization_out_of_scope");
+      }
     }
   }
   if (toolId === "note_update") {
@@ -542,7 +554,7 @@ async function resolveAuthorizationTarget(
       expectedKind: "file"
     });
     if (target.exists) {
-      throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+      throw new PiVaultToolAuthorizationError("vault_target_exists");
     }
     const snapshot = await requireSnapshot(adapter, source, 0);
     return freezeTarget({
@@ -573,7 +585,7 @@ async function resolveAuthorizationTarget(
     expectedKind: "file"
   });
   if (create && target.exists) {
-    throw new PiVaultToolAuthorizationError("tool_policy_blocked");
+    throw new PiVaultToolAuthorizationError("vault_target_exists");
   }
   if (toolId === "note_read") {
     return freezeTarget({
@@ -702,7 +714,7 @@ async function resultAfterDomainFailure(
     readbackVerified: false,
     readback: readback.readback,
     error: Object.freeze({
-      code: status === "cancelled" ? "operation_cancelled" : "vault_tool_execution_failed",
+      code: status === "cancelled" ? "operation_cancelled" : error instanceof PiVaultToolAuthorizationError ? error.code : "vault_tool_execution_failed",
       message: safeErrorMessage(error)
     })
   });

@@ -1,3 +1,4 @@
+import { actionFailureText } from "../core/error-copy";
 import { ItemView, Notice, setIcon, type EventRef, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginPagination, disposeOriginControls } from "../settings/origin-controls";
@@ -79,13 +80,13 @@ export class PdfReadingPageView extends ItemView {
     if (!this.snapshot) this.field("status").setText(this.t("正在读取PDF记录…", "Reading PDF history…"));
     try {
       const host = this.plugin.pdfReading;
-      if (!host) throw new Error(this.t("PDF 服务尚未就绪", "PDF service is not ready"));
+      if (!host) throw new Error(this.t("PDF 精读尚未就绪。请稍后重试。", "PDF reading is not ready yet. Try again later."));
       const data = await host.navigationData();
       if (!this.active() || generation !== this.generation) return;
       this.snapshot = { entries: [...data.entries].sort((a, b) => b.job.createdAt - a.job.createdAt), errors: data.errors };
       const status = this.field("status"); this.reset(status);
       if (data.errors.length) {
-        status.createSpan({ text: data.entries.length ? this.t("部分记录暂时读不到", "Some PDF records cannot be read") : this.t("暂时读不到PDF记录，请重试", "PDF history cannot be read. Please retry") });
+        status.createSpan({ text: data.entries.length ? this.t("部分记录暂时无法读取", "Some PDF records cannot be read") : this.t("暂时无法读取PDF记录，请重试", "PDF history cannot be read. Please retry") });
         this.button(status, this.t("重试", "Retry"), () => this.refresh());
       }
       const signature = JSON.stringify([this.snapshot, this.settingsSignature]);
@@ -93,12 +94,12 @@ export class PdfReadingPageView extends ItemView {
     } catch (error) {
       if (!this.active() || generation !== this.generation) return;
       const status = this.field("status"); this.reset(status);
-      status.createSpan({ text: this.t("暂时读不到PDF记录，请重试", "PDF history cannot be read. Please retry") + `：${this.error(error)}` });
+      status.createSpan({ text: this.t("暂时无法读取PDF记录，请重试", "PDF history cannot be read. Please retry") + `：${this.error(error)}` });
       this.button(status, this.t("重试", "Retry"), () => this.refresh());
     }
   }
   private reset(host: HTMLElement): void { disposeOriginControls(host); host.empty(); }
-  private error(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private error(error: unknown): string { return actionFailureText(error, this.plugin.settings.settingsLanguage); }
   private button(host: HTMLElement, text: string, action: () => unknown, cls = "is-tertiary"): HTMLButtonElement {
     const button = createOriginButton(host, { text, cls: `pdf-page-button ${cls}` });
     button.onclick = async () => {
@@ -206,8 +207,8 @@ export class PdfReadingPageView extends ItemView {
   }
   private originalMessage(entry: PdfNavigationEntry): string {
     if (entry.originalState === "not-saved") return this.t("这份历史记录没有保存原件", "This historical record has no saved original PDF");
-    if (entry.originalState === "missing") return this.t("原PDF找不到了", "The original PDF cannot be found");
-    if (entry.originalState === "changed") return this.t("原PDF已经改过，请先核对", "The original PDF has changed. Check it before continuing");
+    if (entry.originalState === "missing") return this.t("原 PDF 已不存在。请恢复原文件后继续。", "The original PDF no longer exists. Restore it to continue.");
+    if (entry.originalState === "changed") return this.t("原 PDF 已被修改。请核对原文件后继续。", "The original PDF was changed. Check it before continuing.");
     if (entry.originalState === "pending") return this.t("原 PDF 尚未保存", "The original PDF has not been saved yet");
     return "";
   }
@@ -215,7 +216,7 @@ export class PdfReadingPageView extends ItemView {
     const host = this.field("detail"); this.reset(host);
     const entry = this.snapshot?.entries.find(item => item.job.id === this.selectedId);
     if (!entry) {
-      host.createDiv({ cls: "pdf-page-empty", text: this.selectedId && this.snapshot?.errors.length ? this.t("这份PDF记录暂时读不到，请重试", "This PDF record cannot be read. Please retry") : this.t("选择一份PDF查看成果", "Select a PDF to view its outputs") }); return;
+      host.createDiv({ cls: "pdf-page-empty", text: this.selectedId && this.snapshot?.errors.length ? this.t("这份PDF记录暂时无法读取，请重试", "This PDF record cannot be read. Please retry") : this.t("选择一份PDF查看成果", "Select a PDF to view its outputs") }); return;
     }
     host.createEl("h2", { text: entry.job.name });
     const meta = [this.date(entry.job)];
@@ -240,7 +241,7 @@ export class PdfReadingPageView extends ItemView {
     row.createSpan({ cls: "pdf-page-artifact-path", text: artifact.path });
     if (artifact.kind === "wiki" && artifact.label && artifact.label !== "知识成果") row.createSpan({ cls: "pdf-page-artifact-label", text: artifact.label });
     if (unavailable) {
-      if (artifact.kind !== "original") row.createSpan({ cls: "pdf-page-message is-error", text: this.t("这个成果文件找不到了", "This output file cannot be found") });
+      if (artifact.kind !== "original") row.createSpan({ cls: "pdf-page-message is-error", text: this.t("该成果文件已不存在", "This output file no longer exists") });
     } else {
       const arrow = row.createSpan({ cls: "pdf-page-arrow", attr: { "aria-hidden": "true" } }); setIcon(arrow, "arrow-up-right");
     }

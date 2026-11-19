@@ -4,6 +4,7 @@ import { EXPERT_HALL_VIEW_TYPE, ExpertHallView } from "../experts/view";
 import { registerWorkspacePreviewExtension, WORKSPACE_PREVIEW_VIEW_TYPE, WorkspacePreviewView } from "../workspace/view";
 import { createOriginButton, disposeOriginControls } from "../settings/origin-controls";
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
+import { NewsPageView, NEWS_PAGE_VIEW_TYPE } from "../home/news-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
 import { MemoryPageView, MEMORY_PAGE_VIEW_TYPE } from "../home/memory/memory-page";
@@ -28,6 +29,7 @@ import {
 
 import { registerGalleryFeature } from "../gallery/controller";
 import { SelectionAskController } from "../selection-ask/controller";
+import { userFacingErrorText } from "../core/error-copy";
 
 export interface EchoInkPluginControllers {
   selectionAsk: SelectionAskController;
@@ -41,6 +43,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
     ? new EchoInkWorkbenchView(leaf, plugin) : new EchoInkHomeView(leaf, plugin));
   if (Platform.isDesktopApp) {
     plugin.registerView(PDF_READING_PAGE_VIEW_TYPE, leaf => new PdfReadingPageView(leaf, plugin));
+    plugin.registerView(NEWS_PAGE_VIEW_TYPE, leaf => new NewsPageView(leaf, plugin));
     plugin.registerView(ENGLISH_DIARY_PAGE_VIEW_TYPE, leaf => new EnglishDiaryPageView(leaf, plugin));
     plugin.registerView(KNOWLEDGE_PAGE_VIEW_TYPE, (leaf: WorkspaceLeaf) => new KnowledgePageView(leaf, plugin));
     plugin.registerView(MEMORY_PAGE_VIEW_TYPE, leaf => new MemoryPageView(leaf, plugin));
@@ -120,9 +123,7 @@ export function registerEchoInkPluginFeatures(plugin: CodexForObsidianPlugin): E
                 new Notice("正文或选区已变化，未写入翻译结果。");
               }
             } catch (error) {
-              new Notice(error instanceof Error
-                ? error.message
-                : "翻译失败，正文未修改。");
+              new Notice(userFacingErrorText(error, "翻译未能完成，正文未修改。请稍后重试。"));
             }
           })();
         }));
@@ -154,9 +155,9 @@ export function registerGenerationFileMenu(plugin: CodexForObsidianPlugin): void
     menu.addItem(item => item.setTitle("用 EchoInk 生成…").setIcon("sparkles").onClick(() => {
       void (async () => { try {
         await plugin.activateView(); const view = plugin.getCodexView();
-        if (!view || !await view.waitForTaskUiReady()) throw new Error("EchoInk 尚未就绪，请稍后重试。");
+        if (!view || !await view.waitForTaskUiReady()) throw new Error("EchoInk 尚未就绪。请稍后重试。");
         view.openGenerationForPath(file.path);
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); } })();
+      } catch (error) { new Notice(userFacingErrorText(error, "未能打开生成面板。请稍后重试。")); } })();
     }));
   }));
 }

@@ -7,6 +7,8 @@ import type {
 import { resolveMcpConnectionConfig } from "./mcp-connections";
 import { swallowError } from "../core/error-handling";
 import { JsonRpcStdioTransport, type JsonRpcMessage, type JsonRpcStdioLaunch } from "./json-rpc-stdio-transport";
+import { userFacingErrorText } from "../core/error-copy";
+import { MCP_CODES } from "../core/error-copy/codes/mcp";
 
 export interface EchoInkMcpBrokerInvocation {
   resource: EchoInkResource;
@@ -97,7 +99,7 @@ export class EchoInkMcpBroker {
     signal?: AbortSignal
   ): Promise<EchoInkMcpToolListResult> {
     const publicConfig = resolveMcpConnectionConfig(resource, { mcpConnections: this.options.connections ?? {} });
-    if (!publicConfig) throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
+    if (!publicConfig) throw brokerError("connection_failed", MCP_CODES.mcp_config_missing[0]);
     const config = await this.resolveRuntimeConfig(resource, publicConfig);
     throwIfMcpAborted(signal);
     let transport: EchoInkMcpBrokerTransport | undefined;
@@ -117,10 +119,10 @@ export class EchoInkMcpBroker {
         signal
       );
       if (!result || typeof result !== "object") {
-        throw brokerError("schema_invalid", "MCP tools/list 返回了非法 Schema。");
+        throw brokerError("schema_invalid", MCP_CODES.mcp_tools_invalid[0]);
       }
       const tools: unknown = Reflect.get(result, "tools");
-      if (!Array.isArray(tools)) throw brokerError("schema_invalid", "MCP tools/list 返回了非法 Schema。");
+      if (!Array.isArray(tools)) throw brokerError("schema_invalid", MCP_CODES.mcp_tools_invalid[0]);
       return { tools };
     } catch (error) {
       if (transport) await closePooledMcpTransport(config, "close MCP broker transport after listTools failure", this.poolKey(resource, publicConfig));
@@ -131,7 +133,7 @@ export class EchoInkMcpBroker {
   async callTool(invocation: EchoInkMcpBrokerInvocation): Promise<EchoInkMcpBrokerResult> {
     const publicConfig = resolveMcpConnectionConfig(invocation.resource, { mcpConnections: this.options.connections ?? {} });
     if (!publicConfig) {
-      throw brokerError("connection_failed", "MCP 资源没有 EchoInk broker 连接配置。");
+      throw brokerError("connection_failed", MCP_CODES.mcp_config_missing[0]);
     }
     const config = await this.resolveRuntimeConfig(invocation.resource, publicConfig);
     throwIfMcpAborted(invocation.signal);
@@ -318,7 +320,7 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
       const returnedSessionId = mcpHttpHeader(response, "mcp-session-id").trim();
       if (returnedSessionId) {
         if (!/^[\x21-\x7e]{1,256}$/u.test(returnedSessionId)) {
-          throw brokerError("schema_invalid", "MCP Server 返回了非法 Session ID。");
+          throw brokerError("schema_invalid", MCP_CODES.mcp_session_invalid[0]);
         }
       }
       const parsed: unknown = parseMcpHttpResponse(response);
@@ -326,7 +328,7 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
         ? parsed as Record<string, unknown>
         : undefined;
       if (data?.error) {
-        throw brokerError("call_failed", safeJsonRpcError(data.error));
+        throw brokerError("call_failed", userFacingErrorText(safeJsonRpcError(data.error), MCP_CODES.mcp_request_failed[0]));
       }
       if (returnedSessionId) this.sessionId = returnedSessionId;
       return data?.result;
@@ -356,7 +358,7 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
 
   private assertOpen(signal?: AbortSignal): void {
     throwIfMcpAborted(signal);
-    if (this.closed) throw brokerError("disconnected", "MCP Server 已断线。");
+    if (this.closed) throw brokerError("disconnected", MCP_CODES.mcp_disconnected[0]);
   }
 
   private post(
@@ -378,9 +380,9 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
         action();
       };
       const onAbort = () => finish(() => reject(mcpAbortError()));
-      const onClose = () => finish(() => reject(brokerError("disconnected", "MCP Server 已断线。")));
+      const onClose = () => finish(() => reject(brokerError("disconnected", MCP_CODES.mcp_disconnected[0])));
       const timer = window.setTimeout(() => finish(() => reject(
-        brokerError("timeout", `MCP 请求超时：${message.method}。`)
+        brokerError("timeout", MCP_CODES.mcp_request_timeout[0])
       )), timeoutMs);
       this.pending.add(onClose);
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -393,9 +395,9 @@ class HttpMcpTransport implements EchoInkMcpBrokerTransport {
           throw: false
         }).then((response) => finish(() => {
           if (response.status === 401 || response.status === 403) {
-            reject(brokerError("authentication_failed", "MCP 认证失败，请检查 Credential。"));
+            reject(brokerError("authentication_failed", MCP_CODES.mcp_authentication_failed[0]));
           } else if (response.status < 200 || response.status >= 300) {
-            reject(brokerError("connection_failed", `MCP HTTP ${response.status}。`));
+            reject(brokerError("connection_failed", MCP_CODES.mcp_connection_failed[0]));
           } else {
             resolve(response);
           }
@@ -523,7 +525,7 @@ function parseMcpHttpResponse(response: RequestUrlResponse): unknown {
   const contentType = mcpHttpHeader(response, "content-type").toLowerCase();
   const text = response.text;
   if (!text.trim()) {
-    throw brokerError("schema_invalid", "MCP Server 返回了空响应。");
+    throw brokerError("schema_invalid", MCP_CODES.mcp_empty_result[0]);
   }
   try {
     if (contentType.includes("text/event-stream")) {
@@ -532,14 +534,14 @@ function parseMcpHttpResponse(response: RequestUrlResponse): unknown {
         .map((line) => line.slice(5).trim())
         .filter((line) => line && line !== "[DONE]");
       if (!payloads.length) {
-        throw brokerError("schema_invalid", "MCP SSE 响应没有 JSON-RPC data 事件。");
+        throw brokerError("schema_invalid", MCP_CODES.mcp_result_invalid[0]);
       }
       return JSON.parse(payloads[payloads.length - 1]);
     }
     return JSON.parse(text);
   } catch (error) {
     if (error instanceof EchoInkMcpBrokerError) throw error;
-    throw brokerError("schema_invalid", "MCP Server 返回了无法解析的 JSON-RPC 响应。");
+    throw brokerError("schema_invalid", MCP_CODES.mcp_result_invalid[0]);
   }
 }
 
@@ -560,15 +562,15 @@ function normalizeBrokerError(
   const message = error instanceof Error ? error.message : String(error);
   const safe = sanitizeSingleLine(message).slice(0, 300);
   if (/unauthori[sz]ed|forbidden|authentication|credential|\b401\b|\b403\b/iu.test(safe)) {
-    return brokerError("authentication_failed", "MCP 认证失败，请检查 Credential。");
+    return brokerError("authentication_failed", MCP_CODES.mcp_authentication_failed[0]);
   }
   if (/timed? out|timeout/iu.test(safe)) {
-    return brokerError("timeout", "MCP 请求超时。");
+    return brokerError("timeout", MCP_CODES.mcp_request_timeout[0]);
   }
   if (/closed|exited|broken pipe|econnreset|disconnected/iu.test(safe)) {
-    return brokerError("disconnected", "MCP Server 已断线。");
+    return brokerError("disconnected", MCP_CODES.mcp_disconnected[0]);
   }
-  return brokerError(fallback, safe || "MCP 请求失败。");
+  return brokerError(fallback, userFacingErrorText(safe, MCP_CODES.mcp_request_failed[0]));
 }
 
 function sanitizeSingleLine(value: string): string {
@@ -587,7 +589,7 @@ function throwIfMcpAborted(signal?: AbortSignal): void {
 }
 
 function mcpAbortError(): Error {
-  const error = new Error("MCP 工具调用已取消。");
+  const error = new Error(MCP_CODES.mcp_call_cancelled[0]);
   error.name = "AbortError";
   return error;
 }

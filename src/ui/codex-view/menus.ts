@@ -1,3 +1,5 @@
+import { bindPressFeedback } from "../press-feedback";
+import { renderProviderBrandIcon, type ProviderBrandId } from "../../settings/provider-brand-icons";
 import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import type { CapabilityAccess } from "../../membership/types";
 import { ownedDiv } from "../owned-dom";
@@ -65,6 +67,8 @@ export interface WorkspaceMenuCallbacks {
 }
 
 export interface ModelMenuState {
+  readCurrent?: () => ModelMenuState;
+  subscribeChanges?: (listener: () => void) => () => void;
   language?: SettingsLanguage;
   providerModels: ComposerProviderModelOption[];
   selectedProviderSettingsId: string;
@@ -81,10 +85,13 @@ export interface ModelMenuState {
 }
 
 export interface ComposerProviderModelOption {
+  providerBrand?: ProviderBrandId;
   providerSettingsId: string;
   providerName: string;
   modelId: string;
   modelName: string;
+  typicalPointsLabel?: string;
+  isXiaoechoModel?: boolean;
 }
 
 export interface ModelMenuCallbacks {
@@ -109,8 +116,11 @@ export interface SessionMenuCallbacks {
 }
 
 interface ComposerParameterOption {
+  providerBrand?: ProviderBrandId;
   value: string;
   label: string;
+  typicalPointsLabel?: string;
+  isXiaoechoModel?: boolean;
   selected: boolean;
   group?: string;
   groupId?: string;
@@ -132,6 +142,7 @@ interface ActiveComposerParameterMenu {
   anchor: HTMLElement;
   root: HTMLElement;
   submenu: HTMLElement | null;
+  submenuPressCleanup?: () => void;
   activeTrigger: HTMLButtonElement | null;
   activeSectionId: string;
   cleanup: () => void;
@@ -263,8 +274,22 @@ export function openModelMenu(event: MouseEvent, state: ModelMenuState, callback
     event,
     parameterSections(state, callbacks, true),
     conversationUiText(language, "模型和运行参数", "Model and run settings"),
-    language
+    language,
+    state.readCurrent ? () => parameterSections(state.readCurrent!(), callbacks, true) : undefined,
+    state.subscribeChanges
   );
+}
+
+/** Toolbar redraws replace the trigger; the open menu still belongs to the same Composer. */
+export function reanchorComposerParameterMenu(previous: HTMLElement | null, next: HTMLElement | null): void {
+  const active = activeComposerParameterMenu;
+  if (!active || active.anchor !== previous || !next || next.ownerDocument !== active.root.ownerDocument) return;
+  active.anchor.removeClass("is-open");
+  active.anchor.setAttribute("aria-expanded", "false");
+  active.anchor = next;
+  next.addClass("is-open");
+  next.setAttribute("aria-expanded", "true");
+  active.reposition();
 }
 
 export function closeComposerParameterMenu(): void {
@@ -273,6 +298,7 @@ export function closeComposerParameterMenu(): void {
   activeComposerParameterMenu = null;
   active.anchor.removeClass("is-open");
   active.anchor.setAttribute("aria-expanded", "false");
+  active.submenuPressCleanup?.(); active.submenuPressCleanup = undefined;
   active.submenu?.remove();
   active.root.remove();
   active.cleanup();
@@ -428,10 +454,13 @@ function parameterSections(
       options: state.providerModels.map((model) => ({
         value: model.modelId,
         label: model.modelName,
+        typicalPointsLabel: model.typicalPointsLabel,
+        isXiaoechoModel: model.isXiaoechoModel,
         selected: model.providerSettingsId === state.selectedProviderSettingsId
           && model.modelId === state.selectedModel,
         group: model.providerName,
         groupId: model.providerSettingsId,
+        providerBrand: model.providerBrand,
         providerSettingsId: model.providerSettingsId
       })),
       onSelect: (option) => {
@@ -445,7 +474,7 @@ function parameterSections(
   sections.push({
     id: "reasoning",
     icon: "brain",
-    label: conversationUiText(language, "思考强度", "Reasoning effort"),
+    label: "Think",
     currentValue: state.reasoningCurrentValue,
     disabled: !state.reasoningAdjustable
       || Boolean(state.reasoningDisabledReason),
@@ -478,7 +507,9 @@ function openComposerParameterMenu(
   event: MouseEvent,
   sections: ComposerParameterSection[],
   ariaLabel: string,
-  language: SettingsLanguage
+  language: SettingsLanguage,
+  readSections?: () => ComposerParameterSection[],
+  subscribeChanges?: (listener: () => void) => () => void
 ): void {
   event.preventDefault();
   event.stopPropagation();
@@ -500,6 +531,7 @@ function openComposerParameterMenu(
   root.setAttribute("aria-label", ariaLabel);
   root.setCssStyles({ visibility: "hidden" });
   doc.body.appendChild(root);
+  const pressCleanup = anchor.closest("[data-echoink-press-scope]") ? bindPressFeedback(root) : () => {};
 
   const active: ActiveComposerParameterMenu = {
     anchor,
@@ -514,35 +546,60 @@ function openComposerParameterMenu(
   anchor.addClass("is-open");
   anchor.setAttribute("aria-expanded", "true");
 
-  for (const section of sections) {
-    const trigger = createParameterTrigger(root, section, language);
-    trigger.onmouseenter = () => {
-      if (section.disabled) {
-        closeActiveParameterSubmenu(active);
-        return;
+  const renderSections = (nextSections: ComposerParameterSection[]) => {
+    const sectionId = active.activeSectionId;
+    const focused = doc.activeElement as HTMLElement | null;
+    const focusedTriggerId = focused?.dataset.parameterSection;
+    const optionFocused = Boolean(focused && active.submenu?.contains(focused));
+    const focusedValue = focused?.dataset.parameterValue;
+    const focusedProvider = focused?.dataset.parameterProvider;
+    const scrollTop = active.submenu?.scrollTop ?? 0;
+    closeActiveParameterSubmenu(active);
+    root.replaceChildren();
+    for (const section of nextSections) {
+      const trigger = createParameterTrigger(root, section, language);
+      trigger.dataset.parameterSection = section.id;
+      trigger.onmouseenter = () => {
+        if (section.disabled) {
+          closeActiveParameterSubmenu(active);
+          return;
+        }
+        openParameterSubmenu(active, section, trigger, false);
+      };
+      trigger.onclick = (clickEvent) => {
+        clickEvent.preventDefault();
+        clickEvent.stopPropagation();
+        if (section.disabled) return;
+        openParameterSubmenu(active, section, trigger, true);
+      };
+      trigger.onkeydown = (keyEvent) => {
+        if (keyEvent.key !== "ArrowRight" && keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
+        keyEvent.preventDefault();
+        if (section.disabled) return;
+        openParameterSubmenu(active, section, trigger, true);
+      };
+      if (section.id === sectionId && !section.disabled) openParameterSubmenu(active, section, trigger, false);
+      if (focusedTriggerId === section.id) trigger.focus();
+    }
+    if (active.submenu) {
+      active.submenu.scrollTop = scrollTop;
+      if (optionFocused) {
+        const options = Array.from(active.submenu.querySelectorAll<HTMLButtonElement>(".codex-parameter-option"));
+        const retained = options.find(option => option.dataset.parameterValue === focusedValue && option.dataset.parameterProvider === focusedProvider);
+        (retained ?? options.find(option => option.getAttribute("aria-checked") === "true") ?? options[0] ?? active.activeTrigger)?.focus();
       }
-      openParameterSubmenu(active, section, trigger, false);
-    };
-    trigger.onclick = (clickEvent) => {
-      clickEvent.preventDefault();
-      clickEvent.stopPropagation();
-      if (section.disabled) return;
-      openParameterSubmenu(active, section, trigger, true);
-    };
-    trigger.onkeydown = (keyEvent) => {
-      if (keyEvent.key !== "ArrowRight" && keyEvent.key !== "Enter" && keyEvent.key !== " ") return;
-      keyEvent.preventDefault();
-      if (section.disabled) return;
-      openParameterSubmenu(active, section, trigger, true);
-    };
-  }
+    } else if (optionFocused) {
+      root.querySelector<HTMLButtonElement>("button")?.focus();
+    }
+  };
+  renderSections(sections);
 
   const reposition = () => {
-    if (!anchor.isConnected) {
+    if (!active.anchor.isConnected) {
       closeComposerParameterMenu();
       return;
     }
-    const anchorRect = anchor.getBoundingClientRect();
+    const anchorRect = active.anchor.getBoundingClientRect();
     const rootRect = root.getBoundingClientRect();
     const viewport = { width: doc.documentElement.clientWidth, height: doc.documentElement.clientHeight };
     const placement = positionAnchoredMenu(anchorRect, rootRect, viewport);
@@ -558,7 +615,7 @@ function openComposerParameterMenu(
 
   const onPointerDown = (pointerEvent: PointerEvent) => {
     const target = pointerEvent.target instanceof (view.Node ?? Node) ? pointerEvent.target : null;
-    if (!target || root.contains(target) || active.submenu?.contains(target) || anchor.contains(target)) return;
+    if (!target || root.contains(target) || active.submenu?.contains(target) || active.anchor.contains(target)) return;
     closeComposerParameterMenu();
   };
   const onKeyDown = (keyEvent: KeyboardEvent) => {
@@ -571,17 +628,24 @@ function openComposerParameterMenu(
       return;
     }
     closeComposerParameterMenu();
-    anchor.focus();
+    active.anchor.focus();
   };
   const observer = new MutationObserver(() => {
-    if (!anchor.isConnected) closeComposerParameterMenu();
+    if (!active.anchor.isConnected) closeComposerParameterMenu();
   });
   observer.observe(doc.body, { childList: true, subtree: true });
   doc.addEventListener("pointerdown", onPointerDown, true);
   doc.addEventListener("keydown", onKeyDown, true);
   doc.addEventListener("scroll", reposition, true);
   view.addEventListener("resize", reposition);
+  const unsubscribeChanges = readSections && subscribeChanges?.(() => {
+    if (activeComposerParameterMenu !== active) return;
+    renderSections(readSections());
+    reposition();
+  });
   active.cleanup = () => {
+    pressCleanup(); active.submenuPressCleanup?.(); active.submenuPressCleanup = undefined;
+    unsubscribeChanges?.();
     observer.disconnect();
     doc.removeEventListener("pointerdown", onPointerDown, true);
     doc.removeEventListener("keydown", onKeyDown, true);
@@ -646,6 +710,7 @@ function openParameterSubmenu(
 
   active.activeTrigger?.removeClass("is-open");
   active.activeTrigger?.setAttribute("aria-expanded", "false");
+  active.submenuPressCleanup?.(); active.submenuPressCleanup = undefined;
   active.submenu?.remove();
   active.activeTrigger = trigger;
   active.activeSectionId = section.id;
@@ -653,7 +718,7 @@ function openParameterSubmenu(
   trigger.setAttribute("aria-expanded", "true");
 
   const panel = ownedDiv(active.root.ownerDocument);
-  panel.className = "codex-composer-parameter-submenu";
+  panel.className = `codex-composer-parameter-submenu${section.options.some(option => option.isXiaoechoModel) ? " has-xiaoecho-models" : ""}`;
   panel.setAttribute("role", "menu");
   panel.setAttribute("aria-label", section.label);
   panel.setCssStyles({ visibility: "hidden" });
@@ -676,7 +741,20 @@ function openParameterSubmenu(
         "aria-checked": String(option.selected)
       }
     });
+    button.dataset.parameterValue = option.value;
+    button.dataset.parameterProvider = option.providerSettingsId ?? "";
+    if (option.isXiaoechoModel) button.addClass("is-xiaoecho-model");
+    if (option.providerBrand) {
+      button.classList.add("has-provider-brand");
+      const brand = button.createSpan({ cls: "codex-parameter-menu-icon", attr: { "aria-hidden": "true" } });
+      renderProviderBrandIcon(brand, option.providerBrand);
+    }
     button.createSpan({ cls: "codex-parameter-option-label", text: option.label });
+    if (option.typicalPointsLabel) {
+      button.addClass("has-typical-points");
+      button.createSpan({ cls: "codex-parameter-option-points", text: option.typicalPointsLabel });
+    }
+    if (option.isXiaoechoModel) attachNativeTooltip(button, option.label);
     const check = button.createSpan({ cls: "codex-parameter-option-check" });
     if (option.selected) setIcon(check, "check");
     button.onclick = (clickEvent) => {
@@ -689,6 +767,7 @@ function openParameterSubmenu(
   panel.onkeydown = (keyEvent) => {
     if (keyEvent.key !== "ArrowLeft") return;
     keyEvent.preventDefault();
+    active.submenuPressCleanup?.(); active.submenuPressCleanup = undefined;
     panel.remove();
     active.submenu = null;
     active.activeSectionId = "";
@@ -698,6 +777,7 @@ function openParameterSubmenu(
   };
   active.root.ownerDocument.body.appendChild(panel);
   active.submenu = panel;
+  active.submenuPressCleanup = active.anchor.closest("[data-echoink-press-scope]") ? bindPressFeedback(panel) : undefined;
   positionActiveSubmenu(active);
   if (focusFirstOption) panel.querySelector<HTMLButtonElement>("button")?.focus();
 }
@@ -707,6 +787,7 @@ function closeActiveParameterSubmenu(
 ): void {
   active.activeTrigger?.removeClass("is-open");
   active.activeTrigger?.setAttribute("aria-expanded", "false");
+  active.submenuPressCleanup?.(); active.submenuPressCleanup = undefined;
   active.submenu?.remove();
   active.submenu = null;
   active.activeSectionId = "";

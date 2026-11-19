@@ -102,6 +102,9 @@ try {
   await toggle("做梦", true); assert.ok(current().content.querySelector('[aria-label="每日最多次数"]')); await click("立即整理"); assert.equal(writes.dream, 1); assert.match(current().content.textContent, /正在整理/);
   await click("停止"); assert.ok(writes.cancelDream > 0); assert.match(current().content.textContent, /整理已中断/); assert.equal(buttons().find(node => node.textContent.trim() === "立即整理").disabled, true, "daily limit disables another attempt");
   dream.attemptsToday = 0; notify(); await tick(); await click("立即整理"); assert.equal(writes.dream, 2); await toggle("做梦", false); assert.equal(dream.phase, "interrupted"); assert.equal(prefs.dreamEnabled, false); await toggle("做梦", true);
+  dream.attemptsToday = 0; notify(); await tick(); await click("立即整理"); const cancellations = writes.cancelDream;
+  await ctx.back(); await tick(); assert.equal(dream.phase, "running", "leaving iPad Settings does not own Dream cancellation"); assert.equal(writes.cancelDream, cancellations); await api.cancelDream();
+  await ctx.push(module.exports.createAgentSettingsPage(ctx, async () => {}, "memory")); await tick(); current().content.querySelector(".pd-agent-dream-link").click(); await tick();
   fill("每日最多次数", "3"); const discard = ctx.back(); await tick(); await click("放弃修改"); assert.equal(await discard, true); assert.equal(prefs.dreamRunsPerDay, 1);
   assert.equal(right, dom.window.document.querySelector("aside textarea")); assert.equal(right.value, "right task draft");
   assert.equal(unhandled.length, 0, `Unhandled errors: ${unhandled.join("; ")}`);

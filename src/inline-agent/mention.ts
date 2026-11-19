@@ -1,3 +1,4 @@
+import { userFacingErrorText } from "../core/error-copy";
 import { ownedDiv, ownedSpan, ownedEl } from "../ui/owned-dom";
 import { isImeKeyEvent } from "../ui/ime-composition";
 import { Prec, StateEffect, StateField, type EditorState, type Extension, type Transaction } from "@codemirror/state";
@@ -236,7 +237,7 @@ export class InlineMentionController {
     } catch (error) {
       if (!this.disposed && this.views.has(view)) {
         view.dispatch({ effects: action.of({ kind: "pending", id, pending: false }) });
-        new Notice(error instanceof Error ? error.message : "发送失败，请重试。");
+        new Notice(userFacingErrorText(error, "未能发送给管家，输入已保留。请稍后重试。"));
       }
     }
   }

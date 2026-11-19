@@ -1,8 +1,10 @@
 import { requestUrl } from "obsidian";
+import { CAUSE, NEXT } from "../core/error-copy";
+import { providerStatusCopy } from "../core/error-copy/codes/settings";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
 import { apiProviderModelsUrl, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
 import { parseProviderModelResponse } from "../settings/provider-model-discovery";
-import { mobileModel, mobileProvider, mobileStreamingEnabled, supportedProvider, type MobileSettings } from "./settings";
+import { MOBILE_PROVIDER_UNSUPPORTED, mobileModel, mobileProvider, mobileStreamingEnabled, supportedProvider, type MobileSettings } from "./settings";
 import { mobileGenerateText, MOBILE_STREAM_BLOCKED, type MobileRequest, type MobileStreamFetch, type MobileUsageObserver } from "./transport";
 import { enableTargetToolCalling, type ToolCallRecoveryTarget } from "../agents/tool-call-recovery";
 
@@ -17,7 +19,7 @@ export const MOBILE_MODEL_REQUEST_TIMEOUT_MS = 20_000;
 const writes = new WeakMap<MobileSettings, Promise<void>>();
 const copy = <T>(value: T): T => structuredClone(value);
 const fingerprint = (value: unknown): string => JSON.stringify(value);
-const conflict = () => new Error("模型服务已在其他位置修改，请重新打开后编辑；当前草稿已保留。");
+const conflict = () => new Error(CAUSE.editedElsewhere[0]);
 
 export function validateMobileModelParameters(model: ApiProviderModelConfig): void {
   if (typeof model.id !== "string" || !/^[^\s\p{Cc}]{1,256}$/u.test(model.id)) throw new Error("请填写有效的模型 ID（最多 256 字符，不能含空白）。");
@@ -36,17 +38,14 @@ export function validateMobileModelParameters(model: ApiProviderModelConfig): vo
 }
 
 function validateConnection(provider: ApiProviderConfig): void {
-  if (!supportedProvider(provider)) throw new Error("此服务仅支持电脑端，请选择移动端可用的 API Key 服务。");
+  if (!supportedProvider(provider)) throw new Error(MOBILE_PROVIDER_UNSUPPORTED);
   try { normalizeApiProviderBaseUrl(provider.baseUrl, provider.apiProtocol); }
-  catch { throw new Error("请填写有效的 HTTPS 接口地址。"); }
+  catch { throw new Error(CAUSE.providerUrlInvalid[0]); }
   if (!provider.apiKey.trim()) throw new Error("请填写 API Key。");
 }
 
 function checkResponse(status: number): void {
-  if (status === 401 || status === 403) throw new Error("API Key 验证失败，请检查后重试。");
-  if (status === 429) throw new Error("请求过于频繁，请稍后重试。");
-  if (status >= 500) throw new Error("模型服务暂时不可用，请稍后重试。");
-  if (status < 200 || status >= 300) throw new Error(`模型服务请求失败（${status}），请检查接口和模型。`);
+  if (status < 200 || status >= 300) throw new Error(providerStatusCopy(status)[0]);
 }
 
 export class MobileModelConfiguration {
@@ -70,7 +69,7 @@ export class MobileModelConfiguration {
   }
 
   fetchModels(provider: ApiProviderConfig): Promise<{ models: ApiProviderModelConfig[]; incomplete: boolean }> {
-    try { validateConnection(provider); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error("模型配置无效。")); }
+    try { validateConnection(provider); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error("模型配置无效。请检查后重新保存。")); }
     const draft = copy(provider), key = fingerprint(draft);
     const previous = this.fetching.get(draft.id);
     if (previous?.key === key) return previous.promise;
@@ -80,8 +79,8 @@ export class MobileModelConfiguration {
       for (const [name, value] of Object.entries(draft.queryParams ?? {})) url.searchParams.set(name, value);
       const response = await this.checkedRequest({ url: url.toString(), method: "GET", headers: { Authorization: `Bearer ${draft.apiKey.trim()}` }, throw: false });
       const parsed = parseProviderModelResponse(response.json);
-      if (!parsed) throw new Error("模型服务返回格式错误，请重试或手动填写模型 ID。");
-      if (this.fetching.get(draft.id) !== entry || fingerprint(provider) !== key) throw new Error("服务信息已变更，请重新获取模型。");
+      if (!parsed) throw new Error("模型服务返回的模型列表格式无效。请重试，或手动填写 Model ID。");
+      if (this.fetching.get(draft.id) !== entry || fingerprint(provider) !== key) throw new Error("模型服务信息已变化。请重新获取模型。");
       return { incomplete: parsed.incomplete, models: parsed.models.map(discovery => {
         const existing = draft.models.find(model => model.id === discovery.id);
         const model = mobileModel(discovery.id, { ...discovery, ...existing, discovery, metadataSource: existing?.metadataSource ?? "discovery" } as ApiProviderModelConfig);
@@ -129,9 +128,9 @@ export class MobileModelConfiguration {
             try { return await this.checkedRequest(request); }
             catch (error) { requestFailure = error as Error; throw error; }
           }, "Connection check. Reply with OK only.", "只回复 OK", 32, signal, this.usage, "connection-test", streamFetch);
-          if (!text.trim()) throw new Error("连接测试未返回有效内容，请检查模型。");
+          if (!text.trim()) throw new Error("连接测试未返回有效内容。请检查 Model ID 后重试。");
         } catch {
-          throw requestFailure ?? new Error("连接测试失败，请检查接口与模型后重试。");
+          throw requestFailure ?? new Error(CAUSE.providerNotRespondingMobile[0]);
         }
       });
       if (fingerprint(current()) !== fingerprint(baseline) || fingerprint(provider) !== inputKey || this.settings() !== settings) throw conflict();
@@ -158,7 +157,7 @@ export class MobileModelConfiguration {
     return this.enqueue(async settings => {
       const provider = settings.apiProviders.find(item => item.id === target.providerSettingsId);
       const model = provider?.models.find(item => item.id === target.modelId);
-      if (!provider || !model) throw new Error("任务所用模型已不存在，请先检查模型服务设置。");
+      if (!provider || !model) throw new Error(CAUSE.providerModelRemoved[0]);
       if (model.toolCalling) return;
       const next = copy(provider);
       enableTargetToolCalling([next], target);
@@ -218,17 +217,17 @@ export class MobileModelConfiguration {
       if (settings.providerMode === "api") {
         if (hadProviderMode) settings.providerMode = previousMode; else delete settings.providerMode;
       }
-      throw new Error("设置保存失败，当前草稿已保留，请重试。");
+      throw new Error(`设置未能保存，当前草稿已保留。${NEXT.retry[0]}`);
     }
   }
 
   private async checkedRequest(request: Parameters<MobileRequest>[0]): ReturnType<MobileRequest> {
     let response: Awaited<ReturnType<MobileRequest>>;
     try { response = await this.request(request); }
-    catch { throw new Error("网络请求失败，请检查连接后重试。"); }
+    catch { throw new Error(CAUSE.providerNetwork[0]); }
     checkResponse(response.status);
     try { return { status: response.status, json: response.json }; }
-    catch { throw new Error("模型服务返回格式错误，请重试或手动填写模型 ID。"); }
+    catch { throw new Error("模型服务返回的模型列表格式无效。请重试，或手动填写 Model ID。"); }
   }
 
   private async timed<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -236,7 +235,7 @@ export class MobileModelConfiguration {
     let timer: number | undefined;
     try {
       return await Promise.race([operation(controller.signal), new Promise<never>((_, reject) => {
-        timer = window.setTimeout(() => { controller.abort(); reject(new Error("模型服务请求超时，请重试。")); }, MOBILE_MODEL_REQUEST_TIMEOUT_MS);
+        timer = window.setTimeout(() => { controller.abort(); reject(new Error(CAUSE.providerTimeout[0])); }, MOBILE_MODEL_REQUEST_TIMEOUT_MS);
       })]);
     } finally { if (timer !== undefined) window.clearTimeout(timer); }
   }

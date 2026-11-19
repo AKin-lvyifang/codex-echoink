@@ -67,12 +67,12 @@ export function generationContextMessage(request: GenerationRequest, sources: re
 }
 export function parseGenerationModelJson(text: string): unknown {
   const cleaned = text.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
-  try { return JSON.parse(cleaned) as unknown; } catch { throw new Error("模型未返回有效的生成内容，本轮尚未写入文件。"); }
+  try { return JSON.parse(cleaned) as unknown; } catch { throw new Error("模型未返回有效内容，未写入文件。请重试；如问题持续，请更换模型。"); }
 }
 
 /** Hard preflight called by the runtime before entering Pi's extension runner. */
 export function assertGenerationInputBudget(request: GenerationRequest, sources: readonly GenerationSource[], inputBudget: number, userText = generationModelPrompt(request), attempt: GenerationAttempt = { kind: "initial" }, drawingSchema = ""): void {
-  if (!Number.isSafeInteger(inputBudget) || inputBudget <= 0) throw new Error("当前模型的本轮预算不可用，请切换模型后重试。");
+  if (!Number.isSafeInteger(inputBudget) || inputBudget <= 0) throw new Error("当前模型的处理上限未知。请在 设置 → 模型服务 中更换模型后重试。");
   const tokens = estimateTokenValue(generationSystemPrompt(request, attempt, drawingSchema)) + estimateTokenValue(generationContextMessage(request, sources, attempt).content) + estimateTokenValue(userText);
-  if (tokens + 1024 > inputBudget) throw new Error("资料超出当前模型的本轮预算，请缩小范围或切换模型。");
+  if (tokens + 1024 > inputBudget) throw new Error("资料长度已超出当前模型的处理上限。请减少资料，或更换处理上限更高的模型。");
 }

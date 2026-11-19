@@ -13,8 +13,9 @@ import type { MobileCapabilityPolicy } from "./capability-policy";
 import type { MobileAgentRegistryService } from "./agent-registry-service";
 import type { MobileSettings } from "./settings";
 import type { MobileSkillSnapshot, MobileSkillSummary } from "./capabilities-contracts";
+import { CAUSE, NEXT, userFacingErrorText } from "../core/error-copy";
 
-const conflict = () => new Error("Skill 已在其他位置修改，请重新读取后再保存；编辑草稿已保留。");
+const conflict = () => new Error(CAUSE.editedElsewhere[0]);
 function safePath(path: string): string {
   const normalized = path.replace(/\\/gu, "/");
   if (!normalized || normalized !== normalized.trim() || normalized.startsWith("/") || /^[a-z]:/iu.test(normalized) || [...normalized].some(char => char.charCodeAt(0) < 32)
@@ -102,7 +103,7 @@ export class MobileSkillsService {
       remote, locked, readonly: remote, compareUrl: metadata?.compareUrl ?? null, contentVersion: metadata?.version,
       deliveryStatus: locked ? ""
         : skillDeliveryStateText(this.contentResolver.deliveryState(item.id), this.settings().settingsLanguage === "en"),
-      mobileAvailable, ...(!mobileAvailable ? { unavailableReason: locked ? "需要有效 PRO，请在账号与会员中启用本机。" : item.id === "obsidian-cli" ? "此 Skill 仅在电脑运行；移动端可以查看和编辑。" : "Skill 正文尚未导入当前笔记库。" } : {}),
+      mobileAvailable, ...(!mobileAvailable ? { unavailableReason: locked ? CAUSE.proRequired[0] : item.id === "obsidian-cli" ? "此 Skill 仅在电脑运行；移动端可以查看和编辑。" : "Skill 正文尚未导入当前笔记库。" } : {}),
       contentPath: remote ? null : actualPath, sourceLabel: remote ? "EchoInk 官方联网下发" : actualPath ?? (item.builtin ? "EchoInk 内置正文" : "正文尚未导入"),
       agentsVersion: sha256Hex(JSON.stringify(this.settings().agentRegistry)),
       agents: this.settings().agentRegistry.agents.map(agent => {
@@ -124,7 +125,7 @@ export class MobileSkillsService {
     catch (error) {
       if (!summary.remote) throw error;
       const current = await this.summary(item);
-      return { ...current, deliveryStatus: current.deliveryStatus || (error instanceof Error ? error.message : "Skill 暂时不可用，请重试。"), content: "", version: "unavailable" };
+      return { ...current, deliveryStatus: current.deliveryStatus || userFacingErrorText(error, "技能暂时不可用。请联网后重试。"), content: "", version: "unavailable" };
     }
     const content = resolved.content;
     if (!content) throw new Error("Skill 正文尚未导入当前笔记库。");
@@ -151,10 +152,31 @@ export class MobileSkillsService {
       return this.readSkill(id);
     });
   }
-  async resolveRunSkills(taskId: string, agentId: string, text: string, selectedId?: string, recordUsage = true): Promise<ResolvedSkillContent[]> {
+  /** 智能判断的技能清单：已启用、本 Agent 允许、远程技能可用；含用户自建技能。 */
+  async decisionOptions(agentId: string): Promise<{ id: string; name: string; description: string }[]> {
+    await this.prepare();
+    const options: { id: string; name: string; description: string }[] = [];
+    for (const item of this.entries()) if (await this.decisionUsable(item, agentId)) options.push({ id: item.id, name: item.name, description: item.description });
+    return options.slice(0, 60);
+  }
+  private async decisionUsable(item: SkillEntry, agentId: string): Promise<boolean> {
+    if (!item.enabled) return false;
+    try { this.policy(agentId).assertSkill(item.id); } catch { return false; }
+    return !(isRemoteOnlySkill(item.id) && !this.contentResolver.hasRemoteAccess() && !await this.contentResolver.isUserCopy(item.id, item.path));
+  }
+  /** 智能判断给出的技能；选中的不可用时返回 null，回到原来的规则。 */
+  private async decidedCandidates(decision: Readonly<{ skillId: string | null; fresh?: boolean }>, agentId: string): Promise<SkillEntry[] | null> {
+    const find = (id: string) => this.entries().find(item => item.id === id);
+    const chosen = decision.skillId ? find(decision.skillId) : undefined;
+    if (decision.skillId && (!chosen || !await this.decisionUsable(chosen, agentId))) return null;
+    const freshness = decision.fresh ? find("evidence-freshness-audit") : undefined;
+    return [...(freshness && await this.decisionUsable(freshness, agentId) ? [freshness] : []), ...(chosen && chosen !== freshness ? [chosen] : [])];
+  }
+  async resolveRunSkills(taskId: string, agentId: string, text: string, selectedId?: string, recordUsage = true, decision?: Readonly<{ skillId: string | null; fresh?: boolean }>): Promise<ResolvedSkillContent[]> {
     await this.prepare();
     const normalized = normalizeTaskText(text), policy = this.policy(agentId);
-    const candidates = selectedId ? [this.entry(selectedId)] : isSimpleTask(normalized) ? [] : this.entries().filter(item => item.enabled && isBuiltinSkillId(item.id) && builtinTrigger(item.id, normalized).matched)
+    const decided = !selectedId && decision && !isSimpleTask(normalized) ? await this.decidedCandidates(decision, agentId) : null;
+    const candidates = selectedId ? [this.entry(selectedId)] : decided ? decided : isSimpleTask(normalized) ? [] : this.entries().filter(item => item.enabled && isBuiltinSkillId(item.id) && builtinTrigger(item.id, normalized).matched)
       .sort((a, b) => builtinTrigger(b.id as Parameters<typeof builtinTrigger>[0], normalized).score - builtinTrigger(a.id as Parameters<typeof builtinTrigger>[0], normalized).score);
     const resolved: ResolvedSkillContent[] = [], roles = new Set<string>();
     for (const item of candidates) {
@@ -217,7 +239,7 @@ export class MobileSkillsService {
           if (existing) resource.enabled = existing.enabled;
           else if (JSON.stringify(resource) === JSON.stringify({ id, kind: "skill", source: "echoink-local", name: item.name, description: item.description, enabled, bridgeMode: "prompt-only", metadata: { resourceId: id } })) settings.resources.catalog.splice(index, 1);
         }
-        throw new Error("Skill 启用状态保存失败，请重试。");
+        throw new Error(`Skill 启用状态未能保存。${NEXT.retry[0]}`);
       }
       return this.summary(this.entry(id));
     });

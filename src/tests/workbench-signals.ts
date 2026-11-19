@@ -1,3 +1,4 @@
+import { runWorkbenchDismissalTests } from "./workbench-dismissals";
 import assert from "node:assert/strict";
 import { calculateWorkbenchSignals, latestFailedPdfRequests, nextWorkbenchRefreshAt, workbenchCalendarOrdinal, type WorkbenchFacts } from "../home/workbench-signals";
 import { EMPTY_LIFESTYLE_DATA, type FinanceEntry, type LifestyleData } from "../lifestyle/store-core";
@@ -13,6 +14,7 @@ const pdf = (id: string, state: PdfJob["state"], createdAt: number, overrides: P
   sourceFingerprint: "source", options: { engine: "local", reading: true, translation: false, wiki: false }, rawDirectory: "raw", stage: "", artifacts: [], pages: [], chunks: [], warnings: [], published: {}, ...overrides });
 
 export async function runWorkbenchSignalsTests(): Promise<void> {
+  await runWorkbenchDismissalTests();
   const now = new Date(2026, 9, 16, 18).getTime();
   const base = (): WorkbenchFacts => ({ now, modules: [...AGENT_MODULE_IDS], tasks: [], todos: [], journals: [], englishMissing: null, inbox: [], inboxScope: "inbox",
     raw: [], rawScope: "raw", pdfJobs: [], reviewComplete: true, isolated: null, knowledgeScope: "wiki" });

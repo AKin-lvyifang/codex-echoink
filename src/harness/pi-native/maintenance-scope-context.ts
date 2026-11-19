@@ -50,6 +50,21 @@ export function isMaintenanceScopeConfirmation(text: string): boolean {
     || /^(?:yes|ok(?:ay)?|go ahead|continue|proceed)(?: please)?$/iu.test(value);
 }
 
+/**
+ * 维护清单后的这句话：有智能判断时作为第二道把关。正则说“继续”但判断很有把握是换话题 / 新范围时不继续；
+ * 正则没认出来但判断很有把握是“继续”时继续。写明了新来源或替换范围的句子始终不算继续。
+ */
+export function maintenanceConfirmationWithJudgment(text: string, judgment?: Readonly<{ continue: number; new: number; stop: number; discuss: number }>, threshold = 0.8): boolean {
+  const regex = isMaintenanceScopeConfirmation(text);
+  if (!judgment) return regex;
+  if (regex) return judgment.stop < threshold && judgment.new < threshold;
+  const value = text.trim();
+  if (/[^\s`[\]<>|，。；]+\/[^\s`[\]<>|，。；]+\.(?:markdown|md)(?![a-z0-9_.-])/iu.test(value)
+    || /(?:改为|改成|换成)(?:[^。；\n]*)(?:来源|资料|笔记|主题|范围)|(?:另外|另行|重新)(?:维护|整理|处理|选择|检索|搜索)/u.test(value)
+    || /^\s*\/(?:ask|maintain|dream|skill:)/iu.test(value)) return false;
+  return judgment.continue >= threshold;
+}
+
 /** Capture a new selection even when the Agent only gives advice this turn. */
 export function isNewMaintenanceScopeRequest(text: string, vaultRootPath?: string): boolean {
   if (isMaintenanceScopeConfirmation(text)) return false;

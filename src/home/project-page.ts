@@ -1,7 +1,9 @@
+import { actionFailureText } from "../core/error-copy";
 import { ItemView, Notice, setIcon, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
-import { dispatchForPlanTask, projectCounts, projectMilestones } from "../company/logic";
+import { dispatchForPlanTask, pendingDecisions, projectCounts, projectMilestones } from "../company/logic";
+import type { SyncRequestService } from "../sync/requests";
 import type { CompanyService } from "../company/service";
 import type { CompanyDocument, CompanyProject } from "../company/types";
 import { companyApprovals, companyDecisions, CompanyInteractionController } from "../company/interaction-bridge";
@@ -12,11 +14,15 @@ import { renderMilestoneTab, renderOutputTab, renderRecordTab, renderTaskTab, ty
 
 export const PROJECT_PAGE_VIEW_TYPE = "echoink-project-page";
 type ProjectTab = "record" | "task" | "milestone" | "output";
-interface ProjectPageState { projectId?: string }
+interface ProjectPageState { projectId?: string; deviceId?: string }
 
 /** Read-only project page. The only action is answering 等你定; changes go through the router card. */
 export class ProjectPageView extends ItemView {
   private projectId = "";
+  /** Set when the project belongs to another device: rendered from the sync overview, read-only. */
+  private deviceId = "";
+  private unsubscribeSync: (() => void) | null = null;
+  private unsubscribeRequests: (() => void) | null = null;
   private tab: ProjectTab = "record";
   private expanded: string | null = null;
   private service: CompanyService | null = null;
@@ -31,11 +37,11 @@ export class ProjectPageView extends ItemView {
   getViewType(): string { return PROJECT_PAGE_VIEW_TYPE; }
   getDisplayText(): string { return this.project()?.name ?? "项目"; }
   getIcon(): string { return "briefcase"; }
-  getState(): Record<string, unknown> { return this.projectId ? { projectId: this.projectId } : {}; }
+  getState(): Record<string, unknown> { return this.projectId ? { projectId: this.projectId, ...(this.deviceId ? { deviceId: this.deviceId } : {}) } : {}; }
   async setState(state: unknown, result: ViewStateResult): Promise<void> {
-    const id = (state as ProjectPageState | null)?.projectId;
-    const next = typeof id === "string" ? id : "";
-    if (next !== this.projectId) { this.projectId = next; this.tab = "record"; this.expanded = null; this.contentEl.scrollTop = 0; }
+    const id = (state as ProjectPageState | null)?.projectId, device = (state as ProjectPageState | null)?.deviceId;
+    const next = typeof id === "string" ? id : "", nextDevice = typeof device === "string" && device !== this.plugin.syncDeviceId ? device : "";
+    if (next !== this.projectId || nextDevice !== this.deviceId) { this.projectId = next; this.deviceId = nextDevice; this.tab = "record"; this.expanded = null; this.contentEl.scrollTop = 0; }
     await super.setState(state, result);
     if (this.opened) this.render(true);
   }
@@ -56,6 +62,8 @@ export class ProjectPageView extends ItemView {
   async onClose(): Promise<void> {
     this.opened = false; this.signature = "";
     this.unsubscribe?.(); this.unsubscribe = null; this.service = null;
+    this.unsubscribeSync?.(); this.unsubscribeSync = null;
+    this.unsubscribeRequests?.(); this.unsubscribeRequests = null;
     this.unsubscribeRuns?.(); this.unsubscribeRuns = undefined;
     this.interactions.dispose();
     this.resize?.disconnect(); this.resize = null;
@@ -66,49 +74,57 @@ export class ProjectPageView extends ItemView {
     if (service === this.service) return;
     this.unsubscribe?.(); this.unsubscribe = null; this.service = service;
     if (service) this.unsubscribe = service.subscribe(() => this.render());
+    if (!this.unsubscribeSync && this.plugin.syncOverview) this.unsubscribeSync = this.plugin.syncOverview.subscribe(() => this.render());
+    if (!this.unsubscribeRequests && this.plugin.syncRequests) this.unsubscribeRequests = this.plugin.syncRequests.subscribe(() => this.render());
     this.render(true);
   }
-  private project(): CompanyProject | undefined { return this.projectId ? this.plugin.companyService?.projectOf(this.projectId) : undefined; }
+  private remoteDoc(): CompanyDocument | undefined { return this.deviceId ? this.plugin.syncOverview?.docOf(this.deviceId) : undefined; }
+  private project(): CompanyProject | undefined {
+    if (!this.projectId) return undefined;
+    return this.deviceId ? this.remoteDoc()?.projects.find(p => p.id === this.projectId) : this.plugin.companyService?.projectOf(this.projectId);
+  }
   private agents(): AgentLookup { return agentLookup(this.plugin.settings.agentRegistry.agents); }
 
   private render(force = false): void {
     if (!this.opened) return;
-    const service = this.plugin.companyService, project = this.project(), source = service?.doc;
-    const approvals = source && project ? companyApprovals(this.plugin, source, { projectId: project.id }) : [];
+    const service = this.plugin.companyService, project = this.project(), source = this.deviceId ? this.remoteDoc() : service?.doc;
+    const approvals = source && project && !this.deviceId ? companyApprovals(this.plugin, source, { projectId: project.id }) : [];
     const approvalIds = new Set(approvals.map(item => item.dispatch.id));
     const doc = source ? { ...source, dispatches: source.dispatches.map(d => approvalIds.has(d.id) ? { ...d, status: "waiting" as const } : d) } : undefined;
-    const signature = JSON.stringify([this.tab, this.expanded, project, approvals.map(a => a.key), doc && project ? [doc.dispatches.filter(d => d.projectId === project.id), doc.events.filter(e => e.projectId === project.id)] : null]);
+    const signature = JSON.stringify([this.tab, this.expanded, this.deviceId, project, approvals.map(a => a.key), doc && project ? [doc.dispatches.filter(d => d.projectId === project.id), doc.events.filter(e => e.projectId === project.id)] : null, this.deviceId ? [this.plugin.syncOverview?.snapshot().devices, this.plugin.syncRequests?.sent()] : null]);
     if (!force && signature === this.signature) return;
     this.signature = signature;
     const root = this.contentEl, scroll = root.scrollTop;
     const focusKey = (root.ownerDocument.activeElement as HTMLElement | null)?.closest<HTMLElement>("[data-pp-focus]")?.dataset.ppFocus;
     disposeOriginControls(root); root.empty();
     const page = root.createDiv({ cls: "echoink-project-content" });
-    if (!service || !doc || !project) {
+    if ((!service && !this.deviceId) || !doc || !project) {
       page.createEl("h1", { text: "项目" });
-      page.createDiv({ cls: "echoink-project-empty", text: !service ? "项目功能还没准备好，稍后再打开。" : "找不到这个项目，可能已被删除。" });
+      page.createDiv({ cls: "echoink-project-empty", text: !service && !this.deviceId ? "项目功能还没准备好，稍后再打开。" : this.deviceId ? "这个项目在另一台设备上，暂时无法读取其记录。" : "找不到这个项目，可能已被删除。" });
       return;
     }
+    const remote = this.deviceId ? () => new Notice("该任务位于另一台设备上。请在对应设备上打开。") : null;
     const ctx: ProjectTabContext = { app: this.app, doc, project, agent: this.agents(), expanded: this.expanded,
-      openTask: id => this.openTask(id), openRouter: () => this.openTask(project.routerConversationId), toggleAgent: id => this.toggleAgent(id) };
+      openTask: id => remote ? remote() : this.openTask(id), openRouter: () => remote ? remote() : this.openTask(project.routerConversationId), toggleAgent: id => this.toggleAgent(id) };
     this.renderHeader(page, project);
     if (project.status === "done") this.renderBanner(page, doc, project, ctx.agent);
     this.renderMembers(page, doc, project, ctx.agent);
     this.renderOverview(page, doc, project);
-    this.renderDecisions(page, service, project);
+    if (service && !this.deviceId) this.renderDecisions(page, service, project);
+    else if (this.deviceId) this.renderRemoteActions(page, doc, project);
     this.renderTabs(page, doc, project, ctx);
     root.scrollTop = scroll;
     this.syncPanelHeight(); this.syncStuck();
     if (focusKey) root.querySelector<HTMLElement>(`[data-pp-focus="${CSS.escape(focusKey)}"]`)?.focus({ preventScroll: true });
   }
   /** Not named open(): that is Obsidian's View lifecycle method and would swallow page opening. */
-  private openTask(taskId: string): void { void this.plugin.openTaskDetail(taskId).catch(error => new Notice(message(error))); }
+  private openTask(taskId: string): void { void this.plugin.openTaskDetail(taskId).catch(error => new Notice(message(error, this.plugin.settings.settingsLanguage))); }
 
   private button(parent: HTMLElement, text: string, key: string, action: () => unknown, variant: "primary" | "secondary" = "secondary", icon?: string): HTMLButtonElement {
     const button = createOriginButton(parent, { cls: `echoink-project-button is-${variant}`, text, attr: { "data-pp-focus": key } });
     applyAmicroButton(button, { variant });
     if (icon) { const node = button.createSpan({ cls: "echoink-project-btn-icon", attr: { "aria-hidden": "true" } }); setIcon(node, icon); button.prepend(node); }
-    button.onclick = () => { void Promise.resolve().then(action).catch(error => new Notice(message(error))); };
+    button.onclick = () => { void Promise.resolve().then(action).catch(error => new Notice(message(error, this.plugin.settings.settingsLanguage))); };
     return button;
   }
   private section(parent: HTMLElement, title: string, count?: string, cls = ""): HTMLElement {
@@ -124,6 +140,13 @@ export class ProjectPageView extends ItemView {
     const title = header.createDiv({ cls: "echoink-project-title" });
     title.createEl("h1", { text: project.name });
     if (project.folder) title.createDiv({ cls: "echoink-project-folder", text: `${project.folder}/` });
+    if (this.deviceId) {
+      const device = this.plugin.syncOverview?.snapshot().devices.find(d => d.id === this.deviceId);
+      const where = title.createDiv({ cls: "echoink-project-folder echoink-project-device" });
+      setIcon(where.createSpan({ cls: "echoink-project-btn-icon", attr: { "aria-hidden": "true" } }), "monitor-smartphone");
+      where.createSpan({ text: `在${device?.name ?? this.deviceId}上运行${device ? device.online ? " · 在线" : ` · 最后在线 ${lastSeenText(device.lastSeenAt)}` : ""}` });
+      return;
+    }
     this.button(header, "项目对话", "router", () => this.plugin.openTaskDetail(project.routerConversationId), "secondary", "message-circle");
   }
   private renderBanner(page: HTMLElement, doc: CompanyDocument, project: CompanyProject, agent: AgentLookup): void {
@@ -230,6 +253,59 @@ export class ProjectPageView extends ItemView {
     const section = this.section(page, "等你定", String(count));
     this.interactions.render(section.createDiv({ cls: "echoink-company-interactions" }), scope, () => this.render(true));
   }
+  /** Decisions and running work on the owning device; answers and stops travel as request files, with their ack shown. */
+  private renderRemoteActions(page: HTMLElement, doc: CompanyDocument, project: CompanyProject): void {
+    const requests = this.plugin.syncRequests, device = this.plugin.syncOverview?.snapshot().devices.find(d => d.id === this.deviceId);
+    if (!requests) return;
+    const deviceName = device?.name ?? this.deviceId;
+    const status = (state: ReturnType<SyncRequestService["stateFor"]>): string => {
+      if (!state) return device && !device.online ? `${deviceName}离线 · 最后在线 ${lastSeenText(device.lastSeenAt)}` : "";
+      if (state.status === "sent") return device?.online ? `已发出，等${deviceName}处理` : `已发出，${deviceName}在线时送达`;
+      return state.status === "adopted" ? "已采纳" : state.ack.reason;
+    };
+    const agent = this.agents();
+    const decisions = pendingDecisions(doc, project.id);
+    if (decisions.length) {
+      const section = this.section(page, "等你定", String(decisions.length));
+      const rows = section.createDiv({ cls: "echoink-project-rows" });
+      for (const d of decisions) {
+        const report = d.report!, row = rows.createDiv({ cls: "echoink-project-row echoink-project-remote-decision" });
+        renderAvatar(row, agent(d.agentId), true);
+        const text = row.createDiv({ cls: "echoink-project-grow" });
+        text.createDiv({ text: report.question || report.summary || d.brief });
+        text.createDiv({ cls: "echoink-project-sub", text: `${agentName(agent, d.agentId)} · 在${deviceName}上` });
+        const state = requests.stateFor(d.id, report.at);
+        if (!state) {
+          const choices = text.createDiv({ cls: "echoink-project-remote-choices" });
+          const send = (answer: string) => requests.send({ kind: "answer_decision", targetDeviceId: this.deviceId, dispatchId: d.id, ...(d.projectId ? { projectId: d.projectId } : {}), reportAt: report.at, answer });
+          for (const option of report.options ?? []) this.button(choices, option, `remote-${d.id}-${option}`, () => send(option));
+          const form = choices.createEl("form", { cls: "echoink-project-remote-reply" });
+          const input = form.createEl("input", { type: "text", attr: { placeholder: report.options?.length ? "或者自己写一句" : "写下你的回答", "aria-label": "回答", "data-pp-focus": `remote-input-${d.id}` } });
+          const submit = this.button(form, "发送", `remote-send-${d.id}`, () => { const value = input.value.trim(); if (value) return send(value); }, "primary");
+          submit.type = "submit";
+          form.onsubmit = event => { event.preventDefault(); submit.click(); };
+        }
+        const line = status(state);
+        if (line) text.createDiv({ cls: `echoink-project-sub echoink-project-request-status is-${state?.status ?? "offline"}`, text: line });
+      }
+    }
+    const live = doc.dispatches.filter(d => d.projectId === project.id && (d.status === "running" || d.status === "queued"));
+    if (live.length) {
+      const section = this.section(page, "进行中", String(live.length));
+      const rows = section.createDiv({ cls: "echoink-project-rows" });
+      for (const d of live) {
+        const row = rows.createDiv({ cls: "echoink-project-row" });
+        renderAvatar(row, agent(d.agentId), true);
+        const text = row.createDiv({ cls: "echoink-project-grow" });
+        text.createDiv({ text: project.plan.find(t => t.id === d.planTaskId)?.label ?? d.brief });
+        text.createDiv({ cls: "echoink-project-sub", text: `${agentName(agent, d.agentId)} · ${d.status === "running" ? "进行中" : "排队中"}` });
+        const state = requests.sent().find(s => s.request.payload.kind === "stop_dispatch" && s.request.payload.dispatchId === d.id);
+        if (!state) this.button(row, "停下", `remote-stop-${d.id}`, () => requests.send({ kind: "stop_dispatch", targetDeviceId: this.deviceId, dispatchId: d.id, projectId: project.id }), "secondary", "square");
+        const line = status(state);
+        if (line) text.createDiv({ cls: `echoink-project-sub echoink-project-request-status is-${state?.status ?? "offline"}`, text: line });
+      }
+    }
+  }
   private renderTabs(page: HTMLElement, doc: CompanyDocument, project: CompanyProject, ctx: ProjectTabContext): void {
     const counts = projectCounts(doc, project), outputs = projectOutputs(doc, project);
     page.createDiv({ cls: "echoink-project-tabs-anchor" });
@@ -278,4 +354,8 @@ export class ProjectPageView extends ItemView {
   }
 }
 
-function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+function message(error: unknown, language: string): string { return actionFailureText(error, language); }
+function lastSeenText(at: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  return minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.round(minutes / 60)} 小时前` : `${Math.round(minutes / 1440)} 天前`;
+}

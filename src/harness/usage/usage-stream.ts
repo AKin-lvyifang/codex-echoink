@@ -4,10 +4,12 @@ import {
   type AssistantMessageEventStream,
   type Context
 } from "@earendil-works/pi-ai";
-import { estimateUsageInputTokens, estimateUsageOutputTokens, USAGE_TOKEN_STANDARD } from "./token-estimator";
+import { estimateUsageInputTokensAsync, estimateUsageOutputTokensAsync, USAGE_TOKEN_STANDARD } from "./token-estimator";
 
 export type UsageSource = "conversation" | "background" | "connection-test";
 export interface UsageRequestEvent {
+  readonly runId?: string;
+  readonly stepId?: string;
   readonly requestId: string;
   readonly recordedAt: number;
   readonly provider: string;
@@ -17,6 +19,8 @@ export interface UsageRequestEvent {
   readonly outputTokens: number;
   readonly status: "completed" | "failed" | "cancelled";
   readonly standard: typeof USAGE_TOKEN_STANDARD;
+  /** Request-scoped header fallback already owns the user notification. */
+  readonly xiaoechoFallback?: boolean;
 }
 
 export interface ObserveUsageOptions {
@@ -28,9 +32,9 @@ export interface ObserveUsageOptions {
   readonly requestId?: string;
   readonly now?: () => number;
   /** Native document contents omitted from the text Context, when available. */
-  readonly additionalInputTokens?: number;
+  readonly additionalInputTokens?: number | Promise<number>;
   /** Transport-specific visible output kept outside AssistantMessage.content. */
-  readonly estimateOutputTokens?: (message: Readonly<AssistantMessage>) => number;
+  readonly estimateOutputTokens?: (message: Readonly<AssistantMessage>) => number | Promise<number>;
   readonly onRecordError?: () => void;
 }
 
@@ -43,9 +47,8 @@ export function observeUsageStream(
   const requestId = options.requestId ?? crypto.randomUUID();
   const now = options.now ?? Date.now;
   const recordedAt = now();
-  const additionalInputTokens = Number.isSafeInteger(options.additionalInputTokens)
-    ? Math.max(0, options.additionalInputTokens!) : 0;
-  const inputTokens = estimateUsageInputTokens(options.context) + additionalInputTokens;
+  const additionalInputTokens = Promise.resolve(options.additionalInputTokens).then(count => Number.isSafeInteger(count) ? Math.max(0, count!) : 0);
+  const inputTokens = Promise.all([estimateUsageInputTokensAsync(options.context), additionalInputTokens]).then(([count, additional]) => count + additional);
   let settled = false;
   let partial: AssistantMessage | undefined;
   const interrupted = (): AssistantMessage => ({ role: "assistant", api: partial?.api ?? "openai-completions",
@@ -56,12 +59,13 @@ export function observeUsageStream(
   const record = async (message: AssistantMessage, status: UsageRequestEvent["status"]) => {
     if (settled) return;
     settled = true;
-    const outputTokens = options.estimateOutputTokens?.(message) ?? estimateUsageOutputTokens(message);
+    const outputTokens = await (options.estimateOutputTokens?.(message) ?? estimateUsageOutputTokensAsync(message));
     // A local admission error or rejected request is not evidence of inference.
     if (status !== "completed" && outputTokens === 0) return;
     try {
       await options.recordUsage({ requestId, recordedAt, provider: options.provider, model: options.model,
-        source: options.source, inputTokens, outputTokens, status, standard: USAGE_TOKEN_STANDARD });
+        source: options.source, inputTokens: await inputTokens, outputTokens, status, standard: USAGE_TOKEN_STANDARD,
+        ...(options.provider === "xiaoecho" && options.model !== "auto" && message.model === "auto" ? { xiaoechoFallback: true } : {}) });
     } catch {
       try { options.onRecordError?.(); } catch { /* Statistics never fail inference. */ }
     }
@@ -72,7 +76,7 @@ export function observeUsageStream(
         if ("partial" in event) partial = event.partial;
         if (event.type === "done") await record(event.message, "completed");
         else if (event.type === "error") {
-          const message = estimateUsageOutputTokens(event.error) > 0 ? event.error : partial ?? event.error;
+          const message = await estimateUsageOutputTokensAsync(event.error) > 0 ? event.error : partial ?? event.error;
           await record(message, event.reason === "aborted" ? "cancelled" : "failed");
         }
         output.push(event);

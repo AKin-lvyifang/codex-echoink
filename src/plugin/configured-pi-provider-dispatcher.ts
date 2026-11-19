@@ -16,7 +16,7 @@ import type {
   ApiProviderProtocol
 } from "../settings/provider-presets";
 import {
-  isLoopbackApiProviderUrl
+  isLocalNetworkApiProviderUrl
 } from "../settings/provider-presets";
 import {
   createLoopbackOpenAICompletionsAdapter
@@ -40,7 +40,7 @@ export interface ConfiguredPiProviderTransportInput {
 export function resolveConfiguredPiProviderTransportKind(
   input: ConfiguredPiProviderTransportInput
 ): ConfiguredPiProviderTransportKind {
-  if (isLoopbackApiProviderUrl(input.baseUrl)) return "loopback";
+  if (isLocalNetworkApiProviderUrl(input.baseUrl)) return "loopback";
   if (
     input.providerId === "qwen-token-plan"
     && input.apiProtocol === "openai-completions"

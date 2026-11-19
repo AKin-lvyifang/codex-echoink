@@ -5,6 +5,8 @@ import type {
   ProviderStreams
 } from "@earendil-works/pi-ai";
 import { observeUsageStream, type UsageRequestEvent } from "../harness/usage/usage-stream";
+import { countTextTokens } from "../harness/usage/token-estimator";
+import { xiaoechoBusyCode } from "../harness/pi/xiaoecho-retry";
 import { requestUrl } from "obsidian";
 import {
   PiProviderProtocolDispatcher,
@@ -32,7 +34,7 @@ import {
   apiProviderAuthMode,
   apiProviderApiKeyRequired,
   apiProviderModelsUrl,
-  isLoopbackApiProviderUrl,
+  isLocalNetworkApiProviderUrl,
   normalizeApiProviderBaseUrl,
   getApiProviderPreset,
   type ApiProviderAuthMode,
@@ -49,6 +51,7 @@ import {
 const PROVIDER_REQUEST_TIMEOUT_MS = 10_000;
 const CODEX_CONNECTION_TIMEOUT_MS = 60_000;
 import { parseProviderModelResponse, type DiscoveredProviderModel } from "../settings/provider-model-discovery";
+import { listXiaoechoModels } from "../membership/xiaoecho-catalog";
 
 export interface PiProviderConfigurationDraft {
   readonly providerSettingsId: string;
@@ -96,6 +99,11 @@ export type PiProviderConnectionTestResult =
   };
 
 export interface PiProviderTextGenerationInput {
+  readonly requestId?: string;
+  readonly runId?: string;
+  readonly stepId?: string;
+  readonly onUsage?: (usage: { inputTokens: number; outputTokens: number; tokenSource: "server" | "estimated"; usageRequestId?: string }) => void;
+  readonly reportRateLimit?: boolean;
   readonly draft: PiProviderConfigurationDraft;
   readonly systemPrompt: string;
   readonly userPrompt: string;
@@ -121,6 +129,8 @@ export class PiProviderConfigurationService {
       adapters?: Readonly<Partial<Record<ApiProviderProtocol, ProviderStreams>>>;
       textGenerationDispatcher?: Pick<PiProviderProtocolDispatcher, "stream">;
       resolveOAuthAccessToken?: () => Promise<string>;
+      /** EchoInk membership token for the 小echo provider. */
+      resolveAccountToken?: () => Promise<string>;
       recordUsage?(event: UsageRequestEvent): void | Promise<void>;
       timeoutMs?: number;
     } = {}
@@ -130,6 +140,16 @@ export class PiProviderConfigurationService {
     draft: PiProviderConfigurationDraft
   ): Promise<PiProviderModelListResult> {
     const normalized = normalizeDraft(draft, false);
+    if (normalized.providerId === "xiaoecho") {
+      let token: string;
+      try { token = await this.resolveAuthToken(normalized); }
+      catch { return { status: "api_key_error", models: [] }; }
+      return await listXiaoechoModels({
+        baseUrl: normalized.baseUrl, token,
+        fetchImpl: this.options.fetchImpl ?? providerModelFetchForUrl(normalized.baseUrl),
+        timeoutMs: this.options.timeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS
+      });
+    }
     if (normalized.providerId === "openai-codex") {
       return {
         status: "available",
@@ -240,22 +260,31 @@ export class PiProviderConfigurationService {
         }
       });
       const stream = this.options.recordUsage ? observeUsageStream(upstream, {
+        requestId: input.requestId,
         context, provider: model.provider, model: model.id, source: "background",
-        recordUsage: (event) => this.options.recordUsage?.(event),
+        recordUsage: (event) => this.options.recordUsage?.({ ...event, ...(input.runId ? { runId: input.runId } : {}), ...(input.stepId ? { stepId: input.stepId } : {}) }),
         onRecordError: () => console.error("EchoInk background usage could not be recorded")
       }) : upstream;
       const message = await stream.result();
       const text = assistantText(message);
+      const reportedInput = (message.usage?.input ?? 0) + (message.usage?.cacheRead ?? 0) + (message.usage?.cacheWrite ?? 0);
+      input.onUsage?.({ inputTokens: reportedInput || countTextTokens(input.systemPrompt + input.userPrompt),
+        outputTokens: message.usage?.output || countTextTokens(text), tokenSource: reportedInput ? "server" : "estimated", usageRequestId: input.requestId });
       if (
         abortKind
         || message.stopReason !== "stop"
         || !text.trim()
       ) {
-        throw new Error(abortKind === "external"
+        const failure = new Error(abortKind === "external"
           ? "provider_text_generation_aborted"
           : abortKind === "timeout"
             ? "provider_text_generation_timeout"
           : "provider_text_generation_failed");
+        const detail = (message as AssistantProviderFailure).echoInkProviderFailure;
+        const failureMessage = [message.errorMessage, detail?.code, detail?.message].filter(Boolean).join(" ");
+        if (!abortKind && input.reportRateLimit && (classifyPiProviderConnectionFailure(detail?.status ?? null, failureMessage) === "rate_limit"
+          || xiaoechoBusyCode(model.provider, detail?.status ?? null, failureMessage))) Object.assign(failure, { code: "provider_rate_limited" });
+        throw failure;
       }
       return text;
     } catch (error) {
@@ -275,6 +304,10 @@ export class PiProviderConfigurationService {
   private async resolveAuthToken(
     draft: PiProviderConfigurationDraft
   ): Promise<string> {
+    if (draft.authMode === "account") {
+      if (!this.options.resolveAccountToken) throw new Error("provider_account_login_required");
+      return await this.options.resolveAccountToken();
+    }
     if (draft.authMode === "oauth") {
       if (
         draft.providerId !== "openai-codex"
@@ -382,7 +415,7 @@ export function providerModelFetchForUrl(
   cloudFetch: PiProviderFetch = obsidianProviderFetch,
   localFetch: PiProviderFetch = loopbackProviderFetch
 ): PiProviderFetch {
-  return isLoopbackApiProviderUrl(baseUrl) ? localFetch : cloudFetch;
+  return isLocalNetworkApiProviderUrl(baseUrl) ? localFetch : cloudFetch;
 }
 
 function abortableProviderRequest<T>(

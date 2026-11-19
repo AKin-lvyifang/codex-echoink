@@ -1,3 +1,4 @@
+import { actionFailureText } from "../../core/error-copy";
 import { Menu, Notice } from "obsidian";
 import type { SettingsLanguage } from "../../settings/settings";
 import type { AgentDefinition } from "../../agents/types";
@@ -34,7 +35,7 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
   if (reports) {
     const more = taskIconButton(header, language === "en" ? "Session run records" : "会话运行记录", "ellipsis", () => {
       const menu = new Menu().setUseNativeMenu(false);
-      const perform = (action: () => Promise<void>) => { if (more.disabled) return; more.disabled = true; void action().catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => { more.disabled = false; }); };
+      const perform = (action: () => Promise<void>) => { if (more.disabled) return; more.disabled = true; void action().catch(error => new Notice(actionFailureText(error, language))).finally(() => { more.disabled = false; }); };
       menu.addItem(item => item.setTitle(language === "en" ? "Export run records" : "导出运行记录").setIcon("download").onClick(() => perform(reports.export)));
       menu.addItem(item => item.setTitle(language === "en" ? "Report a problem" : "上报问题").setIcon("send").onClick(() => perform(reports.report)));
       const bounds = more.getBoundingClientRect(); menu.showAtPosition({ x: bounds.right, y: bounds.bottom }, root.ownerDocument);
@@ -43,9 +44,16 @@ export function renderTaskDetailHeader(root: HTMLElement, agent: AgentDefinition
 
 }
 const entered = new WeakMap<HTMLElement, number>();
+const entering = new WeakMap<HTMLElement, Animation>();
 export function animateTaskDetailEntry(root: HTMLElement, navigationToken: number): void {
   if (entered.get(root) === navigationToken) return;
   entered.set(root, navigationToken);
+  const previous = entering.get(root);
+  const continuing = previous?.playState === "running";
+  const style = continuing ? root.ownerDocument.defaultView?.getComputedStyle(root) : null;
+  const from = style ? { transform: style.transform, opacity: style.opacity } : { transform: "translateX(16px)", opacity: "0" };
+  previous?.cancel(); entering.delete(root);
   if (root.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
-  root.animate?.([{ transform: "translateX(16px)", opacity: 0 }, { transform: "translateX(0)", opacity: 1 }], { duration: 160, easing: "ease-out" });
+  const animation = root.animate?.([from, { transform: "translateX(0)", opacity: "1" }], { duration: 160, easing: "ease-out" });
+  if (animation) { entering.set(root, animation); animation.onfinish = () => { if (entering.get(root) === animation) entering.delete(root); }; }
 }

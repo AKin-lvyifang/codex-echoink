@@ -160,7 +160,7 @@ async function loadVaultSkillCatalog(
     }).catch((error) => {
       if (isMissingFileSystemError(error)) return null;
       warnings.push(
-        `Skill ${entry.name} 无法读取：${error instanceof Error ? error.message : String(error)}`
+        `技能 ${entry.name} 无法读取。请检查该技能文件夹中的 SKILL.md 后刷新列表。`
       );
       return null;
     });

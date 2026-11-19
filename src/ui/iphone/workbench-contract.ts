@@ -14,6 +14,9 @@ import type { IPhoneShell } from "./shell";
 import type { AccountService } from "../../membership/account-service";
 import type { MobileRequest, MobileStreamFetch } from "../../mobile/transport";
 import type { CompanyService } from "../../company/service";
+import type { SyncOverviewService } from "../../sync/overview-service";
+import type { SyncRequestService } from "../../sync/requests";
+import type { CloudSyncController } from "../../sync/cloud/controller";
 
 export interface IPhoneWorkbenchHost {
   app: App;
@@ -23,6 +26,7 @@ export interface IPhoneWorkbenchHost {
   agents: MobileAgentRegistryService;
   workbench: MobileWorkbenchPort;
   accountService?: AccountService;
+  reportLogin?: import("../../run-reports/login").RunReportLogin;
   version?: string;
   modelRequest?: MobileRequest;
   modelFetch?: MobileStreamFetch;
@@ -34,10 +38,15 @@ export interface IPhoneWorkbenchHost {
   renderMarkdown: (text: string, element: HTMLElement, sourcePath?: string) => void;
   /** Null when the company record is unavailable on this device. */
   company?: () => CompanyService | null;
+  /** Other devices' sync folders, read-only; null when sync is off. */
+  syncOverview?: () => SyncOverviewService | null;
+  syncRequests?: () => SyncRequestService | null;
+  /** EchoInk cloud sync; null when it is not available on this device. */
+  cloudSync?: () => CloudSyncController | null;
 }
 
 export type IPhoneRoute = { kind: "home" } | { kind: "agent"; agentId: string }
-  | { kind: "task"; taskId: string } | { kind: "agent-form"; agentId?: string; creation?: AgentEditorCreationOptions } | { kind: "project"; projectId: string };
+  | { kind: "task"; taskId: string } | { kind: "agent-form"; agentId?: string; creation?: AgentEditorCreationOptions } | { kind: "project"; projectId: string; deviceId?: string } | { kind: "remote-conversation"; deviceId: string; conversationId: string };
 
 export interface IPhonePageContext {
   host: IPhoneWorkbenchHost;

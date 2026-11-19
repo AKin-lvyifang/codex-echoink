@@ -138,10 +138,10 @@ export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboar
   service.optimizeMode = "noop";
   await expectNotice(optimizeRetry, "目录已采用可读名称，无需优化。");
   service.optimizeMode = "failed";
-  await expectNotice(optimizeRetry, "名称优化未完成：测试优化失败");
+  await expectNotice(optimizeRetry, "文件夹名称未能优化。测试优化失败。");
   assert(!retry.disabled && optimizeRetry.textContent === "优化名称", "failed optimization restores both controls");
   service.restoreFails = true;
-  await expectNotice(retry, "仓库复原未完成：测试复原失败");
+  await expectNotice(retry, "仓库未能复原。测试复原失败。");
   assert(!optimizeRetry.disabled && retry.textContent === "复原", "failed restoration restores both controls");
   fixture.plugin.settings.settingsLanguage = "en";
   disposeOriginControls(page); page.empty(); fixture.mountKnowledgeDashboard(page, false); await tick();
@@ -152,7 +152,7 @@ export async function runWikiTodoDom(Fixture: new () => { mountKnowledgeDashboar
   service.optimizeMode = "noop";
   await expectNotice(englishOptimize, "Folder names are already readable; no optimization needed.");
   service.optimizeMode = "failed";
-  await expectNotice(englishOptimize, "Folder name optimization did not complete: 测试优化失败");
+  await expectNotice(englishOptimize, "Folder names could not be optimized. Try again later.");
   service.restoreFails = false;
   await expectNotice(englishRestore, "Restored 1 file; 1 item needs attention.");
   service.optimizeMode = "partial";

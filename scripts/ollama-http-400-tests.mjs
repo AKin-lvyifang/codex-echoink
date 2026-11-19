@@ -73,7 +73,8 @@ try {
   const error = await (await transport.stream({ runId: "r", turnId: "t", conversationId: "c", correlationId: "x",
     model, context, provider: { providerId: "ollama", apiProtocol: "openai-completions", authMode: "api-key", baseUrl, modelRef: model.id },
     options: { temperature: 0, cacheRetention: "none", maxRetries: 0, timeoutMs: 1000 } })).result();
-  assert.match(api.assistantProviderFailureText(error), /HTTP 400.*Unsupported parameter max_tokens/su);
+  assert.doesNotMatch(api.assistantProviderFailureText(error), /HTTP 400|max_tokens/u, "the bubble never shows the raw upstream reply");
+  assert.match(JSON.stringify(error.echoInkProviderFailure), /Unsupported parameter max_tokens/u, "the raw reply survives transport for the run report");
   assert.doesNotMatch(JSON.stringify(error), /sk-fixture-secret|Bearer/u);
   assert.equal(error.errorMessage, "provider_http_failed", "safe retry classification remains stable");
   assert.equal(api.sanitizeProviderFailureDetail(400, { error: "model does not support thinking" }).message, "model does not support thinking", "Ollama native string errors retain the message too");

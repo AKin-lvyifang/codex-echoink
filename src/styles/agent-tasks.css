@@ -46,11 +46,15 @@
 .echoink-task-error { color: var(--text-error); }
 .echoink-task-interruption { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; padding: 12px; border: 1px solid var(--background-modifier-border); border-radius: var(--echoink-conversation-radius-lg, 10px); font-size: 13px; line-height: 1.6; color: var(--text-normal); overflow-wrap: anywhere; }
 .echoink-agent-tasks .codex-messages.has-echoink-message-tail.has-echoink-message-tail > .codex-virtual-list { min-height: 0; }
+.codex-messages > .codex-virtual-list.has-composer-tail { min-height: 0; }
 .echoink-task-interruption-detail { color: var(--text-muted); }
 .echoink-task-interruption-warning { color: var(--echoink-theme-warn, var(--text-warning)); }
 .echoink-task-interruption-error { color: var(--text-error); }
 .echoink-task-interruption-operations { margin: 0; padding-left: 20px; }
 .echoink-task-interruption-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.echoink-smart-judgment-intro { display: flex; align-items: flex-start; gap: 8px; }
+.echoink-smart-judgment-intro > span:first-child { display: inline-flex; flex: none; margin-top: 3px; color: var(--text-muted); }
+.echoink-smart-judgment-intro > span:first-child svg { width: 14px; height: 14px; }
 .echoink-agent-tasks .echoink-task-interruption-actions .echoink-origin-control[data-slot="button"] { height: auto; min-height: 26px; padding: 2px 10px; font-size: 12px; line-height: 20px; }
 .echoink-task-detail > .codex-messages-shell { flex: 1; min-height: 0; }
 @keyframes echoink-task-spin { to { transform: rotate(360deg); } }
@@ -80,6 +84,23 @@
 .codex-composer-pending-text { white-space: pre-wrap; }
 .codex-composer-pending-status { color: var(--text-muted); font-size: var(--echoink-conversation-font-status, 13px); line-height: 1.4; }
 .codex-turn-queue-item.has-insert { grid-template-columns: 18px minmax(0, 1fr) auto 24px; }
+
+.echoink-submission { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; padding: 8px 0; }
+.echoink-submission > article { align-self: flex-end; max-width: 100%; }
+.echoink-submission-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-submission-error { color: var(--text-error); font-size: var(--echoink-conversation-font-status, 13px); line-height: 1.4; margin-top: 6px; }
+.echoink-submission-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.echoink-submission-process { display: flex; flex-direction: column; gap: 6px; }
+.echoink-submission-step { display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: var(--echoink-conversation-font-label-primary, 13px); line-height: 1.4; }
+.echoink-submission-step .codex-assistant-turn-node-icon { display: flex; flex: none; width: 14px; }
+.echoink-submission-step svg { width: 14px; height: 14px; }
+.echoink-submission-step.is-running svg { animation: echoink-task-spin 1s linear infinite; }
+.echoink-preparation-result { color: var(--text-muted); font-size: 13px; line-height: 1.5; margin: 8px 0; }
+.echoink-preparation-notes { display: flex; flex-direction: column; gap: 6px; }
+.echoink-preparation-note { background: transparent; box-shadow: none; border: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; color: var(--text-muted); }
+body.is-mobile .echoink-preparation-note { min-height: 44px; }
+body.is-mobile .echoink-preparation-result > summary { box-sizing: border-box; min-height: 44px; padding: 12px 0; }
+@media (prefers-reduced-motion: reduce) { .echoink-submission-step.is-running svg { animation: none; } }
 .codex-turn-queue-body { min-width: 0; }
 .codex-turn-queue-preview, .codex-turn-queue-meta { white-space: normal; overflow-wrap: anywhere; }
 .codex-turn-queue-item > .codex-turn-queue-insert { min-width: 0; max-width: 12ch; height: auto; min-height: 26px; white-space: normal; overflow-wrap: anywhere; line-height: 1.4; padding: 3px 6px; font-size: var(--echoink-conversation-font-label-secondary, 12px); color: var(--text-muted); background: transparent; border-color: transparent; box-shadow: none; }
@@ -188,3 +209,22 @@ button.echoink-company-button { height: auto; min-height: 30px; padding: 4px 10p
 .echoink-company-interaction-dock .echoink-company-compact-send { min-height: 28px; margin-left: auto; padding: 4px 10px; font-size: 12px; line-height: 18px; }
 .echoink-company-interaction-dock .echoink-company-compact-error { margin: 0 0 0 28px; font-size: 12px; }
 .echoink-company-interaction-dock .echoink-company-compact-error:empty { display: none; }
+
+/* Desktop preparation uses the established conversation spine; mobile keeps its own steps. */
+.codex-container .codex-preparation-node .codex-assistant-turn-node-summary { display: block; flex-basis: 100%; font-weight: 400; }
+.codex-container .codex-thinking-gap-copy { color: var(--text-muted); font-size: var(--echoink-conversation-font-label-secondary, 12px); font-weight: 400; transition: opacity .25s ease; }
+.codex-container .codex-static-thinking-icon,
+.codex-container .codex-static-thinking-icon > .codex-ai-elements-reasoning-trigger,
+.codex-container .codex-static-thinking-icon .codex-ai-elements-reasoning-icon,
+.codex-container .codex-static-thinking-icon .codex-ai-elements-reasoning-icon * { animation: none; transform: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .codex-container .codex-preparation-node .codex-assistant-turn-node-summary.is-shimmering {
+    color: transparent; background: linear-gradient(90deg, var(--text-muted) 20%, var(--text-normal) 50%, var(--text-muted) 80%);
+    background-clip: text; -webkit-background-clip: text; background-size: 200% 100%; animation: codex-ai-elements-reasoning-shimmer 1.6s linear infinite;
+  }
+}
+@media (prefers-reduced-motion: reduce) { .codex-container .codex-thinking-gap-copy { transition: none; } }
+
+/* Match the existing 14px virtual-message row gap at durable acceptance. */
+.codex-container .echoink-submission.is-desktop-chain { gap: 14px; }
+.codex-container .echoink-submission.is-desktop-chain > .codex-message { margin-bottom: 0; }

@@ -25,8 +25,13 @@ export class WorkbenchWeatherStage {
   private readonly login: HTMLButtonElement;
   private readonly checkins: WorkbenchCheckinService;
   private readonly controls = new Set<AnimationPlaybackControlsWithThen>();
+  private readonly layers = new Map<string, SVGElement>();
+  private readonly sparkles = new Set<SVGGElement>();
   private readonly cleanups: (() => void)[] = [];
   private blinkTimer?: number;
+  private blinkPending?: { callback: () => void; due: number; remaining: number };
+  private motionPaused = false;
+  private motionNeedsRestart = true;
   private feedbackTimer?: number;
   private weather: WeatherLayer = "still";
   private agent: WorkbenchAgentState | null = null;
@@ -39,11 +44,16 @@ export class WorkbenchWeatherStage {
   private weatherFlight?: Promise<void>;
   private weatherAttemptAt = 0;
   private active = false;
+  private idlePaused = false;
+  private idleTimer?: number;
+  private lastActivityAt = 0;
+  private readonly idlePauseMs = 10_000;
   private reduced = false;
   private dragging: { pointer: number; y: number; dy: number } | null = null;
   private signing = false;
   private submitGeneration = 0;
   private checkinContext = -1;
+  private lastReward: { points: number; streak: number } | null = null;
   private errorVersion = -1;
   private disposed = false;
   private popover?: HTMLElement;
@@ -51,6 +61,7 @@ export class WorkbenchWeatherStage {
   private readonly win: Window;
   constructor(parent: HTMLElement, private readonly plugin: CodexForObsidianPlugin, private readonly jump: (state: WorkbenchAgentState) => void, private readonly layoutChanged: () => void = () => {}, private readonly weatherService: WorkbenchWeatherService = workbenchWeather(plugin)) {
     this.win = parent.ownerDocument.defaultView!;
+    this.lastActivityAt = this.win.performance.now();
     this.checkins = workbenchCheckin(plugin);
     this.element = parent.createDiv({ cls: "wb-sky" });
     parent.classList.remove("has-weather-feedback");
@@ -78,8 +89,12 @@ export class WorkbenchWeatherStage {
     this.listen(this.win, "online", () => { void this.refreshWeather(true); });
     this.listen(this.win, "offline", () => { void this.refreshWeather(true); });
     this.listen(this.element.ownerDocument, "visibilitychange", () => {
-      this.restart(); this.scheduleWeather(); if (this.visible()) void this.refreshWeather();
+      if (this.visible()) this.noteActivity(); else this.clearIdleTimer();
+      this.syncMotionVisibility(); this.scheduleWeather(); if (this.visible()) void this.refreshWeather();
     });
+    for (const name of ["pointerdown", "pointerup", "pointermove", "keydown", "keyup", "input", "wheel", "touchstart", "touchend"]) {
+      this.listen(this.element.ownerDocument, name, () => this.noteActivity(), { capture: true, passive: true });
+    }
     if (WORKBENCH_CHECKIN_ENABLED) this.bindCheckin();
     this.update(null, "");
     this.cleanups.push(this.checkins.subscribe(() => this.checkinChanged()));
@@ -114,9 +129,17 @@ export class WorkbenchWeatherStage {
     this.listen(this.element.ownerDocument, "pointerdown", (e: PointerEvent) => { if (!this.element.contains(e.target as Node)) this.closePopover(); });
   }
   private t(zh: string, en: string): string { return this.plugin.settings.settingsLanguage === "en" ? en : zh; }
-  private layer(name: string): SVGElement { return this.svg.querySelector<SVGElement>(`[data-layer="${name}"]`)!; }
-  private listen(target: EventTarget, name: string, listener: EventListener): void {
-    target.addEventListener(name, listener); this.cleanups.push(() => target.removeEventListener(name, listener));
+  private layer(name: string): SVGElement {
+    let node = this.layers.get(name);
+    if (!node) { node = this.svg.querySelector<SVGElement>(`[data-layer="${name}"]`)!; this.layers.set(name, node); }
+    return node;
+  }
+  private attribute(node: SVGElement, name: string, value: string): void {
+    if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+  }
+  private layerAttribute(layer: string, name: string, value: string): void { this.attribute(this.layer(layer), name, value); }
+  private listen(target: EventTarget, name: string, listener: EventListener, options?: AddEventListenerOptions): void {
+    target.addEventListener(name, listener, options); this.cleanups.push(() => target.removeEventListener(name, listener, options));
   }
   private signed(): boolean { return this.checkins.snapshot().checkedIn; }
   private refreshCheckin(force = false): void {
@@ -141,6 +164,26 @@ export class WorkbenchWeatherStage {
     this.refreshCheckin(); void this.refreshWeather();
   }
   private visible(): boolean { return this.active && !this.disposed && this.element.ownerDocument.visibilityState !== "hidden"; }
+  private motionVisible(): boolean { return this.visible() && !this.idlePaused; }
+  private clearIdleTimer(): void {
+    if (this.idleTimer !== undefined) this.win.clearTimeout(this.idleTimer);
+    this.idleTimer = undefined;
+  }
+  private noteActivity(): void {
+    if (!this.visible()) return;
+    this.lastActivityAt = this.win.performance.now();
+    if (this.idlePaused) { this.idlePaused = false; this.syncMotionVisibility(); }
+    if (this.idleTimer === undefined) this.scheduleIdlePause();
+  }
+  private scheduleIdlePause(): void {
+    this.clearIdleTimer();
+    if (!this.visible()) return;
+    this.idleTimer = this.win.setTimeout(() => {
+      this.idleTimer = undefined;
+      if (this.win.performance.now() - this.lastActivityAt < this.idlePauseMs) this.scheduleIdlePause();
+      else { this.idlePaused = true; this.syncMotionVisibility(); }
+    }, Math.max(0, this.idlePauseMs - (this.win.performance.now() - this.lastActivityAt)));
+  }
   private renderWeatherText(): void {
     const weather = this.currentWeather, en = this.plugin.settings.settingsLanguage === "en";
     const descriptions: Record<string, string> = { "晴": "Clear", "晴间多云": "Partly cloudy", "多云": "Cloudy", "阴": "Overcast", "小雨": "Light rain", "中雨": "Rain", "大雨": "Heavy rain", "阵雨": "Showers", "小雪": "Light snow", "中雪": "Snow", "大雪": "Heavy snow", "雾": "Fog", "大风": "Windy" };
@@ -181,7 +224,9 @@ export class WorkbenchWeatherStage {
     if (!this.currentWeather) { this.weatherStatus = "loading"; this.renderWeatherText(); }
     const current = () => !this.disposed && generation === this.weatherGeneration && this.plugin.settings.weatherCity?.id === city.id;
     const flight = this.weatherService.current(city.id, true).then(weather => {
-      if (!current()) return; this.currentWeather = weather; this.weatherStatus = "ready"; this.weather = weatherLayer(weather); this.renderWeatherText(); this.restart();
+      if (!current()) return; const previous = this.weather;
+      this.currentWeather = weather; this.weatherStatus = "ready"; this.weather = weatherLayer(weather); this.renderWeatherText();
+      if (previous !== this.weather) this.restart();
     }).catch(error => {
       if (!current()) return; this.weatherStatus = error instanceof MembershipApiError && error.code === "CITY_NOT_FOUND" ? "missing" : "unavailable";
       this.weather = "unknown"; this.renderWeatherText(); this.restart();
@@ -189,10 +234,10 @@ export class WorkbenchWeatherStage {
     this.weatherFlight = flight; return flight;
   }
   setActive(active: boolean): void {
-    if (active !== this.active) { this.active = active; this.closePopover(); this.restart(); this.scheduleWeather(); if (active) { this.refreshCheckin(true); void this.refreshWeather(); } }
+    if (active !== this.active) { this.active = active; if (active) this.noteActivity(); else this.clearIdleTimer(); this.closePopover(); this.syncMotionVisibility(); this.scheduleWeather(); if (active) { this.refreshCheckin(true); void this.refreshWeather(); } }
   }
   private paintTag(): void {
-    this.layer("tag").setAttribute("display", WORKBENCH_CHECKIN_ENABLED ? "inline" : "none");
+    this.layerAttribute("tag", "display", WORKBENCH_CHECKIN_ENABLED ? "inline" : "none");
     if (!WORKBENCH_CHECKIN_ENABLED) return;
     const days = this.checkins.snapshot().total ?? 0;
     this.layer("tag-text").textContent = this.signed() ? this.t(`${days} 天`, `${days} d`) : this.t("签到", "Check in");
@@ -200,58 +245,85 @@ export class WorkbenchWeatherStage {
   }
   private motion(from: number, to: number | number[], update: (value: number) => void, options: Record<string, unknown> = {}): AnimationPlaybackControlsWithThen {
     let control: AnimationPlaybackControlsWithThen;
-    control = animate(from, to, { duration: 1, ...options, onUpdate: update, onComplete: () => this.controls.delete(control) });
+    control = animate(from, to, { duration: 1, ...options, onUpdate: value => { if (this.motionVisible()) update(value); }, onComplete: () => this.controls.delete(control) });
+    if (!this.motionVisible()) { control.pause(); this.motionPaused = true; }
     this.controls.add(control); return control;
   }
   private stop(): void {
     for (const control of this.controls) control.stop(); this.controls.clear();
+    for (const group of this.sparkles) group.remove(); this.sparkles.clear();
     if (this.blinkTimer !== undefined) this.win.clearTimeout(this.blinkTimer); this.blinkTimer = undefined;
+    this.blinkPending = undefined;
+    this.motionPaused = false;
+  }
+  private scheduleBlink(callback: () => void, delay: number): void {
+    this.blinkPending = { callback, due: this.win.performance.now() + delay, remaining: delay };
+    if (!this.motionVisible()) return;
+    this.blinkTimer = this.win.setTimeout(() => { this.blinkTimer = undefined; this.blinkPending = undefined; callback(); }, delay);
+  }
+  private syncMotionVisibility(): void {
+    if (!this.motionVisible()) {
+      for (const control of this.controls) control.pause();
+      if (this.blinkTimer !== undefined) {
+        this.win.clearTimeout(this.blinkTimer); this.blinkTimer = undefined;
+        if (this.blinkPending) this.blinkPending.remaining = Math.max(0, this.blinkPending.due - this.win.performance.now());
+      }
+      this.motionPaused = true;
+      return;
+    }
+    if (this.motionNeedsRestart) { this.restart(); return; }
+    if (!this.motionPaused) return;
+    this.motionPaused = false;
+    for (const control of this.controls) control.play();
+    if (this.blinkPending) this.scheduleBlink(this.blinkPending.callback, this.blinkPending.remaining);
   }
   private applyPose(pose: DollPose): void {
-    for (const face of ["happy", "sad", "curious", "laugh"]) this.layer(`face-${face}`).setAttribute("display", pose.face === face && pose.scaleX >= 0 ? "inline" : "none");
-    this.layer("body").setAttribute("transform", `translate(0 ${pose.y}) rotate(${pose.angle} 118 26) translate(118 26) scale(${pose.scaleX} 1) translate(-118 -26)`);
-    this.layer("head").setAttribute("transform", `rotate(${pose.head} 118 51)`);
-    this.layer("skirt").setAttribute("transform", `rotate(${pose.skirt} 118 51)`);
-    this.layer("bow-ribbon-left").setAttribute("transform", `rotate(${pose.left} 118 54)`);
-    this.layer("bow-ribbon-right").setAttribute("transform", `rotate(${pose.right} 120 54)`);
+    for (const face of ["happy", "sad", "curious", "laugh"]) this.layerAttribute(`face-${face}`, "display", pose.face === face && pose.scaleX >= 0 ? "inline" : "none");
+    this.layerAttribute("body", "transform", `translate(0 ${pose.y}) rotate(${pose.angle} 118 26) translate(118 26) scale(${pose.scaleX} 1) translate(-118 -26)`);
+    this.layerAttribute("head", "transform", `rotate(${pose.head} 118 51)`);
+    this.layerAttribute("skirt", "transform", `rotate(${pose.skirt} 118 51)`);
+    this.layerAttribute("bow-ribbon-left", "transform", `rotate(${pose.left} 118 54)`);
+    this.layerAttribute("bow-ribbon-right", "transform", `rotate(${pose.right} 120 54)`);
     const end = dollStringEndpoint(pose);
-    this.layer("string-line").setAttribute("d", `M118 8Q${(118 + end.x) / 2} ${17 + pose.y / 2} ${end.x} ${end.y}`);
+    this.layerAttribute("string-line", "d", `M118 8Q${(118 + end.x) / 2} ${17 + pose.y / 2} ${end.x} ${end.y}`);
   }
   private pull(y: number): void { this.applyPose({ ...dollPose(this.agent ?? "idle"), y }); }
   private paintWeather(): void {
-    for (const name of weatherLayers) this.layer(`weather-${name}`).setAttribute("display", this.weather === name ? "inline" : "none");
-    this.svg.dataset.weather = this.weather;
+    for (const name of weatherLayers) this.layerAttribute(`weather-${name}`, "display", this.weather === name ? "inline" : "none");
+    if (this.svg.dataset.weather !== this.weather) this.svg.dataset.weather = this.weather;
   }
   private restart(): void {
-    this.stop(); this.paintWeather(); if (this.dragging) return;
+    this.stop(); this.motionNeedsRestart = !this.motionVisible();
+    if (!this.visible()) return;
+    this.paintWeather(); if (this.dragging) return;
     this.pull(0); if (!this.signing) this.paintTag();
     for (const name of ["doll-swing", "tag", "tag-card", "eyes-happy", "eyes-sad", "eyes-curious", "eyes-laugh", "rays", "cloudy-rays"]) this.layer(name).removeAttribute("transform");
     for (const name of ["weather-overcast", "cloudy-cloud", "thunder-lightning", ...Array.from({ length: 3 }, (_, i) => `wind-${i + 1}`), ...Array.from({ length: 6 }, (_, i) => `drop-${i + 1}`), ...Array.from({ length: 3 }, (_, i) => `thunder-drop-${i + 1}`), ...Array.from({ length: 4 }, (_, i) => `snowflake-${i + 1}`), ...Array.from({ length: 4 }, (_, i) => `fog-band-${i + 1}`)]) {
       const node = this.layer(name); node.removeAttribute("transform"); node.removeAttribute("opacity"); node.removeAttribute("stroke-dasharray"); node.removeAttribute("stroke-dashoffset");
     }
-    if (!this.visible() || this.reduced || this.agent === null || this.signing) return;
-    const rotate = (name: string, x: number, y: number) => (v: number) => this.layer(name).setAttribute("transform", `rotate(${v} ${x} ${y})`);
+    if (this.motionNeedsRestart || this.reduced || this.agent === null || this.signing) return;
+    const rotate = (name: string, x: number, y: number) => (v: number) => this.layerAttribute(name, "transform", `rotate(${v} ${x} ${y})`);
     const loop = { repeat: Infinity, repeatType: "reverse", ease: "easeInOut" };
     const agent = this.agent;
-    this.motion(0, 24, time => { this.applyPose(dollPose(agent, time)); this.svg.dataset.workAction = agent === "working" ? ["dance", "spin", "twist"][Math.floor(time / 8) % 3] : agent; }, { repeat: Infinity, duration: 24, ease: "linear" });
+    this.motion(0, 24, time => { this.applyPose(dollPose(agent, time)); const action = agent === "working" ? ["dance", "spin", "twist"][Math.floor(time / 8) % 3] : agent; if (this.svg.dataset.workAction !== action) this.svg.dataset.workAction = action; }, { repeat: Infinity, duration: 24, ease: "linear" });
     if (agent !== "idle" && WORKBENCH_CHECKIN_ENABLED) this.motion(-1, 1, rotate("tag", 181, 8), { ...loop, duration: 3.1 });
     if (this.weather === "fair") this.motion(0, 360, rotate("rays", 44, 59), { repeat: Infinity, ease: "linear", duration: 30 });
-    if (this.weather === "cloudy") { this.motion(0, 360, rotate("cloudy-rays", 53, 39), { repeat: Infinity, ease: "linear", duration: 30 }); this.motion(-2, 2, x => this.layer("cloudy-cloud").setAttribute("transform", `translate(${x} 0)`), { ...loop, duration: 6 }); }
-    if (this.weather === "overcast") this.motion(-3, 3, x => this.layer("weather-overcast").setAttribute("transform", `translate(${x} 0)`), { ...loop, duration: 6 });
+    if (this.weather === "cloudy") { this.motion(0, 360, rotate("cloudy-rays", 53, 39), { repeat: Infinity, ease: "linear", duration: 30 }); this.motion(-2, 2, x => this.layerAttribute("cloudy-cloud", "transform", `translate(${x} 0)`), { ...loop, duration: 6 }); }
+    if (this.weather === "overcast") this.motion(-3, 3, x => this.layerAttribute("weather-overcast", "transform", `translate(${x} 0)`), { ...loop, duration: 6 });
     if (this.weather === "breeze") for (let i = 1; i <= 3; i++) {
-      const wind = this.layer(`wind-${i}`); wind.setAttribute("stroke-dasharray", "14 6");
-      this.motion(0, -40, v => wind.setAttribute("stroke-dashoffset", String(v)), { repeat: Infinity, ease: "linear", duration: 1 + i * .2 });
+      const wind = this.layer(`wind-${i}`); this.attribute(wind, "stroke-dasharray", "14 6");
+      this.motion(0, -40, v => this.attribute(wind, "stroke-dashoffset", String(v)), { repeat: Infinity, ease: "linear", duration: 1 + i * .2 });
     }
     if (this.weather === "drizzle" || this.weather === "thunder") for (let i = 1; i <= (this.weather === "drizzle" ? 6 : 3); i++) {
       const drop = this.layer(`${this.weather === "thunder" ? "thunder-" : ""}drop-${i}`);
-      this.motion(-8, 12, v => { drop.setAttribute("transform", `translate(0 ${v})`); drop.setAttribute("opacity", String(Math.max(0, 1 - Math.abs(v - 2) / 10))); }, { repeat: Infinity, duration: .9 + i * .08, delay: i * .17 });
+      this.motion(-8, 12, v => { this.attribute(drop, "transform", `translate(0 ${v})`); this.attribute(drop, "opacity", String(Math.max(0, 1 - Math.abs(v - 2) / 10))); }, { repeat: Infinity, duration: .9 + i * .08, delay: i * .17 });
     }
-    if (this.weather === "thunder") this.motion(.3, .8, v => this.layer("thunder-lightning").setAttribute("opacity", String(v)), { ...loop, duration: 4 });
-    if (this.weather === "snow") for (let i = 1; i <= 4; i++) this.motion(-3, 4, y => this.layer(`snowflake-${i}`).setAttribute("transform", `translate(0 ${y})`), { ...loop, duration: 2.5 + i * .3 });
-    if (this.weather === "fog") for (let i = 1; i <= 4; i++) this.motion(-3, 3, x => this.layer(`fog-band-${i}`).setAttribute("transform", `translate(${x} 0)`), { ...loop, duration: 4 + i * .5 });
+    if (this.weather === "thunder") this.motion(.3, .8, v => this.layerAttribute("thunder-lightning", "opacity", String(v)), { ...loop, duration: 4 });
+    if (this.weather === "snow") for (let i = 1; i <= 4; i++) this.motion(-3, 4, y => this.layerAttribute(`snowflake-${i}`, "transform", `translate(0 ${y})`), { ...loop, duration: 2.5 + i * .3 });
+    if (this.weather === "fog") for (let i = 1; i <= 4; i++) this.motion(-3, 3, x => this.layerAttribute(`fog-band-${i}`, "transform", `translate(${x} 0)`), { ...loop, duration: 4 + i * .5 });
     const face = dollPose(agent).face, eyeY = { happy: 37, sad: 39, curious: 38, laugh: 36 }[face];
-    const blink = () => { this.blinkTimer = this.win.setTimeout(() => {
-      this.motion(1, [1, .12, 1], v => this.layer(`eyes-${face}`).setAttribute("transform", `translate(118 ${eyeY}) scale(1 ${v}) translate(-118 ${-eyeY})`), { duration: .2 }); blink();
+    const blink = () => { this.scheduleBlink(() => {
+      this.motion(1, [1, .12, 1], v => this.layerAttribute(`eyes-${face}`, "transform", `translate(118 ${eyeY}) scale(1 ${v}) translate(-118 ${-eyeY})`), { duration: .2 }); blink();
     }, 2500 + Math.random() * 3000); };
     blink();
   }
@@ -269,7 +341,7 @@ export class WorkbenchWeatherStage {
   private hint(): void {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.say(this.t("向下拉一下，或按 ↓ 签到", "Pull down, or press ↓ to check in"));
-    if (!this.reduced && this.active) { this.stop(); void this.motion(7, 0, y => this.pull(y), { type: "spring", stiffness: 160, damping: 9 }).then(() => this.restart()); this.motion(0, [0, 8, -6, 0], v => this.layer("tag").setAttribute("transform", `rotate(${v} 181 8)`), { duration: .7 }); }
+    if (!this.reduced && this.motionVisible()) { this.stop(); void this.motion(7, 0, y => this.pull(y), { type: "spring", stiffness: 160, damping: 9 }).then(() => this.restart()); this.motion(0, [0, 8, -6, 0], v => this.layerAttribute("tag", "transform", `rotate(${v} 181 8)`), { duration: .7 }); }
     else this.restart();
   }
   private async checkIn(): Promise<void> {
@@ -279,7 +351,7 @@ export class WorkbenchWeatherStage {
     let celebrate = false;
     try {
       if (this.win.navigator.onLine === false) this.failure(new Error("offline"));
-      else celebrate = !(await this.checkins.record()).alreadyCheckedIn;
+      else { const recorded = await this.checkins.record(); celebrate = !recorded.alreadyCheckedIn; this.lastReward = recorded.reward ?? null; }
     } catch { /* The shared service publishes only errors for the current account. */ }
     finally {
       if (!this.disposed && generation === this.submitGeneration) { this.signing = false; this.stage.removeAttribute("disabled"); this.stage.removeAttribute("aria-busy"); this.paintTag(); this.restart(); }
@@ -300,26 +372,28 @@ export class WorkbenchWeatherStage {
   private async celebrate(generation: number): Promise<void> {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
     this.stop();
-    const days = this.checkins.snapshot().total ?? 0;
-    this.say(this.t(`签到成功 · 第 ${days} 天`, `Checked in · Day ${days}`));
-    if (!this.reduced && this.active) {
+    const days = this.checkins.snapshot().total ?? 0, reward = this.lastReward; this.lastReward = null;
+    this.say(reward ? this.t(`签到成功 · 连续 ${reward.streak} 天 · +${reward.points} AI 点数`, `Checked in · ${reward.streak}-day streak · +${reward.points} AI points`) : this.t(`签到成功 · 第 ${days} 天`, `Checked in · Day ${days}`));
+    if (!this.reduced && this.motionVisible()) {
       this.layer("tag-text").textContent = this.t("签到", "Check in");
       const rebound = this.motion(16, 0, y => this.pull(y), { type: "spring", stiffness: 150, damping: 8 });
-      await this.motion(1, 0, v => this.layer("tag-card").setAttribute("transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { duration: .16 });
+      await this.motion(1, 0, v => this.layerAttribute("tag-card", "transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { duration: .16 });
       if (this.disposed || generation !== this.submitGeneration) return; this.paintTag();
-      const flip = this.motion(0, 1, v => this.layer("tag-card").setAttribute("transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { type: "spring", stiffness: 230, damping: 14 });
+      const flip = this.motion(0, 1, v => this.layerAttribute("tag-card", "transform", `translate(181 45) scale(${v} 1) translate(-181 -45)`), { type: "spring", stiffness: 230, damping: 14 });
       this.sparkle();
       await Promise.all([rebound, flip]);
     } else { this.pull(0); this.paintTag(); }
   }
   private sparkle(): void {
     const group = ownedSvg(this.svg.ownerDocument, "g"); group.setAttribute("aria-hidden", "true"); this.svg.append(group);
+    this.sparkles.add(group);
+    const flights: AnimationPlaybackControlsWithThen[] = [];
     for (let i = 0; i < 10; i++) {
       const star = ownedSvg(this.svg.ownerDocument, "path"); star.setAttribute("d", "M-2 0H2M0-2V2"); group.append(star);
       const a = i * Math.PI / 5;
-      this.motion(0, 1, v => { star.setAttribute("transform", `translate(${181 + Math.cos(a) * v * 30} ${45 + Math.sin(a) * v * 26})`); star.setAttribute("opacity", String(1 - v)); }, { duration: .75 });
+      flights.push(this.motion(0, 1, v => { this.attribute(star, "transform", `translate(${181 + Math.cos(a) * v * 30} ${45 + Math.sin(a) * v * 26})`); this.attribute(star, "opacity", String(1 - v)); }, { duration: .75 }));
     }
-    this.win.setTimeout(() => group.remove(), 800);
+    void Promise.all(flights).then(() => { group.remove(); this.sparkles.delete(group); });
   }
   private togglePopover(): void {
     if (!WORKBENCH_CHECKIN_ENABLED) return;
@@ -335,7 +409,10 @@ export class WorkbenchWeatherStage {
     if (total === null) { this.closePopover(); return; }
     this.popover.replaceChildren();
     this.popover.createDiv({ text: this.t(`累计签到 ${total} 天`, `${total} check-in days`) });
+    const { streak, nextReward } = this.checkins.snapshot();
+    if (streak !== null && streak > 0) this.popover.createDiv({ text: this.t(`连续 ${streak} 天`, `${streak}-day streak`) });
+    if (nextReward) this.popover.createDiv({ text: this.t(`再签 ${nextReward.inDays} 天 +${nextReward.points} AI 点数`, `+${nextReward.points} AI points in ${nextReward.inDays} days`) });
   }
   private closePopover(): void { this.popover?.remove(); this.popover = undefined; if (WORKBENCH_CHECKIN_ENABLED) this.stage.setAttribute("aria-expanded", "false"); }
-  dispose(): void { this.weatherGeneration++; if (this.weatherTimer !== undefined) this.win.clearTimeout(this.weatherTimer); this.disposed = true; this.submitGeneration++; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); disposeOriginControls(this.element); this.element.remove(); }
+  dispose(): void { this.weatherGeneration++; this.clearIdleTimer(); if (this.weatherTimer !== undefined) this.win.clearTimeout(this.weatherTimer); this.disposed = true; this.submitGeneration++; this.stop(); if (this.feedbackTimer !== undefined) this.win.clearTimeout(this.feedbackTimer); for (const cleanup of this.cleanups) cleanup(); disposeOriginControls(this.element); this.element.remove(); this.layers.clear(); }
 }

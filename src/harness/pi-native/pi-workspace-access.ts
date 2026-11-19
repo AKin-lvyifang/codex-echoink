@@ -60,11 +60,12 @@ export function piWorkspaceToolDecision(input: PiWorkspaceAccess & Readonly<{
   if (input.memoryMode === "no_memory" && input.memoryToolNames.includes(input.toolName)) {
     return { allowed: false, reason: "本轮已关闭个人记忆，不能调用记忆工具。" };
   }
+  const vaultWrite = ["note_create", "note_update", "metadata_update", "note_move", "note_delete"].includes(input.toolName);
   if (input.mode === "plan") return input.planToolNames.includes(input.toolName)
-    ? { allowed: true } : { allowed: false, reason: "当前为 Plan，只允许分析与记录计划；此工具不在本轮可用范围。" };
+    ? { allowed: true } : { allowed: false, reason: vaultWrite ? "vault_write_plan_only" : "当前为 Plan，只允许分析与记录计划；此工具不在本轮可用范围。" };
   if (input.permission !== "read-only") return { allowed: true };
   return CONTENT_READ_TOOLS.has(input.toolName) || input.externalReadToolNames.includes(input.toolName)
-    ? { allowed: true } : { allowed: false, reason: "当前工作区为只读，不能调用写入或外部副作用工具。" };
+    ? { allowed: true } : { allowed: false, reason: vaultWrite ? "vault_write_read_only" : "当前工作区为只读，不能调用写入或外部副作用工具。" };
 }
 
 /** Compatibility for tool publication; dispatch retains the complete decision. */

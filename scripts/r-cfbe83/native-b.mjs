@@ -1,0 +1,22 @@
+import {configureNative} from "./environment.mjs";
+import assert from 'node:assert/strict';import fs from 'node:fs/promises';import path from 'node:path';import os from 'node:os';
+await configureNative();
+const{connect,delay}=await import('../runtime-smoothness/cdp.mjs');let state=173;const raw=Array.from({length:2000},()=>{state=(Math.imul(state,1664525)+1013904223)>>>0;return String.fromCharCode(0x4e00+state%16000)}).join('');const c=await connect();const results=[];
+try{
+ await c.send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+ for(const kind of ['continuous','dispersed','ordinary','append']){
+  const root=`R-CFBE83/${kind}-${Date.now()}`,title='合成'+kind,target=root+'/wiki/'+title+'.md',before=kind==='append'?`---\n类型: 概念\naliases: []\n建议领域: 合成验收\n---\n# ${title}\n\n原有用户导语。\n\n## 要点\n用户原有观点应当保留。\n`:undefined;
+  const sources=Array.from({length:3},(_,i)=>({path:`${root}/raw/合成资料${i+1}.md`,content:`# 合成资料${i+1}\n\n${raw}\n必要短原句。\n`}));
+  await c.evaluate(`(async()=>{window.p=app.plugins.plugins['codex-echoink'];p.hideEchoInkOnboardingWorkspaceCard();for(const dir of ${JSON.stringify(['R-CFBE83',root,root+'/raw',root+'/wiki'])})if(!app.vault.getAbstractFileByPath(dir))await app.vault.createFolder(dir);for(const s of ${JSON.stringify(sources)}){const f=app.vault.getFileByPath(s.path);if(f)await app.vault.modify(f,s.content);else await app.vault.create(s.path,s.content);}if(${JSON.stringify(before)}!==undefined){const f=app.vault.getFileByPath(${JSON.stringify(target)});if(f)await app.vault.modify(f,${JSON.stringify(before)});else await app.vault.create(${JSON.stringify(target)},${JSON.stringify(before)});}const b=p.settings.knowledgeBase.folderBindings;b.revision++;for(const role of ['raw','wiki'])Object.assign(b.roles[role],{enabled:true,readPaths:[${JSON.stringify(root)}+'/'+role],writePath:${JSON.stringify(root)}+'/'+role});b.roles.inbox.enabled=false;p.settings.settingsLanguage='zh-CN';p.settings.workbenchDismissals={version:1,entries:{}};await p.saveSettings(true,{flushConversationStore:false});await p.activateHomeView();window.h=app.workspace.getLeavesOfType('codex-echoink-home')[0].view;await h.refresh();return true;})()`);
+  const statsBefore=(await(await fetch('http://127.0.0.1:19684/stats')).json()).length;
+  await fetch('http://127.0.0.1:19684/scenario',{method:'POST',body:JSON.stringify({kind,sources,target,title,before})});
+  const taskId=await c.evaluate(`(async()=>{const signal=(await h.port.load()).signals.find(s=>s.id===7);if(!signal||signal.source.objects.length!==3)throw Error('Expected three synthetic sources');return p.startWorkbenchSignalTask(p.settings.agentRegistry.moduleOwners['knowledge-base'],signal);})()`);
+  let settled=false;for(let i=0;i<200;i++){const busy=await c.evaluate(`(()=>{const r=p.getConversationRunService().runs.get(${JSON.stringify(taskId)});return !!(r?.running||r?.flight||r?.queueStartInProgress);})()`);if(!busy){settled=true;break;}await delay(150);}
+  assert.ok(settled,'synthetic turn settles');
+  const stats=await(await fetch('http://127.0.0.1:19684/stats')).json();const events=stats.slice(statsBefore).filter(e=>e.kind===kind);const file=path.join(process.env.ECHOINK_PERF_VAULT,target);let content=await fs.readFile(file,'utf8').catch(()=>null);
+  const report=await c.evaluate(`(async()=>{await p.ensurePiProductionRuntime();const runs=await p.piLocalData.productRuns.listReadOnly(${JSON.stringify(taskId)});return runs.map(r=>({state:r.state,terminal:r.terminalState,maintenance:r.maintenance?{processed:r.maintenance.processedSourcePaths.length,pending:r.maintenance.pendingSourcePaths.length}:null,error:r.error}));})()` ).catch(()=>[]);
+  const row={kind,taskId,events,exists:!!content,containsFullSource:content?.includes(raw)??false,preservesUserText:!before||content?.includes('用户原有观点应当保留。'),runs:report};results.push(row);await c.write('native-b-results.json',results);await c.evaluate('p.hideEchoInkOnboardingWorkspaceCard();true');await delay(900);await c.screenshot('native-b-'+kind);
+  assert.ok(events.some(e=>e.copyRejectedSeen),'copy rejection is returned to the model before rewrite');assert.ok(content,'rewritten page exists');assert.ok(!content.includes(raw),'raw full text is never written');assert.ok(row.preservesUserText);assert.equal(events.filter(e=>e.stage==='write').length,2,'bad draft then rewritten draft');
+ }
+ console.log(results.map(({kind,exists,containsFullSource,preservesUserText})=>({kind,exists,containsFullSource,preservesUserText})));
+}finally{c.close();}

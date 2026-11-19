@@ -269,8 +269,8 @@ export class FinanceLedger {
     if (base instanceof TFile) {
       const update = (text: string): string => {
         let value: unknown;
-        try { value = parse(text); } catch { throw new Error("现有 ledger.base 格式无效，未改写原文件"); }
-        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("现有 ledger.base 格式无效，未改写原文件");
+        try { value = parse(text); } catch { throw new Error("现有账本文件 ledger.base 格式无效，原文件未改写。请修正该文件后重新打开财务。"); }
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("现有账本文件 ledger.base 格式无效，原文件未改写。请修正该文件后重新打开财务。");
         const config = value as Record<string, unknown>;
         const replace = (item: unknown): unknown => {
           if (typeof item === "string") {
@@ -329,11 +329,11 @@ export class FinanceLedger {
     };
     const existing = this.app.vault.getAbstractFileByPath(this.basePath);
     if (existing) {
-      if (!(existing instanceof TFile)) throw new Error("账本.base 路径被目录占用");
+      if (!(existing instanceof TFile)) throw new Error("账本.base 的路径已被文件夹占用。请移走同名文件夹后重新打开财务。");
       const mergeMissingViews = (text: string): string => {
         let parsed: unknown;
-        try { parsed = parse(text); } catch { throw new Error("现有账本.base 格式无效，未改写原文件"); }
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("现有账本.base 格式无效，未改写原文件");
+        try { parsed = parse(text); } catch { throw new Error("现有账本文件 账本.base 格式无效，原文件未改写。请修正该文件后重新打开财务。"); }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("现有账本文件 账本.base 格式无效，原文件未改写。请修正该文件后重新打开财务。");
         const current = parsed as Record<string, unknown>;
         const views = Array.isArray(current.views) ? current.views as Record<string, unknown>[] : [];
         const missing = config.views.filter((view) => !views.some((item) => item?.name === view.name));
@@ -475,7 +475,7 @@ export class FinanceLedger {
   }
 
   private async createDirect(entry: FinanceEntry, sourceFields?: FinanceImportRow["sourceFields"], guard: () => void = () => {}): Promise<void> {
-    if (this.allIds.has(entry.id)) throw new Error(`账目已存在：${entry.id}`);
+    if (this.allIds.has(entry.id)) throw new Error("该账目已存在，未重复写入。");
     await this.ensureFolder(guard);
     const path = `${this.directory}/${fileName(entry.id)}`;
     if (this.app.vault.getAbstractFileByPath(path)) throw new Error(`账目目标文件已被占用：${path}`);
@@ -488,7 +488,7 @@ export class FinanceLedger {
 
   private async patchDirect(id: string, changes: Record<string, string | null>): Promise<void> {
     const file = this.files.get(id);
-    if (!file) throw new Error(`找不到账目：${id}`);
+    if (!file) throw new Error("未找到该账目，可能已被删除。请刷新后重试。");
     await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) => {
       for (const [key, value] of Object.entries(changes)) {
         if (value === null) delete frontmatter[key]; else frontmatter[key] = value;
@@ -677,7 +677,7 @@ export class FinanceLedger {
         return;
       }
       const ids = new Set(legacy.map((entry) => entry.id));
-      if (ids.size !== legacy.length) throw new Error("旧账目存在重复 ID，未清除旧数据");
+      if (ids.size !== legacy.length) throw new Error("旧账目中存在重复记录，旧数据已保留。请修正重复账目后重新打开财务。");
       await this.readDirect();
       if (this.unidentifiedNote) throw new Error("账目目录存在缺少有效属性的笔记，旧账目已保留，修正后可重试迁移");
       const created: FinanceEntry[] = [];
@@ -689,10 +689,10 @@ export class FinanceLedger {
         }
         await this.readDirect();
         const migrated = new Map(this.records.map((entry) => [entry.id, entry]));
-        if (legacy.some((entry) => !migrated.has(entry.id))) throw new Error("旧账目迁移数量核对失败");
+        if (legacy.some((entry) => !migrated.has(entry.id))) throw new Error("旧账目迁移后数量不一致，旧数据已保留。请重新打开财务后重试。");
         const expectedCents = created.reduce((sum, entry) => sum + entry.amountCents, 0);
         const actualCents = created.reduce((sum, entry) => sum + migrated.get(entry.id)!.amountCents, 0);
-        if (expectedCents !== actualCents) throw new Error("旧账目迁移金额核对失败");
+        if (expectedCents !== actualCents) throw new Error("旧账目迁移后金额不一致，旧数据已保留。请重新打开财务后重试。");
         await this.store.retainLegacyFinanceBackup();
         await this.store.update((draft) => { draft.financeEntries = []; });
       } finally { await this.readDirect(); }

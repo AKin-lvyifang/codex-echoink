@@ -1,3 +1,4 @@
+import { CAUSE, pickErrorCopy } from "../../core/error-copy";
 import { safeSkillCompareUrl } from "../../membership/skill-delivery";
 import { normalizeWebSearchSettings, webSearchApiKey, webSearchKeySource, setWebSearchApiKey, webSearchProvider, WEB_SEARCH_PROVIDERS } from "../../tools/web-search-settings";
 import { Notice } from "obsidian";
@@ -47,7 +48,7 @@ function resourcePage<T>(ctx: IPadSettingsContext, id: string, title: string, lo
       content.replaceChildren(); draw(content, value);
     }).catch(failure => {
       if (disposed || generation !== ticket) return;
-      content.replaceChildren(); const error = settingsError(ctx); showSettingsError(error, failure); content.append(error);
+      content.replaceChildren(); const error = settingsError(ctx); showSettingsError(error, failure, ctx); content.append(error);
       content.append(settingsAction(ctx, "重试", () => { key = undefined; refresh(); }));
     }).finally(() => { if (!disposed && generation === ticket) content.setAttribute("aria-busy", "false"); });
   };
@@ -63,7 +64,7 @@ export function createCapabilityPage(ctx: IPadSettingsContext, editAgent: EditAg
     try {
       const draft = await api.createMcpDraft(service?.id); if (disposed) return;
       opening = false; await ctx.push(createMcpPage(ctx, draft, service));
-    } catch (failure) { if (!disposed) showSettingsError(error, failure); }
+    } catch (failure) { if (!disposed) showSettingsError(error, failure, ctx); }
     finally { opening = false; if (!disposed) page.content.querySelectorAll<HTMLButtonElement>("button").forEach(button => { button.disabled = false; }); }
   };
   const page = resourcePage(ctx, "ipad-settings-caps", "能力", async () => {
@@ -100,7 +101,7 @@ function createSkillList(ctx: IPadSettingsContext, category: "builtin" | "pro" |
         const toggle = settingsToggle(ctx, `${t(ctx, "启用")}${skill.name}`, skill.enabled, async enabled => {
           error.hidden = true;
           try { await api.setSkillEnabled(skill.id, enabled); ctx.refresh(); }
-          catch (failure) { showSettingsError(error, failure); throw failure; }
+          catch (failure) { showSettingsError(error, failure, ctx); throw failure; }
         }); const hit = el(ctx.document, "label", "pd-settings-switch-hit"); hit.append(toggle); row.classList.add("has-switch-control"); row.append(hit);
       }
       group.append(row);
@@ -119,7 +120,7 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
       if (nested || allowLeave || !dirty()) return true;
       return leave ??= leaveSettingsConfirm(ctx, leaveArea).then(allowed => { leave = undefined; allowLeave = allowed; return allowed; });
     }, dispose: () => { disposed = true; generation++; } };
-  const report = (failure: unknown) => { if (!disposed) showSettingsError(error, failure); };
+  const report = (failure: unknown) => { if (!disposed) showSettingsError(error, failure, ctx); };
   function update(): void {
     content.setAttribute("aria-busy", String(busy));
     content.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLTextAreaElement>("button,input,textarea").forEach(control => { control.disabled = busy; });
@@ -134,7 +135,7 @@ function createSkillDetail(ctx: IPadSettingsContext, id: string, editAgent: Edit
     if (snapshot.remote || snapshot.readonly) {
       const english = ctx.host.settings().settingsLanguage === "en";
       content.append(el(ctx.document, "span", "pd-status", "PRO"));
-      const message = snapshot.locked ? (english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。") : snapshot.deliveryStatus;
+      const message = snapshot.locked ? pickErrorCopy(CAUSE.proRequired, english ? "en" : "zh") : snapshot.deliveryStatus;
       if (message) content.append(el(ctx.document, "p", "pd-settings-description", message));
       const compareUrl = snapshot.compareUrl ? safeSkillCompareUrl(snapshot.compareUrl) : null;
       if (compareUrl) content.append(textAction(ctx, english ? "View comparison" : "查看对比", () => { ctx.document.defaultView?.open(compareUrl, "_blank", "noopener,noreferrer"); }));
@@ -217,7 +218,7 @@ function createSkillAgentsPage(ctx: IPadSettingsContext, snapshot: MobileSkillSn
   const cancel = settingsAction(ctx, "取消", () => { allow = true; return ctx.back(); }), save = settingsAction(ctx, "保存", async () => {
     if (busy) return; busy = true; update(); error.hidden = true;
     try { const summary = await capabilities(ctx).saveSkillAgents(snapshot.id, [...selected], snapshot.agentsVersion); if (disposed) return; saved(summary); allow = true; busy = false; await ctx.back(); }
-    catch (failure) { if (!disposed) showSettingsError(error, failure); }
+    catch (failure) { if (!disposed) showSettingsError(error, failure, ctx); }
     finally { busy = false; if (!disposed) update(); }
   }, true);
   function update(): void { content.querySelectorAll<HTMLInputElement>("input").forEach(input => { input.disabled = busy; }); cancel.disabled = save.disabled = busy; content.setAttribute("aria-busy", String(busy)); }
@@ -237,7 +238,7 @@ function createMcpPage(ctx: IPadSettingsContext, input: MobileMcpDraft, summary?
   const tools = el(ctx.document, "div", "pd-cap-tools");
   const changed = () => { allowLeave = false; error.hidden = true; };
   const secrets = () => { let query: string[] = []; try { query = [...new URL(draft.url).searchParams.values()]; } catch { /* A partial URL is editable. */ } return [...Object.values(draft.headers), draft.url, ...query]; };
-  const report = (failure: unknown) => { if (!disposed) showSettingsError(error, safeFailure(failure, secrets())); };
+  const report = (failure: unknown) => { if (!disposed) showSettingsError(error, safeFailure(failure, secrets()), ctx); };
   const cancel = settingsAction(ctx, "取消", () => ctx.back()), stop = settingsAction(ctx, "停止", () => abort?.abort());
   const save = settingsAction(ctx, "保存", async () => {
     if (busy || readonly) return; busy = true; saving = true; error.hidden = true; update();
@@ -346,13 +347,13 @@ function createTavilyPage(ctx: IPadSettingsContext): MobileShellPage {
   const test = settingsAction(ctx, "测试连接", async () => {
     if (busy || !apiKey()) return; busy = true; saving = false; abort = new AbortController(); const request = abort, revision = ++generation; error.hidden = true; result.hidden = true; update();
     try { await api.testTavily({ ...draft }, request.signal); if (!disposed && revision === generation && !request.signal.aborted) { result.textContent = t(ctx, "连接成功"); result.hidden = false; } }
-    catch (failure) { if (!disposed && revision === generation) showSettingsError(error, request.signal.aborted ? t(ctx, "测试已取消。") : t(ctx, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey]))); }
+    catch (failure) { if (!disposed && revision === generation) showSettingsError(error, request.signal.aborted ? t(ctx, "测试已取消。") : t(ctx, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey])), ctx); }
     finally { if (revision === generation) { busy = false; abort = undefined; update(); } }
   });
   const save = settingsAction(ctx, "保存", async () => {
     if (busy || draft.enabled && !apiKey()) return; busy = true; saving = true; error.hidden = true; update();
     try { await api.saveTavily({ ...draft }); allowLeave = true; ctx.refresh(); if (!disposed) { new Notice(t(ctx, "已保存")); busy = false; saving = false; await ctx.back(); } }
-    catch (failure) { if (!disposed) showSettingsError(error, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey])); }
+    catch (failure) { if (!disposed) showSettingsError(error, safeFailure(failure, [draft.apiKey, draft.deepseekApiKey]), ctx); }
     finally { busy = false; saving = false; update(); }
   }, true);
   function update(): void {

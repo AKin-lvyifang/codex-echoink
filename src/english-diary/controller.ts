@@ -16,6 +16,7 @@ import type { EnglishDiaryViewHost } from "./view-host";
 import { EnglishDiaryView } from "./view";
 import { EnglishExpressionView } from "./expression-view";
 import { fingerprint } from "./model";
+import { diaryError } from "./ui";
 
 export class EnglishDiaryController implements EnglishDiaryViewHost {
   readonly api: EnglishDiaryService;
@@ -63,7 +64,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
     normalizeDiaryPath(directory);
     const existing = this.plugin.app.vault.getAbstractFileByPath(directory);
     if (existing && !(existing instanceof TFolder)) {
-      throw new Error("英文日记或表达库的保存位置被文件占用，请重新选择文件夹；已有资料仍可查看。");
+      throw new Error("英文日记或表达库的保存位置已有同名文件，已有资料仍可查看。请重新选择文件夹。");
     }
   }
   private canMigrateStorage(): boolean {
@@ -118,7 +119,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
     plugin.registerEvent(plugin.app.vault.on("delete", (file) => this.api.cancel(file.path)));
   }
   enabled(): boolean { return this.plugin.settings.englishDiary.enabled; }
-  private requireEnabled(): void { requireProPluginAction(this.api.access, this.enabled(), "enter"); if (!this.enabled()) throw new Error("请先在设置 → 插件中启用英文日记。"); }
+  private requireEnabled(): void { requireProPluginAction(this.api.access, this.enabled(), "enter"); if (!this.enabled()) throw new Error("英文日记尚未开启。请在 设置 → 插件 中开启。"); }
   async setEnabled(enabled: boolean): Promise<void> {
     requireProPluginAction(this.api.access, this.enabled(), "toggle");
     const previous = this.enabled();
@@ -162,7 +163,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
       return existing;
     }
     const file = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error("日记文件不存在，请重新打开原日记。");
+    if (!(file instanceof TFile)) throw new Error("日记文件不存在。请重新打开原日记。");
     const leaf = beside ? workspace.createLeafBySplit(beside, "vertical", true) : workspace.getLeaf("tab");
     await leaf.openFile(file, { state: { mode: "source" } });
     return leaf;
@@ -190,7 +191,7 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
     if (!expected || fingerprint(content) !== expected || ranges.some((range) => !Number.isInteger(range.start)
       || !Number.isInteger(range.end) || range.start < 0 || range.end <= range.start || range.end > content.length
       || content.slice(range.start, range.end) !== range.text)) {
-      new Notice("原稿已变化，已打开日记；请更新英文后再定位。");
+      new Notice("原稿已被修改，已打开日记。请更新英文后再定位。");
       return;
     }
     editor.setSelections(ranges.map((range) => ({ anchor: editor.offsetToPos(range.start), head: editor.offsetToPos(range.end) })));
@@ -207,12 +208,12 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
   }
   async openFile(path: string): Promise<void> {
     const file = this.plugin.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) throw new Error("文件已移动或不存在。");
+    if (!(file instanceof TFile)) throw new Error("原文件已不存在或已移动。请确认文件位置后重试。");
     await this.plugin.app.workspace.getLeaf("tab").openFile(file);
   }
   async generate(path: string, options: GenerateDiaryOptions = {}): Promise<DiaryRecord> {
     this.requireEnabled();
-    if (Platform.isMobile) throw new Error("请在电脑上生成英文；手机可直接阅读已有笔记。");
+    if (Platform.isMobile) throw new Error("英文生成仅支持电脑端。手机可直接阅读已有笔记。");
     const source = await this.api.readSource(path), record = await this.api.load(path);
     const sourceHash = fingerprint(source.content);
     if (record.englishModified && (options.force || record.result?.sourceFingerprint !== sourceHash || record.pending?.sourceFingerprint === sourceHash)) {
@@ -228,10 +229,10 @@ export class EnglishDiaryController implements EnglishDiaryViewHost {
     this.requireEnabled();
     await this.plugin.activateView();
     const view = this.plugin.getCodexView();
-    if (!view) throw new Error("无法打开 EchoInk 对话，请重试。");
+    if (!view) throw new Error("EchoInk 对话未能打开。请重试。");
     const prepared = view.prepareComposerDraft(`请帮我整理接下来提供的零散想法，用于日记 ${JSON.stringify(path)}。只使用我在本次对话中主动提供的内容，不要自动读取日记或其他笔记。先给我中文预览，经过我确认后再写入日记，不生成英文。\n\n我的想法：`);
     if (!prepared) new Notice("已打开当前对话，输入框中原有草稿已保留。");
   }
   dispose(): void { this.api.cancelAll(); }
 }
-function showError(error: unknown): void { new Notice(error instanceof Error ? error.message : String(error)); }
+function showError(error: unknown): void { new Notice(diaryError(error)); }

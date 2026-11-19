@@ -101,3 +101,36 @@ export async function runCssBehaviorSentinels() {
   }
   return { count: 3, errors };
 }
+
+/**
+ * 开关只有一套尺寸（origin-controls.css：轨道 36×21、滑块 15、位移 15）。
+ * 页面样式另写尺寸或位移，会出现“开到一半”的开关，所以这里直接拦下。
+ */
+export async function auditUnifiedSwitch(rootDir) {
+  const { default: postcss } = await import("postcss");
+  const { readdir, readFile } = await import("node:fs/promises");
+  const pathModule = await import("node:path");
+  const errors = [], geometry = /^(?:width|height|min-width|max-width|min-height|max-height|transform|translate|border-radius|top|left|inset)$/u;
+  const walk = async directory => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const full = pathModule.join(directory, entry.name);
+      if (entry.isDirectory()) { if (!/^(?:iphone|ipad|mobile|tests)$/u.test(entry.name)) await walk(full); continue; }
+      if (!entry.name.endsWith(".css") || entry.name === "origin-controls.css") continue;
+      postcss.parse(await readFile(full, "utf8")).walkRules(rule => {
+        for (const selector of rule.selectors ?? []) {
+          // 只看以开关或滑块本身为目标的选择器，不看“开关所在的行”。
+          let target = selector.split(/[\s>+~]+/u).at(-1) ?? "", previous = "";
+          // :not(...) 里提到开关是“排除开关”，不算以开关为目标。
+          while (previous !== target) { previous = target; target = target.replace(/:not\((?:[^()]|\([^()]*\))*\)/gu, ""); }
+          if (!/\[data-slot=["']?switch(?:-thumb)?["']?\]/u.test(target)) continue;
+          rule.walkDecls(declaration => {
+            if (geometry.test(declaration.prop)) errors.push(`${pathModule.relative(rootDir, full)}:${declaration.source?.start?.line ?? 0} 开关尺寸只在 origin-controls.css 定义，这里不要写 ${declaration.prop}`);
+          });
+          break;
+        }
+      });
+    }
+  };
+  await walk(pathModule.join(rootDir, "src"));
+  return { errors };
+}

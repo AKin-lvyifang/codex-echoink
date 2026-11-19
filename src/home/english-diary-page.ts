@@ -1,3 +1,4 @@
+import { actionFailureText } from "../core/error-copy";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, type EventRef, type WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -99,7 +100,7 @@ export class EnglishDiaryPageView extends ItemView {
     if (!this.snapshot) this.field("status").setText(this.t("正在读取英文日记…", "Reading English diaries…"));
     try {
       const repository = this.plugin.englishDiary?.api.repository;
-      if (!repository) throw new Error(this.t("英文日记尚未就绪", "English diary is not ready"));
+      if (!repository) throw new Error(this.t("英文日记尚未就绪。请稍后重试。", "English diary is not ready yet. Try again later."));
       const next = await loadEnglishDiaryPageData({ repository });
       if (this.closed || generation !== this.generation || !this.active()) return;
       if (this.snapshot) {
@@ -111,13 +112,13 @@ export class EnglishDiaryPageView extends ItemView {
       this.reset(this.field("status"));
       if (!this.plugin.settings.englishDiary.enabled) this.field("status").setText(this.t("英文日记已停用，请到设置中启用。已有文件仍可打开。", "English diary is disabled. Enable it in settings. Existing files can still be opened."));
       this.renderHeader(); this.renderMetrics(); this.renderHeatmap(); this.renderDiaries(); this.ensureExpressions();
-      this.expressions?.setEntries(next.expressions, next.errors.expressions ? this.t("表达暂时读不到，请重试。已有内容尚未更新。", "Expressions cannot be read. Retry; shown content is not updated.") : "");
+      this.expressions?.setEntries(next.expressions, next.errors.expressions ? this.t("表达暂时无法读取，请重试。已有内容尚未更新。", "Expressions cannot be read. Retry; shown content is not updated.") : "");
       this.showPage();
       if (this.requestedExpression) { const id = this.requestedExpression; this.requestedExpression = ""; await this.expressions?.openExpression(id); }
     } catch (error) {
       if (this.closed || generation !== this.generation) return;
       this.reset(this.field("status"));
-      this.regionError(this.field("status"), this.t("暂时读不到英文日记，请重试", "English diaries cannot be read. Please retry") + `：${this.error(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : ""));
+      this.regionError(this.field("status"), this.t("暂时无法读取英文日记，请重试", "English diaries cannot be read. Please retry") + `：${this.error(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : ""));
     }
   }
   openPage(page: DiaryPage, expressionId?: string): void {
@@ -130,7 +131,7 @@ export class EnglishDiaryPageView extends ItemView {
     if (!this.snapshot && this.active()) void this.refresh();
   }
   private reset(host: HTMLElement): void { disposeOriginControls(host); host.empty(); }
-  private error(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+  private error(error: unknown): string { return actionFailureText(error, this.plugin.settings.settingsLanguage); }
   private button(host: HTMLElement, text: string, action: () => unknown, cls = "is-tertiary"): HTMLButtonElement {
     const button = createOriginButton(host, { text, cls: `english-page-button ${cls}` });
     button.onclick = async () => {
@@ -229,15 +230,15 @@ export class EnglishDiaryPageView extends ItemView {
       title: this.t("日记足迹", "Diary activity"), label: (date, count) => this.t(`${date} · ${count} 个表达 · 生成 ${byDate.get(date)?.generationCount ?? 0} 次`, `${date} · ${count} expressions · ${byDate.get(date)?.generationCount ?? 0} generations`),
       summary: days => this.t(`生成 ${days.reduce((sum, day) => sum + (day.count ?? 0), 0)} 个表达 · 打卡 ${days.filter(day => (byDate.get(day.date)?.generationCount ?? 0) > 0).length} 天`, `${days.reduce((sum, day) => sum + (day.count ?? 0), 0)} generated expressions · ${days.filter(day => (byDate.get(day.date)?.generationCount ?? 0) > 0).length} active days`)
     });
-    this.regionError(host, data.errors.activity ? this.t("日记足迹暂时读不到，请重试。已有内容尚未更新。", "Diary activity cannot be read. Retry; shown content is not updated.") : "");
+    this.regionError(host, data.errors.activity ? this.t("日记足迹暂时无法读取，请重试。已有内容尚未更新。", "Diary activity cannot be read. Retry; shown content is not updated.") : "");
     this.syncActive();
   }
   private renderDiaries(): void {
     const host = this.field("diary"), previous = host.querySelector<HTMLElement>(".english-page-diary-list");
     if (previous) this.diaryScroll = previous.scrollTop;
     this.reset(host); const data = this.snapshot!;
-    this.regionError(host, data.errors.diaries ? this.t("部分英文日记暂时读不到，请重试。列表尚未完整更新。", "Some English diaries cannot be read. Retry; this list is not fully updated.") : "");
-    if (!data.diaries.length) { host.createDiv({ cls: "english-page-empty", text: data.errors.diaries ? this.t("暂时读不到英文日记", "English diaries are unavailable") : this.t("还没有英文日记", "No English diaries yet") }); return; }
+    this.regionError(host, data.errors.diaries ? this.t("部分英文日记暂时无法读取，请重试。列表尚未完整更新。", "Some English diaries cannot be read. Retry; this list is not fully updated.") : "");
+    if (!data.diaries.length) { host.createDiv({ cls: "english-page-empty", text: data.errors.diaries ? this.t("暂时无法读取英文日记", "English diaries are unavailable") : this.t("还没有英文日记", "No English diaries yet") }); return; }
     const pages = Math.max(1, Math.ceil(data.diaries.length / 20)); this.diaryPage = Math.min(this.diaryPage, pages);
     const list = host.createDiv({ cls: "english-page-diary-list" });
     for (const entry of data.diaries.slice((this.diaryPage - 1) * 20, this.diaryPage * 20)) {
@@ -248,7 +249,7 @@ export class EnglishDiaryPageView extends ItemView {
       if (entry.preview) copy.createSpan({ cls: "english-page-preview", text: entry.preview, attr: { lang: "en" } });
       const metadata = row.createSpan({ cls: "english-page-row-meta" });
       metadata.createSpan({ cls: "english-page-count", text: this.t(`${entry.expressionCount} 个表达`, `${entry.expressionCount} expressions`) });
-      const warnings = [entry.missingSource && this.t("原稿找不到了", "Original draft not found"), entry.missingEnglish && this.t("英文文件找不到了", "English file not found"), entry.sourceChanged && this.t("原稿有更新", "Original draft changed"), entry.englishModified && this.t("英文稿有手工修改", "English draft was edited")].filter(Boolean);
+      const warnings = [entry.missingSource && this.t("原稿已不存在", "The original draft no longer exists"), entry.missingEnglish && this.t("英文文件已不存在", "The English file no longer exists"), entry.sourceChanged && this.t("原稿有更新", "Original draft changed"), entry.englishModified && this.t("英文稿有手工修改", "English draft was edited")].filter(Boolean);
       if (warnings.length) metadata.createSpan({ cls: "english-page-note", text: warnings.join(" · ") });
       setIcon(row.createSpan({ cls: "english-page-row-arrow", attr: { "aria-hidden": "true" } }), "chevron-right");
     }
@@ -280,7 +281,7 @@ export class EnglishDiaryPageView extends ItemView {
     if (!this.snapshot?.expressions.length || !this.plugin.settings.englishDiary.enabled) return;
     const settings = this.plugin.settings.englishDiary;
     const paths = [...new Set([settings.expressionDirectory, ...(settings.legacyExpressionDirectories ?? [])].filter(Boolean))];
-    if (!paths.length) throw new Error(this.t("表达库位置尚未配置", "Expression library location is not configured"));
+    if (!paths.length) throw new Error(this.t("尚未设置表达库位置。请在英文日记设置中选择位置。", "No expression library location is set. Choose one in English diary settings."));
     const text = this.t("用最近收录的表达考考我。只读取以下表达库范围，不读取原始日记，也不生成或改写英文日记：", "Quiz me on recently saved expressions. Read only these expression library locations; do not read original diaries or generate or rewrite English diaries:") + "\n" + paths.map(path => `- ${path}`).join("\n");
     if (startNow) { await this.plugin.startModulePromptTask("english-diary", text); return; }
     const opened = await this.plugin.openAgentTaskList(owner.id, text);

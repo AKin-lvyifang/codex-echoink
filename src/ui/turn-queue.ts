@@ -28,6 +28,9 @@ export interface QueuedTurnItem {
   attachments: StoredAttachment[];
   /** Document bytes/text/transport frozen before this turn enters the queue. */
   preparedDocuments?: readonly Readonly<PiChatPreparedDocument>[];
+  preparedImages?: readonly Readonly<import("../harness/pi-native/contracts").PiChatPreparedImage>[];
+  /** Bodies already read before a later preparation failure; retries reuse them. */
+  preparedNoteMentions?: readonly Readonly<NoteMentionSnapshot>[];
   /** Whole-note bodies frozen when the Composer draft is sent or queued. */
   noteMentions?: readonly Readonly<NoteMentionSnapshot>[];
   selectionAnnotations?: readonly SelectionAnnotation[];
@@ -39,6 +42,9 @@ export interface QueuedTurnItem {
   piDraftId?: string;
   /** In-memory queue lease marker; never persisted as Conversation content. */
   piUserEntryAccepted?: boolean;
+  /** Exact durable user identity for replacing its display-only submission. */
+  piUserEntryId?: string;
+  piProductRunId?: string;
   /** Clear this exact Composer snapshot only after Pi durably accepts it. */
   clearComposerAfterPiAcceptance?: boolean;
 }
@@ -213,6 +219,8 @@ export function cloneQueuedTurnItem(item: QueuedTurnItem): QueuedTurnItem {
     ...(item.pdfTaskRequest ? { pdfTaskRequest: structuredClone(item.pdfTaskRequest) } : {}),
     ...(item.resumeContext ? { resumeContext: structuredClone(item.resumeContext) } : {}),
     attachments: item.attachments.map((attachment) => ({ ...attachment })),
+    ...(item.preparedNoteMentions ? { preparedNoteMentions: item.preparedNoteMentions.map(mention => ({ ...mention })) } : {}),
+    ...(item.preparedImages ? { preparedImages: item.preparedImages.map(image => ({ content: { ...image.content }, attachment: { ...image.attachment } })) } : {}),
     ...(item.preparedDocuments
       ? {
           preparedDocuments: item.preparedDocuments.map((document) => ({

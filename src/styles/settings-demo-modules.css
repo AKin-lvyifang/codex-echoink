@@ -279,9 +279,8 @@ body:not(.is-mobile) .echoink-settings-aligned .echoink-module-pro-required { fl
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(n) { border: 0; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(odd) { border-right: 1px solid var(--line); }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .metrics > div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
-.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-benefits-group { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .desktop-account-benefits-group { border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
 .echoink-settings-aligned .echoink-desktop-account-settings .echoink-account .plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.echoink-settings-aligned .echoink-desktop-account-settings .echoink-account button.desktop-account-device-navigation { min-height: 52px; padding: 13px 18px; border: 1px solid var(--line); border-radius: 10px; }
 .echoink-settings-aligned .echoink-desktop-account-settings .desktop-account-form :is(.form-field, .device-row) { min-width: 0; }
 .echoink-settings-aligned .echoink-desktop-account-settings .desktop-account-form .device-row { padding: 13px 18px; border-bottom: 1px solid var(--line); }
 

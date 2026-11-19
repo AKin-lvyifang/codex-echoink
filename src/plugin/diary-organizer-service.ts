@@ -1,4 +1,5 @@
 import { TFile } from "obsidian";
+import { getDecisionClient } from "../membership/decision-client";
 import type CodexForObsidianPlugin from "../main";
 import { DiaryOrganizerEngine } from "../diary-organizer/engine";
 import { DiaryOrganizerScheduler } from "../diary-organizer/scheduler";
@@ -59,6 +60,7 @@ export class DiaryOrganizerService {
       hasFinanceAccess: () => plugin.settings.lifestyle.finance.enabled && hasProPluginAccess(plugin.accountService ?? unavailableCapabilityAccess),
       isBusy: () => plugin.diaryOrganizerBusy(),
       generateText: request => plugin.generateDiaryOrganizerText(request.system, request.prompt, request.signal),
+      decideDiary: async request => await getDecisionClient()?.judgeDiary(request) ?? null,
       readFinanceSnapshot: async () => {
         const snapshot = await finance.readDiarySnapshot();
         return { entries: snapshot.records.map(record => ({ ...record.entry, version: record.version })),

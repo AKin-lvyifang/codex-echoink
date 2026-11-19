@@ -71,6 +71,7 @@ import {
   parseKnowledgeMaintenanceResultEnvelope
 } from "../knowledge-base/knowledge-maintenance-result";
 import { KnowledgeAgentIndex } from "../knowledge-base/knowledge-agent-index";
+import { userFacingErrorText } from "../core/error-copy";
 
 const { createHash, randomUUID } = getDesktopCrypto();
 const { TextDecoder } = getDesktopUtil();
@@ -444,7 +445,7 @@ implements PiKnowledgeMaintenanceToolPort {
     } catch (error) {
       if (!this.automaticLinkingEnabled()) return record;
       await this.state.updateLinkingMetadata(record.recordId, createKnowledgeMaintenanceResultEnvelope({ ...record.result,
-        issues: [...record.result.issues.filter(issue => issue.code !== "linking_start_failed"), { code: "linking_start_failed", message: `知识已写入，关联补全待恢复：${knowledgeErrorDetail(error)}` }]
+        issues: [...record.result.issues.filter(issue => issue.code !== "linking_start_failed"), { code: "linking_start_failed", message: `知识已写入，关联补全尚未开始：${userFacingErrorText(knowledgeErrorDetail(error), "关联服务暂时不可用").replace(/[。.]$/u, "")}。请在“Agent 权限与维护”中的“补全知识关联”处点击“开始”。` }]
       }), "知识已写入；关联补全待恢复，原稿保留。");
     }
     return await readPrivateMaintenanceRecord(this.privateKnowledgeRootPath, record.recordId, this.vaultId) ?? record;
@@ -826,7 +827,7 @@ implements Phase3MaintenanceStateStore {
     await serializePiNativeFileWrite(this.rootPath, async () => {
       const recordPath = path.join(await ensurePrivateStateDirectory(this.rootPath, ["records"]), `${requireControlId(recordId)}.json`);
       const previous = await readControlEnvelope(recordPath, this.vaultId, "record") as KnowledgeMaintenanceRecord | null;
-      if (!previous || previous.originConversationId && previous.originConversationId !== originConversationId) throw new Error("维护记录来源冲突");
+      if (!previous || previous.originConversationId && previous.originConversationId !== originConversationId) throw new Error("维护记录与原任务不一致。请回到原任务继续。");
       if (!previous.originConversationId) await writeControlEnvelope(recordPath, this.vaultId, "record", { ...previous, originConversationId });
     });
   }
@@ -982,10 +983,10 @@ export async function rebasePrivateMaintenanceRecords(rootPath: string, from: st
 }
 
 async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, vaultId?: string): Promise<KnowledgeMaintenanceRecord | null> {
-  if (!/^maintenance-[a-f0-9]{32}$/u.test(recordId)) throw new Error("维护记录身份无效");
+  if (!/^maintenance-[a-f0-9]{32}$/u.test(recordId)) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   const raw = await readJsonFileIfPresent(path.join(rootPath, "records", `${recordId}.json`), "维护记录");
   if (raw === null) return null;
-  if (!isRecord(raw) || typeof raw.vaultId !== "string") throw new Error("维护记录无效");
+  if (!isRecord(raw) || typeof raw.vaultId !== "string") throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   const payload = parseControlEnvelope(raw, vaultId ?? raw.vaultId, "record").payload;
   if (!isRecord(payload)
     || payload.schemaVersion !== 1
@@ -1000,9 +1001,9 @@ async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, 
     || payload.sources.some((source) => !isRecord(source)
       || typeof source.path !== "string" || typeof source.fingerprint !== "string"
       || !["processed", "unread", "failed"].includes(String(source.status))
-      || !Array.isArray(source.evidencePaths) || source.evidencePaths.some((value) => typeof value !== "string"))) throw new Error("维护记录版本或身份无效");
+      || !Array.isArray(source.evidencePaths) || source.evidencePaths.some((value) => typeof value !== "string"))) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   const result = parseKnowledgeMaintenanceResultEnvelope(payload.result);
-  if (!result) throw new Error("维护记录结果无效");
+  if (!result) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   if (payload.pendingLinking !== undefined && (!isRecord(payload.pendingLinking)
     || payload.pendingLinking.taskId !== recordId
     || !Array.isArray(payload.pendingLinking.sourcePaths) || payload.pendingLinking.sourcePaths.some(value => typeof value !== "string" || !result.notes.some(note => note.path === value))

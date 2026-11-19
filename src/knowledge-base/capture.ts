@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { getDesktopFs, getDesktopFsPromises } from "../platform/desktop-filesystem";
 import { getDesktopPath } from "../platform/desktop-paths";
 import { resolveKnowledgeRoleTarget, getKnowledgeFolderBindings } from "./root-paths";
@@ -84,12 +85,12 @@ export class KnowledgeBaseCaptureService {
   async captureActiveAttachment(): Promise<void> {
     const file = this.plugin.app.workspace.getActiveFile();
     if (!(file instanceof TFile)) {
-      new Notice("没有可收集的当前文件");
+      new Notice("当前没有打开的文件。请先打开图片或 PDF。");
       return;
     }
     const ext = path.extname(file.path).toLowerCase();
     if (!SUPPORTED_RAW_EXTENSIONS.has(ext) || [".md", ".markdown", ".txt"].includes(ext)) {
-      new Notice("当前文件不是图片或 PDF");
+      new Notice("当前文件不是图片或 PDF。请打开图片或 PDF 后重试。");
       return;
     }
     const vaultPath = this.plugin.getVaultPath();
@@ -101,7 +102,7 @@ export class KnowledgeBaseCaptureService {
 
   private async captureRawArticleInput(value: string, kind?: CaptureLinkKind, feedback?: CaptureLinkFeedback): Promise<string[]> {
     const url = extractFirstUrl(value);
-    if (!url) throw new Error("收藏只支持网页和公众号链接");
+    if (!url) throw new Error(CAUSE.captureLinkUnsupported[0]);
     if (!kind) return this.captureLink(value, feedback);
     return kind === "wechat" ? this.captureWeChatUrl(url) : this.captureWebUrl(url, value);
   }
@@ -147,12 +148,12 @@ export class KnowledgeBaseCaptureService {
       return legacy;
     }
     const relative = knowledgeCollectionDirectory(config, kind);
-    if (!relative) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}收藏位置尚未选择或已失效，请到知识库 → Agent 产出物保存到重新选择。`);
+    if (!relative) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}收藏位置尚未选择或已失效。请在 设置 → 知识库 → Agent 产出物保存到 中重新选择。`);
     let current = await fsp.realpath(vaultPath);
     for (const segment of relative.split("/")) {
       current = path.join(current, segment);
       const stat = await fsp.lstat(current).catch(error => { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; });
-      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}的原收藏目录已失效，请到知识库 → Agent 产出物保存到重新选择。`);
+      if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error(`${KNOWLEDGE_COLLECTION_LABELS[kind]}的原收藏位置已失效。请在 设置 → 知识库 → Agent 产出物保存到 中重新选择。`);
     }
     return current;
   }
@@ -171,7 +172,7 @@ export class KnowledgeBaseCaptureService {
     });
     const html = response.text;
     if (isHtmlVerificationBlocked(html)) {
-      throw new Error(`${source}收藏失败：网页需要验证或登录，插件不会绕过验证。`);
+      throw new Error(`${source}未能收藏：该网页需要验证或登录。请在浏览器中打开后手动保存内容。`);
     }
     const article = extractArticleMarkdown(html, url);
     const now = new Date();
@@ -193,7 +194,7 @@ export class KnowledgeBaseCaptureService {
       article.markdown || "正文提取失败，仅保留来源链接。",
       ""
     ].filter((line) => line !== "").join("\n");
-    if (await this.collectionDirectory(vaultPath, kind) !== dest) throw new Error("收藏位置已更改，请重新收藏。");
+    if (await this.collectionDirectory(vaultPath, kind) !== dest) throw new Error("收藏位置已更改。请重新收藏。");
     await fsp.writeFile(absolute, body, "utf8");
     return normalizePath(path.relative(vaultPath, absolute));
   }
@@ -211,7 +212,7 @@ export class KnowledgeBaseCaptureService {
       const target = await this.copyCapturedFile(file.path, targetDir, `${formatDateTimeForFile(new Date())}-${path.basename(file.path)}`);
       copied.push(normalizePath(path.relative(vaultPath, target)));
     }
-    if (!copied.length) throw new Error("请选择 PDF、Word、Markdown、文本或图片文件。");
+    if (!copied.length) throw new Error("文件格式不受支持。请选择 PDF、Word、Markdown、文本或图片文件。");
     return copied;
   }
 

@@ -21,6 +21,9 @@ import type {
   MembershipRights,
   CheckInSummary,
   CheckInResult,
+  MembershipEntitlements,
+  PointsSummary,
+  PointsHistory,
 } from "./types";
 import { hasProPluginAccess } from "./access";
 import { signProof, verifyLease } from "./crypto";
@@ -30,31 +33,8 @@ import { parseOfficialSkillCatalog, parseSkillDelivery, REMOTE_SKILL_IDS,
 import { parseExpertCatalog, parseExpertDelivery, validExpertId,
   type ExpertCatalog, type ExpertDeliveryResponse, type ExpertPlatform } from "../experts/contracts";
 
-const ERRORS: Record<string, string> = {
-  AUTH_REQUIRED: "请重新登录账号。",
-  AUTH_FAILED: "邮箱或登录凭据无效，请重试。",
-  OTP_INVALID: "验证码无效、已使用或已过期，请重新获取对应验证码。",
-  RATE_LIMITED: "请求较频繁，请稍后重试。",
-  MAIL_UNAVAILABLE: "邮件服务暂不可用，请稍后重试。",
-  DEVICE_LIMIT: "设备名额已满，请先解绑旧设备。",
-  DEVICE_REVOKED: "本机已解绑，请重新启用设备。",
-  PRO_REQUIRED: "此操作需要有效 PRO 权益。",
-  REVOKED: "该授权已撤销，请联系支持核实。",
-  SUBSCRIPTION_EXPIRED: "订阅已到期，已有资料仍可查看。",
-  ENTITLEMENT_SCHEDULED: "权益尚未生效，请查看开始日期。",
-  CODE_ALREADY_REDEEMED: "兑换码已被使用。",
-  CODE_INVALID: "兑换码无效。",
-  CODE_FOR_OTHER_ACCOUNT: "此内测激活码属于其他账号，请使用本人领取的激活码。",
-  BETA_ENDED: "内测活动已结束，此激活码已不可兑换。已有资料仍可查看。",
-  ALREADY_OWNED: "已拥有对应买断权益，无需重复购买。",
-  PASSWORD_LENGTH: "密码需为10至128个字符。",
-  PRODUCT_UNAVAILABLE: "购买待开放；已有激活码可在账号与会员中兑换。",
-  SERVICE_UNAVAILABLE: "账号服务暂不可用。",
-  OPERATION_CANCELLED: "账号已切换，本次操作已取消。",
-  ACCOUNT_DISABLED: "账号已停用，无法下载 Skill。",
-  PROOF_INVALID: "设备授权已失效，请联网重新验证。",
-  VERSION_NOT_COVERED: "当前版本不支持此 Skill，请检查插件更新。",
-};
+import { membershipErrorText, membershipFailureText } from "./messages";
+import { PRO_ACCESS_COPY } from "../core/error-copy/codes/account";
 
 function hasTimerUnref(value: unknown): value is { unref(): void } {
   return value !== null && typeof value === "object" && "unref" in value && typeof value.unref === "function";
@@ -63,7 +43,7 @@ function hasTimerUnref(value: unknown): value is { unref(): void } {
 export class MembershipApiError extends Error {
   readonly retryAfter?: number;
   constructor(readonly code: string, retryAfter?: number) {
-    super(ERRORS[code] || "账号请求未完成，请重试。");
+    super(membershipErrorText(code));
     if (Number.isSafeInteger(retryAfter) && retryAfter! > 0) this.retryAfter = retryAfter;
   }
 }
@@ -93,6 +73,7 @@ export class AccountService implements CapabilityAccess {
   private refreshError: string | null = null;
   private initializing = true;
   private listeners = new Set<() => void>();
+  private signInReturnListeners = new Set<() => Promise<void>>();
   private refreshFlight: Promise<void> | null = null;
   private persistence: Promise<void> = Promise.resolve();
   private closed = false;
@@ -101,7 +82,9 @@ export class AccountService implements CapabilityAccess {
   private readonly skillSessionId = crypto.randomUUID();
   private refreshGeneration = -1;
   private products: MembershipProduct[] = [];
+  private proMonthlyPoints = 0;
   private salesOpen = false;
+  private maxSalesOpen = false;
   private earlyOffer: MembershipEarlyOffer | null = null;
   private betaOffer: MembershipRights["betaOffer"] = null;
   private expiryTimer: number | null = null;
@@ -172,6 +155,9 @@ export class AccountService implements CapabilityAccess {
         );
         this.assertCurrent(operation);
         if (id === this.state.deviceId) this.clearLease();
+        // A refresh started before DELETE may still contain the removed device.
+        await this.refreshFlight?.catch(() => undefined);
+        this.assertCurrent(operation);
         await this.refresh(true);
       },
       openOrders: async () => {
@@ -179,7 +165,9 @@ export class AccountService implements CapabilityAccess {
       },
       selectPlan: async ({ planId }) => {
         this.assertCurrent(this.operation());
-        if (!["early", "month", "quarter", "year"].includes(planId) || !membershipPlanAction(this.read(), planId, "CNY", false, true).purchasable) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
+        // Every family uses the same catalogue validation as its purchase button.
+        if (planId.startsWith("max-") && !this.state.account) throw new MembershipApiError("AUTH_REQUIRED");
+        if (!["early", "month", "quarter", "year", "max-month", "max-quarter", "max-year"].includes(planId) || !membershipPlanAction(this.read(), planId, "CNY", false, true).purchasable) throw new MembershipApiError("PRODUCT_UNAVAILABLE");
         this.openWebsite(membershipWebsiteLink(`plugin.plan.${planId}`, { baseURL: this.websiteUrl, planId, currency: "CNY" }));
       },
     };
@@ -200,8 +188,44 @@ export class AccountService implements CapabilityAccess {
       throw new MembershipApiError("OPERATION_CANCELLED");
   }
 
+  /** The membership login token, for the 小echo provider only; null when signed out. */
+  apiToken(): string | null { return !this.closed && this.state.token ? this.state.token : null; }
+  /** Latest entitlements snapshot from /api/membership (points, sync, tier); null until the first refresh. */
+  entitlements(): MembershipEntitlements | null { return this.state.rights?.entitlements ?? null; }
+  async getPoints(): Promise<PointsSummary> {
+    const operation = this.operation();
+    if (!operation.token) throw new MembershipApiError("AUTH_REQUIRED");
+    return await this.call("/api/points", "GET", undefined, operation);
+  }
+  async getXiaoechoModels(): Promise<unknown> {
+    const operation = this.operation();
+    if (!operation.token) throw new MembershipApiError("AUTH_REQUIRED");
+    return await this.call("/api/xiaoecho/models", "GET", undefined, operation);
+  }
+  /** After a 小echo turn: refresh the balance shown in settings and report whether the server fell back to auto. */
+  async afterXiaoechoTurn(since: number): Promise<{ fallback: boolean; balance: string } | null> {
+    const operation = this.operation();
+    if (!operation.token) return null;
+    const [points, history] = await Promise.all([
+      this.call("/api/points", "GET", undefined, operation),
+      this.call("/api/points/history?page=1", "GET", undefined, operation) as Promise<PointsHistory>,
+    ]);
+    this.assertCurrent(operation);
+    const rights = this.state.rights;
+    if (rights?.entitlements) {
+      this.state = { ...this.state, rights: { ...rights, entitlements: { ...rights.entitlements, points: { ...rights.entitlements.points, balanceMilli: points.balanceMilli, balance: points.balance, nextExpiry: points.nextExpiry } } } };
+      this.emit();
+    }
+    const latest = history?.items?.[0];
+    return { fallback: !!latest && latest.createdAt >= since - 120_000 && latest.fallback === true, balance: points.balance };
+  }
   /** An opaque in-memory session revision; no token or PRO/device lease is exposed. */
   checkInSession(): number | null { return !this.closed && this.state.token ? this.generation : null; }
+  /** What the cloud sync engine needs: the account identity for key derivation and the Bearer to forward to the sync service. */
+  cloudSyncSession(): { readonly apiUrl: string; readonly token: string; readonly accountId: string; readonly passwordSet: boolean; readonly deviceId: string | null } | null {
+    if (this.closed || !this.apiUrl || !this.state.token || !this.state.account) return null;
+    return { apiUrl: this.apiUrl, token: this.state.token, accountId: this.state.account.id, passwordSet: this.state.account.passwordSet === true, deviceId: this.state.deviceId ?? null };
+  }
 
   /** Opaque cache ownership only. Credentials and the signed lease stay here. */
   skillAuthorization(): SkillAuthorization | null {
@@ -293,7 +317,27 @@ export class AccountService implements CapabilityAccess {
   /** Voluntary upload; credentials remain inside the account transport. */
   async submitRunReport(report: unknown): Promise<unknown> {
     const operation = this.operation();
-    return await this.call("/api/run-reports", "POST", { report }, operation);
+    if (!operation.token || !this.read().identity) throw new MembershipApiError("AUTH_REQUIRED");
+    try { return await this.call("/api/run-reports", "POST", { report }, operation); }
+    catch (error) {
+      if (this.isCurrent(operation) && error instanceof MembershipApiError && ["AUTH_REQUIRED", "UNAUTHORIZED"].includes(error.code)) {
+        ++this.generation; ++this.skillGeneration;
+        this.state = {}; this.claims = null; this.clearProducts();
+        // Invalidate immediately, including when secure storage cannot be written.
+        this.emit();
+        await this.persist().catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  onSignInReturned(listener: () => Promise<void>): () => void {
+    this.signInReturnListeners.add(listener);
+    return () => this.signInReturnListeners.delete(listener);
+  }
+  /** Called by the login UI only after its own close/back operation completes. */
+  async signInReturned(): Promise<void> {
+    if (!this.closed && this.read().identity) for (const listener of this.signInReturnListeners) await listener();
   }
 
   async getCheckIns(date: string): Promise<CheckInSummary> {
@@ -576,12 +620,16 @@ export class AccountService implements CapabilityAccess {
   }
   private clearProducts(): void {
     this.products = [];
+    this.proMonthlyPoints = 0;
     this.salesOpen = false;
+    this.maxSalesOpen = false;
     this.earlyOffer = null;
   }
   private updateProducts(products: MembershipApiResponses["/api/products"]): void {
     this.products = products.products;
+    this.proMonthlyPoints = Number.isSafeInteger(products.proMonthlyPoints) && products.proMonthlyPoints! > 0 ? products.proMonthlyPoints! : 0;
     this.salesOpen = products.salesOpen === true;
+    this.maxSalesOpen = products.maxSalesOpen === true;
     this.earlyOffer = products.earlyOffer ?? null;
     this.betaOffer = products.betaOffer ?? null;
   }
@@ -603,7 +651,7 @@ export class AccountService implements CapabilityAccess {
         } catch (error) {
           if (!this.isCurrent(operation)) return;
           this.clearProducts();
-          this.refreshError = error instanceof Error ? error.message : "商品信息加载失败，请重试。";
+          this.refreshError = membershipFailureText(error, "PRODUCTS_UNAVAILABLE");
         }
       } else this.clearProducts();
       if (this.isCurrent(operation)) await this.persist();
@@ -629,7 +677,7 @@ export class AccountService implements CapabilityAccess {
       const account = accountResult.value, rights = rightsResult.value;
       this.connected = true;
       this.refreshError = productsResult.status === "rejected"
-        ? productsResult.reason instanceof Error ? productsResult.reason.message : "商品信息加载失败，请重试。"
+        ? membershipFailureText(productsResult.reason, "PRODUCTS_UNAVAILABLE")
         : null;
       this.state = {
         ...this.state,
@@ -658,7 +706,7 @@ export class AccountService implements CapabilityAccess {
     } catch (error) {
       if (!this.isCurrent(operation)) return;
       this.connected = false;
-      this.refreshError = error instanceof Error ? error.message : "会员验证失败，请重试。";
+      this.refreshError = membershipFailureText(error, "VERIFY_FAILED");
       if (
         error instanceof MembershipApiError &&
         error.code === "AUTH_REQUIRED"
@@ -786,10 +834,13 @@ export class AccountService implements CapabilityAccess {
         deviceLimit: rights?.deviceLimit || null,
       },
       products: this.products,
+      proMonthlyPoints: this.proMonthlyPoints,
       salesOpen: this.salesOpen,
+      maxSalesOpen: this.maxSalesOpen,
       earlyOffer: this.earlyOffer,
       activityGifts: rights?.activityGifts ?? [],
       betaOffer: rights?.betaOffer ?? this.betaOffer,
+      entitlements: rights?.entitlements ?? null,
       serviceAvailable: !!this.apiUrl && !this.initializing,
       storageNotice: this.storage.persistent
         ? null
@@ -814,15 +865,11 @@ export class AccountService implements CapabilityAccess {
     if (this.checkCapability(capability)) return;
     const state = this.read().membership.state;
     throw new Error(
-      state === "verification-required"
-        ? "需要联网验证会员，已有资料仍可查看。"
-        : state === "device-required"
-          ? "已拥有 PRO，请在账号与会员中启用本机。"
-          : state === "device-limit"
-            ? "设备名额已满，请管理旧设备后启用本机。"
-            : state === "scheduled"
-              ? "权益尚未生效，请查看开始日期。"
-              : "此操作需要有效 PRO；已有资料仍可查看。",
+      (state === "verification-required" ? PRO_ACCESS_COPY.verificationRequired
+        : state === "device-required" ? PRO_ACCESS_COPY.deviceRequired
+          : state === "device-limit" ? PRO_ACCESS_COPY.deviceLimit
+            : state === "scheduled" ? PRO_ACCESS_COPY.scheduled
+              : PRO_ACCESS_COPY.required)[0],
     );
   }
   subscribe(listener: () => void): () => void {
@@ -845,6 +892,7 @@ export class AccountService implements CapabilityAccess {
     this.expiryTimer = null;
     ++this.generation;
     this.listeners.clear();
+    this.signInReturnListeners.clear();
     this.claims = null;
     this.state = {};
     this.clearProducts();

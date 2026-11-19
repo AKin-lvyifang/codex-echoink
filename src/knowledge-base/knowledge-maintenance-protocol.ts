@@ -42,7 +42,7 @@ export const ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_STEPS = Object.freeze([
 
 export type { KnowledgeMaintenanceRawBinding, KnowledgeMaintenanceSourceEvidence } from "./knowledge-maintenance-sources-core";
 
-import { knowledgeFolderOrganizationPrompt, projectedKnowledgeFolderRoles } from "./folder-bindings";
+import { knowledgeFolderOrganizationPrompt, knowledgeFolderBindingPrompt } from "./folder-bindings";
 import type { KnowledgeRootRole } from "./root-paths-core";
 
 const path = getDesktopPath();
@@ -72,7 +72,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     "新条目使用简短对象名，例如SQLite、阿波罗13号；不用SQLite 的适用场景与限制或阿波罗13号：成功的失败作新文件名/H1，文章角度写进导语。新拆解标题被拒绝时改好再提交，不动已冻结旧页。",
     "未成功页因用户编辑而冲突时，保留用户修改和所有成功页；继续后先note_read完整重读该目标，再sections取得新区域，用新区域生成局部sectionPatches。不能只换版本号重放旧草稿，不重写成功页。用户只需知道哪页被改过、已保留什么，以及点继续会重新读取后处理。",
     `固定协议版本：${ECHOINK_KNOWLEDGE_MAINTENANCE_PROTOCOL_VERSION}`,
-    bindings ? `真实绑定：${JSON.stringify(projectedKnowledgeFolderRoles(bindings, roleScope))}` : "使用当前真实 Raw/Inbox 与 Wiki 路径。",
+    bindings ? knowledgeFolderBindingPrompt(bindings, roleScope) : "使用当前真实 Raw/Inbox 与 Wiki 路径。",
     "本轮只处理已选 Raw 与 Inbox Markdown，最多20篇，同一会话单模型串行。通常省略工具根sourcePaths并继承冻结范围；每页writingPlan[].sourcePaths仍逐字列来源，不能据此缩窄根批次。不得读取历史维护报告充当来源，不合并两张既有Wiki页。",
     "只有真实读取确认同批选定来源均已提炼时，用knowledge_maintain(stage=inspect,view=pages)取得只读无需再写的回执（query仍按前述显式候选例外），不要重新decompose，也不要仅凭自然语言结束；有未完成清单则沿原清单继续。",
     "未提炼新批不要先inspect/resume。程序强制阶段：每篇完整note_read后立即knowledge_maintain(stage=decompose,decompositions:[{sourcePath,summary,units:[{id,type,typePendingConfirmation?,domain,title,aliases,points,evidence:[{sourcePath,sourceRevision,quote}]}]}])；同stage=decompose可逐篇提交并保存严格校验检查点，保留完整批次范围；全批齐备才plan，不把读取算拆完；每篇decomposition在decompositions里并列，不能嵌入另一篇units；同一点也使用每来源独立且全批唯一的id（如s01_u1/s02_u1），plan才聚合。sourceRevision用真实note_read的contentSha256或contentRevision（64位全文hash或sha256:前缀），quote使用原文连续原句；程序仅可兼容同一普通段落内的排版空白差异并保存实际源片段和位置，仅允许明确全半角标点及老式反引号引号等确定性排版等价，不改大小写/字词，不跨段落或代码边界。错误会列unit/source/quoteIndex和收到引文，修正quote后沿用ID重发受影响来源，不必换ID或删来源。程序仅检查原句存在和版本，模型还须自检原句是否支持要点；只拆解不写。",

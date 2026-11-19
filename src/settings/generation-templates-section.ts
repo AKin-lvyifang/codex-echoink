@@ -5,6 +5,8 @@ import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "./
 import { createOriginButton, createOriginInput, createOriginRadioGroup } from "./origin-controls";
 import { createSettingsGroup, createSettingsNavigationRow, createSettingsPage, createSettingsSection, showSettingsInlineConfirmation } from "./settings-v2";
 import { defaultGenerationTemplates, generationTemplateIsEdited, normalizeGenerationTemplates, uniqueGenerationTemplateName, validateGenerationTemplate } from "./generation-templates";
+import { NEXT, failureText } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 
 interface GenerationTemplateSettingsHost {
   settings: { settingsLanguage: string; generationTemplates: GenerationTemplate[] };
@@ -140,7 +142,7 @@ export class GenerationTemplatesSection {
     try { await this.plugin.saveSettings(); this.pending = false; done(); }
     catch (error) {
       if (this.plugin.settings.generationTemplates === templates) this.plugin.settings.generationTemplates = previous;
-      status.setText(this.text("保存失败：", "Save failed: ") + (error instanceof Error ? error.message : String(error)));
+      status.setText(failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, this.plugin.settings.settingsLanguage));
     } finally { this.pending = false; }
   }
 }

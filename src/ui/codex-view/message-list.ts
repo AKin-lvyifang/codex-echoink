@@ -1,8 +1,15 @@
+import { composerReadingSpace } from "../conversation-scroll";
+import { errorText, failureText, NEXT, actionFailureText } from "../../core/error-copy";
+import { projectCompanyReports, type CompanyReportProjection, type CompanyReportSource } from "../../company/report-presentation";
+import { renderCompanyReportSource } from "../company-report-source";
 import { showConversationContentLocationNotice } from "../conversation-content-notice";
 import { ConversationContentLocationError } from "../../knowledge-base/conversation-content";
 import { ownedFragment, ownedEl } from "../owned-dom";
-import { disposeOriginControls } from "../../settings/origin-controls";
+import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
+import { knowledgeWikiWriteIssue, requestsKnowledgeWrite } from "../../knowledge-base/knowledge-write-context";
 import { renderAnimateIcon } from "../animate-icon";
+import { memoryRecallReason } from "../../home/memory/memory-panel";
+import { THINKING_NODE_ID, type PreparationUpdate } from "../../types/composer-submission";
 import type { MemoryReceipt } from "../../home/memory/memory-page-types";
 import { attachNativeTooltip } from "../native-tooltip";
 import { generationApprovalPresentation, generationProgressStage, generationProgressTitle, isGenerationProgressMessage } from "../../generation/projection";
@@ -11,7 +18,7 @@ import { maintenancePageLabel } from "../../knowledge-base/maintenance-user-copy
 import { renderGenerationRequestSummary, renderGenerationResultCard } from "../../generation/message-ui";
 import { openSelectionAnnotationSource } from "../../selection-ask/navigation";
 import { renderSelectionAnnotationSummary } from "./selection-annotations";
-import { Notice, normalizePath, setIcon, TFile, type App, type Component, type Editor } from "obsidian";
+import { Notice, normalizePath, setIcon, TFile, TFolder, type App, type Component, type Editor } from "obsidian";
 import type {
   ChatMessage,
   DiffSummary,
@@ -43,6 +50,7 @@ import {
 import { buildActionTimeline, isActionTimelineItem, type ActionGroupKind, type ActionItemViewModel } from "./action-timeline";
 import {
   buildAgentTurnProjection,
+  buildPreparationProcessNodes,
   formatAgentTurnSummary,
   isAgentAnswerMessage,
   isAgentProcessItemType,
@@ -136,6 +144,13 @@ interface LocalMemoryDocumentSource {
 
 type LocalDocumentSource = LocalVaultDocumentSource | LocalMemoryDocumentSource;
 
+export function shouldShowThinkingLive(turn: Pick<AgentTurnView, "status" | "providerReasoningSegments" | "messages" | "processNodes">): boolean {
+  return !isTerminalTurnStatus(turn.status)
+    && !turn.providerReasoningSegments.some(segment => segment.text.trim())
+    && !turn.messages.some(message => (isAgentAnswerMessage(message) && message.text.trim()) || isActionTimelineItem(message))
+    && !turn.processNodes.some(node => node.nodeId !== THINKING_NODE_ID && node.status === "running");
+}
+
 export interface MessageListRenderOptions {
   forceBottom?: boolean;
   fromScroll?: boolean;
@@ -169,6 +184,7 @@ export interface MessageListRenderInput {
   sessionId: string;
   sourcePath?: string;
   conversationTitle?: string;
+  companyRole?: string;
   knowledgeFolderBindings?: KnowledgeFolderBindings | null;
   getKnowledgeFolderBindings?: () => KnowledgeFolderBindings | null | undefined;
   settingsLanguage: SettingsLanguage;
@@ -186,6 +202,7 @@ export interface MessageListRenderInput {
   onAnswerSaved?: (messageId: string, path: string) => Promise<void>;
   onAnswerDirectoryReady?: (directory: string) => Promise<void>;
   onOpenOutputLocationSettings?: (kind: "answer" | "generation") => void | Promise<void>;
+  onOpenKnowledgeDirectorySettings?: () => void | Promise<void>;
   onOpenConversationContentSettings?: () => void | Promise<void>;
   onDerivePiConversation?: (entryId: string) => Promise<void>;
   piConversationDeriveDisabled?: boolean;
@@ -204,6 +221,7 @@ export interface MessageListRenderInput {
   onScheduleMeasure: (forceBottom?: boolean) => void;
   onScheduleRunProgress: () => void;
   shouldFollowBottom?: () => boolean;
+  isTurnRunning?: () => boolean;
   onProcessDisclosureToggle?: () => void;
   /** Persistent transcript decorations must be restored before row measurement. */
   onAfterRenderRows?: (root: HTMLElement, rows: readonly MessageListRenderedRow[]) => void;
@@ -424,9 +442,15 @@ interface DisclosureAutoFoldRegistration {
 interface TextSelectionBookmark {
   readonly anchorOffset: number;
   readonly focusOffset: number;
+  readonly anchorNode: Node;
+  readonly focusNode: Node;
+  readonly anchorNodeOffset: number;
+  readonly focusNodeOffset: number;
 }
 
 export class CodexMessageListRenderer {
+  private reportProjection: CompanyReportProjection = projectCompanyReports([]);
+  private readonly openCompanyReports = new Map<string, boolean>();
   private readonly answerMarkdown = new AnswerMarkdownRenderer();
   private virtualSessionId = "";
   private virtualRowHeights = new Map<string, number>();
@@ -441,6 +465,10 @@ export class CodexMessageListRenderer {
   private viewportHeight = 0;
   private rawTextCache = new Map<string, string>();
   private openProcessItems = new Map<string, boolean>();
+  private readonly preparationDocumentsByTurn = new Map<string, LocalDocumentSource[]>();
+  private readonly preparationStagesByTurn = new Map<string, readonly PreparationUpdate[]>();
+  private readonly openMemoryReceipts = new Map<string, boolean>();
+  private thinkingCopyTimer: number | undefined;
   private openActionItemDetails = new Map<string, boolean>();
   private openKnowledgeBaseCitations = new Map<string, boolean>();
   private openKnowledgeBaseReportSections = new Map<string, boolean>();
@@ -449,10 +477,30 @@ export class CodexMessageListRenderer {
   private readonly openGenerationRequests = new Map<string, boolean>();
   private answerSaveStates = new Map<string, { status: "pending" | "saved" | "failed"; path?: string; error?: string }>();
   private answerReadingTail: { rowId: string; height: number } | null = null;
+  private composerReadingAnchor: { id: string; userEntryId?: string; turnId?: string } | null = null;
+  private composerReadingSpacer: HTMLElement | null = null;
   private virtualLayoutHeight = 0;
   private reasoningDisclosureStates = new Map<string, ReasoningDisclosureState>();
+  private readonly expandedReasoningReaders = new Set<string>();
   private disclosureAutoFoldTimers = new Map<string, DisclosureAutoFoldRegistration>();
   private env: MessageListEnvironment | null = null;
+  private readonly visibleRowInputs = new Map<string, string>();
+  private readonly memoryReceiptSourceViews = new Map<string, {
+    host: HTMLElement;
+    sources: NonNullable<ChatMessage["injectedMemorySources"]>;
+    question?: string;
+  }>();
+  private readonly reasoningScrolls = new WeakMap<HTMLElement, { scrollTop: number; following: boolean }>();
+  private readonly pendingReasoningScrolls = new Set<HTMLElement>();
+  private selectionCleanup?: () => void;
+  private selectionDocument: Document | null = null;
+  private messageSelectionPossible = true;
+  private pendingReadingAnchor: { rowId: string; answer: boolean; top: number; scrollTop: number } | null = null;
+  private readonly providerReasoningViews = new Map<string, {
+    root: HTMLDetailsElement;
+    scrollTop: number;
+    following: boolean;
+  }>();
   private virtualRerenderScheduled = false;
   private virtualRerenderBurst = 0;
   private virtualRerenderWindowStartedAt = 0;
@@ -462,14 +510,37 @@ export class CodexMessageListRenderer {
   private readonly answerMessageBatcher = new LatestByKeyFrameBatcher<PendingProcessMessageUpdate>();
 
   render(input: MessageListRenderInput): void {
+    const selection = input.virtualListEl.ownerDocument.getSelection?.();
+    const anchor = selection?.anchorNode, focus = selection?.focusNode;
+    const offsets = selection ? [selection.anchorOffset, selection.focusOffset] : [];
+    const retainedSelection = anchor && focus && input.virtualListEl.contains(anchor) && input.virtualListEl.contains(focus);
+    this.renderRows(input);
+    // Moving a retained Markdown slot clears Selection while its text nodes
+    // survive. Reattach those exact endpoints after the virtual row move.
+    if (retainedSelection && anchor.isConnected && focus.isConnected
+      && input.virtualListEl.contains(anchor) && input.virtualListEl.contains(focus)) {
+      selection?.setBaseAndExtent(anchor, offsets[0], focus, offsets[1]);
+    }
+  }
+
+  private renderRows(input: MessageListRenderInput): void {
+    if (this.pendingReadingAnchor && this.env?.sessionId === input.sessionId
+      && this.env.messagesEl.scrollTop === this.pendingReadingAnchor.scrollTop) this.restoreReadingAnchor(this.pendingReadingAnchor);
+    this.pendingReadingAnchor = null;
     const env: MessageListEnvironment = { ...input, options: input.options ?? {} };
     this.env = env;
     const { messagesEl, virtualListEl, messages } = env;
     this.observeMessageViewport(messagesEl);
     if (this.virtualSessionId !== env.sessionId) {
+      this.providerReasoningViews.clear();
+      this.memoryReceiptSourceViews.clear();
+      this.pendingReasoningScrolls.clear();
+      this.expandedReasoningReaders.clear();
+      this.visibleRowInputs.clear();
       this.answerMarkdown.clear();
       this.cancelAllDisclosureAutoFolds();
       this.virtualSessionId = env.sessionId;
+      this.clearComposerReadingAnchor();
       this.virtualRowHeights.clear();
       this.revealedMessageId = null;
       this.openTurnProcesses.clear();
@@ -479,13 +550,23 @@ export class CodexMessageListRenderer {
       this.resetVirtualRerenderThrottle();
     }
     const previousScrollTop = messagesEl.scrollTop;
-    const shouldPinBottom = shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
+    const shouldPinBottom = (env.shouldFollowBottom?.() ?? true)
+      && shouldPinMessageListBottom(env.options, this.isNearBottom(messagesEl, virtualListEl));
     const readingAnchor = !shouldPinBottom ? this.captureReadingAnchor() : null;
+    // A virtual row may be rebuilt while the reader is pressing its disclosure
+    // or reading older reasoning. Keep that disclosure and its viewport alive.
+    for (const view of this.providerReasoningViews.values()) {
+      const body = view.root.querySelector<HTMLElement>(".codex-ai-elements-reasoning-content");
+      if (!body || body.clientHeight <= 0) continue;
+      view.scrollTop = body.scrollTop;
+      view.following = isReasoningScrollNearBottom(body.scrollTop, body.clientHeight, body.scrollHeight);
+    }
     this.disconnectVisibleRowsObserver();
     this.answerMarkdown.beginRender();
     disposeOriginControls(virtualListEl);
     virtualListEl.empty();
     if (messages.length === 0) {
+      this.memoryReceiptSourceViews.clear();
       // Agent task pages own the empty state; an empty transcript adds no greeting.
       virtualListEl.setCssStyles({ height: "100%" });
       this.currentRows = [];
@@ -507,6 +588,8 @@ export class CodexMessageListRenderer {
     });
     virtualListEl.setCssStyles({ height: `${messageListVirtualHeight(virtual.totalHeight, this.hasMessageTail(messagesEl) ? 0 : viewportHeight)}px` });
 
+    this.visibleRowInputs.clear();
+    const visibleReceiptViews = new Set<string>();
     for (const virtualRow of virtual.rows) {
       const row = rows[virtualRow.index];
       if (!row) continue;
@@ -515,11 +598,20 @@ export class CodexMessageListRenderer {
       rowEl.dataset.index = String(virtualRow.index);
       rowEl.setCssStyles({ transform: `translateY(${virtualRow.top}px)` });
       this.renderVirtualRow(rowEl, row);
+      if (row.kind === "assistantTurn") visibleReceiptViews.add(this.memoryReceiptViewKey(row.turn));
+      this.visibleRowInputs.set(row.id, JSON.stringify(row));
     }
 
     this.decorateVisibleRows();
 
-    this.answerMarkdown.endRender();
+    for (const [key, view] of this.providerReasoningViews) {
+      if (!virtualListEl.contains(view.root)) this.providerReasoningViews.delete(key);
+    }
+    for (const key of this.memoryReceiptSourceViews.keys()) {
+      if (!visibleReceiptViews.has(key)) this.memoryReceiptSourceViews.delete(key);
+    }
+
+    this.answerMarkdown.endRender(virtualListEl);
 
     this.observeVisibleVirtualRows(messagesEl, virtualListEl);
     this.measureVisibleVirtualRows(messagesEl, virtualListEl, shouldPinBottom);
@@ -534,6 +626,11 @@ export class CodexMessageListRenderer {
 
   measureVisibleVirtualRows(messagesEl: HTMLElement, virtualListEl: HTMLElement, forceBottom = false, options: { rerender?: boolean } = {}): boolean {
     if (messagesEl.clientHeight === 0) return false;
+    const reasoningScrolls = this.readReasoningScrollPlans();
+    const anchor = this.pendingReadingAnchor;
+    this.pendingReadingAnchor = null;
+    const readingDelta = anchor && messagesEl.scrollTop === anchor.scrollTop ? this.readingAnchorDelta(anchor) : 0;
+    forceBottom = forceBottom && (this.env?.shouldFollowBottom?.() ?? true);
     let changed = false;
     for (const child of Array.from(virtualListEl.children)) {
       if (!(child.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement))) continue;
@@ -553,14 +650,52 @@ export class CodexMessageListRenderer {
     if (changed && forceBottom && (this.virtualRerenderScheduled || this.virtualRerenderTrailingTimer !== null)) {
       this.virtualRerenderPendingForceBottom = true;
     }
-    if (changed && options.rerender !== false) this.scheduleMeasuredRowsRerender(forceBottom);
+    if (changed && options.rerender !== false && this.needsVirtualRowsRender()) this.scheduleMeasuredRowsRerender(forceBottom);
     if (!changed) {
       this.resetVirtualRerenderThrottle();
     }
     if ((changed || layoutChanged) && forceBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    } else if (readingDelta) messagesEl.scrollTop += readingDelta;
+    for (const plan of reasoningScrolls) {
+      plan.state.scrollTop = plan.top;
+      if (plan.current !== plan.top) plan.body.scrollTop = plan.top;
     }
     return changed;
+  }
+
+  private trackReasoningScroll(body: HTMLElement, reading?: { scrollTop: number; following: boolean }): { scrollTop: number; following: boolean } {
+    let state = this.reasoningScrolls.get(body);
+    if (!state) {
+      state = reading ? { ...reading } : { scrollTop: body.scrollTop, following: true };
+      this.reasoningScrolls.set(body, state);
+      const tracked = state;
+      body.addEventListener("scroll", () => {
+        const top = body.scrollTop;
+        if (top === tracked.scrollTop || body.clientHeight <= 0) return;
+        tracked.scrollTop = top;
+        tracked.following = isReasoningScrollNearBottom(top, body.clientHeight, body.scrollHeight);
+      }, { passive: true });
+    } else if (reading) Object.assign(state, reading);
+    return state;
+  }
+
+  private queueReasoningScroll(body: HTMLElement): void {
+    this.trackReasoningScroll(body);
+    this.pendingReasoningScrolls.add(body);
+    this.env?.onScheduleMeasure(false);
+  }
+
+  private readReasoningScrollPlans(): { body: HTMLElement; state: { scrollTop: number; following: boolean }; top: number; current: number }[] {
+    const plans: ReturnType<CodexMessageListRenderer["readReasoningScrollPlans"]> = [];
+    for (const body of this.pendingReasoningScrolls) {
+      const height = body.clientHeight;
+      if (height <= 0) continue;
+      const state = this.trackReasoningScroll(body), maximum = Math.max(0, body.scrollHeight - height);
+      plans.push({ body, state, top: state.following ? maximum : Math.min(maximum, state.scrollTop), current: body.scrollTop });
+    }
+    this.pendingReasoningScrolls.clear();
+    return plans;
   }
 
   private layoutMeasuredRows(messagesEl: HTMLElement, virtualListEl: HTMLElement): boolean {
@@ -568,6 +703,11 @@ export class CodexMessageListRenderer {
     const last = this.currentRows.at(-1);
     const hasAnswer = last?.kind === "assistantTurn"
       && Boolean(last.turn.finalAnswer && displayTextForMessage(last.turn.finalAnswer).trim());
+    if (this.composerReadingAnchor?.turnId && last?.kind === "assistantTurn"
+      && last.turn.runId === this.composerReadingAnchor.turnId && hasAnswer && isTerminalTurnStatus(last.turn.status)
+      && !this.env?.isTurnRunning?.()) {
+      this.clearComposerReadingAnchor();
+    }
     const renderedRows = new Map(Array.from(virtualListEl.children).map((child) => [
       (child as HTMLElement).dataset.rowId, child as HTMLElement
     ]));
@@ -578,19 +718,127 @@ export class CodexMessageListRenderer {
       if (Number.isFinite(height) && height > 0) this.answerReadingTail = { rowId: last.id, height };
     }
     if (!hasAnswer) this.answerReadingTail = null;
-    const spacer = !hasTail && hasAnswer && this.answerReadingTail?.rowId === last?.id
+    const spacer = !this.composerReadingAnchor && !hasTail && hasAnswer && this.answerReadingTail?.rowId === last?.id
       ? answerReadingSpacer(messagesEl.clientHeight, this.answerReadingTail.height)
       : 0;
     let top = 0;
     for (const row of this.currentRows) {
-      renderedRows.get(row.id)?.setCssStyles({ transform: `translateY(${top}px)` });
+      const element = renderedRows.get(row.id), transform = `translateY(${top}px)`;
+      if (element && element.style.transform !== transform) element.setCssStyles({ transform });
       top += this.virtualRowHeightFor(row.id);
     }
     const height = messageListVirtualHeight(top + spacer, hasTail ? 0 : messagesEl.clientHeight);
-    virtualListEl.setCssStyles({ height: `${height}px` });
+    virtualListEl.classList.toggle("has-composer-tail", hasTail);
+    if (virtualListEl.style.height !== `${height}px`) virtualListEl.setCssStyles({ height: `${height}px` });
+    this.layoutComposerReadingSpacer(messagesEl, virtualListEl);
     const changed = this.virtualLayoutHeight !== height;
     this.virtualLayoutHeight = height;
     return changed;
+  }
+
+  /** Display-only anchor: the formal entry/run identity takes over the same landing. */
+  followComposerSubmission(id: string): void {
+    this.composerReadingAnchor = { id };
+    this.answerReadingTail = null;
+    this.refreshComposerLayout();
+  }
+
+  get followingComposerSubmission(): boolean { return this.composerReadingAnchor !== null; }
+
+  acceptComposerSubmission(id: string, identity: { userEntryId?: string; turnId?: string }): void {
+    if (this.composerReadingAnchor?.id === id) Object.assign(this.composerReadingAnchor, identity);
+    if (identity.turnId) {
+      const stages = this.preparationStagesByTurn.get(`submission:${id}`);
+      if (stages) { this.preparationStagesByTurn.set(`run:${identity.turnId}`, stages); this.preparationStagesByTurn.delete(`submission:${id}`); }
+    }
+    if (identity.turnId) for (const [key, state] of this.reasoningDisclosureStates) {
+      const prefix = `submission:${id}\0`;
+      if (key.startsWith(prefix)) { this.reasoningDisclosureStates.set(`run:${identity.turnId}\0${key.slice(prefix.length)}`, state); this.reasoningDisclosureStates.delete(key); }
+    }
+    if (identity.turnId) for (const [key, open] of this.openProcessItems) {
+      const prefix = `submission:${id}:`;
+      if (key.startsWith(prefix)) { this.openProcessItems.set(`run:${identity.turnId}:${key.slice(prefix.length)}`, open); this.openProcessItems.delete(key); }
+    }
+  }
+
+  /** Desktop explicitly opts in; the shared mobile composer keeps its renderer. */
+  renderComposerPreparation(parent: HTMLElement, id: string, stages: readonly PreparationUpdate[], context: {
+    language: SettingsLanguage; agentIdentity: AgentIdentityView; openNote: (path: string) => void; onMeasure: () => void;
+    readMemory?: MessageListRenderInput["readPersonalMemorySource"];
+  }): void {
+    const language = context.language;
+    this.preparationStagesByTurn.set(`submission:${id}`, stages.map(stage => ({ ...stage })));
+    const nodes = buildPreparationProcessNodes(stages, language);
+    const wrapper = parent.createDiv({ cls: "codex-message codex-message-assistant codex-message-type-assistantTurn is-preparing" });
+    markAIElementsMessage(wrapper, "assistant");
+    this.renderAgentHeader(wrapper, { statusLabel: "", compact: false, agentIdentity: context.agentIdentity });
+    const body = createAIElementsMessageContent(wrapper);
+    body.addClass("codex-assistant-turn");
+    const process = body.createDiv({ cls: "codex-assistant-turn-process" });
+    const chain = createAIElementsChainOfThought(process, { status: "running" }).body;
+    chain.addClass("codex-assistant-turn-process-body", "codex-assistant-turn-spine");
+    const turn: Pick<AgentTurnView, "key" | "processNodes" | "messages" | "providerReasoningSegments" | "status"> = {
+      key: `submission:${id}`, processNodes: nodes, messages: [], providerReasoningSegments: [], status: "preparing"
+    };
+    for (const node of nodes) {
+      if (node.nodeId === THINKING_NODE_ID) this.renderWaitingThinkingNode(chain, turn, node, language);
+      else createTurnProcessNode(chain, node, node.title, assistantTurnNodeIcon(node), conversationCopy(language), language);
+      if (node.nodeId.endsWith(":memory:recall")) {
+        const sources = stages.find(stage => stage.stage === "memory")?.memorySources ?? [];
+        const content = chain.lastElementChild?.querySelector<HTMLElement>(".codex-assistant-turn-node-content");
+        if (sources.length && content) this.renderPreparationMemorySources(content, `${turn.key}:${node.nodeId}`, sources, language, context.readMemory, context.onMeasure);
+      }
+      if (!node.nodeId.endsWith(":knowledge:retrieval")) continue;
+      const paths = stages.find(stage => stage.stage === "knowledge")?.notePaths ?? [];
+      if (!paths.length) continue;
+      const content = chain.lastElementChild?.querySelector<HTMLElement>(".codex-assistant-turn-node-content");
+      if (!content) continue;
+      const disclosure = this.createAssistantTurnResourceDisclosure(content, `${turn.key}:${node.nodeId}`,
+        conversationUiText(language, "本轮读到的笔记", "Notes read this turn"), true, context.onMeasure);
+      disclosure.body.addClass("codex-answer-source-list");
+      for (const path of paths) {
+        const row = disclosure.body.createDiv({ cls: "codex-answer-source-row" });
+        const button = row.createEl("button", { cls: "codex-message-note-link", text: noteNameForPath(path), attr: { type: "button" } });
+        button.onclick = () => { context.openNote(path); };
+      }
+    }
+  }
+
+  clearComposerReadingAnchor(id?: string): void {
+    if (id && this.composerReadingAnchor?.id !== id) return;
+    this.composerReadingAnchor = null;
+    this.composerReadingSpacer?.remove();
+    this.composerReadingSpacer = null;
+  }
+
+  refreshComposerLayout(): void {
+    if (this.env) this.layoutMeasuredRows(this.env.messagesEl, this.env.virtualListEl);
+  }
+
+  private layoutComposerReadingSpacer(messagesEl: HTMLElement, virtualListEl: HTMLElement): void {
+    const anchor = this.composerReadingAnchor;
+    if (!anchor || !this.env) return;
+    const user = this.env.messages.find(message => message.role === "user" && (
+      anchor.userEntryId && piEntryIdFromProjectedMessageId(message.id) === anchor.userEntryId
+      || anchor.turnId && message.runId === anchor.turnId));
+    const pending = Array.from(messagesEl.querySelectorAll<HTMLElement>("[data-composer-transfer]"))
+      .find(node => node.dataset.composerTransfer === anchor.id);
+    const rowTop = user ? this.rowTopForRowId(`message:${user.id}`) : null;
+    const anchorTop = rowTop !== null ? virtualListEl.getBoundingClientRect().top + rowTop
+      : pending?.querySelector("article")?.getBoundingClientRect().top ?? pending?.getBoundingClientRect().top;
+    if (anchorTop === undefined) return;
+    const end = Math.max(...Array.from(messagesEl.children)
+      .filter(child => child !== this.composerReadingSpacer && !(child as HTMLElement).hidden)
+      .map(child => child.getBoundingClientRect().bottom));
+    const padding = Number.parseFloat(messagesEl.ownerDocument.defaultView!.getComputedStyle(messagesEl).paddingBottom) || 0;
+    // Consume this space as the same turn grows. Do not introduce answer-reading
+    // padding at the first token: that would move the user message a second time.
+    const space = composerReadingSpace(messagesEl.clientHeight, end - anchorTop, padding);
+    const tail = this.composerReadingSpacer ??= ownedEl(messagesEl.ownerDocument, "div");
+    tail.setAttribute("aria-hidden", "true");
+    tail.dataset.composerReadingSpacer = "true";
+    if (tail.style.height !== `${space}px`) tail.style.height = `${space}px`;
+    if (messagesEl.lastElementChild !== tail) messagesEl.appendChild(tail);
   }
 
   private hasMessageTail(messagesEl: HTMLElement): boolean {
@@ -616,17 +864,90 @@ export class CodexMessageListRenderer {
   }
 
   private restoreReadingAnchor(anchor: ReturnType<CodexMessageListRenderer["captureReadingAnchor"]>): void {
-    if (!anchor || !this.env) return;
+    const delta = this.readingAnchorDelta(anchor);
+    if (delta && this.env) this.env.messagesEl.scrollTop += delta;
+  }
+
+  private rememberReadingAnchor(): void {
+    if (!this.env || this.pendingReadingAnchor || (this.env.shouldFollowBottom?.() ?? true)) return;
+    const anchor = this.captureReadingAnchor();
+    if (anchor) this.pendingReadingAnchor = { ...anchor, scrollTop: this.env.messagesEl.scrollTop };
+  }
+
+  private readingAnchorDelta(anchor: ReturnType<CodexMessageListRenderer["captureReadingAnchor"]>): number {
+    if (!anchor || !this.env) return 0;
     const row = Array.from(this.env.virtualListEl.children)
       .find((child) => (child as HTMLElement).dataset.rowId === anchor.rowId) as HTMLElement | undefined;
     const target = anchor.answer ? row?.querySelector<HTMLElement>(".codex-assistant-turn-final") : row;
-    if (target) this.env.messagesEl.scrollTop += target.getBoundingClientRect().top - anchor.top;
+    return target ? target.getBoundingClientRect().top - anchor.top : 0;
+  }
+
+  /** A loading-copy clock must not detach a disclosure between pointer events.
+   * Runtime events continue to own structural changes. */
+  refreshRunProgress(): boolean {
+    const env = this.env;
+    if (!env || env.messages.some(message => message.itemType === "thinking")) return false;
+    for (const row of this.currentRows) {
+      if (row.kind !== "assistantTurn" || !row.turn.finalAnswer) continue;
+      const message = row.turn.finalAnswer;
+      if (message.status !== "running" || displayTextForMessage(message).trim()) continue;
+      const element = Array.from(env.virtualListEl.children).find(child => (child as HTMLElement).dataset.rowId === row.id);
+      const content = element?.querySelector<HTMLElement>(".codex-assistant-turn-final .codex-message-content");
+      if (content) this.renderAgentAnswerContent(content, message);
+    }
+    return true;
+  }
+
+  /** Runtime summary events can omit a single changed message. Patch their
+   * visible running turn too, without replacing the entire virtual window. */
+  tryUpdateVisibleMessages(messages: ChatMessage[]): boolean {
+    const env = this.env;
+    if (!env) return false;
+    env.messages = messages;
+    const rows = this.buildVirtualRows(messages);
+    if (rows.length !== this.currentRows.length || rows.some((row, i) => row.id !== this.currentRows[i]?.id)) return false;
+    const updates: { element: HTMLElement; row: Extract<MessageRenderRow, { kind: "assistantTurn" }>; input: string }[] = [];
+    for (const child of Array.from(env.virtualListEl.children)) {
+      const element = child as HTMLElement;
+      const row = rows.find(candidate => candidate.id === element.dataset.rowId);
+      if (!row) return false;
+      // Live approval/question bindings can change before the durable message.
+      // Keep their existing explicit refresh path, even for identical snapshots.
+      if (row.kind === "assistantTurn" && row.turn.processNodes.some(node => node.status === "waiting")) return false;
+      const input = JSON.stringify(row);
+      if (input === this.visibleRowInputs.get(row.id)) continue;
+      const previous = this.currentRows.find(candidate => candidate.id === row.id);
+      if (row.kind !== "assistantTurn" || previous?.kind !== "assistantTurn"
+        || row.turn.status !== previous.turn.status
+        || row.showAgentHeader !== previous.showAgentHeader) return false;
+      updates.push({ element, row, input });
+    }
+    for (const { element, row, input } of updates) {
+      const message = row.turn.finalAnswer ?? row.turn.messages.at(-1);
+      if (!message || !this.tryUpdateAssistantTurnMessage(element, message, row.turn)) return false;
+      this.visibleRowInputs.set(row.id, input);
+    }
+    this.currentRows = rows;
+    return true;
+  }
+
+  /** Measured height changes update offsets in place. Only a changed set of
+   * visible row identities needs a new virtual window. */
+  needsVirtualRowsRender(): boolean {
+    if (!this.env) return false;
+    const { messagesEl, virtualListEl } = this.env;
+    const expected = calculateVirtualWindow({ rowIds: this.currentRows.map(row => row.id), rowHeights: this.virtualRowHeights,
+      scrollTop: messagesEl.scrollTop, viewportHeight: Math.max(1, messagesEl.clientHeight) }).rows.map(row => row.id);
+    const actual = Array.from(virtualListEl.children).map(child => (child as HTMLElement).dataset.rowId).filter(Boolean);
+    return actual.length !== expected.length || expected.some((id, i) => id !== actual[i]);
   }
 
   tryUpdateMessage(message: ChatMessage, messages?: ChatMessage[]): boolean {
     const env = this.env;
     if (!env || message.rawRef || message.citations || message.itemType === "knowledgeBase") return false;
     if (messages) env.messages = messages;
+    if (this.reportProjection.standalone.size && isAgentAnswerMessage(message) && message.text.trim()
+      && this.companyReportProjection(env.messages).replies.has(message.id)) return false;
     const processMessage = isAgentProcessItemType(message.itemType);
     if (!processMessage && message.status !== "running") return false;
     const target = this.findRenderedMessageElement(message.id);
@@ -744,6 +1065,11 @@ export class CodexMessageListRenderer {
   }
 
   resetVirtualWindow(): void {
+    this.expandedReasoningReaders.clear();
+    this.visibleRowInputs.clear();
+    this.providerReasoningViews.clear();
+    this.memoryReceiptSourceViews.clear();
+    this.clearComposerReadingAnchor();
     this.revealedMessageId = null;
     this.cancelAllDisclosureAutoFolds();
     this.virtualSessionId = "";
@@ -756,9 +1082,21 @@ export class CodexMessageListRenderer {
   }
 
   dispose(): void {
+    this.pendingReadingAnchor = null;
+    this.pendingReasoningScrolls.clear();
+    this.expandedReasoningReaders.clear();
+    this.visibleRowInputs.clear();
+    this.providerReasoningViews.clear();
+    this.memoryReceiptSourceViews.clear();
+    this.openCompanyReports.clear();
+    if (this.thinkingCopyTimer !== undefined) window.clearInterval(this.thinkingCopyTimer);
+    this.clearComposerReadingAnchor();
     if (this.env) disposeOriginControls(this.env.virtualListEl);
     this.answerMarkdown.clear();
     this.openGenerationRequests.clear();
+    this.preparationStagesByTurn.clear();
+    this.preparationDocumentsByTurn.clear();
+    this.openMemoryReceipts.clear();
     this.cancelAllDisclosureAutoFolds();
     this.disconnectVisibleRowsObserver();
     this.disconnectViewportObserver();
@@ -793,9 +1131,29 @@ export class CodexMessageListRenderer {
   }
 
   private observeMessageViewport(messagesEl: HTMLElement): void {
-    if (this.observedMessagesEl === messagesEl && this.viewportResizeObserver) return;
+    if (this.observedMessagesEl === messagesEl && this.selectionDocument === messagesEl.ownerDocument && this.viewportResizeObserver) return;
     this.disconnectViewportObserver();
     this.observedMessagesEl = messagesEl;
+    const document = messagesEl.ownerDocument;
+    this.selectionDocument = document;
+    const selectionChanged = () => {
+      const selection = document.getSelection?.();
+      this.messageSelectionPossible = !!selection?.rangeCount && !!selection.anchorNode && !!selection.focusNode
+        && (selection.anchorNode !== selection.focusNode || selection.anchorOffset !== selection.focusOffset);
+    };
+    // A real selection gesture can start before selectionchange is delivered.
+    const selecting = (event: Event) => {
+      if (event.target && messagesEl.contains(event.target as Node)) this.messageSelectionPossible = true;
+    };
+    document.addEventListener("selectionchange", selectionChanged);
+    document.addEventListener("pointerdown", selecting, true);
+    document.addEventListener("keydown", selecting, true);
+    selectionChanged();
+    this.selectionCleanup = () => {
+      document.removeEventListener("selectionchange", selectionChanged);
+      document.removeEventListener("pointerdown", selecting, true);
+      document.removeEventListener("keydown", selecting, true);
+    };
     this.viewportWidth = Math.max(0, messagesEl.clientWidth);
     this.viewportHeight = Math.max(0, messagesEl.clientHeight);
     const ownerWindow = messagesEl.ownerDocument?.defaultView as (Window & { ResizeObserver?: typeof ResizeObserver }) | null;
@@ -820,12 +1178,13 @@ export class CodexMessageListRenderer {
         this.cancelVirtualRerenderTrailing(true);
         this.resetVirtualRerenderThrottle();
       }
-      this.scheduleMeasuredRowsRerender(false);
+      this.env?.onScheduleMeasure(false);
     });
     this.viewportResizeObserver.observe(messagesEl);
   }
 
   private disconnectViewportObserver(): void {
+    this.selectionCleanup?.(); this.selectionCleanup = undefined; this.selectionDocument = null; this.messageSelectionPossible = true;
     this.viewportResizeObserver?.disconnect();
     this.viewportResizeObserver = null;
     this.observedMessagesEl = null;
@@ -846,7 +1205,7 @@ export class CodexMessageListRenderer {
     this.visibleRowsResizeObserver = new ResizeObserverCtor(() => {
       if (!this.env || this.env.messagesEl !== messagesEl || this.env.virtualListEl !== virtualListEl) return;
       const forceBottom = this.env.shouldFollowBottom?.() ?? false;
-      this.measureVisibleVirtualRows(messagesEl, virtualListEl, forceBottom);
+      this.env.onScheduleMeasure(forceBottom);
     });
     for (const child of Array.from(virtualListEl.children)) {
       if (child.instanceOf(child.ownerDocument.defaultView?.HTMLElement ?? HTMLElement)) this.visibleRowsResizeObserver.observe(child);
@@ -993,7 +1352,7 @@ export class CodexMessageListRenderer {
       if (!content) continue;
       wrapper.toggleClass("codex-message-streaming", update.message.status === "running");
       wrapper.toggleClass("codex-message-empty-running", update.message.status === "running" && !displayTextForMessage(update.message).trim());
-      preserveTextSelectionDuringMutation(content, () => {
+      this.preserveMessageTextSelection(content, () => {
         if (isAgentAnswerMessage(update.message)) this.renderAgentAnswerContent(content, update.message);
         else renderRichText(env.app, env.component, content, displayTextForMessage(update.message));
       });
@@ -1008,10 +1367,11 @@ export class CodexMessageListRenderer {
 
   private tryUpdateAssistantTurnMessage(
     renderedRow: HTMLElement,
-    message: ChatMessage
+    message: ChatMessage,
+    projectedTurn?: AgentTurnView
   ): boolean {
     const env = this.requireEnv();
-    const projection = buildAgentTurnProjection(
+    const projection = projectedTurn ? { kind: "assistantTurn" as const, turn: projectedTurn } : buildAgentTurnProjection(
       env.messages,
       env.settingsLanguage
     ).find((item) =>
@@ -1022,8 +1382,12 @@ export class CodexMessageListRenderer {
     const turn = projection.turn;
     const turnRoot = renderedRow.querySelector<HTMLElement>(".codex-assistant-turn");
     if (!turnRoot) return false;
+    const wrapper = turnRoot.closest<HTMLElement>(".codex-message-type-assistantTurn");
+    for (const status of ["preparing", "running", "waiting_for_user", "completing", "completed", "failed", "cancelled", "interrupted"] as const) {
+      wrapper?.toggleClass(`is-${status}`, turn.status === status);
+    }
     const following = env.shouldFollowBottom?.() ?? true;
-    const readingAnchor = !following ? this.captureReadingAnchor() : null;
+    this.rememberReadingAnchor();
 
     const knownNodes: HTMLElement[] = [
       ...Array.from(turnRoot.querySelectorAll<HTMLElement>(".codex-assistant-turn-node")),
@@ -1038,6 +1402,7 @@ export class CodexMessageListRenderer {
       // Waiting owns live controls. Rebuild that boundary so settled approvals
       // cannot leave their old sibling buttons in the work record.
       if ((renderedNode.dataset.nodeStatus === "waiting") !== (node.status === "waiting")) return false;
+      const statusChanged = renderedNode.dataset.nodeStatus !== node.status;
       for (const status of ["waiting", "running", "completed", "failed", "cancelled", "skipped"] as const) {
         renderedNode.toggleClass(`is-${status}`, status === node.status);
       }
@@ -1045,6 +1410,14 @@ export class CodexMessageListRenderer {
       renderedNode.dataset.nodeStatus = node.status;
       const icon = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-icon");
       const nodeSource = turn.messages.find((candidate) => candidate.id === node.sourceMessageId);
+      if (statusChanged && renderedNode.hasClass("codex-assistant-turn-action-node")) {
+        const actionMessage = actionMessageForProcessNode(turn, node);
+        const item = actionMessage && buildActionTimeline([actionMessage], env.settingsLanguage).groups[0]?.items[0];
+        if (item) {
+          markAIElementsTool(renderedNode, item.status);
+          this.applyAssistantTurnActionSemantics(renderedNode, item);
+        }
+      }
       const produced = nodeSource ? knowledgeUsageMessageData(nodeSource).producedPaths : [];
       if (icon) setSemanticIcon(icon, node.kind === "artifact" && node.status === "completed"
         && produced.length && produced.every((path) => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
@@ -1052,11 +1425,13 @@ export class CodexMessageListRenderer {
       const displayedTitle = this.approvalStepTitle(nodeSource, node.title);
       if (title && title.textContent !== displayedTitle) title.setText(displayedTitle);
       const summary = renderedNode.querySelector<HTMLElement>(".codex-assistant-turn-node-summary");
+      summary?.toggleClass("is-shimmering", node.status === "running" && renderedNode.hasClass("codex-preparation-node"));
       if (summary && node.summary !== undefined && summary.textContent !== node.summary) {
         summary.setText(node.summary);
       }
     }
 
+    this.updateThinkingLiveCopies(turnRoot, turn);
     const chain = turnRoot.querySelector<HTMLElement>(".codex-ai-elements-chain-of-thought");
     if (chain) {
       applyAIElementsStatus(
@@ -1071,7 +1446,8 @@ export class CodexMessageListRenderer {
       const root = turnRoot
         .querySelectorAll<HTMLDetailsElement>(".codex-ai-elements-reasoning");
       const matchingRoot = Array.from(root)
-        .find((candidate) => candidate.dataset.reasoningId === reasoning.reasoningId);
+        .find((candidate) => candidate.dataset.reasoningId === reasoning.reasoningId
+          || reasoning === turn.providerReasoningSegments[0] && candidate.dataset.nodeId === THINKING_NODE_ID);
       if (!matchingRoot) return false;
       this.patchProviderReasoning(matchingRoot, turn, reasoning);
     }
@@ -1087,11 +1463,12 @@ export class CodexMessageListRenderer {
         answerContent.dataset.renderedText !== answerText
         || answerContent.getAttribute("data-streaming") !== String(turn.finalAnswer.status === "running")
       ) {
-        preserveTextSelectionDuringMutation(answerContent, () => {
+        this.preserveMessageTextSelection(answerContent, () => {
           this.renderAgentAnswerContent(answerContent, turn.finalAnswer!);
         });
       }
       this.renderAssistantFailureReason(answerSection, turn.finalAnswer);
+      this.renderKnowledgeDirectoryAction(answerSection, turn);
       const wrapper = turnRoot.closest<HTMLElement>(".codex-message-type-assistantTurn");
       wrapper?.toggleClass("codex-message-streaming", turn.finalAnswer.status === "running");
       if (
@@ -1117,7 +1494,6 @@ export class CodexMessageListRenderer {
     if (row?.kind === "assistantTurn") row.turn = turn;
     this.decorateVisibleRows();
     if (disclosureChanged) this.measureVisibleVirtualRows(env.messagesEl, env.virtualListEl, following);
-    this.restoreReadingAnchor(readingAnchor);
     env.onScheduleMeasure(following);
     return true;
   }
@@ -1125,11 +1501,12 @@ export class CodexMessageListRenderer {
   private patchProviderReasoning(
     root: HTMLDetailsElement,
     turn: AgentTurnView,
-    reasoning: AgentTurnView["providerReasoningSegments"][number]
+    reasoning: AgentTurnView["providerReasoningSegments"][number],
+    reading?: { scrollTop: number; following: boolean }
   ): void {
     const env = this.requireEnv();
     const copy = this.copy();
-    const disclosureKey = `${env.sessionId}\0${turn.key}\0provider-reasoning\0${reasoning.reasoningId}`;
+    const disclosureKey = `${turn.key}\0provider-reasoning\0${turn.providerReasoningSegments[0]?.reasoningId === reasoning.reasoningId ? THINKING_NODE_ID : reasoning.reasoningId}`;
     const disclosure = nextReasoningDisclosureState(
       this.reasoningDisclosureStates.get(disclosureKey),
       reasoning.status
@@ -1145,32 +1522,31 @@ export class CodexMessageListRenderer {
     const label = root.querySelector<HTMLElement>(".codex-ai-elements-reasoning-label");
     const body = root.querySelector<HTMLElement>(".codex-ai-elements-reasoning-content");
     if (!summary || !body) return;
+    root.dataset.reasoningId = reasoning.reasoningId;
     label?.toggleClass("is-shimmering", reasoning.status === "running");
-    label?.setText(reasoning.status === "running"
-      ? copy.process.publicReasoningRunning
+    const labelText = reasoning.status === "running"
+      ? conversationUiText(env.settingsLanguage, "正在思考", "Thinking")
       : reasoning.durationMs === undefined
         ? copy.process.publicReasoningCompleted
-        : copy.process.publicReasoningDuration(formatCompactDuration(reasoning.durationMs)));
+        : copy.process.publicReasoningDuration(formatCompactDuration(reasoning.durationMs));
+    if (label && label.textContent !== labelText) label.setText(labelText);
     const displayText = userVisibleProviderReasoningText(
       reasoning.text,
       assistantTurnHasPersonalMemoryContext(turn)
     );
-    if (body.dataset.renderedText !== displayText) {
-      const previousScrollTop = body.scrollTop;
-      const shouldFollowLatest = isReasoningScrollNearBottom(
-        previousScrollTop,
-        body.clientHeight,
-        body.scrollHeight
-      );
-      preserveTextSelectionDuringMutation(body, () => {
+    const streaming = reasoning.status === "running";
+    if (body.dataset.renderedText !== displayText || body.dataset.reasoningStreaming !== String(streaming)) {
+      this.trackReasoningScroll(body, reading);
+      this.preserveMessageTextSelection(body, () => {
         if (displayText.trim()) {
-          this.renderAnswerMarkdown(body, `reasoning:${turn.key}:${reasoning.reasoningId}`, displayText, reasoning.status === "running");
+          this.renderAnswerMarkdown(body, `reasoning:${turn.key}:${reasoning === turn.providerReasoningSegments[0] ? THINKING_NODE_ID : reasoning.reasoningId}`, displayText, streaming);
         } else {
           body.empty();
         }
         body.dataset.renderedText = displayText;
+        body.dataset.reasoningStreaming = String(streaming);
       });
-      body.scrollTop = shouldFollowLatest ? body.scrollHeight : previousScrollTop;
+      this.queueReasoningScroll(body);
     }
     this.scheduleDisclosureAutoFold(
       `reasoning:${disclosureKey}`,
@@ -1187,7 +1563,7 @@ export class CodexMessageListRenderer {
   ): boolean {
     const expandable = hasActionItemDetails(item);
     if (isDetailsElement(row) !== expandable) return false;
-    preserveTextSelectionDuringMutation(row, () => {
+    this.preserveMessageTextSelection(row, () => {
       markAIElementsTool(row, item.status);
       row.toggleClass("is-failed", isAttentionActionStatus(item.status));
       row.toggleClass("is-running", isActiveActionStatus(item.status));
@@ -1218,7 +1594,7 @@ export class CodexMessageListRenderer {
   ): boolean {
     const summary = details.querySelector<HTMLElement>(".codex-process-summary");
     if (!summary) return false;
-    preserveTextSelectionDuringMutation(details, () => {
+    this.preserveMessageTextSelection(details, () => {
       markAIElementsTool(details, message.status);
       details.toggleClass("is-running", isActiveProcessStatus(message.status));
       details.toggleClass("is-completed", message.status === "completed");
@@ -1304,11 +1680,12 @@ export class CodexMessageListRenderer {
         Math.max(env.virtualListEl.scrollHeight, env.messagesEl.scrollHeight),
         MESSAGE_LIST_BOTTOM_PIN_EPSILON_PX
       );
-      this.render({ ...env, options: { forceBottom: stillPinnedBottom, preserveScroll: !stillPinnedBottom } });
+      if (this.needsVirtualRowsRender()) this.render({ ...env, options: { forceBottom: stillPinnedBottom, preserveScroll: !stillPinnedBottom } });
     });
   }
 
   private buildVirtualRows(messages: ChatMessage[]): MessageRenderRow[] {
+    this.reportProjection = this.companyReportProjection(messages);
     const rows: MessageRenderRow[] = [];
     const agentHeaderKeys = new Set<string>();
     const footerMessageIds = terminalAnswerFooterMessageIds(messages);
@@ -1317,7 +1694,7 @@ export class CodexMessageListRenderer {
         const turn = item.turn;
         const identityMessage = turn.messages[0] ?? turn.finalAnswer;
         const headerKey = identityMessage ? agentRunHeaderKey(identityMessage) : turn.key;
-        const showAgentHeader = !agentHeaderKeys.has(headerKey);
+        const showAgentHeader = !agentHeaderKeys.has(headerKey) || turn.messages.some(message => this.reportProjection.replies.has(message.id));
         if (showAgentHeader) agentHeaderKeys.add(headerKey);
         rows.push({
           id: assistantTurnRowId(turn),
@@ -1336,6 +1713,7 @@ export class CodexMessageListRenderer {
         continue;
       }
       const message = item.message;
+      if (this.reportProjection.hidden.has(message.id) && !this.reportProjection.standalone.has(message.id)) continue;
       if (isActionTimelineItem(message)) {
         const headerKey = agentRunHeaderKey(message);
         const showAgentHeader = !agentHeaderKeys.has(headerKey);
@@ -1344,7 +1722,7 @@ export class CodexMessageListRenderer {
         continue;
       }
       const headerKey = agentRunHeaderKey(message);
-      const showAgentHeader = isAgentHeaderCandidate(message) && !agentHeaderKeys.has(headerKey);
+      const showAgentHeader = isAgentHeaderCandidate(message) && (!agentHeaderKeys.has(headerKey) || this.reportProjection.replies.has(message.id));
       if (showAgentHeader) agentHeaderKeys.add(headerKey);
       rows.push({
         id: messageRowId(message),
@@ -1376,6 +1754,12 @@ export class CodexMessageListRenderer {
   }
 
   private renderMessage(container: HTMLElement, message: ChatMessage, options: { showAgentHeader: boolean; showAgentFooter: boolean; processExpanded?: boolean; allowConversationDerive?: boolean } = { showAgentHeader: false, showAgentFooter: false }): void {
+    const standalone = this.reportProjection.standalone.get(message.id);
+    if (standalone) {
+      const line = container.createDiv({ cls: "codex-message echoink-report-standalone" }); line.dataset.messageId = message.id;
+      this.renderReportSource(line, line, standalone);
+      return;
+    }
     const env = this.requireEnv();
     const wrapper = container.createDiv({ cls: `codex-message codex-message-${message.role}` });
     markAIElementsMessage(wrapper, message.role);
@@ -1488,7 +1872,11 @@ export class CodexMessageListRenderer {
       let pendingUserDisclosureIntent = false;
       if (message.reasoningSummary) {
         reasoning.summary.onclick = (event) => {
-          if (event.isTrusted) pendingUserDisclosureIntent = true;
+          if (event.isTrusted) {
+            pendingUserDisclosureIntent = true;
+            this.pendingReadingAnchor = null;
+            env.onProcessDisclosureToggle?.();
+          }
         };
         reasoning.summary.onkeydown = (event) => {
           if (
@@ -1559,7 +1947,9 @@ export class CodexMessageListRenderer {
 
   private renderAgentAnswerContent(container: HTMLElement, message: ChatMessage): void {
     const env = this.requireEnv();
-    const text = displayTextForMessage(message);
+    const text = message.itemType === "error"
+      ? firstPartyMessageText(message, env.settingsLanguage)
+      : displayTextForMessage(message);
     if (message.status === "running" && !text.trim()) {
       const copy = this.copy();
       const visualLabel = rotatingChoice(
@@ -1589,9 +1979,16 @@ export class CodexMessageListRenderer {
       env.onScheduleRunProgress();
       return;
     }
-    this.renderAnswerMarkdown(container, `answer:${message.id}`, text, message.status === "running", message.savedNotePath);
+    this.renderAnswerMarkdown(container, `answer:${message.runId ?? message.turnId ?? message.id}`, text, message.status === "running", message.savedNotePath);
     container.dataset.renderedText = text;
     markAIElementsResponse(container, message.status === "running");
+  }
+
+  private preserveMessageTextSelection(container: HTMLElement, mutate: () => void): void {
+    // Selection endpoints force Chromium layout after writes. Native user
+    // selection events tell us when there is text worth bookmarking.
+    if (this.messageSelectionPossible) preserveTextSelectionDuringMutation(container, mutate);
+    else mutate();
   }
 
   private renderAnswerMarkdown(container: HTMLElement, key: string, text: string, streaming: boolean, sourcePath?: string): void {
@@ -1599,13 +1996,10 @@ export class CodexMessageListRenderer {
     this.answerMarkdown.render({
       app: env.app, container, key, text, streaming, sourcePath: sourcePath ?? env.sourcePath ?? "",
       mutate: (root, change) => {
-        const host = root.parentElement;
-        const previousScrollTop = host?.scrollTop ?? 0;
-        const followReasoning = host && isReasoningScrollNearBottom(previousScrollTop, host.clientHeight, host.scrollHeight);
-        preserveTextSelectionDuringMutation(root, change);
-        if (host?.hasClass("codex-ai-elements-reasoning-content")) {
-          host.scrollTop = followReasoning ? host.scrollHeight : previousScrollTop;
-        }
+        this.rememberReadingAnchor();
+        const host = root.closest<HTMLElement>(".codex-ai-elements-reasoning-content");
+        this.preserveMessageTextSelection(root, change);
+        if (host) this.queueReasoningScroll(host);
       },
       onCommit: () => {
         if (this.env?.sessionId !== env.sessionId) return;
@@ -1638,6 +2032,20 @@ export class CodexMessageListRenderer {
     if (reason.textContent !== text) reason.setText(text);
   }
 
+  private renderKnowledgeDirectoryAction(container: HTMLElement, turn: AgentTurnView): void {
+    const env = this.requireEnv();
+    const existing = container.querySelector<HTMLElement>(":scope > .codex-knowledge-directory-action");
+    const user = env.messages.slice(0, turn.anchorIndex + 1).reverse().find(message => message.role === "user");
+    const bindings = env.getKnowledgeFolderBindings?.() ?? env.knowledgeFolderBindings;
+    const needed = env.onOpenKnowledgeDirectorySettings && user && requestsKnowledgeWrite(user.text)
+      && knowledgeWikiWriteIssue(bindings, path => env.app.vault.getAbstractFileByPath(path) instanceof TFolder);
+    if (!needed || !isTerminalTurnStatus(turn.status)) { existing?.remove(); return; }
+    if (existing) return;
+    const actions = container.createDiv({ cls: "codex-knowledge-directory-action" });
+    const button = createOriginButton(actions, { cls: "text-button", text: conversationUiText(env.settingsLanguage, "去设置目录", "Choose Knowledge folder") });
+    button.onclick = () => { void env.onOpenKnowledgeDirectorySettings?.(); };
+  }
+
   private renderMissingPlanHint(bodyHost: HTMLElement, message: ChatMessage): void {
     const env = this.requireEnv();
     if (message.planMissing && message.role === "assistant") {
@@ -1651,7 +2059,7 @@ export class CodexMessageListRenderer {
         button.disabled = !env.onMissingPlanAction || Boolean(env.planActionsDisabled);
         button.onclick = () => {
           for (const item of Array.from(actions.querySelectorAll("button"))) item.disabled = true;
-          void env.onMissingPlanAction?.(message, action).catch(error => new Notice(error instanceof Error ? error.message : String(error)))
+          void env.onMissingPlanAction?.(message, action).catch(error => new Notice(actionFailureText(error, env.settingsLanguage)))
             .finally(() => { for (const item of Array.from(actions.querySelectorAll("button"))) item.disabled = Boolean(env.planActionsDisabled); });
         };
       }
@@ -1824,7 +2232,7 @@ export class CodexMessageListRenderer {
         renderIcon("triangle-alert");
         copyButton.setAttr("aria-label", failureLabel);
         attachNativeTooltip(copyButton, copy.message.copyFailed);
-        new Notice(`${copy.message.copyFailed}: ${result.error instanceof Error ? result.error.message : String(result.error)}`);
+        new Notice(conversationUiText(env.settingsLanguage, `${copy.message.copyFailed}。请重新点击复制。`, `${copy.message.copyFailed}. Click copy again.`));
       }
       window.setTimeout(() => {
         renderIcon("copy");
@@ -1836,7 +2244,19 @@ export class CodexMessageListRenderer {
     return copyButton;
   }
 
-  private renderAgentHeader(container: HTMLElement, input: { message?: ChatMessage; statusLabel: string; compact: boolean; agentIdentity?: AgentIdentityView }): void {
+  private companyReportProjection(messages: ChatMessage[]): CompanyReportProjection {
+    return projectCompanyReports(messages.map(message => ({ ...message, text: displayTextForMessage(message), isReply: isAgentAnswerMessage(message) })), this.env?.companyRole);
+  }
+
+  private renderReportSource(buttonParent: HTMLElement, detailParent: HTMLElement, sources: readonly CompanyReportSource[]): void {
+    const env = this.requireEnv();
+    const sourceId = piEntryIdFromProjectedMessageId(sources[0].messageId) ?? sources[0].messageId;
+    renderCompanyReportSource({ buttonParent, detailParent, sources, open: this.openCompanyReports,
+      key: `${env.sessionId}:${sourceId}`, english: env.settingsLanguage === "en",
+      onToggle: () => { env.onProcessDisclosureToggle?.(); env.onScheduleMeasure(false); } });
+  }
+
+  private renderAgentHeader(container: HTMLElement, input: { message?: ChatMessage; statusLabel: string; compact: boolean; agentIdentity?: AgentIdentityView; reportSources?: readonly CompanyReportSource[] }): void {
     const header = container.createDiv({ cls: "codex-agent-header" });
     header.toggleClass("is-compact", input.compact);
     // 未显式传入时读取当前渲染环境的身份快照（消息头全部使用同一份
@@ -1858,6 +2278,8 @@ export class CodexMessageListRenderer {
     const agent = input.message ? agentModelLine(input.message) : "";
     if (agent) nameRow.createSpan({ cls: "codex-agent-model-pill", text: `· ${agent}` });
     if (input.statusLabel) main.createDiv({ cls: "codex-agent-status-line", text: input.statusLabel });
+    const sources = input.reportSources ?? (input.message ? this.reportProjection.replies.get(input.message.id) : undefined);
+    if (sources?.length) this.renderReportSource(nameRow, container, sources);
   }
 
   private renderAgentFooter(
@@ -1874,8 +2296,8 @@ export class CodexMessageListRenderer {
       attr: {
         title: message.providerId || conversationUiText(
           language,
-          "历史消息未记录 Provider 身份",
-          "Provider information was not recorded for this historical message"
+          "历史消息未记录模型服务",
+          "The model service was not recorded for this earlier message"
         )
       }
     });
@@ -1909,8 +2331,8 @@ export class CodexMessageListRenderer {
     const refresh = () => {
       const state = this.answerSaveStates.get(key);
       const label = conversationUiText(env.settingsLanguage,
-        state?.status === "pending" ? "正在存为笔记" : state?.status === "saved" ? "已存为笔记，点击打开" : state?.status === "failed" ? `保存失败：${state.error}` : "存为笔记",
-        state?.status === "pending" ? "Saving note" : state?.status === "saved" ? "Saved as note, open" : state?.status === "failed" ? `Save failed: ${state.error}` : "Save as note");
+        state?.status === "pending" ? "正在存为笔记" : state?.status === "saved" ? "已存为笔记，点击打开" : state?.status === "failed" ? state.error ?? "未能存为笔记" : "存为笔记",
+        state?.status === "pending" ? "Saving note" : state?.status === "saved" ? "Saved as note, open" : state?.status === "failed" ? state.error ?? "The note could not be saved" : "Save as note");
       button.disabled = state?.status === "pending";
       button.setAttribute("aria-busy", String(state?.status === "pending"));
       button.setAttribute("aria-label", label);
@@ -1954,17 +2376,17 @@ export class CodexMessageListRenderer {
           onDirectoryReady: env.onAnswerDirectoryReady
         });
         this.answerSaveStates.set(key, { status: "saved", path });
-        let receiptError = "";
+        let receiptFailed = false;
         try {
           await env.onAnswerSaved?.(message.id, path);
-        } catch (error) {
-          receiptError = error instanceof Error ? error.message : String(error);
+        } catch {
+          receiptFailed = true;
         }
         const notice = ownedFragment(env.messagesEl.ownerDocument);
-        notice.append(receiptError
+        notice.append(receiptFailed
           ? conversationUiText(env.settingsLanguage,
-            `已存为 ${path}，但保存状态未能写入对话，重开后可能无法识别：${receiptError}\u3000`,
-            `Saved as ${path}, but the conversation could not remember it after reopening: ${receiptError} `)
+            `已存为 ${path}。笔记已保存，但重新打开对话后，该回答可能不显示“已存为笔记”。\u3000`,
+            `Saved as ${path}. The note is saved, but after the conversation is reopened, this answer may not show it as saved. `)
           : conversationUiText(env.settingsLanguage, `已存为 ${path}\u3000`, `Saved as ${path} `));
         const open = ownedEl(env.messagesEl.ownerDocument, "button");
         open.textContent = conversationUiText(env.settingsLanguage, "打开", "Open");
@@ -1972,12 +2394,13 @@ export class CodexMessageListRenderer {
         notice.append(open);
         new Notice(notice);
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = failureText(error,
+          ["未能存为笔记。", "The note could not be saved."], NEXT.retry, env.settingsLanguage);
         this.answerSaveStates.set(key, { status: "failed", error: reason });
         if (error instanceof ConversationContentLocationError) {
           showConversationContentLocationNotice(env.messagesEl.ownerDocument, env.settingsLanguage,
             () => env.onOpenOutputLocationSettings ? env.onOpenOutputLocationSettings(error.kind) : env.onOpenConversationContentSettings?.(), error.kind);
-        } else new Notice(conversationUiText(env.settingsLanguage, `存为笔记失败：${reason}`, `Could not save note: ${reason}`));
+        } else new Notice(reason);
       }
       refresh();
       // A streaming delta may have replaced the button while the write was pending.
@@ -2164,14 +2587,14 @@ export class CodexMessageListRenderer {
     if (showItemInFinder(absolute)) return;
     new Notice(conversationUiText(
       env.settingsLanguage,
-      `没有在当前 Obsidian 仓库找到：${path}`,
+      `未在当前 Obsidian 仓库中找到：${path}`,
       `Not found in the current Obsidian vault: ${path}`
     ));
   }
 
   private renderKnowledgeVerificationNote(container: HTMLElement, skipped: ChatMessage["knowledgeVerificationSkipped"]): void {
     if (skipped !== "knowledge_permission_revoked") return;
-    container.createDiv({ cls: "codex-kb-no-evidence", text: conversationUiText(this.requireEnv().settingsLanguage,
+    container.createDiv({ cls: "codex-kb-no-evidence codex-knowledge-verification-note", text: conversationUiText(this.requireEnv().settingsLanguage,
       "权限关闭，引用未重新核验。", "Knowledge permission was disabled; references were not rechecked.") });
   }
 
@@ -2219,7 +2642,7 @@ export class CodexMessageListRenderer {
 
   private renderAnswerSources(container: HTMLElement, turn: AgentTurnView): void {
     const usage = mergeKnowledgeUsageMessageData(turn.messages);
-    const receiptSources = [...new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? []).map(source => [source.id, source])).values()];
+    let receiptSources: NonNullable<ChatMessage["injectedMemorySources"]> = [...new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? []).map(source => [source.id, source])).values()];
     const citations = turn.messages.flatMap((message) => message.citations?.citations ?? []);
     const summary = citations.length ? {
       status: turn.messages.find((message) => message.citations)?.citations?.status ?? "strong",
@@ -2228,23 +2651,90 @@ export class CodexMessageListRenderer {
     } : undefined;
     const verificationSkipped = turn.messages.find(message => message.knowledgeVerificationSkipped)?.knowledgeVerificationSkipped;
     const question = this.requireEnv().messages.slice(0, turn.anchorIndex).reverse().find(message => message.role === "user")?.text;
+    const viewKey = this.memoryReceiptViewKey(turn);
+    const retained = this.memoryReceiptSourceViews.get(viewKey);
+    const hasReceiptMetadata = turn.messages.some(message => message.injectedMemorySources !== undefined);
+    if (!receiptSources.length && retained && (hasReceiptMetadata || isTerminalTurnStatus(turn.status))) retained.sources = [];
+    // Injection is already proven for this run. Live projections can omit its
+    // metadata; an explicit empty envelope still clears the displayed receipt.
+    if (!receiptSources.length && !isTerminalTurnStatus(turn.status)
+      && !hasReceiptMetadata
+      && retained?.question === question) receiptSources = retained?.sources ?? receiptSources;
     const signature = JSON.stringify([usage.references, usage.askSourceAttribution, summary, verificationSkipped, receiptSources, question]);
+    const contentSignature = JSON.stringify([usage.references.map(({ verificationStatus: _freshness, ...snapshot }) => snapshot), usage.askSourceAttribution, summary, receiptSources, question]);
     const previous = container.querySelector<HTMLElement>(".codex-answer-sources");
+    if (previous?.dataset.contentSignature === contentSignature) this.bindMemoryReceiptActions(previous, turn, receiptSources, question);
     if (previous?.dataset.signature === signature) return;
+    if (previous?.dataset.contentSignature === contentSignature) {
+      const rows = Array.from(previous.querySelectorAll<HTMLElement>(".codex-ai-elements-source"));
+      for (const document of localDocumentSources(summary, usage)) {
+        if (document.kind !== "vault") continue;
+        const row = rows.find(element => element.getAttribute("data-source-key") === document.key);
+        if (row) this.patchSourceFreshness(row, document);
+      }
+      const warning = previous.querySelector<HTMLElement>(".codex-knowledge-verification-note");
+      if (verificationSkipped && !warning) this.renderKnowledgeVerificationNote(previous, verificationSkipped);
+      else if (!verificationSkipped) warning?.remove();
+      previous.dataset.signature = signature;
+      return;
+    }
     previous?.remove();
     const host = container.createDiv({ cls: "codex-answer-sources" });
     host.dataset.signature = signature;
-    if (receiptSources.length) {
+    host.dataset.contentSignature = contentSignature;
+    if (receiptSources.length) this.memoryReceiptSourceViews.set(viewKey, { host, sources: receiptSources.map(source => ({ ...source })), question });
+    // Sparse closeout projections can temporarily omit the receipt. Keep its
+    // detached nodes while this turn is visible, but never show an old count.
+    const receiptSignature = JSON.stringify([receiptSources, question]);
+    host.dataset.receiptSignature = receiptSignature;
+    const receiptHost = previous?.querySelector(".codex-memory-receipt") ? previous : retained?.host;
+    const retainedButton = receiptHost?.querySelector<HTMLElement>(".codex-memory-receipt");
+    const retainedList = receiptHost?.querySelector<HTMLElement>(".codex-memory-receipt-list");
+    if (receiptSources.length && receiptHost?.dataset.receiptSignature === receiptSignature && retainedButton && retainedList) {
+      host.append(retainedButton, retainedList);
+    } else if (receiptSources.length) {
       const env = this.requireEnv();
       const button = host.createEl("button", { cls: "codex-memory-receipt", attr: { type: "button", "aria-label": conversationUiText(env.settingsLanguage, `用了 ${receiptSources.length} 条记忆`, `Used ${receiptSources.length} memories`) } });
       renderAnimateIcon(button.createSpan({ attr: { "aria-hidden": "true" } }), "brain");
       button.createSpan({ text: conversationUiText(env.settingsLanguage, `用了 ${receiptSources.length} 条记忆`, `Used ${receiptSources.length} memories`) });
-      button.onclick = () => { void env.onOpenMemoryReceipt?.({ conversationId: env.sessionId, messageId: turn.finalAnswer?.id, question, sources: receiptSources }).catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+      const stateKey = `${env.sessionId}:${turn.key}`;
+      const list = host.createDiv({ cls: "codex-answer-source-list codex-memory-receipt-list", attr: { id: stableDomId(`memory-receipt-${stateKey}`) } });
+      list.hidden = !(this.openMemoryReceipts.get(stateKey) ?? false);
+      button.setAttribute("aria-controls", list.id);
+      button.setAttribute("aria-expanded", String(!list.hidden));
+      for (const source of receiptSources) {
+        const row = list.createEl("button", { cls: "codex-message-note-link codex-memory-receipt-row", attr: { type: "button" } });
+        row.createSpan({ text: source.title });
+        if (source.reason) row.createSpan({ cls: "codex-memory-receipt-reason", text: memoryRecallReason(source.reason, env.settingsLanguage, source.relatedFrom) });
+      }
+      button.onclick = () => {
+        list.hidden = !list.hidden;
+        this.openMemoryReceipts.set(stateKey, !list.hidden);
+        button.setAttribute("aria-expanded", String(!list.hidden));
+        env.onScheduleMeasure();
+      };
     }
+    this.bindMemoryReceiptActions(host, turn, receiptSources, question);
     this.renderKnowledgeUsageCards(host, turn.finalAnswer?.id ?? turn.key, { ...usage, personalMemorySources: [], producedPaths: [] }, summary, 0, true);
     this.renderKnowledgeVerificationNote(host, verificationSkipped);
     const footer = container.querySelector<HTMLElement>(".codex-agent-footer");
     if (footer) container.insertBefore(host, footer);
+  }
+
+  private memoryReceiptViewKey(turn: AgentTurnView): string {
+    const env = this.requireEnv();
+    return `${env.sessionId}\0${env.settingsLanguage}\0${turn.key}`;
+  }
+
+  private bindMemoryReceiptActions(host: HTMLElement, turn: AgentTurnView, sources: NonNullable<ChatMessage["injectedMemorySources"]>, question?: string): void {
+    const messageId = turn.finalAnswer?.id ?? "";
+    if (!sources.length || host.dataset.receiptMessageId === messageId) return;
+    host.dataset.receiptMessageId = messageId;
+    const env = this.requireEnv();
+    host.querySelectorAll<HTMLElement>(".codex-memory-receipt-row").forEach((row, index) => {
+      const source = sources[index];
+      if (source) row.onclick = () => { void env.onOpenMemoryReceipt?.({ conversationId: env.sessionId, messageId: turn.finalAnswer?.id, question, sources, selectedId: source.id }).catch(error => new Notice(actionFailureText(error, env.settingsLanguage))); };
+    });
   }
 
   private renderLocalDocumentSource(
@@ -2322,6 +2812,18 @@ export class CodexMessageListRenderer {
         };
       }
     }
+    this.patchSourceFreshness(item, document);
+  }
+
+  private patchSourceFreshness(item: HTMLElement, document: LocalVaultDocumentSource): void {
+    const changed = document.references.some(reference => reference.verificationStatus === "source_link_changed");
+    const previous = item.querySelector<HTMLElement>(".codex-source-freshness");
+    if (!changed) { previous?.remove(); return; }
+    if (previous) return;
+    item.querySelector<HTMLElement>(".codex-ai-elements-source-header")?.createSpan({
+      cls: "codex-ai-elements-source-meta codex-source-freshness",
+      text: conversationUiText(this.requireEnv().settingsLanguage, "来源已变化", "Source changed")
+    });
   }
 
   private renderProducedArtifactSources(
@@ -2373,7 +2875,7 @@ export class CodexMessageListRenderer {
     if (!(file instanceof TFile)) {
       new Notice(conversationUiText(
         env.settingsLanguage,
-        `没有在当前 Obsidian 仓库找到：${document.path}`,
+        `未在当前 Obsidian 仓库中找到：${document.path}`,
         `Not found in the current Obsidian vault: ${document.path}`
       ));
       return;
@@ -2388,7 +2890,7 @@ export class CodexMessageListRenderer {
     if (!(file instanceof TFile)) {
       new Notice(conversationUiText(
         env.settingsLanguage,
-        `没有在当前 Obsidian 仓库找到：${reference.vaultRelativePath}`,
+        `未在当前 Obsidian 仓库中找到：${reference.vaultRelativePath}`,
         `Not found in the current Obsidian vault: ${reference.vaultRelativePath}`
       ));
       return;
@@ -2441,7 +2943,8 @@ export class CodexMessageListRenderer {
       this.renderAgentHeader(wrapper, {
         message: identityMessage,
         statusLabel: "",
-        compact: false
+        compact: false,
+        reportSources: turn.messages.flatMap(message => this.reportProjection.replies.get(message.id) ?? [])
       });
     }
     const bodyHost = createAIElementsMessageContent(wrapper);
@@ -2468,6 +2971,7 @@ export class CodexMessageListRenderer {
       });
       this.renderAgentAnswerContent(answerContent, answer);
       this.renderAssistantFailureReason(answerSection, answer);
+      this.renderKnowledgeDirectoryAction(answerSection, turn);
       if (answer.generationResult) renderGenerationResultCard(answerSection, { app: env.app, result: answer.generationResult, language: env.settingsLanguage, onMeasure: () => env.onScheduleMeasure() });
       this.renderMissingPlanHint(answerSection, answer);
       this.renderAnswerSources(answerSection, turn);
@@ -2565,6 +3069,10 @@ export class CodexMessageListRenderer {
     // An active/resumed run must reveal its work again. A completed turn only
     // defaults closed once; subsequent renders preserve the reader's choice.
     if (!complete) this.openTurnProcesses.delete(turn.key);
+    if (complete && !this.openTurnProcesses.has(turn.key) && turn.providerReasoningSegments.some((reasoning, index) => {
+      const key = `${turn.key}\0provider-reasoning\0${index === 0 ? THINKING_NODE_ID : reasoning.reasoningId}`;
+      return this.expandedReasoningReaders.has(key);
+    })) this.openTurnProcesses.set(turn.key, true);
     const open = !complete || (this.openTurnProcesses.get(turn.key) ?? false);
     const changed = button.hidden !== !complete || body.hidden !== !open;
     button.hidden = !complete;
@@ -2621,9 +3129,14 @@ export class CodexMessageListRenderer {
     const waiting = ["approval", "waiting_approval", "blocked"].includes(item.status);
     const noteUpdate = item.toolId === "note_update" || item.source.title === "修改笔记";
     const icon = row.querySelector<HTMLElement>(".codex-action-item-icon");
-    if (icon) setSemanticIcon(icon, failed ? "triangle-alert" : interrupted ? "circle-pause" : waiting ? "hand"
-      : isActiveActionStatus(item.status) ? "loader-circle" : noteUpdate ? "file-diff" : item.source.processKind === "view" ? "file-text"
-        : /(?:web|联网|网络|网页)/iu.test(item.source.title ?? "") ? "globe" : iconForActionKind(item.kind));
+    if (icon) {
+      const status = aiElementsStatus(item.status);
+      applyAIElementsStatus(icon, status);
+      icon.setAttribute("data-tool-status", status);
+      setSemanticIcon(icon, failed ? "triangle-alert" : interrupted ? "circle-pause" : waiting ? "hand"
+        : isActiveActionStatus(item.status) ? "loader-circle" : noteUpdate ? "file-diff" : item.source.processKind === "view" ? "file-text"
+          : /(?:web|联网|网络|网页)/iu.test(item.source.title ?? "") ? "globe" : iconForActionKind(item.kind));
+    }
     const main = row.querySelector<HTMLElement>(".codex-action-item-main");
     if (main && isKnowledgeWorkRecordMessage(item.source)) {
       main.empty();
@@ -2669,50 +3182,24 @@ export class CodexMessageListRenderer {
     turn: AgentTurnView,
     node: Readonly<EchoInkTurnProcessNode>
   ): void {
-    if (node.kind === "reasoning" && node.nodeId.startsWith("provider-reasoning:")
-      && turn.providerReasoningSegments.some((segment) => node.nodeId === `provider-reasoning:${segment.reasoningId}`)) {
+    if (node.nodeId === THINKING_NODE_ID && !turn.providerReasoningSegments.length) {
+      this.renderWaitingThinkingNode(container, turn, node);
+      return;
+    }
+    if (node.kind === "reasoning" && (node.nodeId === THINKING_NODE_ID || node.nodeId.startsWith("provider-reasoning:"))
+      && turn.providerReasoningSegments.length) {
       this.renderProviderReasoningNode(container, turn, node);
       return;
     }
-    const row = container.createDiv({
-      cls: `codex-assistant-turn-node is-${node.status} is-${node.kind}`
-    });
-    row.dataset.nodeId = node.nodeId;
-    row.toggleClass("is-current", node.nodeId === turn.currentNodeId);
-    if (node.sourceMessageId) row.dataset.messageId = node.sourceMessageId;
-
-    const icon = row.createSpan({
-      cls: "codex-assistant-turn-node-icon",
-      attr: { "aria-hidden": "true" }
-    });
-    const source = node.sourceMessageId ? turn.messages.find((message) => message.id === node.sourceMessageId) : undefined;
+    const source = node.sourceMessageId ? turn.messages.find(message => message.id === node.sourceMessageId) : undefined;
     const generationStage = source ? generationProgressStage(source) : undefined;
-    if (generationStage) row.dataset.nodeStatus = node.status;
     const paths = source ? knowledgeUsageMessageData(source).producedPaths : [];
     const generationIcon = generationStage && node.status === "completed"
       ? ({ reading: "file-text", writing: "file-text", layout: "layout-dashboard", approval: "hand", saving: "file-plus" } as const)[generationStage] : undefined;
-    setSemanticIcon(icon, generationIcon ?? (node.kind === "artifact" && node.status === "completed" && paths.length && paths.every((path) => path.endsWith(".canvas"))
-      ? "layout-dashboard" : assistantTurnNodeIcon(node)));
-
-    const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
-    const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
-    const title = withNativeMessageTooltip(heading.createSpan({
-      cls: "codex-assistant-turn-node-title",
-      text: this.approvalStepTitle(source, node.title),
-      attr: { title: this.approvalStepTitle(source, node.title) }
-    }));
-    if (node.status === "running") {
-      title.setAttribute("aria-label", `${node.title}, ${this.copy().process.nodeStatus(node.status)}`);
-    }
-    if (node.summary && !generationStage) {
-      withNativeMessageTooltip((node.status === "failed" ? content : heading).createSpan({
-        cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary",
-        text: node.summary,
-        attr: { title: node.summary }
-      }));
-    }
-    if (node.status === "cancelled") content.createDiv({ cls: "codex-work-record-failure", text: conversationUiText(this.requireEnv().settingsLanguage, "未完成", "Incomplete") });
-
+    const icon = generationIcon ?? (node.kind === "artifact" && node.status === "completed" && paths.length && paths.every(path => path.endsWith(".canvas")) ? "layout-dashboard" : assistantTurnNodeIcon(node));
+    const { row, content } = createTurnProcessNode(container, generationStage ? { ...node, summary: undefined } : node,
+      this.approvalStepTitle(source, node.title), icon, this.copy(), this.requireEnv().settingsLanguage);
+    row.toggleClass("is-current", node.nodeId === turn.currentNodeId);
     this.renderAssistantTurnNodeDetail(content, turn, node);
   }
 
@@ -2730,9 +3217,32 @@ export class CodexMessageListRenderer {
       return;
     }
     if (node.nodeId.startsWith("process-activity:")) {
+      if (node.nodeId.endsWith(":memory:recall")) {
+        const env = this.requireEnv();
+        const sources = [...new Map(turn.messages.flatMap(message => message.injectedMemorySources ?? []).map(source => [source.id, source])).values()];
+        const prepared = this.preparationStagesByTurn.get(turn.key)?.find(stage => stage.stage === "memory")?.memorySources ?? [];
+        if (sources.length || prepared.length) {
+          this.renderPreparationMemorySources(container, `${turn.key}:${node.nodeId}`, sources.length ? sources : prepared, env.settingsLanguage, env.readPersonalMemorySource, () => env.onScheduleMeasure());
+          return;
+        }
+      }
       const usage = mergeKnowledgeUsageMessageData(turn.messages);
-      const documents = localDocumentSources(undefined, usage).filter((document) =>
+      let documents = localDocumentSources(undefined, usage).filter((document) =>
         node.nodeId.endsWith(":memory:recall") ? document.kind === "memory" && document.source.title.trim() : document.kind === "vault");
+      const resourceKey = `${turn.key}:${node.nodeId}`;
+      if (documents.length) this.preparationDocumentsByTurn.set(resourceKey, documents);
+      else documents = this.preparationDocumentsByTurn.get(resourceKey) ?? [];
+      const preparedPaths = node.nodeId.endsWith(":knowledge:retrieval") ? this.preparationStagesByTurn.get(turn.key)?.find(stage => stage.stage === "knowledge")?.notePaths ?? [] : [];
+      if (!documents.length && preparedPaths.length) {
+        const disclosure = this.createAssistantTurnResourceDisclosure(container, `${turn.key}:${node.nodeId}`,
+          conversationUiText(this.requireEnv().settingsLanguage, "本轮读到的笔记", "Notes read this turn"), true);
+        disclosure.body.addClass("codex-answer-source-list");
+        for (const path of preparedPaths) {
+          const row = disclosure.body.createDiv({ cls: "codex-answer-source-row" });
+          const button = row.createEl("button", { cls: "codex-message-note-link", text: noteNameForPath(path), attr: { type: "button" } });
+          button.onclick = () => { void this.openKnowledgeBasePath(path); };
+        }
+      }
       if (documents.length && node.kind === "retrieval") {
         const disclosure = this.createAssistantTurnResourceDisclosure(container, `${turn.key}:${node.nodeId}`,
           conversationUiText(this.requireEnv().settingsLanguage, node.nodeId.endsWith(":memory:recall") ? "用上的记忆" : "本轮读到的笔记", node.nodeId.endsWith(":memory:recall") ? "Memories used" : "Notes read this turn"), true);
@@ -2828,6 +3338,84 @@ export class CodexMessageListRenderer {
     }
   }
 
+  private renderPreparationMemorySources(container: HTMLElement, key: string, sources: NonNullable<PreparationUpdate["memorySources"]>, language: SettingsLanguage,
+    readMemory: MessageListRenderInput["readPersonalMemorySource"], onMeasure: () => void): void {
+    const disclosure = this.createAssistantTurnResourceDisclosure(container, key, conversationUiText(language, "用上的记忆", "Memories used"), true, onMeasure);
+    disclosure.root.addClass("codex-work-record-sources");
+    disclosure.body.addClass("codex-answer-source-list");
+    let loading: Promise<void> | undefined;
+    const load = () => {
+      if (!disclosure.root.open || loading) return loading;
+      loading = Promise.all(sources.map(async source => {
+        const row = disclosure.body.createDiv({ cls: "codex-ai-elements-source is-memory" });
+        const header = row.createDiv({ cls: "codex-ai-elements-source-header" });
+        setSemanticIcon(header.createSpan({ cls: "codex-ai-elements-source-icon", attr: { "aria-hidden": "true" } }), "user-round");
+        header.createSpan({ cls: "codex-ai-elements-source-title codex-message-note-link is-disabled", text: `${conversationUiText(language, "记忆", "Memory")}：${source.title}` });
+        if (!readMemory) return;
+        const original = disclosure.body.createDiv({ cls: "codex-process-detail codex-memory-source-original", text: conversationUiText(language, "读取中…", "Loading…") });
+        try {
+          const result = await readMemory(source.id, source.revision);
+          original.setText(result.status === "available" ? result.content ?? "" : result.status === "changed"
+            ? conversationUiText(language, "这条记忆已修订，无法显示当时原文。", "This memory changed; its original text is unavailable.")
+            : conversationUiText(language, "这条记忆已不存在或已被忘记。", "This memory is missing or has been forgotten."));
+        } catch { original.setText(conversationUiText(language, "暂时无法读取这条记忆。", "This memory could not be read.")); }
+      })).then(onMeasure);
+      return loading;
+    };
+    const onToggle = disclosure.root.ontoggle;
+    disclosure.root.ontoggle = event => { onToggle?.call(disclosure.root, event); return load(); };
+    void load();
+  }
+
+  private renderWaitingThinkingNode(container: HTMLElement, turn: Pick<AgentTurnView, "key" | "processNodes" | "messages" | "providerReasoningSegments" | "status">, node: Readonly<EchoInkTurnProcessNode>, language = this.requireEnv().settingsLanguage): void {
+    const key = `${turn.key}\0provider-reasoning\0${THINKING_NODE_ID}`;
+    const state = this.reasoningDisclosureStates.get(key) ?? nextReasoningDisclosureState(undefined, node.status);
+    const elements = createAIElementsReasoning(container, { bodyId: stableDomId(`thinking-${turn.key}`), open: state.open,
+      status: aiElementsStatus(node.status), summary: node.status === "running" ? conversationUiText(language, "正在思考", "Thinking") : node.title });
+    elements.root.addClass("codex-assistant-turn-reasoning-node", "codex-static-thinking-icon");
+    elements.root.dataset.nodeId = THINKING_NODE_ID;
+    elements.root.dataset.nodeStatus = node.status;
+    elements.summary.createSpan({ cls: "codex-thinking-gap-copy", attr: { "data-thinking-live": "true", "data-started-at": String(node.startedAt || Date.now()), "data-language": language } });
+    if (node.summary) elements.body.createSpan({ text: node.summary });
+    this.reasoningDisclosureStates.set(key, state);
+    let userDisclosure = false;
+    elements.summary.onclick = event => { if (event.isTrusted) userDisclosure = true; };
+    elements.summary.onkeydown = event => { if (event.isTrusted && (event.key === "Enter" || event.key === " ")) userDisclosure = true; };
+    elements.root.ontoggle = () => {
+      if (userDisclosure) this.reasoningDisclosureStates.set(key, { ...state, open: elements.root.open, manual: true });
+      userDisclosure = false;
+      elements.summary.setAttribute("aria-expanded", String(elements.root.open));
+    };
+    this.updateThinkingLiveCopies(elements.root, turn);
+    const liveRoot = container.closest<HTMLElement>(".codex-container");
+    if (this.thinkingCopyTimer === undefined) this.thinkingCopyTimer = window.setInterval(() => {
+      const root = liveRoot ?? this.env?.messagesEl;
+      if (!root || !Array.from(root.querySelectorAll<HTMLElement>("[data-thinking-live]")).some(element => !element.hidden)) {
+        window.clearInterval(this.thinkingCopyTimer); this.thinkingCopyTimer = undefined; return;
+      }
+      this.refreshThinkingCopyText(root);
+    }, 150);
+  }
+
+  private updateThinkingLiveCopies(root: HTMLElement, turn: Parameters<typeof shouldShowThinkingLive>[0]): void {
+    const show = shouldShowThinkingLive(turn);
+    root.querySelectorAll<HTMLElement>("[data-thinking-live]").forEach(element => { element.hidden = !show; });
+    this.refreshThinkingCopyText(root);
+  }
+
+  private refreshThinkingCopyText(root: HTMLElement): void {
+    const reduced = root.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    root.querySelectorAll<HTMLElement>("[data-thinking-live]").forEach(element => {
+      if (element.hidden) return;
+      const copies = conversationCopy(element.dataset.language === "en" ? "en" : "zh-CN").message.thinkingLiveCopies;
+      const elapsed = Math.max(0, Date.now() - Number(element.dataset.startedAt));
+      const index = reduced ? 0 : Math.floor(elapsed / 3000) % copies.length;
+      element.style.opacity = !reduced && elapsed % 3000 > 2750 ? "0" : "1";
+      const text = ` · ${copies[index]}`;
+      if (element.textContent !== text) element.textContent = text;
+    });
+  }
+
   private renderProviderReasoningNode(
     container: HTMLElement,
     turn: AgentTurnView,
@@ -2835,14 +3423,32 @@ export class CodexMessageListRenderer {
   ): void {
     const env = this.requireEnv();
     const copy = this.copy();
-    const reasoningId = node.nodeId.slice("provider-reasoning:".length);
+    const reasoningId = node.nodeId === THINKING_NODE_ID ? turn.providerReasoningSegments[0]?.reasoningId : node.nodeId.slice("provider-reasoning:".length);
     const reasoning = turn.providerReasoningSegments.find((segment) =>
       segment.reasoningId === reasoningId
     );
     if (!reasoning) return;
     const displayText = userVisibleProviderReasoningText(reasoning.text, assistantTurnHasPersonalMemoryContext(turn));
     if (!shouldDisplayReasoning(reasoning, displayText)) return;
-    const disclosureKey = `${env.sessionId}\0${turn.key}\0provider-reasoning\0${reasoning.reasoningId}`;
+    const reasoningSlotId = node.nodeId === THINKING_NODE_ID ? THINKING_NODE_ID : reasoning.reasoningId;
+    const viewKey = `${turn.key}\0${reasoningSlotId}`;
+    const retained = this.providerReasoningViews.get(viewKey);
+    if (retained) {
+      container.appendChild(retained.root);
+      retained.root.dataset.nodeId = node.nodeId;
+      retained.root.dataset.nodeStatus = node.status;
+      for (const status of ["waiting", "running", "completed", "failed", "cancelled", "skipped"] as const) {
+        retained.root.toggleClass(`is-${status}`, node.status === status);
+      }
+      retained.root.toggleClass("is-current", node.nodeId === turn.currentNodeId);
+      const carrier = turn.messages.find(message => message.assistantTurn?.providerReasoningSegments?.some(segment => segment.reasoningId === reasoning.reasoningId));
+      if (carrier) retained.root.dataset.messageId = carrier.id;
+      this.patchProviderReasoning(retained.root, turn, reasoning, retained);
+      const body = retained.root.querySelector<HTMLElement>(".codex-ai-elements-reasoning-content");
+      if (body) body.scrollTop = retained.following ? body.scrollHeight : retained.scrollTop;
+      return;
+    }
+    const disclosureKey = `${turn.key}\0provider-reasoning\0${turn.providerReasoningSegments[0]?.reasoningId === reasoning.reasoningId ? THINKING_NODE_ID : reasoning.reasoningId}`;
     const disclosure = nextReasoningDisclosureState(
       this.reasoningDisclosureStates.get(disclosureKey),
       reasoning.status
@@ -2856,12 +3462,12 @@ export class CodexMessageListRenderer {
         ? "error"
         : aiElementsStatus(reasoning.status),
       summary: reasoning.status === "running"
-        ? copy.process.publicReasoningRunning
+        ? conversationUiText(env.settingsLanguage, "正在思考", "Thinking")
         : reasoning.durationMs === undefined
           ? copy.process.publicReasoningCompleted
           : copy.process.publicReasoningDuration(formatCompactDuration(reasoning.durationMs))
     });
-    elements.root.addClass("codex-assistant-turn-reasoning-node");
+    elements.root.addClass("codex-assistant-turn-reasoning-node", "codex-static-thinking-icon");
     elements.root.addClass(`is-${node.status}`);
     elements.root.toggleClass("is-current", node.nodeId === turn.currentNodeId);
     elements.root.dataset.nodeId = node.nodeId;
@@ -2874,6 +3480,7 @@ export class CodexMessageListRenderer {
     );
     if (carrier) elements.root.dataset.messageId = carrier.id;
     elements.body.dataset.renderedText = displayText;
+    elements.body.dataset.reasoningStreaming = String(reasoning.status === "running");
     this.scheduleDisclosureAutoFold(
       `reasoning:${disclosureKey}`,
       disclosureKey,
@@ -2882,19 +3489,36 @@ export class CodexMessageListRenderer {
       elements.summary
     );
     let pendingUserDisclosureIntent = false;
+    const pauseForReader = () => {
+      this.pendingReadingAnchor = null;
+      env.onProcessDisclosureToggle?.();
+    };
+    elements.summary.onpointerdown = (event) => {
+      // Stop following before a content frame can move the native click target
+      // between press and release. Native click still owns the disclosure.
+      if (event.isTrusted && event.button === 0) pauseForReader();
+    };
     elements.summary.onclick = (event) => {
-      if (event.isTrusted) pendingUserDisclosureIntent = true;
+      if (event.isTrusted) {
+        pendingUserDisclosureIntent = true;
+        pauseForReader();
+      }
     };
     elements.summary.onkeydown = (event) => {
       if (
         event.isTrusted
         && (event.key === "Enter" || event.key === " " || event.code === "Space")
-      ) pendingUserDisclosureIntent = true;
+      ) {
+        pendingUserDisclosureIntent = true;
+        pauseForReader();
+      }
     };
     elements.root.ontoggle = () => {
       const current = this.reasoningDisclosureStates.get(disclosureKey) ?? disclosure;
       if (pendingUserDisclosureIntent) {
         this.cancelDisclosureAutoFold(`reasoning:${disclosureKey}`);
+        if (elements.root.open && (env.isTurnRunning?.() ?? !isTerminalTurnStatus(turn.status))) this.expandedReasoningReaders.add(disclosureKey);
+        else this.expandedReasoningReaders.delete(disclosureKey);
         this.reasoningDisclosureStates.set(disclosureKey, Object.freeze({
           ...current,
           open: elements.root.open,
@@ -2903,14 +3527,19 @@ export class CodexMessageListRenderer {
       }
       pendingUserDisclosureIntent = false;
       elements.summary.setAttribute("aria-expanded", String(elements.root.open));
+      this.queueReasoningScroll(elements.body);
       env.onScheduleMeasure();
     };
     if (displayText.trim()) {
-      this.renderAnswerMarkdown(elements.body, `reasoning:${turn.key}:${reasoning.reasoningId}`, displayText, reasoning.status === "running");
+      this.renderAnswerMarkdown(elements.body, `reasoning:${turn.key}:${reasoningSlotId}`, displayText, reasoning.status === "running");
       if (reasoning.status === "running") {
         elements.body.scrollTop = elements.body.scrollHeight;
       }
     }
+    this.providerReasoningViews.set(viewKey, {
+      root: elements.root,
+      scrollTop: elements.body.scrollTop, following: reasoning.status === "running"
+    });
   }
 
   private renderCompactTaskPlanNode(container: HTMLElement, message: ChatMessage): void {
@@ -2967,9 +3596,10 @@ export class CodexMessageListRenderer {
     container: HTMLElement,
     stateKey: string,
     label: string,
-    withDisclosureHint = false
+    withDisclosureHint = false,
+    onMeasure?: () => void
   ): { root: HTMLDetailsElement; body: HTMLElement } {
-    const env = this.requireEnv();
+    const scheduleMeasure = onMeasure ?? this.requireEnv().onScheduleMeasure;
     const bodyId = stableDomId(`codex-assistant-turn-resource-${stateKey}`);
     const root = container.createEl("details", { cls: "codex-assistant-turn-resource" });
     root.open = this.openProcessItems.get(stateKey) ?? false;
@@ -2994,7 +3624,7 @@ export class CodexMessageListRenderer {
       rememberOpenState(this.openProcessItems, stateKey, root.open);
       summary.setAttribute("aria-expanded", String(root.open));
       if (caret) setSemanticIcon(caret, root.open ? "chevron-down" : "chevron-right");
-      env.onScheduleMeasure();
+      scheduleMeasure();
     };
     return { root, body };
   }
@@ -3636,7 +4266,7 @@ export class CodexMessageListRenderer {
     }
     const ref = normalizeProcessFileRef(attachment.path, env.vaultPath);
     if (!ref.openable) {
-      new Notice(conversationUiText(env.settingsLanguage, "这个文件路径无法打开", "This file path cannot be opened"));
+      new Notice(conversationUiText(env.settingsLanguage, "无法打开该文件路径", "This file path cannot be opened"));
       return;
     }
     const absolutePath = ref.absolutePath
@@ -3905,7 +4535,7 @@ export class CodexMessageListRenderer {
           body.createDiv({
             cls: "codex-process-raw-loading",
             text: copy.details.fileChangesLoadFailed(
-              error instanceof Error ? error.message : String(error)
+              errorText(error, NEXT.retry, this.requireEnv().settingsLanguage)
             )
           });
           this.renderPlainTextBlock(body, displayTextForMessage(message) || fallback);
@@ -3936,7 +4566,7 @@ export class CodexMessageListRenderer {
           body.createDiv({
             cls: "codex-process-raw-loading",
             text: copy.details.commandOutputLoadFailed(
-              error instanceof Error ? error.message : String(error)
+              errorText(error, NEXT.retry, this.requireEnv().settingsLanguage)
             )
           });
           renderShell(displayTextForMessage(message) || fallback);
@@ -4088,7 +4718,7 @@ export class CodexMessageListRenderer {
       .catch((error) => {
         status.empty();
         status.setText(this.copy().details.fullTextLoadFailed(
-          error instanceof Error ? error.message : String(error)
+          errorText(error, NEXT.retry, this.requireEnv().settingsLanguage)
         ));
         this.requireEnv().onScheduleMeasure();
       });
@@ -4115,7 +4745,7 @@ export class CodexMessageListRenderer {
           body.createDiv({
             cls: "codex-process-raw-loading",
             text: this.copy().details.fullTextLoadFailed(
-              error instanceof Error ? error.message : String(error)
+              errorText(error, NEXT.retry, this.requireEnv().settingsLanguage)
             )
           });
           this.requireEnv().onScheduleMeasure();
@@ -4187,7 +4817,7 @@ export class CodexMessageListRenderer {
   private async openProcessFile(file: ProcessFileRef): Promise<void> {
     const env = this.requireEnv();
     if (!file.openable) {
-      new Notice(conversationUiText(env.settingsLanguage, "这个文件路径无法打开", "This file path cannot be opened"));
+      new Notice(conversationUiText(env.settingsLanguage, "无法打开该文件路径", "This file path cannot be opened"));
       return;
     }
     if (file.kind === "vault") {
@@ -4199,13 +4829,13 @@ export class CodexMessageListRenderer {
       if (file.absolutePath && showItemInFinder(file.absolutePath)) return;
       new Notice(conversationUiText(
         env.settingsLanguage,
-        `没有在当前 Obsidian 仓库找到：${file.displayPath}`,
+        `未在当前 Obsidian 仓库中找到：${file.displayPath}`,
         `Not found in the current Obsidian vault: ${file.displayPath}`
       ));
       return;
     }
     if (file.kind === "external" && showItemInFinder(file.absolutePath ?? file.path)) return;
-    new Notice(conversationUiText(env.settingsLanguage, "无法打开这个文件位置", "Could not open this file location"));
+    new Notice(conversationUiText(env.settingsLanguage, "无法打开该文件位置", "Could not open this file location"));
   }
 
   private pruneVirtualHeights(rowIds: string[]): void {
@@ -4784,6 +5414,7 @@ function captureTextSelection(container: HTMLElement): TextSelectionBookmark | n
     || selection.rangeCount === 0
     || !selection.anchorNode
     || !selection.focusNode
+    || (selection.anchorNode === selection.focusNode && selection.anchorOffset === selection.focusOffset)
     || !container.contains(selection.anchorNode)
     || !container.contains(selection.focusNode)
   ) return null;
@@ -4798,7 +5429,8 @@ function captureTextSelection(container: HTMLElement): TextSelectionBookmark | n
     selection.focusOffset
   );
   if (anchorOffset === null || focusOffset === null) return null;
-  return Object.freeze({ anchorOffset, focusOffset });
+  return Object.freeze({ anchorOffset, focusOffset, anchorNode: selection.anchorNode, focusNode: selection.focusNode,
+    anchorNodeOffset: selection.anchorOffset, focusNodeOffset: selection.focusOffset });
 }
 
 function textOffsetForPoint(
@@ -4823,9 +5455,15 @@ function restoreTextSelection(
   const document = container.ownerDocument;
   const selection = document?.getSelection?.();
   if (!document || !selection) return;
-  const anchor = textPointAtOffset(container, bookmark.anchorOffset);
-  const focus = textPointAtOffset(container, bookmark.focusOffset);
+  const retainedPoint = (node: Node, offset: number) => node.nodeType === 3 && container.contains(node)
+    && offset <= (node.textContent?.length ?? 0) ? { node, offset } : null;
+  // Earlier native blocks can add whitespace while a selected text node stays
+  // intact. Its own endpoints are more precise than an offset through the tree.
+  const anchor = retainedPoint(bookmark.anchorNode, bookmark.anchorNodeOffset) ?? textPointAtOffset(container, bookmark.anchorOffset);
+  const focus = retainedPoint(bookmark.focusNode, bookmark.focusNodeOffset) ?? textPointAtOffset(container, bookmark.focusOffset);
   if (!anchor || !focus) return;
+  if (selection.anchorNode === anchor.node && selection.anchorOffset === anchor.offset
+    && selection.focusNode === focus.node && selection.focusOffset === focus.offset) return;
   try {
     selection.setBaseAndExtent(
       anchor.node,
@@ -5110,4 +5748,24 @@ function countLines(text: string): number {
 function rememberOpenState(store: Map<string, boolean>, id: string, open: boolean): void {
   if (open) store.set(id, true);
   else store.delete(id);
+}
+
+function createTurnProcessNode(container: HTMLElement, node: Readonly<EchoInkTurnProcessNode>, titleText: string, iconName: string, copy: ConversationCopy, language: SettingsLanguage): { row: HTMLElement; content: HTMLElement } {
+  const row = container.createDiv({ cls: `codex-assistant-turn-node is-${node.status} is-${node.kind}` });
+  row.dataset.nodeId = node.nodeId; row.dataset.nodeStatus = node.status;
+  const preparation = ["process-activity:preparation:judgment", "process-activity:knowledge:retrieval", "process-activity:memory:recall"].includes(node.nodeId);
+  row.toggleClass("codex-preparation-node", preparation);
+  if (node.sourceMessageId) row.dataset.messageId = node.sourceMessageId;
+  setSemanticIcon(row.createSpan({ cls: "codex-assistant-turn-node-icon", attr: { "aria-hidden": "true" } }), iconName);
+  const content = row.createDiv({ cls: "codex-assistant-turn-node-content" });
+  const heading = content.createDiv({ cls: "codex-assistant-turn-node-heading" });
+  const title = withNativeMessageTooltip(heading.createSpan({ cls: "codex-assistant-turn-node-title", text: titleText, attr: { title: titleText } }));
+  if (node.status === "running") title.setAttribute("aria-label", `${node.title}, ${copy.process.nodeStatus(node.status)}`);
+  if (node.summary) {
+    const summary = withNativeMessageTooltip((node.status === "failed" ? content : heading).createSpan({
+      cls: node.status === "failed" ? "codex-work-record-failure" : "codex-assistant-turn-node-summary", text: node.summary, attr: { title: node.summary } }));
+    summary.toggleClass("is-shimmering", preparation && node.status === "running");
+  }
+  if (node.status === "cancelled") content.createDiv({ cls: "codex-work-record-failure", text: conversationUiText(language, "未完成", "Incomplete") });
+  return { row, content };
 }

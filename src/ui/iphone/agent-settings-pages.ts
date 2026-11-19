@@ -1,3 +1,4 @@
+import { renderMobileCorrections } from "../mobile/memory-feedback";
 import { getModuleOwner } from "../../agents/registry";
 import { AGENT_MODULE_NAMES, AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, type AgentModuleId } from "../../agents/types";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
@@ -124,8 +125,8 @@ export class IPhoneAgentSettingsPages {
     this.loading(body); this.refreshers.add(render);
     const unsubscribe = this.service.subscribe(() => { if (!disposed) { dreamView?.(); void render(); } });
     const background = () => { if (ctx.document.hidden && (controller || this.service.dreamStatus().phase === "running")) void stop().catch(error => ctx.error(error)); };
-    ctx.document.addEventListener("visibilitychange", background);
-    await pushSettingsPage(ctx, { id, title: section === "agent" ? "Agent" : section === "memory" ? "记忆" : "会话", content: body, actions: section === "agent" ? iphoneButton(ctx.document, this.text("会话", "Conversations"), () => { void this.open("sessions").catch(ctx.error); }, "is-text") : undefined, canLeave: async () => { if (!await guard.canLeave()) return false; if (controller || this.service.dreamStatus().phase === "running") await stop(); return true; }, dispose: () => { disposed = true; revision++; unsubscribe(); guard.dispose(); this.refreshers.delete(render); ctx.document.removeEventListener("visibilitychange", background); if (controller || this.service.dreamStatus().phase === "running") void stop().catch(error => ctx.error(error)); } });
+
+    await pushSettingsPage(ctx, { id, title: section === "agent" ? "Agent" : section === "memory" ? "记忆" : "会话", content: body, actions: section === "agent" ? iphoneButton(ctx.document, this.text("会话", "Conversations"), () => { void this.open("sessions").catch(ctx.error); }, "is-text") : undefined, canLeave: async () => { if (!await guard.canLeave()) return false; return true; }, dispose: () => { disposed = true; revision++; unsubscribe(); guard.dispose(); this.refreshers.delete(render); ctx.document.removeEventListener("visibilitychange", background);  } });
     if (!disposed) await render();
   }
 
@@ -143,7 +144,7 @@ export class IPhoneAgentSettingsPages {
       const item = snapshot!.items.find(item => item.profileKey === slot.profileKey && item.status === "current"), row = el(ctx.document, "section", "ip-agent-profile-item"); row.dataset.profileKey = slot.profileKey;
       const header = el(ctx.document, "div", "ip-agent-item-head"); header.append(el(ctx.document, "h3", "", settingsText(ctx, slot.labelZh))); row.append(header); parent.append(row);
       if (editing === slot.profileKey) {
-        const editor = this.editor(row, slot.labelZh, draft, value => { draft = value; }); editor.maxLength = 120;
+        const editor = this.editor(row, slot.labelZh, draft, value => { draft = value; }, false); editor.maxLength = 120;
         const actions = this.actions(row);
         actions.append(settingsButton(ctx, "重新读取", () => { void reload(true); }), settingsButton(ctx, "取消", () => { editing = undefined; draft = ""; render(); }), settingsButton(ctx, "保存", () => { void mutate(() => this.service.saveProfile(slot.profileKey, draft, snapshot!.revision)); }, "is-primary"));
         return;
@@ -206,6 +207,7 @@ export class IPhoneAgentSettingsPages {
         const snapshot = await this.service.list(query); if (disposed || current !== revision || busy) return; error.show(); records.replaceChildren(); forgotten.replaceChildren();
         for (const record of snapshot.records) settingsRow(ctx, records, record.title, { literal: true, literalDetail: true, detail: `${record.status === "current" ? "" : `${this.memoryStatus(record.status)} · `}${this.memoryKind(record.kind)} · ${this.memoryBasis(record.basis)} · ${record.date}`, action: () => this.memory(record.id) });
         if (!snapshot.records.length) this.empty(records, query ? "没有匹配的记忆" : "还没有记忆");
+        renderMobileCorrections(records, (snapshot.corrections ?? []).filter(event=>event.action==='obsolete'), {language:ctx.host.settings().settingsLanguage ?? 'zh',service:this.service,reload:render,error:ctx.error});
         forgotten.append(el(ctx.document, "summary", "", this.text(`已忘记 · ${snapshot.forgotten.length}`, `Forgotten · ${snapshot.forgotten.length}`)));
         for (const item of snapshot.forgotten) {
           const row = el(ctx.document, "div", "ip-agent-forgotten-item"); row.append(el(ctx.document, "h3", "", item.title), el(ctx.document, "div", "ip-agent-basis", this.date(item.forgottenAt)));
@@ -235,7 +237,8 @@ export class IPhoneAgentSettingsPages {
       if (!snapshot || disposed) return; body.replaceChildren(); const record = snapshot.record, heading = el(ctx.document, "h2", "ip-agent-title", record.title); body.append(heading);
       const meta = settingsGroup(ctx, body); settingsRow(ctx, meta, "类型", { value: this.memoryKind(record.kind), literalValue: true }); settingsRow(ctx, meta, "状态", { value: this.memoryStatus(record.status), literalValue: true }); settingsRow(ctx, meta, "来源", { detail: this.text(record.contentOrigin === "user_edit" ? "你手动编辑的记录" : "任务中保存的记录", record.contentOrigin === "user_edit" ? "Records you edited" : "Records saved in a task"), literalDetail: true, value: this.memoryBasis(record.basis), literalValue: true }); settingsRow(ctx, meta, "记录日期", { value: record.date, literalValue: true });
       if (!editing) {
-        this.markdown(body, record.content); if (record.recallWhen) { const group = settingsGroup(ctx, body, "何时想起"); group.append(el(ctx.document, "div", "ip-agent-copy", record.recallWhen)); }
+        this.markdown(body, record.content);
+        renderMobileCorrections(body, snapshot.corrections ?? [], {language:ctx.host.settings().settingsLanguage ?? 'zh',service:this.service,reload:async restoredId=>{if(restoredId)recordId=restoredId;snapshot=await this.service.read(recordId);render();this.refresh();},error:ctx.error}); if (record.recallWhen) { const group = settingsGroup(ctx, body, "何时想起"); group.append(el(ctx.document, "div", "ip-agent-copy", record.recallWhen)); }
         const actions = this.actions(body); actions.append(settingsButton(ctx, "修正", () => { draft = original(); editing = true; preview = undefined; render(); }));
         actions.append(settingsButton(ctx, "忘记", () => this.confirm(body, "忘记这条记忆？之后仍可恢复。", "忘记", async () => {
           if (busy) return; busy = true; this.controls(body, true); error.show();
@@ -323,8 +326,8 @@ export class IPhoneAgentSettingsPages {
   private memoryStatus(status: string): string { return settingsText(this.ctx, status === "superseded" ? "已被更新" : status === "closed" ? "已结束" : "当前有效"); }
   private memoryKind(kind: string): string { return settingsText(this.ctx, ({ fact: "事实", view: "观点", decision: "决定", goal: "目标", task: "任务", open_loop: "待跟进", episode: "经历" } as Record<string, string>)[kind] ?? kind); }
   private actions(parent: HTMLElement): HTMLElement { const actions = el(this.ctx.document, "div", "ip-settings-actions ip-agent-actions"); parent.append(actions); return actions; }
-  private editor(parent: HTMLElement, name: string, value: string, change: (value: string) => void): HTMLTextAreaElement {
-    const label = el(this.ctx.document, "label", "ip-settings-field"); label.append(settingsMessage(this.ctx, el(this.ctx.document, "span", "ip-settings-field-label"), name)); const editor = el(this.ctx.document, "textarea", "ip-agent-editor"); editor.value = value; editor.setAttribute("aria-label", settingsText(this.ctx, name)); editor.addEventListener("input", () => change(editor.value)); label.append(editor); parent.append(label); return editor;
+  private editor(parent: HTMLElement, name: string, value: string, change: (value: string) => void, showLabel = true): HTMLTextAreaElement {
+    const label = el(this.ctx.document, "label", "ip-settings-field"); if (showLabel) label.append(settingsMessage(this.ctx, el(this.ctx.document, "span", "ip-settings-field-label"), name)); const editor = el(this.ctx.document, "textarea", "ip-agent-editor"); editor.value = value; editor.setAttribute("aria-label", settingsText(this.ctx, name)); editor.addEventListener("input", () => change(editor.value)); label.append(editor); parent.append(label); return editor;
   }
   private markdown(parent: HTMLElement, text: string): void { const content = el(this.ctx.document, "div", "ip-agent-markdown markdown-rendered"); parent.append(content); this.ctx.host.renderMarkdown(text, content); }
   private empty(parent: HTMLElement, text: string): void { parent.append(settingsMessage(this.ctx, el(this.ctx.document, "div", "ip-agent-empty"), text)); }

@@ -97,6 +97,8 @@ export interface DiaryOrganizerPorts {
   /** Host must pass signal to the provider so a timed-out call actually aborts. */
   generateText(request: { purpose: "extract" | "dedupe"; system: string; prompt: string; signal: AbortSignal }): Promise<string>;
   readFinanceSnapshot(): Promise<DiaryFinanceSnapshot>;
+  /** 智能判断（PRO）：查重与自动入账复查；返回 null 时走模型和规则。 */
+  decideDiary?(input: import("../membership/decision-client").DiaryDecisionInput): Promise<import("../membership/decision-client").DiaryDecisionResult | null>;
   /** Full snapshot, filtered to unfinished, unknown completion date, or last seven days. */
   readTodoSnapshot(): Promise<DiaryTodoSnapshotEntry[]>;
   writeFinance(input: DiaryWriteInput<DiaryFinanceCandidate>): Promise<DiaryWrittenRecord>;

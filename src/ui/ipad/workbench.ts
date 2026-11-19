@@ -1,11 +1,13 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import type { AgentModuleId } from "../../agents/types";
 import { HomeSearchService } from "../../home/home-search";
 import { isHomeNotePath } from "../../home/home-note-visibility";
 import { IPadShell } from "./shell";
 import { createHomePage } from "./workbench-pages";
-import { createIPadProjectPage } from "./company-pages";
+import { createIPadProjectPage, createIPadRemoteConversationPage } from "./company-pages";
 import type { IPadPageContext, IPadRoute, IPadWorkbenchHost } from "./workbench-contract";
 import { ipadElement as el } from "./workbench-elements";
 import { mobileModuleEnabled } from "../../mobile/module-settings";
@@ -38,9 +40,14 @@ export class IPadWorkbench {
   navigate(route: IPadRoute, _replace = false): Promise<void> {
     return this.enqueue(async () => {
       if (route.kind === "project") {
-        const id = `project:${route.projectId}`;
+        const id = route.deviceId ? `project:${route.deviceId}:${route.projectId}` : `project:${route.projectId}`;
         if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
-        const page = createIPadProjectPage(this.context, route.projectId); if (!await this.shell.push(page)) page.dispose?.(); return;
+        const page = createIPadProjectPage(this.context, route.projectId, route.deviceId); if (!await this.shell.push(page)) page.dispose?.(); return;
+      }
+      if (route.kind === "remote-conversation") {
+        const id = `remote-conversation:${route.deviceId}:${route.conversationId}`;
+        if (this.shell.hasPage(id)) { await this.shell.backTo(id); return; }
+        const page = createIPadRemoteConversationPage(this.context, route.deviceId, route.conversationId); if (!await this.shell.push(page)) page.dispose?.(); return;
       }
       if (route.kind !== "home") { await this.host.openAgent(route); return; }
       if (this.shell.hasPage("ipad-home")) await this.shell.backTo("ipad-home");
@@ -48,7 +55,8 @@ export class IPadWorkbench {
     });
   }
 
-  openProject(projectId: string): Promise<void> { return this.navigate({ kind: "project", projectId }); }
+  openProject(projectId: string, deviceId?: string): Promise<void> { return this.navigate({ kind: "project", projectId, ...(deviceId ? { deviceId } : {}) }); }
+  openRemoteConversation(deviceId: string, conversationId: string): Promise<void> { return this.navigate({ kind: "remote-conversation", deviceId, conversationId }); }
 
   openModule(module: AgentModuleId): Promise<void> {
     return this.enqueue(async () => {
@@ -104,7 +112,7 @@ export class IPadWorkbench {
             if (match.snippet) row.append(el(document, "span", "pd-sub", match.snippet));
             row.addEventListener("click", () => { void this.host.openNote(match.path).catch(error => this.error(error)); }); results.append(row);
           }
-        } catch (error) { if (!disposed && !current.signal.aborted && query === current) status.textContent = error instanceof Error ? error.message : String(error); }
+        } catch (error) { if (!disposed && !current.signal.aborted && query === current) status.textContent = settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage); }
         finally { if (query === current) { query = undefined; results.removeAttribute("aria-busy"); } }
       };
       const schedule = () => {
@@ -133,6 +141,6 @@ export class IPadWorkbench {
     return next;
   }
 
-  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(error instanceof Error ? error.message : String(error)); }
+  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage)); }
   dispose(): void { if (this.closed) return; this.closed = true; this.shell.dispose(); }
 }

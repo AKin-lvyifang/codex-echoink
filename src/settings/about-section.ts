@@ -1,5 +1,6 @@
 import { ownedSvg } from "../ui/owned-dom";
 import { Notice, setIcon, setTooltip } from "obsidian";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import { openExternalInElectron } from "../core/electron";
 import { createOriginButton } from "./origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "./amicro-buttons";
@@ -33,10 +34,10 @@ export function renderCompactAbout(parent: HTMLElement, options: {
   const zh = options.language !== "en";
   const openLink = (url: string) => {
     void openExternalInElectron(url).then(opened => {
-      if (!opened) new Notice(zh ? "暂时无法打开链接" : "Could not open this link");
+      if (!opened) new Notice(joinErrorCopy(["无法打开链接。", "Could not open this link."], NEXT.retryLater, options.language));
     }).catch(error => {
       console.warn("[EchoInk] Could not open about link", error);
-      new Notice(zh ? "暂时无法打开链接" : "Could not open this link");
+      new Notice(joinErrorCopy(["无法打开链接。", "Could not open this link."], NEXT.retryLater, options.language));
     });
   };
   const row = parent.createDiv({ cls: "echoink-about-compact" });
@@ -73,7 +74,7 @@ export function renderCompactAbout(parent: HTMLElement, options: {
     checkLabel.setText(pending ? (zh ? "正在检查…" : "Checking…") : (zh ? "检查更新" : "Check for updates"));
     status.empty(); status.hidden = state.status === "idle" || pending;
     status.toggleClass("is-error", state.status === "error");
-    if (state.status === "error") status.setText(zh ? "暂时无法检查，请重试" : "Could not check for updates. Please try again.");
+    if (state.status === "error") status.setText(joinErrorCopy(["未能检查更新。", "Could not check for updates."], NEXT.retryLater, zh ? "zh" : "en"));
     if (state.status === "current") status.setText(zh ? "已是最新版本" : "You're up to date");
     if (state.status === "available") {
       status.createSpan({ text: zh ? `发现新版本 v${state.version}` : `New version v${state.version}` });

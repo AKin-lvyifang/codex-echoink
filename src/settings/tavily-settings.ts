@@ -1,4 +1,5 @@
 import { setIcon } from "obsidian";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import { createOriginButton, createOriginInput, createOriginSwitch, createOriginRadioGroup } from "./origin-controls";
 import { applyAmicroButton } from "./amicro-buttons";
 import { createSettingsGroup, createSettingsSection, createSettingsState } from "./settings-v2";
@@ -12,7 +13,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   const label = (zh: string, en: string) => english ? en : zh;
   const settings = host.settings.tavily;
   const apiKey = () => webSearchApiKey(settings, host.settings.apiProviders);
-  const missingKey = () => webSearchProvider(settings) === "deepseek" ? label("先在模型里添加 DeepSeek", "Add DeepSeek in Models first") : label("请先填写 API Key。", "Enter an API key first.");
+  const missingKey = () => webSearchProvider(settings) === "deepseek" ? label("尚未添加 DeepSeek。请先在 设置 → 模型服务 中添加 DeepSeek。", "DeepSeek has not been added. Add DeepSeek in Settings → Model services first.") : label("请先填写 API Key。", "Enter an API key first.");
   Object.assign(settings, normalizeWebSearchSettings(settings));
   const aligned = parent.closest(".echoink-settings-aligned") !== null;
   const section = createSettingsSection(parent, { title: label("联网搜索", "Web search"), surface: aligned ? "flat" : "group" });
@@ -62,7 +63,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
   const state = card.createDiv({ cls: "echoink-tavily-state" });
   function show(text: string, tone: "error" | "success" | "neutral" = "neutral"): void { state.empty(); createSettingsState(state, text, tone); }
   function invalidate(): void { generation++; pending?.abort(); pending = null; test.disabled = !apiKey(); state.empty(); }
-  function save(): void { void host.saveSettings().catch(() => show(label("保存失败，请重试。", "Could not save settings. Try again."), "error")); }
+  function save(): void { void host.saveSettings().catch(() => show(joinErrorCopy(["联网搜索设置未能保存。", "The web search settings could not be saved."], NEXT.retry, english ? "en" : "zh"), "error")); }
   function refreshKey(): void {
     const deepseek = webSearchProvider(settings) === "deepseek";
     const source = webSearchKeySource(settings, host.settings.apiProviders), editable = !deepseek || source === "legacy";
@@ -104,7 +105,7 @@ export function renderTavilySettings(parent: HTMLElement, host: {
 }
 
 export function renderProviderTabs(parent: HTMLElement, active: "models" | "tools", english: boolean, activate: (tab: "models" | "tools", focus: boolean) => void): HTMLElement {
-  const tabs = parent.createDiv({ cls: "codex-resource-tabs echoink-provider-tabs", attr: { role: "tablist", "aria-label": english ? "Provider settings" : "Provider 设置" } });
+  const tabs = parent.createDiv({ cls: "codex-resource-tabs echoink-provider-tabs", attr: { role: "tablist", "aria-label": english ? "Model service settings" : "模型服务设置" } });
   const ids = ["models", "tools"] as const;
   ids.forEach((id, index) => {
     const button = createOriginButton(tabs, { cls: `codex-resource-tab${active === id ? " is-active" : ""}`, text: id === "models" ? (english ? "Model API" : "大模型 API") : (english ? "Tools" : "tool 工具"), attr: { id: `echoink-provider-tab-${id}`, role: "tab", "aria-selected": String(active === id), "aria-controls": "echoink-provider-panel", tabindex: active === id ? 0 : -1, "data-echoink-focus-key": `provider-tab:${id}` } });

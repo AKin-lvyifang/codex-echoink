@@ -144,17 +144,17 @@ function assertGenerationPromptsAndBudget(): void {
   for (const attempt of [initial, repair, fallback]) {
     const budget = budgetFor(attempt);
     assert.doesNotThrow(() => assertGenerationInputBudget(request, sources, budget, userText, attempt));
-    assert.throws(() => assertGenerationInputBudget(request, sources, budget - 1, userText, attempt), /本轮预算/u);
+    assert.throws(() => assertGenerationInputBudget(request, sources, budget - 1, userText, attempt), /处理上限/u);
   }
-  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(fallback), userText), /本轮预算/u, "full skill and examples consume the initial budget");
+  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(fallback), userText), /处理上限/u, "full skill and examples consume the initial budget");
   for (const larger of [
     { ...repair, failedOutput: repair.failedOutput.repeat(100) },
     { ...repair, validationError: repair.validationError.repeat(100) }
-  ]) assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(repair), userText, larger), /本轮预算/u, "repair output and errors are never truncated or omitted from budget");
-  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(initial), userText.repeat(100)), /本轮预算/u, "actual user text is included");
-  assert.throws(() => assertGenerationInputBudget(request, [{ ...sources[0], content: sources[0].content.repeat(100) }], budgetFor(initial), userText), /本轮预算/u, "source content is never truncated to fit");
+  ]) assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(repair), userText, larger), /处理上限/u, "repair output and errors are never truncated or omitted from budget");
+  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(initial), userText.repeat(100)), /处理上限/u, "actual user text is included");
+  assert.throws(() => assertGenerationInputBudget(request, [{ ...sources[0], content: sources[0].content.repeat(100) }], budgetFor(initial), userText), /处理上限/u, "source content is never truncated to fit");
   assert.doesNotThrow(() => assertGenerationInputBudget(request, sources, budgetFor(initial)));
-  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(initial) - 1), /本轮预算/u, "the default budget includes the actual neutral Canvas prompt");
+  assert.throws(() => assertGenerationInputBudget(request, sources, budgetFor(initial) - 1), /处理上限/u, "the default budget includes the actual neutral Canvas prompt");
   assert.doesNotThrow(() => assertGenerationInputBudget(renamed, sources, budgetFor(initial)), "public template labels are not charged as model input");
-  for (const invalid of [0, -1, 1.5, Number.NaN]) assert.throws(() => assertGenerationInputBudget(request, sources, invalid), /本轮预算/u);
+  for (const invalid of [0, -1, 1.5, Number.NaN]) assert.throws(() => assertGenerationInputBudget(request, sources, invalid), /处理上限/u);
 }

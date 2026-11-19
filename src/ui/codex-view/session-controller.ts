@@ -1,4 +1,5 @@
 import { cloneSelectionAnnotations } from "../../types/selection-annotations";
+import { failureText, NEXT } from "../../core/error-copy";
 import { applyConversationTaskMetadata, normalizeConversationTaskMetadata, type ConversationTaskMetadata } from "../../agents/task-metadata";
 import { emptySelectionDraft, restoreSelectionDraft } from "../../selection-ask/draft";
 import { Notice, type App } from "obsidian";
@@ -78,11 +79,9 @@ export function renderTabsView(host: CodexSessionHost): void {
         try {
           await activateSession(host, session);
         } catch (error) {
-          new Notice(conversationUiText(
-            host.plugin.settings.settingsLanguage,
-            `打开会话失败：${errorMessage(error)}`,
-            `Could not open the conversation: ${errorMessage(error)}`
-          ));
+          new Notice(failureText(error,
+            ["会话未能打开。", "The conversation could not be opened."],
+            NEXT.retryOrReload, host.plugin.settings.settingsLanguage));
         } finally {
           renderConversationShellChange(host);
         }
@@ -95,11 +94,7 @@ export function renderTabsView(host: CodexSessionHost): void {
         try {
           await host.createSession();
         } catch (error) {
-          new Notice(conversationUiText(
-            host.plugin.settings.settingsLanguage,
-            `新建会话失败：${errorMessage(error)}`,
-            `Could not create a conversation: ${errorMessage(error)}`
-          ));
+          new Notice(failureText(error, CREATE_FAILED_LEAD, RETRY_OR_RELOAD, host.plugin.settings.settingsLanguage));
         } finally {
           renderConversationShellChange(host);
         }
@@ -138,15 +133,13 @@ export async function resetSessionNativeCache(host: CodexSessionHost, session: S
     await persistPiConversationShells(host);
     new Notice(conversationUiText(
       host.plugin.settings.settingsLanguage,
-      "Agent 运行实例已释放，下次打开会从同一会话记录恢复",
-      "The Agent runtime was released. It will restore from this conversation record when reopened."
+      "已重置，下次打开会接着原来的对话。",
+      "Reset. Reopening it will continue the same conversation."
     ));
   } catch (error) {
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `重置 Agent 缓存失败：${errorMessage(error)}`,
-      `Could not reset the Agent cache: ${errorMessage(error)}`
-    ));
+    new Notice(failureText(error,
+      ["重置未完成。", "The reset could not be completed."],
+      NEXT.reloadPlugin, host.plugin.settings.settingsLanguage));
   }
 }
 
@@ -358,11 +351,7 @@ async function derivePiConversationInTransitionLane(
       )
     });
   } catch (error) {
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `新建会话失败：${errorMessage(error)}`,
-      `Could not create a conversation: ${errorMessage(error)}`
-    ));
+    new Notice(failureText(error, CREATE_FAILED_LEAD, RETRY_OR_RELOAD, host.plugin.settings.settingsLanguage));
     return;
   }
   if (
@@ -371,8 +360,8 @@ async function derivePiConversationInTransitionLane(
   ) {
     new Notice(conversationUiText(
       host.plugin.settings.settingsLanguage,
-      "新建会话失败：派生结果没有独立会话身份",
-      "Could not create a conversation: the derived result has no independent conversation identity"
+      "新会话未能创建。请重试。",
+      "The new conversation could not be created. Try again."
     ));
     return;
   }
@@ -410,20 +399,14 @@ async function derivePiConversationInTransitionLane(
   try {
     await persistPiConversationShells(host);
   } catch (error) {
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `新会话已创建，但界面状态保存失败：${errorMessage(error)}`,
-      `The new conversation was created, but its UI state could not be saved: ${errorMessage(error)}`
-    ));
+    new Notice(failureText(error,
+      ["新会话已创建，但标签页状态未能保存。", "The new conversation was created, but its tab state could not be saved."],
+      ["对话不受影响；如重新加载插件后标签页未显示，请从会话列表打开。", "The conversation is unaffected; if its tab is missing after a reload, open it from the conversation list."], host.plugin.settings.settingsLanguage));
   }
   if (derivation.activation.status === "failed") {
-    new Notice(
-      conversationUiText(
-        host.plugin.settings.settingsLanguage,
-        `会话已创建，但 Agent 暂未激活：${derivation.activation.message}`,
-        `The conversation was created, but the Agent is not active yet: ${derivation.activation.message}`
-      )
-    );
+    new Notice(failureText(derivation.activation.message,
+      ["会话已创建，但 Agent 暂未激活。", "The conversation was created, but the Agent is not active yet."],
+      NEXT.reopen, host.plugin.settings.settingsLanguage));
     return;
   }
   new Notice(derivation.anchorRole === "user"
@@ -510,7 +493,7 @@ export async function archiveSession(
   renderConversationShellChange(host);
   new Notice(
     fallbackError
-      ? conversationUiText(host.plugin.settings.settingsLanguage, "会话已归档，可在设置中恢复。无法打开后续会话，请重试。", "Conversation archived. You can restore it in Settings. Could not open the next conversation. Please try again.")
+      ? conversationUiText(host.plugin.settings.settingsLanguage, "会话已归档，可在设置中恢复。无法打开后续会话，请重试。", "Conversation archived. You can restore it in Settings. Could not open the next conversation. Try again.")
       : conversationUiText(host.plugin.settings.settingsLanguage, "会话已归档，可在设置中恢复。", "Conversation archived. You can restore it in Settings.")
   );
 }
@@ -649,13 +632,8 @@ export async function deleteSessions(
       host.turnQueue.clearSessionQueue(session.id);
       removeConversationShell(host, session.id);
     } catch (error) {
-      new Notice(
-        conversationUiText(
-          host.plugin.settings.settingsLanguage,
-          `删除“${session.title}”失败：${errorMessage(error)}`,
-          `Could not delete “${session.title}”: ${errorMessage(error)}`
-        )
-      );
+      new Notice(failureText(error,
+        [`“${session.title}”未能删除。`, `“${session.title}” could not be deleted.`], RETRY_OR_RELOAD, host.plugin.settings.settingsLanguage));
     }
   }
   if (committedCount) {
@@ -671,7 +649,7 @@ export async function deleteSessions(
         ? conversationUiText(
           host.plugin.settings.settingsLanguage,
           `${committedCount === 1 ? "已删除会话" : `已删除 ${committedCount} 个会话`}；无法打开后续会话，请重试。`,
-          `${committedCount === 1 ? "Conversation deleted." : `${committedCount} conversations deleted.`} Could not open the next conversation. Please try again.`
+          `${committedCount === 1 ? "Conversation deleted." : `${committedCount} conversations deleted.`} Could not open the next conversation. Try again.`
         )
         : conversationUiText(
           host.plugin.settings.settingsLanguage,
@@ -740,8 +718,8 @@ export function ensureSession(host: CodexSessionHost): StoredSession {
   if (session) return session;
   throw new Error(conversationUiText(
     host.plugin.settings.settingsLanguage,
-    "Pi Conversation Catalog 中没有可打开的普通会话",
-    "Pi Conversation Catalog has no openable regular conversation"
+    "当前无可打开的会话。请新建会话。",
+    "No conversation is available to open. Start a new conversation."
   ));
 }
 
@@ -1060,6 +1038,5 @@ function conversationShellFingerprint(host: CodexSessionHost): string {
   });
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+const CREATE_FAILED_LEAD = ["新会话未能创建。", "The new conversation could not be created."] as const;
+const RETRY_OR_RELOAD = NEXT.retryOrReload;

@@ -4,8 +4,11 @@ import type { FinanceEntry } from "./store-core";
 import type { FinanceImportRow } from "./finance-domain";
 import { FINANCE_BRAND_CHOICES, financeSelectableCategoryNames, matchConfigured, resolveFinanceMerchant } from "./finance-catalog";
 import type { FinanceSettings } from "./settings";
+import type { FinanceImportDecisionInput, FinanceImportDecisionRow } from "../membership/decision-client";
 
 const BATCH_SIZE = 8;
+/** 智能判断每次请求最多 50 行（服务器每次扣 1 次）。 */
+const DECISION_BATCH_SIZE = 50;
 const text = (value: unknown, max: number): string | null => typeof value === "string" && value.trim().length <= max ? value.trim() : null;
 const abort = (): never => { throw new DOMException("已取消智能整理", "AbortError"); };
 
@@ -30,6 +33,8 @@ function shortlist<T>(source: string, items: readonly T[], labels: (item: T) => 
 }
 
 export interface FinanceOrganizationOptions {
+  /** 智能判断（PRO）：分类、商户、账户、图标都是选择题；返回 null 的批次再交给 generate。 */
+  decide?: (input: FinanceImportDecisionInput) => Promise<FinanceImportDecisionRow[] | null>;
   generate?: (systemPrompt: string, userPrompt: string, signal: AbortSignal) => Promise<string>;
   skillContent?: string;
   signal: AbortSignal;
@@ -38,6 +43,8 @@ export interface FinanceOrganizationOptions {
 export interface FinanceOrganizationResult { rows: FinanceImportRow[]; warnings: string[]; aiCandidates: number; incomplete?: boolean }
 
 interface Candidate {
+  /** Already organized by the smart judgment; skipped by the model batches. */
+  decided?: boolean;
   ref: number; rowIndexes: number[]; fixed: { merchant: boolean; category: boolean; account: boolean; icon: boolean };
   source: NonNullable<FinanceImportRow["sourceFields"]>; entry: FinanceEntry;
   choices?: { merchant: Map<string, { name: string; defaultCategory: string; iconId: string }>; account: Map<string, string>; icon: Map<string, string> };
@@ -52,14 +59,14 @@ function candidateKey(candidate: Candidate): string {
 function parseSuggestions(response: string): unknown[] {
   const trimmed = response.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
   const parsed: unknown = JSON.parse(trimmed);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("模型未返回 JSON 对象");
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("模型返回的账单内容无法识别。请重新导入。");
   const rows = (parsed as Record<string, unknown>).rows;
-  if (!Array.isArray(rows)) throw new Error("模型未返回 rows 数组");
+  if (!Array.isArray(rows)) throw new Error("模型返回的账单内容无法识别。请重新导入。");
   return rows;
 }
 
 /** Apply only bounded semantic suggestions; source facts and identity never enter this function. */
-export function applyFinanceSuggestion(candidate: Candidate, suggestion: unknown, categories: readonly string[], iconIds: ReadonlySet<string>): FinanceEntry | null {
+export function applyFinanceSuggestion(candidate: Candidate, suggestion: unknown, _categories: readonly string[], iconIds: ReadonlySet<string>): FinanceEntry | null {
   if (!suggestion || typeof suggestion !== "object" || Array.isArray(suggestion)) return null;
   const value = suggestion as Record<string, unknown>;
   if (value.ref !== candidate.ref) return null;
@@ -67,12 +74,13 @@ export function applyFinanceSuggestion(candidate: Candidate, suggestion: unknown
   const merchantChoice = candidate.choices?.merchant.get(String(value.merchantChoice));
   const merchant = merchantChoice?.name || text(value.merchant, 60);
   const description = text(value.description, 200);
-  const category = text(value.category, 60);
+  const category = text(value.category, 30);
   const account = candidate.choices?.account.get(String(value.accountChoice)) || text(value.account, 100);
   const iconId = candidate.choices?.icon.get(String(value.iconChoice)) || text(value.iconId, 100);
   if (!candidate.fixed.merchant && merchant) entry.merchant = merchant;
   if (description) entry.description = description;
-  if (!candidate.fixed.category && category && categories.includes(category)) {
+  // A new name is allowed: the service creates the category before applying suggestions.
+  if (!candidate.fixed.category && category) {
     entry.category = category;
     delete entry.classificationPending;
   }
@@ -135,17 +143,20 @@ export async function organizeFinanceRows(
   }
   const warnings: string[] = [];
   let incomplete = false;
+  const decided = options.decide && candidates.length ? await decideFinanceRows(candidates, rows, settings, options) : 0;
+  const pending = decided ? candidates.filter((candidate) => !candidate.decided) : candidates;
+  if (!pending.length) return { rows, warnings, aiCandidates: candidates.length };
   if (!options.generate || !options.skillContent) {
     warnings.push("智能整理未运行，已保留原字段及你设置的资料匹配，可核对后基础导入");
-    return { rows, warnings, aiCandidates: 0 };
+    return { rows, warnings, aiCandidates: decided ? candidates.length : 0, ...(decided ? { incomplete: true } : {}) };
   }
   const categories = financeSelectableCategoryNames(settings);
   const activeMerchants = settings.merchants.filter((item) => item.active);
   const activeAccounts = settings.accounts.filter((item) => item.active);
   const brands = FINANCE_BRAND_CHOICES.filter(([id]) => id !== "auto" && id !== "none");
-  for (let offset = 0; offset < candidates.length; offset += BATCH_SIZE) {
+  for (let offset = 0; offset < pending.length; offset += BATCH_SIZE) {
     if (options.signal.aborted) abort();
-    const batch = candidates.slice(offset, offset + BATCH_SIZE);
+    const batch = pending.slice(offset, offset + BATCH_SIZE);
     const candidateIcons = new Map<number, ReadonlySet<string>>();
     const input = {
       categories,
@@ -199,8 +210,6 @@ export async function organizeFinanceRows(
           if (reason) rows[index].reason = reason;
           if (typeof proposedCategory !== "string")
             rows[index].review = [rows[index].review, "整理建议缺少分类，已保留基础分类"].filter(Boolean).join("；");
-          if (typeof proposedCategory === "string" && !categories.includes(proposedCategory))
-            rows[index].review = [rows[index].review, "建议分类不在当前目录中，已保留基础分类"].filter(Boolean).join("；");
           if (typeof proposed.merchantChoice === "string" && !candidate.choices?.merchant.has(proposed.merchantChoice))
             rows[index].review = [rows[index].review, "未能匹配商户，已保留原名称"].filter(Boolean).join("；");
           if (typeof proposed.accountChoice === "string" && !candidate.choices?.account.has(proposed.accountChoice))
@@ -208,7 +217,7 @@ export async function organizeFinanceRows(
           if ((typeof proposed.iconChoice === "string" && !candidate.choices?.icon.has(proposed.iconChoice))
             || (typeof proposed.iconId === "string" && !iconOptions.has(proposed.iconId)))
             rows[index].review = [rows[index].review, "未能匹配图标，已保留原图标"].filter(Boolean).join("；");
-          if (typeof proposedCategory !== "string" || !categories.includes(proposedCategory)
+          if (typeof proposedCategory !== "string"
             || typeof proposed.merchantChoice === "string" && !candidate.choices?.merchant.has(proposed.merchantChoice)
             || typeof proposed.accountChoice === "string" && !candidate.choices?.account.has(proposed.accountChoice)
             || typeof proposed.iconChoice === "string" && !candidate.choices?.icon.has(proposed.iconChoice)
@@ -224,8 +233,64 @@ export async function organizeFinanceRows(
       warnings.push(`第 ${offset + 1}–${offset + batch.length} 个候选未完成智能整理：${error instanceof Error ? error.message : String(error)}`);
       for (const candidate of batch) for (const index of candidate.rowIndexes) rows[index].review = [rows[index].review, "智能整理失败，按基础字段待核对"].filter(Boolean).join("；");
     }
-    options.onProgress?.(Math.min(candidates.length, offset + batch.length), candidates.length,
+    options.onProgress?.(Math.min(candidates.length, decided + offset + batch.length), candidates.length,
       batch.flatMap((candidate) => candidate.rowIndexes.map((index) => rows[index])));
   }
   return { rows, warnings, aiCandidates: candidates.length, ...(incomplete ? { incomplete: true } : {}) };
+}
+
+/** 智能判断先整理：每 50 行一次请求；消费说明保留账单原文。返回已整理的候选数。 */
+async function decideFinanceRows(candidates: Candidate[], rows: FinanceImportRow[], settings: FinanceSettings, options: FinanceOrganizationOptions): Promise<number> {
+  const categories = financeSelectableCategoryNames(settings);
+  // 服务器拿名字当选项问判断模型：同一列表里的名字必须唯一，重复的只留第一个。
+  const uniqueBy = <T>(items: readonly T[], key: (item: T) => string): T[] => { const seen = new Set<string>(); return items.filter((item) => { const value = key(item).trim(); if (!value || seen.has(value)) return false; seen.add(value); return true; }); };
+  const merchants = uniqueBy(settings.merchants.filter((item) => item.active), (item) => item.name);
+  const accounts = uniqueBy(settings.accounts.filter((item) => item.active), (item) => item.name);
+  const brands = uniqueBy(uniqueBy(FINANCE_BRAND_CHOICES.filter(([id]) => id !== "auto" && id !== "none"), ([id]) => id), ([, name]) => name).slice(0, 250);
+  const brandIds = new Set(brands.map(([id]) => id));
+  const catalog = {
+    categories: categories.map((name) => ({ id: name, name, description: "" })),
+    merchants: merchants.map((item, index) => ({ id: `m${index}`, name: item.name, aliases: [...item.aliases] })),
+    accounts: accounts.map((item, index) => ({ id: `a${index}`, name: item.name, aliases: [...item.aliases] })),
+    icons: brands.map(([id, name]) => ({ id, name }))
+  };
+  let done = 0;
+  for (let offset = 0; offset < candidates.length; offset += DECISION_BATCH_SIZE) {
+    if (options.signal.aborted) abort();
+    const batch = candidates.slice(offset, offset + DECISION_BATCH_SIZE);
+    const result = await options.decide!({ ...catalog, rows: batch.map(({ ref, source, entry }) => ({
+      id: `r${ref}`, counterparty: source.counterparty, product: source.product, method: source.paymentMethod,
+      amount: entry.amountCents / 100, direction: entry.kind, time: entry.date
+    })) }).catch(() => null);
+    if (options.signal.aborted) abort();
+    if (!result) continue;
+    const byId = new Map(result.map((row) => [row.id, row]));
+    const handled: Candidate[] = [];
+    for (const candidate of batch) {
+      const decision = byId.get(`r${candidate.ref}`);
+      if (!decision) continue;
+      const entry = { ...candidate.entry };
+      const merchant = decision.merchant ? merchants[Number(decision.merchant.id.slice(1))] : undefined;
+      const account = decision.account ? accounts[Number(decision.account.id.slice(1))] : undefined;
+      const category = decision.category && categories.includes(decision.category.id) ? decision.category.id : "";
+      if (!candidate.fixed.merchant && merchant) entry.merchant = merchant.name;
+      if (!candidate.fixed.category && category) { entry.category = category; delete entry.classificationPending; }
+      if (!candidate.fixed.merchant && merchant?.defaultCategory && categories.includes(merchant.defaultCategory)) { entry.category = merchant.defaultCategory; delete entry.classificationPending; }
+      if (!candidate.fixed.account && account) entry.account = account.name;
+      if (!candidate.fixed.icon && decision.icon && brandIds.has(decision.icon.id)) entry.icon = decision.icon.id;
+      if (!candidate.fixed.merchant && !candidate.fixed.icon && merchant?.iconId && merchant.iconId !== "auto") entry.icon = merchant.iconId;
+      for (const index of candidate.rowIndexes) {
+        rows[index].entry = { ...rows[index].entry!, merchant: entry.merchant, category: entry.category, account: entry.account, icon: entry.icon };
+        if (entry.classificationPending === true) rows[index].entry.classificationPending = true;
+        else delete rows[index].entry.classificationPending;
+        if (!candidate.fixed.category && !category && !merchant?.defaultCategory)
+          rows[index].review = [rows[index].review, "未选出合适分类，按基础分类待核对"].filter(Boolean).join("；");
+      }
+      candidate.decided = true;
+      handled.push(candidate);
+    }
+    done += handled.length;
+    if (handled.length) options.onProgress?.(done, candidates.length, handled.flatMap((candidate) => candidate.rowIndexes.map((index) => rows[index])));
+  }
+  return done;
 }

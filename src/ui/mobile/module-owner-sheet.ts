@@ -1,7 +1,9 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { AGENT_MODULE_NAMES, GENERAL_ASSISTANT_ID, type AgentModuleId, type AgentDefinition } from "../../agents/types";
 import { isAgentHired } from "../../agents/persona";
 import type { MobileAgentRegistryService } from "../../mobile/agent-registry-service";
 import { shellElement as el } from "./shell-controls";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import type { MobileShellSheet } from "./shell-types";
 
 interface ModuleOwnerSheetHost {
@@ -15,6 +17,8 @@ interface ModuleOwnerSheetHost {
   create(): Promise<void>;
   start(): Promise<void>;
   error(failure: unknown): void;
+  /** Interface language for the sheet's error text. */
+  language?: string;
 }
 
 /** Selection saves through the same versioned Registry writer as mobile Settings. */
@@ -35,7 +39,7 @@ export function openModuleOwnerSheet(host: ModuleOwnerSheetHost, module: AgentMo
         await host.start();
         host.shell.closeSheet();
       } catch (failure) {
-        if (!closed) { error.textContent = failure instanceof Error ? failure.message : String(failure); busy = false; list.disabled = create.disabled = false; start.disabled = !selected; }
+        if (!closed) { error.textContent = settingsErrorText(failure, SETTINGS_FALLBACK.mobilePage, host.language); busy = false; list.disabled = create.disabled = false; start.disabled = !selected; }
         else host.error(failure);
       }
     })();

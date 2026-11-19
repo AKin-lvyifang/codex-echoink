@@ -326,9 +326,8 @@ async function repositoryAndLifecycle(): Promise<void> {
   };
   const makeSystem = async (repository: PersonalMemoryRepository) => {
     const system = await CognitiveSystem.create({ repository,
-      llm: () => llmMode === "none" ? null : { call: async () => { calls++; return llmMode === "valid" ? "no_change" : "{invalid"; } },
+      llm: () => llmMode === "none" ? null : { call: async input => { calls++; return llmMode === "valid" ? input.systemPrompt.includes("本次只输出 USER") ? "no_change" : JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] }) : "{invalid"; } },
       getDreamConfig: () => ({ enabled, runsPerDay: 3 }),
-      isForegroundBusy: () => foregroundBusy,
       registerInterval: () => undefined
     });
     systems.push(system);
@@ -355,7 +354,7 @@ async function repositoryAndLifecycle(): Promise<void> {
     assert.equal(await system.forceDreamRun(), null);
     enabled = true;
     foregroundBusy = true;
-    assert.equal(await system.forceDreamRun(), null);
+    assert.equal((await system.forceDreamRun())?.providerUnavailable, true, "foreground activity does not defer Dream");
     foregroundBusy = false;
     assert.equal((await system.forceDreamRun())?.providerUnavailable, true);
     assert.equal(calls, 0);
@@ -561,7 +560,7 @@ async function schedulerDisposeDuringDueRead(): Promise<void> {
   let calls = 0;
   const scheduler = new DreamScheduler({
     engine: { isRunning: false, runOnce: async () => { calls++; } } as never,
-    getConfig: () => ({ enabled: true, runsPerDay: 3 }), isForegroundBusy: () => false,
+    getConfig: () => ({ enabled: true, runsPerDay: 3 }),
     readLastRunAt: () => new Promise((resolve) => { release = resolve; }), registerInterval: () => undefined
   });
   const pending = scheduler.tick();

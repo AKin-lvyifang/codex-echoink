@@ -51,7 +51,7 @@ export async function extractMinerPdf(job: PdfJob, bytes: Uint8Array | undefined
   }
   if (job.uploadState === "prepared") {
     pdfAbort(signal);
-    if (!bytes || !job.uploadUrl) throw new Error("此任务尚未上传。请重新选择同一 PDF，再点继续；将复用原 MinerU 任务。");
+    if (!bytes || !job.uploadUrl) throw new Error("该任务尚未上传。请重新选择同一 PDF，再点击“继续”。");
     job.uploadState = "uncertain"; await persist();
     const uploaded = await transport.request(secureUrl(job.uploadUrl), "PUT", { "Content-Type": "application/pdf" }, new Uint8Array(bytes).buffer);
     if (uploaded.status < 200 || uploaded.status >= 300) throw new Error("MinerU 上传未确认，任务 ID 已保留；继续查询，不自动重复上传。");

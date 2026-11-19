@@ -15,6 +15,7 @@ export type EchoInkReasoningSummaryStatus =
 
 export type EchoInkReasoningActivityKind =
   | "provider"
+  | "judgment"
   | "knowledge"
   | "memory"
   | "task"
@@ -30,6 +31,7 @@ export type EchoInkReasoningActivityStatus =
 export type EchoInkReasoningActivityStage =
   | "requesting"
   | "searching"
+  | "selecting_knowledge"
   | "continuing_search"
   | "reading_knowledge"
   | "comparing_memory"
@@ -60,6 +62,10 @@ export interface EchoInkReasoningActivity {
   readonly current?: number;
   readonly total?: number;
   readonly completed?: number;
+  /** Unique delivered notes; retrieval totals above may count source spans. */
+  readonly notesRead?: number;
+  readonly knowledgeDecision?: boolean;
+  readonly skillName?: string;
 }
 
 export interface EchoInkReasoningSummarySnapshot {
@@ -94,6 +100,7 @@ const TOOL_NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const ACTIVITY_LIMIT = 64;
 const ACTIVITY_KINDS = new Set<EchoInkReasoningActivityKind>([
   "provider",
+  "judgment",
   "knowledge",
   "memory",
   "task",
@@ -109,6 +116,7 @@ const ACTIVITY_STATUSES = new Set<EchoInkReasoningActivityStatus>([
 const ACTIVITY_STAGES = new Set<EchoInkReasoningActivityStage>([
   "requesting",
   "searching",
+  "selecting_knowledge",
   "continuing_search",
   "reading_knowledge",
   "comparing_memory",
@@ -292,7 +300,7 @@ function normalizeReasoningActivity(
     "status",
     "startedAt",
     "updatedAt"
-  ], ["stage", "name", "current", "total", "completed"],
+  ], ["stage", "name", "current", "total", "completed", "notesRead", "knowledgeDecision", "skillName"],
   "reasoning_summary_activity_invalid");
   const id = reasoningIdentity(record.id);
   if (!ACTIVITY_KINDS.has(record.kind as EchoInkReasoningActivityKind)) {
@@ -321,6 +329,8 @@ function normalizeReasoningActivity(
   if ((record.kind === "tool") !== Boolean(name)) {
     throw new TypeError("reasoning_summary_activity_name_invalid");
   }
+  if (record.knowledgeDecision !== undefined && typeof record.knowledgeDecision !== "boolean") throw new TypeError("reasoning_summary_judgment_invalid");
+  if (record.skillName !== undefined && (typeof record.skillName !== "string" || record.skillName.length > 160)) throw new TypeError("reasoning_summary_judgment_invalid");
   const current = optionalCount(record.current);
   const total = optionalCount(record.total);
   const completed = optionalCount(record.completed);
@@ -340,7 +350,10 @@ function normalizeReasoningActivity(
     ...(name ? { name } : {}),
     ...(current !== undefined ? { current } : {}),
     ...(total !== undefined ? { total } : {}),
-    ...(completed !== undefined ? { completed } : {})
+    ...(completed !== undefined ? { completed } : {}),
+    ...(record.notesRead !== undefined ? { notesRead: optionalCount(record.notesRead) } : {}),
+    ...(record.knowledgeDecision !== undefined ? { knowledgeDecision: record.knowledgeDecision } : {}),
+    ...(record.skillName !== undefined ? { skillName: record.skillName } : {})
   });
 }
 

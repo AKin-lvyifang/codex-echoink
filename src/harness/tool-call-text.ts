@@ -1,10 +1,12 @@
-export const TOOL_CALLING_DISABLED_MESSAGE = "当前模型未开启工具调用，无法执行。";
+import { pickErrorCopy } from "../core/error-copy";
+import { PROVIDER_CODES } from "../core/error-copy/codes/provider";
+
 export type ToolCallTextFailureCode = "model_tool_call_text_disabled" | "model_tool_call_text_incompatible";
 
-export function toolCallTextFailureMessage(code: unknown): string | undefined {
-  if (code === "model_tool_call_text_disabled") return "模型把工具调用写成了文字，本轮没有执行工具。请在模型服务中开启工具调用。";
-  if (code === "model_tool_call_text_incompatible") return "模型返回了工具调用文本，本轮没有执行工具。请检查代理接口的工具调用兼容性，或在 设置 → 模型服务 中更换模型。";
-  return undefined;
+/** Sentence from core/error-copy/codes/provider.ts; Chinese unless a language is given. */
+export function toolCallTextFailureMessage(code: unknown, language?: string): string | undefined {
+  if (code !== "model_tool_call_text_disabled" && code !== "model_tool_call_text_incompatible") return undefined;
+  return pickErrorCopy(PROVIDER_CODES[code], language);
 }
 
 /** Diagnose only; text is never turned into executable calls. */

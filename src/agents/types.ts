@@ -42,6 +42,8 @@ export interface AgentDefinition {
   persona?: string;
   /** Only the main Agent owns the company approval preference. */
   companyApprovalMode?: CompanyApprovalMode;
+  /** Main Agent only: may open extra folders to workers when dispatching. Absent means on. */
+  companyFolderGrants?: boolean;
   kind?: "custom" | "expert";
   expert?: ExpertAgentState;
   /** Other Agents explicitly opt into these capabilities; new capabilities stay off. */

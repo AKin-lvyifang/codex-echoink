@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { ownedFragment, ownedSpan, ownedDiv, ownedEl } from "../ui/owned-dom";
 /** Notice contents only: clicking opens a review form; it never uploads automatically. */
 export function settingsReportNoticeContent(doc: Document, message: string, openReport: () => void | Promise<void>, english = false, mobile = false): DocumentFragment {
@@ -9,7 +10,7 @@ export function settingsReportNoticeContent(doc: Document, message: string, open
   button.onclick = () => {
     if (button.disabled) return; button.disabled = true;
     void Promise.resolve().then(openReport).catch(error => {
-      const reason = ownedDiv(doc); reason.textContent = error instanceof Error ? error.message : english ? "Could not open report" : "无法打开上报问题";
+      const reason = ownedDiv(doc); reason.textContent = failureText(error, ["“上报问题”未能打开。", "Report a problem could not be opened."], NEXT.retryLater, english ? "en" : "zh");
       actions.append(reason);
     }).finally(() => { button.disabled = false; });
   };

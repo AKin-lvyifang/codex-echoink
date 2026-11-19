@@ -73,8 +73,7 @@ async function withFixture(name: string, callback: (fixture: Fixture) => Promise
 async function createSystem(fixture: Fixture, repository: PersonalMemoryRepository, call: DreamLlmPort["call"] | null) {
   return await CognitiveSystem.create({
     repository, llm: () => call ? { call } : null,
-    getDreamConfig: () => ({ enabled: false, runsPerDay: 1 }),
-    isForegroundBusy: () => false, registerInterval: () => undefined, now: fixture.now
+    getDreamConfig: () => ({ enabled: false, runsPerDay: 1 }), registerInterval: () => undefined, now: fixture.now
   });
 }
 
@@ -155,6 +154,7 @@ async function observedConfirmationAndWholeSlotDeletion(): Promise<void> {
     }
     const system = await createSystem(fixture, fixture.repository, async (request) =>
       request.systemPrompt.includes("本次只输出 Agent current-self") ? "no_change" : JSON.stringify({
+        ...(JSON.parse(request.userPrompt).memory ? { secondaryFacts: [], relatedIds: [] } : {}),
         userProfileItems: [{ section: "preference", profileKey: "preference.format", text: "先看结论再看依据" }]
       }));
     const outcome = await system.engine.runOnce(); assert.equal(outcome.committed, true, JSON.stringify(outcome));
@@ -192,7 +192,7 @@ async function deletionSurvivesReloadAndDreamReplay(): Promise<void> {
       if ((JSON.parse(request.userPrompt) as { memory?: unknown }).memory) {
         memoryCalls += 1;
         const input = JSON.parse(request.userPrompt) as { memory: { content: string } };
-        return JSON.stringify({ userProfileItems: input.memory.content === targetText
+        return JSON.stringify({ secondaryFacts: [], relatedIds: [], userProfileItems: input.memory.content === targetText
           ? [{ section: "preference", profileKey: "preference.tone", text: targetText }] : [] });
       }
       const input = JSON.parse(request.userPrompt) as { sources: Array<{ sourceId: string; userText?: string; content?: string }> };
@@ -254,7 +254,7 @@ async function inFlightDreamCannotRestoreDeletedSlot(): Promise<void> {
         entered();
         await resume;
       }
-      return JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "我偏好直接清晰的语气" }] });
+      return JSON.stringify({ ...(JSON.parse(request.userPrompt).memory ? { secondaryFacts: [], relatedIds: [] } : {}), userProfileItems: [{ section: "preference", profileKey: "preference.tone", text: "我偏好直接清晰的语气" }] });
     });
     if (pauseAt === "profile-read") {
       const readProfile = system.profileStore.read.bind(system.profileStore);
@@ -337,6 +337,27 @@ function compatibleBarrierStateTransforms(): void {
   console.log("PASS older v2 compatibility, bounded barrier validation and lifecycle preservation");
 }
 
+async function associationMetadataCannotRefillDeletedProfile(): Promise<void> {
+  await withFixture("association-barrier", async fixture => {
+    const text = "我偏好直接清晰的语气";
+    await save(fixture.repository, "preference.tone", text);
+    const neighbor = (await fixture.repository.write({ operation: "create", kind: "fact", title: "关联对象", content: "独立的一条约定", basis: "explicit" }, fixture.runtime())).record!;
+    await remove(fixture.repository, "preference.tone");
+    const system = await createSystem(fixture, fixture.repository, async request => {
+      const input = JSON.parse(request.userPrompt);
+      if (!input.memory) return "no_change";
+      const matches = input.memory.content === text;
+      return JSON.stringify({ secondaryFacts: [], relatedIds: matches ? [neighbor.id] : [], userProfileItems: matches
+        ? [{ section: "preference", profileKey: "preference.tone", text }] : [] });
+    });
+    await expectDreamCommit(system);
+    assert.ok((await fixture.repository.inspect()).records.some(record => record.related?.includes(neighbor.id)), "the metadata revision really advanced");
+    assert.equal((await fixture.repository.readUserProfileControlSnapshot()).items.some(item => item.profileKey === "preference.tone"), false,
+      "related metadata is not new user evidence and must not refill a deleted profile slot");
+  });
+  console.log("PASS association-only metadata revisions do not revive deleted user profile evidence");
+}
+
 async function snapshotIncludesAllSlotsBeforeProjectionBudget(): Promise<void> {
   await withFixture("budget", async (fixture) => {
     for (const slot of USER_PROFILE_SLOTS) await save(fixture.repository, slot.profileKey, `${slot.labelZh}${"内容".repeat(45)}`);
@@ -358,6 +379,7 @@ export async function runUserProfileControlScenarios(): Promise<void> {
   await concurrentControlsRejectStaleRevisions();
   await inFlightDreamCannotRestoreDeletedSlot();
   await transactionRollbackAndReadFailures();
+  await associationMetadataCannotRefillDeletedProfile();
   await snapshotIncludesAllSlotsBeforeProjectionBudget();
-  console.log("User profile control acceptance: PASS (8 scenarios)");
+  console.log("User profile control acceptance: PASS (9 scenarios)");
 }

@@ -119,7 +119,7 @@ export async function runKnowledgeMaintenanceHistoryTests(): Promise<void> {
   cleanup = renderKnowledgeMaintenanceHistoryList(host, { zh: true, entries: [{ ...legacy(""), recordId: "absent" }], records: [], state,
     onBack() {}, onChange() {}, onSelectRecord() { assert.fail("missing record must not show details"); }, onOpenPath: open, onUnavailable() { unavailable++; } });
   click('.echoink-maintenance-record-list button'); assert.equal(unavailable, 1);
-  for (const options of [{ loading: true, error: "" }, { loading: false, error: "维护记录暂时读不到" }, { loading: false, error: "" }]) {
+  for (const options of [{ loading: true, error: "" }, { loading: false, error: "暂时无法读取维护记录。请稍后重试。" }, { loading: false, error: "" }]) {
     cleanup(); host.empty();
     cleanup = renderKnowledgeMaintenanceHistoryList(host, { zh: true, entries: [], records: [], state, ...options, onBack() {}, onChange() {}, onSelectRecord() {}, onOpenPath: open, onUnavailable() {} });
     assert.ok(host.textContent!.includes(options.loading ? "正在读取维护记录" : options.error || "还没有知识库维护记录"));

@@ -1,5 +1,6 @@
 import type { ApiProviderConfig } from "../settings/settings";
 import { toolCallTextFailureMessage, type ToolCallTextFailureCode } from "../harness/tool-call-text";
+import { CAUSE, NEXT } from "../core/error-copy";
 
 export interface ToolCallFailureInfo {
   readonly toolCallTextFailure?: ToolCallTextFailureCode;
@@ -23,7 +24,7 @@ export function toolCallingSettingsPath(surface: ToolCallRecoverySurface, provid
   return `设置 → 模型 → 模型服务 → ${providerName} → 参数 → ${modelName} → ${surface === "iphone" ? "支持工具调用" : "工具调用"}`;
 }
 export function toolCallingDisabledMessage(surface: ToolCallRecoverySurface, providerName?: string, modelName?: string): string {
-  return `当前模型未开启工具调用，无法执行。请到 ${toolCallingSettingsPath(surface, providerName, modelName)} 开启。`;
+  return `当前模型未开启工具调用，无法执行该操作。请在 ${toolCallingSettingsPath(surface, providerName, modelName)} 中开启。`;
 }
 
 /** A duplicate ID or a removed model is not a safe one-click target. Explicit composer choices are retained. */
@@ -39,7 +40,7 @@ export function toolCallRecoveryTarget(info: ToolCallFailureInfo | undefined, pr
 export function enableTargetToolCalling(providers: readonly ApiProviderConfig[], target: ToolCallRecoveryTarget): void {
   const provider = providers.find(provider => provider.id === target.providerSettingsId);
   const model = provider?.models.find(model => model.id === target.modelId);
-  if (!model) throw new Error("任务所用模型已不存在，请先检查模型服务设置。");
+  if (!model) throw new Error(CAUSE.providerModelRemoved[0]);
   model.toolCalling = true;
   model.capabilityOverrides = { ...model.capabilityOverrides, toolCalling: true };
 }
@@ -53,8 +54,8 @@ export function toolCallRecoveryGuidance(info: ToolCallFailureInfo | undefined, 
   const enable = !!model && !model.toolCalling;
   let message = toolCallTextFailureMessage(code)!;
   if (!target) message = code === "model_tool_call_text_disabled"
-    ? `模型把工具调用写成了文字，本轮没有执行工具。请到 ${toolCallingSettingsPath(surface)} 开启工具调用。`
-    : `模型返回了工具调用文本，本轮没有执行工具。请检查代理接口的工具调用兼容性，或到 ${toolCallingSettingsPath(surface)} 检查或更换模型。`;
-  else if (code === "model_tool_call_text_disabled" && !enable) message = "模型把工具调用写成了文字，本轮没有执行工具。";
+    ? `模型未实际执行工具调用。请在 ${toolCallingSettingsPath(surface)} 中开启后重试。`
+    : `模型未实际执行工具调用。请在 ${toolCallingSettingsPath(surface)} 中确认已开启；如已开启，请在 设置 → 模型服务 中更换支持工具调用的模型。`;
+  else if (code === "model_tool_call_text_disabled" && !enable) message = `模型未实际执行工具调用。工具调用现已开启。${NEXT.continueTask[0]}`;
   return { target, enable, message, buttonLabel: enable ? "开启工具调用并继续" : "继续" };
 }

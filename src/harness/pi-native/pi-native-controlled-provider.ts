@@ -16,6 +16,7 @@ import type {
   PiProviderRuntimeConfigPort
 } from "../pi/production-pi-model-resolver";
 import type { ApiProviderProtocol } from "../../settings/provider-presets";
+import { appendCurrentDateContext } from "../current-date-context";
 import {
   withDiscoveredPiReasoningModel,
   withEchoInkResolvedPiReasoningModel
@@ -392,9 +393,7 @@ function cloneProviderContext(
   supportsToolCalling: boolean
 ): Context {
   return deepFreeze({
-    ...(context.systemPrompt === undefined
-      ? {}
-      : { systemPrompt: context.systemPrompt }),
+    systemPrompt: appendCurrentDateContext(context.systemPrompt),
     messages: context.messages.map((message) => {
       if (message.role !== "toolResult") return structuredClone(message);
       const providerMessage = { ...message };

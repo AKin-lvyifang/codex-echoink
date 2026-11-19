@@ -13,6 +13,7 @@ import { mobileKnowledgeSourcesHost, strictKnowledgePagePath } from "./knowledge
 import { loadMobileKnowledgeHealth } from "./knowledge-page-health";
 import { validateKnowledgePageRecord } from "./knowledge-page-records";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { userFacingErrorText } from "../core/error-copy";
 
 /** Read-only product data. Reads never initialize files or notify their own subscribers. */
 export class MobileKnowledgePageService implements MobileKnowledgePagePort {
@@ -107,7 +108,7 @@ export class MobileKnowledgePageService implements MobileKnowledgePagePort {
     if (wiki.directory.state !== "ready") { sources.state = sources.checkedCount ? "partial" : "unknown"; errors.sources = "知识成果位置尚未完整读取，来源状态未核实。"; }
     let health: KnowledgePageSnapshot["health"] = null;
     try { health = await loadMobileKnowledgeHealth(this.services, bindings, check); if (!health) errors.health = "尚未启用可评估的知识用途位置。"; }
-    catch (error) { check(); errors.health = error instanceof Error ? error.message : "健康状态暂时无法核实。"; }
+    catch (error) { check(); errors.health = userFacingErrorText(error, "知识库健康状态暂时无法核实。请稍后刷新。"); }
     check();
     return { generatedAt: now, bindings, dashboard: null, health, ...activity, directories: scans.map(scan => scan.directory), links, sources,
       maintenanceHistory, maintenanceRecords: loaded.records, errors };

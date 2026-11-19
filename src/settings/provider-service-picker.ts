@@ -43,6 +43,7 @@ export function renderProviderServicePicker(host: HTMLElement, options: Provider
 
 function providerDescription(preset: ApiProviderPreset, language: "zh-CN" | "en"): string {
   const descriptions: Record<string, readonly [string, string]> = {
+    xiaoecho: ["EchoInk 账号登录，按 AI 点数计费", "EchoInk account, billed in AI points"],
     "openai-codex": ["使用 ChatGPT 账号登录", "Sign in with a ChatGPT account"],
     anthropic: ["Claude 模型", "Claude models"],
     glm: ["智谱 GLM 模型", "Zhipu GLM models"],

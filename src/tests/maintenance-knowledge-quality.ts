@@ -1,3 +1,4 @@
+import { runMaintenanceCopyGuardTests } from "./maintenance-copy-guard";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import type { MaintenanceKnowledgeSource, MaintenanceKnowledgeUnit } from "../knowledge-base/maintenance-p2-contract";
@@ -17,6 +18,7 @@ function page(type: string = "概念", metadata = "aliases: []", body = "# 间�
 }
 
 export function runMaintenanceKnowledgeQualityTests(): void {
+  runMaintenanceCopyGuardTests();
   assert.equal(MAINTENANCE_KNOWLEDGE_TYPES.length, 7);
   assert.equal(new Set(MAINTENANCE_KNOWLEDGE_TYPES).size, 7);
   for (const type of MAINTENANCE_KNOWLEDGE_TYPES) {
@@ -28,6 +30,10 @@ export function runMaintenanceKnowledgeQualityTests(): void {
   const second = source("raw/second.md", "# 补充材料\n\n长期效果仍需要验证。\n");
   const valid = unit(first);
   validateMaintenanceKnowledgeUnits([valid], [first]);
+  assert.throws(() => validateMaintenanceKnowledgeUnits([{ ...valid, evidence: Array.from({ length: 5 }, () => valid.evidence[0]) }], [first]), /最多4条/u);
+  assert.throws(() => validateMaintenanceKnowledgeUnits([{ ...valid, evidence: [{ ...valid.evidence[0], quote: "长".repeat(401) }] }], [first]), /最多400字符/u);
+  const emojiSource = source("raw/emoji.md", "😀".repeat(400));
+  validateMaintenanceKnowledgeUnits([unit(emojiSource, { evidence: [{ sourcePath: emojiSource.path, sourceRevision: emojiSource.contentRevision, quote: "😀".repeat(400) }] })], [emojiSource]);
   const nativeUnit = unit(first, { id: "native-r1-unit" });
   const bareRevision = first.contentRevision.slice("sha256:".length);
   for (const sourceRevision of [bareRevision, bareRevision.toUpperCase()]) {
@@ -414,8 +420,8 @@ function assertQuoteGrounding(): void {
     assert.match(error.message, /已列出3条，遗漏0条/u);
     return true;
   });
-  const manyFailures = unit(aggregateSource, { evidence: Array.from({ length: 20 }, (_, index) => badEvidence(`missing quote ${index}`)) });
-  assert.throws(() => groundMaintenanceKnowledgeUnits([manyFailures], [aggregateSource]), (error: unknown) => {
+  const manyFailures = Array.from({ length: 5 }, (_, group) => unit(aggregateSource, { id: `missing-${group}`, evidence: Array.from({ length: 4 }, (_, index) => badEvidence(`missing quote ${group * 4 + index}`)) }));
+  assert.throws(() => groundMaintenanceKnowledgeUnits(manyFailures, [aggregateSource]), (error: unknown) => {
     assert.ok(error instanceof Error);
     assert.match(error.message, /共20条/u);
     assert.match(error.message, /已列出12条，遗漏8条/u);
@@ -423,8 +429,8 @@ function assertQuoteGrounding(): void {
     assert.ok(Buffer.byteLength(error.message, "utf8") <= 6500);
     return true;
   });
-  const hugeFailures = unit(aggregateSource, { evidence: Array.from({ length: 20 }, () => badEvidence("😀不存在的引文\n".repeat(2000))) });
-  assert.throws(() => groundMaintenanceKnowledgeUnits([hugeFailures], [aggregateSource]), (error: unknown) => {
+  const hugeFailures = Array.from({ length: 5 }, (_, group) => unit(aggregateSource, { id: `huge-${group}`, evidence: Array.from({ length: 4 }, () => badEvidence("😀不存在引文".repeat(50))) }));
+  assert.throws(() => groundMaintenanceKnowledgeUnits(hugeFailures, [aggregateSource]), (error: unknown) => {
     assert.ok(error instanceof Error);
     assert.ok(Buffer.byteLength(error.message, "utf8") <= 6500);
     assert.match(error.message, /收到的quote已截短/u);

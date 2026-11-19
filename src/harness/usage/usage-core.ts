@@ -71,7 +71,8 @@ export function parseRequest(value: unknown): UsageRequestEvent {
     || value.standard !== USAGE_TOKEN_STANDARD) throw new Error("Invalid usage evidence");
   return { requestId: value.requestId, recordedAt: value.recordedAt, provider: value.provider, model: value.model,
     inputTokens: value.inputTokens, outputTokens: value.outputTokens,
-    source: value.source as UsageRequestEvent["source"], status: value.status as UsageRequestEvent["status"], standard: USAGE_TOKEN_STANDARD };
+    source: value.source as UsageRequestEvent["source"], status: value.status as UsageRequestEvent["status"], standard: USAGE_TOKEN_STANDARD,
+    ...(text(value.runId) ? { runId: value.runId } : {}), ...(text(value.stepId) ? { stepId: value.stepId } : {}) };
 }
 export function parseDocument(value: unknown): UsageDocument {
   if (!record(value) || value.schemaVersion !== 1 || value.standard !== USAGE_TOKEN_STANDARD

@@ -16,6 +16,10 @@ export const internalRules = [
     matches: (file) => file.startsWith("docs/")
   },
   {
+    reason: "private memory recall evaluation material",
+    matches: (file) => /^scripts\/memory-(?:recall-audit|association)\//u.test(file)
+  },
+  {
     reason: "private experiment material",
     matches: (file) => file.startsWith("experiments/")
   },

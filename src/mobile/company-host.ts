@@ -1,13 +1,21 @@
-import { getModuleOwner } from "../agents/registry";
 import { CompanyApprovalCoordinator, type CompanyApprovalTicket } from "../company/approval-core";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { agentPositionDescription } from "../agents/identity";
+import { getModuleOwner } from "../agents/registry";
 import { isAgentHired } from "../agents/persona";
 import { GENERAL_ASSISTANT_ID } from "../agents/types";
 import { companyRouterPrompt, companyWorkerPrompt } from "../company/prompts";
 import { CompanyService, type CompanyHost, type CompanyPermission } from "../company/service";
 import { companyRouterToolSpecs, companyWorkerToolSpecs } from "../company/tool-specs";
 import { MobileCompanyStore } from "./company-store";
+import { CompanySyncMirror } from "../sync/company-mirror";
+import { SyncDeviceStore } from "../sync/device-store";
+import type { SyncFs } from "../sync/fs";
+import { SyncOverviewService } from "../sync/overview-service";
+import { SyncRequestService } from "../sync/requests";
+import { SyncConversationExporter } from "../sync/conversation-sync";
+import { neutralFromAgentMessages, type SyncConversationSource } from "../sync/conversations";
+import type { SyncDeviceKind } from "../sync/types";
 import type { MobileCompanyRuntimePort, MobileRuntime, MobileTurnOutcome } from "./runtime";
 import type { MobileSettings } from "./settings";
 import { newSession, type MobilePermission, type MobileSession, type MobileStorageAdapter, type MobileStore } from "./store";
@@ -19,8 +27,19 @@ export interface MobileCompanyFolderPort {
   ensureFolder(path: string): Promise<void>;
 }
 
+export interface MobileCompanySyncInput {
+  readonly fs: SyncFs;
+  /** The device's task instance id: device-local, never written into Vault files. */
+  readonly deviceId: string;
+  readonly deviceName: string;
+  readonly deviceKind: SyncDeviceKind;
+  readonly enabled: boolean;
+}
+
 export interface MobileCompanyHostInput {
   readonly runtime: MobileRuntime;
+  /** Absent in tests that only exercise the device-local company. */
+  readonly sync?: MobileCompanySyncInput;
   readonly store: MobileStore;
   readonly settings: () => MobileSettings;
   readonly folders: MobileCompanyFolderPort;
@@ -52,8 +71,10 @@ export function createMobileCompanyHost(input: MobileCompanyHostInput): CompanyH
     now: () => Date.now(),
     newId: prefix => `${prefix}-${crypto.randomUUID()}`,
     agents: () => input.settings().agentRegistry.agents.map(agent => ({ id: agent.id, name: agent.name, position: agentPositionDescription(agent), hired: isAgentHired(agent) })),
+    ...(input.sync ? { deviceId: () => input.sync!.deviceId } : {}),
     moduleOwner: module => getModuleOwner(input.settings().agentRegistry, module)?.id ?? null,
     routerPermission: routerId => toCompany(mobileCompanyPermission(store, routerId)),
+    folderGrantsEnabled: () => input.settings().agentRegistry.agents.find(agent => agent.id === GENERAL_ASSISTANT_ID)?.companyFolderGrants !== false,
     createWorker: async worker => {
       if (session(worker.id)) return;
       await store.update(state => {
@@ -111,6 +132,10 @@ export function createMobileCompanyHost(input: MobileCompanyHostInput): CompanyH
 export interface MobileCompany {
   readonly service: CompanyService;
   readonly approvals: CompanyApprovalCoordinator;
+  /** Other devices' projects; null when sync is off or unavailable. */
+  readonly overview: SyncOverviewService | null;
+  /** Requests to and from other devices; null when sync is off. */
+  readonly requests: SyncRequestService | null;
   dispose(): void;
 }
 
@@ -160,6 +185,7 @@ export async function startMobileCompany(input: MobileCompanyHostInput & Readonl
         return task.companyRole === "worker" && dispatch ? companyWorkerPrompt(dispatch.projectId ? service.projectOf(dispatch.projectId) : undefined) : "";
       },
       isJudging: key => approvals.isJudging(key),
+      folderGrants: id => service.workerFolderGrants(id),
       tools: (task, approvalKey) => approvalKey ? [approvals.decisionSpec(task.id, approvalKey)].filter((spec): spec is NonNullable<typeof spec> => !!spec) : task.companyRole === "router" && task.agentId === GENERAL_ASSISTANT_ID ? companyRouterToolSpecs(service, task.id)
         : task.companyRole === "worker" && service.dispatchOf(task.id) ? companyWorkerToolSpecs(service, task.id) : []
     };
@@ -167,13 +193,43 @@ export async function startMobileCompany(input: MobileCompanyHostInput & Readonl
     unsubscribe = input.runtime.onTurnSettled((id, outcome, startedAt) => { void settle(service, input, id, outcome, startedAt); });
     await service.initialize();
     const stopChanges = service.subscribe(() => input.changed());
+    const sync = input.sync?.enabled ? await startMobileCompanySync(input.sync, service, () => input.changed(), input.store, input.runtime) : null;
     approvals.start();
-    return { service, approvals, dispose: () => { approvals.dispose(); unsubscribe?.(); stopChanges(); input.runtime.setCompany(() => undefined); } };
+    return { service, approvals, overview: sync?.overview ?? null, requests: sync?.requests ?? null, dispose: () => { approvals.dispose(); unsubscribe?.(); stopChanges(); sync?.dispose(); input.runtime.setCompany(() => undefined); } };
   } catch (error) {
     unsubscribe?.(); input.runtime.setCompany(() => undefined);
     console.error("EchoInk mobile company unavailable", error);
     return null;
   }
+}
+
+/** Failure keeps the device-local record untouched; the classic company keeps working without sync. */
+async function startMobileCompanySync(sync: MobileCompanySyncInput, service: CompanyService, changed: () => void, store: MobileStore, runtime: MobileRuntime): Promise<{ overview: SyncOverviewService; requests: SyncRequestService; dispose(): void } | null> {
+  const overview = new SyncOverviewService({ fs: sync.fs, deviceId: sync.deviceId, onError: error => console.error("EchoInk sync overview could not read", error) });
+  overview.subscribe(changed);
+  overview.start();
+  const device = new SyncDeviceStore({ fs: sync.fs, deviceId: sync.deviceId, deviceName: sync.deviceName, deviceKind: sync.deviceKind });
+  const requests = new SyncRequestService({ fs: sync.fs, device, service, deviceName: id => overview.deviceName(id), changed, onError: error => console.error("EchoInk sync requests could not process", error) });
+  const mirror = new CompanySyncMirror({ device, store: { snapshot: () => service.doc, subscribe: listener => service.subscribe(listener) }, onError: error => console.error("EchoInk company sync mirror could not write", error) });
+  const started = await mirror.start();
+  if (started.status === "failed") console.error("EchoInk company sync mirror unavailable", started.error);
+  requests.start();
+  const exporter = new SyncConversationExporter({ fs: sync.fs, device,
+    list: () => Promise.resolve(store.state.sessions.map(session => ({ id: session.id, updatedAt: session.updatedAt }))),
+    read: id => Promise.resolve(readMobileConversation(store, id)), onError: error => console.error("EchoInk conversation sync could not export", error) });
+  const stopExports = runtime.onTurnSettled(id => { void exporter.exportOne(id); });
+  void exporter.migrate().catch(error => console.error("EchoInk conversation sync migration failed", error));
+  return { overview, requests, dispose: () => { stopExports(); mirror.stop(); requests.stop(); overview.stop(); } };
+}
+
+function readMobileConversation(store: MobileStore, id: string): SyncConversationSource | null {
+  const session = store.getSession(id);
+  if (!session) return null;
+  const messages = neutralFromAgentMessages(session.messages, session.updatedAt);
+  if (!messages.some(message => message.role === "user")) return null;
+  const fork = session.syncForkOf ? session.syncForkOf.split(":") : null;
+  return { id, title: session.title, agentId: session.agentId, status: session.archivedAt ? "archived" : "active", createdAt: messages[0]?.at ?? session.updatedAt, updatedAt: session.updatedAt, messages,
+    ...(fork && fork.length >= 2 ? { forkOf: { deviceId: fork[0], conversationId: fork.slice(1).join(":") } } : {}) };
 }
 
 async function settle(service: CompanyService, input: MobileCompanyHostInput, id: string, outcome: MobileTurnOutcome, startedAt: number): Promise<void> {

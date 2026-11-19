@@ -50,7 +50,13 @@ export interface SecureVaultToolResult {
 export async function secureVaultToolResult(
   input: Readonly<SecureVaultToolResultInput>
 ): Promise<Readonly<SecureVaultToolResult>> {
-  const serialized = serializeToolResult(input.value);
+  let serialized = serializeToolResult(input.value);
+  const failure = failureEnvelope(input.value);
+  if (failure) {
+    serialized = serializeToolResult({ ...failure, ...(input.value as Record<string, unknown>) });
+    // Keep a valid, actionable failure when a readback body exhausts the budget.
+    if (Buffer.byteLength(serialized, "utf8") > input.sizeLimitBytes) serialized = serializeToolResult({ ...failure, readbackOmitted: true });
+  }
   const redacted = redactEchoInkLocalSecretsV1(serialized);
   const limited = truncateUtf8(redacted, input.sizeLimitBytes);
   const byteLength = Buffer.byteLength(limited.text, "utf8");
@@ -68,6 +74,19 @@ export async function secureVaultToolResult(
     truncated: limited.truncated,
     redactionPolicy: ECHOINK_LOCAL_SECRETS_V1
   });
+}
+
+function failureEnvelope(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") return;
+  const record = value as Record<string, unknown>;
+  const error = record.error;
+  if (!error || typeof error !== "object" || typeof (error as Record<string, unknown>).code !== "string") return;
+  const code = (error as Record<string, unknown>).code as string;
+  return { error, recovery: code === "version_conflict"
+    ? "Read the current complete note, reconcile the changes, then submit with its new version. Do not replay the old content."
+    : "Check the failure and read the current target before trying again; do not replay a write that may already have succeeded.",
+  status: record.status, operationIdentity: record.operationIdentity, operation: record.operation,
+  sourcePath: record.sourcePath, targetPath: record.targetPath, sideEffectStarted: record.sideEffectStarted, readbackVerified: record.readbackVerified };
 }
 
 /** Default local-to-configured-provider policy used by the seven Vault Tools. */

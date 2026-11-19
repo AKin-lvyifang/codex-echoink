@@ -59,6 +59,7 @@ function normalizeProject(value: unknown): CompanyProject | null {
   const acceptance = Array.isArray(r.acceptance) ? r.acceptance.flatMap(item => { const a = rec(item); const criterion = str(a?.criterion, 200);
     return a && criterion ? [{ criterion, passed: a.passed === true, evidence: str(a.evidence, 300), ...(str(a.agentId, 128) ? { agentId: str(a.agentId, 128) } : {}) }] : []; }) : undefined;
   return { id, name, background: str(r.background), goal: str(r.goal, 600), criteria: strs(r.criteria, 10), folder: str(r.folder, 400), routerConversationId,
+    ...(str(r.ownerDeviceId, 128) ? { ownerDeviceId: str(r.ownerDeviceId, 128) } : {}),
     status: r.status as CompanyProject["status"], plan, roles, createdAt: time(r.createdAt) ?? 0,
     ...(time(r.startedAt) !== undefined ? { startedAt: time(r.startedAt) } : {}), ...(str(r.dueLabel, 40) ? { dueLabel: str(r.dueLabel, 40) } : {}),
     ...(time(r.endedAt) !== undefined ? { endedAt: time(r.endedAt) } : {}), ...(acceptance ? { acceptance } : {}), ...(str(r.summary) ? { summary: str(r.summary) } : {}) };
@@ -74,10 +75,12 @@ function normalizeDispatch(value: unknown): CompanyDispatch | null {
   if (!r || !id || !routerConversationId || !agentId || !DISPATCH_STATUS.includes(r.status as string)) return null;
   const report = normalizeReport(r.report), wake = rec(r.wake), wakeText = str(wake?.text, 4000);
   const pending = rec(r.reportPending), pendingId = str(pending?.id, 128);
-  return { id, routerConversationId, agentId, ...(AGENT_MODULE_IDS.includes(r.moduleId as AgentModuleId) || r.moduleId === "none" ? { moduleId: r.moduleId as AgentModuleId | "none" } : {}), brief: str(r.brief, 1000), status: r.status as CompanyDispatch["status"],
+  return { id, routerConversationId, agentId, ...(AGENT_MODULE_IDS.includes(r.moduleId as AgentModuleId) || r.moduleId === "none" ? { moduleId: r.moduleId as AgentModuleId | "none" } : {}),
+    ...(str(r.ownerDeviceId, 128) ? { ownerDeviceId: str(r.ownerDeviceId, 128) } : {}), brief: str(r.brief, 1000), status: r.status as CompanyDispatch["status"],
     permission: PERMISSIONS.includes(r.permission as string) ? r.permission as CompanyDispatch["permission"] : "read-only",
     ...(PERMISSIONS.includes(r.turnPermission as string) ? { turnPermission: r.turnPermission as CompanyDispatch["permission"] } : {}),
     ...(r.workerPending === true ? { workerPending: true } : {}),
+    ...(strs(r.folderGrants, 20).length ? { folderGrants: strs(r.folderGrants, 20) } : {}),
     createdAt: time(r.createdAt) ?? 0, turns: time(r.turns) ?? 0,
     ...(str(r.projectId, 128) ? { projectId: str(r.projectId, 128) } : {}), ...(str(r.planTaskId, 64) ? { planTaskId: str(r.planTaskId, 64) } : {}),
     ...(time(r.startedAt) !== undefined ? { startedAt: time(r.startedAt) } : {}), ...(time(r.endedAt) !== undefined ? { endedAt: time(r.endedAt) } : {}),
@@ -179,6 +182,32 @@ export function reportMessage(dispatch: CompanyDispatch, agentName: string, proj
   return [`〔员工汇报〕${agentName}${projectName ? " · " + projectName : ""}：${head}`, `任务：${dispatch.brief}`, `摘要：${r.summary}`,
     ...(r.outputs.length ? [`产出：${r.outputs.join("、")}`] : []), ...(r.question ? [`问题：${r.question}`] : []),
     ...(r.options?.length ? [`选项：${r.options.join(" / ")}`] : []), `任务编号：${dispatch.id}`].join("\n");
+}
+
+/** The delivered message is the historical snapshot, independent of later rework or renaming. */
+export interface CompanyReportSnapshot {
+  readonly agentName: string;
+  readonly projectName?: string;
+  readonly outcome: CompanyReport["outcome"];
+  readonly task: string;
+  readonly summary: string;
+  /** Keep the rendered lists verbatim: a file name itself may contain the list separator. */
+  readonly outputs?: string;
+  readonly question?: string;
+  readonly options?: string;
+  readonly taskId: string;
+}
+
+export function parseReportMessage(text: string): CompanyReportSnapshot | null {
+  const match = /^〔员工汇报〕([^\n]+)：(做完了|没做成|需要用户定)\n任务：([\s\S]*?)\n摘要：([\s\S]*?)(?:\n产出：([\s\S]*?))?(?:\n问题：([\s\S]*?))?(?:\n选项：([\s\S]*?))?\n任务编号：([^\s]+)(?:\n[\s\S]*)?$/u.exec(text.replace(/\r\n/gu, "\n").trim());
+  if (!match) return null;
+  const separator = match[1].indexOf(" · ");
+  const agentName = (separator < 0 ? match[1] : match[1].slice(0, separator)).trim();
+  if (!agentName) return null;
+  return { agentName, ...(separator < 0 ? {} : { projectName: match[1].slice(separator + 3) }),
+    outcome: match[2] === "做完了" ? "done" : match[2] === "没做成" ? "failed" : "need_decision",
+    task: match[3], summary: match[4], ...(match[5] === undefined ? {} : { outputs: match[5] }),
+    ...(match[6] === undefined ? {} : { question: match[6] }), ...(match[7] === undefined ? {} : { options: match[7] }), taskId: match[8] };
 }
 export function projectFolderName(name: string, now: number): string {
   const d = new Date(now); const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;

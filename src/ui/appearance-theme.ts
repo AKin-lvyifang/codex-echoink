@@ -4,6 +4,7 @@ import { galleryComparison } from "../gallery/comparison";
 import type { App } from "obsidian";
 import { hasProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import type { CapabilityAccess } from "../membership/types";
+import { membershipWebsiteLink } from "../membership/website-links";
 
 export const ECHOINK_COLOR_THEMES = [
   { id: "minimal", zh: "极简黑白", en: "Minimal" },
@@ -12,7 +13,7 @@ export const ECHOINK_COLOR_THEMES = [
 ] as const;
 export type EchoInkColorTheme = typeof ECHOINK_COLOR_THEMES[number]["id"];
 export const ECHOINK_THEME_ATTRIBUTE = "data-echoink-theme";
-export const ECHOINK_COMPANION_THEME_URL = "https://echoink.cn/theme";
+export const ECHOINK_COMPANION_THEME_URL = membershipWebsiteLink("plugin.theme");
 export const ECHOINK_APPEARANCE_REFRESH = "echoink-appearance-refresh";
 
 export function effectiveEchoInkColorTheme(value: unknown, access: CapabilityAccess | null | undefined): EchoInkColorTheme {

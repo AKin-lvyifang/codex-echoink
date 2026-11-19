@@ -1,3 +1,6 @@
+import { JSDOM } from "jsdom";
+import { providerBrandForIdentity } from "../settings/provider-presets";
+import { setEchoInkAccountCredentialProbe } from "../settings/settings";
 import { JournalFormatService } from "../home/journal-format-service";
 import { runCustomModelToolCallingTests } from "./custom-model-tool-calling";
 import { installMockObsidianDom } from "./obsidian-dom";
@@ -88,7 +91,9 @@ import {
   apiProviderConfiguredDisplayName,
   apiProviderRequestUrl,
   getApiProviderPreset,
+  isLocalNetworkApiProviderUrl,
   isQwenTokenPlanApiProviderUrl,
+  normalizeApiProviderBaseUrl,
   normalizeApiProviderProtocol,
   QWEN_TOKEN_PLAN_API_BASE_URL
 } from "../settings/provider-presets";
@@ -188,7 +193,7 @@ import {
   ProductActivityGate
 } from "../plugin/api-provider-activation-service";
 import { CodexView } from "../ui/codex-view";
-import { currentComposerProviderBrand } from "../ui/codex-view/composer-controller";
+import { currentComposerProviderBrand, composerProviderModelOptions } from "../ui/codex-view/composer-controller";
 import { runEditorTranslationServiceTests } from "./editor-translation-service";
 import { runEditorTranslationSelectionTests } from "./editor-translation-selection";
 import {
@@ -258,7 +263,41 @@ import {
 import { resolvePiProductionSkillById } from "../plugin/pi-production-runtime-composition";
 import { runEnglishDiaryProviderTests } from "./english-diary-provider";
 
+function assertProviderBaseUrlNetworkPolicy(): void {
+  for (const url of [
+    "http://127.0.0.1:11434/v1",
+    "http://localhost:8080/v1",
+    "http://192.168.1.20:8080/v1",
+    "http://10.0.0.5:8000/v1",
+    "http://172.16.3.4:8080/v1",
+    "http://172.31.255.1/v1",
+    "http://169.254.10.10:8080/v1",
+    "http://my-box.local:8080/v1",
+    "http://[fd12::1]:8080/v1",
+    "http://[fe80::1]:8080/v1"
+  ]) {
+    assert.equal(normalizeApiProviderBaseUrl(url, "openai-completions"), url, url);
+    assert.equal(isLocalNetworkApiProviderUrl(url), true, url);
+  }
+  for (const url of [
+    "http://8.8.8.8:8080/v1",
+    "http://172.32.0.1/v1",
+    "http://api.example.com/v1",
+    "http://local/v1",
+    "http://evil.local.example.com/v1",
+    "http://192.168.1.20:8080/v1?x=1",
+    "http://user:pass@192.168.1.20/v1",
+    "ftp://192.168.1.20/v1"
+  ]) {
+    assert.throws(() => normalizeApiProviderBaseUrl(url, "openai-completions"), /provider_url_invalid/u, url);
+    if (!/[?@]/u.test(url)) assert.equal(isLocalNetworkApiProviderUrl(url), false, url);
+  }
+  assert.equal(isLocalNetworkApiProviderUrl("https://192.168.1.20/v1"), false);
+  assert.equal(normalizeApiProviderBaseUrl("https://api.example.com/v1/", "openai-completions"), "https://api.example.com/v1");
+}
+
 export async function runProviderSettingsBehaviorTests(): Promise<void> {
+  assertProviderBaseUrlNetworkPolicy();
   await runSettingsSaveResilienceTests();
   await runEnglishDiaryProviderTests(installProviderModalDomFixture);
   await runSettingsWindowRefreshTest();
@@ -293,6 +332,8 @@ export async function runProviderSettingsBehaviorTests(): Promise<void> {
   assertPresetRequestMappings();
   assertAnthropicProviderContract();
   assertQwenProviderContract();
+  assertXiaoechoProviderBrandContract();
+  assertXiaoechoEditorPointsPresentation();
   await assertProviderOutputLimitContract();
   await assertQwenTokenPlanTransportContract();
   await assertPiAgentSessionPartialAwareRetryContract();
@@ -430,7 +471,7 @@ async function assertProviderActivationMainTransactionContract(): Promise<void> 
     model.contextWindow = 1_024;
     model.modelMaxTokens = 2_048;
     model.maxOutputTokens = 2_048;
-  }), /Context|metadata/u);
+  }), /上下文窗口|单次输出上限/u);
   assert.deepEqual(events, [], "invalid candidate must fail before cancellation or persistence");
   assert.equal(plugin.settings.defaultModel, provider.defaultModelId);
 
@@ -975,6 +1016,20 @@ async function assertProviderTextGenerationCompletionContract(): Promise<void> {
   assert.equal(capturedRequest?.model.contextWindow, 96_000);
   assert.equal(capturedRequest?.model.maxTokens, 12_000);
   assert.equal(capturedRequest?.options.maxTokens, 4_000);
+
+  nextResult = async () => ({ ...providerTextMessage("error", ""), errorMessage: "429 Too many requests" });
+  await assert.rejects(service.generateText({ ...input, reportRateLimit: true }), error => (error as { code?: string }).code === "provider_rate_limited");
+  await assert.rejects(service.generateText(input), error => (error as { code?: string }).code === undefined);
+  nextResult = async () => ({ ...providerTextMessage("error", ""), errorMessage: "429 insufficient_quota" });
+  await assert.rejects(service.generateText({ ...input, reportRateLimit: true }), error => (error as { code?: string }).code === undefined);
+  let releaseBackground!: (message: AssistantMessage) => void;
+  nextResult = async () => await new Promise(resolve => { releaseBackground = resolve; });
+  const background = service.generateText({ ...input, userPrompt: "background", reportRateLimit: true });
+  await flushProviderModalTasks();
+  nextResult = async () => providerTextMessage("stop", "foreground finished");
+  assert.equal(await service.generateText({ ...input, userPrompt: "foreground" }), "foreground finished", "foreground request never waits for the background request");
+  releaseBackground(providerTextMessage("stop", "background finished"));
+  assert.equal(await background, "background finished");
 
   nextResult = async () => providerTextMessage("stop", " \n\t ");
   await assert.rejects(
@@ -2053,7 +2108,7 @@ async function assertOpenAICodexCredentialStoreContract(): Promise<void> {
   assert.equal((await oauth.status()).state, "disconnected");
   await assert.rejects(
     oauth.resolveAccessToken(),
-    /OpenAI Codex 授权已失效，请在设置中重新登录/u
+    /该模型服务的登录状态已失效。请在 设置 → 模型服务 中重新登录/u
   );
 
   settings.openAICodexCredential = {
@@ -3034,6 +3089,44 @@ async function assertMcpModalFieldAccessibility(): Promise<void> {
   );
   assert.equal(providerModalTestDocument.activeElement, name);
   modal.close();
+}
+
+function assertXiaoechoEditorPointsPresentation(): void {
+  installProviderModalDomFixture();
+  const previousDesktop = Platform.isDesktopApp;
+  try {
+    for (const desktop of [true, false]) for (const providerId of ["xiaoecho", "custom"] as const) {
+      Platform.isDesktopApp = desktop;
+      const provider = createApiProviderConfig(providerId, `points-${providerId}-${desktop}`);
+      provider.models = [
+        { ...createApiProviderModelConfig(providerId, "sonnet", provider.runtimeProviderId), displayName: "Claude Sonnet 5.5 ×10", discovery: { id: "sonnet", typicalPoints: "3.90" } },
+        { ...createApiProviderModelConfig(providerId, "auto", provider.runtimeProviderId), discovery: { id: "auto", typicalPoints: "0.18" } },
+        { ...createApiProviderModelConfig(providerId, "legacy", provider.runtimeProviderId), displayName: "Legacy ×22" }
+      ];
+      provider.defaultModelId = "auto";
+      const before = JSON.stringify(provider);
+      const modal = new ProviderModelModal({
+        app: new App(), draft: provider, editing: true, language: "en", copy: settingsCopy("en"),
+        preflight: { listModels: async () => ({ status: "network_error", models: [] }), testConnection: async () => ({ status: "available" }) },
+        save: async () => ({ saved: true })
+      });
+      modal.open();
+      try {
+        const names = modal.contentEl.querySelectorAll<ProviderModalTestElement>(".codex-provider-model-choice-name");
+        const points = modal.contentEl.querySelectorAll<ProviderModalTestElement>(".codex-provider-model-choice-points");
+        if (desktop && providerId === "xiaoecho") {
+          assert.deepEqual(Array.from(names, name => name.textContent), ["Claude Sonnet 5.5", "auto", "Legacy"]);
+          assert.deepEqual(Array.from(points, point => point.textContent), ["~3.9 pts/msg", "~0.18 pts/msg"]);
+          assert.ok(Array.from(points).every(point => !point.closest("label")), "point labels stay separate from model and default controls");
+        } else {
+          assert.equal(names[0]?.textContent, "Claude Sonnet 5.5 ×10", "mobile and other Providers keep their model names");
+          assert.equal(points.length, 0, "only desktop xiaoecho adds point labels");
+        }
+        assert.equal(JSON.stringify(provider), before, "presentation does not change the selected model or stored configuration");
+      } finally { modal.close(); }
+    }
+  } finally { Platform.isDesktopApp = previousDesktop; }
+  console.log("PASS xiaoecho editor: separate point labels, Auto, legacy offline names and desktop/provider isolation");
 }
 
 async function assertProviderModalModelAccessibleNameIncludesValue(): Promise<void> {
@@ -5509,7 +5602,7 @@ async function assertDesktopModelAndMcpFinish(): Promise<void> {
     assert.equal(JSON.stringify(settings), before, "rejected removal preserves active provider and fallback settings");
     assert.ok(remove()); assert.equal(remove().disabled, false, "failed removal retains a live retry action after redraw");
     assert.equal(tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="name"]')!.value, "Uncommitted finish draft");
-    assert.match(tab.containerEl.querySelector(".codex-provider-modal-save-state")!.textContent, /not deleted/u);
+    assert.match(tab.containerEl.querySelector(".codex-provider-modal-save-state")!.textContent, /could not be deleted/u);
     assert.ok(!openTestNoticeMessages.slice(noticesBefore).some(message => /removed|Now using/u.test(message)), "failure never reports deletion success");
     tab.containerEl.querySelector<ProviderModalTestElement>('[data-modal-focus-key="cancel"]')!.click();
     mutable.renderSettingsContent();
@@ -6144,7 +6237,7 @@ async function assertMcpPanelUsesTurnResourceTruth(): Promise<void> {
   };
   await assert.doesNotReject(loadMcpPanelView(loaderInput));
   assert.equal(loaderReads, 1);
-  assert.match(loaderContainer.textContent, /读取失败：fixture catalog failed/u);
+  assert.match(loaderContainer.textContent, /读取失败：请重试。/u);
   assert.equal(loaderContainer.querySelector(".codex-mcp-error")?.getAttribute("role"), "alert");
   assert.equal(loaderContainer.querySelector(".codex-mcp-empty"), null);
   const loaderRetry = loaderContainer.querySelector<HTMLButtonElement>(".codex-mcp-retry");
@@ -6384,7 +6477,7 @@ async function assertKnowledgeInitNotePickerModalContract(): Promise<void> {
   retryChoice.checked = true; retryChoice.fireEvent("change");
   const retryConfirm = retry.contentEl.querySelector<ProviderModalTestElement>(".echoink-knowledge-note-picker-confirm")!;
   retryConfirm.click(); await flushProviderModalTasks();
-  assert.equal(openTestModals.at(-1), retry); assert.match(retry.contentEl.textContent, /没有保存成功，请再试一次/u); assert.equal(retryConfirm.disabled, false);
+  assert.equal(openTestModals.at(-1), retry); assert.match(retry.contentEl.textContent, /未能保存。请重试。/u); assert.equal(retryConfirm.disabled, false);
   fail = false; retryConfirm.click(); await flushProviderModalTasks(); assert.equal(openTestModals.length, 0);
   assert.deepEqual(assignments[1], [{ sourcePath: "notes/alpha.md", role: "raw" }]);
 
@@ -6552,6 +6645,58 @@ function assertAnthropicProviderContract(): void {
     anthropic.apiProtocol
   ), "https://api.anthropic.com/v1/messages");
   assert.match(providerBrandSvg("anthropic"), /claudeGrad/u);
+}
+
+function assertXiaoechoProviderBrandContract(): void {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const defaultProvider = createApiProviderConfig("deepseek", "default-deepseek");
+  const echo = createApiProviderConfig("xiaoecho", "echo-account");
+  echo.models = ["auto", "gpt-6.1-sol", "claude-opus-5-5", "gemini-3.8-flash-tiered", "deepseek-v4.1-flash", "qwen3.8-max"].map(id => ({ ...echo.models[0]!, id, displayName: id }));
+  settings.apiProviders = [defaultProvider, echo];
+  settings.activeApiProviderId = defaultProvider.id;
+  for (const model of echo.models) {
+    assert.equal(currentComposerProviderBrand({ plugin: { settings }, selectedProviderSettingsId: echo.id, selectedModel: model.id } as never), "xiaoecho", model.id);
+    assert.equal(providerBrandForIdentity(echo.providerId, echo.baseUrl, model.id), "xiaoecho");
+  }
+  setEchoInkAccountCredentialProbe(() => true);
+  let options: ReturnType<typeof composerProviderModelOptions>;
+  try { options = composerProviderModelOptions({ plugin: { settings } } as never).filter(item => item.providerSettingsId === echo.id); }
+  finally { setEchoInkAccountCredentialProbe(() => false); }
+  assert.equal(options.length, echo.models.length);
+  assert.ok(options.every(item => item.providerBrand === "xiaoecho"));
+  assert.equal(currentComposerProviderBrand({ plugin: { settings }, selectedProviderSettingsId: "" } as never), "deepseek");
+  assert.equal(providerBrandForIdentity("custom", "https://proxy.example/v1", "claude-opus-5-5"), "custom");
+  assert.equal(providerBrandForIdentity("qwen-token-plan"), "qwen");
+  assert.match(providerBrandSvg("xiaoecho"), /M16 8 2 22/u);
+  const css = readFileSync("styles.css", "utf8");
+  const selectors = [
+    '.echoink-settings-demo .codex-provider-saved-icon>svg',
+    '.echoink-origin-control .echoink-origin-select-icon svg',
+    '.codex-provider-brand-svg[data-provider-brand="xiaoecho"] > path'
+  ];
+  const rules = selectors.map(selector => {
+    const start = css.indexOf(selector + " {");
+    const compactStart = start >= 0 ? start : css.indexOf(selector + "{");
+    assert.ok(compactStart >= 0, selector);
+    return css.slice(compactStart, css.indexOf("}", compactStart) + 1);
+  }).join("\n");
+  for (const theme of ["theme-light", "theme-dark"]) {
+    const dom = new JSDOM(`<style>${rules}</style><body class="${theme}"><main class="echoink-settings-demo"><span class="codex-provider-saved-icon"></span><button class="echoink-origin-control"><span class="echoink-origin-select-icon"></span></button></main></body>`);
+    try {
+      for (const container of dom.window.document.querySelectorAll(".codex-provider-saved-icon,.echoink-origin-select-icon")) {
+        container.innerHTML = providerBrandSvg("xiaoecho").replace("<svg ", '<svg class="codex-provider-brand-svg" data-provider-brand="xiaoecho" ');
+        const svg = container.querySelector("svg")!;
+        assert.equal(dom.window.getComputedStyle(svg).stroke, "none", "exercise the real settings reset");
+        for (const path of svg.querySelectorAll("path")) {
+          const style = dom.window.getComputedStyle(path);
+          assert.equal(style.stroke, "currentColor");
+          assert.equal(style.strokeWidth, "2");
+          assert.equal(style.fill, "none");
+        }
+      }
+    } finally { dom.window.close(); }
+  }
+  console.log("PASS xiaoecho brands: session identity overrides global DeepSeek; all model families keep feather; custom and Qwen preserved");
 }
 
 function assertQwenProviderContract(): void {
@@ -9545,7 +9690,7 @@ async function assertProviderPickerGroupingAndFiltering(): Promise<void> {
     ".codex-provider-combobox-trigger"
   );
   const search = picker?.querySelector<ProviderModalTestElement>(
-    'input[aria-label="搜索 Provider"]'
+    'input[aria-label="搜索模型服务"]'
   );
   assert.ok(picker && options && trigger && search);
   assert.equal(openTestModals.length, modalRegistryBaseline + 1);
@@ -9637,7 +9782,7 @@ async function assertProviderPickerGroupingAndFiltering(): Promise<void> {
   );
   assert.deepEqual(headings.map((heading) => heading.textContent), [
     "登录账户",
-    "供应商",
+    "模型服务",
     "Token Plan",
     "其他"
   ]);
@@ -9662,7 +9807,7 @@ async function assertProviderPickerGroupingAndFiltering(): Promise<void> {
   search.fireEvent("input");
   assert.deepEqual(visibleOptionIds(), API_PROVIDER_PRESETS.filter((preset) => preset.group === "provider").map((preset) => preset.id));
   headings[0].click();
-  assert.deepEqual(visibleOptionIds(), ["openai-codex"]);
+  assert.deepEqual(visibleOptionIds(), API_PROVIDER_PRESETS.filter((preset) => preset.group === "account").map((preset) => preset.id));
   headings[2].click();
   assert.deepEqual(visibleOptionIds(), API_PROVIDER_PRESETS.filter((preset) => preset.group === "token-plan").map((preset) => preset.id));
   headings[1].click();
@@ -9744,7 +9889,7 @@ async function assertProviderPickerGroupingAndFiltering(): Promise<void> {
     englishModal.contentEl.querySelectorAll<ProviderModalTestElement>(
       ".provider-group-button"
     ).map((heading) => heading.textContent),
-    ["Account sign-in", "Providers", "Token plans", "Other"]
+    ["Account sign-in", "Model services", "Token plans", "Other"]
   );
   englishModal.close();
   await flushProviderModalTasks();
@@ -10611,7 +10756,7 @@ function assertAboutGitHubActionsContract(): void {
     update.state = { status: "checking" }; listeners.forEach(listener => listener()); assert.equal(check.disabled, true);
     update.state = { status: "current" }; listeners.forEach(listener => listener()); assert.equal(check.disabled, false);
     assert.match(container.textContent, /已是最新版本/u);
-    update.state = { status: "error" }; listeners.forEach(listener => listener()); assert.match(container.textContent, /暂时无法检查，请重试/u);
+    update.state = { status: "error" }; listeners.forEach(listener => listener()); assert.match(container.textContent, /未能检查更新。请稍后重试。/u);
     assert.equal(container.querySelector(".echoink-about-compact-status")?.getAttribute("aria-live"), "polite");
   } finally { dispose(); container.remove(); Platform.isDesktopApp = previousDesktop; scope.require = previousRequire; }
   assert.equal(listeners.size, 0, "closing About releases the update listener");
@@ -11736,6 +11881,8 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-output-limit") {
   assertPresetRequestMappings();
   assertAnthropicProviderContract();
   assertQwenProviderContract();
+  assertXiaoechoProviderBrandContract();
+  assertXiaoechoEditorPointsPresentation();
   await assertQwenTokenPlanTransportContract();
   await assertPiAgentSessionPartialAwareRetryContract();
   await assertProviderModelDiscoveryRequestContract();

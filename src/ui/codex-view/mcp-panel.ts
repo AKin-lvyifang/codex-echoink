@@ -1,5 +1,6 @@
 import type { SettingsLanguage } from "../../settings/settings";
 import { conversationUiText } from "./ui-i18n";
+import { errorText, NEXT } from "../../core/error-copy";
 
 export interface McpPanelResourceState {
   total: number;
@@ -20,7 +21,7 @@ export async function loadMcpPanelView(input: {
     render(null, input.loadResources());
   } catch (error) {
     render(
-      error instanceof Error ? error.message : String(error),
+      errorText(error, NEXT.retry, input.language),
       { total: 0, enabled: 0 }
     );
   }

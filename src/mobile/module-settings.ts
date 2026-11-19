@@ -1,6 +1,7 @@
 import type { AgentModuleId } from "../agents/types";
 import { PRO_CAPABILITIES, type CapabilityAccess } from "../membership/types";
 import type { MobileSettings } from "./settings";
+import { CAUSE, NEXT } from "../core/error-copy";
 
 type BasicModuleId = "knowledge-base" | "journal" | "review" | "todos";
 const basicModule = (module: AgentModuleId): module is BasicModuleId => ["knowledge-base", "journal", "review", "todos"].includes(module);
@@ -23,13 +24,13 @@ export function mobileModuleEnabled(settings: MobileSettings, module: AgentModul
 export function setMobileModuleEnabled(host: MobileModuleSettingsHost, module: AgentModuleId, value: boolean): Promise<void> {
   const settings = host.settings();
   const pending = (writes.get(settings) ?? Promise.resolve()).catch(() => {}).then(async () => {
-    if (host.settings() !== settings) throw new Error("设置已更新，请重新打开模块设置。");
+    if (host.settings() !== settings) throw new Error(CAUSE.editedElsewhere[0]);
     if (typeof value !== "boolean") throw new Error("模块开关值无效。");
     if (!basicModule(module) && module !== "finance" && module !== "english-diary") throw new Error("此模块暂不支持在移动端启用。");
-    if (!basicModule(module) && !PRO_CAPABILITIES.some(capability => host.accountService?.checkCapability(capability) === true)) throw new Error("此操作需要有效 PRO，原配置已保留。");
+    if (!basicModule(module) && !PRO_CAPABILITIES.some(capability => host.accountService?.checkCapability(capability) === true)) throw new Error(CAUSE.proRequired[0]);
     if (mobileModuleEnabled(settings, module) === value) return;
     if (module === "finance") {
-      if (!host.services.lifestyle) throw new Error("财务服务尚未就绪，请稍后重试。");
+      if (!host.services.lifestyle) throw new Error(`财务服务尚未就绪。${NEXT.retryLater[0]}`);
       await host.services.lifestyle.setEnabled("finance", value);
       return;
     }
@@ -39,7 +40,7 @@ export function setMobileModuleEnabled(host: MobileModuleSettingsHost, module: A
       try { await host.saveSettings(); }
       catch {
         if (settings.englishDiary.enabled === value) settings.englishDiary.enabled = previous;
-        throw new Error("模块设置保存失败，请重试。");
+        throw new Error(`模块设置未能保存。${NEXT.retry[0]}`);
       }
       return;
     }
@@ -54,7 +55,7 @@ export function setMobileModuleEnabled(host: MobileModuleSettingsHost, module: A
         if (previousMap === undefined && !Object.keys(restored).length) delete ui.moduleEnabled;
         else ui.moduleEnabled = restored;
       }
-      throw new Error("模块设置保存失败，请重试。");
+      throw new Error(`模块设置未能保存。${NEXT.retry[0]}`);
     }
   });
   writes.set(settings, pending);

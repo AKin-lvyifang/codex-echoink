@@ -10,13 +10,15 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  padding-bottom: var(--em-bottom-compensation, 0px);
   color: var(--text-normal);
   background: var(--background-primary);
   font-family: var(--font-interface);
   font-size: 15px;
   line-height: 1.5;
 }
+
+/* Keep the pane's measured inset above the host .view-content padding. */
+.echoink-ipad.echoink-ipad.echoink-ipad { padding: 0 0 var(--em-bottom-compensation, 0px); }
 
 .echoink-ipad *, .echoink-ipad *::before, .echoink-ipad *::after { box-sizing: border-box; }
 .echoink-ipad [hidden][hidden][hidden][hidden][hidden][hidden][hidden][hidden] { display: none; }
@@ -175,3 +177,13 @@
 .echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-header.has-echoink-hidden-ipad-back.has-echoink-hidden-ipad-back { min-height: 53px; padding-top: 24px; padding-bottom: 2px; }
 .echoink-ipad.echoink-ipad-settings-wide .echoink-ipad-page.has-echoink-root-ipad-header.has-echoink-root-ipad-header.has-echoink-root-ipad-header > .echoink-ipad-content { padding-top: 0; }
 @media (prefers-reduced-motion: reduce) { .echoink-ipad .echoink-ipad-page-push { animation: none; } }
+/* Delegated touch state; existing dimensions and native activation stay intact. */
+:is(.echoink-ipad, .echoink-mobile.em-tablet) :is(button, summary, a[href], [role=button], [role=link], input, textarea) {
+  -webkit-tap-highlight-color: transparent;
+}
+:is(.echoink-ipad, .echoink-mobile.em-tablet) [data-mobile-pressed="true"]:not(:disabled):not([aria-disabled="true"]) {
+  opacity: .65;
+}
+.echoink-ipad :is(.pd-list-task, .pd-completed-row, .pd-task-card)[data-mobile-pressed="true"] {
+  background: var(--pd-soft);
+}

@@ -1,5 +1,13 @@
+import { settingsErrorText } from "../../core/error-copy";
+import { MobileSubmissionScroller } from "./submission-scroll";
+import { renderComposerSubmission } from "../composer-submission-renderer";
+import { renderMobilePreparation, renderMobileSearchResult } from "./preparation";
+import { messageRunIds } from "../../mobile/task-recovery";
 import { TOOL_ROUND_STOP_MESSAGE } from "../../agents/tool-round-budget";
+import { getDecisionClient } from "../../membership/decision-client";
+import { smartJudgmentExhaustedActions, smartJudgmentExhaustedText, smartJudgmentIntroText } from "../smart-judgment-copy";
 import { formatMobileDateTime } from "../../mobile/date-display";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { setIcon, type App } from "obsidian";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
@@ -87,6 +95,7 @@ export class MobileUI {
   private timer?: number;
   private unsubscribeIdentity?: () => void;
   private unsubscribeRuntime?: () => void;
+  private submissionScroll: MobileSubmissionScroller;
   private chatSessionId?: string;
   private chatBinding?: { sessionId: string };
   private draftEdits = new Map<string, { text: string }>();
@@ -97,24 +106,26 @@ export class MobileUI {
   private answeringQuestions = new Set<string>();
   private questionSheet?: { taskId: string; key: string; overlay: HTMLElement; updatePending: () => void };
   private resumingTasks = new Set<string>();
+  private smartJudgmentExhausted?: { resetAt: string; sessionId: string };
   private cancelledResumes = new Set<string>();
   private resumeSheet?: { taskId: string; fingerprint: string; overlay: HTMLElement };
   private onRuntimeChange = (taskId: string) => {
     if (taskId !== this.chatSessionId && this.chatSessionId === this.host.store.session.id) return;
     if (this.page === "chat" || (this.host.isTablet && this.page === "history")) this.refreshChat();
   };
-  constructor(private root: HTMLElement, private host: MobileUIHost) { this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), back: () => this.back(), captureScroll: key => this.captureScroll(key), restoreScroll: key => this.restoreScroll(key), updateHeader: () => this.syncHeader(), sheet: (title, render) => this.openSheet(title, render), closeSheet: () => this.closeSheet(), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
+  constructor(private root: HTMLElement, private host: MobileUIHost) { this.submissionScroll = new MobileSubmissionScroller(host.runtime, () => this.chatSessionId ?? host.store.session.id, () => root.querySelector<HTMLElement>(".em-messages"), () => root.querySelector<HTMLElement>(".em-messages"), root.ownerDocument); this.host.applyAppearance = () => this.applyAppearance(); this.settingPages = new MobileSettingsPages(host, { go: page => this.go(page), back: () => this.back(), captureScroll: key => this.captureScroll(key), restoreScroll: key => this.restoreScroll(key), updateHeader: () => this.syncHeader(), sheet: (title, render) => this.openSheet(title, render), closeSheet: () => this.closeSheet(), row: (parent, title, desc, name, action) => this.row(parent, title, desc, name, action), button: (parent, title, action, name, cls) => this.button(parent, title, action, name, cls), field: (parent, title, value, update, type) => this.field(parent, title, value, update, type), act: action => this.act(action) }); }
   showPage(page: MobileSettingsRoute) { if (page === "english-diary-settings") { if (this.host.openSettings) void this.act(() => this.host.openSettings!(page)); return; } this.go(page, page === "settings"); }
   showChat() { if (this.host.settingsOnly) return; if (this.page !== "chat") this.go("chat"); else this.refreshChat(); }
   mount() {
     this.mounted = true; this.root.classList.add("echoink-mobile"); this.root.classList.toggle("em-tablet", !!this.host.isTablet); this.root.classList.toggle("em-settings-surface", !!this.host.settingsOnly);
     if (this.host.settingsOnly) this.page = this.host.settingsRoot === "english-diary-settings" ? "settings" : this.host.settingsRoot ?? "settings";
-    else { this.unsubscribeRuntime = this.host.runtime.subscribe(this.onRuntimeChange); this.timer = window.setInterval(() => this.updateTimers(), 250); }
+    else { this.unsubscribeRuntime = this.host.runtime.subscribe(this.onRuntimeChange); this.unsubscribeSubmissions = this.host.runtime.composerSubmissions.subscribe(() => { if (this.mounted && this.chatSessionId) this.refreshChat(); }); this.timer = window.setInterval(() => this.updateTimers(), 250); }
     this.unsubscribeIdentity = this.host.services?.subscribeIdentity(() => { this.syncHeader(); this.settingPages.refreshIdentity(); });
     this.render(); this.viewport = new MobileViewport(this.root); this.applyAppearance();
   }
   refreshSettings() { this.applyAppearance(); this.updateComposerLabels(); if (!this.host.settingsOnly) this.refreshChat(); }
-  destroy() { this.unsubscribeRuntime?.(); this.unsubscribeRuntime = undefined; this.unsubscribeIdentity?.(); this.unsubscribeIdentity = undefined; this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); this.root.replaceChildren(); }
+  private unsubscribeSubmissions?: () => void;
+  destroy() { this.submissionScroll.dispose(); this.unsubscribeSubmissions?.(); this.unsubscribeRuntime?.(); this.unsubscribeRuntime = undefined; this.unsubscribeIdentity?.(); this.unsubscribeIdentity = undefined; this.viewport?.dispose(); this.settingPages.dispose(); this.closeSheet(false); this.mounted = false; window.clearInterval(this.timer); this.root.replaceChildren(); }
   private async act(action: () => void | Promise<void>) {
     try { this.error = ""; this.showError(); await action(); }
     catch (error) { this.error = error instanceof Error ? error.message : String(error); if (this.mounted) this.showError(); }
@@ -134,6 +145,7 @@ export class MobileUI {
   private restoreScroll(key = this.scrollKey()) { const body = this.root.querySelector<HTMLElement>(".em-body"); if (body) body.scrollTop = this.scroll.get(key) ?? 0; }
   private isSettingsPage(page: Page) { return page === "settings" || page === "provider" || this.settingPages.categories.some(item => item.page === this.settingPages.categoryPage(page)); }
   private go(page: Page, fromHome = false) {
+    if (page !== this.page) this.submissionScroll.leave();
     if (this.host.settingsOnly && page === "chat") { this.closeSheet(false); if (this.host.openChat) void this.act(() => this.host.openChat!()); return; }
     if (!this.host.settingsOnly && this.host.isTablet && this.host.openSettings && page !== "provider" && this.isSettingsPage(page)) { this.closeSheet(false); void this.act(() => this.host.openSettings!(page as MobileSettingsRoute)); return; }
     this.captureScroll();
@@ -178,14 +190,15 @@ export class MobileUI {
     content.addEventListener("touchcancel", () => { start = undefined; }, { passive: true });
   }
   private showError() {
-    this.root.querySelectorAll<HTMLElement>(".em-error,.em-sheet-error").forEach(box => { box.textContent = this.error; box.hidden = !this.error; });
+    const text = this.error ? settingsErrorText(this.error, SETTINGS_FALLBACK.mobileTask, this.host.settings().settingsLanguage) : "";
+    this.root.querySelectorAll<HTMLElement>(".em-error,.em-sheet-error").forEach(box => { box.textContent = text; box.hidden = !text; });
   }
   private syncHeader() {
     const header = this.root.querySelector<HTMLElement>(".em-header") ?? el(this.root, "header", "em-header");
     header.replaceChildren();
     if (this.page !== "chat" && (!(this.host.settingsOnly && this.page === "settings") || this.host.onSettingsRootBack)) this.iconButton(header, this.settingPages.backLabel() ?? "返回", "chevron-left", () => this.back());
     else if (this.page === "chat") el(header, "span", "em-agent-avatar"); else icon(header, "settings-2");
-    const titles: Record<Page, string> = { ...this.settingPages.titles, "profile-agent": `${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 档案`, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型与提供商", provider: "配置提供商", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
+    const titles: Record<Page, string> = { ...this.settingPages.titles, "profile-agent": `${(this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName} 档案`, chat: (this.host.services?.agentIdentity ?? defaultAgentIdentityState()).displayName, settings: "设置", basic: "基础设置", providers: "模型服务", provider: "配置模型服务", models: "选择模型", permissions: "工作区权限", history: "历史对话", review: "复盘", memories: "记忆", memory: "记忆详情", notes: "引用笔记" };
     el(header, "h2", "em-title", this.settingPages.navigationTitle() ?? (this.host.settingsOnly && this.page === "settings" ? "EchoInk 设置" : titles[this.page]));
     if (this.page === "chat") {
       this.updateIdentity();
@@ -194,6 +207,7 @@ export class MobileUI {
     }
   }
   private render() {
+    if (this.chatSessionId && this.chatSessionId !== this.host.store.session.id) this.submissionScroll.leave();
     this.settingPages.dispose();
     const previousSidebar = this.root.querySelector<HTMLElement>(".em-sidebar");
     if (previousSidebar) this.sidebarScroll.set(previousSidebar.getAttribute("aria-label") ?? "", previousSidebar.scrollTop);
@@ -271,7 +285,7 @@ export class MobileUI {
       else if (this.page === "provider") this.provider(body);
       else if (this.page === "settings" || this.page === "basic") this.basic(body);
       else this.settingPages.render(this.page as MobileSettingsPage, body);
-      const category = this.page === "settings" ? "基础设置" : this.page === "provider" ? "API Provider" : this.settingPages.categories.find(item => item.page === this.settingPages.categoryPage(this.page))?.title ?? "基础设置";
+      const category = this.page === "settings" ? "基础设置" : this.page === "provider" ? "模型服务" : this.settingPages.categories.find(item => item.page === this.settingPages.categoryPage(this.page))?.title ?? "基础设置";
       navigation.querySelectorAll<HTMLButtonElement>(".em-row").forEach(row => row.setAttribute("aria-current", row.querySelector("strong")?.textContent === category ? "page" : "false"));
       return true;
     }
@@ -295,7 +309,7 @@ export class MobileUI {
     const chatSessionId = session.id;
     this.chatSessionId = chatSessionId;
     const binding = { sessionId: chatSessionId }; this.chatBinding = binding;
-    body.classList.add("em-messages"); this.messages(body, chatSessionId);
+    body.classList.add("em-messages"); this.messages(body, chatSessionId); this.submissionScroll.refresh();
     const compose = el(this.content, "footer", "em-compose");
     const quick = el(compose, "div", "em-quick");
     this.button(quick, "新对话", async () => { const agentId = this.host.store.getSession(binding.sessionId)?.agentId; await this.host.store.createSession(agentId); this.scroll.delete("chat"); this.render(); }, "square-pen");
@@ -316,6 +330,8 @@ export class MobileUI {
     el(picker, "span", "em-model-label", model?.model.displayName || "配置模型"); icon(picker, "chevron-down");
     const stop = this.iconButton(controls, "停止回答", "square", async () => {
       const taskId = binding.sessionId;
+      const pending = [...this.host.runtime.composerSubmissions.records.values()].find(record => record.owner === taskId && record.phase === "preparing");
+      if (pending) { await this.host.runtime.cancelComposerSubmission(pending.id); this.draftEdits.delete(taskId); this.refreshChat(); return; }
       if (this.stoppingTasks.has(taskId)) return;
       this.stoppingTasks.add(taskId); this.updateTaskStatus();
       try { if (this.host.runtime.stateFor(taskId).resuming || this.resumingTasks.has(taskId)) await this.cancelTaskResume(taskId); else await this.host.runtime.stopTask(taskId); }
@@ -327,20 +343,18 @@ export class MobileUI {
       if (this.sendingTasks.has(chatSessionId)) return;
       const draft = input.value;
       if (!draft.trim()) return;
-      const previousMessageCount = this.host.store.getSession(chatSessionId)?.messages.length ?? 0;
+      const task = this.host.store.getSession(chatSessionId);
+      const submissionId = this.host.runtime.beginComposerSubmission({ taskId: chatSessionId }, { text: draft, attachments: [], ...task?.draftContext });
+      input.value = "";
       this.sendingTasks.add(chatSessionId); this.cancelledResumes.delete(chatSessionId); this.taskErrors.delete(chatSessionId); this.updateTaskStatus();
       try {
-        await this.updateDraft(chatSessionId, draft);
-        const submission = await this.host.runtime.submit(draft, chatSessionId);
-        if (this.chatSessionId === chatSessionId && input.value === draft) input.value = this.draftEdits.get(chatSessionId)?.text ?? this.host.store.getSession(chatSessionId)?.draft ?? "";
+        await this.updateDraft(chatSessionId, "");
+        const submission = await this.host.runtime.submitComposerSubmission(submissionId);
         void submission.completion.catch(error => this.taskFailure(chatSessionId, error));
       } catch (error) {
-        const latest = this.host.store.getSession(chatSessionId);
-        const accepted = latest?.messages.slice(previousMessageCount).some(message => message.role === "user") ?? false;
-        if (!accepted && !this.draftEdits.has(chatSessionId) && !latest?.draft) this.draftEdits.set(chatSessionId, { text: draft });
-        if (this.chatSessionId === chatSessionId) input.value = this.draftEdits.get(chatSessionId)?.text ?? latest?.draft ?? (accepted ? "" : draft);
-        this.taskFailure(chatSessionId, error);
-        if (!this.cancelledResumes.has(chatSessionId)) this.showResumeReview(chatSessionId, draft);
+        const review = this.host.runtime.stateFor(chatSessionId).resumeReview;
+        if (review?.issues.length) this.showResumeReview(chatSessionId, draft);
+        else this.host.runtime.composerSubmissions.fail(submissionId, settingsErrorText(error, SETTINGS_FALLBACK.mobileTask, this.host.settings().settingsLanguage));
       } finally { this.sendingTasks.delete(chatSessionId); this.updateTaskStatus(); }
     }); send.classList.add("em-send");
     const status = el(compose, "div", "em-status em-task-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
@@ -400,7 +414,7 @@ export class MobileUI {
     const state = this.host.runtime.stateFor(taskId);
     const stop = this.root.querySelector<HTMLButtonElement>(".em-task-stop");
     const resuming = state.resuming || this.resumingTasks.has(taskId);
-    if (stop) { stop.hidden = !state.busy && !resuming; stop.disabled = this.stoppingTasks.has(taskId); stop.setAttribute("aria-busy", String(stop.disabled)); stop.setAttribute("aria-label", resuming ? "取消继续" : "停止回答"); }
+    if (stop) { stop.hidden = !state.busy && !resuming && ![...this.host.runtime.composerSubmissions.records.values()].some(record => record.owner === taskId && record.phase === "preparing"); stop.disabled = this.stoppingTasks.has(taskId); stop.setAttribute("aria-busy", String(stop.disabled)); stop.setAttribute("aria-label", resuming ? "取消继续" : "停止回答"); }
     const send = this.root.querySelector<HTMLButtonElement>(".em-send");
     if (send) { send.disabled = this.sendingTasks.has(taskId) || resuming; send.setAttribute("aria-busy", String(send.disabled)); }
     this.root.querySelectorAll<HTMLButtonElement>(".em-task-resume-button").forEach(button => { button.disabled = state.busy || resuming; button.setAttribute("aria-busy", String(!!resuming)); button.querySelector("span")!.textContent = resuming ? "准备中…" : "从这里继续"; });
@@ -421,7 +435,8 @@ export class MobileUI {
     try {
       if (!fingerprint && text !== undefined) await this.updateDraft(taskId, text);
       if (this.cancelledResumes.has(taskId)) return;
-      const submission = await this.host.runtime.resumeTask(taskId, text?.trim() ? text : undefined, fingerprint);
+      const pending = [...this.host.runtime.composerSubmissions.records.values()].find(record => record.owner === taskId && record.phase === "review" && record.snapshot.text === text);
+      const submission = pending ? await this.host.runtime.submitComposerSubmission(pending.id, fingerprint) : await this.host.runtime.resumeTask(taskId, text?.trim() ? text : undefined, fingerprint);
       void submission.completion.catch(error => this.taskFailure(taskId, error));
       if (this.resumeSheet?.taskId === taskId) { this.resumeSheet = undefined; this.closeSheet(); }
       const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
@@ -542,7 +557,7 @@ export class MobileUI {
         } catch (error) {
           if (this.questionSheet?.key === key) {
             const errorBox = this.questionSheet.overlay.querySelector<HTMLElement>(".em-sheet-error")!;
-            errorBox.textContent = error instanceof Error ? error.message : String(error); errorBox.hidden = false;
+            errorBox.textContent = settingsErrorText(error, SETTINGS_FALLBACK.mobileTask, this.host.settings().settingsLanguage); errorBox.hidden = false;
           }
         } finally {
           this.answeringQuestions.delete(key); updatePending();
@@ -578,6 +593,7 @@ export class MobileUI {
     if (!body) return;
     const changedSession = this.chatSessionId !== this.host.store.session.id;
     if (changedSession) {
+      this.submissionScroll.leave();
       if (this.questionSheet && this.questionSheet.taskId !== this.host.store.session.id) this.closeSheet(false);
       if (this.resumeSheet && this.resumeSheet.taskId !== this.host.store.session.id) this.closeSheet(false);
       this.chatSessionId = this.host.store.session.id;
@@ -586,8 +602,9 @@ export class MobileUI {
       this.root.querySelectorAll<HTMLElement>(".em-session-list").forEach(list => { list.replaceChildren(); this.history(list); });
     }
     const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 90;
-    this.host.beginRender(); body.replaceChildren(); this.messages(body);
-    if (nearBottom || changedSession) body.scrollTop = body.scrollHeight;
+    this.submissionScroll.capture(); this.host.beginRender(); body.replaceChildren(); this.messages(body);
+    if ((nearBottom || changedSession) && !this.submissionScroll.active) body.scrollTop = body.scrollHeight;
+    this.submissionScroll.refresh();
     const input = this.root.querySelector<HTMLTextAreaElement>(".em-input");
     const draft = this.draftEdits.get(this.chatSessionId!)?.text ?? this.host.store.getSession(this.chatSessionId!)?.draft ?? "";
     if (input && input.value !== draft) input.value = draft;
@@ -624,21 +641,26 @@ export class MobileUI {
     const session = this.host.store.getSession(sessionId);
     if (!session) return;
     if (!session.messages.length) {
+      this.renderComposerSubmissions(body, sessionId);
+      if ([...this.host.runtime.composerSubmissions.records.values()].some(record => record.owner === sessionId && record.phase !== "accepted")) return;
       const welcome = el(body, "section", "em-welcome");
       const settings = this.host.settings();
       const title = settings.customWelcomeEnabled ? settings.customWelcomeTitle.trim() : "";
       const subtitle = settings.customWelcomeEnabled ? settings.customWelcomeSubtitle.trim() : "";
       el(welcome, "h1", "", title || MOBILE_DEFAULT_WELCOME.title);
       el(welcome, "p", "", subtitle || MOBILE_DEFAULT_WELCOME.subtitle);
-      if (!this.taskModel(sessionId)) this.button(welcome, "添加模型与提供商", () => this.go("providers"), "plus", "em-text-action");
+      if (!this.taskModel(sessionId)) this.button(welcome, "添加模型服务", () => this.go("providers"), "plus", "em-text-action");
+      this.smartJudgmentCard(body, sessionId);
       return;
     }
-    for (const message of session.messages) {
+    const runIds = messageRunIds(session), runs = new Map(session.runs?.map(run => [run.id, run]));
+    for (const [index, message] of session.messages.entries()) {
       if (message.role === "toolResult") continue;
       const text = contentText(message);
       if (text) {
         const bubble = el(body, "article", message.role === "user" ? "em-user-message" : "em-answer markdown-rendered");
-        if (message.role === "user") bubble.textContent = text; else this.host.renderMarkdown(text, bubble, session.notePath);
+        bubble.dataset.messageRole = message.role;
+        if (message.role === "user") { bubble.textContent = text; bubble.dataset.submissionTurn = runIds.get(index) ?? ""; renderMobilePreparation(body, runs.get(runIds.get(index) ?? ""), this.host.settings().settingsLanguage ?? "zh", path => this.host.openNote(path)); } else this.host.renderMarkdown(text, bubble, session.notePath);
       }
       if (message.role !== "assistant") continue;
       if (message.stopReason === "aborted" || message.stopReason === "error") el(body, "p", "em-message-state", message.stopReason === "aborted" ? "已停止，可继续发送消息。" : message.errorMessage ?? "回答失败，可继续发送消息。");
@@ -658,7 +680,48 @@ export class MobileUI {
         if (record?.saved && record.path) this.button(body, `打开 ${record.path}`, () => this.host.openNote(record.path!), "file-text", "em-note-link");
       }
     }
+    this.renderComposerSubmissions(body, sessionId);
     this.taskInterruption(body, sessionId);
+    this.smartJudgmentCard(body, sessionId);
+  }
+  /**
+   * 智能判断在对话里只说两次话：第一次开启（知道了 / 设置），本月用完（只在当时那个对话里说一次）。
+   * 平时不显示次数；卡片只在界面上，不进会话记录。
+   */
+  private smartJudgmentCard(body: HTMLElement, sessionId: string) {
+    const client = getDecisionClient();
+    if (!client) return;
+    const resetAt = client.takeExhaustedNotice();
+    if (resetAt) this.smartJudgmentExhausted = { resetAt, sessionId };
+    if (this.smartJudgmentExhausted && !client.exhausted()) this.smartJudgmentExhausted = undefined;
+    const exhausted = this.smartJudgmentExhausted?.sessionId === sessionId ? this.smartJudgmentExhausted : undefined;
+    if (!exhausted && !client.shouldShowIntro()) return;
+    const card = el(body, "section", "em-task-interruption em-smart-judgment-card"); card.setAttribute("aria-label", "智能判断");
+    el(card, "p", "", exhausted ? smartJudgmentExhaustedText(exhausted.resetAt, client.status()?.quota?.showCount === true, false) : smartJudgmentIntroText(false));
+    const actions = el(card, "div", "em-smart-judgment-actions");
+    const done = () => { if (exhausted) this.smartJudgmentExhausted = undefined; else void client.dismissIntro(); };
+    if (exhausted) {
+      // 升级 PRO：滚到账号页订阅管理（和智能判断分组里的升级按钮同一做法）。
+      const next = { upgrade: () => { this.go("account"); this.root.querySelector<HTMLElement>(".em-settings-page .membership-section")?.scrollIntoView({ block: "start", behavior: "smooth" }); },
+        usage: () => this.go("account"), dismiss: () => this.refreshChat() };
+      for (const item of smartJudgmentExhaustedActions(client.status()?.quota?.showCount === true, false))
+        this.button(actions, item.text, () => { done(); next[item.action](); }, undefined, item.primary ? "em-primary em-task-compact" : "em-task-compact");
+      return;
+    }
+    this.button(actions, "设置", () => { done(); this.go("account"); }, undefined, "em-task-compact");
+    this.button(actions, "知道了", () => { done(); this.refreshChat(); }, undefined, "em-primary em-task-compact");
+  }
+  private renderComposerSubmissions(parent: HTMLElement, taskId: string) {
+    for (const record of this.host.runtime.composerSubmissions.records.values()) {
+      if (record.owner !== taskId || record.phase === "accepted") continue;
+      if (record.phase === "preparing" && this.host.runtime.isRunning?.(taskId)
+        && this.host.runtime.isComposerSubmissionRunning?.(record.id) === false) continue;
+      renderComposerSubmission(parent, record, { text: record.snapshot.text, language: this.host.settings().settingsLanguage ?? "zh", userClass: "em-user-message",
+        button: (parent, label, action) => { this.button(parent, label, action, undefined, "em-task-compact"); },
+        retry: async () => { if (!this.host.runtime.retryComposerSubmission(record.id)) return; try { const result = await this.host.runtime.submitComposerSubmission(record.id); void result.completion.catch(error => this.taskFailure(taskId, error)); } catch { /* Runtime retains failure. */ } },
+        edit: async () => { if (!await this.host.runtime.restoreComposerSubmission(record.id)) this.taskFailure(taskId, new Error("输入框中已有新的草稿，该消息已保留。请先处理当前草稿。")); else { this.draftEdits.delete(taskId); this.refreshChat(); } }
+      });
+    }
   }
   private toolContent(parent: HTMLElement, name: string, args: Record<string, unknown>, receipt?: ToolResultMessage, sourcePath?: string) {
     if (receipt?.isError) { el(parent, "p", "", contentText(receipt)); return; }
@@ -673,6 +736,7 @@ export class MobileUI {
       if (result?.saved && typeof result.path === "string") { note(result.path); if (typeof args.content === "string") markdown(args.content); }
       else el(parent, "p", "", typeof args.path === "string" ? args.path : "等待保存结果");
     } else if (name === "vault_search") {
+      if (receipt) { renderMobileSearchResult(parent, receipt, this.host.settings().settingsLanguage ?? "zh", path => this.host.openNote(path)); return; }
       if (Array.isArray(data)) { if (!data.length) el(parent, "p", "", "没有找到相关笔记"); for (const item of data) { const record = detailRecord(item); if (typeof record?.path === "string") note(record.path); } }
       else if (typeof args.query === "string") el(parent, "p", "", args.query);
     } else if (name.startsWith("memory_") && toolNames[name]) {
@@ -755,7 +819,7 @@ export class MobileUI {
       const row = this.row(group, provider.name, `${provider.models.map(m => m.displayName || m.id).join("、")}${provider.id === this.host.settings().activeApiProviderId ? " · 当前" : ""}`, "cpu", () => { this.providerDraft = structuredClone(provider); this.openSheet("编辑模型", body => this.provider(body)); });
       const mark = row.querySelector<HTMLElement>(".em-icon")!; mark.replaceChildren(); renderProviderBrandIcon(mark, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
     }
-    this.button(body, "添加提供商", () => { this.providerDraft = mobileProvider("deepseek"); this.openSheet("添加模型", body => this.provider(body)); }, "plus", "em-wide-action");
+    this.button(body, "添加模型服务", () => { this.providerDraft = mobileProvider("deepseek"); this.openSheet("添加模型", body => this.provider(body)); }, "plus", "em-wide-action");
   }
   private field(parent: HTMLElement, title: string, value: string, update: (value: string) => void, type = "text") {
     const label = el(parent, "label", "em-field"); el(label, "span", "", title); const input = el(label, "input"); input.type = type; input.value = value; input.setAttribute("aria-label", title); input.autocomplete = "off"; input.spellcheck = false;
@@ -764,7 +828,7 @@ export class MobileUI {
   private provider(body: HTMLElement) {
     const draft = this.providerDraft!;
     const form = el(body, "div", "em-form em-provider-form");
-    const presetLabel = el(form, "div", "em-field"); el(presetLabel, "span", "", "供应商");
+    const presetLabel = el(form, "div", "em-field"); el(presetLabel, "span", "", "模型服务");
     const presets = this.button(presetLabel, "", () => {
       const scroll = body.scrollTop;
       form.hidden = true; presets.setAttribute("aria-expanded", "true");
@@ -772,8 +836,8 @@ export class MobileUI {
       const close = () => { this.providerPickerBack = undefined; picker.remove(); form.hidden = false; presets.setAttribute("aria-expanded", "false"); body.scrollTop = scroll; presets.focus({ preventScroll: true }); };
       this.providerPickerBack = close;
       this.button(picker, "返回配置", close, "chevron-left", "em-provider-back");
-      el(picker, "h3", "em-section-title", "选择供应商");
-      const list = el(picker, "div"); list.setAttribute("role", "listbox"); list.setAttribute("aria-label", "供应商");
+      el(picker, "h3", "em-section-title", "选择模型服务");
+      const list = el(picker, "div"); list.setAttribute("role", "listbox"); list.setAttribute("aria-label", "模型服务");
       for (const preset of mobilePresets) {
         const row = this.row(list, preset.name.split(" / ")[0], "", "cpu", () => {
           close();
@@ -799,7 +863,7 @@ export class MobileUI {
       });
       list.querySelector<HTMLElement>('[aria-selected="true"]')?.focus({ preventScroll: true });
     }, undefined, "em-provider-trigger");
-    presets.setAttribute("aria-label", `供应商：${mobilePresets.find(item => item.id === draft.providerId)?.name.split(" / ")[0] ?? draft.name}`); presets.setAttribute("aria-haspopup", "listbox"); presets.setAttribute("aria-expanded", "false");
+    presets.setAttribute("aria-label", `模型服务：${mobilePresets.find(item => item.id === draft.providerId)?.name.split(" / ")[0] ?? draft.name}`); presets.setAttribute("aria-haspopup", "listbox"); presets.setAttribute("aria-expanded", "false");
     const brand = el(presets, "span", "em-provider-brand"); brand.setAttribute("aria-hidden", "true"); renderProviderBrandIcon(brand, draft.providerId === "openai" ? "openai-codex" : draft.providerId ?? "custom");
     el(presets, "span", "", mobilePresets.find(item => item.id === draft.providerId)?.name.split(" / ")[0] ?? draft.name); icon(presets, "chevron-down");
     this.field(form, "显示名称", draft.name, value => { draft.name = value; });
@@ -825,12 +889,12 @@ export class MobileUI {
         await this.host.saveSettings(); this.closeSheet(); this.render();
       } finally { this.saving = false; }
     };
-    this.button(form, "检查填写", () => { validateMobileProvider(draft); let feedback = form.querySelector<HTMLElement>(".em-provider-feedback"); if (!feedback) feedback = el(form, "p", "em-provider-feedback"); feedback.setAttribute("role", "status"); feedback.textContent = "填写检查通过；尚未请求供应商。"; }, "check", "em-wide-action");
+    this.button(form, "检查填写", () => { validateMobileProvider(draft); let feedback = form.querySelector<HTMLElement>(".em-provider-feedback"); if (!feedback) feedback = el(form, "p", "em-provider-feedback"); feedback.setAttribute("role", "status"); feedback.textContent = "填写检查通过；尚未请求模型服务。"; }, "check", "em-wide-action");
     const actions = el(form, "div", "em-provider-actions");
     this.button(actions, "保存并设为当前", () => persist(true), "check", "em-primary");
     this.button(actions, "保存", () => persist(false));
     if (this.host.settings().apiProviders.some(p => p.id === draft.id)) {
-      this.button(form, "删除提供商", () => this.confirmAction(form, `删除「${draft.name}」的本地配置？`, "确认删除", async () => {
+      this.button(form, "删除模型服务", () => this.confirmAction(form, `删除「${draft.name}」的本地配置？`, "确认删除", async () => {
         const settings = this.host.settings(); settings.apiProviders = settings.apiProviders.filter(p => p.id !== draft.id);
         if (settings.activeApiProviderId === draft.id) { settings.activeApiProviderId = ""; settings.defaultModel = ""; }
         await this.host.saveSettings(); this.closeSheet(); this.render();
@@ -852,7 +916,7 @@ export class MobileUI {
       const mark = row.querySelector<HTMLElement>(".em-icon")!; mark.replaceChildren(); renderProviderBrandIcon(mark, provider.providerId === "openai" ? "openai-codex" : provider.providerId ?? "custom");
       if (active) { const check = row.querySelector<HTMLElement>(".em-icon:last-child")!; check.replaceChildren(); setIcon(check, "check"); }
     }
-    this.button(body, "模型与提供商设置", () => this.go("providers"), "settings-2", "em-wide-action");
+    this.button(body, "模型服务设置", () => this.go("providers"), "settings-2", "em-wide-action");
   }
   private history(body: HTMLElement) {
     body.classList.add("em-session-list");
@@ -897,7 +961,7 @@ export class MobileUI {
       this.button(body, "预览修改", () => {
         if (!this.host.store.state.memoryEnabled) throw new Error("请先在基础设置中开启长期记忆。");
         if (!draft.title.trim() || !draft.content.trim()) throw new Error("标题和内容不能为空。");
-        if (draft.title.trim() === record.title && draft.content.trim() === record.content) throw new Error("内容没有变化。");
+        if (draft.title.trim() === record.title && draft.content.trim() === record.content) throw new Error("内容未发生变化。");
         this.openSheet("记忆修改预览", part => {
           el(part, "h3", "em-section-title", "修改前"); el(part, "strong", "", record.title); const before = el(part, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(record.content, before);
           el(part, "h3", "em-section-title", "修改后"); el(part, "strong", "", draft.title.trim()); const after = el(part, "article", "em-memory-content markdown-rendered"); this.host.renderMarkdown(draft.content.trim(), after);

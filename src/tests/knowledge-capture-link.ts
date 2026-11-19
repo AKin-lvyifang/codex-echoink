@@ -40,7 +40,7 @@ async function assertComposerCaptureFeedback(): Promise<void> {
   };
   const pure = makeHost("  只有文字，原样保留  ", [], null), beforePure = openTestNoticeMessages.length;
   await captureComposerKnowledgeSource(pure.host as never);
-  assert.deepEqual(openTestNoticeMessages.slice(beforePure), ["收藏只支持网页和公众号链接"]);
+  assert.deepEqual(openTestNoticeMessages.slice(beforePure), ["收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。"]);
   assert.equal(pure.host.inputEl.value, "  只有文字，原样保留  "); pure.assertUnchanged();
 
   let resolveCapture!: (paths: string[]) => void, calls = 0;
@@ -122,7 +122,7 @@ export async function runKnowledgeCaptureLinkTests(): Promise<void> {
     return { status: 200, text: `<html><title>合成收藏${requests.length}</title><article><p>完整合成正文</p></article></html>`, headers: {}, json: {}, arrayBuffer: new ArrayBuffer(0) };
   });
   try {
-    await assert.rejects(capture.captureChatInput("raw-articles", "只是想保存的一句话", []), /^Error: 收藏只支持网页和公众号链接$/u);
+    await assert.rejects(capture.captureChatInput("raw-articles", "只是想保存的一句话", []), /^Error: 收藏仅支持网页链接和公众号文章链接。请粘贴链接后重试。$/u);
     assert.equal(requests.length, 0);
     for (const name of ["网页", "公众号", "文档", "图片", "想法"]) assert.deepEqual(await fs.readdir(path.join(root, name)), []);
 

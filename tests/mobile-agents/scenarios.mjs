@@ -36,7 +36,7 @@ export async function runAgentScenarios(api) {
     assert.equal(profile.identity.avatar.presetId, "sol");
     assert.equal(profile.templateId, "executor");
     assert.equal(profile.profile.representativeHabits.length, 0);
-    assert.ok(Object.values(snapshot.registry.moduleOwners).every(owner => owner === ""));
+    assert.ok(Object.values(snapshot.registry.moduleOwners).every(owner => owner === "generalist"), "fresh installs start every module on the generalist");
     const reopened = setup({}, JSON.parse(f.saved));
     assert.equal((await reopened.service.profile()).version, profile.version);
     f.unchanged();

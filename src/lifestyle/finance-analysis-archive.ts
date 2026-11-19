@@ -25,7 +25,7 @@ function recordField(value: unknown, key: string): unknown {
 export function validateFinanceAnalysisDirectory(value: string, root: string, transactions: string, config: string): string {
   const result = value.trim() || `${root}/分析记录`;
   if (result.startsWith("/") || result.includes("\\") || /[:\p{Cc}]/u.test(result)
-    || result.split("/").some(part => !part || part === "." || part === "..")) throw new Error("分析保存位置须为 Vault 内的相对目录，不能越界");
+    || result.split("/").some(part => !part || part === "." || part === "..")) throw new Error("分析保存位置须为仓库内的目录。请在财务设置中重新选择。");
   if ([config, transactions].some(path => inside(result, path))) throw new Error("分析保存位置不能使用插件配置或账目目录及其子目录");
   return result;
 }
@@ -177,7 +177,7 @@ export class FinanceAnalysisArchive {
     if (file instanceof TFile) {
       const content=await this.app.vault.read(file);
       if (!content.includes(`analysis_id: ${draft.id}\n`)) throw new Error("存档文件冲突，原记录已保留");
-      if (content!==markdown) throw new Error("存档正文已改变，保留原文并提示重试");
+      if (content!==markdown) throw new Error("存档正文已被修改，原文已保留。请重新保存分析。");
     } else await this.app.vault.create(record.path,markdown);
     await this.store.update(data=> {
       data.financeAnalysisArchives=(data.financeAnalysisArchives??[]).map(r=>r.id===draft.id?{...record,status:draft.status}:r);

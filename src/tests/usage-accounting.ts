@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createAssistantMessageEventStream, type AssistantMessage, type Context } from "@earendil-works/pi-ai";
-import { countTextTokens, estimateTokenValue, estimateUsageInputTokens, estimateUsageOutputTokens, USAGE_TOKEN_STANDARD } from "../harness/usage/token-estimator";
+import { countTextTokens, countTextTokensAsync, estimateTokenValue, estimateUsageInputTokens, estimateUsageInputTokensAsync, estimateUsageOutputTokens, USAGE_TOKEN_STANDARD } from "../harness/usage/token-estimator";
 import { observeUsageStream, type UsageRequestEvent } from "../harness/usage/usage-stream";
 import { UsageStore } from "../harness/usage/usage-store";
-import { buildPiContextLedger, calculatePiEffectiveInputBudget, parsePiContextLedger } from "../harness/pi-native/pi-context-budget";
+import { buildPiContextLedger, buildPiContextLedgerAsync, calculatePiEffectiveInputBudget, parsePiContextLedger } from "../harness/pi-native/pi-context-budget";
 
 const now = new Date(2026, 9, 10, 12).getTime();
 function assistant(text: string): AssistantMessage {
@@ -64,7 +64,7 @@ function testEstimator() {
   return toolContext;
 }
 
-function testNativeAttachmentLedger() {
+async function testNativeAttachmentLedger() {
   const input = { conversationId: "fixture-conversation", piSessionId: "fixture-session", productRunId: "fixture-run",
     requestSequence: 1, requestLeafId: null, recordedAt: now, model: { provider: "fixture", id: "fixture" },
     budget: calculatePiEffectiveInputBudget({ contextWindow: 64_000, maxOutputReserve: 4_000 }),
@@ -77,6 +77,12 @@ function testNativeAttachmentLedger() {
   assert.equal(native.categories.reduce((sum, category) => sum + category.tokens, 0), native.totalInputTokens);
   assert.equal(native.remainingInputTokens, plain.remainingInputTokens - 2_400);
   assert.deepEqual(parsePiContextLedger(native), native, "persisted native attachment estimate remains a valid ledger");
+  assert.deepEqual(await buildPiContextLedgerAsync({ ...input, additionalInputTokens: 2_400 }), native,
+    "async counting preserves every category, budget, attachment and diagnostic");
+  assert.equal(await estimateUsageInputTokensAsync(context), estimateUsageInputTokens(context));
+  for (const text of ["<|endoftext|> literal", "中文与 English 🧑🏽‍💻", "中文1234 abc\n".repeat(5_000)]) {
+    assert.equal(await countTextTokensAsync(text), countTextTokens(text));
+  }
 }
 
 async function testStreams(toolContext: Context) {
@@ -169,7 +175,7 @@ async function testStore() {
 }
 
 const toolContext = testEstimator();
-testNativeAttachmentLedger();
+await testNativeAttachmentLedger();
 await testStreams(toolContext);
 await testStore();
 console.log("Usage accounting tests passed: local tokenizer, metadata exclusion, tool rounds, aborts, deduplication, persistence, daily totals and streaks.");

@@ -45,6 +45,8 @@ export interface AgentCapabilityContext {
   readonly isRootJournalPath?: (value: string) => boolean;
   /** A router card only dispatches; a worker reports back. Unset keeps the classic behavior. */
   readonly companyRole?: "router" | "worker";
+  /** Folders the assistant opened for writing when it dispatched this worker's task. */
+  readonly folderGrants?: readonly string[];
   readonly relativeTarget: (value: string) => string | null;
   readonly resolvePath: (value: string) => string;
   readonly toolAdapters: AgentCapabilityToolAdapters;
@@ -52,7 +54,7 @@ export interface AgentCapabilityContext {
 export interface AgentCapabilityDecision {
   readonly allowed: boolean;
   readonly capabilityId: string;
-  readonly reason: "allowed" | "agent_missing" | "agent_disabled" | "module_disabled" | "pro_required" | "read_only" | "memory_disabled" | "resource_disabled" | "scope_required" | "unknown_resource" | "unknown_tool" | "invalid_target" | "router_only";
+  readonly reason: "allowed" | "agent_missing" | "agent_disabled" | "module_disabled" | "pro_required" | "read_only" | "memory_disabled" | "resource_disabled" | "scope_required" | "unknown_resource" | "unknown_tool" | "invalid_target" | "router_only" | "folder_grant_required";
 }
 export interface AgentMcpCapabilityTarget { readonly resourceId: string; readonly toolName: string; readonly readOnly: boolean; readonly externalOnly?: boolean; readonly executable?: boolean; readonly inputSchema?: Readonly<Record<string, unknown>> }
 const BASE_SKILLS = new Set(["clarify-real-question", "two-layer-explanation", "deep-understanding", "evidence-freshness-audit", "multi-lens-problem-solving", "minimum-real-world-experiment", "self-discovery-life-design"]);
@@ -154,44 +156,47 @@ export function checkAgentSkillPath(context: AgentCapabilityContext, value: stri
 }
 function relativeTarget(context: AgentCapabilityContext, value: string): string | null { return context.relativeTarget(value); }
 function inside(value: string, root: string): boolean { return value === root || value.startsWith(root + "/"); }
-function moduleForRole(context: AgentCapabilityContext, role: string): AgentModuleCapability | null {
-  return role === "journal" ? "journal" : (context.knowledgeRoles ?? ["raw", "wiki", "projects", "inbox", "outputs", "work", "archive", "templates", "assets"]).includes(role) ? "knowledge" : null;
-}
 /** Ordinary reads skip directory availability only, preserving live grants and module switches. */
 function checkOrdinaryReadCapability(context: AgentCapabilityContext, capability: string): AgentCapabilityDecision {
   if (capability !== "knowledge" && capability !== "journal") return checkAgentCapability(context, capability, "read");
   return checkAgentCapability({ ...context, settings: { ...context.settings,
     knowledgeBase: { ...context.settings.knowledgeBase, folderBindings: null } } }, capability, "read");
 }
+/** Reading notes is open to every hired Agent; module grants only decide where it may write. */
 function checkUnscopedOrdinaryRead(context: AgentCapabilityContext, result: AgentCapabilityDecision): AgentCapabilityDecision {
-  // Other failures and the existing partially scoped Agent rules stay authoritative.
-  if (result.reason !== "module_disabled" || result.capabilityId !== "knowledge" || context.moduleEnabled?.knowledge === false) return result;
-  const bindings = context.settings.knowledgeBase.folderBindings;
-  if (bindings && Object.entries(bindings.roles).some(([role, binding]) => moduleForRole(context, role) !== null
-    && !binding.enabled && (binding.readPaths.some(Boolean) || !!binding.writePath))) return decision("knowledge", "scope_required");
-  return checkOrdinaryReadCapability(context, "knowledge");
+  return result.allowed ? result : checkAgentCapability(context, "conversation", "read");
 }
+/**
+ * Reads are open to every hired Agent. Writes: an Agent owns its modules' folders; other modules'
+ * folders need that module (or an assistant grant); ordinary folders are open when the person
+ * talks to the Agent directly, while a dispatched worker needs the assistant's folder grant.
+ */
 export function checkAgentTarget(context: AgentCapabilityContext, target: string, effect: Effect, broad = false,
-  options: { readonly ordinaryRead?: boolean } = {}): AgentCapabilityDecision {
+  _options: { readonly ordinaryRead?: boolean } = {}): AgentCapabilityDecision {
   const value = relativeTarget(context, target);
   if (!value) return decision(target, "invalid_target");
+  if (effect === "read") return checkAgentCapability(context, "conversation", "read");
   const matches: Array<{ root: string; capability: AgentModuleCapability; enabled: boolean }> = [];
   if (context.isRootJournalPath?.(value)) matches.push({ root: value, capability: "journal", enabled: true });
   for (const [capability, roots] of Object.entries(context.modulePaths ?? {})) for (const root of roots ?? []) if (root && (inside(value, root) || broad && inside(root, value))) matches.push({ root, capability: capability as AgentModuleCapability, enabled: true });
-  const bindings = context.settings.knowledgeBase.folderBindings;
-  if (bindings) for (const [role, binding] of Object.entries(bindings.roles)) {
-    const capability = moduleForRole(context, role); if (!capability) continue;
-    for (const root of [...binding.readPaths, ...(binding.writePath ? [binding.writePath] : [])]) if (inside(value, root) || broad && inside(root, value)) matches.push({ root, capability, enabled: binding.enabled });
-  }
+  const journal = context.settings.knowledgeBase.folderBindings?.roles.journal;
+  if (journal) for (const root of [...journal.readPaths, ...(journal.writePath ? [journal.writePath] : [])]) if (root && (inside(value, root) || broad && inside(root, value))) matches.push({ root, capability: "journal", enabled: journal.enabled });
   // More specific module outputs (English/finance/review) override the generic outputs root.
   const longest = Math.max(0, ...matches.filter(match => inside(value, match.root)).map(match => match.root.length));
   const relevant = broad ? matches : matches.filter(match => match.root.length === longest);
-  const capabilityCheck = (capability: string) => options.ordinaryRead && effect === "read"
-    ? checkOrdinaryReadCapability(context, capability) : checkAgentCapability(context, capability, effect);
-  if (!relevant.length) return capabilityCheck("knowledge");
+  const granted = !!context.folderGrants?.some(root => inside(value, root));
+  const ordinary = () => checkAgentCapability(context, "conversation", effect);
+  if (!relevant.length) {
+    if (context.companyRole !== "worker" || granted || checkAgentCapability(context, "knowledge", effect).allowed) return ordinary();
+    const base = ordinary();
+    return base.allowed ? decision(value, "folder_grant_required") : base;
+  }
   for (const match of relevant) {
     if (!match.enabled) return decision(match.capability, "module_disabled");
-    const result = capabilityCheck(match.capability); if (!result.allowed) return result;
+    const result = checkAgentCapability(context, match.capability, effect);
+    if (result.allowed) continue;
+    if (granted && result.reason === "agent_disabled") { const fallback = ordinary(); if (fallback.allowed) continue; }
+    return result;
   }
   return decision(relevant[0].capability, "allowed");
 }
@@ -289,7 +294,7 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     const capability = scope.capability;
     const ordinaryRead = !scope.write && typeof request.command === "string" && ORDINARY_READ_CLI_COMMANDS.has(request.command);
     const targets = structuredTargets(resolvedTarget ?? { ...args, file: undefined });
-    if (!targets.length && scope.broad && currentAgent(context) && !hasAllModuleCapabilities(context)) return decision(capability, "scope_required");
+    if (!targets.length && scope.broad && scope.write && currentAgent(context) && !hasAllModuleCapabilities(context)) return decision(capability, "scope_required");
     // Ordinary file commands derive their module from the resolved path. A
     // journal-only Agent does not need Knowledge permission to read its diary.
     const initial = checkAgentCapability(context, capability === "knowledge" && (targets.length || scope.exactTarget) ? "conversation" : capability, scope.write ? "write" : "read");

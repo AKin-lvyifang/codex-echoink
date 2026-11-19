@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import type { PersonalMemoryKind } from "../harness/memory/personal-memory-contracts";
 
 const CORRECTION_TIMEOUT_MS = 45_000;
@@ -38,7 +39,7 @@ export class PersonalMemoryCorrectionService {
   }>): Promise<Readonly<PersonalMemoryCorrectionPreview>> {
     const correction = input.correction.trim();
     if (!correction) throw new Error("personal_memory_correction_empty");
-    if (this.running) throw new Error("EchoInk 正在处理其他请求，请稍后再试。");
+    if (this.running) throw new Error(CAUSE.busyAnswering[0]);
     this.running = true;
     try {
       const output = await this.port.generateCorrection({

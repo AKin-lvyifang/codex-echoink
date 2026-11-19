@@ -6,11 +6,12 @@ import type { PersonalMemoryRuntimeContext } from "../harness/memory/personal-me
 import { MEMORY_ACTIVITY_PATH } from "../harness/memory/memory-activity-store";
 import { createSecondaryRecord, serializeSecondaryRecord } from "../harness/memory/secondary-memory-store";
 import { queryMemoryPage, memorySourceView, createMemoryPagePort } from "../plugin/memory-page-service";
-import { renderMemoryPanel, type MemoryPanelActions, type MemoryPanelState } from "../home/memory/memory-panel";
+import { memoryCorrectionReason, renderMemoryPanel, type MemoryPanelActions, type MemoryPanelState } from "../home/memory/memory-panel";
 import type { MemoryPageSnapshot, MemorySource } from "../home/memory/memory-page-types";
 import { disposeOriginControls } from "../settings/origin-controls";
 import { installObsidianDom } from "./obsidian-dom";
 import { CodexMessageListRenderer } from "../ui/codex-view/message-list";
+import { MemoryPageView } from "../home/memory/memory-page";
 import { runMemoryMapTests } from "./memory-map";
 import { normalizeInjectedMemorySources } from "../harness/pi-native/pi-memory-sources";
 
@@ -23,6 +24,13 @@ async function optionalFile(file: string): Promise<string | null> {
 }
 
 function assertSources(): void {
+  const target: any = { closed: true };
+  const receipt = { conversationId: "receipt-test", selectedId: "second", sources: [{ id: "first", title: "第一条" }, { id: "second", title: "第二条" }] };
+  MemoryPageView.prototype.openPage.call(target, { receipt });
+  assert.deepEqual(target.state, { mode: "detail", id: "second" }, "the chosen receipt item opens directly, not the whole receipt list");
+  MemoryPageView.prototype.openPage.call(target, { receipt: { ...receipt, selectedId: "outside-receipt" } });
+  assert.deepEqual(target.state, { mode: "receipt" }, "a selected id must belong to this immutable receipt");
+
   assert.deepEqual(normalizeInjectedMemorySources([{ id: "pin", title: "固定记忆", reason: "pinned" }, { id: "hit", title: "命中记忆", revision: 2, reason: "title_or_trigger" }]),
     [{ id: "pin", title: "固定记忆", reason: "pinned" }, { id: "hit", title: "命中记忆", revision: 2, reason: "title_or_trigger" }], "persisted receipts retain their original reasons");
   const date = "2026-11-03";
@@ -208,6 +216,27 @@ function panelScenarios(win: Window & typeof globalThis, data: Awaited<ReturnTyp
   const click = (text: string) => { const button = Array.from(host.querySelectorAll("button")).find(element => element.textContent?.trim() === text); assert.ok(button, `button ${text} exists`); button.click(); };
   const sections = () => Array.from(host.querySelectorAll(".memory-section-heading")).map(element => element.textContent);
   try {
+    for (const reason of ["Dream 已按用户原话核对", "已按你的原话核对"]) {
+      assert.equal(memoryCorrectionReason(reason, "zh-CN"), "已按你的原话核对");
+      assert.equal(memoryCorrectionReason(reason, "en"), "Checked against your own words");
+    }
+    assert.equal(memoryCorrectionReason("用户撤销 Dream 纠错", "en"), "You undid this correction");
+    assert.equal(memoryCorrectionReason("用户自己的 Dream 项目说明", "zh-CN"), "用户自己的 Dream 项目说明", "user text is not rewritten");
+    const star = data.snapshot.stars.find(item => item.id === data.plainId)!;
+    const trace: MemoryPageSnapshot = { ...data.snapshot, corrections: [{ id: "trace-test", checkKey: "pinned-test", phase: "change", source: star.source,
+      beforeId: star.id, afterId: star.id, beforeRevision: star.revision, afterRevision: star.revision, action: "correct", at: data.snapshot.now, before: star, after: { ...star, pinned: true }, canUndo: true }] };
+    const legacy = { ...data.snapshot, stars: data.snapshot.stars.map(item => item.id === star.id
+      ? { ...item, history: [{ ...star, reason: "Dream 已按用户原话核对" }] } : item) };
+    draw({ mode: "detail", id: star.id }, legacy);
+    assert.match(host.textContent!, /已按你的原话核对/u);
+    assert.doesNotMatch(host.textContent!, /Dream|dream_correction/u);
+    assert.equal(legacy.stars.find(item => item.id === star.id)!.history[0].reason, "Dream 已按用户原话核对", "rendering leaves historical data untouched");
+    draw({ mode: "detail", id: star.id }, trace);
+    host.querySelector<HTMLElement>("details.memory-correction summary")!.click();
+    draw({ mode: "detail", id: star.id }, trace);
+    assert.equal(host.querySelector<HTMLDetailsElement>("details.memory-correction")!.open, true, "ordinary correction traces retain the same expansion behavior");
+    assert.match(host.textContent!, /已按.*你的说法更新/u);
+    assert.doesNotMatch(host.textContent!, /可能需要改正|建议改为|采用|忽略/u);
     draw({ mode: "detail", id: data.plainId });
     assert.deepEqual(sections(), ["来源"], "absent optional data cannot create placeholder groups");
     assert.equal(host.querySelectorAll(".memory-field").length, 3);
@@ -273,6 +302,28 @@ export async function runMemoryPageTests(root: string, win: Window & typeof glob
   await assertPageErrorsFollowLanguage();
   const data = await repositoryScenarios(root);
   panelScenarios(win, data);
+  // A new task has no virtual-message environment yet. Its preparation must
+  // still render immediately and hand its open note list to the formal run.
+  const preparationHost = win.document.createElement("div");
+  const preparationRenderer = new CodexMessageListRenderer();
+  const stages = [{ stage: "judgment" as const, status: "completed" as const, knowledgeDecision: true, startedAt: 1, updatedAt: 2 },
+    { stage: "knowledge" as const, status: "completed" as const, notePaths: ["验收/A.md"], startedAt: 3, updatedAt: 4 }];
+  const context = { language: "zh-CN" as const, agentIdentity: { displayName: "总助", avatarUrl: null }, openNote: () => undefined, onMeasure: () => undefined };
+  preparationRenderer.renderComposerPreparation(preparationHost, "first-task", stages, context);
+  assert.equal(preparationHost.querySelectorAll("[data-node-id]").length, 2, "new-task progress does not wait for the first accepted message");
+  assert.equal(preparationHost.querySelector(".echoink-submission-step"), null, "desktop preparation uses the formal node component");
+  const notes = preparationHost.querySelector<HTMLDetailsElement>("details")!;
+  notes.open = true; notes.ontoggle!({} as Event);
+  preparationRenderer.acceptComposerSubmission("first-task", { turnId: "formal-run" });
+  const open = (preparationRenderer as any).openProcessItems;
+  assert.equal(open.get("run:formal-run:process-activity:knowledge:retrieval"), true, "acceptance preserves the user's open note list");
+  preparationHost.replaceChildren();
+  preparationRenderer.renderComposerPreparation(preparationHost, "programmatic-wait", [{ stage: "thinking", status: "active", readyForModel: true }], context);
+  await new Promise(resolve => win.setTimeout(resolve, 0));
+  const disclosureStates = (preparationRenderer as any).reasoningDisclosureStates;
+  assert.equal(disclosureStates.get("submission:programmatic-wait\0provider-reasoning\0process-activity:provider:thinking").manual, false,
+    "the initial automatic toggle must not disable the existing completion auto-fold");
+  preparationRenderer.dispose();
   const host = win.document.createElement("div");
   const target = host.createDiv({ attr: { "data-message-id": "revealed" } });
   const child = target.createSpan();

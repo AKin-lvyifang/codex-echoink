@@ -165,7 +165,7 @@ function builtinSkillSnapshotWarnings(
     if (snapshot.fileStatus === "ready") return [];
     const state = snapshot.fileStatus === "missing" ? "缺失" : "损坏";
     return [
-      `内置 Skill ${snapshot.id} 的 SKILL.md ${state}${snapshot.error ? `：${snapshot.error}` : "。"}`
+      `内置技能 ${snapshot.id} 的 SKILL.md ${state}。请重新安装或更新插件后重试。`
     ];
   });
 }

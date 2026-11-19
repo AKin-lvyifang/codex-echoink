@@ -401,7 +401,7 @@ function unsupportedSetup(setup) {
 
 // Synthetic public-API host; it only adapts file access and metadata. Ranking,
 // filtering, positions and delivery use the unchanged production implementation.
-function syntheticVaultHost(root, openedPaths, activePath, readFailures) {
+export function syntheticVaultHost(root, openedPaths, activePath, readFailures) {
   const failedReads = new Set(readFailures), readFailureEvents = [];
   const file = relative => {
     const stat = fsSync.statSync(inside(root, relative));

@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { attachNativeTooltip, type NativeTooltipHandle } from "./native-tooltip";
 import type { Capability, CapabilityAccess } from "../membership/types";
 import type { ProPluginAccess } from "../membership/access";
@@ -37,7 +38,7 @@ export class ProPluginControls {
       this.tooltips.set(control, attachNativeTooltip(control, () => {
         const current = this.readPolicy();
         const blocked = (options.needsWrite?.() ?? true) && (!current.canWrite || !!options.capability && !this.access.checkCapability(options.capability));
-        return blocked ? current.reason ?? "此操作需要有效 PRO 权限。" : options.tooltip?.() ?? this.defaultHints.get(control) ?? "";
+        return blocked ? current.reason ?? CAUSE.proRequired[0] : options.tooltip?.() ?? this.defaultHints.get(control) ?? "";
       }));
     }
   }

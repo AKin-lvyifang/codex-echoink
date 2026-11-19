@@ -1,6 +1,7 @@
 import type { DataAdapter } from "obsidian";
 import type { AccountService } from "../membership/account-service";
 import { MembershipNetworkError } from "../membership/network-error";
+import { userFacingErrorText } from "../core/error-copy";
 import { skillPluginVersionSupported, type SkillAuthorization } from "../membership/skill-delivery";
 import { mobileAtomicFilePort } from "../mobile/finance-store";
 import { sha256Hex } from "../utils/sha256";
@@ -20,6 +21,8 @@ export interface ResolvedExpertPackage {
   assertAvailable(): void;
   /** Return only for a transient private system context, never messages or persisted run reports. */
   buildTransientPrompt(input: ExpertPromptInput): string;
+  /** 智能判断用的技能清单：只有 id、名称和说明，不含正文。 */
+  skillOptions(): { id: string; name: string; description: string }[];
   /** Public licenses are the sole full texts exposed to the About UI. */
   licenseTexts(): ExpertLicense[];
 }
@@ -52,7 +55,7 @@ export class ExpertContentService {
     const auth = this.options.account()?.skillAuthorization(), state = this.states.get(id);
     if (!auth || !state || state.binding !== `${auth.scope}:${auth.session}`) return null;
     return state.value.kind === "offline" && this.now() >= Math.min(state.value.until, auth.validUntil)
-      ? { kind: "error", message: "专家缓存已到期，请联网重新下载。" } : state.value;
+      ? { kind: "error", message: "专家缓存已到期。请联网后重新下载。" } : state.value;
   }
   private setState(id: string, auth: SkillAuthorization, value: ExpertDeliveryState | null): void {
     const current = this.options.account()?.skillAuthorization();
@@ -64,7 +67,7 @@ export class ExpertContentService {
   }
   private async read(path: string): Promise<string | null> {
     const value = await this.options.files.read(safeExpertCachePath(path));
-    if (value !== null && new TextEncoder().encode(value).length > MAX_EXPERT_PACKAGE_BYTES + 16384) throw new Error("专家缓存超过大小限制。");
+    if (value !== null && new TextEncoder().encode(value).length > MAX_EXPERT_PACKAGE_BYTES + 16384) throw new Error("专家内容超出大小限制，未能加载。请刷新后重试。");
     return value;
   }
   async publicCatalog(force = false): Promise<ExpertCatalog> {
@@ -74,7 +77,7 @@ export class ExpertContentService {
     if (this.catalogFlight) return this.catalogFlight;
     const file = `${this.options.cacheRoot}/catalog-${sha256Hex(account?.apiUrl ?? "disabled")}.json`;
     const flight = (async () => {
-      if (!account) throw new Error("账号服务不可用，暂时无法加载专家。");
+      if (!account) throw new Error("账号服务暂时不可用，未能加载专家。请稍后重试。");
       let catalog: ExpertCatalog;
       try { catalog = await account.getExpertCatalog(); }
       catch (error) {
@@ -84,9 +87,9 @@ export class ExpertContentService {
         if (!raw) throw error;
         catalog = parseExpertCatalog(JSON.parse(raw) as unknown, account.apiUrl);
       }
-      if (account !== this.options.account()) throw new Error("账号服务已切换，本次加载已取消。");
+      if (account !== this.options.account()) throw new Error("账号已切换，本次加载已取消。请重新打开专家页面。");
       await this.options.files.write(file, JSON.stringify(catalog));
-      if (account !== this.options.account()) throw new Error("账号服务已切换，本次加载已取消。");
+      if (account !== this.options.account()) throw new Error("账号已切换，本次加载已取消。请重新打开专家页面。");
       this.catalog = catalog; this.catalogAt = this.now();
       return catalog;
     })().finally(() => { if (this.catalogFlight === flight) this.catalogFlight = null; });
@@ -94,13 +97,13 @@ export class ExpertContentService {
     return flight;
   }
   async resolve(id: string): Promise<ResolvedExpertPackage> {
-    if (!validExpertId(id)) throw new Error("专家标识无效。");
+    if (!validExpertId(id)) throw new Error("专家信息无效。请刷新专家列表后重试。");
     const account = this.options.account(), auth = account?.skillAuthorization();
-    if (!account || !auth) throw new Error("聘请和使用专家需要有效 PRO，请在账号与会员中启用本机。");
+    if (!account || !auth) throw new Error("PRO_REQUIRED");
     const key = `${auth.scope}:${auth.session}:${id}`, existing = this.resolutions.get(key);
     if (existing) return existing;
     const flight = this.remote(id, account, auth).catch((error: unknown) => {
-      this.setState(id, auth, { kind: "error", message: error instanceof Error ? error.message : "专家暂时不可用，请重试。" });
+      this.setState(id, auth, { kind: "error", message: userFacingErrorText(error, "专家暂时不可用。请稍后重试。") });
       throw error;
     }).finally(() => { if (this.resolutions.get(key) === flight) this.resolutions.delete(key); });
     this.resolutions.set(key, flight);
@@ -109,7 +112,7 @@ export class ExpertContentService {
   private assertAuthorization(account: ExpertDeliveryAccount, expected: SkillAuthorization): void {
     const current = account.skillAuthorization();
     if (account !== this.options.account() || !current || current.scope !== expected.scope || current.session !== expected.session
-      || this.now() >= current.validUntil) throw new Error("账号、设备或授权已变化，本次专家已停止提供。");
+      || this.now() >= current.validUntil) throw new Error("账号、设备或授权已变化，专家服务已停止。请在 设置 → 账号与会员 中确认授权后重试。");
   }
   private validCache(response: ExpertPackageResponse): boolean {
     const now = this.now();
@@ -138,8 +141,8 @@ export class ExpertContentService {
     const body = parseExpertPackage(cache.response, account.apiUrl);
     const assertAvailable = () => {
       this.assertAuthorization(account, auth);
-      if (!this.validCache(cache.response)) throw new Error("专家缓存已到期，请联网重新下载。");
-      if (!this.compatible(body)) throw new Error("请更新插件，或在支持的设备上使用此专家。");
+      if (!this.validCache(cache.response)) throw new Error("专家缓存已到期。请联网后重新下载。");
+      if (!this.compatible(body)) throw new Error("当前插件版本或设备不支持此专家。请更新插件，或在支持的设备上使用。");
     };
     assertAvailable();
     const { persona: _persona, skills: _skills, avatar, licenses: _licenses, schema: _schema, disclosure, ...meta } = body;
@@ -149,6 +152,7 @@ export class ExpertContentService {
       avatar: { kind: "custom", mimeType: avatar.mimeType, dataUrl: `data:${avatar.mimeType};base64,${avatar.base64}`, width: 256, height: 256 },
       assertAvailable,
       buildTransientPrompt: input => { assertAvailable(); return buildExpertTransientPrompt(body, input); },
+      skillOptions: () => body.skills.map(skill => ({ id: skill.id, name: skill.name, description: skill.description })),
       licenseTexts: () => { assertAvailable(); return body.licenses.map(license => ({ ...license })); },
     };
   }
@@ -157,8 +161,8 @@ export class ExpertContentService {
     const previous = await this.cached(id, auth, account);
     await this.publicCatalog(); this.assertAuthorization(account, auth);
     const metadata = this.catalogEntry(id);
-    if (!metadata) throw new Error("此专家已不在当前目录中，请刷新后重试。");
-    if (!this.compatible(metadata)) throw new Error("请更新插件，或在支持的设备上使用此专家。");
+    if (!metadata) throw new Error("此专家已不在当前目录中。请刷新后重试。");
+    if (!this.compatible(metadata)) throw new Error("当前插件版本或设备不支持此专家。请更新插件，或在支持的设备上使用。");
     let response: ExpertDeliveryResponse;
     try {
       response = await account.getExpertPackage(id, { pluginVersion: this.options.pluginVersion, platform: this.options.platform,

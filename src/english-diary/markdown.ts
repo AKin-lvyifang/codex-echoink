@@ -117,7 +117,7 @@ function categoryLine(content: string, entry: ExpressionEntry): { start: number;
 export function migrateExpressionMarkdown(content: string, id: string, entry?: ExpressionEntry): string {
   const legacy = content.match(/<!-- echoink-expression:v1 ([A-Za-z0-9+/=]+) -->/);
   const existingId = expressionIdentity(content);
-  if (existingId && existingId !== id) throw new Error("表达文件的关联标识不一致。");
+  if (existingId && existingId !== id) throw new Error("表达文件与记录不一致。请点击“上报问题”。");
   let cleaned = legacy ? content.replace(legacy[0], "") : content;
   if (legacy && !existingId) cleaned = `${cleaned}\n${expressionIdentityMarker(id)}\n`;
   for (const occurrence of entry?.occurrences ?? []) {
@@ -137,12 +137,12 @@ export function patchExpressionMarkdown(content: string, before: ExpressionEntry
   let updated = content;
   if (next.note !== before.note) {
     const start = updated.indexOf(NOTE_START), end = updated.indexOf(NOTE_END, start + NOTE_START.length);
-    if (start < 0 || end < 0) throw new Error("备注区域已被手工改动，请在笔记中编辑备注。");
+    if (start < 0 || end < 0) throw new Error("备注区域有手动修改。请直接在笔记中编辑备注。");
     updated = updated.slice(0, start + NOTE_START.length) + `\n${next.note}\n` + updated.slice(end);
   }
   if (next.category !== before.category) {
     const field = categoryLine(updated, before);
-    if (!field || field.value !== before.category) throw new Error("分类区域已被手工改动，请先在笔记中确认该内容。");
+    if (!field || field.value !== before.category) throw new Error("分类区域有手动修改。请先在笔记中确认该内容。");
     updated = `${updated.slice(0, field.start)}分类：${oneLine(next.category)}${updated.slice(field.end)}`;
   }
   const matched = new Set<number>();
@@ -153,13 +153,13 @@ export function patchExpressionMarkdown(content: string, before: ExpressionEntry
     if (current && JSON.stringify(current) === JSON.stringify(previous) && previous.journalId !== replaceJournalId) continue;
     const original = occurrenceBlocks(previous).find((block) => updated.includes(block))
       ?? (previous.journalId === replaceJournalId ? editedOccurrenceBlock(updated, previous) : null);
-    if (!original) throw new Error("出处正文有手工修改，请先在笔记中确认该内容。");
+    if (!original) throw new Error("出处内容有手动修改。请先在笔记中确认该内容。");
     updated = updated.replace(original, current ? renderExpressionOccurrence(current) : "");
   }
   const appended = next.occurrences.filter((_item, index) => !matched.has(index));
   if (appended.length) {
     const marker = expressionIdentityMarker(next.id);
-    if (!updated.includes(marker)) throw new Error("表达文件的关联标记已被修改。");
+    if (!updated.includes(marker)) throw new Error("表达文件的标记已被修改。请恢复该文件后重试。");
     updated = updated.replace(marker, `${appended.map(renderExpressionOccurrence).join("\n\n")}\n\n${marker}`);
   }
   return updated;
@@ -168,7 +168,7 @@ export function patchExpressionMarkdown(content: string, before: ExpressionEntry
 export function parseExpressionMarkdown(content: string, path: string, metadata?: ExpressionEntry): ExpressionEntry | null {
   const match = content.match(/<!-- echoink-expression:v1 ([A-Za-z0-9+/=]+) -->/);
   if (!match && !metadata) {
-    if (content.includes(`<!-- ${ENTRY_MARKER}`)) throw new Error("表达文件的结构信息损坏，请先恢复该文件。");
+    if (content.includes(`<!-- ${ENTRY_MARKER}`)) throw new Error("表达文件的结构已损坏。请先恢复该文件。");
     return null;
   }
   const entry = metadata ? JSON.parse(JSON.stringify(metadata)) as ExpressionEntry
@@ -182,7 +182,7 @@ export function parseExpressionMarkdown(content: string, path: string, metadata?
         item.sourceFingerprint, item.scene, item.example, item.reason, item.usage,
         item.sourceExcerpt, item.targetExcerpt].every((value) => typeof value === "string")
       && ["verified", "needs-review"].includes(item.status))) {
-    throw new Error("表达文件的结构信息不完整，请先恢复该文件。");
+    throw new Error("表达文件的结构不完整。请先恢复该文件。");
   }
   // Notes edited in the ordinary Markdown editor are retained on the next archive.
   const start = content.indexOf(NOTE_START);

@@ -1,3 +1,5 @@
+import { errorText } from "../core/error-copy";
+import { JOURNAL_FORMAT_FAILED } from "../core/error-copy/codes/modules";
 import type { JournalFormatError } from "./journal-format";
 import type { JournalKeepReason } from "./journal-organization";
 export function journalFormatCopy(language: string) {
@@ -8,7 +10,7 @@ export function journalFormatCopy(language: string) {
     today: t("今天", "Today"), organize: t("整理老日记", "Organize old journals"), journal: t("日记", "Journal"), view: t("查看", "View"),
     move: t("改到新位置", "Move to new location"), ai: t("需要 AI 判断日期", "Dates needing AI"), keep: t("保留原处", "Keep in place"),
     identify: t("用 AI 判断", "Use AI"), identifying: t("判断中", "Identifying"), waiting: t("等待判断", "Waiting"), undo: t("撤销", "Undo"), finish: t("完成", "Done"),
-    modelMissing: t("尚未配置当前模型，程序能认出的照常整理", "No model configured. Recognized journals can still be organized."),
+    modelMissing: t("尚未配置模型服务，可识别的日记仍会照常整理。", "No model service is set up. Recognized journals are still organized."),
     empty: t("没有需要整理的老日记", "No old journals need organizing"), loading: t("正在读取…", "Loading…"),
     more: (n: number) => t(`… 另外 ${n} 篇`, `… ${n} more`), count: (n: number) => t(`${n} 个`, String(n)),
     off: (n: number) => t(`${n} 篇老日记不在这个格式下`, `${n} old journals use a different format`),
@@ -29,14 +31,6 @@ export function journalFormatCopy(language: string) {
     })[reason] ?? t("保留原处", "Kept in place"),
     invalid: (error: JournalFormatError) => ({ empty: t("不能为空", "Cannot be empty"), date: t("需要同时包含 YYYY、MM、DD", "Include YYYY, MM and DD"),
       path: t('不能包含 .. 、开头的 / 或 \\ : * ? " < > |', 'Cannot contain .., a leading /, or \\ : * ? " < > |'), time: t("不支持时间字段", "Time fields are not supported"), fields: t("不支持的日期字段", "Unsupported date fields") })[error],
-    error: (message: string) => ({
-      journal_links_disabled: t("请在 Obsidian 设置 → 文件与链接中开启“自动更新内部链接”，再开始整理。", "Enable Automatically update internal links in Obsidian Settings → Files and links, then retry."),
-      journal_model_missing: t("请先配置当前模型服务", "Configure a model first"), journal_parent_occupied: t("文件占用了目标文件夹", "A file occupies the destination folder"),
-      journal_target_occupied: t("目标位置已被占用", "The destination is occupied"), journal_template_missing: t("模板不存在或位置已被占用", "Template missing or path occupied"),
-      journal_settings_changed: t("日记设置已变化，请重新预览", "Journal settings changed. Preview again."), journal_source_changed: t("日记已变化，请重新预览", "Journal changed. Preview again."),
-      journal_record_invalid: t("整理记录损坏，保留现状", "Organization record is invalid. Files were left unchanged."), journal_record_changed: t("整理记录保存未确认，保留现状", "Could not confirm the organization record. Files were left unchanged."),
-      journal_previous_record: t("上次整理未完成，请先核对或撤销", "Check or restore the interrupted operation first"), journal_busy: t("正在整理，请稍后再试", "An operation is running. Try again later."),
-      journal_cancelled: t("已停止，已移动的日记可撤销", "Stopped. Moved journals can be restored."), journal_plan_missing: t("请重新预览整理清单", "Preview the organization plan again")
-    } as Record<string, string>)[message] ?? t("操作未完成，请核对模型连接或文件状态后重试", "Operation could not finish. Check the model connection and file state, then retry")
+    error: (message: string) => errorText(message, JOURNAL_FORMAT_FAILED, language)
   };
 }

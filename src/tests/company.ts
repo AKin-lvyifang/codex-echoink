@@ -187,6 +187,23 @@ export async function runCompanyTests(): Promise<void> {
     assert.match(await flood.dispatch("card-flood", { agentId: "generalist", brief: "第 9 件" }), /没做完/u, "一张卡片最多 8 件未完成的活");
     ok("单件活：派出即返回，汇报回到原卡片");
 
+    /* 派活可附带开放文件夹：只对这件活有效、存档后还在；总助开关关掉就拒绝；不能开放配置目录 */
+    const grantHost = fakeHost(); let grantsOn = true; grantHost.host.folderGrantsEnabled = () => grantsOn;
+    const grantStore = new CompanyStore(path.join(dir, "grants.json")); const grants = new CompanyService(grantStore, grantHost.host); await grants.initialize();
+    assert.match(await grants.dispatch("card-g", { agentId: "generalist", brief: "对账", folders: ["/02-Areas/个人财务/"] }), /已派给/u);
+    const granted = grantHost.workers[0];
+    assert.deepEqual(grants.dispatchOf(granted)?.folderGrants, ["02-Areas/个人财务"]);
+    assert.deepEqual(grants.workerFolderGrants(granted), ["02-Areas/个人财务"]);
+    const reloaded = new CompanyService(new CompanyStore(path.join(dir, "grants.json")), fakeHost().host); await reloaded.initialize();
+    assert.deepEqual(reloaded.dispatchOf(granted)?.folderGrants, ["02-Areas/个人财务"], "grants survive a restart");
+    assert.match(await grants.dispatch("card-g", { agentId: "generalist", brief: "x", folders: [".obsidian"] }), /不是库内文件夹/u);
+    assert.match(await grants.dispatch("card-g", { agentId: "generalist", brief: "x", folders: ["a/../b"] }), /不是库内文件夹/u);
+    grantsOn = false;
+    assert.match(await grants.dispatch("card-g", { agentId: "generalist", brief: "x", folders: ["02-Areas"] }), /关闭了/u);
+    assert.match(await grants.dispatch("card-g", { agentId: "generalist", brief: "不带文件夹照常派" }), /已派给/u);
+    assert.equal(grantHost.workers.length, 2, "rejected dispatches create no worker");
+    ok("派活开放文件夹：规范化、持久化、总助开关与配置目录保护");
+
     /* 员工忘了汇报：用最后一条回复兜底；卡片正忙就插话，不另开一轮 */
     const w2 = (await service.dispatch("card-1", { agentId: "lin", brief: "查一下 X" }), f.workers[1]);
     f.last.set(w2, "X 是 Y。"); f.running.add("card-1"); f.settle(w2);

@@ -8,9 +8,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const directory = await mkdtemp(path.join(tmpdir(), "echoink-report-tests-"));
 const file = path.join(directory, "tests.mjs");
 const dom = new JSDOM("<!doctype html><body></body>", { url: "http://127.0.0.1", pretendToBeVisual: true });
+for (const name of ["window", "document", "Element", "HTMLElement", "Node", "Event", "CustomEvent", "MutationObserver"]) Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? dom.window : dom.window[name] });
+dom.window.HTMLElement.prototype.createDiv = function(options = {}) { const element = this.ownerDocument.createElement("div"); element.className = options.cls ?? ""; this.append(element); return element; };
 try {
   await esbuild.build({ entryPoints: ["src/tests/run-reports.ts"], outfile: file, bundle: true, platform: "node", format: "esm", target: "node22",
-    alias: desktopNodeTestAliases,
+    alias: desktopNodeTestAliases, loader: { ".md": "text" },
     banner: { js: `import {createRequire} from "node:module";const require=createRequire(${JSON.stringify(path.resolve("package.json"))});` },
     plugins: [{ name: "sdk-location", setup(build) { build.onResolve({ filter: /^@earendil-works\/pi-coding-agent$/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)), external: true })); } }],
     logLevel: "silent" });

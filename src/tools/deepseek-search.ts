@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { DEEPSEEK_SEARCH_CODES } from "../core/error-copy/codes/modules";
 import type { TavilyTransport, WebSearchResult } from "./tavily-search";
 
 export type DeepSeekSearchErrorCode = "key_missing" | "key_invalid" | "quota" | "rate_limit" | "network" | "timeout" | "cancelled" | "invalid_response" | "invalid_query";
@@ -47,13 +48,5 @@ export async function searchDeepSeek(input: { apiKey: string; query: string; max
   finally { if (timer !== undefined) window.clearTimeout(timer); if (cancel) input.signal?.removeEventListener("abort", cancel); }
 }
 export function deepSeekSearchErrorMessage(error: DeepSeekSearchError, english: boolean): string {
-  const messages: Record<DeepSeekSearchErrorCode, [string, string]> = {
-    key_missing: ["请先填写 API Key。", "Enter an API key first."], key_invalid: ["DeepSeek API Key 无效或无访问权限，请检查。", "The DeepSeek API key is invalid or lacks access."],
-    quota: ["DeepSeek 余额不足，请检查账户余额。", "Your DeepSeek balance is insufficient. Check your account."],
-    rate_limit: ["请求过于频繁，请稍后重试。", "Rate limited. Try again later."], network: ["连接失败，请检查网络后重试。", "Connection failed. Check your network and retry."],
-    timeout: ["连接超时，请稍后重试。", "Connection timed out. Try again later."], cancelled: ["测试已取消。", "Test cancelled."],
-    invalid_response: ["未收到有效的搜索响应。", "No valid search response received."],
-    invalid_query: ["DeepSeek 搜索词须为 1–128 个 Unicode 字符，请缩短搜索词后重试。", "DeepSeek search queries must contain 1–128 Unicode characters. Shorten the query and retry."]
-  };
-  return messages[error.code][english ? 1 : 0];
+  return DEEPSEEK_SEARCH_CODES[error.code][english ? 1 : 0];
 }

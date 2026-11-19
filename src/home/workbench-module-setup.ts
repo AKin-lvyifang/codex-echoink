@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { setIcon, Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
@@ -24,7 +25,7 @@ export function renderWorkbenchModuleSetup(parent: HTMLElement, plugin: CodexFor
   header.createEl("h1", { text: en ? module.en : module.zh });
   const settings = createOriginButton(header, { text: en ? "Go to settings" : "去设置", cls: "wb-button is-primary", attr: { "data-wb-focus": "module-setup-settings" } });
   applyAmicroButton(settings, { variant: "primary" });
-  settings.onclick = () => { void plugin.openWorkbenchModuleSettings(id).catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+  settings.onclick = () => { void plugin.openWorkbenchModuleSettings(id).catch(error => new Notice(failureText(error, ["模块设置未能打开。", "Module settings could not be opened."], NEXT.retryLater, plugin.settings.settingsLanguage))); };
   page.createEl("p", { cls: "wb-secondary", text: reason });
   return page;
 }

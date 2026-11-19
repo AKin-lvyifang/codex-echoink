@@ -228,6 +228,12 @@ export async function runFinanceOperationsToolTests(root: string) {
   const originalTarget = await call("finance_query", { action: "records", id: unreadOperation.operation.resolvedTarget.recordId });
   assert.equal(originalTarget.data.records.length, 1); assert.equal(originalTarget.data.records[0].amountCents, 2000);
   assert.equal((await f.service.readForConversation()).records.length, beforeRetry + 1, "readback failure recovery never creates another record");
+  entry = { entryId: "user-7b", text: "记一下，健身房月卡300元" }; identity = { ...identity, productRunId: "run-7b" };
+  const gym = await call("finance_record", { action: "create", record: { amountCents: 30000, category: "健身", description: "健身房月卡" } });
+  assert.equal(gym.status, "completed", JSON.stringify(gym));
+  assert.deepEqual(gym.data.createdCategories, ["健身"], "a category the Agent needs is created instead of refused");
+  const gymCategory = f.plugin.settings.lifestyle.finance.categories.find((c: { name: string }) => c.name === "健身");
+  assert.equal(gymCategory?.active, true); assert.equal(gymCategory?.icon, "dumbbell", "the icon is guessed from the built-in library");
   f.plugin.settings.lifestyle.finance.enabled = false;
   assert.equal((await call("finance_query", { action: "catalog" })).reason, "finance_plugin_disabled");
   console.log("PASS finance tool safety: formal schemas, Plan/read-only, frozen human intent/no duplicate confirmation, no model confirmation flag, distinct purchases, callback version conflict, persistent receipt failure/no repeat and original-ID read-only recovery");

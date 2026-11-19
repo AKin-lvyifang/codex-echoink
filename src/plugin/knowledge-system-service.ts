@@ -38,6 +38,7 @@ import {
   maintenancePageIsHeld,
   serializeMaintenancePage,
 } from "../knowledge-base/maintenance-page-lock";
+import { userFacingErrorText } from "../core/error-copy";
 const fs = getDesktopFsPromises(),
   path = getDesktopPath();
 
@@ -90,7 +91,7 @@ export class KnowledgeSystemDomainPicker extends FuzzySuggestModal<{
       .getKnowledgeSystemService()
       .launch(item.domain)
       .catch(
-        (error) => new Notice(error instanceof Error ? error.message : "梳理未完成，请重试。"),
+        (error) => new Notice(userFacingErrorText(error, "知识体系未能完成梳理。请稍后重试。")),
       );
   }
 }
@@ -356,7 +357,7 @@ export class KnowledgeSystemService extends KnowledgeSystemTaskService {
       }
       new KnowledgeSystemDomainPicker(this.plugin, domains).open();
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : "领域暂时读不到，请重试。");
+      new Notice(userFacingErrorText(error, "未能读取知识领域。请稍后重试。"));
     }
   }
 

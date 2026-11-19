@@ -218,7 +218,7 @@ export class EnglishExpressionBrowser {
     }
     if (this.selectedId) {
       if (this.selected) this.renderDetail(page, this.selected);
-      else page.createDiv({ cls: "echoink-diary-empty", text: "这个表达已移除，或暂时无法读取。" });
+      else page.createDiv({ cls: "echoink-diary-empty", text: "该表达已移除，或暂时无法读取。" });
     } else {
       if (!this.options.embedded) this.renderProgress(page);
       this.renderSearch(page);
@@ -241,7 +241,7 @@ export class EnglishExpressionBrowser {
 
   private renderProgress(page: HTMLElement): void {
     if (this.activity && (this.host.api.access ?? unavailableCapabilityAccess).checkCapability("diary.timeline.generate")) renderDiaryProgress(page, this.activity, this.allEntries.length);
-    else page.createDiv({ cls: "echoink-diary-description", text: `已收录 ${this.allEntries.length} 个表达 · 打卡记录暂时无法读取` });
+    else page.createDiv({ cls: "echoink-diary-description", text: `已收录 ${this.allEntries.length} 个表达 · 暂时无法读取打卡记录` });
   }
 
   private renderSearch(page: HTMLElement): void {
@@ -279,7 +279,7 @@ export class EnglishExpressionBrowser {
 
   private renderList(page: HTMLElement): void {
     if (!this.entries.length) {
-      page.createDiv({ cls: "echoink-diary-empty", text: this.loading ? "正在读取表达…" : this.error ? "表达暂时读不到，请重试。" : this.query || this.category ? "没有匹配的表达。" : this.options.embedded ? "还没有收录的表达" : "生成英文日记后，表达会自动收录到这里。" });
+      page.createDiv({ cls: "echoink-diary-empty", text: this.loading ? "正在读取表达…" : this.error ? "暂时无法读取表达。请重试。" : this.query || this.category ? "没有匹配的表达。" : this.options.embedded ? "还没有收录的表达" : "生成英文日记后，表达会自动收录到这里。" });
       return;
     }
     const list = page.createDiv({ cls: "echoink-expression-list" });
@@ -457,7 +457,7 @@ export class EnglishExpressionBrowser {
     this.render();
     try {
       const current = (await this.host.api.repository.listExpressions("", undefined, { readOnly: true })).find((entry) => entry.id === draft.id);
-      if (!current) throw new Error("词条已被移除，当前修改尚未保存。");
+      if (!current) throw new Error("该表达已被移除，当前修改未保存。");
       if ((current.category !== draft.initialCategory || current.note !== draft.initialNote) && !(await confirmModal(this.app, "词条已有其它修改", "保存将采用当前表单中的分类和备注，日记出处会保留。", "保存当前内容", "取消"))) return;
       const saved = await this.host.api.repository.updateExpression(draft.id, { category: draft.category.trim(), note: draft.note });
       this.selected = saved;

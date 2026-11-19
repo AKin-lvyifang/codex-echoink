@@ -1,4 +1,5 @@
 import type { FinanceRecordPatch, FinanceBudgetPatch } from "../../lifestyle/finance-operation-types";
+import { financeWriteAllowed, type DecisionThresholds } from "../../membership/decision-client";
 
 export const PI_FINANCE_TOOL_IDS = ["finance_query", "finance_record", "finance_budget", "finance_bill"] as const;
 export type PiFinanceToolId = typeof PI_FINANCE_TOOL_IDS[number];
@@ -87,10 +88,12 @@ export function budgetPatch(request: FinanceToolRequest): FinanceBudgetPatch {
   return { ...(request.totalCents !== undefined ? { totalCents: request.totalCents } : {}), ...(request.allocations ? { allocations: request.allocations } : {}), ...(request.deltas ? { deltas: request.deltas } : {}) };
 }
 
+const FINANCE_INTENT_DENIED = /不(?:用|要|必|允许|写入|执行)|无需|别(?:写|记|改|删)|先(?:讨论|看看|分析)|示例|假设|如何|怎么|能否|是否|教我|如果|查询|查一下|查看|请问|多少钱|多少[？?]|他说|朋友说|引用|do not|don't|how (?:to|do)|example|hypothetical/iu;
+
 /** Only the frozen human message can supply intent; tool arguments cannot. */
 export function hasDirectFinanceIntent(tool: PiFinanceToolId, request: FinanceToolRequest, userText: string): boolean {
   const text = userText.trim();
-  if (!text || /不(?:用|要|必|允许|写入|执行)|无需|别(?:写|记|改|删)|先(?:讨论|看看|分析)|示例|假设|如何|怎么|能否|是否|教我|如果|查询|查一下|查看|请问|多少钱|多少[？?]|他说|朋友说|引用|do not|don't|how (?:to|do)|example|hypothetical/iu.test(text)) return false;
+  if (!text || FINANCE_INTENT_DENIED.test(text)) return false;
   if ((request.targets?.length ?? 0) > 1 && !/全部|所有|这(?:些|几)笔|(?:本|这个|上个|指定)月|从.+到|\d{4}-\d{2}/u.test(text)) return false;
   if (tool === "finance_record") return request.action === "create" ? /^(?:(?:请|麻烦|帮我|帮忙|再|也|给我)\s*)*(?:记(?:一下|一笔|账|下|下来)|记录|record|log|add)/iu.test(text)
     || /(?:把|将).{1,80}(?:记(?:一下|下来|一笔)|记录下来)/u.test(text) || /[，,。]\s*(?:请|帮我)?记(?:一下|一笔|下来)/u.test(text)
@@ -98,4 +101,14 @@ export function hasDirectFinanceIntent(tool: PiFinanceToolId, request: FinanceTo
   if (tool === "finance_budget") return /预算|budget/iu.test(text) && /调整|改|提高|增加|减少|降低|设|change|set|increase|reduce/iu.test(text);
   return request.action === "associate" ? /记到|放到|关联|归入|关联到|link|associate/iu.test(text)
     : /账单|旅行|bill|trip/iu.test(text) && (request.action === "create" ? /建|创建|新增|create|add/iu.test(text) : /改|调整|update|change/iu.test(text));
+}
+
+/** Desktop and mobile share the same gate: a judgment can only reconsider one new record. */
+export function financeIntentWithJudgment(tool: PiFinanceToolId, request: FinanceToolRequest, userText: string, judgment: number | undefined, thresholds?: Pick<DecisionThresholds, "financeWrite" | "financeWriteBlock">): boolean {
+  const original = hasDirectFinanceIntent(tool, request, userText);
+  if (tool !== "finance_record" || request.action !== "create" || request.targets?.length || !userText.trim()
+    || FINANCE_INTENT_DENIED.test(userText)
+    || /不(?:记|记录|保存|入账)|禁止|取消|勿|\b(?:never|not|cancel|without)\b/iu.test(userText)
+    || /批量|全部|所有|每(?:一)?笔|这(?:些|几)笔|(?:[两三四五六七八九十百\d]+|多|几)\s*(?:笔|条(?:账|记录)?)|\b(?:multiple|all|batch)\b/iu.test(userText)) return original;
+  return financeWriteAllowed(original, judgment, thresholds);
 }

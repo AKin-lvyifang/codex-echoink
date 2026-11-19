@@ -26,6 +26,8 @@ export interface ConversationTaskMetadata {
   projectId?: string;
   unreadAnswerAt?: number;
   lastReadAt?: number;
+  /** "deviceId:conversationId" of the conversation on another device this one continues (sync fork). */
+  syncForkOf?: string;
   /** Catalog revision for metadata projections; unrelated to transcript/run timestamps. */
   taskMetadataUpdatedAt?: number;
 }
@@ -44,14 +46,14 @@ export function patchConversationTaskMetadata(current: ConversationTaskMetadata,
 
 export const CONVERSATION_TASK_METADATA_KEYS = [
   "agentId", "businessKey", "taskStatus", "taskStage", "resultSummary", "taskStartedAt", "taskCompletedAt",
-  "taskInterruptedAt", "pendingResponse", "companyRole", "projectId", "unreadAnswerAt", "lastReadAt", "taskMetadataUpdatedAt"
+  "taskInterruptedAt", "pendingResponse", "companyRole", "projectId", "unreadAnswerAt", "lastReadAt", "syncForkOf", "taskMetadataUpdatedAt"
 ] as const;
 
 export function normalizeConversationTaskMetadata(value: unknown): ConversationTaskMetadata {
   const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const result: ConversationTaskMetadata = { agentId: normalizeAgentId(raw.agentId) ?? GENERAL_ASSISTANT_ID };
   if (raw.companyRole === "router" || raw.companyRole === "worker") result.companyRole = raw.companyRole;
-  for (const key of ["businessKey", "taskStage", "resultSummary", "projectId"] as const) {
+  for (const key of ["businessKey", "taskStage", "resultSummary", "projectId", "syncForkOf"] as const) {
     if (typeof raw[key] === "string" && raw[key].trim()) result[key] = raw[key].trim();
   }
   if (["running", "waiting", "completed", "interrupted"].includes(raw.taskStatus as string)) result.taskStatus = raw.taskStatus as ConversationTaskStatus;

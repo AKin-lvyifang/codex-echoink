@@ -1288,7 +1288,7 @@ async function assertChangedContractRequiresRetrust(): Promise<void> {
     listTools: async () => [changed]
   });
   assert.deepEqual(catalog.tools, []);
-  assert.ok(catalog.warnings.some((warning) => /Schema 或安全合同已变化/u.test(warning)));
+  assert.ok(catalog.warnings.some((warning) => /的定义已变化/u.test(warning)));
   assert.notEqual(
     mcpToolContractFingerprint(cached),
     mcpToolContractFingerprint(changed)

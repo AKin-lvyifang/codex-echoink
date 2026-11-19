@@ -1,9 +1,11 @@
 import type { ReasoningEffort } from "../types/app-server";
+import { normalizeXiaoechoTypicalPoints } from "../membership/xiaoecho-points";
 
 /** Only provider-declared metadata. Absence is distinct from explicit false. */
 export interface DiscoveredProviderModel {
   id: string;
   displayName?: string;
+  typicalPoints?: string;
   input?: ("text" | "image")[];
   toolCalling?: boolean;
   reasoning?: boolean;
@@ -19,6 +21,8 @@ const MODEL_ID = /^[^\s\p{Cc}]{1,256}$/u;
 export function normalizeDiscoveredProviderModel(value: unknown): DiscoveredProviderModel | null {
   if (!record(value) || typeof value.id !== "string" || !MODEL_ID.test(value.id.trim())) return null;
   const result: DiscoveredProviderModel = { id: value.id.trim() };
+  const typicalPoints = normalizeXiaoechoTypicalPoints(value.typicalPoints);
+  if (typicalPoints !== undefined) result.typicalPoints = typicalPoints;
   if (typeof value.displayName === "string" && value.displayName.trim()) {
     result.displayName = value.displayName.trim().replace(/\p{Cc}/gu, "").slice(0, 160);
   }

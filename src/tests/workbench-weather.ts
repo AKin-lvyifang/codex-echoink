@@ -63,8 +63,52 @@ export async function runWorkbenchWeatherTests(): Promise<void> {
   assert.ok(dollPose("working", 1.2).angle !== 0); assert.ok(dollPose("working", 9.2).scaleX < 0);
   assert.ok(dollPose("working", 17.2).scaleX > 0); assert.equal(dollPose("waiting").face, "curious"); assert.equal(dollPose("done").face, "laugh");
 
-  await stageStates(); await refreshAndCityRace(); await citySettings(); await citySettingsIme();
+  await stageStates(); await motionRetention(); await refreshAndCityRace(); await citySettings(); await citySettingsIme();
   console.log("PASS real weather: anonymous transport, all layers/future enum, city persistence, 30-minute memory cache, rate limits, visibility, state priority, independent faces/motion/rope, city search and save/clear");
+}
+
+async function motionRetention(): Promise<void> {
+  const parent = document.body.createDiv();
+  const plugin = { settings: { settingsLanguage: "zh-CN", weatherCity: null }, async openWorkbenchSetup() {} };
+  const stage = new WorkbenchWeatherStage(parent, plugin as never, () => {});
+  const internal = stage as unknown as {
+    controls: Set<unknown>; blinkPending?: { remaining: number };
+    applyPose(pose: ReturnType<typeof dollPose>): void;
+    scheduleBlink(callback: () => void, delay: number): void;
+    idlePauseMs: number; idlePaused: boolean;
+    scheduleIdlePause(): void; noteActivity(): void;
+  };
+  try {
+    stage.setActive(true); stage.update("unfinished", "1 件没做完"); await tick();
+    const svg = parent.querySelector("svg")!;
+    const observer = new MutationObserver(() => {});
+    observer.observe(svg, { attributes: true, subtree: true });
+    const pose = dollPose("unfinished", 1.25);
+    internal.applyPose(pose); observer.takeRecords();
+    internal.applyPose(pose);
+    assert.equal(observer.takeRecords().length, 0, "the same pose causes no SVG attribute writes");
+    internal.applyPose(dollPose("unfinished", 1.5));
+    assert.ok(observer.takeRecords().length > 0, "a changed pose still updates its visible trajectory");
+    observer.disconnect();
+
+    let pauses = 0, plays = 0, stops = 0;
+    const control = { time: 1.25, pause() { pauses++; }, play() { plays++; }, stop() { stops++; } };
+    internal.controls.add(control);
+    internal.scheduleBlink(() => assert.fail("a hidden stage must not blink"), 10_000);
+    stage.setActive(false);
+    assert.equal(pauses, 1); assert.equal(stops, 0, "hiding pauses rather than destroying the running animation");
+    assert.ok(internal.blinkPending!.remaining <= 10_000);
+    stage.setActive(true);
+    assert.equal(plays, 1); assert.equal(control.time, 1.25, "returning resumes the existing timeline");
+    assert.equal(internal.controls.has(control), true);
+    const win = parent.ownerDocument.defaultView!;
+    internal.idlePauseMs = 1; internal.scheduleIdlePause();
+    await new Promise(resolve => win.setTimeout(resolve, 5));
+    assert.equal(internal.idlePaused, true); assert.equal(pauses, 2);
+    internal.noteActivity();
+    assert.equal(internal.idlePaused, false); assert.equal(plays, 2);
+    assert.equal(internal.controls.has(control), true, "idle and focus resume the same timeline");
+  } finally { stage.dispose(); parent.remove(); }
 }
 
 async function refreshAndCityRace(): Promise<void> {
@@ -155,7 +199,7 @@ async function citySettings(): Promise<void> {
     assert.deepEqual(plugin.settings.weatherCity, city); assert.equal(saves, 1); assert.equal(changes, 1);
     parent.querySelector<HTMLButtonElement>('[aria-label="清除天气城市"]')!.click(); await tick(); assert.equal(plugin.settings.weatherCity, null); assert.equal(changes, 2);
     fail = true; await search(); parent.querySelector<HTMLButtonElement>('[role="option"]')!.click(); await tick();
-    assert.equal(plugin.settings.weatherCity, null); assert.match(parent.textContent ?? "", /城市未保存/u); assert.equal(changes, 2);
+    assert.equal(plugin.settings.weatherCity, null); assert.match(parent.textContent ?? "", /城市未能保存/u); assert.equal(changes, 2);
   } finally { dispose(); parent.remove(); }
 }
 

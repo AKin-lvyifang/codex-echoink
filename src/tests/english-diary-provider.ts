@@ -136,12 +136,12 @@ export async function runEnglishDiaryProviderTests(installDom: () => void): Prom
   assert.equal(settings.englishDiary.approvedProvider, "previous-approval");
   failSave = false;
   await plugin.productActivity.run(async () => {
-    await assert.rejects(plugin.setEnglishDiaryModel("", ""), /暂时不能切换/u);
+    await assert.rejects(plugin.setEnglishDiaryModel("", ""), /正在回答/u);
   });
   const savesBeforeInvalid = saves;
-  await assert.rejects(plugin.setEnglishDiaryModel("missing-provider", diary.defaultModelId), /Provider 已不存在/u);
-  await assert.rejects(plugin.setEnglishDiaryModel(diary.id, "missing-model"), /模型已不存在/u);
-  await assert.rejects(plugin.setEnglishDiaryModel(diary.id, ""), /配置不完整/u);
+  await assert.rejects(plugin.setEnglishDiaryModel("missing-provider", diary.defaultModelId), /模型服务已删除/u);
+  await assert.rejects(plugin.setEnglishDiaryModel(diary.id, "missing-model"), /模型已删除/u);
+  await assert.rejects(plugin.setEnglishDiaryModel(diary.id, ""), /模型选择不完整/u);
   assert.equal(saves, savesBeforeInvalid);
 
   const requests: any[] = [];
@@ -207,16 +207,16 @@ export async function runEnglishDiaryProviderTests(installDom: () => void): Prom
   plugin.saveSettings = normalSave; paid = true;
 
   diary.apiKey = "";
-  await assert.rejects(plugin.generateEnglishDiaryText(input()), /缺少 API Key/u);
+  await assert.rejects(plugin.generateEnglishDiaryText(input()), /API Key 无效或未填写/u);
   settings.apiProviders = [global];
-  assert.match(plugin.englishDiaryProviderLabel(), /Provider 已不存在/u);
-  await assert.rejects(plugin.generateEnglishDiaryText(input()), /Provider 已不存在/u);
+  assert.match(plugin.englishDiaryProviderLabel(), /模型服务已删除/u);
+  await assert.rejects(plugin.generateEnglishDiaryText(input()), /模型服务已删除/u);
   assert.equal(requests.length, 2, "removed selection never falls back to another recipient");
   await plugin.setEnglishDiaryModel("", "");
   assert.equal(settings.englishDiary.approvedProvider, "");
   assert.equal(getEnglishDiaryApiProviderModel(settings).provider, global);
   settings.activeApiProviderId = "";
-  assert.match(plugin.englishDiaryProviderLabel(), /尚未设置默认模型/u);
+  assert.match(plugin.englishDiaryProviderLabel(), /尚未配置模型服务/u);
 }
 
 async function assertHomeMissingFolderGuidance(): Promise<void> {
@@ -560,7 +560,7 @@ async function assertDiaryNestedDirectoryGuard(): Promise<void> {
   assert.doesNotThrow(() => guard("我的表达库/word.md", false));
   folders.set("我的表达库", new TFile("我的表达库"));
   assert.equal(canMigrate(), false, "a file cannot be used as the module directory");
-  assert.throws(() => guard("我的表达库/word.md", false), /保存位置被文件占用/u);
+  assert.throws(() => guard("我的表达库/word.md", false), /保存位置已有同名文件/u);
   assert.doesNotThrow(() => guard("我的表达库/old.md", true), "existing assets remain editable");
   folders.set("我的表达库", Object.assign(new TFolder(), { path: "我的表达库" }));
   assert.equal(canMigrate(), true);

@@ -1,3 +1,4 @@
+import { actionFailureText } from "../../core/error-copy";
 import { Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../../main";
 import { changeManagedTaskStatus, readManagedTask, resetManagedTaskCache, resumeManagedTask, stopManagedTask } from "../../plugin/task-management";
@@ -17,7 +18,7 @@ export async function openTaskMenu(plugin: CodexForObsidianPlugin, event: MouseE
       const busy = pending.get(plugin) ?? new Set<string>(); pending.set(plugin, busy);
       if (busy.has(taskId)) return;
       busy.add(taskId);
-      void action().catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => {
+      void action().catch(error => new Notice(actionFailureText(error, plugin.settings.settingsLanguage))).finally(() => {
         busy.delete(taskId); plugin.getConversationRunService().refreshTask(taskId);
         plugin.notifyHomeSurfacesChanged(); changed();
       });
@@ -56,5 +57,5 @@ export async function openTaskMenu(plugin: CodexForObsidianPlugin, event: MouseE
       });
     }
     openSessionMenu(event, callbacks, plugin.settings.settingsLanguage, { task: true, document });
-  } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); changed(); }
+  } catch (error) { new Notice(actionFailureText(error, plugin.settings.settingsLanguage)); changed(); }
 }

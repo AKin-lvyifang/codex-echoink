@@ -254,7 +254,7 @@ export async function runEnglishDiaryNavigationDataTests(): Promise<void> {
     assert.equal(inspected.id, ar.id); assert.equal(inspected.sourcePath, renamed.path);
     assert.equal(inspected.result!.sourcePath, renamed.path);
     editState(files, ar, state => { state.pending = { schema: 99 }; });
-    await unchangedRead(files, () => assert.rejects(() => repository.inspect(renamed), /状态损坏/)); cases++;
+    await unchangedRead(files, () => assert.rejects(() => repository.inspect(renamed), /记录已损坏/)); cases++;
   }
   // Empty is a known zero; opening does not create a diary association.
   {

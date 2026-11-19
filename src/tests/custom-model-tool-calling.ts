@@ -72,7 +72,7 @@ export async function runCustomModelToolCallingTests(): Promise<void> {
   }
   assert.equal(toolCallRecoveryTarget(failure, [first, first]), undefined, "ambiguous IDs cannot be enabled");
   const incompatible = toolCallRecoveryGuidance({ ...failure, toolCallTextFailure: "model_tool_call_text_incompatible" }, [first], "desktop")!;
-  assert.match(incompatible.message, /或在 设置 → 模型服务 中更换模型/u);
+  assert.match(incompatible.message, /请在 设置 → 模型服务 中更换模型/u);
   assert.equal(incompatible.buttonLabel, "继续");
   for (const surface of ["desktop", "iphone", "ipad"] as const) assert.match(toolCallingDisabledMessage(surface, "本地代理", "模型甲"), /模型服务 → 本地代理 → 参数 → 模型甲 → (支持工具调用|工具调用)/u);
   console.log("PASS tool call recovery: exact provider/model, two-field patch, live switch state, legacy paths and all surface labels");

@@ -52,7 +52,7 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
     console.log(`PASS memory directory integration: ${name}`);
   };
 
-  await test("semantic IDs lead, lexical results supplement, and receipts stay outside serialized memory", async fixture => {
+  await test("semantic IDs are authoritative, lexical fallback stays separate, and receipts stay outside serialized memory", async fixture => {
     const semantic = await create(fixture, "山楂账本");
     const lexical = await create(fixture, "柚子");
     const unrelated = await create(fixture, "晴空约定");
@@ -65,8 +65,12 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
       return { text: JSON.stringify([semantic.id, "unknown", semantic.id]), usage: { cacheRead: 120 } };
     } }).prepareTurnContext(turn(fixture));
     assert.equal(calls, 1);
-    assert.deepEqual(ids(prepared), [semantic.id, lexical.id]);
+    assert.deepEqual(ids(prepared), [semantic.id]);
     assert.equal(prepared.directorySelection?.status, "selected");
+    assert.equal(prepared.selectionReceipt?.route, "directory");
+    assert.equal(prepared.selectionReceipt?.candidateCount, 3);
+    assert.equal(prepared.selectionReceipt?.injectedCount, 1);
+    assert.doesNotMatch(JSON.stringify(prepared.selectionReceipt), /晴空约定|柚子|summary|query|recentConversation/u);
     assert.equal(prepared.directorySelection?.stats.usage?.cacheRead, 120);
     assert.ok(measureFinalInjectionTokens(prepared.recall!.candidates, prepared.recall!.total) <= 2_000);
     const serialized = serializeRecallBlocks({ ...prepared.recall!, secondaryFacts: [] }).combined;
@@ -76,18 +80,43 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
     assert.deepEqual(ids(noQuery), [semantic.id], "empty query must not browse unrelated records after semantic selection");
   });
 
-  await test("empty and all-unknown results suppress dynamic records but retain core memory", async fixture => {
+  await test("empty and all-unknown results are reviewed once on local hits and retain core memory", async fixture => {
     const core = await create(fixture, "核心约定", { pinned: true });
     await create(fixture, "柚子");
     for (const response of [[], ["unknown"]]) {
-      const prepared = await harness(fixture, { call: async () => ({ text: JSON.stringify(response) }) })
+      let calls = 0;
+      const prepared = await harness(fixture, { call: async () => { calls++; return { text: JSON.stringify(response) }; } })
         .prepareTurnContext(turn(fixture));
+      assert.equal(calls, 2, "a second empty judgment is accepted without forcing local matches");
       assert.equal(prepared.directorySelection?.status, "selected");
       assert.deepEqual(ids(prepared), []);
       assert.equal(prepared.core?.[0]?.id, core.id);
       assert.equal(prepared.recall?.total, 0);
       assert.equal(prepared.recall?.exhaustive, true);
     }
+  });
+
+  await test("cloud empty with a local hit is reviewed by the grounded directory, unrelated empty stays empty", async fixture => {
+    const memory = await create(fixture, "柚子");
+    let calls = 0;
+    const recall = new PersonalMemoryRecallHarness(fixture.repository, { decisions: { judgeMemory: async request => ({ selected: [], probabilities: Object.fromEntries(request.memories.map(entry => [entry.id, 0])) }) },
+      directory: { modelInputBudget: 32000, llm: { call: async () => { calls++; return { text: JSON.stringify([memory.id]) }; } } } });
+    const selected = await recall.prepareTurnContext(turn(fixture, { decisionTurnId: "cloud-empty" }));
+    assert.deepEqual(ids(selected), [memory.id]); assert.equal(calls, 1);
+    assert.deepEqual(selected.selectionReceipt?.attempts.map(attempt => attempt.route), ["decisions", "directory"]);
+    assert.equal(selected.selectionReceipt?.attempts[0].reason, "empty_local_hit");
+    const unrelated = await recall.prepareTurnContext(turn(fixture, { query: "法国首都", decisionTurnId: "unrelated" }));
+    assert.deepEqual(ids(unrelated), []); assert.equal(calls, 1);
+  });
+
+  await test("known directory names have a generic semantic-query spelling", async fixture => {
+    await create(fixture, "EchoInk");
+    const questions: string[] = [];
+    const recall = new PersonalMemoryRecallHarness(fixture.repository, { decisions: { judgeMemory: async request => {
+      questions.push(request.text); return { selected: [], probabilities: Object.fromEntries(request.memories.map(entry => [entry.id, 0])) };
+    } } });
+    for (const query of ["echoink 的功能？", "EchoInk 的功能？"]) await recall.prepareTurnContext(turn(fixture, { query, decisionTurnId: query }));
+    assert.deepEqual(questions, ["echoink 的功能？", "echoink 的功能？"]);
   });
 
   await test("parse and call failures use the unchanged lexical route exactly once", async fixture => {
@@ -126,10 +155,10 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
     assert.equal(calls, 0);
   });
 
-  await test("directory respects real-query project inference, explicit scope, current status and all faded exclusions", async fixture => {
+  await test("full directory keeps implicit projects and faded records, while explicit scope and status still apply", async fixture => {
     const global = await create(fixture, "全局约定");
     const alpha = await create(fixture, "甲项目安排", { scope: "project:alpha" });
-    await create(fixture, "乙项目安排", { scope: "project:beta" });
+    const beta = await create(fixture, "乙项目安排", { scope: "project:beta" });
     const old = await create(fixture, "旧的全局约定");
     const current = (await fixture.repository.write({ operation: "supersede", targetId: old.id,
       title: "新的全局约定", content: "新的明确规定。", recallWhen: "新的全局约定", basis: "explicit", reason: "fixture update" }, fixture.runtime())).record!;
@@ -144,7 +173,7 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
     const now = fixture.now();
     assert.ok((await new PersonalMemoryRecallHarness(fixture.repository).prepareTurnContext(turn(fixture, { query: fadedGoal.title, now })))
       .recall?.candidates.some(candidate => candidate.id === fadedGoal.id), "old lexical direct-goal exception remains available");
-    const expected = new Set([global.id, alpha.id, current.id]);
+    let expected = new Set([global.id, alpha.id, beta.id, current.id, fadedGoal.id]);
     const preparedHarness = harness(fixture, { call: async call => {
       assert.deepEqual(new Set(parseCatalog(call).map(entry => entry.id)), expected);
       return { text: JSON.stringify([alpha.id]) };
@@ -153,6 +182,7 @@ export async function runMemoryDirectoryIntegrationTests(): Promise<void> {
       query: "alpha 的安排", statuses: ["current", "superseded", "closed"], now
     }));
     assert.equal(ids(inferred)[0], alpha.id);
+    expected = new Set([global.id, alpha.id, current.id, fadedGoal.id]);
     const explicit = await preparedHarness.prepareTurnContext(turn(fixture, {
       query: "beta 远期目标", scope: "alpha", statuses: ["current", "superseded", "closed"], now
     }));

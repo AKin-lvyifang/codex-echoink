@@ -92,7 +92,8 @@ export async function runAnswerSaveStateUiTests(
     await failed.button.onclick!(click);
     assert.equal(failed.button.getAttribute("aria-label"), "已存为笔记，点击打开");
     const failureNotice = openTestNoticeMessages.at(-1) as unknown as FakeElement;
-    assert.match(renderedText(failureNotice), /保存状态未能写入对话.*disk full/u);
+    assert.match(renderedText(failureNotice), /可能不显示“已存为笔记”/u);
+    assert.doesNotMatch(renderedText(failureNotice), /disk full/u);
     const beforeOpen = creates;
     await failed.button.onclick!(click);
     assert.equal(creates, beforeOpen, "receipt failure retains the created note and does not retry saving");

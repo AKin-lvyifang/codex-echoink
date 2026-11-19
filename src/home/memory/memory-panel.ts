@@ -3,7 +3,7 @@ import { createOriginButton, createOriginInput, disposeOriginControls } from "..
 import { applyDeleteButton } from "../../settings/amicro-buttons";
 import { profileSlotDefinition } from "../../harness/memory/user-profile-core";
 import type { MemoryLayer } from "../../harness/memory/memory-relevance";
-import { MEMORY_CATEGORIES, MEMORY_LAYERS, type MemoryCategory, type MemoryPageSnapshot, type MemorySource, type MemoryStar } from "./memory-page-types";
+import { MEMORY_CATEGORIES, MEMORY_LAYERS, type MemoryCategory, type MemoryPageSnapshot, type MemorySource, type MemoryStar, type MemoryCorrectionView } from "./memory-page-types";
 export interface MemoryPanelState {
   mode: "overview" | "list" | "detail" | "profile" | "search" | "receipt";
   id?: string;
@@ -18,6 +18,8 @@ export interface MemoryPanelState {
   confirmProfileDelete?: boolean;
 }
 export interface MemoryPanelActions {
+  undoCorrection?: (id: string) => void;
+  originalQuote?: (source: string) => Promise<string>;
   overview: () => void;
   select: (id: string) => void;
   layer: (layer: MemoryLayer) => void;
@@ -37,9 +39,11 @@ export interface MemoryPanelActions {
 }
 /** All panel states render the same query snapshot; commands belong to the controller. */
 export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapshot, state: MemoryPanelState, actions: MemoryPanelActions, busy: boolean, language: string): void {
+  const expandedCorrections = new Set(Array.from(host.querySelectorAll("details.memory-correction[open]"))
+    .map(details => details.getAttribute("data-correction-id")));
   disposeOriginControls(host);
   host.empty();
-  if (!snapshot.stars.length && state.mode === "overview")
+  if (!snapshot.stars.length && !snapshot.corrections?.length && state.mode === "overview")
     return;
   const t = (zh: string, en: string) => language === "en" ? en : zh;
   const button = (parent: HTMLElement, text: string, action: () => void, variant = "tertiary", icon?: string) => {
@@ -83,6 +87,33 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
       parent.createDiv({ cls: "memory-muted", text: source.text });
   };
   const age = (at?: number) => at === undefined ? t("还未想起", "Not recalled yet") : relativeMemoryTime(at, snapshot.now, language);
+  const quoteDetails = (details: HTMLDetailsElement, body: HTMLElement, source: string) => {
+    body.createDiv({ cls: "memory-section-heading", text: t("依据原话", "Your statement") });
+    const quote = body.createDiv({ cls: "memory-muted", text: t("正在读取…", "Loading…") });
+    let loaded = false;
+    details.ontoggle = () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      void (actions.originalQuote?.(source) ?? Promise.resolve(t("依据原话已不可用", "Original statement unavailable")))
+        .then(text => { quote.textContent = text; }).catch(() => { quote.textContent = t("依据原话已不可用", "Original statement unavailable"); });
+    };
+  };
+  const correctionRow = (event: MemoryCorrectionView, parent: HTMLElement = host) => {
+    const details = parent.createEl("details", { cls: "memory-correction" });
+    details.dataset.correctionId = event.id;
+    const date = new Date(event.at).toLocaleDateString(language === "en" ? "en-US" : "zh-CN", { month: "long", day: "numeric" });
+    details.createEl("summary", { cls: "memory-muted", text: event.undoneAt !== undefined ? t("已撤销这次更新", "Update undone")
+      : event.action === "obsolete" ? t(`已按 ${date} 你的说法关闭`, `Closed after your statement on ${date}`) : t(`已按 ${date} 你的说法更新`, `Updated after your statement on ${date}`) });
+    const body = details.createDiv({ cls: "memory-correction-body" });
+    if (event.before) { body.createDiv({ cls: "memory-section-heading", text: t("改前", "Before") }); body.createDiv({ cls: "memory-history-body", text: `${event.before.title}\n${event.before.content}` }); }
+    if (event.after) { body.createDiv({ cls: "memory-section-heading", text: t("改后", "After") }); body.createDiv({ cls: "memory-history-body", text: `${event.after.title}\n${event.after.content}` }); }
+    quoteDetails(details, body, event.source);
+    if (event.undoneAt === undefined) {
+      if (event.canUndo) button(body, t("撤销", "Undo"), () => actions.undoCorrection?.(event.id), "secondary");
+      else body.createDiv({ cls: "memory-muted", text: t("这条之后又更新过", "This memory was updated again") });
+    }
+    details.open = expandedCorrections.has(event.id);
+  };
   if (!["overview", "search", "receipt"].includes(state.mode))
     button(host, t("返回", "Back"), actions.overview, "tertiary", "arrow-left").addClass("memory-panel-back");
   if (state.mode === "overview") {
@@ -98,6 +129,11 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
     section(t("最近想起", "Recently recalled"));
     const recent = snapshot.stars.filter(star => star.lastRecalledAt !== undefined).sort((a, b) => b.lastRecalledAt! - a.lastRecalledAt!).slice(0, 6);
     rows(recent, new Map(recent.map(star => [star.id, age(star.lastRecalledAt)])), true);
+    const closed = snapshot.corrections?.filter(event => event.action === "obsolete" && event.undoneAt === undefined && event.before?.status === "closed") ?? [];
+    if (closed.length) {
+      const group = section(t("已自动关闭", "Automatically closed"));
+      for (const event of closed) { group.createDiv({ text: event.before!.title }); correctionRow(event, group); }
+    }
   }
   else if (state.mode === "list") {
     const layer = MEMORY_LAYERS.find(item => item.id === state.layer);
@@ -131,6 +167,7 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
       host.createDiv({ cls: "memory-detail-title", text: star.title });
       host.createDiv({ cls: "memory-detail-body", text: star.content });
     }
+    for (const event of snapshot.corrections?.filter(event => event.afterId === star.id || event.beforeId === star.id) ?? []) correctionRow(event);
     const fields = host.createDiv({ cls: "memory-fields" });
     const field = (label: string, value: string) => {
       const row = fields.createDiv({ cls: "memory-field" });
@@ -164,7 +201,7 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
     }
     sourceRow(section(t("来源", "Source")), star.sourceView);
     if (star.basis === "inferred" && star.reason)
-      section(t("依据", "Basis")).createDiv({ cls: "memory-muted", text: star.reason });
+      section(t("依据", "Basis")).createDiv({ cls: "memory-muted", text: memoryCorrectionReason(star.reason, language) });
     if (star.profiles.length) {
       const group = section(t("支撑画像", "Profile supported"));
       for (const item of star.profiles)
@@ -182,7 +219,7 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
         row.createDiv({ text: `${previous.title}（${previous.date}）` });
         row.createDiv({ cls: "memory-history-body", text: previous.content });
         if (previous.reason)
-          row.createDiv({ cls: "memory-muted", text: previous.reason });
+          row.createDiv({ cls: "memory-muted", text: memoryCorrectionReason(previous.reason, language) });
       }
     }
   }
@@ -239,7 +276,7 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
     heading(t("会想起", "Would recall"));
     const preview = snapshot.preview;
     const recalled = (preview?.recalled ?? []).flatMap(id => snapshot.stars.filter(star => star.id === id));
-    rows(recalled, new Map(recalled.map(star => [star.id, memoryRecallReason(preview?.reasons?.[star.id], language)])));
+    rows(recalled, new Map(recalled.map(star => [star.id, memoryRecallReason(preview?.reasons?.[star.id], language, preview?.relatedFrom?.[star.id])])));
     section(t("不会自动想起", "Not recalled automatically"));
     const faded = (preview?.faded ?? []).flatMap(id => snapshot.stars.filter(star => star.id === id));
     rows(faded, new Map(faded.map(star => [star.id, age(star.lastRecalledAt)])), true);
@@ -255,14 +292,16 @@ export function renderMemoryPanel(host: HTMLElement, snapshot: MemoryPageSnapsho
       const body = row.createSpan({ cls: "memory-list-label" });
       body.createSpan({ text: source.title });
       if (source.reason)
-        body.createSpan({ cls: "memory-muted", text: memoryRecallReason(source.reason, language) });
+        body.createSpan({ cls: "memory-muted", text: memoryRecallReason(source.reason, language, source.relatedFrom) });
     }
   }
 }
-export function memoryRecallReason(reason: string | undefined, language: string): string {
+export function memoryRecallReason(reason: string | undefined, language: string, relatedFrom?: { id: string; title: string }): string {
   const english = language === "en";
   switch (reason) {
+    case "related": return relatedFrom ? english ? `Linked from ${relatedFrom.title}` : `由「${relatedFrom.title}」带出` : english ? "Linked memory" : "关联带出";
     case "pinned": return english ? "Always included" : "每轮必带";
+    case "tool_read": return english ? "Read by assistant" : "主动读取";
     case "title_or_trigger": return english ? "Directly related to this message" : "和这句话直接相关";
     default: return english ? "Related content" : "内容有关联";
   }
@@ -272,4 +311,19 @@ export function relativeMemoryTime(at: number, now: number, language: string): s
   if (days === 0)
     return language === "en" ? "Today" : "今天";
   return language === "en" ? `${days} days ago` : `${days} 天前`;
+}
+
+/** Localize known system reasons without rewriting history or user-authored text. */
+export function memoryCorrectionReason(reason: string, language: string): string {
+  const english = language === "en";
+  switch (reason) {
+    case "Dream 已按用户原话核对":
+    case "已按你的原话核对":
+      return english ? "Checked against your own words" : "已按你的原话核对";
+    case "用户撤销 Dream 纠错":
+    case "你已撤销这次纠错":
+      return english ? "You undid this correction" : "你已撤销这次纠错";
+    default:
+      return reason;
+  }
 }

@@ -1,4 +1,24 @@
 export const PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE = "echoink.knowledge-verification.v1";
+export const PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE = "echoink.knowledge-freshness.v1";
+
+export interface PiKnowledgeFreshnessRecord {
+  readonly schemaVersion: 1;
+  readonly piSessionId: string;
+  readonly productRunId: string;
+  readonly assistantEntryId: string;
+  readonly referenceIds: readonly string[];
+}
+
+/** Links freshness to immutable snapshot identities without copying content. */
+export function knowledgeFreshnessFromSessionEntry(entry: unknown, piSessionId: string): Readonly<PiKnowledgeFreshnessRecord> | null {
+  if (!isRecord(entry) || entry.type !== "custom" || entry.customType !== PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE) return null;
+  const data = entry.data;
+  if (!isRecord(data) || data.schemaVersion !== 1 || !nonemptyString(piSessionId) || data.piSessionId !== piSessionId
+    || !nonemptyString(data.productRunId) || !nonemptyString(data.assistantEntryId) || !Array.isArray(data.referenceIds)
+    || !data.referenceIds.length || !data.referenceIds.every(nonemptyString)) return null;
+  return Object.freeze({ schemaVersion: 1, piSessionId, productRunId: data.productRunId,
+    assistantEntryId: data.assistantEntryId, referenceIds: Object.freeze([...new Set(data.referenceIds)]) });
+}
 
 export interface PiKnowledgeVerificationSkippedRecord {
   readonly schemaVersion: 1;

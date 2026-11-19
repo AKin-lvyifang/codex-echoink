@@ -183,7 +183,7 @@ async function journalRouteAndReturn() {
 
 export async function runModuleNavigationTests(): Promise<void> {
   const desktop = Platform.isDesktopApp; (Platform as any).isDesktopApp = true;
-  try { await ownerAndDraftBoundary(); await financeHeader(); await journalRouteAndReturn(); await folderManagementInlineEditors(); }
+  try { await reportAccountWithoutSettingsSave(); await ownerAndDraftBoundary(); await financeHeader(); await journalRouteAndReturn(); await folderManagementInlineEditors(); }
   finally { (Platform as any).isDesktopApp = desktop; }
 }
 
@@ -237,4 +237,16 @@ async function folderManagementInlineEditors(): Promise<void> {
     assert.deepEqual(operations, { preview: 0, rename: 0, restore: 0, refresh: 0 }, "opening and cancelling either inline editor performs no file operation");
   } finally { editor?.(); disposeOriginControls(host); host.remove(); }
   console.log("PASS folder management: real navigation → inline mount retains titles, directory/empty states and confirmation; opening/cancelling performs zero file operations");
+}
+
+async function reportAccountWithoutSettingsSave(): Promise<void> {
+  const calls: string[] = [];
+  const plugin = { manifest: { id: "echoink" }, settings: {}, saveSettings: async () => { calls.push("save"); throw new Error("settings locked"); },
+    prepareDesktopSettingsRoute: (route: { tab: string }) => { assert.equal(route.tab, "account"); calls.push("route"); },
+    app: { setting: { open: () => calls.push("open"), openTabById: (id: string) => { assert.equal(id, "echoink"); calls.push("tab"); } } } };
+  const service = new EchoInkViewService(plugin as never);
+  await service.openEchoInkSettings("account", "account:login", false);
+  assert.deepEqual(calls, ["route", "open", "tab"]);
+  await assert.rejects(service.openEchoInkSettings("account", "account:login"), /settings locked/);
+  console.log("PASS report account route opens even when settings cannot be saved");
 }

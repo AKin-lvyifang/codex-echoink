@@ -1,4 +1,5 @@
 import { PdfReadingPageView, PDF_READING_PAGE_VIEW_TYPE } from "../home/pdf-reading-page";
+import { NewsPageView, NEWS_PAGE_VIEW_TYPE } from "../home/news-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
 import { MemoryPageView, MEMORY_PAGE_VIEW_TYPE } from "../home/memory/memory-page";
@@ -60,6 +61,14 @@ export class EchoInkViewService {
     if (leaf.view instanceof PdfReadingPageView) leaf.view.refreshIfSettingsChanged();
   }
 
+  async activateNewsPage(): Promise<void> {
+    if (!Platform.isDesktopApp) return;
+    let leaf = this.plugin.app.workspace.getLeavesOfType(NEWS_PAGE_VIEW_TYPE)[0];
+    if (!leaf) { leaf = this.plugin.app.workspace.getLeaf("tab"); await leaf.setViewState({ type: NEWS_PAGE_VIEW_TYPE, active: true }); }
+    this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (leaf.view instanceof NewsPageView) leaf.view.refreshIfSettingsChanged();
+  }
+
   async activateEnglishDiaryPage(page: "diary" | "expressions" = "diary", expressionId?: string): Promise<void> {
     if (!Platform.isDesktopApp) { if (page === "expressions") await this.plugin.englishDiary?.openLibrary(expressionId); else await this.plugin.englishDiary?.openToday(); return; }
     let leaf = this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE)[0];
@@ -93,12 +102,12 @@ export class EchoInkViewService {
     if (leaf.view instanceof TodoPageView) leaf.view.refreshIfSettingsChanged();
   }
 
-  async activateProjectPage(projectId: string): Promise<void> {
+  async activateProjectPage(projectId: string, deviceId?: string): Promise<void> {
     if (!Platform.isDesktopApp) return;
     const workspace = this.plugin.app.workspace;
     // One project tab: reuse it and swap the project via its view state.
     const leaf = workspace.getLeavesOfType(PROJECT_PAGE_VIEW_TYPE)[0] ?? workspace.getLeaf("tab");
-    await leaf.setViewState({ type: PROJECT_PAGE_VIEW_TYPE, active: true, state: { projectId } });
+    await leaf.setViewState({ type: PROJECT_PAGE_VIEW_TYPE, active: true, state: { projectId, ...(deviceId ? { deviceId } : {}) } });
     workspace.setActiveLeaf(leaf, { focus: true });
   }
 
@@ -168,6 +177,7 @@ export class EchoInkViewService {
         console.warn("EchoInk 首页语言刷新失败", error);
       }));
     }
+    for (const leaf of this.plugin.app.workspace.getLeavesOfType(NEWS_PAGE_VIEW_TYPE)) if (leaf.view instanceof NewsPageView) leaf.view.refreshLanguage();
     await Promise.all(refreshes);
   }
 
@@ -178,23 +188,23 @@ export class EchoInkViewService {
     this.plugin.prepareDesktopSettingsRoute(resolveDesktopSettingsRoute("resources", { resourceTab: tab }));
     const setting = (this.plugin.app as { setting?: { open?: () => void; openTabById?: (id: string) => void } }).setting;
     if (!setting?.open || !setting?.openTabById) {
-      new Notice("无法打开插件设置页");
+      new Notice("无法打开插件设置页。请在 Obsidian 设置中手动打开 EchoInk。");
       return;
     }
     setting.open();
     setting.openTabById(this.plugin.manifest.id);
   }
 
-  async openEchoInkSettings(tab: SettingsTab, focus?: string): Promise<void> {
+  async openEchoInkSettings(tab: SettingsTab, focus?: string, persist = true): Promise<void> {
     this.plugin.settings.settingsTab = tab;
-    await this.plugin.saveSettings(true);
+    if (persist) await this.plugin.saveSettings(true);
     const route = resolveDesktopSettingsRoute(tab, { focus });
     this.plugin.prepareDesktopSettingsRoute(route);
     const setting = (this.plugin.app as {
       setting?: { open?: () => void; openTabById?: (id: string) => void };
     }).setting;
     if (!setting?.open || !setting?.openTabById) {
-      new Notice("无法打开 EchoInk 设置页");
+      new Notice("无法打开 EchoInk 设置页。请在 Obsidian 设置中手动打开 EchoInk。");
       return;
     }
     setting.open();
@@ -206,7 +216,7 @@ export class EchoInkViewService {
   async openReviewHtmlPreview(relativePath: string): Promise<void> {
     const normalized = relativePath.replace(/\\/g, "/");
     if (!isReviewHtmlPath(normalized, this.plugin.settings.review.outputDir)) {
-      new Notice("只能打开 EchoInk 生成的复盘 HTML");
+      new Notice("该文件不是 EchoInk 生成的复盘 HTML，无法打开。请从复盘列表中选择文件。");
       return;
     }
     let leaf = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_REVIEW_PREVIEW)[0];

@@ -15,7 +15,7 @@ const entries: readonly MemoryDirectoryEntry[] = [
 ];
 
 function input(llm: MemoryDirectoryLlmPort, overrides: Partial<SelectMemoryDirectoryInput> = {}): SelectMemoryDirectoryInput {
-  return { entries, query: "这一项是怎样约定的？", recentConversation: ["之前讨论过一个安排。"],
+  return { entries, query: "这一项是怎样约定的？", now: Date.UTC(2026, 10, 14, 17), recentConversation: ["之前讨论过一个安排。"],
     modelInputBudget: 16_000, memoryMode: "normal", llm, ...overrides };
 }
 
@@ -29,6 +29,7 @@ function directory(prompt: string): { text: string; entries: Array<{ id: string;
 }
 
 export async function runMemoryDirectorySelectorTests(): Promise<void> {
+
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   if (!originalWindow) Object.defineProperty(globalThis, "window", { configurable: true, value: globalThis });
   let passed = 0;
@@ -57,8 +58,9 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
       assert.deepEqual(directory(call.systemPrompt).entries.map(entry => entry.id), ["m-a", "m-b", "m-c"]);
       assert.equal(result.stats.tokens, countTextTokens(directory(call.systemPrompt).text));
       assert.ok(result.stats.tokens <= 16_000 * 0.2);
+      assert.ok(countTextTokens(call.systemPrompt + call.userPrompt) + call.maxTokens <= 16_000);
       assert.deepEqual(JSON.parse(call.userPrompt), {
-        recentConversation: ["之前讨论过一个安排。"], query: "这一项是怎样约定的？"
+        currentDate: "2026-11-15", recentConversation: ["之前讨论过一个安排。"], query: "这一项是怎样约定的？"
       });
       assert.doesNotMatch(call.systemPrompt, /这一项是怎样约定的|之前讨论过一个安排/u);
     });
@@ -111,16 +113,26 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
     await test("caller cancellation returns and propagates abort", async () => {
       const controller = new AbortController();
       let call: Call | undefined;
+      let entered!: () => void;
+      const ready = new Promise<void>(resolve => { entered = resolve; });
       const pending = selectMemoryDirectory(input({ call: request => {
         call = request;
+        entered();
         return new Promise(() => undefined);
       } }, { signal: controller.signal }));
-      await Promise.resolve();
+      await ready;
       controller.abort();
       const result = await pending;
       assert.equal(result.stats.reason, "aborted");
       assert.equal(result.status, "fallback");
       assert.ok(call?.signal.aborted);
+    });
+
+    await test("cancellation during async catalog counting never dispatches", async () => {
+      const controller = new AbortController(); let calls = 0;
+      const pending = selectMemoryDirectory(input({ call: async () => { calls++; return { text: "[]" }; } }, { signal: controller.signal }));
+      controller.abort();
+      assert.equal((await pending).stats.reason, "aborted"); assert.equal(calls, 0);
     });
 
     await test("no-memory and empty-catalog turns never call the model", async () => {
@@ -138,9 +150,9 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
 
     await test("the activity prefix fits the exact budget and excludes unseen IDs", async () => {
       const longEntries = entries.map(entry => ({ ...entry, title: entry.title.repeat(90) }));
-      let twoEntriesPrompt = "";
+      let twoEntriesPrompt = ""; let twoEntriesUser = "";
       await selectMemoryDirectory(input({ call: async call => {
-        twoEntriesPrompt = call.systemPrompt;
+        twoEntriesPrompt = call.systemPrompt; twoEntriesUser = call.userPrompt;
         return { text: "[]" };
       } }, { entries: longEntries.filter(entry => entry.id !== "m-c") }));
       const cap = countTextTokens(directory(twoEntriesPrompt).text) + 8;
@@ -148,7 +160,7 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
       const result = await selectMemoryDirectory(input({ call: async call => {
         prompt = call.systemPrompt;
         return { text: '["m-c","m-b"]' };
-      } }, { entries: longEntries, modelInputBudget: cap * 5 }));
+      } }, { entries: longEntries, modelInputBudget: Math.max(cap * 5, countTextTokens(twoEntriesPrompt) + countTextTokens(twoEntriesUser) + 1_024 + 8) }));
       assert.equal(result.status, "selected");
       assert.deepEqual(directory(prompt).entries.map(entry => entry.id), ["m-a", "m-b"]);
       assert.deepEqual(result.ids, ["m-b"]);
@@ -168,7 +180,7 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
       assert.equal(prompts[0].systemPrompt, prompts[1].systemPrompt);
       assert.notEqual(prompts[0].userPrompt, prompts[1].userPrompt);
       assert.deepEqual(directory(prompts[0].systemPrompt).entries.map(entry => Object.keys(entry)),
-        entries.map(() => ["id", "title", "recallWhen"]));
+        entries.map(() => ["id", "title", "recallWhen", "related"]));
     });
 
     await test("directory text cannot close the low-trust data block", async () => {
@@ -210,7 +222,8 @@ export async function runMemoryDirectorySelectorTests(): Promise<void> {
       assert.ok(result.stats.included > 0 && result.stats.truncated > 0);
       assert.equal(result.stats.tokens, countTextTokens(catalog.text));
       assert.ok(result.stats.tokens <= 2_000);
-      assert.ok(catalog.entries.every(entry => Number(entry.id.slice("entry-".length)) >= 1_000 - result.stats.included));
+      assert.ok(catalog.entries.some(entry => entry.id === "entry-0999"), "overflow retains frequent entries");
+      assert.ok(catalog.entries.some(entry => entry.id === "entry-0000"), "overflow is not a frequent-only cutoff");
     });
   } finally {
     if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);

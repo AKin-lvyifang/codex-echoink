@@ -6,11 +6,22 @@ import type {
 } from "@earendil-works/pi-ai";
 
 export interface EchoInkProviderReasoningWirePolicy {
-  readonly id: "qwen-3.8-chat-completions";
+  readonly id: "qwen-3.8-chat-completions" | "glm-5.3-chat-completions";
+  readonly supportsOff?: boolean;
   readonly selectableLevels: readonly ModelThinkingLevel[];
   readonly defaultLevel: ModelThinkingLevel;
   readonly thinkingLevelMap: Readonly<ThinkingLevelMap>;
 }
+
+const GLM_53_CHAT_COMPLETIONS_POLICY: EchoInkProviderReasoningWirePolicy = Object.freeze({
+  id: "glm-5.3-chat-completions",
+  supportsOff: false,
+  selectableLevels: Object.freeze(["low", "high", "max"] as const),
+  defaultLevel: "max",
+  thinkingLevelMap: Object.freeze({
+    off: "low", minimal: "low", low: "low", medium: "high", high: "high", xhigh: "max", max: "max"
+  })
+});
 
 const QWEN_38_CHAT_COMPLETIONS_POLICY: EchoInkProviderReasoningWirePolicy =
   Object.freeze({
@@ -46,6 +57,7 @@ export function resolveEchoInkProviderReasoningWirePolicy(
   modelId: string
 ): Readonly<EchoInkProviderReasoningWirePolicy> | null {
   const identity = `${runtimeProviderId.trim()}/${modelId.trim()}`;
+  if (identity === "zai-coding-cn/glm-5.3") return GLM_53_CHAT_COMPLETIONS_POLICY;
   return QWEN_38_CHAT_COMPLETIONS_MODELS.has(identity)
     ? QWEN_38_CHAT_COMPLETIONS_POLICY
     : null;
@@ -70,19 +82,20 @@ export function withEchoInkProviderReasoningWirePolicy<TApi extends Api>(
     model.provider,
     model.id
   );
-  if (!policy || !model.reasoning || model.api !== "openai-completions") {
+  if (!policy || (!model.reasoning && policy.supportsOff !== false) || model.api !== "openai-completions") {
     return model;
   }
   const completionsModel = model as Model<"openai-completions">;
   return {
     ...structuredClone(model),
+    reasoning: policy.supportsOff === false || model.reasoning,
     thinkingLevelMap: {
       ...model.thinkingLevelMap,
       ...policy.thinkingLevelMap
     },
     compat: {
       ...completionsModel.compat,
-      thinkingFormat: "qwen",
+      thinkingFormat: policy.id === "glm-5.3-chat-completions" ? "zai" : "qwen",
       supportsReasoningEffort: true
     }
   } as Model<TApi>;
@@ -101,6 +114,12 @@ export function applyEchoInkProviderReasoningWirePolicy(
     return payload;
   }
   const next: Record<string, unknown> = { ...payload };
+  if (policy.id === "glm-5.3-chat-completions") {
+    // Stale off preferences still need a valid always-thinking GLM request.
+    next.thinking = { ...(isPlainRecord(next.thinking) ? next.thinking : {}), type: "enabled" };
+    next.reasoning_effort = policy.thinkingLevelMap[level ?? "off"] ?? "low";
+    return next;
+  }
   delete next.thinking_budget;
   const enabled = Boolean(level && level !== "off");
   next.enable_thinking = enabled;

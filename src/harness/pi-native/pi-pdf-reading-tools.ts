@@ -1,4 +1,4 @@
-import type { PdfDependencies } from "../../pdf-reading/service";
+import { PDF_ORIGINAL_CHANGED, PDF_ORIGINAL_MISSING, isPdfOriginalChanged, isPdfOriginalMissing, type PdfDependencies } from "../../pdf-reading/service";
 import { pdfReadingPage } from "../../pdf-reading/reading-page";
 import { getDesktopCrypto } from "../../platform/desktop-crypto";
 import { getDesktopUtil } from "../../platform/desktop-runtime";
@@ -188,8 +188,8 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
     const version = normalizeJsonValue({ sourceFingerprint, originalPath: original?.plannedPath ?? null,
       originalExpectedVersion: original ? sourceFingerprint : null, files: await this.fileVersions(paths) });
     if (original && await host.api.files.exists(original.plannedPath)) {
-      if (!host.api.files.readBinary || hash(await host.api.files.readBinary(original.plannedPath)) !== sourceFingerprint) throw new Error("原PDF已经改过，请先核对。");
-    } else if (saved?.original?.savedPath) throw new Error("原PDF找不到了，请先恢复后继续。");
+      if (!host.api.files.readBinary || hash(await host.api.files.readBinary(original.plannedPath)) !== sourceFingerprint) throw new Error(PDF_ORIGINAL_CHANGED);
+    } else if (saved?.original?.savedPath) throw new Error(PDF_ORIGINAL_MISSING);
     return { jobId: saved?.id ?? intent.id, options, intent, existing: !!saved, attachmentId, path: args.path, sourceFingerprint, request, run, target, version };
   }
   async handleToolCall(event: ToolCallEvent, signal?: AbortSignal) {
@@ -248,9 +248,9 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
       const bytes = await this.options.host()!.api.readOriginal(job); bytes.fill(0);
       return { text: `原 PDF：${pdfNoteLink(path, "原文件")} · ${path} · ${job.original.savedPath ? "已保存并通过字节回读" : "文件已通过字节回读，保存关联待完成"}。`, verified: true };
     } catch (error) {
-      const reason = error instanceof Error && error.message.includes("改过") ? "原 PDF 已经改过，请先核对，不能继续处理。"
-        : error instanceof Error && error.message.includes("找不到") ? "原 PDF 找不到了，请先恢复，不能继续处理。"
-          : "原 PDF 尚未通过回读，请先核对，不能继续处理。";
+      const reason = isPdfOriginalChanged(error) ? "原 PDF 已被修改，未继续处理。请核对原文件后继续。"
+        : isPdfOriginalMissing(error) ? "原 PDF 已不存在，未继续处理。请恢复原文件后继续。"
+          : "原 PDF 未通过核对，未继续处理。请核对原文件后继续。";
       return { text: `原 PDF：${path} · ${reason}`, verified: false };
     }
   }
@@ -271,7 +271,7 @@ export class PiPdfReadingSecurity implements PiVaultAdditionalToolSecurityPort {
           call.readbackVerified = true;
           return;
         }
-        jobs = args.jobId ? [await host.api.load(args.jobId).catch(() => { throw new Error("PDF 任务记录暂时读不到，请核对任务或重新查询历史。"); })] : (await host.api.history()).slice(0, 20);
+        jobs = args.jobId ? [await host.api.load(args.jobId).catch(() => { throw new Error("PDF 任务记录暂时无法读取，请核对任务或重新查询历史。"); })] : (await host.api.history()).slice(0, 20);
         if (args.jobId && jobs[0]?.conversationId && jobs[0].conversationId === this.runIdentity()?.conversationId) this.options.bindDeliveryJob?.(jobs[0].id);
       }
       else {

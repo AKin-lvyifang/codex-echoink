@@ -75,7 +75,7 @@ await withFakeClock(async clock => {
   const timeoutError = api.runErrors.snapshot().find(error => error.code === "turn_no_progress_timeout");
   assert.equal(timeoutError?.conversationId, "task-lifecycle");
   assert.equal(timeoutError?.runId, "run-lifecycle");
-  assert.match(timeoutError?.message ?? "", /5 分钟没有任何进展/u);
+  assert.match(timeoutError?.message ?? "", /5 分钟无进展/u);
   api.armTurnWatchdog(host, 10);
   api.setTurnWatchdogWaiting(host, true);
   api.clearTurnWatchdog(host);

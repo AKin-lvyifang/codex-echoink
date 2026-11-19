@@ -10,6 +10,7 @@ import { sha256Hex } from "../../utils/sha256";
 import { getBuiltinSkillDefinition, isRemoteOnlySkill, REMOTE_ONLY_SKILL_IDS, renderBuiltinSkill, renderOfficialSkillPointer } from "./builtin-skills";
 import { LEGACY_OFFICIAL_SKILL_HASHES } from "./legacy-official-skill-hashes";
 import { parseVaultSkillDocument } from "./skill-document";
+import { CAUSE, userFacingErrorText } from "../../core/error-copy";
 
 export type SkillDeliveryAccount = Pick<AccountService, "apiUrl" | "skillAuthorization" | "getSkillCatalog" | "getSkillContent">;
 export interface SkillContentFiles {
@@ -45,7 +46,7 @@ export class SkillContentResolver {
   private root(): string { return this.options.cacheRoot; }
   private async read(path: string): Promise<string | null> {
     const value = await this.options.files.read(safeSkillPath(path));
-    if (value !== null && new TextEncoder().encode(value).length > MAX_SKILL_CONTENT_BYTES + 16000) throw new Error("Skill 文件超过大小限制。");
+    if (value !== null && new TextEncoder().encode(value).length > MAX_SKILL_CONTENT_BYTES + 16000) throw new Error("技能文件超出大小限制，未能加载。请联网后重新下载。");
     return value;
   }
   async publicCatalog(force = false): Promise<OfficialSkillCatalog | null> {
@@ -118,12 +119,12 @@ export class SkillContentResolver {
     const remote = isRemoteOnlySkill(id) || id === "knowledge-review" && this.hasRemoteAccess();
     if (remote && !userCopy) {
       const account = this.options.account(), auth = account?.skillAuthorization();
-      if (!account || !auth) throw new Error("此 Skill 需要有效 PRO，请在账号与会员中启用本机。");
+      if (!account || !auth) throw new Error(CAUSE.proRequired[0]);
       const key = `${auth.scope}:${auth.session}:${id}`;
       const flight = this.resolutions.get(key);
       if (flight) return flight;
       const promise = this.remote(id, account, auth).catch((error: unknown): ResolvedSkillContent => {
-        this.setDeliveryState(id, auth, error instanceof MembershipNetworkError ? { kind: "refresh" } : { kind: "error", message: error instanceof Error ? error.message : "Skill 暂时不可用，请重试。" });
+        this.setDeliveryState(id, auth, error instanceof MembershipNetworkError ? { kind: "refresh" } : { kind: "error", message: userFacingErrorText(error, "技能暂时不可用。请联网后重试。") });
         if (id !== "knowledge-review" || !(error instanceof MembershipNetworkError)) throw error;
         this.assertAuthorization(account, auth);
         const content = raw ?? renderBuiltinSkill(definition!);
@@ -133,14 +134,14 @@ export class SkillContentResolver {
       return promise;
     }
     const content = raw ?? (definition && !isRemoteOnlySkill(id) ? renderBuiltinSkill(definition) : "");
-    if (!content.trim()) throw new Error("Skill 正文尚未导入当前笔记库。");
+    if (!content.trim()) throw new Error("技能正文尚未导入当前笔记库。请联网后重新下载。");
     const parsed = parseVaultSkillDocument(content, definition ? id : "user-skill");
-    if (definition && parsed.frontmatter.id !== id || !parsed.instruction.trim()) throw new Error("Skill 正文身份或内容无效。");
+    if (definition && parsed.frontmatter.id !== id || !parsed.instruction.trim()) throw new Error("技能正文无效。请联网后重新下载。");
     return { id, source: userCopy ? "user" : "builtin", content, path: localPath, revision: sha256Hex(content), version: parsed.frontmatter.version || "local", assertAvailable() {} };
   }
   private assertAuthorization(account: SkillDeliveryAccount, expected: SkillAuthorization): void {
     const current = account.skillAuthorization();
-    if (this.options.account() !== account || !current || current.scope !== expected.scope || current.session !== expected.session) throw new Error("账号、设备或授权已变化，本次 Skill 已停止提供。");
+    if (this.options.account() !== account || !current || current.scope !== expected.scope || current.session !== expected.session) throw new Error("账号、设备或授权已变化，此技能已停止提供。请在 设置 → 账号与会员 中确认授权后重试。");
   }
   private validCache(cache: CachedSkill): boolean {
     const now = this.now();
@@ -164,7 +165,7 @@ export class SkillContentResolver {
   private resolved(cache: CachedSkill, account: SkillDeliveryAccount, auth: SkillAuthorization): ResolvedSkillContent {
     const assertAvailable = () => {
       this.assertAuthorization(account, auth);
-      if (this.denied.has(`${auth.scope}:${cache.id}`) || !this.validCache(cache)) throw new Error("Skill 缓存已到期或授权已失效，请联网重新下载。");
+      if (this.denied.has(`${auth.scope}:${cache.id}`) || !this.validCache(cache)) throw new Error("技能缓存已到期或授权已失效。请联网后重新下载。");
     };
     assertAvailable();
     return { id: cache.id, source: "official-remote", content: cache.content, path: this.runtimePath(cache, auth),
@@ -178,10 +179,10 @@ export class SkillContentResolver {
     const metadata = this.catalogEntry(id);
     if (!metadata) {
       if (this.catalogFailure instanceof MembershipNetworkError) throw this.catalogFailure;
-      throw new Error("无法读取官方 Skill 目录，请联网后重试。");
+      throw new Error("无法读取官方技能目录。请联网后重试。");
     }
-    if (!metadata.platforms.includes(this.options.platform)) throw new Error("此 Skill 不支持当前设备。");
-    if (!skillPluginVersionSupported(this.options.pluginVersion, metadata.minPluginVersion)) throw new Error("请更新插件后再使用此 Skill。");
+    if (!metadata.platforms.includes(this.options.platform)) throw new Error("此技能不支持当前设备。请在支持的设备上使用。");
+    if (!skillPluginVersionSupported(this.options.pluginVersion, metadata.minPluginVersion)) throw new Error("当前插件版本不支持此技能。请更新插件后重试。");
     let response: SkillDeliveryResponse;
     try {
       response = await account.getSkillContent(id, { pluginVersion: this.options.pluginVersion, platform: this.options.platform,
@@ -198,19 +199,19 @@ export class SkillContentResolver {
     }
     this.assertAuthorization(account, auth);
     if ("notModified" in response) {
-      if (!previous || response.version !== previous.version || !this.validCache(previous)) throw new Error("Skill 缓存已到期，请重新下载完整正文。");
+      if (!previous || response.version !== previous.version || !this.validCache(previous)) throw new Error("技能缓存已到期。请联网后重新下载完整正文。");
       this.denied.delete(deniedKey);
       await this.ensureRuntimeFile(previous, auth); this.assertAuthorization(account, auth);
       this.setDeliveryState(id, auth, null);
       return this.resolved(previous, account, auth);
     }
-    if (sha256Hex(response.content) !== response.sha256) throw new Error("Skill 正文校验失败，旧版本已保留。");
+    if (sha256Hex(response.content) !== response.sha256) throw new Error("技能正文校验失败，已保留旧版本。请稍后重新下载。");
     const base = `${this.root()}/${auth.scope}/${id}/${sha256Hex(response.version)}/${response.sha256}`;
     const cached: CachedSkill = { ...response, scope: auth.scope, path: `${base}.md`, runtimePath: `${base}-${response.issuedAt}-runtime.md` };
-    if (!this.validCache(cached)) throw new Error("Skill 签发时间已过期或无效，旧版本已保留。");
+    if (!this.validCache(cached)) throw new Error("技能授权已到期或无效，已保留旧版本。请联网后重新下载。");
     await this.options.files.write(cached.path, cached.content);
     this.assertAuthorization(account, auth);
-    if (await this.read(cached.path) !== cached.content) throw new Error("Skill 缓存写入失败，旧版本已保留。");
+    if (await this.read(cached.path) !== cached.content) throw new Error("技能缓存未能写入，已保留旧版本。请稍后重试。");
     await this.ensureRuntimeFile(cached, auth);
     this.assertAuthorization(account, auth);
     // The pointer is the last write, after verification. Existing versions are immutable.
@@ -228,25 +229,25 @@ export class SkillContentResolver {
     const envelope = renderRemoteSkillRuntimeDocument(cache.id, cache.content);
     const target = this.runtimePath(cache, auth);
     if (await this.read(target) !== envelope) await this.options.files.write(target, envelope);
-    if (await this.read(target) !== envelope) throw new Error("Skill 运行正文写入失败。");
+    if (await this.read(target) !== envelope) throw new Error("技能正文未能写入。请稍后重试。");
   }
 }
 
 function renderRemoteSkillRuntimeDocument(id: string, content: string): string {
   const metadata = getBuiltinSkillDefinition(id)!;
   const parsed = parseVaultSkillDocument(content, id);
-  if (parsed.frontmatter.id !== id || !parsed.instruction.trim()) throw new Error("官方 Skill 正文身份无效。");
+  if (parsed.frontmatter.id !== id || !parsed.instruction.trim()) throw new Error("官方技能正文无效。请联网后重新下载。");
   return ["---", `name: ${id}`, `description: ${JSON.stringify(metadata.description)}`, "---", "", parsed.instruction, ""].join("\n");
 }
 
 export function skillLocalPath(id: string): string {
-  if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("Skill 标识无效。");
+  if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error("技能标识无效。请刷新技能列表后重试。");
   return `.echoink/resources/skills/${id}/SKILL.md`;
 }
 export function safeSkillPath(value: string): string {
   const normalized = value.replace(/\\/gu, "/");
   if (!normalized || normalized !== normalized.trim() || normalized.startsWith("/") || /^[a-z]:/iu.test(normalized)
-    || normalized.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Skill 路径必须位于当前笔记库。");
+    || normalized.split("/").some(part => !part || part === "." || part === "..")) throw new Error("技能文件不在当前笔记库中。请将技能放入当前笔记库后重试。");
   return normalized;
 }
 export function adapterSkillContentFiles(adapter: DataAdapter): SkillContentFiles {
@@ -257,7 +258,7 @@ export function adapterSkillContentFiles(adapter: DataAdapter): SkillContentFile
       const port = mobileAtomicFilePort(adapter, safeSkillPath(file)), previous = await port.read();
       try { if (previous !== content) await port.write(content, previous); }
       catch (error) {
-        if (error instanceof Error && error.message.startsWith("财务资料已变化")) throw new Error("Skill 文件已变化，请重试。");
+        if (error instanceof Error && error.message.startsWith("财务资料已变化")) throw new Error("技能文件已变化。请重试。");
         throw error;
       }
     }

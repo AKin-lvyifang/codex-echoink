@@ -115,6 +115,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async resumeTaskAndOpenDetail(id: string) { calls.push(["resume", id]); await new Promise<void>(resolve => { releaseResume = resolve; }); },
     async openAgentTaskList(...args: unknown[]) { calls.push(["list", ...args]); return true; },
     async openPaperGuideAfterOnboarding(manual: boolean) { calls.push(["setup-guide", manual]); },
+    async openAgentPersonaEditor(id: string) { calls.push(["persona", id]); return true; },
+    async openModuleOwnerSettings(id: string) { calls.push(["owner-settings", id]); },
     async startWorkbenchSignalTask(...args: unknown[]) { if (dispatchError) throw dispatchError; calls.push(["dispatch", ...args]); await dispatchGate; return "new-task"; },
     async readPiConversationCatalogEntry(id: string) { return tasks.find(task => task.conversationId === id); },
     piTurnInteractionBinding(identity: unknown) { return { submit(answers: unknown) { calls.push(["answer", identity, answers]); return true; } }; },
@@ -125,6 +127,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     async activateEnglishDiaryPage() { calls.push(["english"]); },
     async activatePdfReadingPage() { calls.push(["pdf"]); },
     async openExpertHall() { calls.push(["experts"]); },
+    async activateNewsPage() { calls.push(["news"]); },
     async openEchoInkGeneralSettings() { calls.push(["settings"]); },
     async openEchoInkAccountSettings(target?: "login" | "benefits") { calls.push(["account", target]); },
     async openEchoInkKnowledgeSettings() { calls.push(["knowledge"]); },
@@ -158,33 +161,55 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="loading"]').length, 6);
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
-    assert.ok(content.querySelector(".wb-starters"));
-    assert.match(content.querySelector(".wb-starter-card.is-current h3")!.textContent!, /知识库/);
-    content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
-    assert.deepEqual(calls.at(-1), ["setup-guide", true], "the first card opens knowledge setup");
-    content.querySelectorAll<HTMLButtonElement>(".wb-deck-dots button")[1].click(); await tick();
-    content.querySelector<HTMLButtonElement>(".wb-starter-card.is-current button")!.click(); await tick();
-    assert.deepEqual(calls.at(-1), ["setup", "agent"], "the moved avatar card retains its agent action");
-    const reminder = content.querySelector<HTMLElement>('[data-wb="knowledge-reminder"]')!;
-    assert.equal(content.querySelector('[data-wb="starters"]')?.nextElementSibling, reminder);
-    assert.equal(reminder.querySelector('.wb-grow')?.textContent, "还没设置知识库");
-    assert.equal(reminder.querySelector('[data-wb-focus="knowledge-reminder-settings"]')?.textContent?.trim(), "去初始化");
-    await click("knowledge-reminder-settings"); assert.deepEqual(calls.at(-1), ["setup-guide", true]);
+    const reminder = content.querySelector<HTMLElement>('[data-wb="setup-todos"]')!;
+    const todoTexts = () => Array.from(reminder.querySelectorAll<HTMLElement>(".wb-setup-todo .wb-grow"), node => node.textContent);
+    const guide = () => reminder.querySelector<HTMLElement>(".wb-guide");
+    assert.equal(content.querySelector(".wb-deck"), null, "the starter carousel is gone");
+    assert.equal(guide()?.querySelector("h2")?.textContent, "新手引导");
+    assert.equal(guide()?.querySelector(".wb-count")?.textContent, "9");
+    assert.deepEqual(todoTexts().slice(0, 2), ["还没设置知识库", "还没连接模型"], "setup to-dos lead the getting-started group");
+    assert.match(todoTexts()[2] ?? "", /^日记、待办.*复盘都交给了通才$/u, "new installs are reminded to write the generalist persona");
+    assert.equal(reminder.querySelectorAll(".wb-setup-todo:not(.is-more)").length, 5, "five rows show by default, the rest fold into one more row");
+    assert.equal(button("setup-todo-more").textContent?.trim(), "还有 4 项");
+    await click("setup-todo-more");
+    assert.equal(reminder.querySelector('[data-guide-step="knowledge"]'), null, "the knowledge step yields to the identical setup to-do");
+    assert.equal(button("guide:english").textContent?.trim(), "开始写", "PRO users get the step itself");
+    await click("guide:avatar"); assert.deepEqual(calls.at(-1), ["setup", "agent"]);
+    assert.equal(reminder.querySelector('[data-guide-step="avatar"]'), null, "a clicked step counts as done");
+    assert.deepEqual((savedSettings.at(-1) as typeof host.settings).setup.onboardingGuideDone, ["avatar"]);
+    assert.equal(button("guide:journal").textContent?.trim(), "开始写");
+    host.settings.agentRegistry.moduleOwners.journal = ""; await view.refresh();
+    assert.equal(button("guide:journal").textContent?.trim(), "指定负责人", "an unowned journal shows the owner action before the click");
+    host.settings.agentRegistry.moduleOwners.journal = "generalist"; await view.refresh();
+    await click("guide:journal");
+    assert.deepEqual(calls.at(-1), ["list", "generalist", "帮我开始写今天的日记，先问我三个问题。"], "the journal step goes to the journal owner");
+    await click("guide-dismiss:reading");
+    assert.equal(reminder.querySelector('[data-guide-step="reading"]'), null, "a dismissed step leaves");
+    assert.equal(reminder.querySelector('[data-wb-focus="setup-todo:knowledge"]')?.textContent?.trim(), "去初始化");
+    await click("setup-todo:knowledge"); assert.deepEqual(calls.at(-1), ["setup-guide", true]);
+    await click("setup-todo:persona"); assert.deepEqual(calls.at(-1), ["persona", "generalist"]);
+    await click("setup-todo:persona:aside"); assert.deepEqual(calls.at(-1), ["owner-settings", "journal"]);
     host.settings.sessions.push({ id: "empty-onboarding", messages: [] }); projectionText.set("empty-onboarding", "");
     tasks = [entry("empty-onboarding", "interrupted")]; await view.refresh();
-    assert.ok(content.querySelector(".wb-starters"), "empty shells and task metadata cannot dismiss onboarding");
+    assert.ok(guide(), "empty shells and task metadata cannot dismiss onboarding");
     assert.equal(host.settings.workbenchOnboardingDismissed, false);
     projectedUsers.add("legacy-onboarding"); tasks = [entry("legacy-onboarding", "completed")]; await view.refresh();
-    assert.equal(content.querySelector(".wb-starters"), null, "legacy stored user messages hide onboarding without resident bodies");
+    assert.equal(guide(), null, "legacy stored user messages hide onboarding without resident bodies");
     assert.equal(host.settings.workbenchOnboardingDismissed, true);
     assert.equal((savedSettings.at(-1) as typeof host.settings).workbenchOnboardingDismissed, true);
     tasks = []; host.settings.sessions = []; await view.refresh();
-    assert.equal(content.querySelector(".wb-starters"), null, "deleting the old conversation cannot restore onboarding");
+    assert.equal(guide(), null, "deleting the old conversation cannot restore onboarding");
+    host.settings.workbenchOnboardingDismissed = false; await view.refresh();
+    assert.ok(guide()); await click("guide-dismiss-all");
+    assert.equal(host.settings.workbenchOnboardingDismissed, true); assert.equal(guide(), null, "dismissing all leaves the setup to-dos without a group");
     assert.equal(reminder.hidden, false, "knowledge setup reminder is independent of conversation onboarding");
-    await click("knowledge-reminder-dismiss");
+    await click("setup-todo-dismiss:knowledge");
     assert.notEqual(host.settings.knowledgeBase.initialized, true);
-    assert.ok(host.settings.setup.knowledgeReminderDismissedAt);
-    assert.ok((savedSettings.at(-1) as typeof host.settings).setup.knowledgeReminderDismissedAt);
+    assert.equal(host.settings.setup.setupTodoDismissed?.knowledge, "knowledge");
+    assert.equal((savedSettings.at(-1) as typeof host.settings).setup.setupTodoDismissed?.knowledge, "knowledge");
+    await view.refresh();
+    assert.equal(todoTexts()[0], "还没连接模型", "dismissing one item keeps the others");
+    await click("setup-todo-dismiss:model"); await click("setup-todo-dismiss:persona");
     assert.equal(reminder.hidden, true); await view.refresh(); assert.equal(reminder.hidden, true);
     for (const [phase, group] of [["scanning", "running"], ["judging", "running"], ["writing", "running"], ["queued", "running"], ["awaiting-confirmation", "waiting"], ["partial", "interrupted"], ["failed", "interrupted"], ["interrupted", "interrupted"], ["completed", null], ["cancelled", null]] as const) {
       const linking: KnowledgeLinkingTask = { schemaVersion: 1, id: "system-linking", mode: "manual", phase, judgment: "aliases", bindingSignature: "test", createdAt: 1, updatedAt: 2, processed: 9, total: 20, proposals: [], patches: [], results: [] };
@@ -209,10 +234,10 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.refresh();
     assert.equal(content.querySelectorAll(".wb-memory-notice").length, 1);
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 0, "memory failure does not fail task groups");
-    assert.equal(content.querySelector(".wb-memory-notice details")?.hasAttribute("open"), false);
-    assert.ok(content.querySelector(".wb-memory-notice details")?.textContent?.includes(memoryNotice.reason));
+    assert.equal(content.querySelector(".wb-memory-notice details"), null, "an English internal reason gets no Details disclosure");
+    assert.ok(!content.querySelector(".wb-memory-notice")?.textContent?.includes(memoryNotice.reason), "the raw reason never reaches the banner");
     const memoryHost = content.querySelector<HTMLElement>('[data-wb="memory-notice"]')!;
-    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "starters", "memory explanation precedes starter cards and task groups");
+    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "setup-todos", "memory explanation precedes getting started and task groups");
     const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
     assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
@@ -232,14 +257,14 @@ export async function runWorkbenchUiTests(): Promise<void> {
     memoryHost.querySelector<HTMLButtonElement>(".is-primary")!.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
     memoryError = "fixture unsupported schema"; await view.refresh();
-    assert.equal(memoryHost.children.length, 0); assert.match(content.querySelector('[data-wb="status"]')?.textContent ?? "", /Memory unavailable/u);
+    assert.equal(memoryHost.children.length, 0); assert.match(content.querySelector('[data-wb="status"]')?.textContent ?? "", /Memory is temporarily unavailable/u);
     assert.equal(content.querySelectorAll('[data-wb-group][data-state="error"]').length, 0);
     memoryError = null; host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
     assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>('.wb-modules [data-module]')).map(node => node.dataset.module),
-      ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts"],
-      "navigation keeps the existing module order followed by Experts");
+      ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts", "news"],
+      "navigation keeps the existing module order followed by Experts and News");
     const journalButton = button("module-journal"), callsBeforeNavigation = calls.length;
     journalButton.click(); journalButton.click(); await tick();
     assert.ok(journalButton.classList.contains("is-nav-animating"), "activation starts playback immediately");
@@ -256,6 +281,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const beforeExperts = JSON.stringify(host.settings.agentRegistry);
     assert.equal(button("module-experts").hidden, false, "PRO discovers the expert tab by default");
     await click("module-experts"); assert.deepEqual(calls.at(-1), ["experts"]);
+    await click("module-news"); await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
+    assert.deepEqual(calls.at(-1), ["news"], "News opens its own page; the page handles locked and rollout states");
     host.settings.expertsEnabled = false; await view.refresh();
     assert.equal(button("module-experts").hidden, true);
     assert.equal(JSON.stringify(host.settings.agentRegistry), beforeExperts, "hiding the hall never dismisses hired Agents");
@@ -298,7 +325,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     snapshot = { ...snapshot, modules: ["todos"] }; await view.refresh();
     const configured = { ...host.settings };
     Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
-    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 7, "default/unconfigured modules remain discoverable independently of snapshot.modules");
+    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 8, "default/unconfigured modules remain discoverable independently of snapshot.modules");
     Object.assign(host.settings, configured); await view.refresh();
     for (const [id, destination] of [["journal", "journal"], ["knowledge-base", "knowledge"]] as const) {
       await click(`module-${id}`);
@@ -367,6 +394,13 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(button("signal-signal-0"), retained, "expansion preserves existing controls");
     assert.equal(document.activeElement, button("signal-toggle"));
     await click("signal-toggle"); assert.equal(content.querySelectorAll('[data-wb-group="signals"] .wb-row').length, 5);
+    const beforeDismissed = snapshot;
+    snapshot = { ...snapshot, signals: [], dismissedCount: 1 }; await view.refresh();
+    assert.ok(content.querySelector('[data-wb="signal-restore"]'), "restore remains reachable after dismissing the last suggestion");
+    assert.equal(content.querySelector('[data-wb-group="signals"] .wb-count')?.textContent, "", "empty suggestions do not show a zero count");
+    assert.equal(content.querySelector<HTMLElement>('[data-wb-group="signals"] .wb-count')?.hidden, true);
+    assert.equal(content.querySelector<HTMLElement>('[data-wb-group="signals"] .wb-rows')?.hidden, true, "only the heading and restore action remain");
+    snapshot = beforeDismissed; await view.refresh();
     await click("task-stop"); assert.deepEqual(calls.at(-1), ["detail", "stop"]);
     const resume = button("resume-stop"); resume.focus(); resume.click(); resume.click(); await tick();
     assert.equal(calls.filter(call => call[0] === "resume").length, 1, "double click only resumes once");
@@ -380,7 +414,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
       const id = `guide-${mode}`; tasks = [entry(id, "interrupted")]; await view.refresh(); await tick();
       const card = content.querySelector<HTMLElement>(`[data-task="${id}"]`)!;
       assert.deepEqual(Array.from(card.querySelectorAll<HTMLButtonElement>(".wb-task-footer button")).map(node => node.textContent?.trim()), ["上报问题", mode === "disabled" ? "开启工具调用并继续" : "继续"]);
-      assert.equal(card.textContent!.split("本轮没有执行工具").length - 1, 1);
+      assert.equal(card.textContent!.split("未实际执行工具调用").length - 1, 1);
       assert.equal(card.textContent!.includes("模型设置"), false);
       if (mode === "legacy") assert.match(card.textContent!, /模型服务 → 对应服务 → 参数 → 对应模型/u);
     }
@@ -407,7 +441,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     releaseDispatch(); await tick(); dispatchGate = undefined;
     dispatchError = new Error("真实派发异常");
     await click("signal-signal-0");
-    assert.match(openTestNoticeMessages.at(-1)!, /操作未完成：真实派发异常/);
+    assert.match(openTestNoticeMessages.at(-1)!, /^操作未能完成。真实派发异常/);
     assert.equal(button("signal-signal-0").disabled, false, "errors release the action's busy state");
     dispatchError = new WorkbenchSetupRequired("先配置可用的模型。", "models");
     await click("signal-signal-0");
@@ -472,7 +506,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     await view.refresh();
     assert.equal(maxProjectionConcurrency, 3, "stored result reads have bounded concurrency");
     assert.match(content.querySelector('[data-task="cold-0"] .wb-secondary')?.textContent ?? "", /未记录结果摘要/);
-    assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /结果暂时读不到/);
+    assert.match(content.querySelector('[data-task="cold-1"] .wb-secondary')?.textContent ?? "", /暂时无法读取结果/);
     const failedReads = projectionReads.get("cold-1");
     await view.refresh(); assert.equal(projectionReads.get("cold-1"), failedReads, "failed revisions are not repeatedly read during streaming refreshes");
     failedProjections.delete("cold-1"); await click("retry");
@@ -497,7 +531,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     publishActivities(partial);
     const partialCard = content.querySelector<HTMLElement>('[data-task="maintenance"]')!;
     assert.equal(partialCard.closest<HTMLElement>("[data-wb-group]")?.dataset.wbGroup, "interrupted");
-    assert.match(partialCard.textContent ?? "", /没做完.*《合成条目》.*不覆盖你的修改.*继续/u);
+    assert.match(partialCard.textContent ?? "", /没做完.*《合成条目》.*保留您的修改.*继续/u);
     assert.equal(maintenanceVisibleCopyIsSafe(partialCard.textContent ?? ""), true);
     assert.equal(maintenanceVisibleCopyIsSafe(button("task-maintenance").getAttribute("aria-label") ?? ""), true);
     assert.equal(maintenanceTask.taskStatus, "running", "business display never rewrites the Catalog object");
@@ -542,9 +576,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const navStyles = document.createElement("style"); navStyles.textContent = ".wb-header { column-gap: 16px } .wb-modules { column-gap: 4px }"; document.head.append(navStyles);
     cleanups.push(() => navStyles.remove());
     const navButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-module]")), more = content.querySelector<HTMLElement>('[data-wb="module-more"]')!;
-    [80, 80, 140, 105, 160, 160, 80].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
+    [80, 80, 140, 105, 160, 160, 80, 60].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
     more.getBoundingClientRect = () => ({ width: 74 } as DOMRect);
-    let withoutWeather = 950;
+    let withoutWeather = 1020;
     nav.getBoundingClientRect = () => ({ width: Math.max(1, withoutWeather
       - (header.classList.contains("is-weather-condensed") ? 0 : content.querySelector(".wb-sky.is-feedback") ? 350 : 170)
       + 2 * (16 - Number.parseFloat(header.style.columnGap || "16"))) } as DOMRect);
@@ -554,7 +588,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     layout.weatherStage.say("签到成功 · 第 2 天"); layout.fitNavigation();
     assert.equal(header.classList.contains("is-weather-condensed"), true, "check-in feedback yields weather space before modules");
     assert.match(content.querySelector(".wb-checkin-message")?.textContent ?? "", /签到成功/);
-    assert.equal(navButtons.filter(button => !button.hidden).length, 6);
+    assert.equal(navButtons.filter(button => !button.hidden).length, 7);
     layout.weatherStage.clearFeedback(); layout.fitNavigation();
     assert.equal(header.classList.contains("is-weather-condensed"), false, "weather returns after the temporary message clears");
     withoutWeather = 900; layout.fitNavigation();

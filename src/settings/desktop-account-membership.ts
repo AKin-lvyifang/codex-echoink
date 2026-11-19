@@ -114,7 +114,8 @@ export class DesktopAccountMembershipController implements DesktopAccountMembers
         try {
           await (action as (...values: unknown[]) => Promise<void>)(...args);
           this.refresh();
-          if (this.closed || generation !== this.generation) throw new Error("Account changed");
+          const signedIn = key === "signIn" && !!this.current.identity && this.current.identity.email.toLowerCase() === (args[0] as { email?: string })?.email?.trim().toLowerCase();
+          if (this.closed || generation !== this.generation && !signedIn) throw new Error("Account changed");
         } finally { release(); }
       };
     }
@@ -167,7 +168,8 @@ export class DesktopAccountMembershipController implements DesktopAccountMembers
     const frame: Frame = { title, page, body, handle: { close: () => this.closeFrame(frame) }, closed, baseline: new Map(), extraDirty: false, committed: false, opener };
     this.frames.push(frame);
     render(body, frame.handle);
-    body.querySelectorAll<HTMLInputElement>("input").forEach(input => frame.baseline.set(input, input.value));
+    // 搜索框这类过滤输入不算未保存的草稿。
+    body.querySelectorAll<HTMLInputElement>("input:not([data-echoink-transient])").forEach(input => frame.baseline.set(input, input.value));
     this.overview.hidden = true; this.detail.hidden = false;
     body.querySelector<HTMLElement>("input:not([disabled]), button:not([disabled])")?.focus({ preventScroll: true });
   }

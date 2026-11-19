@@ -146,7 +146,7 @@ await test("identity-only mismatch leaves tasks readable and adopt restores the 
   const service = await api.PiLocalDataService.create(scope(copied));
   try {
     assert.equal(service.memoryNotice.kind, "mismatch"); assert.equal(service.memoryError, null); assert.equal((await service.listConversations()).length, 1);
-    assert.throws(() => service.assertMemoryAvailable(), /paused/u);
+    assert.throws(() => service.assertMemoryAvailable(), /记忆已暂停使用/u);
     await service.resolveMemory("adopt"); assert.equal(service.memoryNotice, null); assert.equal((await service.personalMemory.inspect()).records.length, 2);
   } finally { await service.dispose(); }
 });
@@ -170,7 +170,7 @@ await test("damage, unsupported schemas and invalid structures are generic memor
   for (const raw of ["{broken", JSON.stringify({ ...JSON.parse(saved), schemaVersion: 99 }), JSON.stringify({ ...JSON.parse(saved), vaultId: api.newVaultId(), records: [{ id: "invalid" }] })]) {
     await fs.writeFile(manifest(copied), raw);
     const service = await api.PiLocalDataService.create(scope(copied));
-    try { assert.equal(service.memoryNotice, null); assert.ok(service.memoryError); assert.equal((await service.listConversations()).length, 1); await assert.rejects(service.resolveMemory("adopt"), /unavailable for this error/u); await assert.rejects(service.resolveMemory("reset"), /unavailable for this error/u); }
+    try { assert.equal(service.memoryNotice, null); assert.ok(service.memoryError); assert.equal((await service.listConversations()).length, 1); await assert.rejects(service.resolveMemory("adopt"), /当前记忆问题无法通过此方式恢复/u); await assert.rejects(service.resolveMemory("reset"), /当前记忆问题无法通过此方式恢复/u); }
     finally { await service.dispose(); }
     assert.equal(await fs.readFile(manifest(copied), "utf8"), raw);
   }

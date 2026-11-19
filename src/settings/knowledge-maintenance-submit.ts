@@ -1,6 +1,10 @@
 import { apiProviderHasUsableCredential, getActiveApiProviderModel, type CodexForObsidianSettings } from "./settings";
 import { isEchoInkPiReasoningEffortSupported, normalizeEchoInkReasoningEffort, resolveEchoInkPiReasoningCapabilities } from "./pi-model-catalog";
 import type { ReasoningEffort } from "../types/app-server";
+import { CAUSE } from "../core/error-copy";
+
+/** Knowledge analysis is checked before it starts; the lead says what did not happen. */
+const NOT_STARTED = "知识分析未能开始，本地整理已保留。";
 
 export function resolveKnowledgeMaintenanceSubmitSnapshot(
   settings: Pick<
@@ -16,13 +20,13 @@ export function resolveKnowledgeMaintenanceSubmitSnapshot(
   reasoning: ReasoningEffort;
 }> {
   const active = getActiveApiProviderModel(settings);
-  if (!active) throw new Error("准备知识分析：缺少已选择的模型；本地整理保留，选择模型后继续。");
-  if (!active.model.id.trim()) throw new Error("准备知识分析：缺少模型 ID。");
-  if (!active.provider.runtimeProviderId.trim()) throw new Error("准备知识分析：缺少 Provider 连接类型。");
-  if (!active.provider.baseUrl.trim()) throw new Error("准备知识分析：缺少 API 地址。");
+  if (!active) throw new Error(`${NOT_STARTED}${CAUSE.providerNotConfigured[0]}`);
+  if (!active.model.id.trim()) throw new Error(`${NOT_STARTED}所选模型缺少 Model ID。请在 设置 → 模型服务 中补充 Model ID。`);
+  if (!active.provider.runtimeProviderId.trim()) throw new Error(`${NOT_STARTED}所选模型服务未设置 API 协议。请在 设置 → 模型服务 中选择“API 协议”。`);
+  if (!active.provider.baseUrl.trim()) throw new Error(`${NOT_STARTED}所选模型服务缺少接口地址。请在 设置 → 模型服务 中填写接口地址。`);
   try { const url = new URL(active.provider.baseUrl); if (!["https:", "http:"].includes(url.protocol)) throw new Error(); }
-  catch { throw new Error("准备知识分析：API 地址无效，请检查连接设置。"); }
-  if (!apiProviderHasUsableCredential(active.provider, settings.openAICodexCredential)) throw new Error("准备知识分析：缺少此 Provider 所需的登录或 API Key。");
+  catch { throw new Error(`${NOT_STARTED}${CAUSE.providerUrlInvalid[0]}`); }
+  if (!apiProviderHasUsableCredential(active.provider, settings.openAICodexCredential)) throw new Error(`${NOT_STARTED}${CAUSE.providerAuth[0]}`);
   const capabilities = resolveEchoInkPiReasoningCapabilities(
     active.provider.runtimeProviderId,
     active.model.id,

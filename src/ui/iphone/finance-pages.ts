@@ -1,3 +1,4 @@
+import { CAUSE } from "../../core/error-copy";
 import { FinanceWorkspace } from "../../lifestyle/finance-view";
 import type { LifestyleViewPort } from "../../lifestyle/host";
 import type { IPhonePageContext } from "./workbench-contract";
@@ -44,7 +45,7 @@ export async function openIPhoneFinance(ctx: IPhonePageContext): Promise<void> {
     const top = scroll.scrollTop, policy = finance.accessState();
     workspace.detach(); body.replaceChildren(); view.error.show();
     if (!lifestyle.plugin.settings.lifestyle.finance.enabled) view.empty(body, "财务插件已关闭");
-    else if (!policy.canEnter) view.error.show(policy.reason ?? "需要有效 PRO");
+    else if (!policy.canEnter) view.error.show(policy.reason ?? CAUSE.proRequired[0]);
     else if (!initialized) view.empty(body, "正在加载…");
     else { if (policy.reason) view.error.show(policy.reason); workspace.render(body); }
     scroll.scrollTop = top;

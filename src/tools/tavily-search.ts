@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { TAVILY_SEARCH_CODES } from "../core/error-copy/codes/modules";
 import type { TavilySettings } from "./tavily-settings";
 export { normalizeTavilySettings } from "./tavily-settings";
 export type { TavilySettings } from "./tavily-settings";
@@ -63,15 +64,5 @@ export async function searchTavily(input: {
   }
 }
 export function tavilyErrorMessage(error: unknown, english: boolean): string {
-  const messages: Record<TavilyErrorCode, [string, string]> = {
-    key_missing: ["请先填写 API Key。", "Enter an API key first."],
-    key_invalid: ["API Key 无效或无访问权限，请检查。", "The API key is invalid or lacks access."],
-    quota: ["Tavily 积分不足，请检查账户额度。", "Tavily credits are exhausted. Check your account."],
-    rate_limit: ["请求过于频繁，请稍后重试。", "Rate limited. Try again later."],
-    network: ["连接失败，请检查网络后重试。", "Connection failed. Check your network and retry."],
-    timeout: ["连接超时，请稍后重试。", "Connection timed out. Try again later."],
-    cancelled: ["测试已取消。", "Test cancelled."],
-    invalid_response: ["未收到有效的搜索响应。", "No valid search response received."]
-  };
-  return messages[error instanceof TavilyError ? error.code : "network"][english ? 1 : 0];
+  return TAVILY_SEARCH_CODES[error instanceof TavilyError ? error.code : "network"][english ? 1 : 0];
 }

@@ -1,5 +1,6 @@
 import type CodexForObsidianPlugin from "../main";
 import { MembershipApiError } from "../membership/account-service";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import { workbenchWeather, type WorkbenchWeatherService } from "../home/weather-service";
 import type { WeatherCity } from "../home/weather-types";
 import { isImeKeyEvent, isComposingInput, watchImeComposition } from "../ui/ime-composition";
@@ -44,7 +45,7 @@ export function renderWeatherCitySettings(parent: HTMLElement, plugin: CodexForO
       if (!disposed) { close(); reset(); status.textContent = ""; }
     } catch {
       plugin.settings.weatherCity = previous;
-      if (!disposed) status.textContent = t("城市未保存，请重试", "City was not saved. Try again");
+      if (!disposed) status.textContent = joinErrorCopy(["城市未能保存。", "The city could not be saved."], NEXT.retry, plugin.settings.settingsLanguage);
     } finally { saving = false; if (!disposed) { input.disabled = clear.disabled = false; control.removeAttribute("aria-busy"); } }
   };
   const search = async () => {
@@ -66,7 +67,7 @@ export function renderWeatherCitySettings(parent: HTMLElement, plugin: CodexForO
       input.setAttribute("aria-expanded", String(cities.length > 0));
     } catch (error) {
       if (disposed || generation !== version) return;
-      status.textContent = error instanceof MembershipApiError && error.code === "RATE_LIMITED" ? t("搜索太快了，请稍后再试", "Too many searches. Try again later") : t("暂时搜不到城市，请重试", "City search is unavailable. Try again");
+      status.textContent = error instanceof MembershipApiError && error.code === "RATE_LIMITED" ? joinErrorCopy(["城市搜索过于频繁。", "Too many city searches."], NEXT.retryLater, plugin.settings.settingsLanguage) : joinErrorCopy(["未能搜索城市。", "Could not search for cities."], NEXT.retry, plugin.settings.settingsLanguage);
     }
   };
   clear.onclick = () => { void choose(null); };

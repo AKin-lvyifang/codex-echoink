@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 const TRANSLATION_TIMEOUT_MS = 45_000;
 
 export interface EditorTranslationPort {
@@ -18,7 +19,7 @@ export class EditorTranslationService {
   async translate(selectedText: string): Promise<string> {
     if (!selectedText.trim()) throw new Error("translation_selection_empty");
     if (this.running) {
-      throw new Error("EchoInk 正在处理其他请求，请稍后再试。");
+      throw new Error(CAUSE.busyAnswering[0]);
     }
     this.running = true;
     try {

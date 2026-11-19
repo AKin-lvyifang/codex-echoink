@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { Modal, Notice, Platform, setIcon, setTooltip } from "obsidian";
 import type { DrawingStyle } from "../excalidraw/elements";
 import { setGenerationIcon } from "./icons";
@@ -25,7 +26,7 @@ export interface GenerationModalOptions {
 export function openGenerationTemplateSettings(plugin: EchoInkPlugin, id: string): void {
   plugin.prepareDesktopSettingsRoute({ tab: "modules", section: "knowledgeBase", focus: `knowledge:generation-template:${id}` });
   const setting = (plugin.app as { setting?: { open?(): void; openTabById?(id: string): void } }).setting;
-  if (!setting?.open || !setting.openTabById) { new Notice("无法打开 EchoInk 设置页"); return; }
+  if (!setting?.open || !setting.openTabById) { new Notice("无法打开 EchoInk 设置页。请在 Obsidian 设置 → 第三方插件 中打开 EchoInk。"); return; }
   setting.open(); setting.openTabById(plugin.manifest.id);
 }
 
@@ -306,7 +307,7 @@ export class GenerationModal extends Modal {
         const saved = { ...template, id: `custom-${crypto.randomUUID()}`, name: uniqueGenerationTemplateName(templates, this.customName) };
         const updated = [...templates, saved]; this.plugin.settings.generationTemplates = updated;
         try { await this.plugin.saveSettings(); new Notice(`已存为模板「${saved.name}」`); this.saveCustom = false; if (this.active) this.renderCustom(); }
-        catch (error) { if (this.plugin.settings.generationTemplates === updated) this.plugin.settings.generationTemplates = previous; new Notice(`模板未保存：${error instanceof Error ? error.message : String(error)}`); }
+        catch (error) { if (this.plugin.settings.generationTemplates === updated) this.plugin.settings.generationTemplates = previous; new Notice(failureText(error, ["模板未能保存。", "The template could not be saved."], NEXT.retryLater, this.plugin.settings.settingsLanguage)); }
       }
       if (!this.active) return;
       await this.options.onSubmit(request, turnOptions);

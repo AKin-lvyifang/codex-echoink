@@ -1,3 +1,4 @@
+import { NEXT, failureText } from "../core/error-copy";
 import { Modal, Notice } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import type { AgentModuleId } from "../agents/types";
@@ -44,7 +45,7 @@ export class ModuleOwnerModal extends Modal {
     const create = createOriginButton(footer, { text: en ? "New Agent" : "新建 Agent" });
     create.onclick = () => {
       if (this.busy) return;
-      this.close(); void this.plugin.openModuleAgentCreation(this.module).catch(e => new Notice(String(e)));
+      this.close(); void this.plugin.openModuleAgentCreation(this.module).catch(e => new Notice(failureText(e, ["新建 Agent 页面未能打开。", "The new Agent page could not be opened."], NEXT.retryLater, this.plugin.settings.settingsLanguage)));
     };
     const start = createOriginButton(footer, { text: en ? "Assign to Ta" : "交给 Ta", cls: "is-primary mod-cta" }); start.disabled = true;
     start.onclick = () => {
@@ -57,7 +58,7 @@ export class ModuleOwnerModal extends Modal {
           this.close();
           await this.run?.();
         } catch (failure) {
-          const message = failure instanceof Error ? failure.message : String(failure);
+          const message = failureText(failure, ["负责人未能保存。", "The owner could not be saved."], NEXT.retryLater, this.plugin.settings.settingsLanguage);
           if (this.contentEl.isConnected) error.textContent = message; else new Notice(message);
           this.busy = false; group.element.inert = false; start.disabled = !selected; create.disabled = cancel.disabled = false;
         }

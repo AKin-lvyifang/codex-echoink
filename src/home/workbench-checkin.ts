@@ -53,9 +53,13 @@ export class WorkbenchCheckinService {
       if (this.context !== before) this.emit();
     });
   }
-  snapshot(): { context: number; checkedIn: boolean; total: number | null; error: unknown; errorVersion: number } {
+  snapshot(): { context: number; checkedIn: boolean; total: number | null; streak: number | null; nextReward: { inDays: number; points: number } | null; error: unknown; errorVersion: number } {
     this.sync();
-    return { context: this.context, checkedIn: this.summary?.today.checkedIn === true, total: this.summary?.total ?? null, error: this.error, errorVersion: this.errorVersion };
+    const streak = this.summary?.streak ?? null, rewards = this.summary?.rewards ?? null;
+    // Next reward: the next multiple of the server's "every N days"; null while the month cap is reached.
+    const nextReward = streak === null || !rewards ? null : Number(rewards.monthPoints) >= rewards.monthCap ? null
+      : { inDays: rewards.everyDays - (streak % rewards.everyDays || rewards.everyDays) || rewards.everyDays, points: Math.min(rewards.points, rewards.monthCap - Number(rewards.monthPoints)) };
+    return { context: this.context, checkedIn: this.summary?.today.checkedIn === true, total: this.summary?.total ?? null, streak, nextReward, error: this.error, errorVersion: this.errorVersion };
   }
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener); this.sync();
@@ -92,10 +96,10 @@ export class WorkbenchCheckinService {
     this.getFlight = run;
     return run;
   }
-  record(): Promise<{ alreadyCheckedIn: boolean; total: number }> {
+  record(): Promise<{ alreadyCheckedIn: boolean; total: number; reward?: { points: number; streak: number } | null }> {
     this.sync();
     if (this.postFlight) return this.postFlight;
-    if (this.summary?.today.checkedIn) return Promise.resolve({ alreadyCheckedIn: true, total: this.summary.total });
+    if (this.summary?.today.checkedIn) return Promise.resolve({ alreadyCheckedIn: true, total: this.summary.total, reward: null });
     const context = this.context, account = this.account, date = this.date;
     this.writeRevision++;
     const run = Promise.resolve().then(async () => {
@@ -106,7 +110,7 @@ export class WorkbenchCheckinService {
         const result = await account.checkIn({ date, timezone: this.timezone(), source: "manual" });
         if (!this.current(context)) throw new MembershipApiError("OPERATION_CANCELLED");
         this.summary = { ...result.summary, today: { date, checkedIn: true, source: "manual" } };
-        this.attempted = true; this.error = null; this.emit(); return { alreadyCheckedIn: result.alreadyCheckedIn, total: result.summary.total };
+        this.attempted = true; this.error = null; this.emit(); return { alreadyCheckedIn: result.alreadyCheckedIn, total: result.summary.total, reward: result.reward ?? null };
       } catch (error) { if (this.current(context)) this.fail(error, "POST"); throw error; }
       finally { if (this.current(context)) this.postFlight = null; }
     });

@@ -40,14 +40,26 @@ export type PiVaultToolBlockReason =
   | "approval_denied"
   | "approval_cancelled"
   | "tool_policy_blocked"
+  | "vault_directory_unbound"
+  | "vault_directory_missing"
+  | "vault_directory_conflict"
+  | "vault_organization_disabled"
+  | "vault_organization_out_of_scope"
+  | "vault_target_exists"
+  | "vault_write_read_only"
+  | "vault_write_plan_only"
   | "target_not_found"
   | "target_kind_invalid"
   | "authorization_failed";
 
 export class PiVaultToolAuthorizationError extends Error {
-  constructor(readonly code: PiVaultToolBlockReason) {
+  constructor(readonly code: PiVaultToolBlockReason, readonly allowedDirectories?: Readonly<Record<string, string | null>>) {
     super(code);
     this.name = "PiVaultToolAuthorizationError";
+  }
+
+  modelReason(): string {
+    return this.allowedDirectories ? JSON.stringify({ error: { code: this.code }, recovery: "Use the configured directories and current organization scope; if a directory is missing or shared, select it in Settings → Knowledge first.", allowedDirectories: this.allowedDirectories }) : this.code;
   }
 }
 
@@ -279,7 +291,7 @@ implements PiVaultToolExecutionSecurityPort {
         state: "authorized"
       });
     } catch (error) {
-      return deny(authorizationBlockReason(error));
+      return deny(error instanceof PiVaultToolAuthorizationError ? error.modelReason() : authorizationBlockReason(error));
     }
   }
 
@@ -533,6 +545,7 @@ function isBlockReason(value: string): value is PiVaultToolBlockReason {
   return value === "approval_denied"
     || value === "approval_cancelled"
     || value === "tool_policy_blocked"
+    || /^vault_(?:directory_(?:unbound|missing|conflict)|organization_(?:disabled|out_of_scope)|target_exists|write_(?:read_only|plan_only))$/u.test(value)
     || value === "target_not_found"
     || value === "target_kind_invalid"
     || value === "authorization_failed";

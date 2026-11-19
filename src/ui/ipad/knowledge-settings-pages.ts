@@ -1,3 +1,4 @@
+import { settingsErrorText } from "../../core/error-copy";
 import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
 import { shellIconButton } from "../mobile/shell-controls";
 import { knowledgeOrganizationSelectable } from "../../knowledge-base/folder-organization";
@@ -7,6 +8,7 @@ import { KNOWLEDGE_ROOT_NAMES } from "../../knowledge-base/root-paths-core";
 import { formatMobileDateTime } from "../../mobile/date-display";
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadSettingsContext } from "./settings-elements";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { ipadElement as el, ipadButton, ipadIcon } from "./workbench-elements";
 import { settingsField, settingsGroup, settingsRow } from "./settings-elements";
 
@@ -27,7 +29,7 @@ class FolderPage {
   private readonly disposers: (() => void)[] = [];
   constructor(readonly ctx: IPadSettingsContext, id: string, title: string) {
     this.content = el(ctx.document, "div", "pd-settings-content pd-knowledge-settings"); this.body = el(ctx.document, "fieldset", "pd-knowledge-body"); this.footer = el(ctx.document, "div", "pd-settings-actions pd-knowledge-footer");
-    this.content.append(this.body); const error = el(ctx.document, "div", "pd-settings-error"); error.hidden = true; error.setAttribute("role", "alert"); this.content.append(error); this.error = { element: error, show: failure => { error.textContent = failure === undefined ? "" : failure !== null && typeof failure === "object" && "message" in failure && typeof failure.message === "string" ? failure.message : typeof failure === "string" ? failure : t(ctx, "操作失败。", "Operation failed."); error.hidden = failure === undefined; } };
+    this.content.append(this.body); const error = el(ctx.document, "div", "pd-settings-error"); error.hidden = true; error.setAttribute("role", "alert"); this.content.append(error); this.error = { element: error, show: failure => { error.textContent = failure === undefined ? "" : settingsErrorText(failure, SETTINGS_FALLBACK.mobilePage, ctx.host.settings().settingsLanguage); error.hidden = failure === undefined; } };
     this.page = { id, title, content: this.content, footer: this.footer, canLeave: () => !this.busy, dispose: () => { this.alive = false; this.disposers.forEach(dispose => dispose()); } };
   }
   async push(): Promise<void> { if (!this.footer.childElementCount) this.page.footer = undefined; if (!await this.ctx.push(this.page)) this.page.dispose?.(); }
@@ -173,7 +175,7 @@ function createOperation(view: FolderPage, effects: HTMLElement, saved: () => Pr
   const confirm = view.button(view.footer, t(ctx, "确认", "Confirm"), async () => {
     if (!preview || settled || !writable) return; execution = new AbortController(); stop.hidden = false;
     settled = true;
-    await view.run(async () => { let result: MobileKnowledgeFolderApplyResult; try { result = await ctx.host.services.knowledgeFolders.apply(preview!.token, execution!.signal); } catch (error) { await saved(); throw new Error(t(ctx, "执行结果未确认，请重新读取记录，不要重复执行。", "Execution could not be confirmed. Reload the records; do not repeat the operation.") + " " + (error instanceof Error ? error.message : String(error))); } if (!view.alive) return;
+    await view.run(async () => { let result: MobileKnowledgeFolderApplyResult; try { result = await ctx.host.services.knowledgeFolders.apply(preview!.token, execution!.signal); } catch (error) { await saved(); throw new Error(t(ctx, "执行结果未确认。请重新读取记录，不要重复执行。", "The result could not be confirmed. Reload the records; do not repeat the operation."), { cause: error }); } if (!view.alive) return;
       if (result.status === "reconfirm") { settled = false; preview = result.preview; draw(); view.error.show(t(ctx, "内容已变化，请核对新的后果后再次确认。", "Content changed. Review the updated effects and confirm again.")); return; }
       settled = true; effects.replaceChildren(el(ctx.document, "p", "pd-knowledge-result", t(ctx, result.status === "completed" ? "已完成" : result.status === "partial" ? "部分完成，未执行的动作不会自动重试。" : "结果尚未确认，请重新读取记录，不要重复执行。", result.status === "completed" ? "Completed" : result.status === "partial" ? "Partially completed. Remaining actions will not retry automatically." : "The result is uncertain. Reload the records before taking further action.")));
       effects.append(el(ctx.document, "p", "", t(ctx, `新建 ${result.created.length} 个文件夹 · 移动 ${result.moved.length} 项`, `${result.created.length} folders created · ${result.moved.length} items moved`))); for (const issue of result.issues) effects.append(el(ctx.document, "div", "pd-knowledge-issue", `${issue.path} · ${issue.reason}`)); await saved();

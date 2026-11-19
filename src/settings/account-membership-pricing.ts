@@ -3,8 +3,18 @@
 // SPDX-License-Identifier: LicenseRef-EchoInk-Pro
 // Scope and preserved rights: ../../LICENSE
 export type MembershipCurrency = "CNY" | "USD";
-export type MembershipPlanId = "early" | "month" | "quarter" | "year";
+export type MembershipPlanId = "early" | "month" | "quarter" | "year" | "max-month" | "max-quarter" | "max-year";
+export const MAX_PLAN_IDS: readonly MembershipPlanId[] = ["max-month", "max-quarter", "max-year"];
+export const isMaxPlanId = (id: string | undefined): id is "max-month" | "max-quarter" | "max-year" => !!id && (MAX_PLAN_IDS as readonly string[]).includes(id);
 
+/** The server's per-account Max quote (/api/products for a signed-in user): what this person pays right now. */
+export interface MembershipMaxQuote {
+  readonly listMinor: number;
+  readonly amountMinor: number;
+  readonly coupon: { readonly rate: number; readonly discountMinor: number } | null;
+  readonly proCredit: { readonly minor: number } | null;
+  readonly endsAt: number;
+}
 export interface MembershipProductPricing {
   readonly id: MembershipPlanId;
   readonly prices: Readonly<Record<MembershipCurrency, number>>;
@@ -12,6 +22,40 @@ export interface MembershipProductPricing {
   readonly available?: boolean;
   readonly availability?: "available" | "owned" | "paused" | "sold_out" | "unavailable";
   readonly currencies?: readonly MembershipCurrency[];
+  readonly kind?: string;
+  readonly months?: number;
+  readonly quote?: MembershipMaxQuote | null;
+}
+export interface MaxPlanPricing {
+  readonly id: "max-month" | "max-quarter" | "max-year";
+  readonly days: number;
+  readonly dailyAmountMinor: number;
+  readonly savingsAmountMinor: number | null;
+  readonly savingsPercent: number | null;
+  /** List price from the catalogue. */
+  readonly listMinor: number;
+  /** What this account pays now: the quote when signed in, the list price otherwise. */
+  readonly amountMinor: number;
+  readonly coupon: { readonly rate: number; readonly discountMinor: number } | null;
+  readonly proCreditMinor: number;
+  readonly endsAt: number | null;
+}
+/** Max rows for the plans card area: month / quarter / year, with the server quote folded in. */
+export function getMaxPlanPricing(products?: readonly MembershipProductPricing[] | null): readonly MaxPlanPricing[] {
+  const month = products?.find(product => product.id === "max-month" && isValidMembershipProduct(product));
+  return MAX_PLAN_IDS.flatMap(id => {
+    const product = products?.find(item => item?.id === id && isValidMembershipProduct(item));
+    if (!product || !isMaxPlanId(product.id)) return [];
+    const quote = product.quote && Number.isSafeInteger(product.quote.amountMinor) && product.quote.amountMinor >= 0 ? product.quote : null;
+    const amountMinor = quote ? quote.amountMinor : product.prices.CNY;
+    const comparison = month && product.days! > month.days! ? month.prices.CNY * product.days! / month.days! : null;
+    const savingsAmountMinor = comparison == null ? null : comparison - product.prices.CNY;
+    return [{ id: product.id, days: product.days!, listMinor: product.prices.CNY,
+      amountMinor, dailyAmountMinor: amountMinor / product.days!, savingsAmountMinor,
+      savingsPercent: comparison == null ? null : Math.round(savingsAmountMinor! / comparison * 100),
+      coupon: quote?.coupon && quote.coupon.rate > 0 && quote.coupon.rate < 1 ? quote.coupon : null,
+      proCreditMinor: quote?.proCredit?.minor ?? 0, endsAt: quote?.endsAt ?? null }];
+  });
 }
 
 export interface MembershipPlanPricing {
@@ -35,8 +79,8 @@ export function getMembershipPlanPricing(_currency: MembershipCurrency, products
   });
   const month = resolved.find(plan => plan.id === "month");
   return resolved.map(plan => {
-    const comparisonAmountMinor = month && (plan.id === "quarter" || plan.id === "year")
-      ? month.amountMinor * (plan.id === "quarter" ? 3 : 12) : null;
+    const comparisonAmountMinor = month && plan.days != null && plan.days > month.days!
+      ? month.amountMinor * plan.days / month.days! : null;
     const savingsAmountMinor = comparisonAmountMinor == null ? null : comparisonAmountMinor - plan.amountMinor;
     return {
       ...plan,

@@ -1,9 +1,12 @@
 import { extractFirstUrl } from "../../knowledge-base/web-capture";
+import { CAUSE, errorText, failureText, joinErrorCopy, NEXT, pickErrorCopy, type ErrorCopy } from "../../core/error-copy";
 import type { CaptureLinkFeedback } from "../capture-link-modal";
 import { showKnowledgeCaptureSuccessNotice } from "../knowledge-capture-notice";
 import { remoteSkillLocked } from "../../resources/remote-skill-presentation";
 import { attachNativeTooltip } from "../native-tooltip";
 import { insertQueuedTurnIntoActiveRun } from "./turn-runner";
+import { repairXiaoechoModelSelection, subscribeXiaoechoCatalogChanges, xiaoechoSelectableModels } from "../../membership/xiaoecho-catalog-state";
+import { xiaoechoDesktopModelName, xiaoechoTypicalPointsLabel } from "../../membership/xiaoecho-points";
 import { composerSelectionAnnotations, clearSelectionDraft } from "../../selection-ask/draft";
 import { Notice, Platform, type App } from "obsidian";
 import { normalizeGenerationTemplates } from "../../settings/generation-templates";
@@ -14,14 +17,13 @@ import type { EchoInkResource } from "../../resources/types";
 import {
   activateApiProviderModel,
   apiProviderHasUsableCredential,
-  getActiveApiProvider,
-  getApiProviderModel,
   type StoredAttachment,
   type StoredSession
 } from "../../settings/settings";
 import type { EchoInkPiReasoningOption } from "../../settings/pi-model-catalog";
 import type { ProviderBrandId } from "../../settings/provider-brand-icons";
 import {
+  providerBrandForIdentity,
   apiProviderConfiguredDisplayName,
   normalizeApiProviderId
 } from "../../settings/provider-presets";
@@ -59,6 +61,7 @@ import { currentDisplayedMarkdownFile } from "./attachments";
 import {
   openKnowledgeCommandMenu as showKnowledgeCommandMenu,
   openModelMenu as showModelMenu,
+  reanchorComposerParameterMenu,
   openSkillMenu as showSkillMenu,
   renderKnowledgeCommandMatches as renderKnowledgeCommandMatchesView,
   renderSkillMatches as renderSkillMatchesView,
@@ -152,6 +155,9 @@ export interface CodexComposerHost {
   openGenerationModal(templateId?: string): void;
 }
 
+const CAPTURE_FAILED_LEAD: ErrorCopy = ["链接未能收藏。", "The link could not be collected."];
+const CAPTURE_FAILED: ErrorCopy = [joinErrorCopy(CAPTURE_FAILED_LEAD, NEXT.retryOrReport, "zh"), joinErrorCopy(CAPTURE_FAILED_LEAD, NEXT.retryOrReport, "en")];
+
 /** Collection writes files, independently of conversation messages and runs. */
 export async function captureComposerKnowledgeSource(host: CodexComposerHost): Promise<void> {
   if (pendingKnowledgeCaptures.has(host)) return;
@@ -162,7 +168,7 @@ export async function captureComposerKnowledgeSource(host: CodexComposerHost): P
   const text = draft.trim();
   const language = host.plugin.settings.settingsLanguage;
   if (text && !attachments.length && !extractFirstUrl(text)) {
-    new Notice(conversationUiText(language, "收藏只支持网页和公众号链接", "Collection only supports web and WeChat links"));
+    new Notice(pickErrorCopy(CAUSE.captureLinkUnsupported, language));
     return;
   }
   let notice: Notice | undefined;
@@ -188,7 +194,7 @@ export async function captureComposerKnowledgeSource(host: CodexComposerHost): P
   host.renderToolbar();
   try {
     const capture = host.plugin.getKnowledgeSurfaceService();
-    if (!capture) throw new Error("知识库尚未就绪，请稍后重试。");
+    if (!capture) throw new Error(joinErrorCopy(["知识库尚未就绪。", "Knowledge is not ready yet."], NEXT.retryLater, language));
     if (attachments.length) feedback.pending?.(true);
     const paths = text || attachments.length
       ? await capture.captureTextInput(text, attachments, feedback) : await capture.captureLink(feedback);
@@ -207,17 +213,18 @@ export async function captureComposerKnowledgeSource(host: CodexComposerHost): P
     }
     notice = showKnowledgeCaptureSuccessNotice(input.ownerDocument, host.app, paths, language);
   } catch (error) {
-    failure(error instanceof Error ? error.message : String(error));
+    failure(errorText(error, CAPTURE_FAILED, language));
   } finally {
     pendingKnowledgeCaptures.delete(host);
     host.renderToolbar();
   }
 }
 
+const composerToolbarInputs = new WeakMap<HTMLElement, { input: string; session: StoredSession; refs: ReturnType<typeof renderComposerToolbar> }>();
+
 export function renderToolbar(host: CodexComposerHost): void {
   if (!host.toolbarEl) return;
   ensureComposerReasoningPreference(host);
-  disposeContextPopover(host);
   host.renderQueue();
   host.renderAttachments();
 
@@ -225,10 +232,7 @@ export function renderToolbar(host: CodexComposerHost): void {
   const knowledgeManager = host.plugin.getKnowledgeSurfaceService();
   const knowledgeTaskRunning = Boolean(knowledgeManager?.isRunning);
   const workspacePath = normalizeWorkspacePath(session.cwd);
-  const refs = renderComposerToolbar(
-    host.toolbarEl,
-    host.workspaceEl,
-    {
+  const toolbarState: Parameters<typeof renderComposerToolbar>[2] = {
       language: host.plugin.settings.settingsLanguage,
       session,
       knowledgeTaskRunning,
@@ -243,7 +247,7 @@ export function renderToolbar(host: CodexComposerHost): void {
       hasDraft: hasComposerDraft(host),
       hasTextDraft: Boolean(host.inputEl.value.trim()),
       hasQueuedItems: host.turnQueue.hasQueuedItems(session.id),
-      currentComposerModel: host.effectiveModel(),
+      currentComposerModel: currentComposerModelName(host),
       currentComposerProviderBrand: currentComposerProviderBrand(host),
       currentComposerSummaryTitle: currentComposerSummaryTitle(host),
       workspacePath,
@@ -251,7 +255,16 @@ export function renderToolbar(host: CodexComposerHost): void {
       workspaceValid: workspacePath ? workspaceDirectoryExists(workspacePath) : false,
       contextLedger: session.contextLedger,
       contextPanelOpen: host.contextPanelOpen
-    },
+    };
+  const input = JSON.stringify({ ...toolbarState, session: { id: session.id } });
+  const cached = composerToolbarInputs.get(host.toolbarEl);
+  const unchanged = cached?.input === input && cached.session === session;
+  if (!unchanged) disposeContextPopover(host);
+  const previousModelAnchor = host.toolbarEl.querySelector<HTMLElement>(".codex-model-summary-button");
+  const refs = unchanged ? cached.refs : renderComposerToolbar(
+    host.toolbarEl,
+    host.workspaceEl,
+    toolbarState,
     {
       onOpenAddMenu: (event) => openAddMenu(host, event),
       onMentionNote: () => openNoteMentionPicker(host),
@@ -293,6 +306,10 @@ export function renderToolbar(host: CodexComposerHost): void {
       onSendMessage: () => void host.sendMessage()
     }
   );
+  if (!unchanged) {
+    composerToolbarInputs.set(host.toolbarEl, { input, session, refs });
+    reanchorComposerParameterMenu(previousModelAnchor, host.toolbarEl.querySelector<HTMLElement>(".codex-model-summary-button"));
+  }
   host.contextEl = refs.contextEl!;
   host.resourcePanelAnchorEl = refs.addButtonEl!;
   host.resourcePanelAnchorEl.setAttribute("aria-expanded", String(host.resourcePanelOpen));
@@ -447,8 +464,8 @@ export function editPiConversationDraft(
   if (!draft) {
     new Notice(conversationUiText(
       host.plugin.settings.settingsLanguage,
-      "这条 Pi 草稿已经不存在，请刷新后重试。",
-      "This Pi draft no longer exists. Refresh and try again."
+      "该草稿已不存在。请刷新后重试。",
+      "This draft no longer exists. Refresh and try again."
     ));
     return false;
   }
@@ -473,14 +490,12 @@ export async function removePiConversationDraft(
     await refreshPiConversationSupport(host.plugin, conversationId);
     clearSelectedPiConversationDraft(host.plugin, conversationId);
     host.renderToolbar();
-    if (removed) new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "Pi 草稿已删除", "Pi draft deleted"));
+    if (removed) new Notice(conversationUiText(host.plugin.settings.settingsLanguage, "草稿已删除", "Draft deleted"));
     return removed;
   } catch (error) {
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `删除 Pi 草稿失败：${errorMessage(error)}`,
-      `Could not delete the Pi draft: ${errorMessage(error)}`
-    ));
+    new Notice(failureText(error,
+      ["草稿未能删除。", "The draft could not be deleted."],
+      NEXT.retryOrReload, host.plugin.settings.settingsLanguage));
     return false;
   }
 }
@@ -527,11 +542,9 @@ export async function recoverPiConversation(
   } catch (error) {
     await refreshPiConversationSupport(host.plugin, session.id)
       .catch(() => undefined);
-    new Notice(conversationUiText(
-      host.plugin.settings.settingsLanguage,
-      `恢复 Pi 会话失败：${errorMessage(error)}`,
-      `Could not recover the Pi conversation: ${errorMessage(error)}`
-    ));
+    new Notice(failureText(error,
+      ["会话未能修复，原文件已保留。", "The conversation could not be repaired; the original file was kept."],
+      NEXT.retryOrReport, host.plugin.settings.settingsLanguage));
     return false;
   } finally {
     setPiConversationRecovering(host.plugin, session.id, false);
@@ -625,11 +638,30 @@ export async function submitKnowledgeBaseCommand(host: CodexComposerHost, comman
 }
 
 export function openModelMenu(host: CodexComposerHost, event: MouseEvent): void {
-  showModelMenu(event, composerModelMenuState(host), {
+  if (repairComposerXiaoechoSelection(host)) host.onInputChanged();
+  showModelMenu(event, {
+    ...composerModelMenuState(host),
+    readCurrent: () => composerModelMenuState(host),
+    subscribeChanges: subscribeXiaoechoCatalogChanges
+  }, {
     onSelectModel: (selection) => void selectComposerModel(host, selection),
     onSelectReasoning: (reasoning) => selectComposerReasoning(host, reasoning),
     onSelectMode: (mode) => selectComposerMode(host, mode)
   });
+  void host.plugin.refreshXiaoechoCatalog?.();
+}
+
+export function repairComposerXiaoechoSelection(
+  host: Pick<CodexComposerHost, "plugin" | "selectedProviderSettingsId" | "selectedModel">
+): boolean {
+  const selection = repairXiaoechoModelSelection(host.plugin.settings, {
+    providerSettingsId: host.selectedProviderSettingsId,
+    modelId: host.selectedModel
+  });
+  if (selection.providerSettingsId === host.selectedProviderSettingsId && selection.modelId === host.selectedModel) return false;
+  host.selectedProviderSettingsId = selection.providerSettingsId ?? host.selectedProviderSettingsId;
+  host.selectedModel = selection.modelId ?? host.selectedModel;
+  return true;
 }
 
 export function composerModelMenuState(host: CodexComposerHost) {
@@ -659,8 +691,9 @@ export function composerProviderModelOptions(
   const settings = host.plugin.settings;
   return settings.apiProviders.flatMap((provider) =>
     apiProviderHasUsableCredential(provider, settings.openAICodexCredential)
-      ? provider.models.map((model) => ({
+      ? xiaoechoSelectableModels(provider).map((model) => ({
           providerSettingsId: provider.id,
+          providerBrand: providerBrandForIdentity(provider.providerId, provider.baseUrl, provider.name),
           providerName: apiProviderConfiguredDisplayName(
             normalizeApiProviderId(
               provider.providerId,
@@ -671,7 +704,13 @@ export function composerProviderModelOptions(
             settings.settingsLanguage
           ),
           modelId: model.id,
-          modelName: model.displayName || model.id
+          modelName: Platform.isDesktopApp && provider.providerId === "xiaoecho"
+            ? xiaoechoDesktopModelName(provider.providerId, model)
+            : model.displayName || model.id,
+          typicalPointsLabel: Platform.isDesktopApp && provider.providerId === "xiaoecho"
+            ? xiaoechoTypicalPointsLabel(model, settings.settingsLanguage)
+            : undefined,
+          isXiaoechoModel: Platform.isDesktopApp && provider.providerId === "xiaoecho"
         }))
       : []
   );
@@ -688,7 +727,7 @@ export async function selectComposerModel(
   const target = host.plugin.settings.apiProviders.find(
     (provider) => provider.id === selection.providerSettingsId
   );
-  const targetModel = target && getApiProviderModel(target, selection.modelId);
+  const targetModel = target && xiaoechoSelectableModels(target).find((model) => model.id === selection.modelId);
   if (
     !target
     || !targetModel
@@ -699,8 +738,8 @@ export async function selectComposerModel(
   ) {
     new Notice(conversationUiText(
       host.plugin.settings.settingsLanguage,
-      "所选 Provider 或模型已不可用，请先检查 Provider 设置",
-      "The selected Provider or model is unavailable. Check Provider settings first."
+      CAUSE.providerModelUnavailable[0],
+      CAUSE.providerModelUnavailable[1]
     ));
     return false;
   }
@@ -729,13 +768,9 @@ export async function selectComposerModel(
       }
     });
   } catch (error) {
-    new Notice(
-      conversationUiText(
-        host.plugin.settings.settingsLanguage,
-        `切换 Provider/模型失败：${error instanceof Error ? error.message : String(error)}`,
-        `Could not switch Provider/model: ${error instanceof Error ? error.message : String(error)}`
-      )
-    );
+    new Notice(failureText(error,
+      ["模型未能切换，当前仍使用原模型。", "The model could not be switched; the previous model is still in use."],
+      NEXT.testConnection, host.plugin.settings.settingsLanguage));
     return false;
   }
   host.selectedProviderSettingsId = selection.providerSettingsId;
@@ -755,9 +790,12 @@ export async function selectComposerModel(
     target.name,
     host.plugin.settings.settingsLanguage
   );
+  const modelName = Platform.isDesktopApp && target.providerId === "xiaoecho"
+    ? xiaoechoDesktopModelName(target.providerId, targetModel)
+    : targetModel.displayName || targetModel.id;
   new Notice(host.plugin.settings.settingsLanguage === "en"
-    ? `Switched to ${providerName} · ${targetModel.displayName || targetModel.id}`
-    : `已切换到 ${providerName} · ${targetModel.displayName || targetModel.id}`);
+    ? `Switched to ${providerName} · ${modelName}`
+    : `已切换到 ${providerName} · ${modelName}`);
   return true;
 }
 
@@ -790,7 +828,7 @@ export function selectComposerMode(host: CodexComposerHost, mode: UiMode): void 
 
 export function currentComposerSummary(host: CodexComposerHost): string {
   const language = host.plugin.settings.settingsLanguage;
-  const model = shortModelLabel(host.effectiveModel(), language);
+  const model = shortModelLabel(currentComposerModelName(host), language);
   const reasoning = ensureComposerReasoningPreference(host);
   if (!reasoning?.supported || !reasoning.enabled || reasoning.effort === "none") {
     return model;
@@ -803,9 +841,19 @@ export function currentComposerSummary(host: CodexComposerHost): string {
     : compactReasoningLabel(reasoning.effort, language)}`;
 }
 
+export function currentComposerModelName(host: Pick<CodexComposerHost, "plugin" | "selectedProviderSettingsId" | "selectedModel" | "effectiveModel">): string {
+  const modelId = host.effectiveModel();
+  const provider = host.plugin.settings.apiProviders.find(item => item.id === host.selectedProviderSettingsId);
+  if (!modelId || !Platform.isDesktopApp || provider?.providerId !== "xiaoecho") return modelId;
+  const model = provider.models.find(item => item.id === host.selectedModel);
+  return xiaoechoDesktopModelName(provider.providerId, model ?? { id: modelId });
+}
+
 export function currentComposerSummaryTitle(host: CodexComposerHost): string {
   const language = host.plugin.settings.settingsLanguage;
-  const model = host.effectiveModel() || conversationUiText(language, "未选择", "Not selected");
+  const model = currentComposerModelName(host) || conversationUiText(language, "未选择", "Not selected");
+  const provider = host.plugin.settings.apiProviders.find(item => item.id === host.selectedProviderSettingsId);
+  if (Platform.isDesktopApp && provider?.providerId === "xiaoecho") return model;
   return conversationUiText(
     language,
     `模型：${model}\n打开模型和运行参数`,
@@ -814,21 +862,12 @@ export function currentComposerSummaryTitle(host: CodexComposerHost): string {
 }
 
 export function currentComposerProviderBrand(host: CodexComposerHost): ProviderBrandId {
-  const providerId = getActiveApiProvider(host.plugin.settings)?.providerId;
-  switch (providerId) {
-    case "glm":
-    case "kimi":
-    case "minimax":
-    case "deepseek":
-    case "qwen":
-    case "ollama":
-    case "custom":
-      return providerId;
-    case "qwen-token-plan":
-      return "qwen";
-    default:
-      return "custom";
-  }
+  const settings = host.plugin.settings;
+  // The session can override the global default provider without changing it.
+  const provider = settings.apiProviders.find(item =>
+    item.id === (host.selectedProviderSettingsId || settings.activeApiProviderId)
+  );
+  return providerBrandForIdentity(provider?.providerId, provider?.baseUrl, provider?.name);
 }
 
 export function persistComposerDefaults(host: CodexComposerHost): void {
@@ -861,7 +900,9 @@ function showComposerReasoningFallbackNotice(
   state: Readonly<ComposerReasoningState>,
   language: "zh-CN" | "en"
 ): void {
-  const modelName = state.model.displayName || state.model.id;
+  const modelName = Platform.isDesktopApp && state.provider.providerId === "xiaoecho"
+    ? xiaoechoDesktopModelName(state.provider.providerId, state.model)
+    : state.model.displayName || state.model.id;
   if (state.effort) {
     new Notice(
       conversationUiText(
@@ -935,9 +976,9 @@ function saveComposerSettings(
 ): void {
   void host.plugin.saveSettings(true).catch((error) => {
     console.error("Codex composer defaults save failed", error);
-    new Notice(host.plugin.settings.settingsLanguage === "en"
-      ? `Could not save ${label}: ${error instanceof Error ? error.message : String(error)}`
-      : `${label}保存失败：${error instanceof Error ? error.message : String(error)}`);
+    new Notice(failureText(error,
+      [`${label}未能保存。`, `The ${label} could not be saved.`],
+      NEXT.retryOrReload, host.plugin.settings.settingsLanguage));
   });
 }
 
@@ -1349,6 +1390,4 @@ export function disposeContextPopover(host: CodexComposerHost): void {
   host.contextEl?.removeAttribute("aria-controls");
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+

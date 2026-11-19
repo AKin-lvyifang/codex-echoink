@@ -115,7 +115,7 @@ export class InlineRequestService {
   }
 
   async readSource(id: string): Promise<{ request: InlineRequest; document: string; context: InlineContext }> {
-    const r = this.requests.get(id); if (!r) throw new Error("正文请求不存在。");
+    const r = this.requests.get(id); if (!r) throw new Error("未找到对应的正文请求。请从正文重新 @ 管家。");
     const editor = await this.host.editor(r.path), document = editor.read();
     this.reconcileRecord(r, document);
     if (!locateInstruction(document, r) || r.status === "missing") throw new Error(r.error ?? "正文位置已删除，请重新 @ 管家。");
@@ -124,7 +124,7 @@ export class InlineRequestService {
   }
   async startRun(id: string, requirement: string, model: InlineModelSelection, context: InlineContext, addMessage = true, annotations?: readonly SelectionAnnotation[]): Promise<string> {
     this.host.assertCanGenerate?.();
-    const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("这块已结束，请重新建立位置。");
+    const r = this.requests.get(id); if (!r || terminal(r) || r.status === "missing") throw new Error("该正文块已结束。请从正文重新 @ 管家。");
     this.restoredReadyQueues.delete(id);
     if (r.question && r.timing?.questionAt) r.timing.userWaitMs = (r.timing.userWaitMs ?? 0) + Date.now() - r.timing.questionAt;
     r.question = undefined; r.error = undefined; r.status = "thinking"; r.targetResolved = false; r.preparedProposal = undefined; r.queue = undefined; r.model = structuredClone(model); r.readContext = structuredClone(context); r.runToken = randomUUID(); r.updatedAt = Date.now();
@@ -201,7 +201,7 @@ export class InlineRequestService {
   }
   private async performCommit(id: string, versionId: string, action: "confirm" | "revoke"): Promise<void> {
     const r = this.requests.get(id);
-    if (!r || this.stopped) throw new Error("找不到本次正文请求。");
+    if (!r || this.stopped) throw new Error("未找到本次正文请求。请从正文重新 @ 管家。");
     if (r.currentVersionId !== versionId) throw new Error("稿件版本已变化，请查看当前新稿。");
     if (terminal(r)) return;
     if (action === "confirm" && this.comparingOriginal.has(id)) throw new Error("请先切回新稿，再确认。");
@@ -225,7 +225,7 @@ export class InlineRequestService {
       }
       if (action === "confirm" && r.status !== "pending") throw new Error(r.error ?? "目标已变化，请重新生成后确认。");
       const version = r.versions.find(v => v.id === versionId)!;
-      if (action === "confirm" && (!version || r.targetResolved === false)) throw new Error("还没有可确认的新稿。");
+      if (action === "confirm" && (!version || r.targetResolved === false)) throw new Error("尚无可确认的新稿。请等待生成完成后再确认。");
       if (action === "confirm" && before.slice(r.target.from, r.target.to) !== version.target.text) throw new Error("目标已变化，未写入。");
       if (action === "confirm" && this.list(r.path).some(item => item.id !== id && (() => { const control = locateInstruction(before, item); return control && intersects(control, r.target); })())) throw new Error("修改范围包含指令，请把 @ 指令移到要改的范围外再试。");
       const changes = commitChanges(before, instruction, action === "confirm" ? r.target : undefined, version?.text ?? "");

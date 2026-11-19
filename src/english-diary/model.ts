@@ -75,7 +75,7 @@ export function normalizePrivacy(
     }
     for (const rule of savedPrivacy.rules) {
       if (!rule || !["translate", "preserve", "exclude"].includes(rule.mode) || modes.has(rule.blockId)) {
-        throw new DiaryServiceError("english_diary_privacy_review_required", "内容发送范围无效，请重新确认。");
+        throw new DiaryServiceError("english_diary_privacy_review_required", "发送范围无效。请重新确认。");
       }
       modes.set(rule.blockId, rule.mode);
     }
@@ -83,7 +83,7 @@ export function normalizePrivacy(
     const changed = savedPrivacy.sourceFingerprint !== currentFingerprint;
     for (const [id, mode] of modes) {
       if (!currentIds.has(id) && (!changed || mode !== "translate")) {
-        throw new DiaryServiceError("english_diary_privacy_review_required", "原稿中的保留或不发送段落已改变，请重新确认发送范围。");
+        throw new DiaryServiceError("english_diary_privacy_review_required", "原稿中设为保留或不发送的段落已被修改。请重新确认发送范围。");
       }
     }
     if (changed) {

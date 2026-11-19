@@ -84,7 +84,7 @@ await test("Skill Agent selection uses independent grants, preserves other permi
   assert.equal(other.capabilityIds.includes("todos"), false, "allowing a Skill does not grant its whole module");
   f.settings.mobileUi.moduleEnabled = { todos: false }; assert.throws(() => f.policy("other").assertSkill(before.id)); f.settings.mobileUi.moduleEnabled = {};
   assert.ok(other.capabilityIds.includes("unshown-future-capability"));
-  await assert.rejects(f.service.saveSkillAgents(before.id, ["sol"], before.agentsVersion), /其他位置修改/);
+  await assert.rejects(f.service.saveSkillAgents(before.id, ["sol"], before.agentsVersion), /其他位置被修改/);
   const normalized = loadMobileSettings(plain(f.settings)); assert.ok(normalized.agentRegistry.agents[0].disabledCapabilityIds.includes("skill:todo-operations"));
   assert.ok(normalized.agentRegistry.agents.find(agent => agent.id === "other").capabilityIds.includes("skill:todo-operations"));
 });
@@ -92,7 +92,7 @@ await test("Skill external edit conflict, failed atomic install restores origina
   const f = fixture(); const path = "Skills/custom/SKILL.md";
   f.files.set(path, "Original"); f.settings.resources.catalog.push({ id: "custom", kind: "skill", source: "manual", enabled: false, name: "Mine", description: "Custom", bridgeMode: "prompt-only", contentPath: path, metadata: { future: true } });
   const original = await f.service.readSkill("custom"); f.files.set(path, "Other editor");
-  await assert.rejects(f.service.saveSkill("custom", "Mine", original.version), /其他位置修改/u); assert.equal(f.files.get(path), "Other editor");
+  await assert.rejects(f.service.saveSkill("custom", "Mine", original.version), /其他位置被修改/u); assert.equal(f.files.get(path), "Other editor");
   const current = await f.service.readSkill("custom"); f.failNextInstall(); await assert.rejects(f.service.saveSkill("custom", "Mine", current.version)); assert.equal(f.files.get(path), "Other editor");
   await f.service.saveSkill("custom", "Mine", current.version); assert.equal(f.files.get(path), "Mine"); assert.equal(f.service.defaultSkillContent("custom"), null);
   assert.equal(f.settings.resources.catalog[0].metadata.future, true);
@@ -122,7 +122,7 @@ await test("targeted setting rollback preserves drafts and unrelated fields", as
   let failSave = false;
   const f = fixture(undefined, async settings => { if (failSave) { settings.unrelated = "kept"; throw new Error("synthetic-secret"); } });
   await f.service.initializeSkills(); failSave = true;
-  await assert.rejects(f.service.setSkillEnabled("daily-journal", false), /保存失败/u); assert.equal((await f.service.readSkill("daily-journal")).enabled, true); assert.equal(f.settings.unrelated, "kept");
+  await assert.rejects(f.service.setSkillEnabled("daily-journal", false), /未能保存/u); assert.equal((await f.service.readSkill("daily-journal")).enabled, true); assert.equal(f.settings.unrelated, "kept");
   const draft = f.service.readTavily(); draft.apiKey = "synthetic-tavily-key"; draft.enabled = true;
   await assert.rejects(f.service.saveTavily(draft), error => /保存失败/u.test(error.message) && !error.message.includes(draft.apiKey));
   assert.equal(f.service.readTavily().apiKey, ""); assert.equal(draft.apiKey, "synthetic-tavily-key");
@@ -181,7 +181,7 @@ try {
     const summaries = await f.service.listMcp(); assert.equal(summaries[0].status, "connected"); assert.equal(summaries[0].headers, undefined);
     assert.equal(f.service.runtimeTools(f.policy(), async input => (await input.call()).result).filter(tool => tool.name.startsWith("mcp_")).length, 3);
     const draft = await f.service.createMcpDraft(id), stale = plain(draft); draft.name = "Updated"; await f.service.saveMcp(draft);
-    await assert.rejects(f.service.saveMcp(stale), /其他位置修改/u);
+    await assert.rejects(f.service.saveMcp(stale), /其他位置被修改/u);
   });
   await test("each live revocation blocks the next action and HTTP call count proves it", async () => {
     for (const revoke of [f => { f.settings.resources.catalog[0].enabled = false; }, f => { f.settings.resources.mcpConnections[f.id].toolPolicies.read_item.enabled = false; },

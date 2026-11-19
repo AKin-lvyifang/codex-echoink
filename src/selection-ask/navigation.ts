@@ -5,9 +5,9 @@ import { conversationUiText } from "../ui/codex-view/ui-i18n";
 import { resolveSourceSpan, renderedSpanForSource } from "./anchors";
 import { resolveProjectedReadingRange, resolveReadingRange } from "./reading";
 export async function openSelectionAnnotationSource(app: App, annotation: SelectionAnnotation, language: SettingsLanguage, knownSource?: string): Promise<void> {
-  const changed = () => new Notice(conversationUiText(language, "原文位置已变化", "The source position has changed"));
+  const changed = () => new Notice(conversationUiText(language, "原文位置已变化。请在笔记中重新查找该段文字。", "The source text has moved. Find the passage in the note again."));
   const file = app.vault.getAbstractFileByPath(annotation.vaultRelativePath);
-  if (!(file instanceof TFile)) { new Notice(conversationUiText(language, `找不到笔记：${annotation.fileName}`, `Note not found: ${annotation.fileName}`)); return; }
+  if (!(file instanceof TFile)) { new Notice(conversationUiText(language, `未找到笔记：${annotation.fileName}。请确认笔记未被移动或删除。`, `Note not found: ${annotation.fileName}. Make sure it was not moved or deleted.`)); return; }
   await app.workspace.openLinkText(annotation.vaultRelativePath, "", false);
   const view = app.workspace.getActiveViewOfType(MarkdownView);
   if (!view || view.file?.path !== annotation.vaultRelativePath) return;

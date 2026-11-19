@@ -58,13 +58,12 @@ async function scenarioUserProfileDreamAndSuppressionPreserveOldSelf(): Promise<
     const system = await CognitiveSystem.create({ repository: fixture.repository,
       llm: () => ({ call: async (input) => {
         assert.doesNotMatch(input.systemPrompt + input.userPrompt, /OLD_SELF_NEVER_TOUCH|agentSelfOperations|currentLearnedHabits|habit_add|AGENT\.md/u);
-        if (!input.systemPrompt.includes("本次只输出 USER")) return JSON.stringify({ secondaryFacts: [], userProfileItems: [] });
+        if (!input.systemPrompt.includes("本次只输出 USER")) return JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] });
         profileCalls++;
         const { sources } = JSON.parse(input.userPrompt);
         return JSON.stringify({ userProfileItems: [{ section: "preference", profileKey: "preference.detail",
           text: "喜欢简短回答", basis: "explicit", sources: sources.map((source: { sourceId: string }) => ({ sourceId: source.sourceId, evidenceQuote: "我长期喜欢简短回答" })) }] });
-      } }), getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false, registerInterval: () => undefined, now: fixture.now });
+      } }), getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }), registerInterval: () => undefined, now: fixture.now });
     try {
       const result = await system.engine.runOnce();
       assert.equal(result.committed, true);
@@ -226,7 +225,7 @@ async function scenarioProductRunMemoryAndExperienceAreNotDoubleCounted(): Promi
       llm: () => ({
         call: async (request) => {
           if (!request.systemPrompt.includes("本次只输出 USER")) {
-            return JSON.stringify({ secondaryFacts: [], userProfileItems: [] });
+            return JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] });
           }
           profilePromptSeen = true;
           assert.match(request.userPrompt, new RegExp(duplicateSourceId, "u"));
@@ -235,7 +234,6 @@ async function scenarioProductRunMemoryAndExperienceAreNotDoubleCounted(): Promi
         }
       }),
       getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false,
       registerInterval: () => undefined,
       now: fixture.now
     });
@@ -270,14 +268,13 @@ async function scenarioSameRunProviderAndParseFailuresKeepExperiencePending(): P
         llm: () => ({
           call: async (request) => {
             if (!request.systemPrompt.includes("本次只输出 USER")) {
-              return JSON.stringify({ secondaryFacts: [], userProfileItems: [] });
+              return JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] });
             }
             if (failure === "provider") throw new Error("same_group_provider_failed");
             return "{invalid-profile-json";
           }
         }),
         getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-        isForegroundBusy: () => false,
         registerInterval: () => undefined,
         now: fixture.now
       });
@@ -312,12 +309,11 @@ async function scenarioSameRunExperienceStillRunsProvider(): Promise<void> {
             providerCalls += 1;
             return request.systemPrompt.includes("本次只输出 USER")
               ? "no_change"
-              : JSON.stringify({ secondaryFacts: [], userProfileItems: [] });
+              : JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] });
           }
         };
       },
       getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false,
       registerInterval: () => undefined,
       now: fixture.now
     });
@@ -350,7 +346,6 @@ async function scenarioInvalidDreamLeavesExperiencePending(): Promise<void> {
       repository: fixture.repository,
       llm: () => ({ call: async () => "{invalid-json" }),
       getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false,
       registerInterval: () => undefined,
       now: fixture.now
     });
@@ -386,7 +381,6 @@ async function scenarioDreamCasFailureLeavesExperiencePending(): Promise<void> {
         }
       }),
       getDreamConfig: () => ({ enabled: true, runsPerDay: 1 }),
-      isForegroundBusy: () => false,
       registerInterval: () => undefined,
       now: fixture.now
     });

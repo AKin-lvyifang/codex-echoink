@@ -51,8 +51,13 @@ export interface CodexViewRunnerBaseContext {
 export interface CodexViewTurnContext extends CodexViewRunnerBaseContext, MessageRenderFollowContext {
   isComposerTransferCancelled?(itemId: string): boolean;
   onComposerTransferStarted?(item: Readonly<QueuedTurnItem>): void;
+  onComposerTransferPrepared?(item: Readonly<QueuedTurnItem>): void;
+  onComposerTransferError?(itemId: string, message: string): void;
+  onPiUserEntryAccepted?(item: Readonly<QueuedTurnItem>): void;
+  onPreparationStage?: import("../../types/composer-submission").PreparationObserver;
   onComposerTransferFinished?(item: Readonly<QueuedTurnItem>, outcome: QueuedTurnOutcome | "queued"): void;
-  onPiRunFailure?(message: string): void;
+  /** Return true when the submission bubble carries this failure. */
+  onPiRunFailure?(message: string): boolean | void;
   onPiRunAccepted?(item: Readonly<QueuedTurnItem>): void | Promise<void>;
   readonly turnQueue: RuntimeTurnQueue;
   queueStartInProgress: boolean;

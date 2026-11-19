@@ -77,7 +77,7 @@ await test("unknown source failures stay null and never create English/review/li
   const facts = await f.workbench.readFacts();
   assert.equal(facts.todos, null); assert.equal(facts.englishMissing, null); assert.equal(facts.reviewComplete, null); assert.equal(facts.isolated, null);
   const snapshot = await f.workbench.load();
-  assert.ok(snapshot.issues.some(issue => issue.includes("TODO_UNAVAILABLE")));
+  assert.ok(snapshot.issues.some(issue => issue.includes("暂时无法读取。请稍后刷新。"))); assert.ok(!snapshot.issues.some(issue => issue.includes("TODO_UNAVAILABLE")));
   assert.ok(!snapshot.signals.some(signal => [1, 2, 5, 9, 14, 8].includes(signal.id))); f.close();
 });
 await test("handoff is only an unsent Agent-list draft; conflict preserves draft, note context and tasks", async () => {
@@ -119,7 +119,7 @@ await test("invalid/edited provenance never attributes an unrelated task and no 
   assert.equal(parseMobileWorkbenchSource(JSON.stringify({ ...signal.source, businessKey: "workbench:finance:due:bad" })), null);
   assert.equal(parseMobileWorkbenchSource(JSON.stringify({ ...signal.source, signalId: 8 })), null);
   await f.workbench.handoff(signal); f.settings.apiProviders = [];
-  await reject(f.runtime.sendNew("generalist", signal.prompt), /提供商/u);
+  await reject(f.runtime.sendNew("generalist", signal.prompt), /模型服务/u);
   assert.equal(f.store.state.newTaskDrafts.generalist.text, signal.prompt); assert.equal(f.store.state.sessions.length, 1); assert.equal(f.counts().requests, 0); f.close();
   const edited = await make({ "EchoInk/待办.md": todoText() });
   const row = (await edited.workbench.load()).signals.find(item => item.id === 1); await edited.workbench.handoff(row);

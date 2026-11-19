@@ -45,6 +45,7 @@ export interface CodexMessageHost {
   renderTaskPlanDock(session: StoredSession): void;
   renderInteractionDock(session: StoredSession): void;
   renderExpertDecorations?(session: StoredSession, root: HTMLElement, rows: readonly MessageListRenderedRow[]): void;
+  renderComposerTransfers?(): void;
   renderMessages(options?: { forceBottom?: boolean; fromScroll?: boolean; preserveScroll?: boolean }): void;
   scheduleRenderMessages(options?: MessageRenderScheduleOptions): void;
   scheduleMeasureVirtualRows(forceBottom?: boolean): void;
@@ -87,7 +88,9 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
   const session = host.ensureSession();
   settleStaleMessages(host, session);
   const messages = session.messages;
-  const renderOptions = host.messagesBottomFollowPaused ? { ...options, forceBottom: false, preserveScroll: true } : options;
+  const renderOptions = host.messagesBottomFollowPaused || host.messageScrollFollow.animating
+    ? { ...options, forceBottom: false, preserveScroll: true } : options;
+  const previousScrollTop = host.messagesEl.scrollTop;
   host.messageListRenderer.render({
     app: host.app,
     component: host as unknown as Component,
@@ -95,9 +98,11 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
     virtualListEl: host.virtualListEl,
     sessionId: session.id,
     conversationTitle: session.title,
+    companyRole: session.companyRole,
     getKnowledgeFolderBindings: () => host.plugin.settings.knowledgeBase.folderBindings,
     onAnswerDirectoryReady: directory => rememberConversationContentDirectory(host.plugin, directory, "answer"),
     onOpenOutputLocationSettings: kind => host.plugin.openEchoInkOutputLocationSettings(kind),
+    onOpenKnowledgeDirectorySettings: () => host.plugin.openEchoInkKnowledgeSettings(),
     settingsLanguage: host.plugin.settings.settingsLanguage,
     agentIdentity: host.plugin.getEchoInkAgentIdentityView(),
     messages,
@@ -154,11 +159,13 @@ export function renderMessages(host: CodexMessageHost, options: { forceBottom?: 
       : {}),
     onScheduleMeasure: (forceBottom) => host.scheduleMeasureVirtualRows(forceBottom),
     onScheduleRunProgress: () => host.scheduleKnowledgeBaseRunProgress(),
-    shouldFollowBottom: () => !host.messagesBottomFollowPaused,
+    shouldFollowBottom: () => !host.messagesBottomFollowPaused && !host.messageScrollFollow.animating,
+    isTurnRunning: () => host.running,
     onProcessDisclosureToggle: () => host.messageScrollFollow.pauseFromUser(),
-    onAfterRenderRows: (root, rows) => host.renderExpertDecorations?.(session, root, rows),
+    onAfterRenderRows: (root, rows) => { host.renderExpertDecorations?.(session, root, rows); host.renderComposerTransfers?.(); },
     options: renderOptions
   });
+  host.messageScrollFollow.recordAutomaticScroll(previousScrollTop, host.messagesEl.scrollTop);
   host.renderTaskPlanDock(session);
   host.renderInteractionDock(session);
   updateJumpToLatestVisibility(host);
@@ -252,8 +259,8 @@ export function attachTurnIdToRun(host: CodexMessageHost, session: StoredSession
 export function renderMessagesIfActive(host: CodexMessageHost, session: StoredSession, updatedMessage?: ChatMessage): void {
   if (session.id !== host.plugin.settings.activeSessionId) return;
   if (
-    updatedMessage
-    && host.messageListRenderer.tryUpdateMessage(updatedMessage, session.messages)
+    host.messageListRenderer.tryUpdateVisibleMessages?.(session.messages)
+    || updatedMessage && host.messageListRenderer.tryUpdateMessage(updatedMessage, session.messages)
   ) {
     host.renderTaskPlanDock(session);
     host.renderInteractionDock(session);
@@ -263,7 +270,8 @@ export function renderMessagesIfActive(host: CodexMessageHost, session: StoredSe
 }
 
 export function handleMessagesScroll(host: CodexMessageHost): void {
-  host.scheduleRenderMessages(host.messageScrollFollow.handleScroll(host.isMessagesAtBottom()));
+  const options = host.messageScrollFollow.handleScroll(host.isMessagesAtBottom(), host.messagesEl.scrollTop);
+  if (host.messageListRenderer.needsVirtualRowsRender()) host.scheduleRenderMessages(options);
   updateJumpToLatestVisibility(host);
 }
 
@@ -294,6 +302,7 @@ export function scheduleKnowledgeBaseRunProgress(host: CodexMessageHost): void {
   if (host.knowledgeBaseRunProgressTimer !== null) return;
   host.knowledgeBaseRunProgressTimer = window.setTimeout(() => {
     host.knowledgeBaseRunProgressTimer = null;
+    if (host.messageListRenderer.refreshRunProgress?.()) return;
     const forceBottom = !host.messagesBottomFollowPaused;
     host.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
   }, 700);
@@ -307,8 +316,10 @@ export function clearKnowledgeBaseRunProgressTimer(host: CodexMessageHost): void
 
 export function measureVisibleVirtualRows(host: CodexMessageHost, forceBottom = false): boolean {
   if (!host.virtualListEl || !host.messagesEl) return false;
+  const previousScrollTop = host.messagesEl.scrollTop;
   const changed = host.messageListRenderer.measureVisibleVirtualRows(host.messagesEl, host.virtualListEl, forceBottom, { rerender: false });
-  if (changed) host.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
+  host.messageScrollFollow.recordAutomaticScroll(previousScrollTop, host.messagesEl.scrollTop);
+  if (changed && host.messageListRenderer.needsVirtualRowsRender()) host.scheduleRenderMessages({ forceBottom, fromScroll: !forceBottom });
   return changed;
 }
 

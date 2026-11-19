@@ -3,10 +3,26 @@ import { AccountService, MembershipApiError, type MembershipTransport } from "..
 import { deviceIdentity, encode, keyHash } from "../membership/crypto";
 import { PRO_CAPABILITIES, type LeaseClaims, type LocalAccountState, type MembershipStorage, type MembershipProduct, type MembershipEarlyOffer } from "../membership/types";
 import { getProPluginAccess } from "../membership/access";
+import { setMembershipLanguageProbe } from "../membership/messages";
+import { pricingProducts } from "./account-membership-pricing";
 import type { AccountStatistics } from "../settings/account-membership-model";
 
 /** In-memory server and real ES256 leases; no network, mail, model or Vault. */
 export async function runMembershipAccountServiceTests(): Promise<void> {
+  try {
+    for (const [language, expected] of [
+      ["zh-CN", "邮箱或密码不正确。请检查后重试；如忘记密码，请在 EchoInk 官网重设。"],
+      ["en", "The email or password is incorrect. Check and try again, or reset your password on the EchoInk website."],
+    ]) {
+      setMembershipLanguageProbe(() => language);
+      const error = new MembershipApiError("AUTH_FAILED");
+      assert.equal(error.code, "AUTH_FAILED", "display copy must not change the protocol code");
+      assert.equal(error.message, expected, "login failure points to website password recovery in both languages");
+      assert.doesNotMatch(error.message, /验证码登录|sign in with an email code/i);
+    }
+  } finally {
+    setMembershipLanguageProbe(() => undefined);
+  }
   const signer = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
   const keys = [{ kid: "fixture", alg: "ES256", publicKey: await crypto.subtle.exportKey("jwk", signer.publicKey) }];
   const identity = await deviceIdentity();
@@ -15,7 +31,8 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
   const start = Date.parse("2026-10-08T00:00:00Z");
   async function fixture(options: { active?: boolean; bound?: boolean; anonymous?: boolean } = {}) {
     let earlyAvailable = false; let offerStatus = "available";
-    let salesOpen = false; const opened: string[] = [];
+    let salesOpen = false; let maxSalesOpen: boolean | undefined; const opened: string[] = [];
+    let proMonthlyPoints: number | undefined;
     let wall = start, state = options.active ? "active" : "free", offline = false, limit = false, invalidLease = false;
     let identityError: Error | null = null;
     let productsError: Error | null = null, rightsError: Error | null = null;
@@ -47,7 +64,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
           { id: "month", prices: { CNY: 900, USD: 299 }, days: 30, available: true, availability: "available", currencies: ["CNY"] },
           { id: "quarter", prices: { CNY: 1900, USD: 699 }, days: 90, available: true, availability: "available", currencies: ["CNY"] },
           { id: "year", prices: { CNY: 4900, USD: 1999 }, days: 365, available: true, availability: "available", currencies: ["CNY"] },
-        ], salesOpen, earlyOffer, betaOffer: { status: offerStatus, visible: offerStatus !== "stopped" } };
+        ], salesOpen, maxSalesOpen, proMonthlyPoints, earlyOffer, betaOffer: { status: offerStatus, visible: offerStatus !== "stopped" } };
         const error = productsError;
         if (waitProducts) await waitProducts();
         if (error) throw error;
@@ -78,18 +95,60 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     };
     const service = new AccountService(storage, transport, "https://fixture.invalid", url => opened.push(url), "https://fixture.invalid", () => "configured", () => wall);
     await service.initialize();
-    return { service, storage, calls, opened, sales(value: boolean) { salesOpen = value; }, early(value: boolean) { earlyAvailable = value; }, beta(value: string) { offerStatus = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; }, catalog(value: MembershipProduct[]) { catalog = value; }, offer(value: MembershipEarlyOffer | null | undefined) { earlyOffer = value; }, failProducts(error: Error | null) { productsError = error; }, failRights(error: Error | null) { rightsError = error; }, waitProducts(value: (() => Promise<void>) | null) { waitProducts = value; } };
+    return { service, storage, calls, opened, maxSales(value: boolean | undefined) { maxSalesOpen = value; }, monthly(value: number | undefined) { proMonthlyPoints = value; }, sales(value: boolean) { salesOpen = value; }, early(value: boolean) { earlyAvailable = value; }, beta(value: string) { offerStatus = value; }, bindings: () => [...activeDevices], offline(value: boolean) { offline = value; }, limit(value: boolean) { limit = value; }, invalid(value: boolean) { invalidLease = value; }, wall(value: number) { wall = value; }, failIdentity(error: Error | null) { identityError = error; }, waitRights(value: (() => Promise<void>) | null) { waitRights = value; }, waitLease(value: (() => Promise<void>) | null) { waitLease = value; }, catalog(value: MembershipProduct[]) { catalog = value; }, offer(value: MembershipEarlyOffer | null | undefined) { earlyOffer = value; }, failProducts(error: Error | null) { productsError = error; }, failRights(error: Error | null) { rightsError = error; }, waitProducts(value: (() => Promise<void>) | null) { waitProducts = value; } };
   }
+  const maxShop = await fixture();
+  try {
+    maxShop.catalog([...pricingProducts]);
+    // Repeated refreshes exercise closed -> open -> closed with independent PRO sales.
+    for (const [pro, max] of [[true, false], [false, true], [true, true], [false, false], [true, false]] as const) {
+      maxShop.sales(pro); maxShop.maxSales(max); await maxShop.service.refresh(true);
+      assert.equal(maxShop.service.read().salesOpen, pro);
+      assert.equal(maxShop.service.read().maxSalesOpen, max);
+      assert.equal(maxShop.service.read().products?.length, 7, "closed sales retain the catalogue");
+      for (const planId of ["month", "max-month", "max-quarter", "max-year"] as const) {
+        const before = maxShop.opened.length;
+        const purchase = maxShop.service.actions.selectPlan!({ planId, currency: "CNY" });
+        if (planId === "month" ? pro : max) {
+          await purchase; assert.equal(maxShop.opened.length, before + 1);
+          assert.equal(new URL(maxShop.opened.at(-1)!).searchParams.get("plan"), planId);
+        } else {
+          await assert.rejects(purchase, error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
+          assert.equal(maxShop.opened.length, before, "blocked actions never open checkout");
+        }
+      }
+    }
+    maxShop.maxSales(true);
+    const maxProduct = pricingProducts.find(product => product.id === "max-year")!;
+    for (const product of [null, { ...maxProduct, prices: { CNY: 0, USD: 5999 } }, { ...maxProduct, available: false }, { ...maxProduct, availability: "paused" as const }]) {
+      maxShop.catalog(product ? [product] : []); await maxShop.service.refresh(true);
+      await assert.rejects(maxShop.service.actions.selectPlan!({ planId: "max-year", currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
+    }
+    maxShop.maxSales(undefined); await maxShop.service.refresh(true);
+    assert.equal(maxShop.service.read().maxSalesOpen, false, "old server lacks the Max sale flag");
+    maxShop.maxSales(true); await maxShop.service.refresh(true);
+    maxShop.failProducts(new Error("catalogue unavailable")); await maxShop.service.refresh();
+    assert.equal(maxShop.service.read().maxSalesOpen, false);
+    assert.equal(maxShop.service.read().salesOpen, false);
+    maxShop.failProducts(null); await maxShop.service.refresh(true);
+    await maxShop.service.actions.signOut!();
+    assert.equal(maxShop.service.read().maxSalesOpen, false, "sign-out clears sale state");
+  } finally { maxShop.service.dispose(); }
   const shop = await fixture({ anonymous: true });
   try {
     assert.equal(shop.service.read().salesOpen, false);
-    await assert.rejects(shop.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), /购买待开放/);
+    assert.equal(shop.service.read().proMonthlyPoints, 0);
+    for (const allowance of [500, 750, 0, undefined, -1, 1.5, Number.NaN]) {
+      shop.monthly(allowance); await shop.service.refresh(true);
+      assert.equal(shop.service.read().proMonthlyPoints, allowance === 500 || allowance === 750 ? allowance : 0, "public monthly allowance follows the catalogue, including its off state");
+    }
+    await assert.rejects(shop.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
     shop.sales(true); await shop.service.refresh(); assert.equal(shop.service.read().salesOpen, true);
     const before = shop.calls.length;
     await shop.service.actions.selectPlan!({ planId: "quarter", currency: "CNY" });
     const url = new URL(shop.opened[0]); assert.equal(url.pathname, "/plans"); assert.equal(url.searchParams.get("plan"), "quarter");
     assert.equal(url.searchParams.get("currency"), "CNY"); assert.equal(shop.calls.length, before, "opening a plan never creates a payment or grants rights in the plugin");
-    await assert.rejects(shop.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), /购买待开放/);
+    await assert.rejects(shop.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
     shop.early(true); shop.beta("stopped"); await shop.service.refresh();
     assert.equal(shop.service.read().betaOffer?.visible, false, "anonymous products response carries stopped beta state");
     const beforeEarly = shop.calls.length;
@@ -131,24 +190,26 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
       for (const invalid of invalidRows) {
         catalog.catalog([invalid]); await catalog.service.refresh(true);
         const openedBefore = catalog.opened.length;
-        await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), /购买待开放/);
+        await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
         assert.equal(catalog.opened.length, openedBefore, `${product.id} cannot open with an invalid price or unavailable product`);
       }
       catalog.catalog([{ ...product, currencies: undefined }]); await catalog.service.refresh(true);
       await catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" });
       catalog.catalog([]); await catalog.service.refresh(true);
-      await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), /购买待开放/);
+      await assert.rejects(catalog.service.actions.selectPlan!({ planId: product.id, currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
     }
-    catalog.catalog([...products]); catalog.offer({ ...offer, endsAt: "2000-01-01" }); await catalog.service.refresh(true);
+    catalog.catalog([...products]); catalog.monthly(500); catalog.offer({ ...offer, endsAt: "2000-01-01" }); await catalog.service.refresh(true);
+    assert.equal(catalog.service.read().proMonthlyPoints, 500);
     await catalog.service.actions.selectPlan!({ planId: "early", currency: "CNY" });
     assert.equal(catalog.service.read().earlyOffer?.endsAt, "2000-01-01", "an elapsed display date never closes sales");
     catalog.failProducts(new Error("CATALOG_OFFLINE")); await catalog.service.refresh(true);
     assert.deepEqual(catalog.service.read().products, []);
     assert.equal(catalog.service.read().salesOpen, false);
+    assert.equal(catalog.service.read().proMonthlyPoints, 0, "failed catalogue refresh clears the old monthly promise");
     assert.equal(catalog.service.read().earlyOffer, null);
-    assert.equal(catalog.service.read().verificationError, "CATALOG_OFFLINE");
+    assert.equal(catalog.service.read().verificationError, "暂时无法读取套餐信息。请检查网络后重试。", "raw catalogue errors never reach the account page");
     assert.equal(catalog.service.read().membership.state, "anonymous");
-    await assert.rejects(catalog.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), /购买待开放/);
+    await assert.rejects(catalog.service.actions.selectPlan!({ planId: "month", currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
     catalog.failProducts(null); catalog.offer({ ...offer, endsAt: "2027-01-31" }); await catalog.service.refresh(true);
     assert.equal(catalog.service.read().earlyOffer?.endsAt, "2027-01-31", "retry uses the current server date");
     assert.equal(catalog.service.read().verificationError, null);
@@ -175,7 +236,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     const verifying = catalogFailure.service.actions.verify!();
     await cleared;
     assert.equal(catalogFailure.service.read().earlyOffer, null, "a failed catalogue is cleared before a pending rights refresh finishes");
-    await assert.rejects(catalogFailure.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), /购买待开放/);
+    await assert.rejects(catalogFailure.service.actions.selectPlan!({ planId: "early", currency: "CNY" }), error => error instanceof MembershipApiError && error.code === "PRODUCT_UNAVAILABLE");
     finishRights(); stopWaiting(); catalogFailure.waitRights(null); await verifying;
     const refreshed = await catalogFailure.storage.read();
     assert.equal(refreshed.rights?.serverTime, start + 100, "a failed catalogue still refreshes account rights");
@@ -336,6 +397,9 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
   try {
     assert.equal(removed.service.read().membership.state, "active");
     await removed.service.actions.removeDevice!("device-A");
+    assert.deepEqual(removed.service.read().membership.devices, [], "device count refreshes before removal resolves");
+    await removed.service.actions.removeDevice!("device-A");
+    assert.equal(removed.service.read().verificationError, null, "repeated removal does not create a false account error");
     await removed.service.actions.verify!();
     await removed.service.actions.signIn!({ email: "A@example.test", method: "password", credential: "synthetic-only" });
     assert.equal(removed.service.read().membership.state, "device-required", "refresh and relogin do not recreate a deliberately removed binding");
@@ -350,7 +414,7 @@ export async function runMembershipAccountServiceTests(): Promise<void> {
     unreadable.failIdentity(new Error("synthetic device storage unavailable"));
     await unreadable.service.actions.signIn!({ email: "A@example.test", method: "password", credential: "synthetic-only" });
     assert.equal(unreadable.service.read().membership.state, "verification-required", "identity failure must not be treated as a new, unbound device");
-    assert.equal(unreadable.service.read().verificationError, "synthetic device storage unavailable");
+    assert.equal(unreadable.service.read().verificationError, "会员状态未能验证。请检查网络后重试。", "raw storage errors never reach the account page");
     assert.equal(unreadable.service.checkCapability("finance.export"), false);
     await assert.rejects(unreadable.service.actions.activateDevice!("test"), /synthetic device storage unavailable/);
     assert.ok(!unreadable.calls.includes("/api/devices/challenge"));

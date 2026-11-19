@@ -1,3 +1,4 @@
+import { errorText, CAUSE } from "../core/error-copy";
 import { Notice, TFile, setIcon, type App } from "obsidian";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition } from "../agents/types";
 import { dispatchForPlanTask, projectMilestones } from "../company/logic";
@@ -71,8 +72,8 @@ function resolveOutput(app: App, path: string, folder: string): TFile | null {
 export function outputExists(app: App, path: string, folder: string): boolean { return resolveOutput(app, path, folder) !== null; }
 export function openOutput(app: App, path: string, folder: string): void {
   const file = resolveOutput(app, path, folder);
-  if (!file) { new Notice(`找不到文件：${path}`); return; }
-  void app.workspace.openLinkText(file.path, "", false).catch(error => new Notice(error instanceof Error ? error.message : String(error)));
+  if (!file) { new Notice(`未找到文件：${path}。请确认文件未被移动或删除。`); return; }
+  void app.workspace.openLinkText(file.path, "", false).catch(error => new Notice(errorText(error, CAUSE.sourceMissing, "zh")));
 }
 
 export function formatClock(at: number): string {

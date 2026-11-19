@@ -7,6 +7,7 @@ import { attachSettingsHelpTooltip } from "./settings-v2";
 import { OriginSetting } from "./origin-setting";
 import { applyAmicroButton } from "./amicro-buttons";
 import { knowledgeLinkingProgressText } from "../ui/codex-view/knowledge-linking-progress";
+import { NEXT, failureText, joinErrorCopy } from "../core/error-copy";
 
 /** A preview quotes only the mention's body line, never adjacent metadata. */
 function previewMentionLine(content: string, start: number, end: number): string {
@@ -69,7 +70,7 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
   details.createEl("summary", { text: english ? "View details" : "查看明细" });
   const content = details.createDiv({ cls: "echoink-knowledge-linking-detail-content" });
   if (!service) {
-    action.onclick = () => new Notice(english ? "Knowledge service is unavailable. Try again shortly." : "知识库服务尚未就绪，请稍后重试。");
+    action.onclick = () => new Notice(joinErrorCopy(["知识库服务尚未就绪。", "The knowledge service is not ready yet."], NEXT.retryLater, english ? "en" : "zh"));
     cancel.hidden = details.hidden = true;
     return () => { releaseLocation(); disposeOriginControls(block); };
   }
@@ -79,7 +80,7 @@ export function renderKnowledgeLinkingSection(container: HTMLElement, plugin: Co
     if (pending || closed) return;
     pending = true; action.disabled = cancel.disabled = true;
     try { await work(); }
-    catch (error) { const message = error instanceof Error ? error.message : String(error); if (!closed) status.setText(message); new Notice(message); }
+    catch (error) { const message = failureText(error, ["知识关联未能补全。", "Knowledge links could not be completed."], NEXT.retryLater, english ? "en" : "zh"); if (!closed) status.setText(message); new Notice(message); }
     finally { pending = false; if (!closed) render(current, true); }
   };
   const render = (task: KnowledgeLinkingTask | null, preserveError = false) => {

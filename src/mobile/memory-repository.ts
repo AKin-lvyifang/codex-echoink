@@ -1,9 +1,14 @@
+import { prepareMemoryTurnSearch, summarize, summarizeSource } from '../harness/memory/memory-turn-snapshot';
+import { parseSecondaryRecord, serializeSecondaryRecord, indexableSecondaryRecords, applySecondaryHit, assertSecondaryPathIdentity, assertUniqueSecondaryIds, SecondaryIdentityError } from '../harness/memory/secondary-memory-core';
+import { planMemoryAssociations } from '../harness/memory/memory-association-plan';
+import { planDreamCorrections, planUndoDreamCorrection } from '../harness/memory/dream-mutation-plan';
+import { defaultDreamState, parseDreamState, DREAM_STATE_RELATIVE_PATH } from '../harness/memory/dream-state-core';
 import type { DataAdapter } from "obsidian";
 import type { PersonalMemoryKind, PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import { PERSONAL_MEMORY_SCHEMA } from "../harness/memory/personal-memory-contracts";
 import { CanonicalMemoryFormatError, canonicalMemoryMetadata, canonicalMemoryPath, canonicalSourceMap, parseCanonicalMemoryRecord, serializeCanonicalMemoryRecord,
   type CanonicalMemoryManifest } from "../harness/memory/personal-memory-core";
-import { buildSearchIndexV3, indexChecksum, type SearchIndexV3 } from "../harness/memory/search-index-core";
+import { buildSearchIndexV3 } from "../harness/memory/search-index-core";
 import { renderPersonalMemoryOverview } from "../harness/memory/personal-memory-core";
 import { emptyUserProfileState, parseUserProfileState, migrateLegacyUserProfileState, reconcileProfileSources, profileSlotDefinition, type UserProfileState } from "../harness/memory/user-profile-core";
 import { renderUserMarkdown } from "../harness/memory/cognitive-projection";
@@ -27,7 +32,7 @@ const safe = (path: string) => {
   if (!path.startsWith(BASE) || path.split("/").some(part => !part || part === "." || part === "..") || path.includes("\\") || [...path].some(char => char.charCodeAt(0) < 32)) throw invalid(); return path;
 };
 export interface MobileCanonicalSnapshot {
-  manifest: CanonicalMemoryManifest; records: PersonalMemoryRecord[]; profile: UserProfileState; user: string; originals: Map<string, string | null>;
+  manifest: CanonicalMemoryManifest; secondary: import("../harness/memory/personal-memory-contracts").SecondaryMemoryRecord[]; records: PersonalMemoryRecord[]; profile: UserProfileState; user: string; originals: Map<string, string | null>;
 }
 interface JournalEntry { relativePath: string; existed: boolean; backupFile?: string; installedHash: string | null }
 interface Journal { schemaVersion: 1; transactionId: string; owner: string; operation: string; baseRevision: number; targetRevision: number; entries: JournalEntry[] }
@@ -222,7 +227,9 @@ export class MobileMemoryRepository {
     if (manifest.fixedFileHashes?.user && manifest.fixedFileHashes.user !== sha256Hex(user)) throw memoryConflict();
     originals.set(`${BASE}.runtime/search-index.json`, await this.read(`${BASE}.runtime/search-index.json`));
     originals.set(`${BASE}.runtime/mobile-memory-import-${this.owner}.json`, await this.read(`${BASE}.runtime/mobile-memory-import-${this.owner}.json`));
-    return { manifest, records, profile, user, originals };
+    const secondary = await this.loadSecondary();
+    for (const record of secondary) originals.set(record.file, await this.read(record.file));
+    return { manifest, records, secondary, profile, user, originals };
   }
   private async bootstrap(): Promise<void> {
     const records: PersonalMemoryRecord[] = [], originals = new Map<string, string | null>([[MANIFEST, null]]);
@@ -250,18 +257,8 @@ export class MobileMemoryRepository {
     changes.set(`${BASE}.runtime/search-index.json`, json(this.index(manifest, records))); changes.set(`${BASE}.runtime/source-map.json`, json(canonicalSourceMap(manifest)));
     await this.transaction(0, revision, changes, originals, "mobile-memory-initialize");
   }
-  private index(manifest: CanonicalMemoryManifest, records: readonly PersonalMemoryRecord[], previousRaw?: string | null) {
-    const summary = (text: string) => { const clean = text.replaceAll(/\s+/gu, " ").trim(); return clean.length <= 240 ? clean : `${clean.slice(0, 237)}…`; };
-    const index = buildSearchIndexV3(manifest.revision, records.map(record => ({ ...record, sourceSummary: summary(record.source), summary: summary(record.content) })), []);
-    if (!previousRaw) return index;
-    let value: unknown; try { value = JSON.parse(previousRaw); } catch { return index; }
-    if (!object(value) || value.schemaVersion !== 3 || !Array.isArray(value.secondaryCatalog) || !Array.isArray(value.secondaryIndex) || !Array.isArray(value.catalog)) return index;
-    const previous = value as unknown as SearchIndexV3;
-    if (previous.checksum !== indexChecksum(previous.revision, previous.catalog, previous.secondaryCatalog, previous.secondaryIndex)) return index;
-    const currentIds = new Set(records.filter(record => record.status === "current").map(record => record.id));
-    const secondaryCatalog = previous.secondaryCatalog.filter(record => currentIds.has(record.parentId)), secondaryIds = new Set(secondaryCatalog.map(record => record.id));
-    const secondaryIndex = previous.secondaryIndex.filter(record => currentIds.has(record.parentId) && secondaryIds.has(record.secondaryId));
-    return { ...index, secondaryCatalog, secondaryIndex, checksum: indexChecksum(index.revision, index.catalog, secondaryCatalog, secondaryIndex) };
+  private index(manifest: CanonicalMemoryManifest, records: readonly PersonalMemoryRecord[], secondary: readonly import('../harness/memory/personal-memory-contracts').SecondaryMemoryRecord[] = []) {
+    return buildSearchIndexV3(manifest.revision, records.map(record => ({ ...record, sourceSummary: summarizeSource(record.source), summary: summarize(record.content) })), indexableSecondaryRecords(secondary));
   }
   snapshot(): Promise<MobileCanonicalSnapshot> { return this.enqueue(() => this.fresh()); }
   readAuxiliary(path: string): Promise<string | null> { return this.enqueue(async () => { await this.recover(); return this.read(path); }); }
@@ -293,6 +290,9 @@ export class MobileMemoryRepository {
         draft.profile = { ...draft.profile, legacyUserMigration: "done" };
       }
       assertMemoryPinLimit(draft.records);
+      const currentParents = new Set(draft.records.filter(record => record.status === 'current').map(record => record.id));
+      draft.secondary = draft.secondary.map(record => { if (record.status !== 'current' || currentParents.has(record.parentId)) return record;
+        const next = { ...record, status: 'disabled' as const, disabledReason: 'parent_lifecycle' as const, revision: record.revision + 1, updatedAt: this.now() }; files.set(next.file, serializeSecondaryRecord(next)); return next; });
       const oldProfile = draft.profile;
       const validSources = new Set(draft.records.filter(record => record.status === "current").map(record => record.id)), invalidated = invalidatedMemoryProductRunIds(draft.records);
       for (const item of oldProfile.items) for (const source of item.sourceMemoryIds) { const run = productRunIdFromExperienceProfileSourceId(source); if (run && !invalidated.has(run)) validSources.add(source); }
@@ -305,12 +305,97 @@ export class MobileMemoryRepository {
       draft.manifest.records = draft.records.map(record => ({ ...previousMetadata.get(record.id), ...canonicalMemoryMetadata(record) })).sort((a, b) => a.id.localeCompare(b.id));
       const auditPath = `${BASE}.runtime/audit.jsonl`, audit = await this.read(auditPath); draft.originals.set(auditPath, audit);
       files.set(auditPath, `${audit ?? ""}${JSON.stringify({ type: "cognitive_update", revision: draft.manifest.revision, at: this.now(), detail: operation })}\n`);
-      files.set(`${BASE}.runtime/search-index.json`, json(this.index(draft.manifest, draft.records, draft.originals.get(`${BASE}.runtime/search-index.json`)))); files.set(`${BASE}.runtime/source-map.json`, json(canonicalSourceMap(draft.manifest)));
+      files.set(`${BASE}.runtime/search-index.json`, json(this.index(draft.manifest, draft.records, draft.secondary))); files.set(`${BASE}.runtime/source-map.json`, json(canonicalSourceMap(draft.manifest)));
       files.set(`${BASE}MEMORY.md`, renderPersonalMemoryOverview(draft.manifest, draft.records));
       // Manifest is installed last; a complete journal is the only publication boundary.
       files.set(MANIFEST, json(draft.manifest));
       await this.transaction(beforeRevision, draft.manifest.revision, files, draft.originals, operation, guard); return this.fresh();
     });
+  }
+  async loadSecondary(): Promise<import('../harness/memory/personal-memory-contracts').SecondaryMemoryRecord[]> {
+    const directory = `${BASE}memory/secondary`, result: import('../harness/memory/personal-memory-contracts').SecondaryMemoryRecord[] = [];
+    if (!await this.adapter.exists(`${this.root}${directory}`)) return result;
+    for (const folder of (await this.adapter.list(`${this.root}${directory}`)).folders.sort()) {
+      for (const file of (await this.adapter.list(folder)).files.sort()) {
+        if (!file.endsWith('.md')) continue;
+        const relative = file.slice(this.root.length), text = await this.read(relative);
+        if (text === null) continue;
+        try { const record = parseSecondaryRecord(text, relative); assertSecondaryPathIdentity(record, folder.split('/').at(-1)!, file.split('/').at(-1)!.slice(0, -3)); result.push(record); }
+        catch (error) { if (error instanceof SecondaryIdentityError) throw error; }
+      }
+    }
+    assertUniqueSecondaryIds(result); return result;
+  }
+  async readVaultId() { return (await this.snapshot()).manifest.vaultId; }
+  async inspect() { const snapshot = await this.snapshot(); return { revision: snapshot.manifest.revision, records: snapshot.records, activity: await this.memoryActivity() }; }
+  async readFixedFiles() { const { user } = await this.snapshot(); return { user, userHash: sha256Hex(user), userBytes: new TextEncoder().encode(user).length }; }
+  async prepareTurnSnapshot(input: Parameters<import('../harness/memory/personal-memory-repository').PersonalMemoryRepository['prepareTurnSnapshot']>[0], runtime?: import('../harness/memory/personal-memory-repository').PersonalMemoryRecallRuntimeContext) {
+    if (input.memoryMode === 'no_memory') return { revision: 0, agent: '', user: null, memory: null, injectionKeys: [], scanned: 0, search: null };
+    const snapshot = await this.snapshot();
+    if (!runtime || runtime.vaultId !== snapshot.manifest.vaultId || runtime.memoryMode !== 'normal') throw new Error('memory_runtime_identity_invalid');
+    const index = buildSearchIndexV3(snapshot.manifest.revision, snapshot.records.map(record => ({ ...record, sourceSummary: summarizeSource(record.source), summary: summarize(record.content) })), indexableSecondaryRecords(snapshot.secondary));
+    const search = await prepareMemoryTurnSearch({ now: this.now, records: snapshot.records, secondary: snapshot.secondary,
+      activity: async (now, preview) => preview ? (await this.activity()).peek(now) : (await this.activity()).snapshot(now),
+      readRecord: async metadata => { const record = snapshot.records.find(item => item.id === metadata.id); if (!record) throw memoryConflict(); return record; }
+    }, { ...input, query: input.query ?? "" }, snapshot.manifest, index, input.selectCandidateIds);
+    return { revision: snapshot.manifest.revision, agent: '', user: snapshot.user, memory: null, injectionKeys: ['echoink.user'], scanned: index.catalog.length, search,
+      core: snapshot.records.filter(record => record.status === 'current' && record.pinned).map(record => ({ id: record.id, title: record.title, revision: record.revision, summary: Array.from(summarize(record.content)).slice(0, 80).join('') })) };
+  }
+  async recordSecondaryRecallHits(hits: readonly { secondaryId: string; parentId: string }[]) {
+    if (!hits.length) return;
+    await this.mutate(undefined, 'secondary-recall-hits', (draft, files) => {
+      draft.secondary = draft.secondary.map(record => {
+        if (!hits.some(hit => hit.secondaryId === record.id && hit.parentId === record.parentId) || record.status !== 'current') return record;
+        const next = applySecondaryHit(record, this.now()); files.set(next.file, serializeSecondaryRecord(next)); return next;
+      });
+    });
+  }
+  async applyCognitiveUpdate(input: Parameters<import('../harness/memory/dream-engine').DreamRepositoryPort['applyCognitiveUpdate']>[0], guard: () => void = () => {}) {
+    const before = await this.snapshot(), extra = input.extraChanges.map(change => ({ ...change })), records = [...before.records];
+    if (before.manifest.revision !== input.expectedMemoryRevision || input.expectedUserProjectionHash !== undefined && sha256Hex(before.user) !== input.expectedUserProjectionHash) throw memoryConflict();
+    await planMemoryAssociations(records, input.associationUpdates, before.manifest.revision + 1, extra, async file => before.originals.get(file) ?? '');
+    const expected = new Map<string, string | null>();
+    for (const change of extra) expected.set(change.relativePath, await this.readAuxiliary(change.relativePath));
+    const after = await this.mutate(input.expectedMemoryRevision, 'dream', (draft, files) => {
+      draft.records = records; draft.secondary = [...input.secondaryRecords];
+      for (const change of extra) { files.set(change.relativePath, change.content ?? null); if (change.relativePath === PROFILE && change.content) draft.profile = parseUserProfileState(JSON.parse(change.content) as Record<string, unknown>)!; }
+      if (input.userContent !== undefined) { draft.user = input.userContent; files.set(`${BASE}USER.md`, input.userContent); }
+    }, guard, expected);
+    return { revision: after.manifest.revision };
+  }
+  private mutationPort(snapshot: MobileCanonicalSnapshot) {
+    return { records: snapshot.records, secondary: snapshot.secondary, profile: snapshot.profile, user: snapshot.user, revision: snapshot.manifest.revision, now: this.now(),
+      readText: async (file: string) => { const text = snapshot.originals.get(file) ?? await this.readAuxiliary(file); if (text === null) throw new Error('memory_source_missing'); return text; },
+      newRecord: (input: Parameters<import('../harness/memory/dream-mutation-plan').DreamMutationPlanPort['newRecord']>[0]) => { const { targetRevision, ...fields } = input; return this.newRecord({ ...fields, revision: targetRevision }); } };
+  }
+  private async publishDreamPlan(snapshot: MobileCanonicalSnapshot, raw: string | null, plan: Awaited<ReturnType<typeof planDreamCorrections>> | Awaited<ReturnType<typeof planUndoDreamCorrection>>, inboxChange?: { relativePath: string; content: string }, guard: () => void = () => {}) {
+    const expected = new Map([[DREAM_STATE_RELATIVE_PATH, raw]]);
+    if (inboxChange) expected.set(inboxChange.relativePath, await this.readAuxiliary(inboxChange.relativePath));
+    return this.mutate(snapshot.manifest.revision, 'dream', (draft, files) => {
+      draft.records = plan.records; draft.secondary = plan.secondary;
+      for (const change of plan.files) { files.set(change.relativePath, change.content ?? null); if (change.relativePath === PROFILE && change.content) draft.profile = parseUserProfileState(JSON.parse(change.content) as Record<string, unknown>)!; }
+      files.set(DREAM_STATE_RELATIVE_PATH, json(plan.state)); if (inboxChange) files.set(inboxChange.relativePath, inboxChange.content);
+    }, guard, expected);
+  }
+  async applyDreamCorrections(input: import('../harness/memory/dream-correction-core').DreamCorrectionBatch, guard: () => void = () => {}) {
+    const snapshot = await this.snapshot(), raw = await this.readAuxiliary(DREAM_STATE_RELATIVE_PATH);
+    if (snapshot.manifest.revision !== input.expectedMemoryRevision) throw memoryConflict();
+    const current = raw === null ? defaultDreamState() : parseDreamState(JSON.parse(raw) as Record<string, unknown>); if (!current) throw invalid();
+    if (new Set(input.mutations.map(item => item.check.memoryId)).size !== input.mutations.length) throw invalid();
+    const plan = await planDreamCorrections(this.mutationPort(snapshot), current, input);
+    const after = await this.publishDreamPlan(snapshot, raw, plan, input.inboxChange, guard);
+    return { revision: after.manifest.revision, replacementIds: plan.replacementIds };
+  }
+  async undoDreamCorrection(id: string) {
+    const snapshot = await this.snapshot(), raw = await this.readAuxiliary(DREAM_STATE_RELATIVE_PATH);
+    const current = raw === null ? defaultDreamState() : parseDreamState(JSON.parse(raw) as Record<string, unknown>); if (!current) throw invalid();
+    const plan = await planUndoDreamCorrection(this.mutationPort(snapshot), current, id); await this.publishDreamPlan(snapshot, raw, plan);
+    return { restoredId: plan.restoredId };
+  }
+  async writeSystemMemory(input: Parameters<import('../harness/memory/dream-engine').DreamRepositoryPort['writeSystemMemory']>[0]) {
+    const snapshot = await this.snapshot(), record = this.newRecord({ ...input, source: 'dream://legacy-user-profile', contentOrigin: 'user_edit', revision: snapshot.manifest.revision + 1 });
+    const after = await this.mutate(snapshot.manifest.revision, 'dream', (draft, files) => { draft.records.push(record); files.set(record.file, serializeCanonicalMemoryRecord(record)); });
+    return { id: record.id, revision: after.manifest.revision };
   }
   async importLegacy(store: MobileStore): Promise<void> {
     if (store.unavailableReason || this.issue()) return;

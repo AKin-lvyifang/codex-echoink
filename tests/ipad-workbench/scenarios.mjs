@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { transcriptSnapshotScenario } from "../mobile-shell/transcript-snapshots.mjs";
 import { createHost, answer } from "../mobile/host.mjs";
 import { gatedStreamFetch } from "../mobile/streaming.mjs";
+import { submissionFeedbackScenario } from "../mobile-shell/submission-feedback.mjs";
+import { companyReportScenario } from "../mobile-shell/company-report.mjs";
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 async function until(check, label) {
@@ -81,6 +84,50 @@ export async function runIPadWorkbenchScenarios(api, win) {
     };
   }
 
+  await test("central task selection takes bounded state snapshots and stays current across 200 rows", async () => {
+    const f = await fixture(), descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(f.store), "state");
+    let reads = 0, center;
+    try {
+      const base = f.store.session;
+      await f.store.update(state => { state.sessions = Array.from({ length: 200 }, (_, index) => ({ ...structuredClone(base), id: `bounded-task-${index}`, title: `事项 ${index}`, updatedAt: Date.now(), taskStatus: "completed", messages: [{ role: "user", content: "固定任务", timestamp: 1 }] })); state.activeSessionId = "bounded-task-0"; state.page = { kind: "detail", taskId: "bounded-task-0" }; });
+      Object.defineProperty(f.store, "state", { configurable: true, get() { reads++; return descriptor.get.call(this); } });
+      center = new api.IPadWorkbench(f.central, f.host); await center.mount(); await settle();
+      assert.equal(f.central.querySelectorAll(".pd-completed-row").length, 200);
+      assert.ok(reads < 30, `200 rows must not each copy the whole store: ${reads}`);
+      assert.equal(f.central.querySelector('[aria-current="page"] .pd-row-title').textContent, "事项 0");
+      await f.store.update(state => { state.activeSessionId = "bounded-task-1"; state.page = { kind: "detail", taskId: "bounded-task-1" }; });
+      f.host.workbench.refreshTasks();
+      assert.equal(f.central.querySelector('[aria-current="page"] .pd-row-title').textContent, "事项 1");
+    } finally { center?.dispose(); delete f.store.state; await f.close(); }
+  });
+  await test("long transcript reads stay bounded while source-path changes invalidate Markdown", async () => {
+    const f = await fixture();
+    try { await transcriptSnapshotScenario(api, f, "pd"); } finally { await f.close(); }
+  });
+  await test("company reports collapse per message and preserve mixed sources across redraws", async () => {
+    const f = await fixture();
+    try { await companyReportScenario(api, win, f, "pd"); } finally { await f.close(); }
+  });
+  await test("pre-admission failure and retry own one explanation and the current preparation steps", async () => {
+    const f = await fixture();
+    try { await submissionFeedbackScenario(api, win, f, "pd"); } finally { await f.close(); }
+  });
+  await test("resume failure uses its submission bubble once; unowned continuation keeps the error notification", async () => {
+    const f = await fixture();
+    try {
+      const taskId = f.store.session.id, submissions = f.runtime.composerSubmissions;
+      const id = f.runtime.beginComposerSubmission({ taskId }, { text: "继续提交失败", attachments: [] });
+      const error = new Error("模型准备失败");
+      const runtime = { composerSubmissions: submissions, stateFor: () => ({ resuming: false }),
+        async submitComposerSubmission() { submissions.fail(id, error.message); throw error; },
+        async resumeTask() { throw error; } };
+      const ctx = { ...f.ctx, host: { ...f.ctx.host, runtime } };
+      await api.requestIPadTaskResume(ctx, taskId, "继续提交失败", undefined, id);
+      assert.equal(submissions.records.get(id).phase, "failed"); assert.equal(f.errors.length, 0);
+      await api.requestIPadTaskResume(ctx, taskId);
+      assert.equal(f.errors.length, 1, "no submission bubble still uses the established error path");
+    } finally { await f.close(); }
+  });
   for (const mode of ["disabled", "enabled", "legacy"]) await test("iPad tool-call guide " + mode + " keeps two buttons and one persisted failure prompt", async () => {
     const f = await fixture();
     try {
@@ -96,10 +143,10 @@ export async function runIPadWorkbenchScenarios(api, win) {
       const page = api.createTaskPage(f.ctx, id); await f.shell.push(page);
       const box = page.content.querySelector(".pd-task-stopbox"), buttons = [...box.querySelectorAll("button")];
       assert.deepEqual(buttons.map(button => button.textContent.trim()), ["上报问题", mode === "disabled" ? "开启工具调用并继续" : "继续"]);
-      assert.equal(page.content.textContent.split("本轮没有执行工具").length - 1, 1);
+      assert.equal(page.content.textContent.split("未实际执行工具调用").length - 1, 1);
       assert.equal(page.content.querySelector('[role="alert"]').hidden, true, "the old error area does not repeat the prompt");
       assert.equal(page.content.textContent.includes("模型设置"), false);
-      if (mode === "enabled") assert.match(box.textContent, /或在 设置 → 模型服务 中更换模型/u);
+      if (mode === "enabled") assert.match(box.textContent, /请在 设置 → 模型服务 中更换模型/u);
       if (mode === "legacy") assert.match(box.textContent, /模型服务 → 对应服务 → 参数 → 对应模型/u);
       if (mode === "disabled") {
         const selected = [f.settings.activeApiProviderId, f.settings.defaultModel]; let sawBothDisabled = false;
@@ -206,6 +253,31 @@ export async function runIPadWorkbenchScenarios(api, win) {
     } finally { await f.close(); }
   });
 
+  await test("new-task pending messages share the iPad task-list scroller and survive a list refresh", async () => {
+    const f = await fixture(); let release;
+    const preparation = new Promise(resolve => { release = resolve; });
+    f.runtime.context = async () => { await preparation; return ""; };
+    try {
+      const { pane } = await f.panes(); await pane.navigate({ kind: "agent", agentId: "agent-b" });
+      input(win, composerInput(f.right), "列表内的新消息"); click(f.right, "发送");
+      await until(() => !!f.runtime.composerScrollTarget("agent:agent-b"), "pre-admission positioning starts");
+      const target = f.runtime.composerScrollTarget("agent:agent-b");
+      const pending = f.right.querySelector(`[data-composer-transfer="${target.turnId}"]`);
+      assert.ok(pending); const scroller = pending.closest(".pd-agent-tasks"); assert.ok(scroller, "pending message is inside the real scrolling list, below the pinned identity");
+      assert.ok(scroller.parentElement.querySelector(".pd-agent-identity"));
+      await f.store.patchSession(f.store.session.id, { agentId: "agent-b", title: "刷新列表的已有任务", taskStatus: "completed", messages: [{ role: "user", content: "合成历史", timestamp: 1 }] });
+      f.host.workbench.refreshTasks();
+      const refreshed = f.right.querySelector(`[data-composer-transfer="${target.turnId}"]`);
+      assert.ok(refreshed); assert.equal(refreshed.closest(".pd-agent-tasks"), scroller);
+      assert.equal(refreshed.querySelector(".echoink-submission-text").textContent, "列表内的新消息");
+      assert.equal(f.runtime.composerScrollTarget("agent:agent-b").sequence, target.sequence);
+      release(); await until(() => f.calls.length === 1 && f.right.querySelector(".pd-task-detail"), "same request enters task detail");
+      assert.equal(f.runtime.composerScrollTarget(target.taskId).sequence, target.sequence);
+      f.calls[0].resolve(answer("openai-completions", "完成"));
+      await until(() => !f.runtime.isBusy(target.taskId), "new task completes");
+    } finally { release(); await f.close(); }
+  });
+
   await test("new-task send is admitted once and failed admission retains the exact original input", async () => {
     const f = await fixture();
     try {
@@ -214,8 +286,8 @@ export async function runIPadWorkbenchScenarios(api, win) {
       const id = f.navigations[0].taskId; assert.notEqual(id, original); assert.equal(f.store.state.sessions.length, 2); assert.equal(field.value, "");
       f.calls[0].resolve(answer("openai-completions", "完成")); await until(() => !f.runtime.isBusy(id), "task complete");
       f.settings.apiProviders[0].apiKey = ""; input(win, field, "失败时逐字保留\n第二行"); click(surface.element, "发送");
-      await until(() => !surface.element.querySelector(".pd-composer-error").hidden, "admission error visible");
-      assert.equal(field.value, "失败时逐字保留\n第二行"); assert.equal(f.store.state.newTaskDrafts["agent-b"].text, field.value); assert.equal(f.store.state.sessions.length, 2); assert.equal(f.calls.length, 1);
+      await until(() => surface.submissions.querySelector(".echoink-submission-error"), "admission error visible on its message");
+      assert.equal(field.value, ""); assert.equal(surface.submissions.querySelector(".echoink-submission-text").textContent, "失败时逐字保留\n第二行"); assert.equal(f.store.state.newTaskDrafts["agent-b"].text, ""); assert.equal(f.store.state.sessions.length, 2); assert.equal(f.calls.length, 1);
     } finally { await f.close(); }
   });
 
@@ -398,7 +470,7 @@ export async function runIPadWorkbenchScenarios(api, win) {
       await f.panes(); await until(() => f.central.querySelectorAll(".pd-signal-row").length === 5, "five initial signals load"); assert.equal(f.central.querySelectorAll(".pd-agent-strip").length, 0);
       click(f.central, "还有 2 条"); assert.equal(f.central.querySelectorAll(".pd-signal-row").length, 7); assert.equal(f.central.querySelector(".pd-section-more").getAttribute("aria-expanded"), "true");
       click(f.central, "收起"); assert.equal(f.central.querySelectorAll(".pd-signal-row").length, 5);
-      const count = f.store.state.sessions.length; f.central.querySelector(".pd-signal-row button").click();
+      const count = f.store.state.sessions.length; click(f.central.querySelector(".pd-signal-row"), "交给 乙助");
       await until(() => f.handoffs.length === 1 && f.store.state.sessions.length === count + 1 && f.calls.length === 1, "handoff admits one responsible employee task");
       const task = f.store.state.sessions.find(task => task.agentId === "agent-b"); assert.ok(task);
       assert.equal(f.store.state.newTaskDrafts["agent-b"], undefined); assert.equal(pageId(f.right), `task:${task.id}`);
@@ -418,11 +490,21 @@ export async function runIPadWorkbenchScenarios(api, win) {
       sse.send({ reasoning_content: "先想" });
       await until(() => !live.hidden && live.querySelector(".pd-task-reasoning")?.open === true, "live thinking open");
       assert.equal(page.content.querySelector(".pd-task-live")?.hidden ?? true, true, "stage loader yields to the live answer");
+      const originalThinking = live.querySelector(".pd-task-reasoning"), originalSummary = originalThinking.querySelector("summary"), originalReasonText = originalThinking.querySelector(".pd-task-reasoning-body").firstChild;
+      sse.send({ reasoning_content: "，再想" });
+      await until(() => live.textContent.includes("先想，再想"), "next reasoning delta shown");
+      assert.equal(live.querySelector(".pd-task-reasoning"), originalThinking);
+      assert.equal(originalThinking.querySelector("summary"), originalSummary);
+      assert.equal(originalThinking.querySelector(".pd-task-reasoning-body").firstChild, originalReasonText);
       sse.send({ content: "第一句" });
       await until(() => live.querySelector(".pd-task-answer-live")?.textContent === "第一句", "live text shown");
+      const originalAnswer = live.querySelector(".pd-task-answer-live"), originalText = originalAnswer.firstChild;
+      sse.send({ content: "，追加" });
+      await until(() => originalAnswer.textContent === "第一句，追加", "answer delta appends to same node");
+      assert.equal(live.querySelector(".pd-task-answer-live"), originalAnswer); assert.equal(originalAnswer.firstChild, originalText);
       sse.send({ content: "，完成" }, "stop"); sse.end(); await submission.completion;
-      await until(() => live.hidden && page.content.querySelector(".pd-task-answer")?.textContent === "第一句，完成", "saved answer replaces live copy");
-      const saved = page.content.querySelector('.pd-task-reasoning[data-tool-id^="reasoning:"]'); assert.ok(saved); assert.equal(saved.open, false);
+      await until(() => live.hidden && page.content.querySelector(".pd-task-answer")?.textContent === "第一句，追加，完成", "saved answer replaces live copy");
+      const saved = page.content.querySelector('.pd-task-reasoning[data-tool-id^="reasoning:"]'); assert.ok(saved); assert.equal(saved.open, false); assert.equal(saved, originalThinking);
       assert.equal(page.content.querySelectorAll(".pd-task-answer").length, 1, "no duplicate answer");
     } finally { await f.close(); }
   });

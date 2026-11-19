@@ -1,4 +1,9 @@
 import type { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
+import { isCompanyProgrammaticUserMessage } from "../company/report-presentation";
+
+export function conversationTitleRequests(messages: readonly { role: string; text: string }[], companyRole?: string): string[] {
+  return messages.filter(message => message.role === "user" && !isCompanyProgrammaticUserMessage(message, companyRole)).map(message => message.text);
+}
 
 export function meaningfulTitleRequest(text: string): boolean {
   const compact = text.replace(/[\s，。！？,.!?~～]+/gu, "").toLowerCase();

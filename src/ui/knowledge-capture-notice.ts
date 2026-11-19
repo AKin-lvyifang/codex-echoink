@@ -1,3 +1,4 @@
+import { errorText, CAUSE } from "../core/error-copy";
 import { Notice, type App } from "obsidian";
 import { ownedEl, ownedFragment } from "./owned-dom";
 
@@ -9,7 +10,7 @@ export function showKnowledgeCaptureSuccessNotice(document: Document, app: App, 
   const open = ownedEl(document, "button");
   open.textContent = language === "en" ? "Open" : "打开";
   open.setAttribute("data-echoink-open-capture", "");
-  open.onclick = () => { void app.workspace.openLinkText(paths[0], "").catch(error => new Notice(error instanceof Error ? error.message : String(error))); };
+  open.onclick = () => { void app.workspace.openLinkText(paths[0], "").catch(error => new Notice(errorText(error, CAUSE.sourceMissing, language))); };
   fragment.append(open);
   return new Notice(fragment);
 }

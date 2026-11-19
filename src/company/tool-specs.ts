@@ -5,7 +5,7 @@ import type { CompanyPlanTask, CompanyReport } from "./types";
 /** What the tools need from the plugin. Every call names the card it comes from. */
 export interface CompanyToolPort {
   roster(): string;
-  dispatch(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none" }>): Promise<string>;
+  dispatch(routerId: string, input: Readonly<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none"; folders?: readonly string[] }>): Promise<string>;
   message(routerId: string, taskId: string, text: string): Promise<string>;
   stop(routerId: string, taskId: string): Promise<string>;
   status(routerId: string, taskId?: string): string;
@@ -36,9 +36,9 @@ export function companyRouterToolSpecs(port: CompanyToolPort, routerId: string):
       parameters: Type.Object({}, { additionalProperties: false }),
       run: () => Promise.resolve(port.roster()) },
     { name: "task_dispatch", label: "派活",
-      description: "把一件活派给一位员工，员工在自己的独立对话里做。立刻返回“已派出”和任务编号，不等做完；做完后员工的汇报会自动回到这张卡片。moduleId 必须说明任务属于哪个模块；只有不属于任何模块的杂活填 none。未指定模块负责人时也必须调用本工具，agentId 可以不填；程序只展示指定入口，不创建任务。brief 写清要做什么、交付什么，一两句话。",
-      parameters: Type.Object({ agentId: Type.Optional(s(128)), moduleId: moduleSchema(), brief: s(1000), title: Type.Optional(s(64)) }, { additionalProperties: false }),
-      run: args => port.dispatch(routerId, shaped<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none" }>(args)) },
+      description: "把一件活派给一位员工，员工在自己的独立对话里做。立刻返回“已派出”和任务编号，不等做完；做完后员工的汇报会自动回到这张卡片。moduleId 必须说明任务属于哪个模块；只有不属于任何模块的杂活填 none。未指定模块负责人时也必须调用本工具，agentId 可以不填；程序只展示指定入口，不创建任务。brief 写清要做什么、交付什么，一两句话。员工天然能读整个库、能写自己模块的文件夹；这件活要写到别的文件夹时（比如用户自己的账本目录），用 folders 列出要开放写入的库内文件夹，只对这件活有效。",
+      parameters: Type.Object({ agentId: Type.Optional(s(128)), moduleId: moduleSchema(), brief: s(1000), title: Type.Optional(s(64)), folders: Type.Optional(Type.Array(s(400), { maxItems: 20 })) }, { additionalProperties: false }),
+      run: args => port.dispatch(routerId, shaped<{ agentId?: string; brief: string; title?: string; moduleId?: AgentModuleId | "none"; folders?: string[] }>(args)) },
     { name: "task_message", label: "给员工带话",
       description: "给一件已派出的活补充要求或转达用户的回答。员工正在做时作为插话送到，做完当前一步就看到；已停下时会接着做。",
       parameters: Type.Object({ taskId: s(256), text: s(2000) }, { additionalProperties: false }),

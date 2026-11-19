@@ -1,4 +1,5 @@
 import type { App } from "obsidian";
+import { NEXT } from "../core/error-copy";
 import type { DiaryRepository } from "../english-diary/types";
 import { renderDiaryProgress } from "../english-diary/activity";
 import { renderActivityHeatmap } from "./activity-heatmap";
@@ -31,7 +32,7 @@ export async function renderEnglishDiaryActivity(
   } catch {
     if (!container.contains(loading)) return;
     container.empty();
-    container.createEl("p", { cls: "settings-note", text: "暂时无法读取日记足迹，请重试。", attr: { role: "status" } });
+    container.createEl("p", { cls: "settings-note", text: `日记足迹未能读取。${NEXT.retry[0]}`, attr: { role: "status" } });
     const retry = createOriginButton(container, { text: "重试", attr: { type: "button" } });
     retry.onclick = () => { void renderEnglishDiaryActivity(container, repository, app); };
   }

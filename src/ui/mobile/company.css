@@ -190,3 +190,25 @@
 @media (max-width: 760px) { .echoink-ipad .pd-project-page { padding: 16px; } }
 
 :is(.echoink-iphone, .echoink-ipad) button.emc-output { width: 100%; justify-content: flex-start; text-align: left; }
+
+/* Remote (another device) decisions: reply line and request status */
+:is(.echoink-iphone, .echoink-ipad) .emc-decision-reply { display: flex; gap: 8px; padding-left: 30px; }
+:is(.echoink-iphone, .echoink-ipad) .emc-decision-reply .emc-input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 0 10px; border: 1px solid var(--emc-line); border-radius: 10px; background: transparent; color: var(--emc-ink); font: inherit; }
+:is(.echoink-iphone, .echoink-ipad) .emc-request-status { padding-left: 30px; white-space: normal; }
+:is(.echoink-iphone, .echoink-ipad) .emc-request-status.is-adopted { color: var(--emc-ink); }
+:is(.echoink-iphone, .echoink-ipad) .emc-request-status.is-offline { color: var(--emc-wait); }
+:is(.echoink-iphone, .echoink-ipad) .emc-device { gap: 4px; }
+
+/* Other devices' conversations: home list and read-only page */
+:is(.echoink-iphone, .echoink-ipad) .emc-conversations { display: flex; flex-direction: column; gap: 8px; }
+:is(.echoink-iphone, .echoink-ipad) button.emc-conversation { appearance: none; display: flex; align-items: center; gap: 10px; width: 100%; height: auto; margin: 0; padding: 10px 12px; border: 1px solid var(--emc-line); border-radius: 12px; box-shadow: none; background: transparent; color: var(--emc-ink); font: inherit; text-align: left; cursor: pointer; }
+:is(.echoink-iphone, .echoink-ipad) .emc-conversation-title { font-weight: 600; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.echoink-iphone, .echoink-ipad) .emc-conversation-sub { color: var(--emc-muted); font-size: calc(var(--emc-font) * .75); line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-conversation { display: flex; flex-direction: column; gap: 12px; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-messages { display: flex; flex-direction: column; gap: 10px; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-msg { padding: 8px 12px; border-radius: 12px; border: 1px solid var(--emc-line); white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-msg.is-user { margin-left: 24px; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-msg.is-assistant { margin-right: 24px; }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-msg.is-tool { border: 0; padding: 0 12px; color: var(--emc-muted); font-size: calc(var(--emc-font) * .75); }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-msg-who { color: var(--emc-muted); font-size: calc(var(--emc-font) * .75); }
+:is(.echoink-iphone, .echoink-ipad) .emc-remote-actions { display: flex; justify-content: flex-end; }

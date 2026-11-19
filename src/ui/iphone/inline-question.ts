@@ -1,7 +1,9 @@
 import type { EchoInkQuestionAnswer } from "../../types/conversation-turn";
 import type { MobileTaskInteraction } from "../../mobile/task-contracts";
 import type { IPhonePageContext } from "./workbench-contract";
+import { settingsErrorText } from "../../core/error-copy";
 import { shellElement } from "../mobile/shell-controls";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 
 const flights = new WeakMap<object, Set<string>>();
 const identity = (interaction: MobileTaskInteraction) => JSON.stringify([interaction.taskId, interaction.runId, interaction.questionId, interaction.createdAt, interaction.questions]);
@@ -47,7 +49,7 @@ export function createInlineQuestion(ctx: IPhonePageContext, taskId: string, onA
       succeeded = true;
       if (!disposed && submittedKey === key) { if (sheet) ctx.shell.closeSheet(); element.hidden = true; }
     } catch (failure) {
-      if (!disposed && submittedKey === key) { error = failure instanceof Error ? failure.message : String(failure); updateControls(); }
+      if (!disposed && submittedKey === key) { error = settingsErrorText(failure, SETTINGS_FALLBACK.mobileTask, ctx.host.settings().settingsLanguage); updateControls(); }
     } finally { pending.delete(submittedKey); if (!disposed) { refresh(); updateControls(); } }
     // Runtime notification can remove the waiting card before admission resolves.
     // The owning page decides whether its navigation callback is still current.

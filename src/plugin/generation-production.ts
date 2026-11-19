@@ -12,6 +12,7 @@ import type { PiVaultToolAuthorizationPort } from "../harness/pi-native/pi-vault
 import { isWriteToolAuthorizationContext } from "../harness/pi-native/tool-authorization";
 import { assertDrawingBinding, finishDrawing } from "./drawing-production";
 import { getExcalidrawService } from "../excalidraw/service";
+import { userFacingErrorText } from "../core/error-copy";
 export interface GenerationProductionOptions {
   app: App;
   vaultRoot: string;
@@ -106,11 +107,11 @@ export function createGenerationRuntimePort(options: GenerationProductionOptions
         result.path = target;
         result.writeState = receipt.status === "completed" && receipt.readbackVerified ? "verified" : receipt.sideEffectStarted && !receipt.readbackVerified ? "unconfirmed" : "not_written";
         if (result.writeState === "not_written") delete result.path;
-        if (result.writeState !== "verified") result.error = result.writeState === "unconfirmed" ? "写入结果未确认，请先核对文件，不要重复生成。" : "尚未写入文件。";
+        if (result.writeState !== "verified") result.error = result.writeState === "unconfirmed" ? "写入结果未能确认。请先核对目标文件，不要重复生成。" : "尚未写入文件。";
         return result;
       } catch (error) {
         if (result.writeState === "not_written") delete result.path;
-        result.error = result.writeState === "unconfirmed" ? "写入结果未确认，请先核对文件，不要重复生成。" : identity.signal.aborted ? "已取消，尚未写入文件。" : error instanceof Error ? error.message : "生成失败，尚未写入文件。";
+        result.error = result.writeState === "unconfirmed" ? "写入结果未能确认。请先核对目标文件，不要重复生成。" : identity.signal.aborted ? "已取消，尚未写入文件。" : userFacingErrorText(error, "内容未能生成，尚未写入文件。请稍后重试。");
         return result;
       }
     }

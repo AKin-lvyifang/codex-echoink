@@ -7,6 +7,7 @@ import {
   resolveMcpConnectionRecord
 } from "../resources/mcp-connections";
 import { inspectMcpToolList } from "../resources/mcp-tool-catalog";
+import { mcpDiagnosticText } from "../core/error-copy";
 import type {
   EchoInkMcpConnectionRecord,
   EchoInkMcpCredentialPurpose,
@@ -177,7 +178,7 @@ export class EchoInkMcpSettingsService {
         upsertResource(this.host.settings.resources.catalog, resource);
         const connection = this.materializeConnection(resource);
         connection.verifiedAt = undefined;
-        connection.diagnostic = diagnosticFromError(error);
+        connection.diagnostic = diagnosticFromError(error, this.host.settings.settingsLanguage);
         connection.lastError = connection.diagnostic.message;
       }));
       throw error;
@@ -195,7 +196,7 @@ export class EchoInkMcpSettingsService {
       connection.verifiedAt = connection.discoveredAt;
       connection.lastError = "";
       connection.diagnostic = inspected.warnings.length
-        ? diagnostic("schema_invalid", inspected.warnings.join(" "))
+        ? diagnostic("schema_invalid", this.host.settings.settingsLanguage)
         : undefined;
       resultDiagnostic = connection.diagnostic;
     }));
@@ -574,17 +575,18 @@ function assertCredentialTargetIsSeparate(
   }
 }
 
-function diagnostic(code: EchoInkMcpDiagnosticCode, message: string): EchoInkMcpDiagnostic {
+/** Stores the code; the message is the fixed sentence in the interface language, never raw server text. */
+function diagnostic(code: EchoInkMcpDiagnosticCode, language?: string): EchoInkMcpDiagnostic {
   return Object.freeze({
     code,
-    message: sanitizeSingleLine(message).slice(0, 500),
+    message: mcpDiagnosticText(code, language),
     occurredAt: Date.now()
   });
 }
 
-function diagnosticFromError(error: unknown): EchoInkMcpDiagnostic {
+function diagnosticFromError(error: unknown, language?: string): EchoInkMcpDiagnostic {
   if (error instanceof EchoInkMcpBrokerError) {
-    return diagnostic(error.code, safeDiagnosticMessage(error.code));
+    return diagnostic(error.code, language);
   }
   const message = error instanceof Error ? error.message : String(error);
   const code: EchoInkMcpDiagnosticCode = /credential|auth|unauthori[sz]ed|\b401\b|\b403\b/iu.test(message)
@@ -594,24 +596,11 @@ function diagnosticFromError(error: unknown): EchoInkMcpDiagnostic {
       : /closed|exited|disconnect|econnreset/iu.test(message)
         ? "disconnected"
         : "connection_failed";
-  return diagnostic(code, safeDiagnosticMessage(code));
+  return diagnostic(code, language);
 }
 
 function hasLineBreakOrNull(value: string): boolean {
   return /[\r\n]/u.test(value) || value.includes("\u0000");
-}
-
-function sanitizeSingleLine(value: string): string {
-  return value.replaceAll("\u0000", " ").replace(/[\r\n]+/gu, " ").trim();
-}
-
-function safeDiagnosticMessage(code: EchoInkMcpDiagnosticCode): string {
-  if (code === "authentication_failed") return "MCP 认证失败，请检查 Credential。";
-  if (code === "timeout") return "MCP 连接或请求超时。";
-  if (code === "disconnected") return "MCP Server 已断线。";
-  if (code === "schema_invalid") return "MCP Tool Schema 非法。";
-  if (code === "call_failed") return "MCP Tool 调用失败。";
-  return "MCP 连接失败，请检查传输配置。";
 }
 
 function compactConnection<T extends EchoInkMcpConnectionRecord>(connection: T): T {

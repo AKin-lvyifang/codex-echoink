@@ -1033,7 +1033,7 @@ function buildWarnings(input: { rawExists: boolean; wikiExists: boolean; tracker
   if (!input.rawExists) warnings.push("raw 目录缺失");
   if (!input.wikiExists) warnings.push("wiki 目录缺失");
   if (!input.trackerExists) warnings.push("tracker 缺失");
-  if (input.lastError.trim()) warnings.push("最近任务有错误");
+  if (input.lastError.trim()) warnings.push("最近一次任务未能完成");
   if (input.scanLimited) warnings.push("文件较多，仅统计前 3000 个");
   return warnings;
 }

@@ -1,3 +1,4 @@
+import { actionFailureText } from "../core/error-copy";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ItemView, Notice, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -110,7 +111,7 @@ export class EchoInkJournalView extends ItemView {
     } catch (error) {
       if (this.closed || generation !== this.generation) return;
       const status = this.field("status"); disposeOriginControls(status); status.empty();
-      status.createSpan({ text: this.t("日记暂时读不到", "Journals are unavailable") + `：${error instanceof Error ? error.message : String(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : "") });
+      status.createSpan({ text: this.t("日记暂时无法读取", "Journals are unavailable") + `：${error instanceof Error ? error.message : String(error)}` + (this.snapshot ? this.t(" · 尚未更新", " · Not updated") : "") });
       this.button(status, this.t("重试", "Retry"), () => this.refresh());
     }
   }
@@ -125,7 +126,7 @@ export class EchoInkJournalView extends ItemView {
           button.disabled = true; setAmicroButtonPending(button, true);
           try { await result; } finally { button.disabled = false; setAmicroButtonPending(button, false); }
         }
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+      } catch (error) { new Notice(actionFailureText(error, this.plugin.settings.settingsLanguage)); }
     };
     return button;
   }
@@ -276,7 +277,7 @@ export class EchoInkJournalView extends ItemView {
         if (this.closed || generation !== this.listGeneration) return;
         this.summaries.set(entry.path, { mtime: entry.mtime, text }); summary.setText(text);
       } catch {
-        if (!this.closed && generation === this.listGeneration) summary.setText((this.summaries.get(entry.path)?.text ?? "") + this.t(" · 尚未更新：这篇日记暂时读不到", " · Not updated: this journal is unavailable"));
+        if (!this.closed && generation === this.listGeneration) summary.setText((this.summaries.get(entry.path)?.text ?? "") + this.t(" · 尚未更新：这篇日记暂时无法读取", " · Not updated: this journal is unavailable"));
       }
     });
     await Promise.all(reads);

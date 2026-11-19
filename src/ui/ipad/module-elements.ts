@@ -1,5 +1,7 @@
 import type { MobileShellPage } from "../mobile/shell-types";
 import type { IPadPageContext } from "./workbench-contract";
+import { settingsErrorText } from "../../core/error-copy";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { ipadElement as el, ipadIcon, ipadAvatar } from "./workbench-elements";
 
 export { el };
@@ -54,7 +56,7 @@ export function moduleView(ctx: IPadPageContext, id: string, title: string, modu
   const view = { content, body, fields, feedback, page, get alive() { return !disposed; }, get busy() { return busy; }, dirty: () => false, discard: () => {}, onBusy: (_busy: boolean) => {},
     setTitle: (value: string) => { page.title = value; const own = header.querySelector("h1"); if (own) own.textContent = value; const panel = content.closest(".echoink-ipad-page"); panel?.setAttribute("aria-label", value); const shellTitle = panel?.querySelector(".echoink-ipad-title"); if (shellTitle) shellTitle.textContent = value; },
     changed: () => { feedback.hidden = true; allowed = false; }, allow: () => { allowed = true; },
-    report: (error: unknown) => { if (!disposed) { const message = error && typeof error === "object" && "message" in error ? String(error.message) : String(error); feedback.hidden = false; feedback.setAttribute("role", "alert"); feedback.textContent = /finance_(?:version|readback)|todo_source_changed/u.test(message) ? moduleText(ctx, "内容已变化，请重新读取；输入已保留。", "Content changed. Reload; your draft is retained.") : message; } },
+    report: (error: unknown) => { if (!disposed) { const message = error && typeof error === "object" && "message" in error ? String(error.message) : String(error), shown = settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, ctx.host.settings().settingsLanguage); feedback.hidden = false; feedback.setAttribute("role", "alert"); feedback.textContent = /finance_(?:version|readback)|todo_source_changed/u.test(message) ? moduleText(ctx, "内容已变化，请重新读取；输入已保留。", "Content changed. Reload; your draft is retained.") : shown; } },
     status: (message: string) => { if (!disposed) { feedback.textContent = message; feedback.hidden = !message; feedback.setAttribute("role", "status"); } },
     cleanup: (dispose: () => void) => cleanup.push(dispose),
     async read<T>(load: () => Promise<T>, render: (value: T) => void): Promise<void> {

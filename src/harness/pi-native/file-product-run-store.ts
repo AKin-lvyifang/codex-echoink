@@ -351,6 +351,15 @@ export class FileProductRunStore {
     return runs.sort((a, b) => a.createdAt - b.createdAt || a.productRunId.localeCompare(b.productRunId));
   }
 
+  /** A provenance lookup must not initialize or scan the historical run index. */
+  async readReadOnly(productRunId: string): Promise<Readonly<PiProductRunRecord> | null> {
+    const id = requireNonEmptyString(productRunId, "productRunId");
+    const loaded = await this.loadProductRunFile(this.runFilePath(id), `ProductRun ${id}`);
+    if (!loaded) return null;
+    if (loaded.run.productRunId !== id) throw new PiNativeFileStoreError("store-corrupt", "ProductRun file identity mismatch");
+    return cloneProductRun(loaded.run);
+  }
+
   private runFilePath(productRunId: string): string {
     return path.join(
       this.rootPath,

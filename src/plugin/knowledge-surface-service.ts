@@ -28,6 +28,10 @@ import { knowledgeErrorDetail } from "../knowledge-base/initialization-error";
 import { InitializationDirectoryHistory, type DirectoryModuleSettings } from "../knowledge-base/initialization-directory-history";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopFsPromises } from "../platform/desktop-filesystem";
+import { CAUSE, userFacingErrorText } from "../core/error-copy";
+
+/** User-facing reason clause: Chinese reasons pass through; codes and English exceptions become the fallback. */
+const reasonText = (error: unknown, fallback: string): string => userFacingErrorText(knowledgeErrorDetail(error), fallback, "zh").replace(/[。.]$/u, "");
 import { getDesktopPath } from "../platform/desktop-paths";
 
 import { normalizePath, Notice, TFolder, TFile } from "obsidian";
@@ -268,7 +272,7 @@ export class EchoInkKnowledgeSurfaceService {
       const target = file.path;
       if (this.ownedRenames.has(`${oldPath}→${target}`)) return;
       const folder = file instanceof TFolder;
-      this.renameSyncQueue = this.renameSyncQueue.then(() => this.syncRenamedPaths(oldPath, target, folder)).catch((error) => { this.folderOperationMessage = `目录或历史路径同步未完成：${knowledgeErrorDetail(error)}`; });
+      this.renameSyncQueue = this.renameSyncQueue.then(() => this.syncRenamedPaths(oldPath, target, folder)).catch((error) => { this.folderOperationMessage = `目录或历史路径未能同步：${reasonText(error, "目录状态已变化")}。请在“目录管理”中重新预览并核对。`; });
     }));
     plugin.registerEvent(plugin.app.vault.on("delete", file => {
       if (file instanceof TFolder) plugin.refreshFolderSettingsSurfaces?.();
@@ -385,7 +389,7 @@ export class EchoInkKnowledgeSurfaceService {
           if (await knowledgeInitializationPathHasSymbolicLink(this.plugin.getVaultPath(), change.from)) throw new Error("符号链接目录保持原位");
           await this.renameTracked(change.from, change.to);
           result.renamed.push(change);
-        } catch (error) { result.skipped.push({ path: change.from, reason: knowledgeErrorDetail(error) }); }
+        } catch (error) { result.skipped.push({ path: change.from, reason: reasonText(error, "目录状态已变化，已保留原名称") }); }
       }
       this.plugin.refreshKnowledgeBaseSurfaces();
       return result;
@@ -770,7 +774,7 @@ export class EchoInkKnowledgeSurfaceService {
         else if (this.plugin.settings.pdfReading.originalDirectory !== undefined) assertKnowledgeModulePath(this.plugin.settings.pdfReading.originalDirectory, "原 PDF 目录");
       }
       validateDirectoryModuleSettings(original); validateDirectoryModuleSettings(applied);
-    } catch (error) { plan.issues.push(knowledgeErrorDetail(error)); }
+    } catch (error) { plan.issues.push(`${reasonText(error, "目录设置未通过检查")}。请重新选择后再预览。`); }
     if (await this.directorySettingsSignature() !== baseSettingsSignature || knowledgeFolderBindingsSignature(this.plugin.settings.knowledgeBase.folderBindings) !== knowledgeFolderBindingsSignature(baseline)) {
       plan.issues.push("文件或设置已变化，请重新核对。");
     }
@@ -856,11 +860,11 @@ export class EchoInkKnowledgeSurfaceService {
       catch (failure) {
         // A concurrent first output save can have committed a newer binding.
         // This transaction must not erase its cleared first-save marker.
-        if (this.plugin.settings.knowledgeBase.folderBindings !== next) throw new Error(`绑定保存失败，保留较新的配置：${knowledgeErrorDetail(failure)}`);
+        if (this.plugin.settings.knowledgeBase.folderBindings !== next) throw new Error("目录绑定未能保存，已保留较新的配置。请重新打开此页面核对目录设置。");
         this.plugin.settings.knowledgeBase.folderBindings = previous;
         let recovery = "";
-        try { await this.plugin.saveSettings(true); } catch (error) { recovery = `；原配置恢复保存失败：${knowledgeErrorDetail(error)}`; }
-        throw new Error(`绑定未保存，原绑定保留：${knowledgeErrorDetail(failure)}${recovery}`);
+        try { await this.plugin.saveSettings(true); } catch { recovery = "原配置也未能恢复保存。请重新加载插件后核对目录设置。"; }
+        throw new Error(`目录绑定未能保存：${reasonText(failure, "设置文件暂时无法写入")}。${recovery || "已保留原绑定，请稍后重试；如问题持续，请点击“上报问题”。"}`);
       }
       this.dashboardSnapshot = null;
       this.plugin.refreshKnowledgeBaseSurfaces();
@@ -1002,32 +1006,32 @@ export class EchoInkKnowledgeSurfaceService {
         const recovery: string[] = [];
         if (nativeJournalChanged && nativeJournal) {
           try { await nativeJournal.restore(); }
-          catch (error) { recovery.push(`Obsidian 日记设置恢复：${knowledgeErrorDetail(error)}`); }
+          catch (error) { recovery.push(`Obsidian 日记设置恢复：${reasonText(error, "未能恢复")}`); }
         }
         // renameFile may have completed before an integration sync failed.
         const moved = plan.moves.filter(move => !this.plugin.app.vault.getAbstractFileByPath(move.from) && this.plugin.app.vault.getAbstractFileByPath(move.to));
         for (const move of [...moved].reverse()) {
           try { await this.renameTracked(move.to, move.from); }
-          catch (error) { recovery.push(`${move.to} → ${move.from}：${knowledgeErrorDetail(error)}`); }
+          catch (error) { recovery.push(`${move.to} → ${move.from}：${reasonText(error, "未能移回")}`); }
         }
         for (const directory of [...result.created].reverse()) {
           try { await this.removeEmptyCreatedFolder(directory); }
-          catch (error) { recovery.push(`${directory}：${knowledgeErrorDetail(error)}`); }
+          catch (error) { recovery.push(`${directory}：${reasonText(error, "未能移除")}`); }
         }
         if (!options.onboarding && moduleSettings && plan.moduleDirectories) {
           try { await this.directoryHistory.recordModuleSettings(moduleSettings, this.directoryModuleSettings(choices)); }
-          catch (error) { recovery.push(`模块目录恢复记录：${knowledgeErrorDetail(error)}`); }
+          catch (error) { recovery.push(`模块目录恢复记录：${reasonText(error, "未能保存")}`); }
         }
-        try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${knowledgeErrorDetail(error)}`); }
+        try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置恢复：${reasonText(error, "未能保存")}`); }
         if (onboardingCaptured && !recovery.length) await this.directoryHistory.clearOnboardingSetup();
-        throw new Error(`目录方案未应用：${knowledgeErrorDetail(failure)}。${recovery.length ? `仍需恢复 ${recovery.length} 项：${recovery.join("；")}。可在目录管理复原仓库。` : `已恢复本次搬迁的 ${moved.length} 个文件，原配置保留；请重新预览。`}`);
+        throw new Error(`目录方案未能应用：${reasonText(failure, "设置或文件暂时无法写入")}。${recovery.length ? `仍需恢复 ${recovery.length} 项：${recovery.join("；")}。请在“目录管理”中点击“复原仓库”。` : `已恢复本次搬迁的 ${moved.length} 个文件，原配置保留；请重新预览。`}`);
       }
       if (optimize && plan.sources.length) {
         try { resolveKnowledgeMaintenanceSubmitSnapshot(this.plugin.settings); }
-        catch (error) { result.refinementError = `目录配置已完成，提炼尚未开始：${knowledgeErrorDetail(error)}`; }
+        catch (error) { result.refinementError = `目录配置已完成，提炼尚未开始：${reasonText(error, CAUSE.providerNotConfigured[0])}`; }
         if (!result.refinementError) {
           try { await this.initializer.startBoundOptimization(plan.sources, plan.baseRevision + 1); result.refinement = "started"; }
-          catch (error) { result.refinement = "failed"; result.refinementError = `目录配置已完成，提炼启动失败：${knowledgeErrorDetail(error)}`; }
+          catch (error) { result.refinement = "failed"; result.refinementError = `目录配置已完成，提炼未能启动：${reasonText(error, "请稍后在“目录管理”中重试")}。`; }
         }
       }
       this.dashboardSnapshot = null;
@@ -1116,10 +1120,10 @@ export class EchoInkKnowledgeSurfaceService {
       settings.pdfReading = previous.pdf;
       settings.knowledgeBase.autoLinkEnabled = previousAutoLink;
       const recovery: string[] = [];
-      if (native) try { await native.restore(); } catch (error) { recovery.push(`Obsidian 日记设置：${knowledgeErrorDetail(error)}`); }
+      if (native) try { await native.restore(); } catch (error) { recovery.push(`Obsidian 日记设置：${reasonText(error, "未能恢复")}`); }
       this.plugin.englishDiary?.refreshStoragePaths();
-      try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置保存：${knowledgeErrorDetail(error)}`); }
-      throw new Error(`模块目录复原未完成：${knowledgeErrorDetail(failure)}。${recovery.length ? `仍需恢复：${recovery.join("；")}` : "原模块设置已保留，请重试"}`);
+      try { await this.plugin.saveSettings(true); } catch (error) { recovery.push(`配置保存：${reasonText(error, "未能保存")}`); }
+      throw new Error(`模块目录未能复原：${reasonText(failure, "设置或文件暂时无法写入")}。${recovery.length ? `仍需恢复：${recovery.join("；")}。请重新加载插件后核对目录设置。` : "已保留原模块设置，请重试。"}`);
     }
   }
 

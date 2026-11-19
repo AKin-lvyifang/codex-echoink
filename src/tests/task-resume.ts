@@ -130,7 +130,7 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     const general = plugin.settings.agentRegistry.agents.find((agent: any) => agent.id === "sol");
     general.disabledCapabilityIds = ["knowledge"];
     const beforeCapabilityFailure = requests;
-    await assert.rejects(plugin.resumeTask("A"), /能力已被关闭/);
+    await assert.rejects(plugin.resumeTask("A"), /未开启「.*」。请在 Agent 设置/);
     assert.equal(requests, beforeCapabilityFailure);
     assert.equal((await f.catalog.get("A"))!.taskStatus, "interrupted");
     const previousDesktop = Platform.isDesktopApp; Platform.isDesktopApp = true;
@@ -210,7 +210,7 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     assert.equal(unhandled, false);
     assert.equal(detailResultSettled, false, "P5 reports preflight failure after opening the detail");
     openGate.resolve();
-    await assert.rejects(openingFailure, /任务已不存在/); await observedOpeningFailure;
+    await assert.rejects(openingFailure, /该任务已删除/); await observedOpeningFailure;
     assert.equal(plugin.opened, "missing-task");
     process.off("unhandledRejection", rejectionListener); plugin.openTaskDetail = actualOpen;
 
@@ -238,7 +238,7 @@ export async function runTaskResumeTests(root: string, createHost: (...args: any
     const actualList = local.productRuns.listReadOnly.bind(local.productRuns);
     local.productRuns.listReadOnly = async () => [];
     assert.equal((await plugin.readTaskInterruption("delete-task")).reason, "process_unknown");
-    await assert.rejects(plugin.resumeTask("delete-task"), /没有可核对的运行记录/);
+    await assert.rejects(plugin.resumeTask("delete-task"), /缺少可核对的运行记录/);
     local.productRuns.listReadOnly = actualList;
     // Exercise the production preflight with a failed target distinct from the global default.
     const originalSettings = structuredClone(plugin.settings);

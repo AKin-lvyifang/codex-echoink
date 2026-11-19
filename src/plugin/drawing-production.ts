@@ -9,6 +9,7 @@ import { parseGenerationModelJson } from "../generation/request";
 import type { GenerationRequest, GenerationResult } from "../generation/types";
 import type { GenerationExecutionIdentity, GenerationStage } from "../generation/runtime";
 import type { GenerationProductionOptions } from "./generation-production";
+import { userFacingErrorText } from "../core/error-copy";
 
 export function assertDrawingDestination(options: Pick<GenerationProductionOptions, "app" | "bindings">, expectedDirectory?: string): string {
   const reason = getExcalidrawService(options.app).disabledReason(); if (reason) throw new Error(reason);
@@ -45,10 +46,10 @@ export async function finishDrawing(options: GenerationProductionOptions, reques
     result.path = path; result.writeState = "unconfirmed";
     if (!receipt.verified) { result.error = receipt.error; return result; }
     result.writeState = "verified";
-    try { await service.openOnce(request.id, path); } catch { result.error = "图已保存，请点击打开按钮查看。"; }
+    try { await service.openOnce(request.id, path); } catch { result.error = "手绘图已保存，但未能自动打开。请点击“打开”查看。"; }
     return result;
   } catch (error) {
-    result.error = identity.signal.aborted ? "已取消，尚未创建手绘图。" : error instanceof Error ? error.message : "手绘图生成失败。";
+    result.error = identity.signal.aborted ? "已取消，尚未创建手绘图。" : userFacingErrorText(error, "手绘图未能生成。请稍后重试。");
     return result;
   }
 }

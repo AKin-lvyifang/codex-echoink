@@ -133,7 +133,7 @@ export async function runInitializationRegressions(api, fixture, build) {
       const record = { schema: 2, id: "folders-invalid-delta", createdAt: Date.now(), kind: "initialize", status: "completed",
         positions: [], actions: [], created: [], linkHashes: {}, ...invalid };
       await f.write(`.obsidian/plugins/echoink/mobile/knowledge-folders-v1/${record.id}.json`, JSON.stringify({ schema: 1, payload: record, checksum: api.digest(record) }));
-      await assert.rejects(f.cold().read(), /目录事务/u);
+      await assert.rejects(f.cold().read(), /目录操作记录/u);
     }
   });
   return passed;

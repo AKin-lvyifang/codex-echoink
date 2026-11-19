@@ -1,3 +1,4 @@
+import { bindPressFeedback } from "../ui/press-feedback";
 import { watchImeComposition } from "../ui/ime-composition";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
@@ -145,7 +146,8 @@ export function createOriginCheck(parent: HTMLElement, options: ElementOptions =
 }
 
 export type OriginSelectElement = HTMLButtonElement & { value: string };
-type OriginSelectOption = { value: string; label: string; disabled?: boolean; renderIcon?: (container: HTMLElement) => void; group?: string };
+export type OriginSelectPresentation = { detail?: string; wrapLabel?: boolean };
+type OriginSelectOption = OriginSelectPresentation & { value: string; label: string; disabled?: boolean; renderIcon?: (container: HTMLElement) => void; group?: string };
 export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   choices: readonly OriginSelectOption[], initialValue = "", app?: Pick<App, "keymap" | "scope">) {
   const island = createIsland(parent);
@@ -155,7 +157,12 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   let open = false;
   let popupElement: HTMLDivElement | null = null;
   const ownerDocument = parent.ownerDocument;
-  const setPopupElement = (element: HTMLDivElement | null) => { popupElement = element; };
+  let popupPressDispose: (() => void) | undefined;
+  const setPopupElement = (element: HTMLDivElement | null) => {
+    if (popupElement === element) return;
+    popupPressDispose?.(); popupPressDispose = undefined; popupElement = element;
+    if (element && parent.closest("[data-echoink-press-scope]")) popupPressDispose = bindPressFeedback(element);
+  };
   const onOutsidePointerDown = (event: PointerEvent) => {
     // Radix's outside handler uses the main realm's Node constructor. A node
     // from an independent settings window fails that check. Capture in the
@@ -211,14 +218,15 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   island.onDispose(() => {
     clearEscapeScope();
     ownerDocument.removeEventListener("pointerdown", onOutsidePointerDown, true);
-    popupElement = null;
+    popupPressDispose?.(); popupPressDispose = undefined; popupElement = null;
   });
   const emptyValue = "__echoink_empty_selection__";
-  const renderLabel = (item: OriginSelectOption) => item.renderIcon ? <span className="echoink-origin-select-label">
-          <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) { container.replaceChildren(); item.renderIcon!(container); } }} />
+  const renderLabel = (item: OriginSelectOption, expanded = false) => item.renderIcon || (expanded && item.wrapLabel) ? <span className={`echoink-origin-select-label${expanded && item.wrapLabel ? " is-xiaoecho-model" : ""}`}>
+          {item.renderIcon && <span className="echoink-origin-select-icon" aria-hidden="true" ref={(container) => { if (container) { container.replaceChildren(); item.renderIcon!(container); } }} />}
           <span className="echoink-origin-select-text">{item.label}</span>
+          {expanded && item.detail && <span className="echoink-origin-select-detail">{item.detail}</span>}
         </span> : item.label;
-  const renderItem = (item: OriginSelectOption) => <SelectItem className="echoink-origin-control" key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>{renderLabel(item)}</SelectItem>;
+  const renderItem = (item: OriginSelectOption) => <SelectItem className={`echoink-origin-control${item.wrapLabel ? " is-xiaoecho-model" : ""}`} key={item.value} value={item.value || emptyValue} disabled={item.disabled} textValue={item.label}>{renderLabel(item, true)}</SelectItem>;
   const renderValue = () => { const selected = items.find(item => item.value === value); return selected ? renderLabel(selected) : undefined; };
   const render = () => island.render(<Select value={value || emptyValue} disabled={disabled} open={open} onOpenChange={setOpen} onValueChange={(next) => {
     value = next === emptyValue ? "" : next; render();
@@ -260,7 +268,7 @@ export function createOriginSelect(parent: HTMLElement, options: ElementOptions,
   Object.defineProperty(element, "disabled", { get: () => disabled, set: (next: boolean) => { disabled = Boolean(next); render(); } });
   decorate(element, options);
   return { element,
-    addOption(next: string, label: string, renderIcon?: OriginSelectOption["renderIcon"], group?: string) { items.push({ value: next, label, renderIcon, group }); if (!value) value = next; render(); },
+    addOption(next: string, label: string, renderIcon?: OriginSelectOption["renderIcon"], group?: string, presentation?: OriginSelectPresentation) { items.push({ value: next, label, renderIcon, group, ...presentation }); if (!value) value = next; render(); },
     setOptionDisabled(next: string, disabled: boolean) { const item = items.find((item) => item.value === next); if (item) { item.disabled = disabled; render(); } }
   };
 }

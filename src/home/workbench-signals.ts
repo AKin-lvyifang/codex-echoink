@@ -1,3 +1,4 @@
+import { workbenchDismissalBasis } from "./workbench-dismissals";
 import { knowledgeSystemReminderText, type KnowledgeSystemReminder } from "../knowledge-base/knowledge-system-reminders";
 import type { AgentModuleId } from "../agents/types";
 import type { FinanceEntry, LifestyleData } from "../lifestyle/store-core";
@@ -10,7 +11,7 @@ import { localWorkbenchDate, validWorkbenchDate, workbenchWeekKey } from "./work
 import type { WorkbenchSignal, WorkbenchSignalId } from "./workbench-types";
 import type { MaintenanceActivity } from "../knowledge-base/maintenance-activity";
 
-export interface WorkbenchSourceFile { path: string; fingerprint: string; enteredAt?: number }
+export interface WorkbenchSourceFile { path: string; fingerprint: string; bodyFingerprint?: string; enteredAt?: number }
 export interface WorkbenchFacts {
   knowledgeSystems?: readonly KnowledgeSystemReminder[];
   now: number;
@@ -62,7 +63,7 @@ export function calculateWorkbenchSignals(facts: WorkbenchFacts): WorkbenchSigna
     if (!enabled.has(moduleId)) return;
     const key = `workbench:${moduleId}:${scene}:${scope}`;
     if (busy.has(key)) return;
-    signals.push({ id, key, moduleId, icon, description, prompt, source: {
+    signals.push({ id, key, moduleId, icon, description, prompt, dismissalBasis: workbenchDismissalBasis(id, objects, facts), source: {
       version: 1, signalId: id, businessKey: key, moduleId, objects: [...objects], ...(versions ? { versions } : {}), prompt, capturedAt: now
     } });
   };

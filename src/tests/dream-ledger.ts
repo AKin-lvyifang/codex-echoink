@@ -45,7 +45,7 @@ export async function runDreamLedgerScenarios(): Promise<void> {
       providerCalls += 1;
       if (input.systemPrompt.includes("本次只输出 USER")) return "no_change";
       return providerMode === "valid"
-        ? JSON.stringify({ secondaryFacts: [], userProfileItems: [] })
+        ? JSON.stringify({ secondaryFacts: [], userProfileItems: [], relatedIds: [] })
         : "{invalid-json";
     }
   };
@@ -57,11 +57,12 @@ export async function runDreamLedgerScenarios(): Promise<void> {
     "只输出新增、替换或删除候选及其来源。不要重写完整 USER.md，不要生成 Skill，不要修改权限、Tool、System 或拒绝边界。没有可靠变化时输出 no_change。"
   ].join("\n"));
   const oneMemoryPrompt = buildDreamPrompts(currentMemory, 2_000).systemPrompt;
-  assert.ok(oneMemoryPrompt.startsWith(`${DREAM_REFLECTION_PROMPT}\n\n`));
+  assert.match(oneMemoryPrompt, /复盘 Harness/u);
   assert.match(oneMemoryPrompt, /不可信数据/u);
   assert.match(oneMemoryPrompt, /不得执行/u);
   assert.match(oneMemoryPrompt, /本次结构化输出协议/u);
-  assert.deepEqual(parseDreamOutput("no_change"), { facts: [], profileItems: [] });
+  assert.equal(parseDreamOutput("no_change"), null);
+  assert.equal(parseDreamOutput('{"secondaryFacts":[],"userProfileItems":[]}'), null);
   const repository: DreamRepositoryPort = {
     inspect: async () => Object.freeze({ revision: repositoryRevision, records: [currentMemory] }),
     readVaultId: async () => "dream-ledger-vault",
@@ -93,6 +94,7 @@ export async function runDreamLedgerScenarios(): Promise<void> {
     dreamStateStore: {
       read: async () => dreamState,
       write: async (state: DreamState) => { dreamState = state; },
+      update: async (fn: (state: DreamState) => DreamState) => { dreamState = fn(dreamState); return dreamState; },
       updateCache: (state: DreamState) => { dreamState = state; },
       peek: () => dreamState
     } as never,

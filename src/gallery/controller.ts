@@ -1,3 +1,4 @@
+import { errorText } from "../core/error-copy";
 import { ownedDiv } from "../ui/owned-dom";
 import { Menu, Notice, Platform, editorInfoField, editorLivePreviewField, type Editor, type MarkdownFileInfo, type Plugin } from "obsidian";
 import { StateEffect, StateField, Transaction } from "@codemirror/state";
@@ -30,10 +31,11 @@ export const gallerySelection = StateField.define<readonly ImageSpan[]>({
 });
 /** One isolated source edit, with no Vault write or attachment operation. */
 export function applyGalleryEdit(view: EditorView, expected: string, edit: GalleryEdit): void {
-  if (view.state.doc.toString() !== expected) throw new Error("图片内容已变化，请重新选择");
+  if (view.state.doc.toString() !== expected) throw new Error("图片内容已变化。请重新选择图片。");
   view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.cursor ?? edit.from }, effects: clearGallerySelection.of(), annotations: [isolateHistory.of("full"), Transaction.userEvent.of("input.echoink-gallery")] });
   view.focus();
 }
+const GALLERY_THEME_REQUIRED = "图片拼排需要配套主题 echoink-theme。请在 Obsidian 设置 → 外观 中启用该主题后重试。";
 type GalleryHost = Plugin & { settings: { settingsLanguage: string } };
 type Action = "insert" | "group" | "split" | "row" | "mosaic";
 interface ImageBox { image: ImageSpan; left: number; top: number; width: number; height: number; picked: boolean }
@@ -112,7 +114,7 @@ class GalleryEditor {
   }
   private toggle(image: ImageSpan): void {
     if (!this.live()) return;
-    if (this.selected().length >= 3 && !this.selected().some(item => item.from === image.from)) { new Notice("一组最多 3 张"); return; }
+    if (this.selected().length >= 3 && !this.selected().some(item => item.from === image.from)) { new Notice("每个图片组最多 3 张图片。请减少选择后重试。"); return; }
     this.view.dispatch({ effects: toggleGalleryImage.of(image) });
   }
   private contextMenu(event: MouseEvent): void {
@@ -217,13 +219,13 @@ export class GalleryController {
   private command(editor: Editor, _info: MarkdownFileInfo, action: Action): void {
     const current = this.find(editor);
     const doc = current?.view.dom.ownerDocument ?? this.plugin.app.workspace.containerEl.ownerDocument;
-    if (!readCompanionTheme(doc).gallery) { new Notice("需要配套主题 echoink-theme 才能拼排"); return; }
+    if (!readCompanionTheme(doc).gallery) { new Notice(GALLERY_THEME_REQUIRED); return; }
     if (!current) { new Notice("请先打开笔记编辑器"); return; }
     this.run(current, action);
   }
   run(current: GalleryEditor, action: Action, position?: number, textSelection = false): void {
     try {
-      if (!current.enabled()) throw new Error("需要配套主题 echoink-theme 才能拼排");
+      if (!current.enabled()) throw new Error(GALLERY_THEME_REQUIRED);
       const view = current.view, source = view.state.doc.toString(), cursor = position ?? view.state.selection.main.head;
       const range = view.state.selection.main;
       const chosen = !textSelection && current.selected().length ? current.selected() : imagesInSelection(source, range.from, range.to);
@@ -231,7 +233,7 @@ export class GalleryController {
         : (action === "row" || action === "mosaic") && position !== undefined ? changeGalleryLayout(source, cursor, action === "row")
         : groupImages(source, chosen, action === "row");
       applyGalleryEdit(view, source, edit);
-    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { new Notice(errorText(error, ["图片拼排未能完成。请重新选择图片后重试。", "The images could not be arranged. Select them again and try again."], this.plugin.settings.settingsLanguage)); }
   }
   selectionMenu(menu: Menu, current: GalleryEditor, textSelection = false): void {
     const snapshot = current.view.state.doc.toString();
@@ -239,7 +241,7 @@ export class GalleryController {
     const range = current.view.state.selection.main;
     const count = textSelection ? imagesInSelection(current.view.state.doc.toString(), range.from, range.to).length : current.selected().length;
     if (!count) return;
-    const add = (title: string, action: Action, disabled = false) => menu.addItem(item => item.setSection("echoink-gallery").setTitle(title).setIcon("images").setDisabled(disabled).onClick(() => { if (current.view.state.doc.toString() !== snapshot) { new Notice("图片内容已变化，请重新选择"); return; } this.run(current, action, undefined, textSelection); }));
+    const add = (title: string, action: Action, disabled = false) => menu.addItem(item => item.setSection("echoink-gallery").setTitle(title).setIcon("images").setDisabled(disabled).onClick(() => { if (current.view.state.doc.toString() !== snapshot) { new Notice("图片内容已变化。请重新选择图片。"); return; } this.run(current, action, undefined, textSelection); }));
     if (count < 2) add("排成图片组 · 再选 1 张", "group", true);
     else if (count === 2) add("排成图片组 · 两张并排", "group");
     else if (count === 3) { add("排成图片组 · 一大两小", "mosaic"); add("排成图片组 · 一排三张", "row"); }
@@ -247,7 +249,7 @@ export class GalleryController {
   }
   groupMenu(menu: Menu, current: GalleryEditor, position: number): void {
     const snapshot = current.view.state.doc.toString();
-    const run = (action: Action) => { if (current.view.state.doc.toString() !== snapshot) { new Notice("图片内容已变化，请重新选择"); return; } this.run(current, action, position); };
+    const run = (action: Action) => { if (current.view.state.doc.toString() !== snapshot) { new Notice("图片内容已变化。请重新选择图片。"); return; } this.run(current, action, position); };
     if (this.menus.has(menu)) return; this.menus.add(menu);
     menu.addItem(item => item.setSection("echoink-gallery").setTitle("拆开图片组").setIcon("ungroup").onClick(() => run("split")));
     const group = galleryAt(current.view.state.doc.toString(), position);

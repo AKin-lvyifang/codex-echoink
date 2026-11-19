@@ -1,4 +1,5 @@
 import { Notice, setIcon } from "obsidian";
+import { NEXT, joinErrorCopy } from "../core/error-copy";
 import type CodexForObsidianPlugin from "../main";
 import { createOriginButton, createOriginSlider, createOriginSwitch, disposeOriginControls } from "./origin-controls";
 import { OriginSetting } from "./origin-setting";
@@ -71,7 +72,7 @@ export class DesktopMemorySettings {
     try { await this.plugin.saveSettings(true); success?.(); }
     catch (error) {
       rollback(); console.warn("[EchoInk] Memory setting was not saved", error);
-      new Notice(this.plugin.settings.settingsLanguage === "en" ? "Not saved. Try again." : "设置未保存，请重试");
+      new Notice(joinErrorCopy(["设置未能保存。", "The setting could not be saved."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
     } finally { this.pending = false; this.actions.redraw(); }
   }
 }

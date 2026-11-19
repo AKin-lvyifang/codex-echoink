@@ -9,6 +9,8 @@ import { PersonalMemoryRecallHarness } from "../harness/memory/personal-memory-r
 import { memoryLifecycle, memoryRelevanceEntry, memoryRelevanceScorer, rankMemory } from "../harness/memory/memory-relevance";
 import { MEMORY_CATEGORIES, type MemoryPageRequest, type MemoryPageSnapshot, type MemorySource } from "../home/memory/memory-page-types";
 import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
+import { MemoryOriginalQuoteReader } from "../harness/memory/memory-original-quote";
+import { canUndoDreamCorrection } from "../harness/memory/dream-correction-core";
 export interface MemoryConversation {
   conversationId: string;
   status: string;
@@ -98,16 +100,25 @@ export async function queryMemoryPage(input: {
     preview = {
       query,
       reasons,
+      relatedFrom: Object.fromEntries(candidates.filter(record => record.relatedFrom).map(record => [record.id, record.relatedFrom!])),
       recalled,
       faded: faded.map(item => item.id).filter(id => !recalled.includes(id))
     };
   }
-  return { revision: state.revision, now, enabled, stars, profile: profile.items, activityState, preview, receipt: request.receipt };
+  const correctionState = await repository.readDreamCorrections();
+  return { revision: state.revision, now, enabled, stars, profile: profile.items, activityState, preview, receipt: request.receipt,
+    corrections: correctionState.events.map(event => ({ ...event, before: records.get(event.beforeId), after: event.afterId ? records.get(event.afterId) : undefined, canUndo: canUndoDreamCorrection(event, state.records) })) };
 }
 /** Assembles the page boundary from the existing local store and user controls. */
 export function createMemoryPagePort(plugin: CodexForObsidianPlugin, localData: () => Promise<PiLocalDataService>, receipt: () => MemoryReceipt | undefined): MemoryPagePort {
   const t = (zh: string, en: string) => plugin.settings.settingsLanguage === "en" ? en : zh;
   return {
+    undoCorrection: async id => (await (await localData()).personalMemory.undoDreamCorrection(id)).restoredId,
+    originalQuote: async source => {
+      const local = await localData();
+      const result = await new MemoryOriginalQuoteReader(local.catalog, local.productRuns).source(source);
+      return result.quote ? Array.from(result.quote.text).slice(0, 600).join("") : t("依据原话已不可用", "Original statement unavailable");
+    },
     query: async (request) => {
       const local = await localData();
       local.assertMemoryAvailable();

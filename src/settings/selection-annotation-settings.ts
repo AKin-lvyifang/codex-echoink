@@ -7,6 +7,8 @@ import { applyDeleteButton } from "./amicro-buttons";
 import { normalizeSelectionAskSettings, selectionActionNameError, type SelectionAskAction } from "../selection-ask/settings";
 import { conversationUiText } from "../ui/codex-view/ui-i18n";
 import { isComposingInput } from "../ui/ime-composition";
+import { NEXT, failureText } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 
 export function renderSelectionAskPluginRow(container: HTMLElement, plugin: CodexForObsidianPlugin, visible: boolean, onSettings: () => void): void {
   const en = plugin.settings.settingsLanguage === "en";
@@ -23,7 +25,7 @@ export function renderSelectionAskPluginRow(container: HTMLElement, plugin: Code
   toggle.onchange = async () => {
     const previous = plugin.settings.selectionAsk.enabled; toggle.disabled = true; plugin.settings.selectionAsk.enabled = toggle.checked;
     try { await plugin.saveSettings(true); row.toggleClass("is-enabled", toggle.checked); row.toggleClass("is-disabled", !toggle.checked); }
-    catch (error) { plugin.settings.selectionAsk.enabled = previous; toggle.checked = previous; new Notice(String(error)); }
+    catch (error) { plugin.settings.selectionAsk.enabled = previous; toggle.checked = previous; new Notice(failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, plugin.settings.settingsLanguage)); }
     finally { toggle.disabled = false; }
   };
 }
@@ -97,7 +99,7 @@ export function renderSelectionAnnotationSettings(container: HTMLElement, plugin
     saving = true; save.disabled = true; updateAdd(); status.textContent = "";
     plugin.settings.selectionAsk = next;
     try { await plugin.saveSettings(true); status.textContent = text("已保存", "Saved"); }
-    catch (error) { plugin.settings.selectionAsk = previous; status.textContent = text(`保存失败：${String(error)}`, `Could not save: ${String(error)}`); }
+    catch (error) { plugin.settings.selectionAsk = previous; status.textContent = failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, plugin.settings.settingsLanguage); }
     finally { saving = false; save.disabled = false; updateAdd(); }
   };
 }
@@ -138,7 +140,7 @@ function renderDesktopSelectionActions(container: HTMLElement, plugin: CodexForO
     pending = true; updatePending(); status.textContent = text("正在保存…", "Saving…");
     plugin.settings.selectionAsk = normalizeSelectionAskSettings({ ...previous, actions });
     try { await plugin.saveSettings(true); success(); status.textContent = text("已保存", "Saved"); }
-    catch (error) { plugin.settings.selectionAsk = previous; draft.error = text(`保存失败：${String(error)}`, `Could not save: ${String(error)}`); status.textContent = draft.error; }
+    catch (error) { plugin.settings.selectionAsk = previous; draft.error = failureText(error, SETTINGS_SCENE.settingNotSaved, NEXT.retryOrReload, plugin.settings.settingsLanguage); status.textContent = draft.error; }
     finally { pending = false; render(); }
   };
   const render = (focusId?: string) => {

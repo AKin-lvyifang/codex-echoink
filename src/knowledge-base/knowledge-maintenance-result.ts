@@ -198,12 +198,12 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
     title: envelope.status === "completed"
       ? "知识整理已完成"
       : envelope.status === "partial"
-        ? "知识整理没做完"
+        ? "知识整理尚未完成"
         : envelope.status === "noop"
           ? "没有需要提炼的知识"
           : envelope.status === "write_uncertain"
             ? "知识写入状态不确定"
-            : "知识整理没做完",
+            : "知识整理尚未完成",
     reportPath: "",
     ...(envelope.linkingTaskId ? { linkingTaskId: envelope.linkingTaskId } : {}),
     careItems: [
@@ -224,7 +224,7 @@ export function knowledgeMaintenanceReportPayloadFromToolResult(
         count: envelope.issues.length,
         emptyText: "没有需要关注的问题。",
         items: envelope.issues.map((issue) => ({
-          title: issue.path ? maintenancePageLabel(issue.path) : "还有内容没做完",
+          title: issue.path ? maintenancePageLabel(issue.path) : "部分内容尚未完成",
           ...(issue.path ? { path: issue.path } : {}),
           description: maintenanceFailureText(issue.message, issue.path),
           tone: "warning" as const

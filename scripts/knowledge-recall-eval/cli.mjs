@@ -39,18 +39,24 @@ async function rejectSymlinkAncestors(directory) {
   }
 }
 
-export async function buildAdapter(sourceRoot, workRoot) {
+export async function buildAdapter(sourceRoot, workRoot, { entryPoint = 'production-adapter.ts', exportName = 'evaluateProduction', sourceTransforms = {}, fixtureWindowTimers = false } = {}) {
   const esbuild = await import('esbuild');
   const output = path.join(workRoot, 'production-adapter.mjs');
   await symlink(path.join(sourceRoot, 'node_modules'), path.join(workRoot, 'node_modules'), 'dir');
   const bodySearchAvailable = await lstat(path.join(sourceRoot, 'src/knowledge-base/vault-body-search.ts')).then(() => true, error => { if (error.code === 'ENOENT') return false; throw error; });
   const result = await esbuild.build({
-    entryPoints: [path.join(here, 'production-adapter.ts')],
+    entryPoints: [path.join(here, entryPoint)],
     absWorkingDir: sourceRoot, outfile: output, bundle: true, platform: 'node', target: 'node22', format: 'esm', metafile: true,
     loader: { '.md': 'text', '.svg': 'text', '.webp': 'dataurl' },
-    banner: { js: `import { createRequire as createEvalRequire } from 'node:module'; const require = createEvalRequire(${JSON.stringify(path.join(sourceRoot, 'package.json'))});` },
+    banner: { js: `import { createRequire as createEvalRequire } from 'node:module'; const require = createEvalRequire(${JSON.stringify(path.join(sourceRoot, 'package.json'))});${fixtureWindowTimers ? ' globalThis.window = globalThis;' : ''}` },
     external: ['@earendil-works/pi-agent-core', '@earendil-works/pi-ai', '@earendil-works/pi-coding-agent', 'yaml', 'jsdom'],
     plugins: [{ name: 'explicit-production-checkout', setup(build) {
+      if (Object.keys(sourceTransforms).length) build.onLoad({ filter: /\.ts$/ }, async args => {
+        const relative = path.relative(sourceRoot, args.path).replaceAll('\\', '/');
+        const transform = sourceTransforms[relative];
+        if (!transform) return undefined;
+        return { contents: transform(await readFile(args.path, 'utf8')), loader: 'ts', resolveDir: path.dirname(args.path) };
+      });
       build.onResolve({ filter: /^@production\// }, args => !bodySearchAvailable && args.path === '@production/knowledge-base/vault-body-search'
         ? { path: args.path, namespace: 'legacy-body-search-absent' }
         : { path: path.join(sourceRoot, 'src', `${args.path.slice('@production/'.length)}.ts`) });
@@ -64,7 +70,8 @@ export async function buildAdapter(sourceRoot, workRoot) {
     if (contains(path.join(sourceRoot, 'src'), full) || contains(here, full)) sourceFiles.push({ path: contains(here, full) ? `evaluator/${path.relative(here, full)}` : path.relative(sourceRoot, full), sha256: createHash('sha256').update(await readFile(full)).digest('hex') });
   }
   const adapter = await import(pathToFileURL(output).href);
-  return { evaluate: adapter.evaluateProduction, metadata: { body_search_available: bodySearchAvailable, entry: path.relative(sourceRoot, path.join(here, 'production-adapter.ts')), source_root: sourceRoot, imported_files: sourceFiles, host_shim: 'src/tests/obsidian-shim.ts', bundle_sha256: createHash('sha256').update(await readFile(output)).digest('hex') } };
+  if (typeof adapter[exportName] !== 'function') throw new Error(`Missing adapter export: ${exportName}`);
+  return { evaluate: adapter[exportName], metadata: { body_search_available: bodySearchAvailable, entry: path.relative(sourceRoot, path.join(here, entryPoint)), source_root: sourceRoot, imported_files: sourceFiles, host_shim: 'src/tests/obsidian-shim.ts', bundle_sha256: createHash('sha256').update(await readFile(output)).digest('hex') } };
 }
 
 function flattenCases(cases, selected) {

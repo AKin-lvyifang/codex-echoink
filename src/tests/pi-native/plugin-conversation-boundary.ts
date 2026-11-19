@@ -945,7 +945,7 @@ async function activeRunStillRejectsASecondProductActivity(): Promise<void> {
     }, async () => {
       actionCalls += 1;
     }),
-    /正在处理其他请求/u
+    /正在回答/u
   );
   assert.equal(actionCalls, 0);
 }
@@ -978,27 +978,27 @@ Promise<void> {
   });
   const sendingA = host.submitPiChat({ conversationId: "a" });
   assert.equal(host.productActivity.hasActivity, true);
-  await assert.rejects(host.submitPiChat({ conversationId: "a" }), /当前会话/u);
+  await assert.rejects(host.submitPiChat({ conversationId: "a" }), /正在回答/u);
   const second = await host.submitPiChat({ conversationId: "b" });
   assert.deepEqual(submitted, ["b"], "B starts while A is still preparing");
   assert.equal(host.productActivity.hasActivity, true,
     "B finishing preparation must not clear A's shared activity count");
-  await assert.rejects(host.withProductActivity(async () => undefined), /其他请求/u);
-  await assert.rejects(host.activateApiProviderSettings(() => undefined), /不能切换/u);
+  await assert.rejects(host.withProductActivity(async () => undefined), /正在回答/u);
+  await assert.rejects(host.activateApiProviderSettings(() => undefined), /正在回答/u);
   firstReady.resolve();
   const first = await sendingA;
   assert.deepEqual(submitted, ["b", "a"]);
   assert.equal(host.productActivity.hasActivity, false);
-  await assert.rejects(host.submitPiChat({ conversationId: "b" }), /当前会话/u);
+  await assert.rejects(host.submitPiChat({ conversationId: "b" }), /正在回答/u);
   await host.cancelHarnessRun(first.productRunId);
   assert.deepEqual(aborted, ["a"]);
   host.releasePiProductionRun(first.productRunId);
   assert.equal(host.isPiProductionRun(second.productRunId), true);
-  await assert.rejects(host.withProductActivity(async () => undefined), /其他请求/u);
+  await assert.rejects(host.withProductActivity(async () => undefined), /正在回答/u);
   host.releasePiProductionRun(second.productRunId);
   const exclusiveReady = deferred<void>();
   const exclusive = host.withProductActivity(() => exclusiveReady.promise);
-  await assert.rejects(host.submitPiChat({ conversationId: "c" }), /其他请求/u);
+  await assert.rejects(host.submitPiChat({ conversationId: "c" }), /EchoInk 正在回答。请等待回答结束后重试。/u);
   assert.equal(host.piSubmittingConversations.size, 0);
   exclusiveReady.resolve();
   await exclusive;

@@ -1,3 +1,5 @@
+import { bindPressFeedback } from "../ui/press-feedback";
+import { xiaoechoDesktopModelName, xiaoechoTypicalPointsLabel } from "../membership/xiaoecho-points";
 import { getModuleOwner } from "../agents/registry";
 import { KnowledgePreferenceWizard } from "../ui/knowledge-preference-wizard";
 import { knowledgePreferenceWizardHost } from "../plugin/knowledge-preference-wizard-host";
@@ -16,6 +18,8 @@ import { DesktopMemorySettings } from "./desktop-memory-settings";
 import type { KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { PdfReadingSettingsPanel } from "../pdf-reading/settings-panel";
 import { renderSelectionAskPluginRow, renderSelectionAnnotationSettings, type SelectionAnnotationSettingsController } from "./selection-annotation-settings";
+import { renderNoteCommentSettings } from "./note-comment-settings";
+import { resolveNoteCommentAgent } from "../note-comments/agent";
 import { renderDesktopModuleSettings as mountDesktopModuleSettings, type DesktopModuleId } from "./desktop-module-settings";
 import { DesktopKnowledgeSettings } from "./desktop-knowledge-settings";
 import { GenerationTemplatesSection } from "./generation-templates-section";
@@ -25,6 +29,7 @@ import { BUILT_IN_JOURNAL_TEMPLATES } from "../home/home-workbench-model";
 import { hasProPluginAccess, getProPluginAccess, unavailableCapabilityAccess } from "../membership/access";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import { mountAccountMembership } from "./account-membership";
+import { renderSmartJudgmentSettings } from "./smart-judgment-settings";
 import { mountDesktopAccountMembership, type DesktopAccountMembershipHandle } from "./desktop-account-membership";
 import { createUnavailableAccountAdapter } from "./account-membership-model";
 import { renderTavilySettings, renderProviderTabs } from "./tavily-settings";
@@ -36,12 +41,15 @@ import { renderAppearancePicker } from "./appearance-picker";
 import { renderObsidianCliStatus } from "./obsidian-cli-status";
 import { DESKTOP_SETTINGS_TAB_ICONS, SETTINGS_TAB_ICONS } from "./settings-tab-icons";
 import { OriginSetting } from "./origin-setting";
+import { renderDesktopCloudSync, type CloudSyncPageOpener } from "./cloud-sync-settings";
 import { renderWeatherCitySettings } from "./weather-city-settings";
 import { mergeKnowledgeMaintenanceHistory, renderKnowledgeMaintenanceHistoryList, renderKnowledgeMaintenanceRecordDetail, openKnowledgeMaintenancePath } from "./knowledge-maintenance-history";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, disposeOriginControls, type OriginCheckElement, type OriginSelectElement } from "./origin-controls";
 import { mountSettingsEditor, type SettingsEditorHandle } from "./inline-editor";
 import { renderProviderServicePicker } from "./provider-service-picker";
 import { renderCompactAbout } from "./about-section";
+import { CAUSE, NEXT, failureText, joinErrorCopy, mcpDiagnosticText, pickErrorCopy, userFacingErrorText, type ErrorCopy } from "../core/error-copy";
+import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 import { ReleaseUpdateController } from "./release-update";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
 import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList } from "../agents/types";
@@ -85,7 +93,6 @@ import {
 } from "../resources/mcp-connections";
 import type {
   EchoInkMcpConnectionRecord,
-  EchoInkMcpDiagnosticCode,
   EchoInkResource
 } from "../resources/types";
 import {
@@ -144,6 +151,8 @@ import {
   type ProviderModelSaveResult
 } from "./provider-model-modal";
 import { renderProviderBrandIcon } from "./provider-brand-icons";
+import { xiaoechoVendorOf } from "../membership/xiaoecho-catalog";
+import { filterXiaoechoProviderDraft, subscribeXiaoechoCatalogChanges, xiaoechoSelectableModels } from "../membership/xiaoecho-catalog-state";
 import {
   renderAnimatedSettingsTabIcon,
   type AnimatedSettingsTabIconName
@@ -208,7 +217,10 @@ interface NativeSettingsNavigation {
 
 const settingsContainerFocusIntents = new WeakMap<HTMLElement, string>();
 
+const SWITCH_FAILED: ErrorCopy = ["未能切换。", "Could not switch."];
+
 export class CodexSettingTab extends PluginSettingTab {
+  private pressFeedback?: { root: HTMLElement; dispose: () => void };
   private resourceSnapshot: WorkspaceResourceSnapshot | null = null;
   private runtimeEchoInkResources: EchoInkResource[] = [];
   private resourceLoadingTab: ResourceManagementTab | null = null;
@@ -400,6 +412,9 @@ export class CodexSettingTab extends PluginSettingTab {
 
   constructor(private readonly plugin: CodexForObsidianPlugin) {
     super(plugin.app, plugin);
+    plugin.register(subscribeXiaoechoCatalogChanges(() => {
+      if (this.settingsVisible && !this.inlineEditor) this.scheduleDisplay();
+    }));
     plugin.register(plugin.onAgentRegistryChanged?.(() => {
       if (this.containerEl.isConnected && ["agent", "capabilities"].includes(this.activeSettingsTab())) this.scheduleDisplay();
     }) ?? (() => {}));
@@ -587,6 +602,7 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private disposeSettingsView(): void {
+    this.pressFeedback?.dispose(); this.pressFeedback = undefined;
     this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.desktopModuleCleanup?.(); this.desktopModuleCleanup = null;
     this.desktopMemory?.suspend(); this.desktopAccount?.suspend();
@@ -685,6 +701,10 @@ export class CodexSettingTab extends PluginSettingTab {
   }
 
   private renderSettingsContent(): void {
+    if (this.pressFeedback?.root !== this.containerEl) {
+      this.pressFeedback?.dispose();
+      this.pressFeedback = { root: this.containerEl, dispose: bindPressFeedback(this.containerEl) };
+    }
     this.weatherCityCleanup?.(); this.weatherCityCleanup = null;
     this.captureModuleInputs();
     this.pdfSettingsPanel?.dispose();
@@ -780,8 +800,13 @@ export class CodexSettingTab extends PluginSettingTab {
         );
         const options = {
           app: this.app, viewModel: adapter.read(), actions: adapter.actions,
+          onSignInReturned: () => this.plugin.accountService?.signInReturned() ?? Promise.resolve(),
           subscribe: adapter.subscribe ? (listener: () => void) => adapter.subscribe!(listener) : undefined, read: () => adapter.read(),
           language: this.plugin.settings.settingsLanguage,
+          mountCloudSync: (parent: HTMLElement, openPage: CloudSyncPageOpener) => renderDesktopCloudSync(this.plugin, parent, this.plugin.settings.settingsLanguage !== "en", openPage),
+          syncUsage: { read: () => { const status = this.plugin.cloudSync?.view().status; return status ? { usedBytes: status.usedBytes, quotaBytes: status.quotaBytes } : null; }, subscribe: (listener: () => void) => this.plugin.cloudSync?.subscribe(listener) ?? (() => {}) },
+          mountSmartJudgment: (parent: HTMLElement) => renderSmartJudgmentSettings(parent, { client: this.plugin.decisionClient, zh: this.plugin.settings.settingsLanguage !== "en",
+            openPlans: () => parent.querySelector<HTMLElement>("[data-account-section=\"plans\"]")?.scrollIntoView?.({ block: "start", behavior: "smooth" }) }),
           openProviders: () => { void this.activateSettingsTab(Platform.isDesktopApp ? "models" : "providers", true); }
         };
         if (Platform.isDesktopApp) {
@@ -922,7 +947,7 @@ export class CodexSettingTab extends PluginSettingTab {
           "button, input, select, textarea, a[href], [tabindex]"
         )).find((element) => this.settingsFocusKey(element) === sharedKey);
         if (!focusable?.isConnected) return;
-        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits" || sharedKey === "explicit:general:appearance" || sharedKey === "explicit:general:weather") focusable.scrollIntoView({ block: "center" });
+        if (sharedKey === "explicit:account:login" || sharedKey === "explicit:account:benefits" || sharedKey === "explicit:general:appearance" || sharedKey === "explicit:general:weather" || /agent:owner:/u.test(sharedKey)) focusable.scrollIntoView({ block: "center" });
         focusable.focus({ preventScroll: true });
         if (this.containerEl.ownerDocument.activeElement !== focusable) return;
         settingsContainerFocusIntents.delete(this.containerEl);
@@ -936,7 +961,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (!focusable) return;
     const focusTarget = () => {
       if (!focusable.isConnected || focusable.closest("[hidden], [inert]")) return;
-      if (key === "explicit:account:login" || key === "explicit:account:benefits" || key === "explicit:general:appearance" || key === "explicit:general:weather") focusable.scrollIntoView({ block: "center" });
+      if (key === "explicit:account:login" || key === "explicit:account:benefits" || key === "explicit:general:appearance" || key === "explicit:general:weather" || /agent:owner:/u.test(key)) focusable.scrollIntoView({ block: "center" });
       focusable.focus({ preventScroll: true });
     };
     focusTarget();
@@ -972,12 +997,28 @@ export class CodexSettingTab extends PluginSettingTab {
     createSettingsState(container, message, "error");
   }
 
-  private reportSettingsActionError(context: SettingsActionContext): void {
-    const message = this.plugin.settings.settingsLanguage === "en"
-      ? `${context === "review" ? "Review" : context === "resources" ? "Resource" : context === "providers" ? "Model" : "Knowledge"} action did not finish. Check the current configuration and try again.`
-      : `${context === "review" ? "复盘" : context === "resources" ? "资源" : context === "providers" ? "模型" : "知识库"}操作未完成。请检查当前配置后重试。`;
+  private reportSettingsActionError(context: SettingsActionContext, error?: unknown): void {
+    const message = context === "providers"
+      ? this.failure(error, SWITCH_FAILED, NEXT.testConnection)
+      : this.failure(error, SETTINGS_SCENE.actionIncomplete, NEXT.retryOrReload);
     this.settingsActionErrors[context] = message;
     this.announceSettingsStatus(message);
+  }
+
+  /** Plain-language text for a caught error; falls back to a sentence that says what to do next. */
+  private friendlyErrorText(error: unknown, zhFallback: string, enFallback: string): string {
+    const language = this.plugin.settings.settingsLanguage;
+    return userFacingErrorText(error, language === "en" ? enFallback : zhFallback, language);
+  }
+
+  /** Scene sentence + the error's readable reason, or the standard next step. */
+  private failure(error: unknown, lead: ErrorCopy, next: ErrorCopy): string {
+    return failureText(error, lead, next, this.plugin.settings.settingsLanguage);
+  }
+
+  /** Scene sentence + a NEXT or CAUSE sentence. */
+  private copyText(lead: ErrorCopy, tail: ErrorCopy): string {
+    return joinErrorCopy(lead, tail, this.plugin.settings.settingsLanguage);
   }
 
   private async refreshOnboardingCoachmark(): Promise<void> {
@@ -1073,7 +1114,7 @@ export class CodexSettingTab extends PluginSettingTab {
       },
       onActionError: (error) => {
         console.error("EchoInk onboarding advance failed", error);
-        new Notice(zh ? "引导进度保存失败，请重试" : "Failed to save tutorial progress. Try again.");
+        new Notice(this.copyText(["引导进度未能保存。", "Tutorial progress could not be saved."], NEXT.retry));
       }
     });
     this.onboardingCoachmarkHandle = handle;
@@ -1087,7 +1128,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.onboardingNavigationPending = true;
       const card = this.onboardingCoachmarkHandle?.element;
       card?.setAttribute("aria-busy", "true"); card?.querySelectorAll("button").forEach(button => { button.disabled = true; });
-      pending = this.plugin.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.plugin.settings.settingsLanguage === "en" ? "Tutorial progress could not be saved. Try again." : "引导进度保存失败，请重试。"); })
+      pending = this.plugin.runEchoInkOnboardingNavigation(action).catch(error => { console.warn("EchoInk onboarding navigation failed", error); new Notice(this.copyText(["引导进度未能保存。", "Tutorial progress could not be saved."], NEXT.retry)); })
         .finally(() => { this.onboardingNavigationPending = false; card?.setAttribute("aria-busy", "false"); card?.querySelectorAll("button").forEach(button => { button.disabled = false; }); });
     };
     if (this.leaveDesktopAgentDetail(run)) { await pending; return; }
@@ -1142,7 +1183,7 @@ export class CodexSettingTab extends PluginSettingTab {
       onDismiss: backToWorkspace,
       onActionError: (error) => {
         console.error("EchoInk onboarding completion action failed", error);
-        new Notice(zh ? "操作未完成，请重试。" : "The action did not finish. Try again.");
+        new Notice(this.copyText(SETTINGS_SCENE.actionIncomplete, NEXT.retry));
       }
     });
   }
@@ -1168,8 +1209,8 @@ export class CodexSettingTab extends PluginSettingTab {
     try {
       await action();
       completed = true;
-    } catch {
-      this.reportSettingsActionError(context);
+    } catch (error) {
+      this.reportSettingsActionError(context, error);
     } finally {
       if (completed) confirmAmicroButton(button);
       else setAmicroButtonPending(button, false);
@@ -1214,7 +1255,7 @@ export class CodexSettingTab extends PluginSettingTab {
         const previous = this.plugin.settings.settingsLanguage;
         this.plugin.settings.settingsLanguage = normalizeSettingsLanguage(value);
         try { await this.plugin.saveSettings(true); }
-        catch { this.plugin.settings.settingsLanguage = previous; dropdown.setValue(previous); new Notice(zh ? "界面语言未保存，请重试" : "Language was not saved. Try again."); return; }
+        catch { this.plugin.settings.settingsLanguage = previous; dropdown.setValue(previous); new Notice(this.copyText(["界面语言未能保存。", "The interface language could not be saved."], NEXT.retry)); return; }
         await this.plugin.refreshLanguageSurfaces();
         // Refresh native labels/index as well as the existing content. The
         // method is absent on old hosts, which continue through display().
@@ -1232,7 +1273,7 @@ export class CodexSettingTab extends PluginSettingTab {
           const previous = this.plugin.settings.autoOpenHome;
           this.plugin.settings.autoOpenHome = value;
           try { await this.plugin.saveSettings(); }
-          catch { this.plugin.settings.autoOpenHome = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
+          catch { this.plugin.settings.autoOpenHome = previous; toggle.setValue(previous); new Notice(this.copyText(["启动设置未保存。", "Startup setting was not saved."], NEXT.retry)); }
         });
       }));
 
@@ -1245,11 +1286,23 @@ export class CodexSettingTab extends PluginSettingTab {
           const previous = this.plugin.settings.autoOpen;
           this.plugin.settings.autoOpen = value;
           try { await this.plugin.saveSettings(); }
-          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(zh ? "启动设置未保存，请重试" : "Startup setting was not saved. Try again."); }
+          catch { this.plugin.settings.autoOpen = previous; toggle.setValue(previous); new Notice(this.copyText(["启动设置未保存。", "Startup setting was not saved."], NEXT.retry)); }
         });
       }));
 
     if (!Platform.isDesktopApp) interfaceGroup.insertBefore(sidebarStartup.settingEl, workbenchStartup.settingEl);
+    applySettingsRow(new OriginSetting(interfaceGroup)
+      .setName(zh ? "同步数据到其他设备" : "Share data with other devices")
+      .setDesc(zh ? "通过笔记库里的 EchoInk/同步数据 文件夹；关闭后只用本机存储，重启插件后生效。" : "Via the EchoInk/同步数据 folder in the Vault; off keeps only local storage. Takes effect after the plugin reloads.")
+      .addOriginToggle((toggle) => {
+        labelSettingsToggle(toggle, zh ? "同步数据到其他设备" : "Share data with other devices");
+        toggle.setValue(this.plugin.settings.syncMirrorEnabled !== false).onChange(async (value) => {
+          const previous = this.plugin.settings.syncMirrorEnabled;
+          this.plugin.settings.syncMirrorEnabled = value;
+          try { await this.plugin.saveSettings(); }
+          catch { this.plugin.settings.syncMirrorEnabled = previous; toggle.setValue(previous !== false); new Notice(this.copyText(["同步设置未保存。", "Sync setting was not saved."], NEXT.retry)); }
+        });
+      }));
     renderObsidianCliStatus(interfaceGroup, zh);
 
     const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
@@ -1275,7 +1328,7 @@ export class CodexSettingTab extends PluginSettingTab {
           catch {
             this.plugin.settings.quickChat.enabled = previous;
             toggle.setValue(previous);
-            new Notice(zh ? "快捷 AI 小窗设置未保存，请重试" : "Quick AI window settings were not saved. Try again.");
+            new Notice(this.copyText(["快捷 AI 小窗设置未保存。", "Quick AI window settings were not saved."], NEXT.retry));
             return;
           }
           this.quickChatExpanded = value;
@@ -1340,7 +1393,7 @@ export class CodexSettingTab extends PluginSettingTab {
           settings.quickChat.hotkey = normalized;
           void (async () => {
             try { await this.plugin.saveSettings(); }
-            catch { settings.quickChat.hotkey = previous; renderHotkey(); new Notice(zh ? "快捷键未保存，请重试" : "Hotkey was not saved. Try again."); return; }
+            catch { settings.quickChat.hotkey = previous; renderHotkey(); new Notice(this.copyText(["快捷键未保存。", "Hotkey was not saved."], NEXT.retry)); return; }
             const result = this.plugin.applyQuickChatSettings();
             if (settings.quickChat.enabled && !result.ok) {
               new Notice(describeQuickChatRegistration(result, true, normalized, zh));
@@ -1402,11 +1455,11 @@ export class CodexSettingTab extends PluginSettingTab {
         .addOriginToggle(toggle => toggle.setValue(this.plugin.settings.diaryOrganizerEnabled).onChange(async value => {
           toggle.setDisabled(true);
           try {
-            if (!this.plugin.diaryOrganizer) throw new Error(zh ? "日记整理尚未就绪，请稍后重试。" : "Journal organizer is not ready yet.");
+            if (!this.plugin.diaryOrganizer) throw new Error(this.copyText(["日记整理尚未就绪。", "Journal organizing is not ready yet."], NEXT.retryLater));
             await this.plugin.diaryOrganizer.setEnabled(value);
           } catch (error) {
             toggle.setValue(this.plugin.settings.diaryOrganizerEnabled);
-            new Notice(error instanceof Error ? error.message : String(error));
+            new Notice(this.failure(error, ["设置未能保存。", "The setting could not be saved."], NEXT.retry));
           } finally { toggle.setDisabled(false); }
         }));
       const help = createOriginButton(automatic.nameEl.createSpan({ cls: "echoink-settings-help" }), { cls: "is-icon", attr: { "aria-label": zh ? "日记自动整理说明" : "Automatic journal organization information" } });
@@ -1469,7 +1522,7 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.plugin.activateMemoryView();
     }
     catch (error) {
-      new Notice(error instanceof Error ? error.message : this.plugin.settings.settingsLanguage === "en" ? "Memory page could not open. Try again." : "记忆页未能打开，请重试。");
+      new Notice(this.failure(error, ["记忆页未能打开。", "The memory page could not be opened."], NEXT.retry));
     }
   }
   private leaveDesktopAccount(done: () => void): boolean {
@@ -1511,6 +1564,12 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     if (knowledge.isDetail) { knowledge.renderDetail(container); return; }
+    if (this.settingsDetail === "note-comments") {
+      const page = createSettingsPage(container, { title: zh ? "笔记评论" : "Note comments", detail: true,
+        backLabel: zh ? "返回模块" : "Back to modules", onBack: () => { this.desktopModuleExpanded.add("note-comments"); void this.closeSettingsDetail(); } });
+      renderNoteCommentSettings(page, this.plugin, () => this.scheduleDisplay());
+      return;
+    }
     if (this.settingsDetail === "selection-ask") {
       if (!this.desktopSelection) {
         const host = container.createDiv();
@@ -1577,6 +1636,10 @@ export class CodexSettingTab extends PluginSettingTab {
           this.lifestyleSettingsPanel ??= new LifestyleSettingsPanel(this.plugin, "finance", () => { void this.closeSettingsDetail(); }, () => this.scheduleDisplay());
           this.lifestyleSettingsPanel.render(parent, { embedded: true }); return () => this.lifestyleSettingsPanel?.dispose();
         } else if (module === "inline-agent") renderInlineAgentSettings(parent, this.plugin);
+        else if (module === "note-comments") {
+          const agent = resolveNoteCommentAgent(this.plugin.settings.agentRegistry.agents, this.plugin.settings.noteComments.agentId);
+          createSettingsNavigationRow(parent, { title: zh ? "评论设置" : "Comment settings", value: agent?.name ?? "", focusKey: "note-comments:settings", onActivate: () => this.openSettingsDetail("note-comments") });
+        }
         else this.renderEnglishDiarySettings(parent, true);
         } finally {
           const location = module === "finance" ? this.lifestyleSettingsPanel?.navigationKey() ?? "finance:root" : module;
@@ -1809,7 +1872,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const previous = !check.checked, next = check.checked;
       if (pro && !getProPluginAccess(access, true).canWrite) { check.checked = previous; return; }
       pending = true; check.disabled = true;
-      void save(next).catch(error => { check.checked = previous; new Notice(error instanceof Error ? error.message : String(error)); })
+      void save(next).catch(error => { check.checked = previous; new Notice(this.failure(error, ["设置未能保存。", "The setting could not be saved."], NEXT.retry)); })
         .finally(() => { pending = false; if (controls) controls.refresh(); else check.disabled = false; });
     };
   }
@@ -1970,7 +2033,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.knowledgeMaintenanceRecordsLoaded = true;
     } catch (error) {
       this.knowledgeMaintenanceRecords = [];
-      this.knowledgeMaintenanceRecordsError = String(error);
+      this.knowledgeMaintenanceRecordsError = this.failure(error, ["维护记录未能读取。", "The maintenance records could not be read."], NEXT.retryLater);
     } finally {
       this.knowledgeMaintenanceRecordsLoading = false;
       this.scheduleDisplay();
@@ -2078,7 +2141,7 @@ export class CodexSettingTab extends PluginSettingTab {
     const preferenceGroup = createSettingsGroup(preferenceSection);
     const remake = createOriginButton(preferenceSection, { text: zh ? "按用途重做" : "Generate for a purpose", cls: "button" });
     applyAmicroButton(remake, { variant: "secondary" });
-    remake.onclick = () => { void this.openKnowledgePreferenceWizard().catch(error => new Notice(String(error))); };
+    remake.onclick = () => { void this.openKnowledgePreferenceWizard().catch(error => new Notice(this.failure(error, ["偏好向导未能打开。", "The preference wizard could not be opened."], NEXT.retry))); };
 
 
     if (this.knowledgePreferenceLoading) {
@@ -2092,7 +2155,7 @@ export class CodexSettingTab extends PluginSettingTab {
       createSettingsState(
         preferenceGroup,
         zh
-          ? "知识提炼偏好暂时无法读取。为避免覆盖现有内容，编辑器没有打开。"
+          ? "知识提炼偏好暂时无法读取。为避免覆盖现有内容，编辑器未打开。"
           : "Preferences are temporarily unavailable. The editor remains closed to avoid overwriting existing content.",
         "error",
         {
@@ -2299,7 +2362,7 @@ export class CodexSettingTab extends PluginSettingTab {
           const previous = this.plugin.settings.autoArchiveDays;
           this.plugin.settings.autoArchiveDays = normalizeAutoArchiveDays(Number(value));
           try { await this.plugin.saveSettings(true); }
-          catch { this.plugin.settings.autoArchiveDays = previous; dropdown.setValue(String(previous)); new Notice(zh ? "自动归档设置未保存" : "Archive setting was not saved"); }
+          catch { this.plugin.settings.autoArchiveDays = previous; dropdown.setValue(String(previous)); new Notice(this.copyText(["自动归档设置未能保存。", "The archive setting could not be saved."], NEXT.retry)); }
         });
       }));
     if (Platform.isDesktopApp) {
@@ -2425,7 +2488,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     if (this.archivedConversationsError) {
-      createSettingsState(list, zh ? "暂时无法读取已归档会话。" : "Archived conversations are unavailable.", "error", {
+      createSettingsState(list, this.copyText(["已归档会话未能读取。", "Archived conversations could not be read."], NEXT.retryLater), "error", {
         label: zh ? "重试" : "Retry",
         onActivate: () => void this.loadArchivedConversations(true)
       });
@@ -2556,14 +2619,14 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     if (!this.personalMemoryState) {
-      createSettingsState(group, zh ? "当前 Memory 暂时无法读取。" : "Current Memory is unavailable.", "error", {
+      createSettingsState(group, this.copyText(["当前记忆未能读取。", "The current memory could not be read."], NEXT.retryLater), "error", {
         label: zh ? "重试" : "Retry",
         onActivate: () => void this.loadPersonalMemoryState(true)
       });
       return;
     }
     const total = this.personalMemoryState.records.filter((record) => record.status === "current").length;
-    section.querySelector<HTMLElement>(".settings-card-header")?.createSpan({ cls: "settings-badge", text: zh ? `${total} 条记录` : `${total} records` });
+    section.querySelector<HTMLElement>(".settings-card-header")?.createSpan({ cls: "settings-badge is-count", text: zh ? `${total} 条记录` : `${total} records` });
     for (const category of PERSONAL_MEMORY_CORRECTION_CATEGORIES) {
       const count = this.currentPersonalMemoryRecords(category.id).length;
       const row = createSettingsNavigationRow(group, {
@@ -2577,7 +2640,7 @@ export class CodexSettingTab extends PluginSettingTab {
           category: category.id
         })
       });
-      row.querySelector<HTMLElement>(".echoink-settings-navigation-value")?.addClass("settings-badge", "review-memory-count");
+      row.querySelector<HTMLElement>(".echoink-settings-navigation-value")?.addClass("settings-badge", "is-count", "review-memory-count");
     }
   }
 
@@ -2605,7 +2668,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     if (!this.personalMemoryState) {
-      createSettingsState(list, zh ? "当前 Memory 暂时无法读取。" : "Current Memory is unavailable.", "error", {
+      createSettingsState(list, this.copyText(["当前记忆未能读取。", "The current memory could not be read."], NEXT.retryLater), "error", {
         label: zh ? "重试" : "Retry",
         onActivate: () => void this.loadPersonalMemoryState(true)
       });
@@ -2736,8 +2799,8 @@ export class CodexSettingTab extends PluginSettingTab {
                   // Preserve the original conflict as the actionable result.
                 }
                 new Notice(zh
-                  ? "Memory 已变化，列表已刷新；请从最新记录重新生成。"
-                  : "Memory changed. The list was refreshed; regenerate from the latest record.");
+                  ? "记忆已变化，列表已刷新。请从最新记录重新生成。"
+                  : "The memory changed and the list was refreshed. Generate again from the latest record.");
               }
               throw error;
             }
@@ -2746,13 +2809,11 @@ export class CodexSettingTab extends PluginSettingTab {
         (modal) => this.openInlineEditor(modal, "review")
       );
       if (result === "saved") {
-        new Notice(zh ? "Memory 已保存为新版本" : "Memory saved as a new version");
+        new Notice(zh ? "记忆已保存为新版本" : "Memory saved as a new version");
       }
     } catch (error) {
       this.personalMemoryError = error instanceof Error ? error.message : String(error);
-      new Notice(zh
-        ? "Memory 修正未写入；请重新加载后重试。"
-        : "Memory correction was not written. Reload and try again.");
+      new Notice(this.copyText(["记忆修正未能写入。", "The memory correction was not written."], NEXT.retryOrReload));
     } finally {
       this.memoryActionRunning = false;
       this.scheduleDisplay();
@@ -2780,32 +2841,30 @@ export class CodexSettingTab extends PluginSettingTab {
       );
       forgotten = true;
       this.personalMemoryState = await this.plugin.getEchoInkPersonalMemoryState();
-      new Notice(zh ? "Memory 已忘掉" : "Memory forgotten");
+      new Notice(zh ? "记忆已忘掉" : "Memory forgotten");
     } catch (error) {
       if (isPersonalMemoryRevisionConflict(error)) {
         try {
           this.personalMemoryState = await this.plugin.getEchoInkPersonalMemoryState();
           this.personalMemoryError = null;
           new Notice(zh
-            ? "Memory 已变化，列表已刷新；请从最新记录重新操作。"
-            : "Memory changed. The list was refreshed; retry from the latest record.");
+            ? "记忆已变化，列表已刷新。请从最新记录重新操作。"
+            : "The memory changed and the list was refreshed. Try again from the latest record.");
         } catch (reloadError) {
           this.personalMemoryError = reloadError instanceof Error
             ? reloadError.message
             : String(reloadError);
           new Notice(zh
-            ? "Memory 已变化，但列表刷新失败；请重新打开复盘。"
-            : "Memory changed, but the list could not refresh. Reopen Review.");
+            ? "记忆已变化，但列表未能刷新。请重新打开复盘。"
+            : "The memory changed, but the list could not refresh. Reopen Review.");
         }
       } else {
         this.personalMemoryError = error instanceof Error ? error.message : String(error);
         new Notice(forgotten
           ? (zh
-            ? "Memory 已忘掉，但列表刷新失败；请重新打开复盘。"
-            : "Memory was forgotten, but the list could not refresh. Reopen Review.")
-          : (zh
-            ? "Memory 未能忘掉；请重新加载后重试。"
-            : "Memory was not forgotten. Reload and try again."));
+            ? "记忆已忘掉，但列表未能刷新。请重新打开复盘。"
+            : "The memory was forgotten, but the list could not refresh. Reopen Review.")
+          : this.copyText(["记忆未能忘掉。", "The memory was not forgotten."], NEXT.retryOrReload));
       }
     } finally {
       this.memoryActionRunning = false;
@@ -2845,16 +2904,13 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.runSettingsButtonAction(button, "review", async () => {
         const manager = this.plugin.getReviewManager();
         if (!manager) {
-          throw new Error(this.plugin.settings.settingsLanguage === "en"
-            ? "Review is not ready yet. Reopen EchoInk and try again."
-            : "复盘服务尚未就绪。请重新打开 EchoInk 后重试。"
-          );
+          throw new Error(this.copyText(["复盘服务尚未就绪。", "Review is not ready yet."], NEXT.retryOrReopen));
         }
         const result = await manager.runReview(kind);
         if (result.status === "failed") {
           throw new Error(this.plugin.settings.settingsLanguage === "en"
             ? "The review report could not be generated. Check the output directory and try again."
-            : "复盘报告生成失败。请检查输出目录后重试。"
+            : "复盘报告未能生成。请检查输出目录后重试。"
           );
         }
         this.announceSettingsStatus(this.plugin.settings.settingsLanguage === "en"
@@ -2879,7 +2935,7 @@ export class CodexSettingTab extends PluginSettingTab {
           const previous = settings.rangeMode;
           settings.rangeMode = value === "current-week" ? "current-week" : "previous-week";
           if (!embedded) await this.plugin.saveSettings();
-          else try { await this.plugin.saveSettings(); } catch (error) { settings.rangeMode = previous; dropdown.setValue(previous); new Notice(error instanceof Error ? error.message : String(error)); }
+          else try { await this.plugin.saveSettings(); } catch (error) { settings.rangeMode = previous; dropdown.setValue(previous); new Notice(this.failure(error, ["设置未能保存。", "The setting could not be saved."], NEXT.retry)); }
         });
     });
     if (!embedded) this.decorateSetting(setting, "calendar-days");
@@ -3272,7 +3328,7 @@ export class CodexSettingTab extends PluginSettingTab {
         draftContent: "",
         loading: false,
         saving: false,
-        error: error instanceof Error ? error.message : String(error)
+        error: this.failure(error, ["SKILL.md 未能读取。", "SKILL.md could not be read."], NEXT.retry)
       };
       this.scheduleDisplay();
     });
@@ -3280,7 +3336,6 @@ export class CodexSettingTab extends PluginSettingTab {
 
   private renderDefaultModelSelector(page: HTMLElement): void {
     const zh = this.plugin.settings.settingsLanguage !== "en";
-    const copy = this.copy;
     const runSection = createSettingsSection(page, {
       title: Platform.isDesktopApp ? (zh ? "默认模型" : "Default model") : (zh ? "模型" : "Model"),
       surface: "flat"
@@ -3293,7 +3348,7 @@ export class CodexSettingTab extends PluginSettingTab {
         provider,
         this.plugin.settings.openAICodexCredential
       )
-        ? provider.models.map((model) => ({ provider, model }))
+        ? xiaoechoSelectableModels(provider).map((model) => ({ provider, model }))
         : []
     );
     const modelSetting = applySettingsRow(new OriginSetting(runGroup)
@@ -3319,17 +3374,23 @@ export class CodexSettingTab extends PluginSettingTab {
             provider.name,
             this.plugin.settings.settingsLanguage
           );
-          for (const model of provider.models) {
+          const xiaoecho = providerId === "xiaoecho";
+          for (const model of xiaoechoSelectableModels(provider)) {
             const value = providerModelSelectionValue(provider.id, model.id);
+            // The saved/server catalog is authoritative; unavailable tiers are omitted.
+            const vendor = xiaoecho ? xiaoechoVendorOf(model.id) : null;
             dropdown.addOption(
               value,
-              `${providerDisplayName} · ${model.displayName}${credentialReady ? "" : (
-                provider.authMode === "oauth"
-                  ? (zh ? "（需要登录）" : " (sign-in required)")
-                  : (zh ? "（需重新保存 API Key）" : " (API key required)")
+              `${providerDisplayName} · ${Platform.isDesktopApp ? xiaoechoDesktopModelName(providerId, model) : model.displayName}${credentialReady ? "" : (
+                provider.authMode === "account"
+                  ? (zh ? "（需登录 EchoInk）" : " (EchoInk sign-in required)")
+                  : provider.authMode === "oauth"
+                    ? (zh ? "（需要登录）" : " (sign-in required)")
+                    : (zh ? "（需重新保存 API Key）" : " (API key required)")
               )}`,
               (container) => { renderProviderBrandIcon(container, getApiProviderPreset(providerId).id); },
-              Platform.isDesktopApp ? providerDisplayName : undefined
+              Platform.isDesktopApp ? (vendor ? `${providerDisplayName} · ${vendor}` : providerDisplayName) : undefined,
+              Platform.isDesktopApp && xiaoecho ? { detail: xiaoechoTypicalPointsLabel(model, this.plugin.settings.settingsLanguage), wrapLabel: true } : undefined
             );
             dropdown.setOptionDisabled(value, !credentialReady);
           }
@@ -3360,7 +3421,7 @@ export class CodexSettingTab extends PluginSettingTab {
                   candidate,
                   settings.openAICodexCredential
                 )) {
-                  throw new Error("Provider authentication unavailable");
+                  throw new Error(pickErrorCopy(CAUSE.providerAuth, this.plugin.settings.settingsLanguage));
                 }
                 activateApiProviderModel(settings, candidate, selection.modelId);
               });
@@ -3377,7 +3438,7 @@ export class CodexSettingTab extends PluginSettingTab {
                 ? `已切换到 ${providerDisplayName} · ${selection.modelId}`
                 : `Now using ${providerDisplayName} · ${selection.modelId}`);
             } catch (error) {
-              new Notice(error instanceof Error ? error.message : copy.providers.saveFailed);
+              new Notice(this.failure(error, SWITCH_FAILED, NEXT.testConnection));
             }
             this.scheduleDisplay();
           });
@@ -3407,7 +3468,7 @@ export class CodexSettingTab extends PluginSettingTab {
       return;
     }
     const page = createSettingsPage(container, {
-      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型与提供商", "Models and providers"),
+      title: Platform.isDesktopApp ? label("模型", "Models") : label("模型服务", "Model services"),
       titleVisibility: Platform.isDesktopApp ? "screen-reader" : "visible"
     });
     page.addClass("codex-provider-model-manager");
@@ -3462,7 +3523,7 @@ export class CodexSettingTab extends PluginSettingTab {
       );
       if (Platform.isDesktopApp) {
         const verified = this.verifiedProviderConnections.get(saved.id) === providerConfigurationFingerprint(saved);
-        const signedIn = saved.authMode === "oauth" && apiProviderHasUsableCredential(saved, this.plugin.settings.openAICodexCredential);
+        const signedIn = saved.authMode !== "api-key" && apiProviderHasUsableCredential(saved, this.plugin.settings.openAICodexCredential);
         const status = verified ? "connected" : signedIn ? "signed-in" : "unverified";
         const statusLabel = verified ? label("连接正常", "Connection verified")
           : signedIn ? label("已登录", "Signed in") : label("未验证", "Not verified");
@@ -3521,8 +3582,8 @@ export class CodexSettingTab extends PluginSettingTab {
               ? `${providerDisplayName}. OpenAI OAuth.`
               : `${providerDisplayName}。OpenAI OAuth。`)
             : this.plugin.settings.settingsLanguage === "en"
-              ? `${providerDisplayName}. Provider endpoint: ${saved.baseUrl}`
-              : `${providerDisplayName}。Provider 地址：${saved.baseUrl}`
+              ? `${providerDisplayName}. Endpoint: ${saved.baseUrl}`
+              : `${providerDisplayName}。接口地址：${saved.baseUrl}`
         }
       });
       if (providerId !== "openai-codex") {
@@ -3536,7 +3597,7 @@ export class CodexSettingTab extends PluginSettingTab {
         saved,
         this.plugin.settings.openAICodexCredential
       );
-      const credentialState = saved.authMode === "oauth"
+      const credentialState = saved.authMode !== "api-key"
         ? credentialReady ? "oauth-ready" : "oauth-missing"
         : !apiKeyRequired
           ? "not-required"
@@ -3623,8 +3684,8 @@ export class CodexSettingTab extends PluginSettingTab {
       emptyCopy.createDiv({
         cls: "codex-provider-saved-empty-description",
         text: label(
-          "添加第一个 Provider 后，就可以在 EchoInk 对话中使用。",
-          "Add a provider to start using it in EchoInk conversations."
+          "添加第一个模型服务后，就可以在 EchoInk 对话中使用。",
+          "Add a model service to start using it in EchoInk conversations."
         )
       });
     }
@@ -3756,7 +3817,7 @@ export class CodexSettingTab extends PluginSettingTab {
         draft.apiProtocol
       );
     } catch {
-      return { saved: false, message: this.copy.providers.saveFailed };
+      return { saved: false, message: this.copy.providers.urlInvalid };
     }
     draft.name = draft.name.trim().slice(0, 80) || preset.name;
     draft.runtimeProviderId = draft.runtimeProviderId.trim();
@@ -3778,7 +3839,7 @@ export class CodexSettingTab extends PluginSettingTab {
       input: [...model.input]
     }));
     draft.defaultModelId = draft.defaultModelId.trim();
-    draft.apiKey = draft.authMode === "oauth"
+    draft.apiKey = draft.authMode !== "api-key"
       ? ""
       : apiKey || draftInput.apiKey.trim();
     if (
@@ -3805,22 +3866,23 @@ export class CodexSettingTab extends PluginSettingTab {
 
     try {
       await this.plugin.activateApiProviderSettings((settings) => {
+        filterXiaoechoProviderDraft(draft);
         if (replacedProvider) {
           const index = settings.apiProviders.findIndex(
             (provider) => provider.id === replacedProvider.id
           );
-          if (index < 0) throw new Error("Provider being edited no longer exists");
+          if (index < 0) throw new Error(this.providerEditedElsewhereText());
           settings.apiProviders[index] = structuredClone(draft);
         } else {
           if (settings.apiProviders.some((provider) => provider.id === draft.id)) {
-            throw new Error("New Provider settings id already exists");
+            throw new Error(this.providerEditedElsewhereText());
           }
           settings.apiProviders.push(structuredClone(draft));
         }
         const candidate = settings.apiProviders.find(
           (provider) => provider.id === draft.id
         );
-        if (!candidate) throw new Error("Provider candidate missing");
+        if (!candidate) throw new Error(this.providerEditedElsewhereText());
         activateApiProvider(settings, candidate);
       });
       if (connectionVerified) {
@@ -3848,9 +3910,13 @@ export class CodexSettingTab extends PluginSettingTab {
     } catch (error) {
       return {
         saved: false,
-        message: error instanceof Error ? error.message : this.copy.providers.saveFailed
+        message: this.friendlyErrorText(error, this.copy.providers.saveFailed, this.copy.providers.saveFailed)
       };
     }
+  }
+
+  private providerEditedElsewhereText(): string {
+    return pickErrorCopy(CAUSE.editedElsewhere, this.plugin.settings.settingsLanguage);
   }
 
   private async deleteSavedProviderModel(providerId: string): Promise<boolean> {
@@ -3901,7 +3967,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.scheduleDisplay();
       return true;
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : this.copy.providers.saveFailed);
+      new Notice(this.failure(error, ["模型服务未能删除。", "The model service could not be deleted."], NEXT.retry));
       return false;
     }
   }
@@ -3976,13 +4042,13 @@ export class CodexSettingTab extends PluginSettingTab {
         ? code === "revision_conflict"
           ? "Preferences changed in another window. Copy your draft, reload, and reconcile before saving."
           : code === "invalid_content"
-            ? "Preferences must contain valid text and remain within 64 KiB."
-            : "Preferences could not be saved. Existing content was not overwritten."
+            ? "Preferences cannot be empty or exceed about 20,000 characters. Adjust them, then save."
+            : joinErrorCopy(["知识提炼偏好未能保存，现有内容未被覆盖。", "Preferences could not be saved. Existing content was not overwritten."], NEXT.retry, "en")
         : code === "revision_conflict"
           ? "偏好已在另一个窗口变化。请先复制当前草稿，重新加载并合并后再保存。"
           : code === "invalid_content"
-            ? "偏好必须是有效非空文本，且不超过 64 KiB。"
-            : "知识提炼偏好保存失败，现有内容未被覆盖。";
+            ? "偏好内容不能为空，且不得超过约 2 万字。请调整后重新保存。"
+            : joinErrorCopy(["知识提炼偏好未能保存，现有内容未被覆盖。", "Preferences could not be saved. Existing content was not overwritten."], NEXT.retry, "zh");
       this.knowledgePreferenceEditor =
         failSavingKnowledgeMaintenancePreference(edited, message);
       this.announceSettingsStatus(message);
@@ -4285,7 +4351,7 @@ export class CodexSettingTab extends PluginSettingTab {
       const state = page.createEl("p", { cls: "settings-note", attr: { "data-skill-delivery-state": id, role: "status", "aria-live": "polite" } });
       const updateState = () => {
         const message = remoteSkillLocked(resource, this.plugin.accountService)
-          ? english ? "An active PRO membership and an enabled device are required." : "需要有效 PRO，并在账号与会员中启用本机。"
+          ? pickErrorCopy(CAUSE.proRequired, english ? "en" : "zh")
           : skillDeliveryStateText(resolver?.deliveryState(id) ?? null, english);
         state.setText(message); state.hidden = !message;
       };
@@ -4311,7 +4377,7 @@ export class CodexSettingTab extends PluginSettingTab {
             const selected = await this.plugin.getSkillContentResolver().resolve(id);
             selected.assertAvailable();
             if (body.isConnected) { body.empty(); await MarkdownRenderer.render(this.app, selected.content, body, "", component); }
-          } catch (error) { state.setText(error instanceof Error ? error.message : String(error)); state.hidden = false; }
+          } catch (error) { state.setText(this.failure(error, ["Skill 内容未能读取。", "The Skill content could not be read."], NEXT.retry)); state.hidden = false; }
           finally { read.disabled = false; }
         };
       }
@@ -4345,7 +4411,7 @@ export class CodexSettingTab extends PluginSettingTab {
             this.scheduleDisplay();
           } catch {
             toggle.checked = this.plugin.settings.resources.catalog.find((item) => item.id === resource.id)?.enabled ?? resource.enabled;
-            const message = english ? "The resource setting was not saved." : "资源开关未保存，请重试。";
+            const message = this.copyText(["资源开关未能保存。", "The resource setting could not be saved."], NEXT.retry);
             new Notice(message);
             this.announceSettingsStatus(message);
           } finally { toggle.disabled = false; }
@@ -4395,9 +4461,7 @@ export class CodexSettingTab extends PluginSettingTab {
       if (diagnostic) {
         createSettingsState(
           actionGroup,
-          english
-            ? `${mcpDiagnosticLabel(diagnostic.code, true)}: ${diagnostic.message}`
-            : `${mcpDiagnosticLabel(diagnostic.code, false)}：${diagnostic.message}`,
+          mcpDiagnosticText(diagnostic.code, english ? "en" : "zh"),
           "error"
         );
       }
@@ -4438,7 +4502,7 @@ export class CodexSettingTab extends PluginSettingTab {
         surface: "group"
       });
       toolsSection.addClass("echoink-resource-tools");
-      toolsSection.querySelector<HTMLElement>(".settings-card-header")!.createSpan({ cls: "settings-badge", text: english
+      toolsSection.querySelector<HTMLElement>(".settings-card-header")!.createSpan({ cls: "settings-badge is-count", text: english
         ? `${connection?.tools.length ?? 0} tools` : `${connection?.tools.length ?? 0} 个工具` });
       const toolsGroup = createSettingsGroup(toolsSection);
       if (!connection?.tools.length) {
@@ -4671,10 +4735,8 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.loadWorkspaceResources(true, "skills");
     } catch (error) {
       if (this.builtinSkillEditor !== editor) return;
-      editor.error = error instanceof Error ? error.message : String(error);
-      const message = this.plugin.settings.settingsLanguage === "en"
-        ? "Skill instructions were not saved. Check the document and try again."
-        : "Skill 指令未保存。请检查文档后重试。";
+      editor.error = this.failure(error, ["Skill 指令未能保存。", "The Skill instructions could not be saved."], NEXT.retry);
+      const message = editor.error;
       new Notice(message);
       this.announceSettingsStatus(message);
     } finally {
@@ -4715,10 +4777,8 @@ export class CodexSettingTab extends PluginSettingTab {
       await this.loadWorkspaceResources(true, "skills");
     } catch (error) {
       if (this.builtinSkillEditor !== editor) return;
-      editor.error = error instanceof Error ? error.message : String(error);
-      const message = english
-        ? "The default Skill could not be restored."
-        : "默认 Skill 恢复失败，请重试。";
+      editor.error = this.failure(error, ["默认 Skill 未能恢复。", "The default Skill could not be restored."], NEXT.retry);
+      const message = editor.error;
       new Notice(message);
       this.announceSettingsStatus(message);
     } finally {
@@ -4778,9 +4838,7 @@ export class CodexSettingTab extends PluginSettingTab {
     } catch {
       toggle.checked = !next;
       toggle.disabled = false;
-      const message = this.plugin.settings.settingsLanguage === "en"
-        ? "The MCP setting was not saved."
-        : "MCP 设置未保存，请重试。";
+      const message = this.copyText(["MCP 设置未能保存。", "The MCP setting could not be saved."], NEXT.retry);
       new Notice(message);
       this.announceSettingsStatus(message);
     }
@@ -4966,7 +5024,8 @@ export class CodexSettingTab extends PluginSettingTab {
           for (const model of provider.models) {
             const key = providerModelSelectionValue(provider.id, model.id);
             if (key === value) found = true;
-            dropdown.addOption(key, `${providerName} · ${model.displayName}${ready ? "" : "（需配置授权）"}`);
+            dropdown.addOption(key, `${providerName} · ${Platform.isDesktopApp ? xiaoechoDesktopModelName(provider.providerId ?? "custom", model) : model.displayName}${ready ? "" : "（需配置授权）"}`, undefined, undefined,
+              Platform.isDesktopApp && provider.providerId === "xiaoecho" ? { detail: xiaoechoTypicalPointsLabel(model, this.plugin.settings.settingsLanguage), wrapLabel: true } : undefined);
             dropdown.setOptionDisabled(key, !ready);
           }
         }
@@ -4981,7 +5040,7 @@ export class CodexSettingTab extends PluginSettingTab {
             this.scheduleDisplay();
           } catch (error) {
             dropdown.setValue(value);
-            new Notice(error instanceof Error ? error.message : String(error));
+            new Notice(this.failure(error, ["英文日记模型未能切换。", "The English Diary model could not be changed."], NEXT.retry));
           } finally { modelPending = false; if (modelControls) modelControls.refresh(); else dropdown.setDisabled(false); }
         });
       }));
@@ -5001,7 +5060,7 @@ export class CodexSettingTab extends PluginSettingTab {
         if (!current.enabled) { new Notice("请先在插件列表中启用英文日记。"); return; }
         await this.plugin.englishDiary?.openLibrary();
         (this.app as unknown as { setting: { close(): void } }).setting.close();
-      } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+      } catch (error) { new Notice(this.failure(error, ["表达库未能打开。", "The expression library could not be opened."], NEXT.retry)); }
     };
     if (!embedded) createSettingsNavigationRow(files, { title: "表达库", description: "搜索已收录的表达，查看出处、修改分类与备注。", actionLabel: "打开", onActivate: () => { void openLibrary(); } });
     const zh = this.plugin.settings.settingsLanguage !== "en";
@@ -5013,7 +5072,7 @@ export class CodexSettingTab extends PluginSettingTab {
       : (zh ? "将首页“快速记录”替换为“写英文日记”。" : "Replace Quick note on Home with Write English diary.");
     if (embedded) {
       this.renderModuleCheckbox(files, shortcutLabel, current.homeShortcut === "english-diary", shortcutHint, async enabled => {
-        if (!this.plugin.englishDiary) throw new Error(zh ? "英文日记尚未就绪" : "English Diary is not ready");
+        if (!this.plugin.englishDiary) throw new Error(this.copyText(["英文日记尚未就绪。", "English Diary is not ready yet."], NEXT.retryLater));
         await this.plugin.englishDiary.setHomeShortcut(enabled ? "english-diary" : "quick-record");
       }, true, "english-diary:home-shortcut");
       return;
@@ -5027,10 +5086,10 @@ export class CodexSettingTab extends PluginSettingTab {
         toggle.setValue(this.plugin.settings.englishDiary.homeShortcut === "english-diary").onChange(async (enabled) => {
           toggle.setDisabled(true);
           try {
-            if (!this.plugin.englishDiary) throw new Error(zh ? "英文日记尚未就绪，请稍后重试。" : "English Diary is not ready. Please try again.");
+            if (!this.plugin.englishDiary) throw new Error(this.copyText(["英文日记尚未就绪。", "English Diary is not ready yet."], NEXT.retryLater));
             await this.plugin.englishDiary.setHomeShortcut(enabled ? "english-diary" : "quick-record");
           } catch (error) {
-            const message = error instanceof Error ? error.message : (zh ? "首页快捷入口未保存，请重试。" : "The home shortcut was not saved. Please try again.");
+            const message = this.failure(error, ["首页快捷入口未保存。", "The home shortcut was not saved."], NEXT.retry);
             new Notice(message);
             this.announceSettingsStatus(message);
           } finally {
@@ -5101,7 +5160,7 @@ export class CodexSettingTab extends PluginSettingTab {
         if (kind === "pdf") await this.plugin.pdfReading?.setEnabled(enabled);
         else await this.plugin.lifestyle.setEnabled(kind, enabled);
       } catch (error) {
-        const message = error instanceof Error ? error.message : (english ? "The plugin setting was not saved." : "插件状态保存失败");
+        const message = this.failure(error, ["插件状态未能保存。", "The plugin setting could not be saved."], NEXT.retry);
         new Notice(message);
         this.announceSettingsStatus(message);
       } finally {
@@ -5404,7 +5463,7 @@ export class CodexSettingTab extends PluginSettingTab {
         } else if (resource.kind === "mcp-server") {
           await this.plugin.setEchoInkMcpServerEnabled(resource.id, enabled);
         } else {
-          if (remoteSkillLocked(resource, this.plugin.accountService)) throw new Error(this.plugin.settings.settingsLanguage === "en" ? "An active PRO membership is required." : "此 Skill 需要有效 PRO。");
+          if (remoteSkillLocked(resource, this.plugin.accountService)) throw new Error(pickErrorCopy(CAUSE.proRequired, this.plugin.settings.settingsLanguage));
           await this.plugin.setEchoInkSkillResourceEnabled(resource.id, enabled);
         }
         const authoritativeEnabled = currentEnabled();
@@ -5417,9 +5476,7 @@ export class CodexSettingTab extends PluginSettingTab {
         toggle.checked = authoritativeEnabled;
         row.toggleClass("is-enabled", authoritativeEnabled);
         row.toggleClass("is-disabled", !authoritativeEnabled);
-        const message = this.plugin.settings.settingsLanguage === "en"
-          ? "The resource setting was not saved."
-          : "资源开关未保存，请重试。";
+        const message = this.copyText(["资源开关未能保存。", "The resource setting could not be saved."], NEXT.retry);
         new Notice(message);
         this.announceSettingsStatus(message);
       } finally {
@@ -5459,7 +5516,7 @@ export class CodexSettingTab extends PluginSettingTab {
     } catch {
       this.settingsActionErrors.resources = this.plugin.settings.settingsLanguage === "en"
         ? "Could not copy the value. Select it from the visible field instead."
-        : "无法复制该内容，请从可见字段中选择并复制。";
+        : "无法复制该内容。请从可见字段中选择并复制。";
       button.focus();
       this.announceSettingsStatus(this.settingsActionErrors.resources);
       this.scheduleDisplay();
@@ -5534,7 +5591,7 @@ export class CodexSettingTab extends PluginSettingTab {
       this.announceSettingsStatus(message);
     } catch {
       button.disabled = false;
-      const message = english ? "The MCP server was not deleted." : "MCP Server 未删除，请重试。";
+      const message = this.copyText(["MCP 服务未能删除。", "The MCP server could not be deleted."], NEXT.retry);
       new Notice(message);
       this.announceSettingsStatus(message);
     }
@@ -5657,11 +5714,11 @@ function describeQuickChatRegistration(
         : "Desktop capability unavailable; the quick window cannot register.";
     case "occupied":
       return zh
-        ? `${display} 已被系统、其他应用或另一个笔记库占用，请更换。`
+        ? `${display} 已被系统、其他应用或另一个笔记库占用。请更换快捷键。`
         : `${display} is taken by the system, another app, or another vault. Choose a different hotkey.`;
     case "invalid":
       return zh
-        ? "快捷键格式无效，请重新录制。"
+        ? "快捷键格式无效。请重新录制。"
         : "Invalid hotkey format. Record it again.";
     default:
       return zh ? "未注册。" : "Not registered.";
@@ -5700,6 +5757,7 @@ type SettingsDetail =
   | "pdf-reading"
   | "english-diary"
   | "selection-ask"
+  | "note-comments"
   | "knowledge-linking"
   | "knowledge-folders"
   | "knowledge-preferences"
@@ -5892,18 +5950,6 @@ function mcpConnectionSummary(connection: EchoInkMcpConnectionRecord, english: b
   return english
     ? `stdio · ${connection.command} · ${argumentCount} arguments`
     : `stdio · ${connection.command} · ${argumentCount} 个参数`;
-}
-
-function mcpDiagnosticLabel(code: EchoInkMcpDiagnosticCode, english: boolean): string {
-  const labels: Record<EchoInkMcpDiagnosticCode, [string, string]> = {
-    connection_failed: ["连接失败", "Connection failed"],
-    authentication_failed: ["认证失败", "Authentication failed"],
-    schema_invalid: ["Schema 异常", "Schema invalid"],
-    disconnected: ["连接中断", "Disconnected"],
-    timeout: ["连接超时", "Timed out"],
-    call_failed: ["Tool 调用失败", "Tool call failed"]
-  };
-  return labels[code][english ? 1 : 0];
 }
 
 function resourceSourceLabel(source: EchoInkResource["source"], language: "zh-CN" | "en"): string {

@@ -1,0 +1,46 @@
+/* Cloud sync indicators: status bar (whole vault) and note header (one note). */
+body { --echoink-sync-warn: #b8860b; }
+body.theme-dark { --echoink-sync-warn: #facc15; }
+.status-bar-item.echoink-sync-status { display: inline-flex; align-items: center; gap: 5px; }
+.status-bar-item.echoink-sync-status.is-hidden { display: none; }
+.echoink-sync-status-icon { display: inline-flex; }
+.echoink-sync-status-icon svg { width: 14px; height: 14px; }
+.echoink-sync-status.is-warn, .view-action.echoink-sync-note-action.is-warn { color: var(--echoink-sync-warn); }
+.echoink-sync-icon .echoink-sync-spin { transform-origin: 12px 16px; animation: echoink-sync-spin 1.2s ease-in-out infinite; }
+.echoink-sync-icon .echoink-sync-up { animation: echoink-sync-up .9s cubic-bezier(.68, -.6, .32, 1.6) infinite alternate; }
+.echoink-sync-icon .echoink-sync-down { animation: echoink-sync-down .9s cubic-bezier(.68, -.6, .32, 1.6) infinite alternate; }
+.echoink-sync-icon .echoink-sync-draw { stroke-dasharray: 10; stroke-dashoffset: 10; animation: echoink-sync-draw .45s ease-out .1s forwards; }
+@keyframes echoink-sync-spin { to { transform: rotate(-360deg); } }
+@keyframes echoink-sync-up { to { transform: translateY(-2px); } }
+@keyframes echoink-sync-down { to { transform: translateY(2px); } }
+@keyframes echoink-sync-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .echoink-sync-icon .echoink-sync-spin, .echoink-sync-icon .echoink-sync-up, .echoink-sync-icon .echoink-sync-down { animation: none; }
+  .echoink-sync-icon .echoink-sync-draw { animation: none; stroke-dashoffset: 0; }
+}
+
+/* Note header popover: state, times, and conflict version records. */
+.view-action.echoink-sync-note-action { position: relative; }
+.view-action.echoink-sync-note-action.is-active { background-color: var(--background-modifier-hover); color: var(--text-normal); }
+.view-action.echoink-sync-note-action.is-active.is-warn { color: var(--echoink-sync-warn); }
+.view-action.echoink-sync-note-action.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--echoink-sync-warn); }
+.echoink-sync-pop { position: fixed; z-index: var(--layer-popover); width: 260px; padding: 14px; display: flex; flex-direction: column; gap: 12px;
+  background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 12px; box-shadow: var(--shadow-s); font-size: var(--font-ui-small); }
+.echoink-sync-pop-head { display: flex; align-items: center; gap: 8px; font-weight: var(--font-semibold); color: var(--text-normal); min-width: 0; }
+.echoink-sync-pop-head > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-sync-pop-head.is-warn { color: var(--echoink-sync-warn); }
+.echoink-sync-pop-icon { display: inline-flex; }
+.echoink-sync-pop-icon svg { width: 16px; height: 16px; }
+.echoink-sync-pop-sub { color: var(--text-muted); }
+.echoink-sync-pop-rows { border: 1px solid var(--background-modifier-border); border-radius: 10px; overflow: hidden; }
+.echoink-sync-pop-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; width: 100%; min-height: 32px; }
+.echoink-sync-pop-row + .echoink-sync-pop-row { border-top: 1px solid var(--background-modifier-border); }
+.echoink-sync-pop-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-normal); }
+.echoink-sync-pop-time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+button.echoink-sync-pop-toggle { background: none; border: none; border-radius: 0; box-shadow: none; font: inherit; cursor: pointer; text-align: left; }
+button.echoink-sync-pop-toggle:hover { background: var(--background-modifier-hover); }
+.echoink-sync-pop-chevron { display: inline-flex; color: var(--text-muted); }
+.echoink-sync-pop-chevron svg { width: 13px; height: 13px; }
+.echoink-sync-pop-versions { max-height: 240px; overflow-y: auto; }
+.echoink-sync-pop-versions .echoink-sync-pop-time { flex: none; }
+button.echoink-sync-pop-restore { flex: none; height: 24px; padding: 0 10px; font-size: var(--font-ui-smaller); box-shadow: none; }

@@ -46,6 +46,11 @@
 .memory-layer-dot.is-peripheral { opacity: .3; }
 .memory-layer-dot.is-faded { background: transparent; border: 1px solid var(--text-faint); }
 .memory-meta, .memory-muted { color: var(--text-muted); font-size: 12px; }
+.memory-correction { margin-top: 8px; font-size: 12px; }
+.memory-correction summary { cursor: pointer; border-radius: 6px; }
+.memory-correction summary:hover, .memory-correction summary:focus-visible { background: var(--background-modifier-hover); outline: none; box-shadow: none; }
+.memory-correction-body { padding: 0 0 8px; overflow-wrap: anywhere; }
+.memory-correction-body .memory-button { margin-top: 8px; }
 .memory-recent-age { color: var(--text-faint); font-size: 12px; flex-shrink: 0; }
 .memory-meta { margin-bottom: 4px; }
 .memory-detail-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
@@ -94,3 +99,12 @@
 .memory-summary-count { flex-shrink: 0; color: var(--text-normal); font-weight: 600; }
 .echoink-memory-page .memory-recall-summary .memory-button { flex-shrink: 0; border: 0; background: transparent; }
 .echoink-memory-page .memory-recall-summary .memory-button:is(:hover, :focus-visible) { background: var(--background-modifier-hover); }
+
+.codex-answer-sources .codex-memory-receipt-list { margin-top: 2px; }
+.codex-answer-sources .codex-memory-receipt-list[hidden] { display: none; }
+/* Keep the resting brain position: 6px button inset + 14px icon + 6px gap. */
+.codex-answer-sources button.codex-memory-receipt-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-start; gap: 2px 6px; padding: 3px 4px 3px 26px; height: auto; min-height: 0; width: 100%; text-align: left; background: transparent; border: 0; box-shadow: none; color: var(--text-normal); font-size: var(--echoink-conversation-font-label-secondary, 12px); white-space: normal; }
+.codex-answer-sources button.codex-memory-receipt-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.codex-answer-sources button.codex-memory-receipt-row:is(:hover, :focus-visible) { background: var(--background-modifier-hover); outline: none; }
+.codex-answer-sources .codex-memory-receipt-reason { color: var(--text-muted); }
+.codex-memory-receipt-list ~ .codex-answer-source-list .codex-ai-elements-source-header { padding-inline-start: 6px; }

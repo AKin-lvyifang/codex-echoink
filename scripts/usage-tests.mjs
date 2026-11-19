@@ -19,6 +19,7 @@ try {
       b.onResolve({filter: /^[^./]/}, args => {if(args.path==="obsidian") return {path:desktopNodeTestAliases.obsidian}; const target=import.meta.resolve(args.path);return {path:target.startsWith("node:")?target:fileURLToPath(target),external:true};});
     }}] });
   await import(pathToFileURL(outfile).href);
+  await (await import('../tests/mobile-token-worker/scenarios.mjs')).mobileTokenWorkerScenarios();
   const bundle = await build({ absWorkingDir: root, entryPoints: ["src/harness/usage/token-estimator.ts"],
     bundle: true, format: "esm", platform: "browser", minify: true, write: false, logLevel: "silent" });
   const bytes = bundle.outputFiles[0].contents;

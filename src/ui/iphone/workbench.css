@@ -229,3 +229,9 @@
 .echoink-iphone .ip-module-owner-option .ip-avatar { width: 28px; height: 28px; }
 .echoink-iphone .ip-module-owner-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; width: 100%; }
 .echoink-iphone .ip-module-owner-actions > button:first-child { margin-right: auto; }
+
+/* Keep each suggestion's actions together; labels determine button width. */
+.echoink-iphone .ip-signal-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; }
+.echoink-iphone .ip-signal-actions button { width: auto; flex: 0 0 auto; white-space: normal; }
+.echoink-iphone .ip-signal-actions button { min-height: 44px; }
+.echoink-iphone .ip-signal-heading { flex-wrap: wrap; }

@@ -9,6 +9,7 @@ import {
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import {
   type PersonalMemoryKind,
+  type PersonalMemoryRecord,
   type PersonalMemoryRuntimeContext,
   type PersonalMemorySearchRequest,
   type PersonalMemoryStatus,
@@ -273,8 +274,8 @@ export class PiPersonalMemoryToolSecurity
 implements PiVaultAdditionalToolSecurityPort {
   readonly toolName = "memory_search";
   readonly toolNames = PI_PERSONAL_MEMORY_TOOL_IDS;
-  private readObserver?: (id: string, turnId: string) => Promise<unknown>;
-  setReadObserver(observer: (id: string, turnId: string) => Promise<unknown>): void { this.readObserver = observer; }
+  private readObserver?: (record: PersonalMemoryRecord, runtime: PersonalMemoryRuntimeContext) => Promise<unknown>;
+  setReadObserver(observer: NonNullable<PiPersonalMemoryToolSecurity["readObserver"]>): void { this.readObserver = observer; }
   private readonly calls = new Map<string, AuthorizedMemoryToolCall>();
   private readonly seenToolCallIds = new Set<string>();
   private readonly writeSessions = new Map<string, Readonly<{ revision: number }>>();
@@ -469,8 +470,8 @@ implements PiVaultAdditionalToolSecurityPort {
       call.errorCode ? "execution" : undefined
     );
     if (!corrected.isError && !event.isError && call.toolId === "memory_read") {
-      const record = (call.result as { record?: { id: string } })?.record;
-      if (record) await this.readObserver?.(record.id, call.runtime.productRunId);
+      const record = (call.result as { record?: PersonalMemoryRecord })?.record;
+      if (record) await this.readObserver?.(record, call.runtime);
     }
     return corrected;
   }
@@ -479,8 +480,12 @@ implements PiVaultAdditionalToolSecurityPort {
 export function createPiPersonalMemoryToolDefinitions(input: Readonly<{
   repository: PersonalMemoryRepository;
   security: PiPersonalMemoryToolSecurity;
+  onRead?(record: PersonalMemoryRecord, runtime: PersonalMemoryRuntimeContext): Promise<unknown>;
 }>): readonly ToolDefinition[] {
-  input.security.setReadObserver((id, turnId) => input.repository.recordRecalledMemories?.([id], turnId) ?? Promise.resolve());
+  input.security.setReadObserver(async (record, runtime) => {
+    await input.repository.recordRecalledMemories?.([record.id], runtime.productRunId);
+    await input.onRead?.(record, runtime);
+  });
   return Object.freeze(PI_PERSONAL_MEMORY_TOOL_IDS.map((toolId) => defineTool({
     name: toolId,
     label: toolLabel(toolId),

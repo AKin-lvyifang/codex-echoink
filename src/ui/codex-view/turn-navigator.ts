@@ -6,10 +6,12 @@
  * answer before the next user message.
  */
 import { attachNativeTooltip, type NativeTooltipHandle } from "../native-tooltip";
+import { isCompanyProgrammaticUserMessage } from "../../company/report-presentation";
 import type { ChatMessage, SettingsLanguage } from "../../settings/settings";
 import { isAgentAnswerMessage } from "./agent-turn-process";
 import type { CodexMessageHost } from "./message-controller";
 import { conversationUiText } from "./ui-i18n";
+import { CONVERSATION_SCROLL_DURATION_MS, conversationScrollProgress } from "./scroll-motion";
 
 export interface ConversationTurn {
   messageId: string;
@@ -26,7 +28,6 @@ const TURN_MAGNIFY_SIGMA_PX = 30;
 const TURN_MAGNIFY_RANGE_PX = 84;
 const TURN_PREVIEW_HIDE_DELAY_MS = 180;
 const TURN_JUMP_TOP_OFFSET_PX = 12;
-const TURN_JUMP_DURATION_MS = 260;
 const TURN_READ_LINE_OFFSET_PX = 28;
 const TURN_TRACK_MIN_HEIGHT_PX = 96;
 const TURN_TRACK_SHELL_RATIO = 0.62;
@@ -39,8 +40,10 @@ export function conversationTurnVisibleText(message: ChatMessage): string {
 export function buildConversationTurns(
   messages: readonly ChatMessage[],
   running: boolean,
-  language: SettingsLanguage
+  language: SettingsLanguage,
+  companyRole?: string
 ): ConversationTurn[] {
+  messages = messages.filter(message => !isCompanyProgrammaticUserMessage(message, companyRole));
   let lastUserIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "user") {
@@ -245,7 +248,7 @@ export class TurnNavigator {
     const sessionChanged = session.id !== this.modelSessionId;
     this.modelFingerprint = fingerprint;
     this.modelSessionId = session.id;
-    this.turns = buildConversationTurns(messages, this.host.running, this.language());
+    this.turns = buildConversationTurns(messages, this.host.running, this.language(), session.companyRole);
     if (sessionChanged) {
       this.currentIndex = -1;
       this.hoverIndex = -1;
@@ -495,8 +498,8 @@ export class TurnNavigator {
     const step = (now: number): void => {
       this.scrollAnimation = 0;
       if (this.userInterruptedScroll) return;
-      const progress = clamp((now - startedAt) / TURN_JUMP_DURATION_MS, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
+      const progress = clamp((now - startedAt) / CONVERSATION_SCROLL_DURATION_MS, 0, 1);
+      const eased = conversationScrollProgress(now - startedAt);
       messagesEl.scrollTop = start + delta * eased;
       if (progress < 1) this.scrollAnimation = window.requestAnimationFrame(step);
     };

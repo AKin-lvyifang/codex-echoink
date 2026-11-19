@@ -282,7 +282,12 @@ export interface PiKnowledgeMaintenanceSettlement {
 }
 
 export interface PiKnowledgeRuntimePort {
+  /** Only adapters that annotate exact delivered snapshots may publish text
+   * before freshness verification. Omitted means strict, buffered publication. */
+  readonly referenceVerificationMode?: "annotate-delivered-snapshots";
   shouldPreflightChat?(conversationId: string): boolean;
+  /** Local-only speculation; no excerpts leave the device until /turn approves. */
+  collectChatCandidates?(input: Readonly<{ conversationId: string; question: string; signal?: AbortSignal }>): Promise<import("../../knowledge-base/chat-knowledge-candidates").ChatKnowledgeCandidatesResult | null>;
   maintenanceActivity?(event: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceActivityLifecycle>): Promise<void>;
   prepareMaintenanceStructure?(input: { initialization: boolean; assertActive(): void }): Promise<string>;
   assertMaintenanceSelection?(input: Readonly<{ conversationId: string; sourcePaths: readonly string[] }>): Promise<void>;
@@ -310,6 +315,11 @@ export interface PiKnowledgeRuntimePort {
   retrieveChat?(input: Readonly<
     PiKnowledgeRunIdentity & {
       signal?: AbortSignal;
+      decisionTurnId?: string;
+      recent?: readonly string[];
+      knowledgePickApproved?: boolean;
+      candidates?: Promise<import("../../knowledge-base/chat-knowledge-candidates").ChatKnowledgeCandidatesResult | null>;
+      onStage?(stage: "selecting_knowledge"): Promise<void>;
       question: string;
       explicitPaths: readonly string[];
       includeUnrefined: boolean;
@@ -400,6 +410,7 @@ export interface PiKnowledgeMaintenanceToolResult {
     | "invalid_input"
     | "invalid_raw_path"
     | "proposal_invalid"
+    | "maintenance_copy_limit"
     | "preview_not_found"
     | "preview_inactive"
     | "preview_stale"
@@ -423,6 +434,8 @@ export interface PiKnowledgeMaintenanceToolPort {
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 
 export interface PiChatSubmitRequest {
+  /** Ephemeral display progress before a durable user Entry exists. */
+  onPreparationStage?: import("../../types/composer-submission").PreparationObserver;
   /** Product-origin company turns must never trigger automatic retrieval. */
   companyProgrammatic?: boolean;
   companyApprovalKey?: string;
@@ -590,6 +603,7 @@ export type PiChatRuntimeEvent =
       status: "active" | "completed";
       stage:
         | "searching"
+        | "selecting_knowledge"
         | "continuing_search"
         | "reading_knowledge"
         | "comparing_memory"

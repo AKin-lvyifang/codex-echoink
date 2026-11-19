@@ -13,7 +13,7 @@ const context = vm.createContext({ module, exports: module.exports, crypto: webc
   AbortController, URL, setTimeout, clearTimeout, console, require(id) {
     assert.equal(id, "obsidian"); return { TFile: FixtureTFile, TFolder: class {}, Notice: class { constructor() {} } };
   } });
-context.self = context;
+context.self = context; context.window = context;
 vm.runInContext(build.outputFiles[0].text, context, { filename: "mobile-tasks-browser.cjs" });
 const unhandled = [];
 const collect = error => unhandled.push(error);

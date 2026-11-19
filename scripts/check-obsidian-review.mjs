@@ -4,7 +4,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
 import { validateManifestSource } from "./manifest-contract.mjs";
-import { lintProductionCss, runCssBehaviorSentinels } from "./obsidian-css-review.mjs";
+import { lintProductionCss, runCssBehaviorSentinels, auditUnifiedSwitch } from "./obsidian-css-review.mjs";
 import {
   productionLintFiles, auditResolvedContracts, auditLintCoverage, collectFindings,
   isHardFinding, createBaseline, validateBaseline, createWarningBaseline, validateWarningBaseline, createCssBaseline, validateCssBaseline, compareBaseline, runBehaviorSentinels
@@ -40,6 +40,7 @@ try {
   requirePass("CSS lint coverage or syntax failed", css.errors);
   const cssSentinels = await runCssBehaviorSentinels();
   requirePass("CSS behavior sentinels failed", cssSentinels.errors);
+  requirePass("Unified switch geometry check failed", (await auditUnifiedSwitch(rootDir)).errors);
   const currentCss = createCssBaseline(css.findings);
   requirePass("Invalid current CSS warnings", validateCssBaseline(currentCss));
   const cssComparison = compareBaseline(currentCss, cssBaseline);

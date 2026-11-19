@@ -269,7 +269,7 @@ export async function readFinanceBill(bytes: Uint8Array, fileName: string, sourc
     let text = new TextDecoder("utf-8").decode(bytes);
     if (text.includes("\uFFFD")) text = new TextDecoder("gb18030").decode(bytes);
     rows = parseCsv(text);
-  } else throw new Error("只支持 CSV 或 XLSX 账单");
+  } else throw new Error("仅支持 CSV 或 XLSX 格式的账单。请重新选择文件。");
   const headerIndex = rows.findIndex((row) => row.some((value) => /交易时间|交易创建时间|付款时间/u.test(value)) && row.some((value) => /金额/u.test(value)));
   if (headerIndex < 0) throw new Error("未识别到账单表头，请选择微信或支付宝的明细导出文件");
   const header = rows[headerIndex].map(headerKey);

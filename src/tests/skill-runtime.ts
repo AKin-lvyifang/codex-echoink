@@ -86,6 +86,9 @@ export async function runSkillRuntimeScenarios(): Promise<void> {
       assert.deepEqual(chosen.skills.map(s => s.id), ["finance-operations"], "ordinary finance does not select analysis/import/freshness methods");
     }
     assert.equal(await coordinator.selectForTask({ text: "记一下早餐12块", excludedSkillIds: ["finance-operations"] }), null);
+    for (const text of ["这段笔记里的双链怎么写才对", "帮我给这篇笔记加 frontmatter 属性", "这款笔记软件当前版本有什么新功能"]) {
+      assert.ok(!(await coordinator.selectForTask({ text }))?.skills.some(s => s.id === "finance-operations"), `note question must not route to finance: ${text}`);
+    }
     for (const text of ["生成财务分析报告", "导入微信CSV账单"]) assert.ok(!(await coordinator.selectForTask({ text }))?.skills.some(s => s.id === "finance-operations"));
     const financeContent = (await coordinator.inspectBuiltinSkill("finance-operations")).content;
     const edited = `${financeContent}\n\n## 我的偏好\n回复保持简短。\n`;

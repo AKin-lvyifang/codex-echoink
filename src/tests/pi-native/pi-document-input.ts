@@ -336,7 +336,7 @@ async function textlessPdfDependsOnTheSelectedTransport(): Promise<void> {
       }),
       (error: PiDocumentInputError) =>
         error.code === "textless"
-        && /后来变化的源文件/u.test(error.message)
+        && /原始内容已无法读取/u.test(error.message)
     );
     await writeFile(filePath, minimalBlankPdf());
 

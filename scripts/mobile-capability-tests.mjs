@@ -13,7 +13,7 @@ for (const forbidden of ["src/settings/settings.ts", "src/agents/capability-poli
   assert.ok(!inputs.includes(forbidden), `mobile bundle imported desktop ${forbidden}`);
 }
 const module = { exports: {} };
-const context = vm.createContext({ module, exports: module.exports, __echoinkFixtureTFile: FixtureTFile, TextEncoder, TextDecoder, Uint8Array, structuredClone, crypto: webcrypto, console, AbortController, setTimeout, clearTimeout });
+const context = vm.createContext({ URL, module, exports: module.exports, __echoinkFixtureTFile: FixtureTFile, TextEncoder, TextDecoder, Uint8Array, structuredClone, crypto: webcrypto, console, AbortController, setTimeout, clearTimeout });
 context.self = context;
 vm.runInContext(build.outputFiles[0].text, context, { filename: "mobile-capabilities-browser.cjs" });
 assert.equal(vm.runInContext("typeof process + ':' + typeof Buffer + ':' + typeof require", context), "undefined:undefined:undefined");

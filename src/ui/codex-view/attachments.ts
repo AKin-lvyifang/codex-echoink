@@ -189,8 +189,8 @@ function appendPiChatFile(host: CodexAttachmentHost, file: File): void {
     new Notice(
       conversationUiText(
         host.plugin.settings.settingsLanguage,
-        `不支持附件“${file.name}”。普通 Pi Chat 仅支持 PDF、Word、Markdown、HTML 和图片。`,
-        `Attachment “${file.name}” is not supported. Regular Pi Chat supports only PDF, Word, Markdown, HTML, and images.`
+        `不支持附件“${file.name}”的格式。请选择 PDF、Word、Markdown、HTML 文件或图片。`,
+        `Attachment “${file.name}” is not supported. Choose a PDF, Word, Markdown, or HTML file, or an image.`
       )
     );
     return;

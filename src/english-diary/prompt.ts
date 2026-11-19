@@ -144,7 +144,7 @@ export function parseDiaryGeneration(
         || !sourceRanges || !targetRanges || typeof item.reason !== "string" || !item.reason.trim() || item.reason.length > 800
         || (item.kind === "translation" && !sourceRanges.some((range) => /\p{Script=Han}/u.test(range.text)))
         || alignments.some((alignment) => overlaps(alignment.source, sourceRanges) || overlaps(alignment.target, targetRanges))) {
-        warnings.push("部分来源对应无法可靠验证，已省略精确标记。");
+        warnings.push("部分原文对应无法确认，已省略精确定位。");
         continue;
       }
       const id = `a_${fingerprint(`${block.id}:${label}`).slice(0, 24)}`;

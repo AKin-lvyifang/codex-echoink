@@ -164,8 +164,8 @@ export class QuickChatWindowController {
     } catch (error) {
       console.error("EchoInk quick window failed to open", error);
       this.notice(
-        `打开 AI 小窗失败：${error instanceof Error ? error.message : String(error)}`,
-        `Could not open the quick AI window: ${error instanceof Error ? error.message : String(error)}`
+        "未能打开 AI 小窗，已回到侧边栏。请稍后重试。",
+        "Could not open the quick AI window, so the sidebar is shown instead. Try again later."
       );
       await this.plugin.activateView().catch(() => undefined);
       return;
@@ -286,8 +286,8 @@ export class QuickChatWindowController {
     } catch (error) {
       console.error("EchoInk quick window return-to-sidebar failed", error);
       this.notice(
-        `回到侧边栏失败：${error instanceof Error ? error.message : String(error)}`,
-        `Could not return to the sidebar: ${error instanceof Error ? error.message : String(error)}`
+        "未能回到侧边栏。请从左侧功能区重新打开 EchoInk。",
+        "Could not return to the sidebar. Open EchoInk again from the ribbon."
       );
       await this.plugin.activateView().catch(() => undefined);
     } finally {

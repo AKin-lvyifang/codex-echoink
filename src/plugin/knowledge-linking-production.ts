@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { getModuleOwner, requireModuleOwner } from "../agents/registry";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopPath } from "../platform/desktop-paths";
@@ -68,7 +69,7 @@ export function createProductionKnowledgeLinkingHost(plugin: CodexForObsidianPlu
     prepareManual: () => {
       requireModuleOwner(plugin.settings.agentRegistry, "knowledge-base");
       try { resolveKnowledgeMaintenanceSubmitSnapshot(plugin.settings); }
-      catch { throw new Error(plugin.settings.settingsLanguage === "en" ? "Configure an available model in Models first." : "请先到「模型」配置可用模型，再开始补全知识关联。"); }
+      catch { throw new Error(CAUSE.providerNotConfigured[plugin.settings.settingsLanguage === "en" ? 1 : 0]); }
     },
     release,
     async *documents(origin) {

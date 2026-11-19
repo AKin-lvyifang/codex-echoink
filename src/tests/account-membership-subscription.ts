@@ -9,7 +9,8 @@ import { getProPluginAccess } from "../membership/access";
 import { ProPluginControls } from "../ui/pro-plugin-controls";
 import type { CapabilityAccess } from "../membership/types";
 import { createUnavailableAccountAdapter, type AccountActions, type AccountMembershipViewModel, type MembershipState } from "../settings/account-membership-model";
-import { pricingProducts } from "./account-membership-pricing";
+import { lifetimeMaxQuote, pricingProducts } from "./account-membership-pricing";
+import { createPluginEditionBadge } from "../settings/plugin-edition-badge";
 
 export async function runAccountMembershipSubscriptionTests(win: Window & typeof globalThis): Promise<void> {
   installObsidianDom(win);
@@ -28,7 +29,7 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
   const base = createUnavailableAccountAdapter().read();
   const identity = { name: "订阅测试", email: "subscription@example.invalid", joinedAt: null, avatar: "initial" as const, passwordSet: false };
   const model = (state: MembershipState, signedIn = true): AccountMembershipViewModel => ({
-    ...base, products: pricingProducts, identity: signedIn ? identity : null, provider: "configured", serviceAvailable: true,
+    ...base, maxSalesOpen: true, products: pricingProducts, identity: signedIn ? identity : null, provider: "configured", serviceAvailable: true,
     membership: { ...base.membership, state, planId: ["active", "device-required", "device-limit"].includes(state) ? "beta" : null }
   });
   const find = (label: string, root = parent) => [...root.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === label);
@@ -42,6 +43,79 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
     let ordersOpened = 0;
     const selections: string[] = [];
     const entryActions: AccountActions = { openOrders: async () => { ordersOpened++; }, selectPlan: async input => { selections.push(input.planId); } };
+    // Entitlements from the server: points, sync quota and the one-time Max coupon render as plain facts; the coupon opens the Max checkout.
+    const entitlements = { tier: "lifetime" as const, lifetime: true, isPro: true, subscription: null, next: null,
+      sync: { status: "none" as const, plan: null, quotaBytes: 0, readOnly: true, graceUntil: null, deviceLimit: 3 },
+      devices: { limit: 3, active: 1, remaining: 2 }, points: { balanceMilli: 1_987_600, balance: "1987.6", nextExpiry: { at: Date.UTC(2027, 4, 5), milli: 1_987_600, points: "1987.6" }, monthly: 0 },
+      maxCoupon: true, serverTime: Date.now() };
+    mount({ ...model("lifetime"), entitlements }, entryActions);
+    const lines = [...parent.querySelectorAll<HTMLElement>(".membership-entitlement-line")].map(line => line.textContent);
+    assert.equal(lines.length, 2); assert.match(lines[0]!, /AI 点数1987\.6/); assert.ok(!/到期/.test(lines[0]!), "batch expiry lives in the hover tip, not the line");
+    assert.match(parent.querySelector<HTMLElement>(".membership-entitlement-line")!.dataset.pointsNote!, /1987\.6 AI 点数 .*到期/); assert.match(lines[1]!, /云同步未开通/);
+    mount({ ...model("lifetime"), salesOpen: true, maxSalesOpen: false, entitlements }, entryActions);
+    assert.equal(find("Max 首次 5 折"), undefined, "stale coupon entitlements do not expose a shortcut before Max opens");
+    mount({ ...model("lifetime"), salesOpen: false, maxSalesOpen: true, entitlements }, entryActions);
+    find("Max 首次 5 折")!.click(); await settle(); assert.deepEqual(selections, ["max-year"]); selections.length = 0;
+    // 方哥 11-08 定（Demo d7353ff8）：头部只留事实、主按钮是动作、购买卡片区分 PRO / Max 两个系列，四种身份各不相同。
+    const quoted = pricingProducts.map(product => product.kind === "max" ? lifetimeMaxQuote(product) : product);
+    const series = (key: string) => parent.querySelector<HTMLButtonElement>(`.plan-series-button[data-series="${key}"]`)!;
+    const card = (id: string) => parent.querySelector<HTMLElement>(`[data-plan-id="${id}"]`);
+    const primaryOf = () => parent.querySelector<HTMLButtonElement>(".membership-actions button.primary");
+    for (const tier of ["lifetime", "max"] as const) {
+      mount({ ...model("lifetime"), products: pricingProducts.filter(p => !p.id.startsWith("max-")), entitlements: { ...entitlements, tier, maxCoupon: false } }, entryActions);
+      assert.equal(find("Max 首次 5 折"), undefined);
+      assert.equal(parent.querySelector<HTMLElement>(".plan-series")!.hidden, true);
+      assert.ok(card("month") && !card("max-year"), "closed Max falls back to populated PRO cards");
+      assert.equal(parent.querySelector(".profile-section .badge")!.textContent, tier === "max" ? "✧ Max" : "✧ PRO", "badge follows entitlements even when Max sales are closed");
+    }
+    for (const language of ["zh-CN", "en"] as const) {
+      const host = win.document.createElement("div");
+      const maxBadge = createPluginEditionBadge(host, "max", language);
+      assert.equal(maxBadge.textContent, "Max");
+      assert.equal(maxBadge.dataset.pluginEdition, "max");
+      assert.equal(maxBadge.classList.contains("is-pro"), true, "reuse the approved paid badge appearance");
+      assert.equal(createPluginEditionBadge(host, "pro", language).textContent, "PRO");
+    }
+    // 买断：没有主按钮，只有「Max 首次 5 折」和（需要时）刷新验证；Max 系列显示折后价 + 划掉原价 + 折标。
+    mount({ ...model("lifetime"), salesOpen: true, products: quoted, membership: { ...model("lifetime").membership, verifiedAt: "09:30" }, entitlements }, entryActions);
+    assert.equal(primaryOf(), null, "lifetime owners get no primary button");
+    assert.ok(find("Max 首次 5 折"));
+    assert.match(parent.querySelector(".membership-copy p")?.textContent ?? "", /^早鸟终生买断 · 09:30 已验证$/);
+    assert.equal(series("pro").getAttribute("aria-pressed"), "true"); assert.ok(card("month") && !card("max-year"));
+    series("max").click(); assert.equal(series("max").getAttribute("aria-pressed"), "true"); assert.ok(card("max-year") && !card("month"));
+    assert.match(card("max-year")!.querySelector(".price")!.textContent!, /¥199\.5.*¥399/); assert.equal(card("max-year")!.querySelector(".plan-offer")!.textContent, "5 折");
+    assert.equal(card("max-quarter")!.querySelector(".plan-offer")!.textContent, "6 折"); assert.equal(card("max-month")!.querySelector(".plan-offer")!.textContent, "7 折");
+    assert.equal(card("max-year")!.querySelector("button")!.textContent, "用首次优惠"); assert.match(card("max-year")!.textContent!, /PRO 全部 · 每30天 3000 AI 点数 · 云同步 5 GB/);
+    card("max-year")!.querySelector("button")!.click(); await settle(); assert.deepEqual(selections, ["max-year"]); selections.length = 0;
+    // 内测 PRO：主按钮「升级 PRO」，停在 PRO 系列；点主按钮打开购买方案。
+    mount({ ...model("active"), salesOpen: true, products: pricingProducts, membership: { ...model("active").membership, planId: "beta", expiresAt: "2027-01-15" } }, entryActions);
+    assert.equal(primaryOf()!.textContent, "升级 PRO"); assert.match(parent.querySelector(".membership-copy p")!.textContent!, /^内测 · 至 2027-01-15$/);
+    assert.equal(series("pro").getAttribute("aria-pressed"), "true"); assert.equal(card("year")!.querySelector("button")!.textContent, "立即订阅");
+    // 订阅 PRO 年卡：主按钮「续费」直接走 selectPlan(year)；年卡卡片标使用中。
+    mount({ ...model("active"), salesOpen: true, products: pricingProducts, membership: { ...model("active").membership, planId: "year", expiresAt: "2027-11-07" } }, entryActions);
+    assert.equal(primaryOf()!.textContent, "续费"); assert.match(parent.querySelector(".membership-copy p")!.textContent!, /^PRO 年卡 · 至 2027-11-07$/);
+    assert.equal(card("year")!.querySelector("button")!.textContent, "续费"); assert.equal(card("year")!.querySelector("button")!.getAttribute("aria-current"), "true");
+    primaryOf()!.click(); await settle(); assert.deepEqual(selections, ["year"]); selections.length = 0;
+    // Max 年卡：默认停在 Max 系列，年付卡「使用中」+ 到期日 + 续费；主按钮「续费」走 selectPlan(max-year)。
+    const maxEntitlements = { ...entitlements, tier: "max" as const, lifetime: false, maxCoupon: false, subscription: { plan: "max" as const, planId: "max-year", startsAt: "2026-11-30T00:00:00.000Z", endsAt: "2027-11-30T00:00:00.000Z" },
+      sync: { status: "active" as const, plan: "max" as const, quotaBytes: 5 * 1024 ** 3, readOnly: false, graceUntil: null, deviceLimit: 3 }, points: { ...entitlements.points, monthly: 3000 } };
+    mount({ ...model("active"), salesOpen: true, products: pricingProducts, entitlements: maxEntitlements, membership: { ...model("active").membership, planId: "max-year", expiresAt: "2027-11-30" } }, entryActions);
+    assert.equal(primaryOf()!.textContent, "续费"); assert.match(parent.querySelector(".membership-copy p")!.textContent!, /^Max 年卡 · 至 2027-11-30$/);
+    assert.equal(series("max").getAttribute("aria-pressed"), "true"); assert.ok(card("max-year")!.classList.contains("is-current"));
+    assert.equal(card("max-year")!.querySelector(".plan-offer")!.textContent, "使用中"); assert.match(card("max-year")!.textContent!, /到期/);
+    assert.equal(card("max-year")!.querySelector("button")!.textContent, "续费"); assert.equal(card("max-month")!.querySelector("button")!.textContent, "立即订阅");
+    primaryOf()!.click(); await settle(); assert.deepEqual(selections, ["max-year"]); selections.length = 0;
+    // 免费：主按钮「开通 PRO」。
+    mount({ ...model("free"), salesOpen: true, products: pricingProducts }, entryActions);
+    assert.equal(primaryOf()!.textContent, "开通 PRO");
+    console.log("PASS plan series PRO/Max, action-only primary button and fact-only header for four identities");
+    mount({ ...model("active"), entitlements: { ...entitlements, tier: "max", lifetime: false, maxCoupon: false,
+      sync: { status: "active", plan: "max", quotaBytes: 5 * 1024 ** 3, readOnly: false, graceUntil: null, deviceLimit: 3 }, points: { ...entitlements.points, monthly: 3000 } } }, entryActions);
+    assert.equal(find("Max 首次 5 折"), undefined);
+    assert.match(parent.querySelector(".membership-entitlements")!.textContent!, /每30天 3000/);
+    assert.match([...parent.querySelectorAll<HTMLElement>(".membership-entitlement-line")][1]!.textContent!, /云同步5 GB1 \/ 3 台设备/);
+    mount({ ...model("anonymous", false), entitlements }, entryActions);
+    assert.equal(parent.querySelector(".membership-entitlements"), null, "signed-out never shows another account's numbers");
     mount({ ...model("anonymous", false), salesOpen: false }, entryActions);
     assert.equal(find("我的订单")!.disabled, false);
     find("我的订单")!.click(); await settle(); assert.equal(ordersOpened, 1);
@@ -192,7 +266,7 @@ export async function runAccountMembershipSubscriptionTests(win: Window & typeof
     const count = openTestModals.length; find("刷新验证")!.click(); find("验证中")!.click();
     assert.equal(verifyCalls, 1); assert.equal(openTestModals.length, count, "one click starts online request without confirmation");
     assert.ok(parent.querySelector(".account-action-spinner")); finishVerify(); await settle();
-    assert.match(parent.textContent!, /network unavailable/); assert.equal(find("刷新验证")!.disabled, false);
+    assert.match(parent.textContent!, /会员状态未能验证。请检查网络后重试。/); assert.doesNotMatch(parent.textContent!, /network unavailable/); assert.equal(find("刷新验证")!.disabled, false);
     const verifyFeedback = parent.querySelector<HTMLElement>(".membership-actions .activation-feedback")!;
     assert.equal(verifyFeedback.dataset.feedbackState, "error"); assert.equal(verifyFeedback.getAttribute("role"), "alert");
     find("刷新验证")!.click(); await settle();

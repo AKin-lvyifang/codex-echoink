@@ -1,7 +1,8 @@
+import { xiaoechoDesktopModelName, xiaoechoTypicalPointsLabel } from "../membership/xiaoecho-points";
 import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
-import { providerFailureDetailText } from "../harness/pi/provider-failure";
+import { CAUSE, NEXT, joinErrorCopy, pickErrorCopy, userFacingErrorText } from "../core/error-copy";
 import { createOriginInput, createOriginButton, createOriginCheck, createOriginSwitch, createOriginSelect, createOriginRadioGroup, disposeOriginControls } from "./origin-controls";
-import { App, Modal, setIcon, setTooltip } from "obsidian";
+import { App, Modal, Platform, setIcon, setTooltip } from "obsidian";
 import type {
   AuthEvent,
   AuthInteraction,
@@ -27,7 +28,8 @@ import {
   isValidApiProviderModelId,
   setApiProviderDefaultModel,
   type ApiProviderModelConfig,
-  type ApiProviderConfig
+  type ApiProviderConfig,
+  apiProviderHasUsableCredential
 } from "./settings";
 import type { SettingsCopy } from "./i18n";
 import { renderProviderBrandIcon } from "./provider-brand-icons";
@@ -156,7 +158,7 @@ export class ProviderModelModal extends Modal {
   constructor(private readonly options: ProviderModelModalOptions) {
     super(options.app);
     this.draft = structuredClone(options.draft);
-    if (!options.editing && this.draft.authMode !== "oauth") {
+    if (!options.editing && this.draft.authMode === "api-key") {
       this.draft.models = [];
       this.draft.defaultModelId = "";
     }
@@ -169,6 +171,12 @@ export class ProviderModelModal extends Modal {
             const discovered = state.models.find((candidate) => candidate.id === model.id);
             return discovered ? createDiscoveredApiProviderModelConfig(this.providerId, model.id, this.draft.runtimeProviderId, discovered, model) : model;
           });
+          // 小echo: the server catalog is the whole list (auto first, vendors folded); nothing to pick by hand.
+          if (this.providerId === "xiaoecho" && state.status === "available") {
+            this.draft.models = state.models.map((discovered) => createDiscoveredApiProviderModelConfig(
+              this.providerId, discovered.id, this.draft.runtimeProviderId, discovered, this.draft.models.find((model) => model.id === discovered.id)));
+            if (!this.draft.models.some((model) => model.id === this.draft.defaultModelId)) this.draft.defaultModelId = this.draft.models[0]?.id ?? "";
+          }
         }
         this.announce(this.modelStatusText());
         if (this.invalidatingPreflightInPlace && state.status === "idle") {
@@ -198,6 +206,7 @@ export class ProviderModelModal extends Modal {
     if (this.providerId === "openai-codex") {
       void this.loadCodexAuthStatus();
     }
+    if (this.providerId === "xiaoecho") void this.discoverModels();
   }
 
   private setWindowListeners(active: boolean): void {
@@ -339,8 +348,8 @@ export class ProviderModelModal extends Modal {
     this.contentEl.createEl("p", {
       cls: "codex-provider-editor-description",
       text: this.label(
-        "先连接提供商，再选择模型。保存后会将这条配置设为当前选择。",
-        "Connect a provider, then choose models. Saving makes this configuration the current selection."
+        "先连接模型服务，再选择模型。保存后会将这条配置设为当前选择。",
+        "Connect a model service, then choose models. Saving makes this configuration the current selection."
       )
     });
     const form = this.contentEl.createDiv({ cls: "codex-provider-modal-form" });
@@ -354,7 +363,7 @@ export class ProviderModelModal extends Modal {
     const connectionCopy = connectionHeader.createDiv();
     const connectionTitle = this.label("连接设置", "Connection");
     const connectionHeading = connectionCopy.createEl("h3", { text: connectionTitle });
-    const connectionDescription = this.label("同一提供商的多套配置，可以用名称区分。", "Use names to distinguish configurations for the same provider.");
+    const connectionDescription = this.label("同一模型服务的多套配置，可以用名称区分。", "Use names to distinguish configurations for the same model service.");
     if (aligned) this.addOptionalHelp(connectionHeading, connectionTitle, connectionDescription);
     else connectionCopy.createEl("p", { text: connectionDescription });
     connectionHeader.createSpan({ cls: "codex-provider-protocol-pill", text: protocolPill(this.draft.apiProtocol) });
@@ -373,6 +382,7 @@ export class ProviderModelModal extends Modal {
       if (providerId === "openai-codex") {
         this.renderCodexOAuth(connection);
       }
+      if (providerId === "xiaoecho") this.renderEchoInkAccountStatus(connection);
       if (apiProviderApiKeyRequired(providerId)) {
         this.renderApiKeyField(connection);
       }
@@ -413,10 +423,10 @@ export class ProviderModelModal extends Modal {
             const removed = await this.options.remove!.action();
             if (this.closed) return;
             if (removed) { this.close(); return; }
-            this.saveError = this.label("模型服务未删除，请重试。", "The model service was not deleted. Please retry.");
+            this.saveError = joinErrorCopy(["模型服务未能删除。", "The model service could not be deleted."], NEXT.retry, this.options.language);
           } catch {
             if (this.closed) return;
-            this.saveError = this.label("模型服务未删除，请重试。", "The model service was not deleted. Please retry.");
+            this.saveError = joinErrorCopy(["模型服务未能删除。", "The model service could not be deleted."], NEXT.retry, this.options.language);
           } finally {
             this.saving = false;
             this.removing = false;
@@ -481,13 +491,13 @@ export class ProviderModelModal extends Modal {
             this.close();
             return;
           }
-          this.saveError = result.message ?? this.options.copy.providers.saveFailed;
+          this.saveError = userFacingErrorText(result.message, this.options.copy.providers.saveFailed, this.options.language);
           saveState.textContent = this.saveError;
           saveState.addClass("is-error");
           this.announce(saveState.textContent);
-        } catch {
+        } catch (error) {
           if (this.closed) return;
-          this.saveError = this.options.copy.providers.saveFailed;
+          this.saveError = userFacingErrorText(error, this.options.copy.providers.saveFailed, this.options.language);
           saveState.textContent = this.saveError;
           saveState.addClass("is-error");
           this.announce(saveState.textContent);
@@ -517,7 +527,7 @@ export class ProviderModelModal extends Modal {
     const labelRow = row.createDiv({ cls: "codex-provider-modal-label-row" });
     const providerLabel = labelRow.createDiv({
       cls: "codex-provider-modal-label",
-      text: this.label("提供商", "Provider"),
+      text: this.label("模型服务", "Model service"),
       attr: { id: `${this.providerTriggerId}-label` }
     });
     const selected = getApiProviderPreset(providerId);
@@ -566,16 +576,16 @@ export class ProviderModelModal extends Modal {
     const search = searchWrap.createEl("input", {
       attr: {
         type: "search",
-        placeholder: this.label("搜索 Provider", "Search providers"),
+        placeholder: this.label("搜索模型服务", "Search model services"),
         autocomplete: "off",
-        "aria-label": this.label("搜索 Provider", "Search providers")
+        "aria-label": this.label("搜索模型服务", "Search model services")
       }
     });
     const levels = menu.createDiv({ cls: "provider-picker-levels" });
-    const groups = levels.createDiv({ cls: "provider-picker-groups", attr: { role: "group", "aria-label": this.label("提供商分类", "Provider categories") } });
+    const groups = levels.createDiv({ cls: "provider-picker-groups", attr: { role: "group", "aria-label": this.label("模型服务分类", "Model service categories") } });
     const results = levels.createDiv({ cls: "provider-picker-results" });
     const resultsTitle = results.createDiv({ cls: "provider-results-title", attr: { role: "status" } });
-    const options = results.createDiv({ cls: "codex-provider-combobox-options provider-picker-options", attr: { role: "listbox", "aria-label": this.label("选择 Provider", "Choose a provider") } });
+    const options = results.createDiv({ cls: "codex-provider-combobox-options provider-picker-options", attr: { role: "listbox", "aria-label": this.label("选择模型服务", "Choose a model service") } });
     options.id = listboxId;
     let activeGroup = providerPickerGroupKey(selected);
     const groupButtons = new Map<ProviderPickerGroupKey, HTMLButtonElement>();
@@ -584,7 +594,7 @@ export class ProviderModelModal extends Modal {
       group: providerPickerGroupKey(item),
       text: `${item.id} ${item.name} ${apiProviderPresetDisplayName(item.id, this.options.language)}`.toLowerCase()
     }));
-    const empty = results.createDiv({ cls: "provider-picker-empty", text: this.label("没有匹配的提供商", "No matching providers"), attr: { role: "status" } });
+    const empty = results.createDiv({ cls: "provider-picker-empty", text: this.label("没有匹配的模型服务", "No matching model services"), attr: { role: "status" } });
     const footer = menu.createDiv({ cls: "provider-picker-footer" });
     footer.createSpan({ text: this.label("↑ ↓ 选择 · Enter 确认", "↑ ↓ Navigate · Enter Select") });
     footer.createSpan({ text: this.label("Esc 收起", "Esc Close") });
@@ -712,10 +722,11 @@ export class ProviderModelModal extends Modal {
     }
     const replacement = createApiProviderConfig(providerId, this.draft.id);
     this.draft = { ...replacement, apiKey: "" };
-    if (!this.options.editing && this.draft.authMode !== "oauth") {
+    if (!this.options.editing && this.draft.authMode === "api-key") {
       this.draft.models = [];
       this.draft.defaultModelId = "";
     }
+    if (providerId === "xiaoecho") void this.discoverModels();
     this.numberDrafts.clear();
     this.formErrors = {};
     this.apiKeyInput = "";
@@ -730,13 +741,13 @@ export class ProviderModelModal extends Modal {
     const inputId = this.controlId("name");
     const field = this.createField(
       container,
-      this.label("自定义供应商名称", "Custom provider name"),
+      this.label("自定义模型服务名称", "Custom model service name"),
       inputId
     );
     const aligned = this.modalEl.closest(".echoink-settings-aligned") !== null;
     const descriptionId = `${inputId}-description`;
-    const description = this.label("可选。用于区分同一供应商下的不同配置。", "Optional. Use this to distinguish configurations from the same provider.");
-    if (aligned) this.addOptionalHelp(field.querySelector<HTMLElement>(".codex-provider-modal-label")!, this.label("自定义供应商名称", "Custom provider name"), description);
+    const description = this.label("可选。用于区分同一模型服务下的不同配置。", "Optional. Use this to distinguish configurations from the same model service.");
+    if (aligned) this.addOptionalHelp(field.querySelector<HTMLElement>(".codex-provider-modal-label")!, this.label("自定义模型服务名称", "Custom model service name"), description);
     else field.createDiv({ cls: "codex-provider-modal-description", text: description, attr: { id: descriptionId } });
     const input = createOriginInput(field, {
       cls: "codex-provider-modal-input",
@@ -760,6 +771,14 @@ export class ProviderModelModal extends Modal {
     input.oninput = () => {
       this.draft.name = input.value;
     };
+  }
+
+  /** 小echo signs in with the EchoInk account; this row only says whether that login exists. */
+  private renderEchoInkAccountStatus(container: HTMLElement): void {
+    const signedIn = apiProviderHasUsableCredential(this.draft, null);
+    const status = container.createDiv({ cls: `codex-provider-endpoint-summary codex-provider-account-status is-${signedIn ? "ready" : "missing"}` });
+    status.createSpan({ text: this.label("EchoInk 账号", "EchoInk account") });
+    status.createEl("code", { text: signedIn ? this.label("已登录", "Signed in") : this.label("未登录 · 先到“账号与会员”登录", "Not signed in · sign in under Account first") });
   }
 
   private renderApiKeyField(container: HTMLElement): void {
@@ -938,10 +957,7 @@ export class ProviderModelModal extends Modal {
     } catch {
       if (!this.authResponseCurrent(generation)) return;
       this.codexAuthStatus = { state: "disconnected" };
-      this.codexAuthError = this.label(
-        "暂时无法读取登录状态。",
-        "The sign-in status is temporarily unavailable."
-      );
+      this.codexAuthError = joinErrorCopy(["未能读取登录状态。", "Could not read the sign-in status."], NEXT.retryLater, this.options.language);
     } finally {
       if (this.authResponseCurrent(generation)) {
         this.codexAuthLoading = false;
@@ -977,10 +993,7 @@ export class ProviderModelModal extends Modal {
       this.announce(this.label("OpenAI Codex 已连接。", "OpenAI Codex connected."));
     } catch {
       if (this.authResponseCurrent(generation) && !controller.signal.aborted) {
-        this.codexAuthError = this.label(
-          "OpenAI 授权未完成，请重试。",
-          "OpenAI authorization did not finish. Try again."
-        );
+        this.codexAuthError = joinErrorCopy(["OpenAI 授权未完成。", "OpenAI authorization did not finish."], NEXT.retry, this.options.language);
       }
     } finally {
       if (this.codexLoginController === controller) {
@@ -1071,10 +1084,7 @@ export class ProviderModelModal extends Modal {
       this.announce(this.label("已退出 OpenAI Codex。", "Logged out of OpenAI Codex."));
     } catch {
       if (!this.authResponseCurrent(generation)) return;
-      this.codexAuthError = this.label(
-        "退出登录失败，请重试。",
-        "Log out failed. Try again."
-      );
+      this.codexAuthError = joinErrorCopy(["未能退出登录。", "Could not sign out."], NEXT.retry, this.options.language);
     } finally {
       if (this.authResponseCurrent(generation)) {
         this.codexAuthLoading = false;
@@ -1157,8 +1167,15 @@ export class ProviderModelModal extends Modal {
       this.focusIntent = `model-enabled:${modelId}`;
       this.setModelEnabled(modelId, checkbox.checked);
     };
-    enabledLabel.createSpan({ text: model.displayName || model.id });
-    if (model.displayName !== model.id) enabledLabel.createSpan({ cls: "codex-provider-model-tag", text: model.id });
+    const desktopXiaoecho = Platform.isDesktopApp && this.providerId === "xiaoecho";
+    const displayName = desktopXiaoecho ? xiaoechoDesktopModelName(this.providerId, model) : model.displayName || model.id;
+    const name = enabledLabel.createSpan({ cls: "codex-provider-model-choice-name", text: displayName });
+    if (desktopXiaoecho) {
+      row.addClass("is-xiaoecho-model");
+      setTooltip(name, displayName);
+      const points = xiaoechoTypicalPointsLabel(model, this.options.language);
+      if (points) selection.createSpan({ cls: "codex-provider-model-choice-points", text: points });
+    } else if (model.displayName !== model.id) enabledLabel.createSpan({ cls: "codex-provider-model-tag", text: model.id });
     if (enabled && this.preflight.state.source === "remote" && !this.preflight.state.models.some((candidate) => candidate.id === modelId)) {
       row.createDiv({ cls: "codex-provider-modal-description", text: this.label("已保存；此次列表未返回（保留选择）", "Saved; absent from this list (selection retained)") });
     }
@@ -1508,8 +1525,8 @@ export class ProviderModelModal extends Modal {
   private modelCapabilityDescription(model: ApiProviderModelConfig): string {
     if (model.metadataSource === "unknown") {
       return this.label(
-        "尚无可靠能力元数据，可按 Provider 文档确认或覆盖以下开关。",
-        "Reliable capability metadata is unavailable. Confirm or override the controls using the provider documentation."
+        "尚无可靠的能力信息，可按模型服务的文档确认或覆盖以下开关。",
+        "Reliable capability information is unavailable. Confirm or override the controls using the model service documentation."
       );
     }
     if (model.metadataSource === "manual") {
@@ -1520,16 +1537,16 @@ export class ProviderModelModal extends Modal {
     }
     if (model.metadataSource === "discovery") return this.label(
       "优先使用接口明确声明的能力与限制；缺项由已知目录补齐，仍未声明的能力保持待确认。DeepSeek 缺失的工具能力由官方兼容资料补齐。",
-      "Provider declarations take priority; the catalog fills missing fields. Undeclared capabilities remain unverified. Official DeepSeek compatibility supplies missing tool capability."
+      "Model service declarations take priority; the catalog fills missing fields. Undeclared capabilities remain unverified. Official DeepSeek compatibility supplies missing tool capability."
     );
     return model.metadataSource === "catalog"
       ? this.label(
-        "能力来自固定 Pi 模型目录，可按 Provider 文档覆盖。",
-        "Capabilities come from the pinned Pi model catalog and can be overridden from the provider documentation."
+        "能力来自内置模型目录，可按模型服务的文档覆盖。",
+        "Capabilities come from the built-in model catalog and can be overridden from the model service documentation."
       )
       : this.label(
-        "能力来自 EchoInk 内置模型预设，可按 Provider 文档覆盖。",
-        "Capabilities come from EchoInk's built-in model preset and can be overridden from the provider documentation."
+        "能力来自 EchoInk 内置模型预设，可按模型服务的文档覆盖。",
+        "Capabilities come from EchoInk's built-in model preset and can be overridden from the model service documentation."
       );
   }
 
@@ -1607,7 +1624,12 @@ export class ProviderModelModal extends Modal {
   }
 
   private renderPreflightStatus(statusRow: HTMLElement): void {
-    statusRow.createSpan({ text: this.modelStatusText() });
+    const [statusText, statusDetail] = this.modelStatusLines();
+    const status = statusRow.createSpan({ text: statusText });
+    if (statusDetail) {
+      status.createEl("br");
+      status.appendText(statusDetail);
+    }
     if (
       this.preflight.state.operation === "model_list"
       && (
@@ -1672,6 +1694,15 @@ export class ProviderModelModal extends Modal {
   }
 
   private modelStatusText(): string {
+    return this.modelStatusLines().join(" ");
+  }
+
+  /** Plain-language status only; the raw service reply stays out of the UI. */
+  private modelStatusLines(): [string] | [string, string] {
+    return [this.primaryStatusText()];
+  }
+
+  private primaryStatusText(): string {
     const state = this.preflight.state;
     if (state.operation === "connection") {
       if (state.status === "loading") {
@@ -1685,14 +1716,9 @@ export class ProviderModelModal extends Modal {
           state.connectionFailure === "auth"
           && this.providerId === "openai-codex"
         ) {
-          return this.label(
-            "OpenAI Codex 授权已失效，请重新登录。",
-            "OpenAI Codex authorization expired. Sign in again."
-          );
+          return pickErrorCopy(CAUSE.providerLoginExpired, this.options.language);
         }
-        const generic = this.options.copy.providers.connectionFailures[state.connectionFailure];
-        const detail = providerFailureDetailText(state.connectionDetail);
-        return detail ? `${generic} ${detail}` : generic;
+        return this.options.copy.providers.connectionFailures[state.connectionFailure];
       }
     }
     if (state.status === "loading") {
@@ -1705,11 +1731,11 @@ export class ProviderModelModal extends Modal {
       `Read ${state.models.length} models; the list is incomplete (pagination or limit). Add missing IDs manually.`
     );
     if (state.status === "available") {
-      if (state.source === "catalog") return this.label("模型来自内置 Pi 目录；未联网发现。", "Models come from the pinned Pi catalog; no online discovery.");
+      if (state.source === "catalog") return this.label("模型来自内置模型目录，未联网获取。", "Models come from the built-in model catalog; nothing was fetched online.");
       if (state.models.length === 0) {
         return this.label(
-          "Provider 没有返回可选模型。请确认权限或直接输入已知 Model ID。",
-          "The provider returned no models. Check access or enter a known Model ID."
+          "模型服务未返回可选模型。请确认账号权限，或点击右侧“+”手动填写 Model ID。",
+          "The model service returned no models. Check your access, or use + on the right to enter a Model ID."
         );
       }
       return this.options.copy.providers.modelListAvailable(
@@ -1718,8 +1744,8 @@ export class ProviderModelModal extends Modal {
     }
     if (state.status === "unsupported") {
       return this.label(
-        "该 Provider 未开放模型列表，请使用下方手动 Model ID 回退。",
-        "This provider does not expose a model list. Use the manual Model ID fallback below."
+        "该模型服务不提供模型列表。请在下方手动填写 Model ID。",
+        "This model service does not provide a model list. Enter a Model ID below."
       );
     }
     if (state.status === "api_key_error") {
@@ -1936,15 +1962,15 @@ export class ProviderModelModal extends Modal {
     if (this.providerId === "custom") {
       const endpoint = this.draft.baseUrl.trim();
       if (!endpoint) {
-        errors.endpoint = this.label("请输入 Endpoint URL。", "Enter an endpoint URL.");
+        errors.endpoint = this.label("请填写接口地址。", "Enter an endpoint URL.");
       } else {
         try {
           const url = new URL(endpoint);
           if (url.protocol !== "https:" && url.protocol !== "http:") {
-            errors.endpoint = this.label("Endpoint 必须使用 http 或 https。", "The endpoint must use http or https.");
+            errors.endpoint = pickErrorCopy(CAUSE.providerUrlInvalid, this.options.language);
           }
         } catch {
-          errors.endpoint = this.label("请输入有效的 Endpoint URL。", "Enter a valid endpoint URL.");
+          errors.endpoint = pickErrorCopy(CAUSE.providerUrlInvalid, this.options.language);
         }
       }
       if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(this.draft.apiProtocol)) {
@@ -2239,7 +2265,7 @@ const PROVIDER_PICKER_GROUPS: readonly Readonly<{
   en: string;
 }>[] = Object.freeze([
   { key: "account", zh: "登录账户", en: "Account sign-in" },
-  { key: "provider", zh: "供应商", en: "Providers" },
+  { key: "provider", zh: "模型服务", en: "Model services" },
   { key: "token-plan", zh: "Token Plan", en: "Token plans" },
   { key: "other", zh: "其他", en: "Other" }
 ]);

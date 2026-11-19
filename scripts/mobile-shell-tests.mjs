@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import vm from "node:vm";
 import esbuild from "esbuild";
 import { JSDOM } from "jsdom";
+import { submissionScrollScenarios } from "../tests/mobile-shell/submission-scroll.mjs";
+import { viewportScenarios } from "../tests/mobile-shell/viewport.mjs";
+import { pressFeedbackScenarios } from "../tests/mobile-shell/press-feedback.mjs";
+import { liveTranscriptScenarios } from "../tests/mobile-shell/live-transcript.mjs";
 
 const bundle = await esbuild.build({ entryPoints: ["tests/mobile-shell/entry.ts"], bundle: true, write: false,
   platform: "browser", format: "cjs", external: ["obsidian"], metafile: true, logLevel: "silent" });
@@ -14,7 +18,7 @@ window.HTMLElement.prototype.createDiv = function(options = {}) {
 const observers = new Set();
 class ResizeObserver {
   constructor(callback) { this.callback = callback; this.targets = new Set(); observers.add(this); }
-  observe(target) { this.targets.add(target); }
+  observe(target) { this.targets.add(target); observers.add(this); }
   disconnect() { this.targets.clear(); observers.delete(this); }
   unobserve(target) { this.targets.delete(target); }
 }
@@ -28,9 +32,15 @@ vm.runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports
   } });
 const api = module.exports;
 api.installObsidianDom(window);
+submissionScrollScenarios(api, window, row => {
+  for (const observer of observers) if (observer.targets.has(row)) observer.callback([{ target: row }]);
+});
 let passed = 0;
 async function test(name, action) { await action(); passed++; console.log(`OK ${name}`); }
 const flush = () => new Promise(resolve => setTimeout(resolve, 35));
+await viewportScenarios(api, window, test);
+await pressFeedbackScenarios(api, window, test);
+await liveTranscriptScenarios(api, window, test);
 function root(width = 390) {
   const element = document.createElement("main"); document.body.append(element);
   let currentWidth = width;

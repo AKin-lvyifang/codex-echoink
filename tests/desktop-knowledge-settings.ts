@@ -341,7 +341,7 @@ try {
       await chooseFolder("wechat", "资料乙"); await settle();
       assert(f.host.querySelector('[data-collection-kind="wechat"] .echoink-folder-picker-values')?.textContent?.includes("资料甲"));
       assert.equal(f.plugin.settings.knowledgeBase.folderBindings.collectionTargets.wechat, "资料甲");
-      assert(f.host.textContent?.includes("绑定未保存"));
+      assert(f.host.textContent?.includes("目录绑定未能保存"));
       assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.raw, raw);
       assert.equal(f.plugin.settings.pdfReading.originalDirectory, pdf);
       assert.deepEqual(await inventory(f.root), before);
@@ -425,10 +425,10 @@ try {
       state = "default"; f.redraw(); await settle();
       assert.equal(row().querySelector(".echoink-settings-navigation-value")?.textContent, "使用默认");
       fails = true; f.redraw(); await settle();
-      assert(row().querySelector(".echoink-settings-navigation-description")?.textContent?.includes("知识提炼偏好读取失败"));
+      assert(row().querySelector(".echoink-settings-navigation-description")?.textContent?.includes("未能读取知识提炼偏好"));
       assert.equal(row().querySelector(".echoink-settings-navigation-value"), null);
       delete f.plugin.getEchoInkKnowledgeMaintenancePreferenceState; f.redraw();
-      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "知识提炼偏好状态暂不可用");
+      assert.equal(row().querySelector(".echoink-settings-navigation-description")?.textContent, "知识提炼偏好暂不可用。请重新打开此页面。");
       assert.equal(f.calls.saves, 0);
     } finally { await f.cleanup(); }
   });
@@ -653,7 +653,7 @@ try {
       f.field("解绑 资料甲").click(); f.button("确认解绑").click(); await settle();
       assert.equal(runtime.knowledgeFolderBindingsSignature(f.plugin.settings.knowledgeBase.folderBindings), old);
       assert.deepEqual(await inventory(f.root), before);
-      assert(f.host.textContent.includes("绑定未保存"), "unbind failure is visible without leaving and reopening");
+      assert(f.host.textContent.includes("目录绑定未能保存"), "unbind failure is visible without leaving and reopening");
       assert.equal(unhandled.length, errorsBefore, "unbind failure does not become an unhandled rejection");
       assert.deepEqual([f.calls.creates, f.calls.moves, f.calls.deletes], [0, 0, 0]);
     } finally { await f.cleanup(); }
@@ -665,7 +665,7 @@ try {
       const before = await inventory(f.root), old = runtime.knowledgeFolderBindingsSignature(f.plugin.settings.knowledgeBase.folderBindings);
       f.failSave(true); f.button("知识成果").click(); f.button("更改文件夹").click(); f.button("新知识").click(); await settle();
       assert.equal(runtime.knowledgeFolderBindingsSignature(f.plugin.settings.knowledgeBase.folderBindings), old);
-      assert(f.host.textContent.includes("绑定未保存")); assert(f.view.isDetail);
+      assert(f.host.textContent.includes("目录绑定未能保存")); assert(f.view.isDetail);
       f.failSave(false); f.button("新知识").click(); await until(() => !f.view.submitting && !f.view.isDetail, "rebind succeeds");
       assert.deepEqual(f.plugin.settings.knowledgeBase.folderBindings.roles.wiki.readPaths, ["新知识"]);
       assert.deepEqual(await inventory(f.root), before);

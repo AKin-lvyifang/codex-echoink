@@ -58,7 +58,7 @@ try {
   assert.equal(current().content.querySelectorAll("[role=switch]").length, 1, "desktop-only skill has no switch");
   assert.equal(current().content.querySelector("[data-skill-id=todo-operations] [data-icon]").dataset.icon, "list-todo");
   failToggle = true; const toggle = current().content.querySelector("[role=switch]"); toggle.checked = true; toggle.dispatchEvent(new dom.window.Event("change")); await tick();
-  assert.equal(toggle.checked, false); assert.match(current().content.textContent, /toggle failed/); failToggle = false;
+  assert.equal(toggle.checked, false); assert.match(current().content.textContent, /操作未完成/); failToggle = false;
   current().content.querySelector("[data-skill-id=obsidian-cli]").click(); await tick(); assert.equal(current().content.querySelector('[role="switch"]'), null); assert.equal(current().content.querySelector('[aria-label="复制路径"]'), null, "builtin source has no fabricated copy path");
   await click("编辑"); input("Skill 指令", "cancelled CLI edit"); await click("取消"); assert.equal(writes.skills.length, 0, "cancelled desktop-only edit never writes"); await ctx.back();
   current().content.querySelector("[data-skill-id=todo-operations]").click(); await tick();
@@ -85,12 +85,12 @@ try {
   await click("连接并发现工具"); assert.match(current().content.textContent, /read_page/); assert.equal(writes.mcp.length, 0, "discovery must not save"); assert.equal(serverTrust.checked, false, "discovery trust reset is visible");
   for (const label of ["信任此服务", "允许调用", "信任此工具"]) { const control = current().content.querySelector(`[aria-label="${label}"]`); control.checked = true; control.dispatchEvent(new dom.window.Event("change")); }
   pendingDiscovery = true; await click("连接并发现工具"); await click("停止"); assert.equal(discoveryAborted, true); assert.equal(credential.value, "private-token");
-  failMcpSave = true; await click("保存"); assert.equal(credential.value, "private-token"); assert.match(current().content.textContent, /\[redacted\]/); assert.ok(!current().content.textContent.includes("private-token"));
+  failMcpSave = true; await click("保存"); assert.equal(credential.value, "private-token"); assert.match(current().content.textContent, /操作未完成/); assert.ok(!current().content.textContent.includes("private-token"));
   failMcpSave = false; await click("保存"); assert.equal(writes.mcp.length, 2); assert.equal(writes.mcp[1].headers.Authorization, "private-token"); assert.equal(writes.mcp[1].trusted, true); assert.equal(writes.mcp[1].toolPolicies.read_page.trusted, true);
   await click("联网搜索未填写 Key"); const testButton = button("测试连接"); assert.equal(testButton.disabled, true, "no Key cannot send a test");
   const searchEnabled = current().content.querySelector('[role="switch"]'); searchEnabled.checked = true; searchEnabled.dispatchEvent(new dom.window.Event("change")); await tick(); assert.equal(button("保存").disabled, true);
-  input("API Key", "private-search-key"); testFailure = "Tavily 积分不足，请检查账户额度。"; await click("测试连接"); assert.match(current().content.textContent, /积分不足/, "service quota error must not become a network error"); testFailure = "";
-  failTavilySave = true; await click("保存"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key"); assert.match(current().content.textContent, /\[redacted\]/); assert.ok(!current().content.textContent.includes("private-search-key"));
+  input("API Key", "private-search-key"); testFailure = "Tavily 账户额度已用尽。请在 Tavily 后台检查额度。"; await click("测试连接"); assert.match(current().content.textContent, /额度已用尽/, "service quota error must not become a network error"); testFailure = "";
+  failTavilySave = true; await click("保存"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, "private-search-key"); assert.match(current().content.textContent, /操作未完成/); assert.ok(!current().content.textContent.includes("private-search-key"));
   failTavilySave = false; await click("保存"); assert.equal(current().id, "ipad-settings-caps"); assert.equal(tavily.enabled, true);
   await click("联网搜索已填写 Key"); pendingTest = true; await click("测试连接"); await click("停止"); assert.match(current().content.textContent, /测试已取消/); testAborted = false;
   await click("测试连接"); current().content.querySelector('[aria-label="DeepSeek"]').click(); await tick(); assert.equal(testAborted, true, "provider change aborts old test"); assert.equal(current().content.querySelector('[aria-label="API Key"]').value, ""); assert.equal(button("测试连接").disabled, false); assert.equal(current().content.querySelector('[aria-label="API Key"]').parentElement.hidden, true);

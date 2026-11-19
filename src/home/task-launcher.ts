@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 import { getModuleOwner } from "../agents/registry";
 import { Notice, TFolder } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
@@ -34,7 +35,7 @@ export async function launchWorkbenchSignal(
   const snapshot = await data.load();
   const current = snapshot.signals.find(item => item.key === signal.key && item.id === signal.id);
   if (!current) {
-    new Notice(plugin.settings.settingsLanguage === "en" ? "This reminder has changed." : "这条提醒已更新。");
+    new Notice(plugin.settings.settingsLanguage === "en" ? "This reminder has been updated. Review it, then hand it off again." : "该提醒已更新。请查看最新内容后重新交给 Agent。");
     return false;
   }
   const owner = getModuleOwner(plugin.settings.agentRegistry, current.moduleId);
@@ -46,10 +47,10 @@ export async function launchWorkbenchSignal(
     const sources = roles?.raw.enabled && roles.raw.readPaths.some(exists);
     const outcomes = roles && [roles.wiki, roles.projects].some(role => role.enabled && !!role.writePath && exists(role.writePath));
     if (!outcomes || current.id !== 14 && !sources) throw new WorkbenchSetupRequired(
-      plugin.settings.settingsLanguage === "en" ? "Set up knowledge folders first." : "先设置知识库目录。", "knowledge");
+      CAUSE.knowledgeFolderMissing[plugin.settings.settingsLanguage === "en" ? 1 : 0], "knowledge");
   }
   const taskId = await plugin.startWorkbenchSignalTask(owner.id, current);
-  if (!taskId) throw new Error(plugin.settings.settingsLanguage === "en" ? "The task was not accepted. Please try again." : "任务尚未受理，请重试。");
+  if (!taskId) throw new Error(plugin.settings.settingsLanguage === "en" ? "The task was not accepted. Try again." : "任务未能受理。请重试。");
   return true;
 }
 

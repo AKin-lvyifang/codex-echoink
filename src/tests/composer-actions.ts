@@ -68,7 +68,8 @@ export async function runComposerActionTests(): Promise<void> {
     const desktop = Platform.isDesktopApp;
     try {
       Platform.isDesktopApp = true;
-      const toolbar = renderAction();
+      const toolbar = renderAction({ currentComposerModel: "deepseek-flash" });
+      assert.equal(toolbar.modelName.textContent, "deepseek-flash", "desktop expansion preserves the model name shown in its tooltip");
       assert.ok(toolbar.mention, "desktop exposes the note picker shortcut");
       let mentionClickStopped = false;
       toolbar.mention.onclick?.({ preventDefault() {}, stopPropagation() { mentionClickStopped = true; } });
@@ -90,7 +91,9 @@ export async function runComposerActionTests(): Promise<void> {
       assert.equal(desktopQueue.calls.stop, 1);
       assert.equal(desktopQueue.calls.enqueue, 0);
       Platform.isDesktopApp = false;
-      assert.equal(renderAction().mention, null, "mobile retains its existing toolbar");
+      const mobileToolbar = renderAction({ currentComposerModel: "deepseek-flash" });
+      assert.equal(mobileToolbar.mention, null, "mobile retains its existing toolbar");
+      assert.equal(mobileToolbar.modelName.textContent, "flash", "mobile keeps its compact model label");
     } finally { Platform.isDesktopApp = desktop; }
     let draftChanges = 0;
     let focused = false;
@@ -869,7 +872,7 @@ function assertDisabledReasoningMenuRow(
     .querySelectorAll(".codex-parameter-menu-trigger")
     .find((trigger) => trigger.querySelector(
       ".codex-parameter-menu-label"
-    )?.textContent === "思考强度");
+    )?.textContent === "Think");
   assert.ok(reasoningTrigger);
   assert.equal(reasoningTrigger.getAttribute("aria-disabled"), "true");
   assert.equal(reasoningTrigger.getAttribute("aria-haspopup"), null);
@@ -953,7 +956,7 @@ async function assertExactComposerProviderModelSelection(): Promise<void> {
       settings,
       activateApiProviderSettings: async (applyCandidate: (candidate: typeof settings) => void) => {
         if (activationMode === "busy") {
-          throw new Error("EchoInk 正在处理其他请求，请稍后再试。");
+          throw new Error("EchoInk 正在处理其他请求。请稍后重试。");
         }
         if (activationMode === "failure") throw new Error("runtime-create-failed");
         applyCandidate(settings);
@@ -1055,13 +1058,16 @@ function renderAction(overrides: Partial<ComposerToolbarState> = {}) {
   };
   const container = new ComposerTestElement("div");
   const workspace = new ComposerTestElement("div");
+  if (Platform.isDesktopApp) container.addClass("is-compact");
   renderComposerToolbar(container as unknown as HTMLElement, workspace as unknown as HTMLElement, state, callbacks);
+  if (Platform.isDesktopApp) assert.equal(container.hasClass("is-compact"), true, "a toolbar refresh retains its measured compact geometry instead of flashing the 4px taller layout");
   return {
     calls,
     mention: container.querySelector(".codex-composer-mention-button"),
     context: container.querySelector(".codex-context-meter")!,
     primary: container.querySelector(".codex-composer-send-button")!,
-    mic: container.querySelector(".codex-composer-mic-button")!
+    mic: container.querySelector(".codex-composer-mic-button")!,
+    modelName: container.querySelector(".codex-composer-model-name")!
   };
 }
 
@@ -1204,6 +1210,13 @@ class ComposerTestElement {
   }
   contains(element: ComposerTestElement): boolean {
     return element === this || this.children.some((child) => child.contains(element));
+  }
+  closest(selector: string): ComposerTestElement | null {
+    const attribute = selector.match(/^\[([^\]]+)\]$/u)?.[1];
+    for (let node: ComposerTestElement | null = this; node; node = node.parentElement) {
+      if (attribute ? node.attributes.has(attribute) : node.matches(selector)) return node;
+    }
+    return null;
   }
   querySelector(selector: string): ComposerTestElement | null { return this.querySelectorAll(selector)[0] ?? null; }
   querySelectorAll(selector: string): ComposerTestElement[] {

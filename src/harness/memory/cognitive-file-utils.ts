@@ -56,14 +56,4 @@ export async function cognitiveReadTextOrEmpty(target: string): Promise<string> 
   return await readFile(target, "utf8");
 }
 
-export function cognitiveJsonText(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-export function newCognitiveId(prefix: string): string {
-  return `${prefix}_${randomUUID().replaceAll("-", "")}`;
-}
-
-export function normalizeTextForDedupe(value: string): string {
-  return value.normalize("NFKC").toLocaleLowerCase().replaceAll(/\s+/gu, " ").trim();
-}
+export { cognitiveJsonText, newCognitiveId, normalizeTextForDedupe } from "./cognitive-text";

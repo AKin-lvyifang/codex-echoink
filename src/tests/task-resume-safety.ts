@@ -12,10 +12,15 @@ import { PiObsidianToolSecurity, createPiObsidianToolDefinitions } from "../harn
 import { createObsidianNativePort } from "../plugin/obsidian-native-tools";
 import { ObsidianVaultDomainAdapter } from "../plugin/obsidian-vault-domain-adapter";
 import { financeOperationsFixture } from "./finance-operations";
+import { nativeJournalFixture } from "./native-journal-fixture";
 import { financeBudgetSnapshot } from "../lifestyle/finance-operation-types";
 import type { PdfJob } from "../pdf-reading/types";
 import { FileApprovalTicketStore, createMcpApprovalToolId, type ApprovalOperationContract, type JsonValue } from "../harness/pi-native/tool-authorization";
-import { createPiVaultProductionWriteExecutionPort } from "../plugin/pi-vault-tool-production";
+import { createPiVaultProductionAuthorizationPort, createPiVaultProductionWriteExecutionPort } from "../plugin/pi-vault-tool-production";
+import { createPiVaultToolDefinitions } from "../harness/pi-native/pi-vault-tool-contracts";
+import { createPiVaultToolSecurityAdapter, createSecurePiVaultToolResultCorrectionPort } from "../harness/pi-native/pi-vault-tool-security-extension";
+import { EchoInkVaultToolEgressPolicy } from "../harness/pi-native/vault-tool-result-safety";
+import { VaultDomainService } from "../harness/pi-native/vault-domain-service";
 import { assertTaskResumeToolAllowed, prepareTaskResumeSafety, readTaskResumeSafety, type TaskResumeSafetySnapshot } from "../plugin/task-resume-safety";
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -25,6 +30,7 @@ export async function runTaskResumeSafetyTests(testRoot: string): Promise<void> 
   const root = await mkdtemp(path.join(testRoot, "p4-resume-safety-"));
   try {
     await fileVersionsAndFinalEffectGate(path.join(root, "files"));
+    await vaultWritesResumeThroughProductionTools(path.join(root, "vault-tools"));
     await todoReceiptsShareTheFileGuard(path.join(root, "todos"));
     await cliReceiptsShareTheFileGuard(path.join(root, "cli"));
     await financeRealPipelineSurvivesChangedRunAndVersion(path.join(root, "finance"));
@@ -84,6 +90,80 @@ async function completedWrite(f: Fixture, content: string, before: string | null
 function guard(f: Fixture, snapshot: TaskResumeSafetySnapshot | undefined, toolName: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown,
   currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) {
   return assertTaskResumeToolAllowed({ ...f, snapshot, toolName, arguments: args, resolvedTarget, currentOperation });
+}
+
+async function vaultWritesResumeThroughProductionTools(root: string): Promise<void> {
+  for (const oldTool of ["note_create", "note_update"] as const) {
+    const f = await fixture(path.join(root, oldTool));
+    const host = await nativeJournalFixture(f.vaultRootPath);
+    const adapter = new ObsidianVaultDomainAdapter(host.app, f.vaultId, f.vaultRootPath);
+    const domainService = new VaultDomainService(adapter);
+    const oldPath = "interrupted.md", before = "Before interruption", oldContent = "Unknown old write";
+    if (oldTool === "note_update") await host.write(oldPath, before);
+    const oldArgs = { relativePath: oldPath, content: oldContent,
+      ...(oldTool === "note_update" ? { expectedVersion: sha(before) } : {}) };
+    const old = await authorized(f, oldTool, "interrupted-call", oldArgs, { relativePath: oldPath },
+      { beforeVersion: oldTool === "note_update" ? sha(before) : null, expectedAfterSha256: sha(oldContent) });
+    await f.receipts.beginAuthorizedOperation(old);
+    await f.receipts.markEffectStarted(old.operationIdentity);
+    const snapshot = await prepareTaskResumeSafety(f);
+    assert.equal(snapshot.operations.find(operation => operation.operationIdentity === old.operationIdentity)?.status, "uncertain");
+    const oldReceipt = await f.receipts.readReceipt(old.operationIdentity);
+    assert.equal(oldReceipt?.status, "uncertain");
+    await f.createRun("resumed-run");
+    const identity = { vaultId: f.vaultId, conversationId: f.conversationId, piSessionId: "same-session", productRunId: "resumed-run" };
+    const assertAllowed = (name: string, args: Readonly<Record<string, unknown>>, target?: unknown,
+      currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => guard(f, snapshot, name, args, target, currentOperation);
+    const security = createPiVaultToolSecurityAdapter({
+      isToolAllowed: async (name, args) => { await assertAllowed(name, args ?? {}); return true; },
+      authorization: createPiVaultProductionAuthorizationPort({ approvals: f.approvals, adapter, currentRunIdentity: () => identity,
+        userId: "user", deviceId: "device", now: f.now, confirmation: { confirm: async () => true } }),
+      resultCorrection: createSecurePiVaultToolResultCorrectionPort(new EchoInkVaultToolEgressPolicy())
+    });
+    const handlers = new Map<string, (...args: any[]) => any>();
+    await security.inlineExtension.factory({ on: (name: string, handler: (...args: any[]) => any) => handlers.set(name, handler) } as never);
+    const tools = createPiVaultToolDefinitions({ domainService, security, assertToolAllowed: assertAllowed,
+      writeExecution: createPiVaultProductionWriteExecutionPort({ receipts: f.receipts, domainService, adapter, now: f.now,
+        assertToolAllowed: (name, args, target, authorization) => assertAllowed(name, args, target,
+          { productRunId: authorization.productRunId, toolCallId: authorization.toolCallId }) }) });
+    let sequence = 0, mutations = 0;
+    const createFile = adapter.createFile.bind(adapter), updateFile = adapter.updateFile.bind(adapter);
+    adapter.createFile = async (...args) => { mutations++; await createFile(...args); };
+    adapter.updateFile = async (...args) => { mutations++; await updateFile(...args); };
+    const call = async (toolName: "note_create" | "note_update", args: Record<string, unknown>) => {
+      const event = { toolName, toolCallId: `resumed-${++sequence}`, input: args };
+      const blocked = await handlers.get("tool_call")!(event, { signal: undefined });
+      if (blocked) throw new Error(blocked.reason);
+      const result = await tools.find(tool => tool.name === toolName)!.execute(event.toolCallId, args, undefined, undefined);
+      const corrected = await handlers.get("tool_result")!({ ...event, ...result, isError: false });
+      return { details: result.details, value: JSON.parse(corrected.content[0].text) };
+    };
+    await assert.rejects(call(oldTool, oldArgs), /task_resume_effect_uncertain_no_replay/u);
+    await assert.rejects(call("note_update", { ...oldArgs, expectedVersion: sha("different version") }), /task_resume_effect_uncertain_no_replay/u,
+      "a changed expectedVersion must not turn the old content write into a new intent");
+    await assert.rejects(call(oldTool === "note_create" ? "note_update" : "note_create",
+      { relativePath: oldPath, content: oldContent, ...(oldTool === "note_create" ? { expectedVersion: sha(before) } : {}) }),
+    /task_resume_effect_uncertain_no_replay/u, "create and update share the content-write replay boundary");
+    assert.equal(mutations, 0, "old uncertain effects never reach host mutations");
+    if (oldTool === "note_create") await assert.rejects(readFile(path.join(f.vaultRootPath, oldPath)), { code: "ENOENT" });
+    else assert.equal(await readFile(path.join(f.vaultRootPath, oldPath), "utf8"), before);
+    const freshPath = "fresh.md", created = "Fresh resumed create", updated = "Fresh resumed update";
+    for (const [toolName, args, content] of [
+      ["note_create", { relativePath: freshPath, content: created }, created],
+      ["note_update", { relativePath: freshPath, content: updated, expectedVersion: `sha256:${sha(created)}` }, updated]
+    ] as const) {
+      const result = await call(toolName, args);
+      assert.equal(result.details.status, "completed", JSON.stringify(result.value));
+      assert.equal(result.value.readbackVerified, true);
+      assert.equal(await readFile(path.join(f.vaultRootPath, freshPath), "utf8"), content);
+      const receipt = await f.receipts.readReceipt(result.details.operationIdentity!);
+      assert.equal(receipt?.status, "completed");
+      assert.equal(receipt.readback.readbackVerified, true);
+    }
+    assert.equal(mutations, 2, "exactly one create and one update reach the host");
+    assert.deepEqual(await f.receipts.readReceipt(old.operationIdentity), oldReceipt, "new writes never clear or rewrite old uncertain receipts");
+  }
+  console.log("PASS resumed real Vault tools: uncertain create/update, fresh create then update, completed verified receipts, no replay across versions or tool names");
 }
 
 async function fileVersionsAndFinalEffectGate(root: string): Promise<void> {

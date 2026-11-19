@@ -157,8 +157,7 @@ async function assertPersistentParentLifecycleProtection(): Promise<void> {
       title: "父记录生命周期", content: "保留已确认的工作约定。", recallWhen: "核对工作约定时",
       basis: "explicit" }, fixture.runtime({ explicitlyAuthorized: true }))).record!;
     const system = await CognitiveSystem.create({ repository: fixture.repository, now: fixture.now,
-      llm: () => null, getDreamConfig: () => ({ enabled: false, runsPerDay: 1 }),
-      isForegroundBusy: () => false, registerInterval: () => {} });
+      llm: () => null, getDreamConfig: () => ({ enabled: false, runsPerDay: 1 }), registerInterval: () => {} });
     system.scheduler.stop();
     try {
       const states = [

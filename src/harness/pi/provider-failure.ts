@@ -1,4 +1,7 @@
 import { replaceKnownSecrets } from "../../security/local-secrets";
+import { xiaoechoFailureText } from "../../membership/xiaoecho-catalog";
+import { CAUSE, pickErrorCopy } from "../../core/error-copy";
+import { PROVIDER_CODES, PROVIDER_FAILURE_CODE_IDS } from "../../core/error-copy/codes/provider";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 
 export interface ProviderFailureDetail {
@@ -7,6 +10,21 @@ export interface ProviderFailureDetail {
   param?: string;
   message?: string;
   reason?: "unsupported" | "invalid" | "required" | "out_of_range";
+}
+
+/** Classify the last request, never the accumulated answer or prior tool calls. */
+export function isReasoningOutputLimit(message: {
+  stopReason?: string;
+  errorMessage?: string;
+  content?: string | readonly { type: string; text?: string; thinking?: string }[];
+  usage?: { reasoning?: number };
+} | undefined): boolean {
+  if (!message || (message.stopReason !== "length"
+    && !(message.stopReason === "error" && message.errorMessage === "provider_output_limit_reached"))) return false;
+  const content = message.content;
+  if (typeof content === "string") return !content.trim() && (message.usage?.reasoning ?? 0) > 0;
+  if (content?.some(block => block.type !== "thinking" && (block.type !== "text" || Boolean(block.text?.trim())))) return false;
+  return (message.usage?.reasoning ?? 0) > 0 || Boolean(content?.some(block => block.type === "thinking" && block.thinking?.trim()));
 }
 
 /** Billing/account exhaustion can arrive as HTTP 429, without being a throttle. */
@@ -85,51 +103,28 @@ export function providerFailureDetailText(value: unknown): string {
     !detail.message && detail.status !== 401 && detail.status !== 403 && raw.reason && Object.hasOwn(reason, raw.reason) ? reason[raw.reason] : "", detail.message].filter(Boolean).join(" · ");
 }
 
+/** Technical upstream detail stays available for support, on its own labelled line. */
+export const PROVIDER_FAILURE_DETAIL_PREFIX = "模型服务返回的原始信息（可提供给客服排查）：";
+
 export function assistantProviderFailureText(message: { errorMessage?: string; echoInkProviderFailure?: unknown }): string {
-  const generic = providerFailureText(message.errorMessage) ?? "Provider 请求失败，请检查服务与请求设置。";
-  const detail = providerFailureDetailText(message.echoInkProviderFailure);
-  return detail ? `${generic}\n${detail}` : generic;
+  // 小echo answers with fixed EchoInk codes ({ error: "POINTS_INSUFFICIENT" }); those read as plain words, not as "HTTP 402 · CODE".
+  const own = xiaoechoProviderFailureText(message.echoInkProviderFailure);
+  if (own) return own;
+  // Raw upstream detail never reaches the bubble; "上报问题" carries it in the run report.
+  return providerFailureText(message.errorMessage) ?? CAUSE.providerNotResponding[0];
+}
+export function xiaoechoProviderFailureText(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as ProviderFailureDetail;
+  for (const candidate of [raw.code, raw.message]) {
+    if (typeof candidate !== "string" || !/^[A-Z][A-Z_]{3,40}$/u.test(candidate)) continue;
+    const text = xiaoechoFailureText(candidate);
+    if (text) return text;
+  }
+  return null;
 }
 
-const PROVIDER_FAILURE_CODES = new Set([
-  "context_length_exceeded",
-  "controlled_transport_aborted",
-  "provider_api_key_missing",
-  "provider_auth_failed",
-  "provider_auto_output_request_rejected",
-  "provider_content_filtered",
-  "provider_certificate_failed",
-  "provider_proxy_failed",
-  "provider_finish_reason_missing",
-  "provider_finish_reason_unsupported",
-  "provider_http_failed",
-  "provider_http_incomplete",
-  "provider_model_invalid",
-  "provider_model_unavailable",
-  "provider_network_error",
-  "provider_network_error_http_incomplete",
-  "provider_network_failed",
-  "provider_network_interrupted",
-  "provider_oauth_relogin_required",
-  "provider_output_limit_reached",
-  "provider_output_limit_rejected",
-  "provider_partial_interrupted_context",
-  "provider_partial_interrupted_deadline",
-  "provider_partial_interrupted_network",
-  "provider_partial_interrupted_rate",
-  "provider_partial_interrupted_service",
-  "provider_protocol_failed",
-  "provider_protocol_mismatch",
-  "provider_rate_limited",
-  "provider_request_rejected",
-  "provider_request_timeout",
-  "provider_service_failed",
-  "provider_service_unavailable",
-  "provider_sse_json_invalid",
-  "provider_tool_call_missing",
-  "provider_unavailable",
-  "provider_utf8_invalid"
-]);
+const PROVIDER_FAILURE_CODES: ReadonlySet<string> = new Set(PROVIDER_FAILURE_CODE_IDS);
 
 export function safeProviderFailureCode(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -186,74 +181,8 @@ export function preventProviderRetryAfterPartial(
   return safeCode;
 }
 
-export function providerFailureText(value: unknown): string | null {
+/** Code → sentence from core/error-copy/codes/provider.ts; Chinese unless a language is given. */
+export function providerFailureText(value: unknown, language?: string): string | null {
   const code = safeProviderFailureCode(value);
-  if (!code) return null;
-  switch (code) {
-    case "provider_auto_output_request_rejected":
-      return "服务商拒绝了这次请求";
-    case "provider_output_limit_rejected":
-      return "服务商拒绝了输出上限，请到模型设置手动填写。";
-    case "provider_output_limit_reached":
-      return "达到输出上限，回答未完整生成。";
-    case "provider_content_filtered":
-      return "内容被 Provider 安全策略拦截，回答未完成。";
-    case "provider_finish_reason_missing":
-      return "Provider 未返回结束原因，回答未完成。";
-    case "provider_finish_reason_unsupported":
-      return "Provider 返回了不支持的结束原因，回答未完成。";
-    case "provider_sse_json_invalid":
-      return "Provider 返回的流数据格式损坏，回答未完成。";
-    case "provider_http_incomplete":
-    case "provider_network_error_http_incomplete":
-      return "网络连接提前结束，回答未完整接收。";
-    case "provider_utf8_invalid":
-      return "Provider 返回的文本编码无效，回答未完成。";
-    case "provider_network_error":
-    case "provider_network_failed":
-      return "无法连接模型服务，请检查网络或代理。";
-    case "provider_network_interrupted":
-    case "provider_partial_interrupted_network":
-      return "网络连接中断，回答未完成。";
-    case "provider_partial_interrupted_context":
-      return "本次回答在上下文超限前已产生部分内容，已停止自动重试。";
-    case "provider_partial_interrupted_rate":
-    case "provider_rate_limited":
-      return "Provider 请求过于频繁或额度已用尽，请稍后重试或检查账户额度。";
-    case "provider_request_timeout":
-      return "等待 Provider 回答超时，请稍后重试。";
-    case "provider_partial_interrupted_deadline":
-      return "等待后续回答超时，已保留收到的内容并停止自动重试。";
-    case "provider_certificate_failed":
-      return "证书校验失败，请检查服务商证书或代理证书。";
-    case "provider_proxy_failed":
-      return "无法连接代理，请检查代理设置或代理服务。";
-    case "provider_request_rejected":
-      return "服务商拒绝了请求。";
-    case "provider_partial_interrupted_service":
-    case "provider_service_failed":
-    case "provider_service_unavailable":
-    case "provider_unavailable":
-      return "Provider 服务暂时不可用，回答未完成。";
-    case "provider_tool_call_missing":
-      return "Provider 声明了工具调用，但没有返回完整工具参数。";
-    case "provider_auth_failed":
-    case "provider_api_key_missing":
-      return "API Key 无效或未填写，请检查设置。";
-    case "provider_oauth_relogin_required":
-      return "OpenAI Codex 授权已失效，请在设置中重新登录。";
-    case "provider_model_invalid":
-    case "provider_model_unavailable":
-      return "当前 Provider 模型不可用，请检查模型设置。";
-    case "context_length_exceeded":
-      return "当前对话超过模型上下文上限。";
-    case "controlled_transport_aborted":
-      return "已停止生成。";
-    case "provider_http_failed":
-      return "Provider 请求失败，请检查服务与请求设置。";
-    case "provider_protocol_failed":
-    case "provider_protocol_mismatch":
-      return "Provider 返回格式不符合当前协议，回答未完成。";
-  }
-  return null;
+  return code ? pickErrorCopy(PROVIDER_CODES[code], language) : null;
 }

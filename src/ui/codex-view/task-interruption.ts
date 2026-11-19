@@ -1,8 +1,12 @@
 import { ownedEl } from "../owned-dom";
 import type { TaskInterruptionInfo } from "../../agents/task-resume";
 import { taskInterruptionExplanation } from "../../agents/task-interruption-copy";
+import { errorText, joinErrorCopy, type ErrorCopy, NEXT } from "../../core/error-copy";
 import { createOriginButton, disposeOriginControls } from "../../settings/origin-controls";
 import { applyAmicroButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
+
+const RESUME_FAILED_LEAD: ErrorCopy = ["任务未能继续执行。", "The task could not be continued."];
+const RESUME_FAILED: ErrorCopy = [joinErrorCopy(RESUME_FAILED_LEAD, NEXT.continueOrReport, "zh"), joinErrorCopy(RESUME_FAILED_LEAD, NEXT.continueOrReport, "en")];
 
 /** The interruption card is UI-only; it never becomes a session message. */
 export function renderTaskInterruption(
@@ -32,8 +36,8 @@ export function renderTaskInterruption(
     const cause = info.reason === "process_unknown" ? (en ? `Unexpected interruption; last recorded at ${time}` : `运行意外中断，最后记录于 ${time}`) : `${time} ${reason}`;
     text("div", "echoink-task-interruption-copy", explanation ?? (en
       ? `${cause}. ${info.stage ? `Stopped at “${info.stage}”.` : "The last step was not recorded."} Everything already completed is preserved.`
-      : `${cause}，${info.stage ? `停在「${info.stage}」。` : "没有保存具体步骤。"}已经完成的内容都保留着。`));
-    if (info.detail && !explanation) text("div", "echoink-task-interruption-detail", info.detail);
+      : `${cause}，${info.stage ? `停在「${info.stage}」。` : "未记录具体步骤。"}已完成的内容均已保留。`));
+    // The raw detail stays in the record for "Report a problem"; the card never shows it.
   } else if (!info && !input.error) text("div", "echoink-task-interruption-copy", en ? "Reading interruption details…" : "正在读取中断记录…");
   if (info?.uncertainOperations.length) {
     text("div", "echoink-task-interruption-warning", en ? "The result of this operation is uncertain. Check it before continuing." : "这个操作结果不确定，继续前请先核对");
@@ -43,7 +47,7 @@ export function renderTaskInterruption(
     }
     container.append(list);
   }
-  if (input.error && !info?.failureMessage) text("div", "echoink-task-interruption-error", input.error).setAttribute("role", "alert");
+  if (input.error && !info?.failureMessage) text("div", "echoink-task-interruption-error", errorText(input.error, RESUME_FAILED, input.language)).setAttribute("role", "alert");
   const actions = text("div", "echoink-task-interruption-actions", "");
   if (input.onReport) {
     const report = createOriginButton(actions, { text: en ? "Report a problem" : "上报问题", attr: { type: "button" } });

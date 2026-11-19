@@ -10,6 +10,9 @@ import { budgetPatch, financeToolEffect, normalizeFinanceToolRequest, type PiFin
 import { normalizeJsonValue } from "../harness/pi-native/json-value-core";
 import type { PreparedObsidianOperation, ObsidianCliResult } from "../harness/pi-native/pi-obsidian-tools";
 
+/** Names the categories an Agent write added, so the reply can tell the user. */
+const created = (names: readonly string[]) => names.length ? { createdCategories: [...names] } : {};
+
 /** Uses the existing ledger/store; this port never invokes the official CLI. */
 export function financeConversationPort(finance?: LifestyleFinanceService, guard: () => void = () => {}) {
   const json = (value: unknown) => normalizeJsonValue(JSON.parse(JSON.stringify(value)));
@@ -43,7 +46,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
     } else if (tool === "finance_record" && input.action === "create") {
       const r = input.record!;
       const category = r.category ?? (/早餐|午餐|晚餐|吃饭|餐饮/u.test(r.description ?? "") ? "餐饮" : "");
-      if (!state.categories.some(c => c.active && c.name === category)) throw new Error("finance_existing_category_required");
+      if (!category.trim()) throw new Error("finance_category_required");
       const token = sha256Hex(operationSeed);
       const prepared = finance.prepareManual({ date: r.date ?? localDate(), merchant: r.merchant ?? "", account: r.account ?? "", description: r.description ?? "", category,
         amountCents: r.amountCents!, kind: r.kind ?? "expense", status: "completed", currency: "CNY", note: r.note ?? "", icon: r.icon ?? "auto", ...(r.billPlanId ? { billPlanId: r.billPlanId } : {}) }, { id: `entry-${token}`, sourceId: `manual-${token}` }, guard);
@@ -53,10 +56,11 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
       const { id: _id, sourceId: _sourceId, source: _source, ...facts } = prepared.entry;
       business = { action: "create", record: facts };
       apply = async () => {
+        const createdCategories = await finance.ensureCategories([category]);
         await prepared.create();
         const record = (await finance.readForConversation()).records.find(r => r.entry.id === prepared.entry.id);
         if (!record || Object.entries(prepared.entry).some(([key, value]) => record.entry[key as keyof typeof record.entry] !== value)) throw new Error("finance_readback_failed");
-        return { record: recordView(record) };
+        return { record: recordView(record), ...created(createdCategories) };
       };
     } else if (tool === "finance_record" || tool === "finance_bill" && input.action === "associate") {
       const records = input.targets!.map(t => {
@@ -77,6 +81,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
       preview = { action: input.action, records: records.map(recordView), ...(patch ? { patch } : {}) };
       business = { action: input.action, recordIds: records.map(r => r.entry.id), ...(patch ? { patch } : {}) };
       apply = async () => {
+        const createdCategories = patch?.category !== undefined ? await finance.ensureCategories([patch.category]) : [];
         const results: unknown[] = [];
         for (const record of records) {
           if (signal?.aborted) { results.push({ id: record.entry.id, status: "cancelled" }); continue; }
@@ -93,7 +98,7 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
             results.push({ id: record.entry.id, status: reason === "finance_version_conflict" || reason === "finance_record_not_found" ? "failed" : "uncertain", reason });
           }
         }
-        return { results };
+        return { results, ...created(createdCategories) };
       };
     } else if (tool === "finance_budget") {
       const before = financeBudgetSnapshot(state.data, scope), patch = budgetPatch(input);
@@ -111,7 +116,10 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
       target = { domain: "finance", budgetScope: scope }; targetVersion = { kind: "budget", scope, beforeVersion: before.version, expectedBudget: afterBudget };
       preview = { action: "update", before, patch };
       business = { action: "update", scope, patch };
-      apply = () => finance.patchConversationBudget(scope, before.version, patch, guard);
+      apply = async () => {
+        const createdCategories = await finance.ensureCategories(Object.keys(patch.allocations ?? {}));
+        return { ...await finance.patchConversationBudget(scope, before.version, patch, guard), ...created(createdCategories) };
+      };
     } else {
       const id = input.action === "create" ? `bill-${sha256Hex(operationSeed)}` : input.id!;
       const before = state.data.financeBillPlans.find(b => b.id === id) ?? null;
@@ -124,7 +132,10 @@ export function financeConversationPort(finance?: LifestyleFinanceService, guard
       catch (error) { throw new Error(`finance_bill_invalid:${error instanceof Error ? error.message : error}`); }
       target = { domain: "finance", billId: id }; targetVersion = { kind: "bill", billId: id, beforeVersion: version, expectedBill: { ...before, ...patch, id, allocations: { ...before?.allocations, ...patch.allocations } } }; preview = { action: input.action, before, patch, id };
       business = { action: input.action, ...(input.action === "update" ? { id } : {}), ...patch, ...(input.action === "create" ? { allocations: patch.allocations ?? {} } : {}) };
-      apply = () => finance.writeConversationBill(input.action as "create" | "update", id, version, patch, guard);
+      apply = async () => {
+        const createdCategories = await finance.ensureCategories(Object.keys(patch.allocations ?? {}));
+        return { ...await finance.writeConversationBill(input.action as "create" | "update", id, version, patch, guard), ...created(createdCategories) };
+      };
     }
     return { effect, target: json(target), targetVersion: json(targetVersion), preview: json(preview), effectArgumentsSha256: financeValueVersion(business),
       execute: async (executionSignal, onEffectStarted): Promise<ObsidianCliResult> => {

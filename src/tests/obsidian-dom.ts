@@ -50,6 +50,9 @@ export function installCurrentObsidianDom(): void {
 export function installMockObsidianDom<T>(value: T): T {
   const document = value as T & {
     win?: unknown;
+    addEventListener?: Document["addEventListener"];
+    removeEventListener?: Document["removeEventListener"];
+    dispatchEvent?: Document["dispatchEvent"];
     createElement(tag: string): unknown;
     createElementNS?(namespace: string, tag: string): unknown;
     createDocumentFragment?(): unknown;
@@ -63,5 +66,11 @@ export function installMockObsidianDom<T>(value: T): T {
     createFragment: () => document.createDocumentFragment?.() ?? document.createElement("fragment")
   };
   document.adoptNode ??= node => node;
+  if (!document.addEventListener) {
+    const events = new EventTarget();
+    document.addEventListener = events.addEventListener.bind(events);
+    document.removeEventListener = events.removeEventListener.bind(events);
+    document.dispatchEvent = events.dispatchEvent.bind(events);
+  }
   return value;
 }

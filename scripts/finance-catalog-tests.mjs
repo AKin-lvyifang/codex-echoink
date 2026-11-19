@@ -158,7 +158,7 @@ try {
     f.remove().click(); f.revoke(); confirm(); await flush();
     assert.equal(f.state.writes, 0, "the real service rechecks PRO after confirmation");
     assert.deepEqual(f.items(), before);
-    assert.equal(api.openTestNoticeMessages.at(-1), "PRO_REQUIRED");
+    assert.equal(api.openTestNoticeMessages.at(-1), "财务操作未能完成，原数据已保留。此操作需要有效的 PRO 权益。请在 设置 → 账号与会员 中查看会员状态。");
     assert.equal(f.remove().disabled, true);
     f.remove().click();
     assert.equal(api.openTestModals.length, 0);
@@ -170,7 +170,7 @@ try {
     f.state.failure = true;
     f.remove().click(); confirm(); await flush();
     assert.deepEqual(f.items(), before, "failed persistence rolls back the real catalog");
-    assert.equal(api.openTestNoticeMessages.at(-1), "SAVE_FAILED");
+    assert.equal(api.openTestNoticeMessages.at(-1), "财务操作未能完成，原数据已保留。请稍后重试。");
     assert.equal(f.panel.isPending(), false);
     assert.equal(f.remove().disabled, false);
     f.dispose();

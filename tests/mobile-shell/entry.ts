@@ -4,3 +4,7 @@ export { IPadShell } from "../../src/ui/ipad/shell";
 export { IPadSettingsShell } from "../../src/ui/ipad/settings-shell";
 export { ContainedShellSheet } from "../../src/ui/mobile/shell-controls";
 export * from "../../src/mobile/shell-workspace";
+export { MobileSubmissionScroller } from "../../src/ui/mobile/submission-scroll";
+export { bindMobilePressFeedback } from "../../src/ui/mobile/press-feedback";
+export { MobileScrollFrame } from "../../src/ui/mobile/scroll-frame";
+export { MobileLiveTaskTranscript, MobileTranscriptNodes } from "../../src/ui/mobile/live-task-transcript";

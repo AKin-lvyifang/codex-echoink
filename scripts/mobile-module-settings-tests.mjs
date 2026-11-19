@@ -57,14 +57,14 @@ await test("explicit stored opt-outs survive loading while malformed boolean val
 });
 await test("failed basic save restores absence and leaves configuration intact", async () => {
   const f = settingHost({}, async () => { throw new Error("disk"); }), before = plain(f.settings);
-  await assert.rejects(setMobileModuleEnabled(f.host, "todos", false), /保存失败/u);
+  await assert.rejects(setMobileModuleEnabled(f.host, "todos", false), /未能保存/u);
   assert.deepEqual(plain(f.settings), before); assert.equal(f.settings.mobileUi.moduleEnabled, undefined);
 });
 await test("basic rollback restores one key while preserving unrelated edits", async () => {
   const f = settingHost({ mobileUi: { moduleEnabled: { journal: false }, future: "kept" } }, async settings => {
     settings.mobileUi.moduleEnabled.todos = false; settings.mobileUi.largeText = true; throw new Error("disk");
   });
-  await assert.rejects(setMobileModuleEnabled(f.host, "journal", true), /保存失败/u);
+  await assert.rejects(setMobileModuleEnabled(f.host, "journal", true), /未能保存/u);
   assert.deepEqual(plain(f.settings.mobileUi.moduleEnabled), { journal: false, todos: false }); assert.equal(f.settings.mobileUi.largeText, true);
 });
 await test("module writes serialize and a failed operation does not poison the next save", async () => {
@@ -72,7 +72,7 @@ await test("module writes serialize and a failed operation does not poison the n
   const f = settingHost({}, async () => { if (++attempt === 1) await pending.promise; });
   const first = setMobileModuleEnabled(f.host, "journal", false), second = setMobileModuleEnabled(f.host, "todos", false);
   await turn(); assert.equal(f.saves(), 1); pending.reject(new Error("disk"));
-  await assert.rejects(first, /保存失败/u); await second;
+  await assert.rejects(first, /未能保存/u); await second;
   assert.equal(mobileModuleEnabled(f.settings, "journal"), true); assert.equal(mobileModuleEnabled(f.settings, "todos"), false);
 });
 await test("both paid modules reject toggles without PRO and retain existing enabled data", async () => {
@@ -102,7 +102,7 @@ await test("English uses unified PRO eligibility and preserves all existing conf
 });
 await test("failed English save restores enabled and paid eligibility is checked at queued execution", async () => {
   const f = settingHost({}, async () => { throw new Error("disk"); }); f.host.accountService = pro;
-  await assert.rejects(setMobileModuleEnabled(f.host, "english-diary", true), /保存失败/u); assert.equal(f.settings.englishDiary.enabled, false);
+  await assert.rejects(setMobileModuleEnabled(f.host, "english-diary", true), /未能保存/u); assert.equal(f.settings.englishDiary.enabled, false);
   f.host.accountService = { checkCapability: () => false };
   await assert.rejects(setMobileModuleEnabled(f.host, "english-diary", true), /PRO/u); assert.equal(f.saves(), 1);
 });
@@ -126,12 +126,14 @@ await test("a live policy rejects the next module Skill after disabling and acce
     await setMobileModuleEnabled(f.host, id, true); f.policy.assertSkill(skill);
   }
 });
-await test("direct note tools obey disabled target modules including the real todo source", async () => {
+await test("direct note writes obey disabled target modules including the real todo source; reads stay open", async () => {
   const f = await policyFixture();
   for (const [id, path] of [["knowledge-base", "wiki/source.md"], ["journal", "journal/source.md"], ["todos", "EchoInk/待办.md"], ["review", "outputs/reviews/source.md"]]) {
     f.policy.assertTool("note_read", { path }); f.policy.assertTool("note_create", { path });
     await setMobileModuleEnabled(f.host, id, false);
-    for (const tool of ["note_read", "note_create"]) assert.throws(() => f.policy.assertTool(tool, { path }), error => error.reason === "module_disabled");
+    f.policy.assertTool("note_read", { path }); // reading stays open with the module off
+    if (id === "knowledge-base") f.policy.assertTool("note_create", { path }); // Knowledge folders are ordinary folders for writes
+    else assert.throws(() => f.policy.assertTool("note_create", { path }), error => error.reason === "module_disabled");
     await setMobileModuleEnabled(f.host, id, true);
   }
 });

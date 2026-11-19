@@ -1,7 +1,8 @@
-import { Notice, TFolder, setIcon, type EventRef, type Modal } from "obsidian";
+import { Notice, TFolder, setIcon, setTooltip, type EventRef, type Modal } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { emptyKnowledgeFolderBindings, normalizeKnowledgeFolderBindings, KNOWLEDGE_COLLECTION_LABELS, knowledgeCollectionLabel, knowledgeCollectionDescription, knowledgeCollectionKinds, knowledgeCollectionTargets, knowledgeCollectionDirectory, knowledgeOutputLocation, knowledgeOrganizationSettings, pathInKnowledgeDirectory, rebaseKnowledgeFolderBindings, type KnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { knowledgeOrganizationSelectable } from "../knowledge-base/folder-organization";
+import { knowledgeFolderConflicts } from "../knowledge-base/folder-bindings";
 import { rebaseKnowledgePath } from "../knowledge-base/root-paths-core";
 import type { KnowledgeDirectoryMode, KnowledgeDirectoryPlan, KnowledgeModuleDirectories } from "../knowledge-base/folder-plan";
 import { readNativeJournalSettings } from "../home/native-journal";
@@ -16,6 +17,7 @@ import { createKnowledgeFolderPicker, type KnowledgeFolderChoice, type Knowledge
 import { initializationFolderTree, renderInitializationFolderTree } from "./knowledge-initialization-tree";
 import { initializationFolderIssues, type InitializationFolderField } from "../knowledge-base/initialization-choices";
 import { knowledgeExcalidrawLocation } from "../knowledge-base/folder-bindings";
+import { userFacingErrorText } from "../core/error-copy";
 
 type Role = "raw" | "wiki" | "projects" | "inbox";
 const titles: Record<Role, string> = { raw: "资料来源", wiki: "知识成果", projects: "项目", inbox: "收件箱" };
@@ -26,6 +28,10 @@ const purposeExplanations: Record<Role, string> = {
   inbox: "保存临时笔记"
 };
 type Page = "sources" | "role" | "initialize" | "initialize-preview" | "picker" | "collections" | "permissions" | "management" | null;
+const SAVE_FAILED = "目录设置未能保存，已保留原设置。请稍后重试；如问题持续，请点击“上报问题”。";
+const PREVIEW_FAILED = "未能生成文件夹预览。请检查所选文件夹后重新预览。";
+const INIT_FAILED = "文件夹初始化未能完成，已完成的步骤会保留。请重新预览后再确认。";
+const errorText = (error: unknown, fallback = SAVE_FAILED): string => userFacingErrorText(error, fallback, "zh");
 
 /** Desktop presentation only. All writes use the existing directory service. */
 export class DesktopKnowledgeSettings {
@@ -74,7 +80,7 @@ export class DesktopKnowledgeSettings {
     this.invalidatePlan();
   }
   private bindings(): KnowledgeFolderBindings { return normalizeKnowledgeFolderBindings(this.plugin.settings.knowledgeBase.folderBindings) ?? normalizeKnowledgeFolderBindings(emptyKnowledgeFolderBindings())!; }
-  private service() { const service = this.plugin.getKnowledgeSurfaceService(); if (!service) throw new Error("目录服务尚未就绪，请稍后重试"); return service; }
+  private service() { const service = this.plugin.getKnowledgeSurfaceService(); if (!service) throw new Error("目录服务尚未就绪。请稍后重试。"); return service; }
   private change(page: Page): void { this.page = page; this.error = ""; this.navigation.redraw(); }
   private restoreReturnFocus(parent: HTMLElement): void {
     if (!this.returnFocusKey) return;
@@ -117,14 +123,14 @@ export class DesktopKnowledgeSettings {
     const row = new OriginSetting(parent).setName(title);
     this.help(row.nameEl, hint);
     const check = createOriginCheck(row.controlEl, { attr: { "aria-label": title } }); check.checked = checked; let accepted = checked;
-    check.onchange = () => { const next = check.checked; check.disabled = true; void save(next).then(() => { accepted = next; }).catch(error => { check.checked = accepted; new Notice(error instanceof Error ? error.message : String(error)); }).finally(() => { check.disabled = false; }); };
+    check.onchange = () => { const next = check.checked; check.disabled = true; void save(next).then(() => { accepted = next; }).catch(error => { check.checked = accepted; new Notice(errorText(error)); }).finally(() => { check.disabled = false; }); };
     return row;
   }
   private async save(next: KnowledgeFolderBindings, wikiChanged = false): Promise<void> {
-    if (this.busy) throw new Error("正在保存，请稍后重试");
+    if (this.busy) throw new Error("正在保存设置。请稍后重试。");
     this.busy = true;
     try { await this.service().saveDirectoryBindings(next, { wikiChanged }); this.error = ""; }
-    catch (error) { this.error = `绑定未保存，仍使用原目录：${error instanceof Error ? error.message : String(error)}`; throw error; }
+    catch (error) { this.error = `目录绑定未能保存，仍使用原目录。${errorText(error, "请稍后重试；如问题持续，请点击“上报问题”。")}`; throw error; }
     finally { this.busy = false; }
   }
   renderSummary(parent: HTMLElement): HTMLElement {
@@ -134,10 +140,19 @@ export class DesktopKnowledgeSettings {
       const binding = bindings.roles[role];
       const invalid = binding.readPaths.some(path => !(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder));
       const configured = binding.enabled && binding.readPaths.length > 0;
-      const status = invalid ? " · 文件夹不存在" : "";
-      const suffix = `${binding.readPaths.length > 1 ? `等 ${binding.readPaths.length} 个` : ""}${status}`.trim();
-      const row = createSettingsNavigationRow(folders, { title: titles[role], value: configured ? binding.readPaths[0] : binding.enabled ? "未配置" : "未启用", valueSuffix: configured && suffix ? suffix : undefined, valueDescription: configured ? `${binding.readPaths.join("、")}${status}` : undefined, explanation: purposeExplanations[role], focusKey: `knowledge:directory:${role}`, onActivate: () => role === "raw" ? this.change("sources") : this.openRole(role) });
+      const conflict = knowledgeFolderConflicts(bindings).find(item => item.roles.includes(role));
+      const warningText = invalid ? "文件夹不存在。请点击后重新选择。" : conflict ? `与${conflict.roles.filter(item => item !== role).map(item => titles[item as Role]).join("、")}共用。请点击后重新选择。` : "";
+      const suffix = binding.readPaths.length > 1 ? `等 ${binding.readPaths.length} 个` : "";
+      const row = createSettingsNavigationRow(folders, { title: titles[role], value: configured ? binding.readPaths[0] : binding.enabled ? "未配置" : "未启用", valueSuffix: configured && suffix ? suffix : undefined, valueDescription: configured ? binding.readPaths.join("、") : undefined, explanation: purposeExplanations[role], focusKey: `knowledge:directory:${role}`, onActivate: () => role === "raw" ? this.change("sources") : this.openRole(role) });
       row.addClass("echoink-knowledge-purpose-row");
+      if (configured && warningText) {
+        const trailing = row.querySelector<HTMLElement>(".echoink-settings-navigation-trailing")!;
+        const warning = trailing.createSpan({ cls: "echoink-knowledge-directory-warning", attr: { role: "img", "aria-label": warningText, id: `${row.querySelector(".echoink-settings-navigation-title")!.id}-warning` } });
+        setIcon(warning, "triangle-alert");
+        setTooltip(warning, warningText);
+        trailing.insertBefore(warning, trailing.querySelector(".echoink-settings-navigation-icon"));
+        row.setAttribute("aria-describedby", warning.id);
+      }
       row.querySelector<HTMLElement>(".echoink-settings-navigation-title")?.createSpan({ cls: "echoink-knowledge-purpose-commands", text: role === "inbox" ? "召回" : "/ask /maintain 召回" });
     }
     for (const [target, title] of [["collections", "Agent 产出物保存到"], ["permissions", "Agent 权限与维护"], ["management", "目录管理"]] as const) {
@@ -169,31 +184,31 @@ export class DesktopKnowledgeSettings {
           if (key === "answer") next.answerDirectoryPending = false;
           if (key === "generation") next.generationDirectoryPending = false;
           picker.setDisabled(true);
-          void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
+          void this.save(next).catch(error => new Notice(errorText(error))).finally(() => this.navigation.redraw());
         }
       });
       picker.element.querySelector<HTMLElement>('[role="combobox"]')?.setAttribute("data-echoink-focus-key", `knowledge:collections:${key}`);
       this.folderPickers.push(picker);
       const missing = directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder);
-      if (missing || !output && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在，请重新选择" : "请重新选择资料来源文件夹");
+      if (missing || !output && !knowledgeCollectionDirectory(bindings, key)) picker.setError(missing ? "文件夹不存在。请重新选择。" : "保存位置不在资料来源内。请重新选择资料来源文件夹。");
     }
     const row = new OriginSetting(targets).setName("Excalidraw 手绘图");
     row.settingEl.dataset.collectionKind = "excalidraw";
     let directory = "", pending = false, error = "";
     try { const location = knowledgeExcalidrawLocation(bindings); directory = location.directory; pending = location.createIfMissing && !this.plugin.app.vault.getAbstractFileByPath(directory); }
-    catch { error = "请先选择保存位置"; }
+    catch { error = "尚未选择保存位置。请先选择保存位置。"; }
     const picker = createKnowledgeFolderPicker(row.controlEl, { label: "Excalidraw 手绘图保存位置",
       folders: () => this.plugin.app.vault.getAllFolders(false).map(folder => folder.path),
       values: directory ? [{ path: directory, create: pending }] : [], multiple: false, required: true, allowCreate: false, app: this.plugin.app,
       onChange: values => {
         const next = this.bindings(); next.excalidrawDirectory = values[0]?.path ?? null;
         picker.setDisabled(true);
-        void this.save(next).catch(error => new Notice(error instanceof Error ? error.message : String(error))).finally(() => this.navigation.redraw());
+        void this.save(next).catch(error => new Notice(errorText(error))).finally(() => this.navigation.redraw());
       }
     });
     picker.element.querySelector<HTMLElement>('[role="combobox"]')?.setAttribute("data-echoink-focus-key", "knowledge:collections:excalidraw");
     this.folderPickers.push(picker);
-    if (error || directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) picker.setError(error || "文件夹不存在，请重新选择");
+    if (error || directory && !pending && !(this.plugin.app.vault.getAbstractFileByPath(directory) instanceof TFolder)) picker.setError(error || "文件夹不存在。请重新选择。");
   }
   private renderPermissions(page: HTMLElement): void {
     const bindings = this.bindings();
@@ -210,8 +225,8 @@ export class DesktopKnowledgeSettings {
     };
     if (typeof this.plugin.getEchoInkKnowledgeMaintenancePreferenceState === "function") {
       void this.plugin.getEchoInkKnowledgeMaintenancePreferenceState().then(state => { showPreference(state.state === "custom" ? "已自定义" : "使用默认"); })
-        .catch(() => { showPreference(undefined, "知识提炼偏好读取失败"); });
-    } else showPreference(undefined, "知识提炼偏好状态暂不可用");
+        .catch(() => { showPreference(undefined, "未能读取知识提炼偏好。请重新打开此页面。"); });
+    } else showPreference(undefined, "知识提炼偏好暂不可用。请重新打开此页面。");
     this.linkingCleanup = renderKnowledgeLinkingSection(permissions, this.plugin, this.linkingTaskId, this.locateLinking);
     this.locateLinking = false;
     this.linkingTaskId = undefined;
@@ -233,7 +248,7 @@ export class DesktopKnowledgeSettings {
     const selectionError = () => {
       const current = this.bindings();
       const invalid = accepted.paths.filter(path => !(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder) || !knowledgeOrganizationSelectable(current, path));
-      return invalid.length ? `文件夹不存在或已不在允许范围内，请移除后重新选择：${invalid.join("、")}` : accepted.paths.length ? "" : "请至少选择一个文件夹";
+      return invalid.length ? `以下文件夹不存在或已不在允许范围内：${invalid.join("、")}。请移除后重新选择。` : accepted.paths.length ? "" : "尚未选择文件夹。请至少选择一个文件夹。";
     };
     const syncDisabled = () => {
       check.disabled = saving;
@@ -241,7 +256,7 @@ export class DesktopKnowledgeSettings {
       picker?.setDisabled(saving || !accepted.enabled);
     };
     const persist = async (organization: typeof accepted) => {
-      if (saving) throw new Error("正在保存，请稍后重试");
+      if (saving) throw new Error("正在保存设置。请稍后重试。");
       saving = true; syncDisabled();
       try {
         const next = this.bindings(); next.organization = organization;
@@ -267,7 +282,7 @@ export class DesktopKnowledgeSettings {
           const active = picker!;
           void persist({ ...accepted, paths: values.map(value => value.path) }).then(() => active.setError(selectionError())).catch(error => {
             active.setValues(accepted.paths.map(path => ({ path, create: false })));
-            active.setError(error instanceof Error ? error.message : String(error));
+            active.setError(errorText(error));
           });
         }
       });
@@ -279,7 +294,7 @@ export class DesktopKnowledgeSettings {
       const nextScope = scope.value === "selected" ? "selected" : "all";
       void persist({ ...accepted, scope: nextScope }).then(renderSelection).catch(error => {
         scope.value = accepted.scope;
-        new Notice(error instanceof Error ? error.message : String(error));
+        new Notice(errorText(error));
       });
     };
     renderSelection(); syncDisabled();
@@ -325,7 +340,9 @@ export class DesktopKnowledgeSettings {
     pathLabel.createSpan({ text: path });
     const unbind = createOriginButton(row, { cls: "is-icon echoink-knowledge-source-unbind", attr: { "aria-label": `解绑 ${path}` } });
     applyDeleteButton(unbind, { iconOnly: true }); unbind.onclick = () => this.confirmUnbind(page, unbind, role, path);
-    if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "文件夹不存在" });
+    if (!(this.plugin.app.vault.getAbstractFileByPath(path) instanceof TFolder)) row.createDiv({ cls: "settings-error", text: "文件夹不存在。请重新选择。" });
+    const conflict = knowledgeFolderConflicts(this.bindings()).find(item => item.path === path && item.roles.includes(role));
+    if (conflict) row.createDiv({ cls: "settings-error", text: `与${conflict.roles.filter(item => item !== role).map(item => titles[item as Role]).join("、")}共用。请重新选择其他文件夹。`, attr: { role: "alert" } });
   }
   private renderSearchPermission(page: HTMLElement, role: Role): void {
     this.checkbox(page, "允许 Agent 检索这些资料", this.bindings().roles[role].searchEnabled !== false, "回答问题时，知识库检索与读取会使用上方所有资料文件夹；关闭后不再使用这些资料，文件、目录绑定和保存位置不变。你主动 @ 引用或提交到聊天的内容除外。此项不授权整理，也不影响 Obsidian 自带搜索。", async enabled => { const next = this.bindings(); next.roles[role].searchEnabled = enabled; await this.save(next); });
@@ -335,6 +352,11 @@ export class DesktopKnowledgeSettings {
       const next = this.bindings(), binding = next.roles[role];
       binding.readPaths = role === "raw" ? [...new Set([...binding.readPaths, path])] : [path];
       binding.writePath = role === "raw" && binding.writePath ? binding.writePath : path; binding.enabled = true; binding.searchEnabled = true;
+      const conflict = knowledgeFolderConflicts(next).find(item => item.path === path && item.roles.includes(role));
+      if (conflict) {
+        this.error = `与${conflict.roles.filter(item => item !== role).map(item => titles[item as Role]).join("、")}共用。请重新选择其他文件夹。`;
+        throw new Error(this.error);
+      }
       await this.save(next, role === "wiki"); this.change(role === "raw" ? "sources" : null);
     } }; this.change("picker");
   }
@@ -345,7 +367,7 @@ export class DesktopKnowledgeSettings {
     const render = () => { disposeOriginControls(list); list.empty();
       const folders = this.plugin.app.vault.getAllFolders(false).filter(folder => !folder.path.split("/").some(part => part.startsWith(".")) && folder.path.toLocaleLowerCase().includes(input.value.toLocaleLowerCase())).sort((a, b) => a.path.localeCompare(b.path));
       if (!folders.length) list.createDiv({ cls: "setting-item-description", text: "没有符合条件的文件夹" });
-      for (const folder of folders) createSettingsNavigationRow(list, { title: folder.path, actionLabel: "选择", onActivate: () => { if (this.busy) return; void picker.onChoose(folder.path).catch(error => { new Notice(error instanceof Error ? error.message : String(error)); this.navigation.redraw(); }); } });
+      for (const folder of folders) createSettingsNavigationRow(list, { title: folder.path, actionLabel: "选择", onActivate: () => { if (this.busy) return; void picker.onChoose(folder.path).catch(error => { new Notice(errorText(error)); this.navigation.redraw(); }); } });
     }; input.oninput = render; render();
     const role = picker.role;
     if (role && this.bindings().roles[role].enabled && role !== "raw") {
@@ -361,7 +383,7 @@ export class DesktopKnowledgeSettings {
       try { await this.save(next);
         if (role === "raw") {
           const affected = knowledgeCollectionKinds(next).filter(kind => !knowledgeCollectionDirectory(next, kind));
-          if (affected.length) new Notice(`${affected.map(kind => KNOWLEDGE_COLLECTION_LABELS[kind]).join("、")}的保存位置已失效，请到Agent 产出物保存到重新选择。`);
+          if (affected.length) new Notice(`${affected.map(kind => KNOWLEDGE_COLLECTION_LABELS[kind]).join("、")}的保存位置已失效。请在“Agent 产出物保存到”中重新选择。`);
         }
         this.change(role === "raw" ? "sources" : null); }
       catch { this.navigation.redraw(); }
@@ -490,7 +512,7 @@ export class DesktopKnowledgeSettings {
         const createPaths = formFields.flatMap(field => field.values.filter(choice => choice.create).map(choice => choice.path.trim()));
         const plan = await this.service().previewDirectoryPlan(bindings, createPaths, { mode: this.mode!, wikiChanged: this.wikiChanged, moduleDirectories: this.moduleDraft });
         if (version === this.generation) this.plan = plan;
-      } catch (error) { if (version === this.generation) this.error = error instanceof Error ? error.message : String(error); }
+      } catch (error) { if (version === this.generation) this.error = errorText(error, PREVIEW_FAILED); }
       finally { if (version === this.generation) this.previewing = false; refresh(); }
     };
     const schedulePreview = () => {
@@ -518,7 +540,7 @@ export class DesktopKnowledgeSettings {
       new Notice(`已新建 ${result.created.length} 个文件夹，移动 ${result.moved.length} 个文件`);
       this.reset(); this.page = this.initializationParent;
       this.returnFocusKey = this.initializationParent ? "knowledge:onboarding" : "knowledge:management";
-    } catch (error) { this.error = error instanceof Error ? error.message : String(error); this.plan = null; }
+    } catch (error) { this.error = errorText(error, INIT_FAILED); this.plan = null; }
     finally { this.busy = false; this.navigation.redraw(); }
   }
   private renderInitializationPreview(page: HTMLElement): void {
@@ -561,7 +583,7 @@ export class DesktopKnowledgeSettings {
         const createPaths = Object.values(this.choices).flatMap(values => values.filter(value => value.create).map(value => value.path));
         const plan = await this.service().previewDirectoryPlan(this.draft, createPaths, { mode: this.mode, wikiChanged: this.wikiChanged, moduleDirectories: this.moduleDraft });
         if (version === this.generation) this.plan = plan;
-      } catch (error) { if (version === this.generation) { this.error = error instanceof Error ? error.message : String(error); this.plan = null; } }
+      } catch (error) { if (version === this.generation) { this.error = errorText(error, PREVIEW_FAILED); this.plan = null; } }
       finally { if (version === this.generation) this.previewing = false; refresh(); }
     };
     const invalidate = () => {

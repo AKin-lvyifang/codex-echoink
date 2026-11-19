@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.10：一人公司开工" src="assets/releases/echoink-agent-2.8.10-release.png">
+    <img width="1024" alt="EchoInk 2.9.0：整库云同步，跨设备接着聊" src="assets/releases/echoink-agent-2.9.0-release.png">
   </a>
 </p>
 
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Obsidian 社区插件下载量"></a>
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.8.10"><img src="https://img.shields.io/badge/version-2.8.10-0EA5E9?style=flat-square" alt="版本 2.8.10"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.0"><img src="https://img.shields.io/badge/version-2.9.0-0EA5E9?style=flat-square" alt="版本 2.9.0"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
@@ -132,9 +132,9 @@
 
 ## 隐私一眼看懂
 
-- **笔记留在本地**：对话、知识、记忆、日记和财务记录保存在你的 Vault，EchoInk 不会上传整个 Vault。
-- **AI 请求发给你选择的模型服务**，使用你自己的 API Key，只带该请求所需的内容。
-- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、PRO Skill 与专家内容下载、可选的天气、工作台签到，以及你主动上报的问题报告。PRO 需要 EchoInk 账号，对话和知识库不需要。
+- **笔记默认留在本地**：对话、知识、记忆、日记和财务记录保存在你的 Vault。只有你开启云同步后，所选范围内的文件才会加密上传到 echoink.cn。
+- **AI 请求发给你选择的模型服务**，只带该请求所需的内容：用自己的 API Key 时直连该服务，选择小echo 时经 echoink.cn 转发并扣除 AI 点数。
+- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、云同步、小echo、智能判断、资讯、PRO Skill 与专家内容下载、可选的天气、工作台签到，以及你登录后主动上报的问题报告。PRO 需要 EchoInk 账号，用自备模型的对话和知识库不需要。
 - **可选的第三方服务**：联网搜索（Tavily 或 DeepSeek，默认关闭）和 MinerU PDF 解析，账号与费用各自另计。
 - **电脑端可以访问 Vault 外的文件**，范围取决于你选择的权限；也会运行你配置的本机 MCP 命令。
 - **不采集客户端使用遥测。**
@@ -165,7 +165,7 @@
 
 ## 最近更新
 
-**2.8.10**（2026-11-06）：一人公司、模块负责人、记忆星图与知识库体检。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
+**2.9.0**（2026-11-19）：整库云同步和跨设备接续对话。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
 
 ## 许可
 

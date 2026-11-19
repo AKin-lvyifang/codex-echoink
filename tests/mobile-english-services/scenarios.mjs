@@ -26,7 +26,7 @@ export async function runEnglishScenarios(api, root) {
   f.request(params => new Promise(resolve => { release=()=>{const body=JSON.parse(params.body);resolve(answer("openai-completions",responseFor(body.messages.find(item=>item.role==="user").content)));}; }));
   const first=f.service.api.generate(sourcePath,{privacy:privacy(inspected)}), duplicate=f.service.api.generate(sourcePath,{privacy:privacy(inspected)});
   assert.equal(first,duplicate,"same workspace request uses original service owner/promise");
-  await assert.rejects(f.service.api.generate(sourcePath,{owner:"agent"}),/另一处/u);
+  await assert.rejects(f.service.api.generate(sourcePath,{owner:"agent"}),/正在生成英文/u);
   await waitFor(()=>release); const requestText=f.requests[0].body; assert.ok(!requestText.includes("PRIVATE-MEDICAL-DETAIL"));
   release(); const saved=await first;
   assert.ok(saved.result); assert.equal(f.requests.length,1); assert.equal(f.usage.length,1); assert.equal(saved.result.expressions.length,1);
@@ -47,7 +47,7 @@ export async function runEnglishScenarios(api, root) {
   const input=await edit.service.inspectSource(sourcePath);const generated=await edit.service.api.generate(sourcePath,{privacy:privacy(input)});
   const initialPage=await edit.service.readPage(), entry=initialPage.expressions[0],version=initialPage.expressionVersions[entry.id];
   await edit.service.saveExpression(entry.id,{category:"My category",note:"My original note"},version);
-  await assert.rejects(edit.service.saveExpression(entry.id,{category:"Old draft",note:"stale"},version),/变化/u);
+  await assert.rejects(edit.service.saveExpression(entry.id,{category:"Old draft",note:"stale"},version),/其他位置被修改/u);
   const fresh=await edit.service.readPage();assert.equal(fresh.expressions[0].note,"My original note");
   const before=await edit.read(fresh.expressions[0].path); let failed=false;
   edit.hooks({write(relative){if(!failed&&relative===fresh.expressions[0].path){failed=true;throw Error("disk save failed");}}});
@@ -63,7 +63,7 @@ export async function runEnglishScenarios(api, root) {
   const approved=await edit.service.readProvider(); edit.settings.apiProviders[0].baseUrl="https://changed.invalid/v1";
   await assert.rejects(edit.service.approveProvider(approved.version),/变化/u); assert.equal((await edit.service.readProvider()).approved,false);
   edit.settings.englishDiary.providerSettingsId="missing-provider";edit.settings.englishDiary.modelId="missing-model";
-  await assert.rejects(edit.service.readProvider(),/不存在/u);assert.equal((await edit.service.readSaved(generated.id)).record.id,generated.id);
+  await assert.rejects(edit.service.readProvider(),/已删除/u);assert.equal((await edit.service.readSaved(generated.id)).record.id,generated.id);
   const legacyStatePath = `.obsidian/plugins/echoink/english-diary/${generated.id}.json`;
   const legacyState = JSON.parse(await edit.read(legacyStatePath));
   legacyState.englishPath = "输出（outputs）/英文日记/existing.md";
@@ -119,7 +119,7 @@ export async function runEnglishScenarios(api, root) {
   console.log("PASS unrelated settings saves: language/theme changes notify without cancelling the workspace generation.");
   const uncertain=await make(api,root,"unknown-transaction");
   await uncertain.write(".obsidian/plugins/echoink/english-diary/expression-operation.json",JSON.stringify({schema:1,phase:"apply",changes:[]}));uncertain.reset();
-  const reopened=uncertain.cold();const unknown=await reopened.readPage();assert.equal(unknown.expressionCount,null);await assert.rejects(reopened.api.generate(sourcePath),/确认|重放/u);
+  const reopened=uncertain.cold();const unknown=await reopened.readPage();assert.equal(unknown.expressionCount,null);await assert.rejects(reopened.api.generate(sourcePath),/确认|重放|核对/u);
   assert.equal(uncertain.calls.writes.length,0);assert.equal(uncertain.requests.length,0);assert.ok(await uncertain.adapter.exists(".obsidian/plugins/echoink/english-diary/expression-operation.json"));reopened.dispose();uncertain.service.dispose();
   const own=await make(api,root,"module-owned-directory");
   own.settings.knowledgeBase.folderBindings.roles.outputs.enabled=false;

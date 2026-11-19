@@ -1,3 +1,4 @@
+import { NEXT, errorText, actionFailureText } from "../core/error-copy";
 import { Modal, Notice, Platform, TFile, type App } from "obsidian";
 import {
   BUILT_IN_JOURNAL_TEMPLATES,
@@ -148,7 +149,7 @@ export class JournalTemplateModal extends Modal {
       void this.options.service.readTemplate(this.selected, this.options.language).then(content => {
         if (this.active && version === this.previewVersion) preview.textContent = content || copy.modal.blankTemplate;
       }).catch(error => {
-        if (this.active && version === this.previewVersion) { preview.textContent = copy.modal.readFailed(errorMessage(error)); preview.setAttribute("role", "alert"); }
+        if (this.active && version === this.previewVersion) { preview.textContent = copy.modal.readFailed(errorMessage(error, this.options.language)); preview.setAttribute("role", "alert"); }
       });
     }
 
@@ -245,7 +246,7 @@ export class JournalTemplateModal extends Modal {
       this.status = this.copy.modal.importReadComplete;
     } catch (error) {
       this.importState = "failed";
-      this.status = this.copy.modal.readFailed(errorMessage(error));
+      this.status = this.copy.modal.readFailed(errorMessage(error, this.options.language));
     }
     this.render();
   }
@@ -272,7 +273,7 @@ export class JournalTemplateModal extends Modal {
       }
     } catch (error) {
       this.importState = "failed";
-      this.status = this.copy.modal.saveFailed(errorMessage(error));
+      this.status = this.copy.modal.saveFailed(errorMessage(error, this.options.language));
     }
     this.render();
   }
@@ -282,8 +283,8 @@ export class JournalTemplateModal extends Modal {
     if (english) {
       try {
         requireProPlugin(this.options.englishAccess ?? unavailableCapabilityAccess);
-        if (!this.options.englishEnabled?.()) throw new Error("英文日记已停用。");
-      } catch (error) { new Notice(errorMessage(error)); return; }
+        if (!this.options.englishEnabled?.()) throw new Error("英文日记已停用。请在 设置 → 英文日记 中开启后重试。");
+      } catch (error) { new Notice(actionFailureText(error, this.options.language)); return; }
     }
     this.submitting = true;
     this.status = this.copy.modal.creatingJournal;
@@ -298,7 +299,7 @@ export class JournalTemplateModal extends Modal {
     } catch (error) {
       this.submitting = false;
       this.importState = "failed";
-      this.status = this.copy.modal.createFailed(errorMessage(error));
+      this.status = this.copy.modal.createFailed(errorMessage(error, this.options.language));
       this.render();
     }
   }
@@ -318,6 +319,6 @@ function basename(path: string): string {
   return path.split("/").pop()?.replace(/\.md$/iu, "") ?? path;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function errorMessage(error: unknown, language: string): string {
+  return errorText(error, NEXT.retryLater, language);
 }

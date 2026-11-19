@@ -35,6 +35,7 @@ import {
   updateReasoningActivity
 } from "../../harness/pi-native/pi-reasoning-summary";
 import { buildPiNoteMentionContextMessage } from "../../harness/pi-native/pi-note-mentions";
+import { PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE } from "../../harness/pi-native/pi-knowledge-verification";
 import { buildPiDocumentContextMessage } from "../../harness/pi-native/pi-document-context";
 
 export async function runPiChatUiProjectorTests(): Promise<void> {
@@ -59,10 +60,35 @@ export async function runPiChatUiProjectorTests(): Promise<void> {
   assertDurableReadbackRekeysAndResolvesProvisionalItems();
   assertToolOnlyAssistantEntryResolvesFromDurableBranchPresence();
   assertPhaseTwoLiveToolProductStatesStayOnOneCard();
+  assertLiveReadCompletionSurvivesAnswerDeltas();
   assertPhaseTwoDurableToolProductStatesReopenWithoutLegacyEvents();
   assertPhaseTwoWriteTerminalStatesRemainDistinct();
   assertSessionRunAndBranchScopesDoNotCross();
   assertInterruptedReadbackNeverPretendsTheRunCompleted();
+}
+
+function assertLiveReadCompletionSurvivesAnswerDeltas(): void {
+  for (const toolName of ["note_read", "vault_search"]) {
+    const projector = new PiChatUiProjector();
+    let view = projector.createEmpty({ piSessionId: "session-live", now: 1 });
+    view = project(projector, view, runtimeEvent("tool_execution_start", 2, {
+      toolCallId: "read-live", toolName, args: { relativePath: "fixture.md" }
+    }));
+    assert.equal(onlyTool(view).status, "running");
+    view = project(projector, view, runtimeEvent("tool_execution_end", 3, {
+      toolCallId: "read-live", toolName, result: { content: [] }, isError: false
+    }));
+    assert.equal(onlyTool(view).status, "completed", "a confirmed read end is visible before the run settles");
+    assert.ok(view.provisionalMessageIds.includes(onlyTool(view).id), "execution completion does not pretend the result is durable");
+    assert.deepEqual(view.pendingToolCallIds, []);
+    view = project(projector, view, runtimeEvent("message_start", 4, { messageKey: "answer-live", role: "assistant" }));
+    view = project(projector, view, runtimeEvent("message_update", 5, { messageKey: "answer-live", textDelta: "正文继续输出" }));
+    assert.equal(onlyTool(view).status, "completed", "later answer deltas cannot downgrade a completed read");
+    view = project(projector, view, runtimeEvent("tool_execution_start", 6, {
+      toolCallId: "still-pending", toolName, args: { relativePath: "other.md" }
+    }));
+    assert.equal(toolByCall(view, "still-pending").status, "running", "a real read end is required for completion");
+  }
 }
 
 function assertWorkRecordToolMetadataIsAccurateAndPrivate(): void {
@@ -87,7 +113,12 @@ function assertWorkRecordToolMetadataIsAccurateAndPrivate(): void {
   }
   assert.equal(view.messages.filter((message) => message.title === "检索知识库").length, 2,
     "separate actual retrievals keep their own rows");
-  assert.equal(toolByCall(view, "search-one").text, "26 篇相关，读了前 6 篇");
+  assert.equal(toolByCall(view, "search-one").text, "读了 1 篇相关笔记");
+  view = project(projector, view, runtimeEvent("tool_execution_end", 4, {
+    toolCallId: "search-empty", toolName: "knowledge_search", privacySafe: true, isError: false,
+    result: { details: { source: "echoink-knowledge", status: "completed", references: [] } }
+  }, "work-records", "work-records-run"));
+  assert.equal(toolByCall(view, "search-empty").text, "没有找到相关笔记");
   const read = toolByCall(view, "read-one");
   assert.equal(read.title, "读取笔记");
   assert.equal(read.text, "三个世界模型");
@@ -103,7 +134,7 @@ function assertWorkRecordToolMetadataIsAccurateAndPrivate(): void {
     const failure = toolByCall(view, toolName);
     assert.equal(failure.title, toolName === "knowledge_maintain" ? "整理知识库" : toolName);
     if (toolName === "knowledge_maintain") {
-      assert.equal(failure.text, "这份资料在整理时有了新的修改。已写好的内容会保留，点继续会重新核对。");
+      assert.equal(failure.text, "该资料在整理期间已被修改，已写入的内容已保留。请点击“继续”重新核对。");
     } else assert.match(failure.text, /来源内容已变化.*回答没用上这一步/u);
   }
   assert.doesNotMatch(JSON.stringify(view), /PRIVATE_|Knowledge Agent|WAL|CAS|隐私安全进度/u);
@@ -307,7 +338,7 @@ function assertProviderReasoningSegmentsStayDistinctAndReopen(): void {
   assert.equal(memoryWriteTool?.status, "failed");
   assert.equal(
     memoryWriteTool?.text,
-    "这次记忆操作没有完成，长期记忆未发生变化。"
+    "本次记忆操作未完成，长期记忆未发生变化。"
   );
   assert.equal(memoryWriteTool?.processOutput, memoryWriteTool?.text);
   const reopened = projector.projectSessionBranch(durableInput);
@@ -528,7 +559,7 @@ function assertPersonalMemoryFailuresStayUserFacing(): void {
   assert.equal(liveCard.status, "failed");
   assert.equal(
     liveCard.processOutput,
-    "写入未完成：本轮还没有先检查是否已有相同记忆。"
+    "写入未完成：本轮尚未检查是否已有相同记忆。"
   );
   assert.equal(liveCard.text, liveCard.processOutput);
   assert.doesNotMatch(
@@ -585,7 +616,7 @@ function assertPersonalMemoryFailuresStayUserFacing(): void {
   };
   const durable = projector.projectSessionBranch(durableInput);
   const durableCard = onlyTool(durable);
-  assert.equal(durableCard.processOutput, "这次记忆操作未通过检查，没有执行。");
+  assert.equal(durableCard.processOutput, "本次记忆操作未通过检查，未执行。");
   assert.equal(durableCard.text, durableCard.processOutput);
   assert.doesNotMatch(
     JSON.stringify(durableCard),
@@ -1169,6 +1200,16 @@ function assertAskSourceAttributionDecorationsAreTruthfulAndIsolated(): void {
     now: 3
   });
   const decorated = projector.decorate(projected, decorations);
+  const freshness = { id: "freshness-record", type: "custom", customType: PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, data: {
+    schemaVersion: 1, piSessionId: "session-source-attribution", productRunId: "run-source-attribution",
+    assistantEntryId: "assistant-source-attribution", referenceIds: [reference.referenceId]
+  } };
+  const changed = projector.decorate(projector.projectSessionBranch({ piSessionId: "session-source-attribution",
+    activeLeafId: "assistant-source-attribution", entries: [...entries, freshness], runState: "completed", productRunId: "run-source-attribution", now: 3 }), decorations);
+  const changedReference = knowledgeUsageMessageData(changed.messages.find(message => message.text === "公开回答")).references[0];
+  assert.deepEqual(changedReference, { ...reference, verificationStatus: "source_link_changed" },
+    "a durable freshness record annotates the same snapshot after source decoration, including reopen");
+  assert.deepEqual(decorations[0].knowledgeReferences, [reference], "freshness does not mutate delivered snapshots");
   const answer = decorated.messages.find((message) => message.text === "公开回答");
   assert.equal(answer?.askSourceAttribution, true);
   assert.deepEqual(answer?.personalMemorySources, [
@@ -1386,9 +1427,9 @@ function assertKnowledgeMaintenanceResultCardIsLiveDurableAndStrict(): void {
   }
 
   const expected = [
-    ["partial", "知识整理没做完", "partial", "failed"],
+    ["partial", "知识整理尚未完成", "partial", "failed"],
     ["noop", "没有需要提炼的知识", "noop", "success"],
-    ["failed", "知识整理没做完", undefined, "failed"],
+    ["failed", "知识整理尚未完成", undefined, "failed"],
     ["write_uncertain", "知识写入状态不确定", undefined, "failed"]
   ] as const;
   for (const [status, title, completion, cardStatus] of expected) {
@@ -1488,7 +1529,7 @@ function assertKnowledgeFailuresStayAccurateAndPrivate(): void {
     { toolName: "knowledge_read", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_source_changed" }, expected: "来源内容已变化" },
     { toolName: "knowledge_search", text: "PRIVATE_FAILURE_CANARY", details: { errorCode: "knowledge_cursor_stale" }, expected: "检索结果已更新" },
     { toolName: "vault_search", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "记录未保留可展示的具体原因" },
-    { toolName: "knowledge_maintain", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "这一步还没做完。已写好的内容会保留，点继续会重新核对后处理。" }
+    { toolName: "knowledge_maintain", text: "PRIVATE_FAILURE_CANARY", details: {}, expected: "此步骤尚未完成，已写入的内容已保留。请点击“继续”重新核对后处理。" }
   ];
   for (const [index, entry] of cases.entries()) {
     const projector = new PiChatUiProjector();
@@ -1544,9 +1585,7 @@ function assertKnowledgeProgressAndToolPayloadsStayPrivate(): void {
     status: "active",
     stage: "searching"
   }, "session-knowledge-private", "run-knowledge-private"));
-  assert.ok(view.messages.some((message) =>
-    message.title === "检索知识库" && message.itemType === "thinking"
-  ));
+  assert.equal(view.messages.some(message => message.itemType === "thinking"), false, "retrieval has one reasoning activity, never a floating message");
   assert.doesNotMatch(JSON.stringify(view), /冲突与时效/u);
 
   view = project(projector, view, runtimeEvent("tool_execution_start", 3, {
@@ -1765,7 +1804,7 @@ function assertDurableBranchRebuildsExistingUiCardsAndHidesReasoning(): void {
   assert.equal(view.messages.filter((message) => message.itemType === "contextCompaction").length, 2);
   assert.ok(view.messages.some((message) => message.title === "上下文已压缩"));
   assert.ok(view.messages.some((message) => message.title === "已切换对话分支"));
-  assert.ok(view.messages.some((message) => message.text === "模型服务请求失败，回答未完成。" && message.status === "failed"));
+  assert.ok(view.messages.some((message) => message.text === "模型服务未正常响应。请在 设置 → 模型服务 中点击“测试连接”排查。" && message.status === "failed"));
   assert.deepEqual(view.provisionalMessageIds, []);
   assert.deepEqual(view.pendingToolCallIds, []);
 
@@ -1791,7 +1830,7 @@ function assertDurableBranchRebuildsExistingUiCardsAndHidesReasoning(): void {
   });
   assert.ok(reloginView.messages.some((message) =>
     message.status === "failed"
-    && message.text === "OpenAI Codex 授权已失效，请在设置中重新登录。"
+    && message.text === "该模型服务的登录状态已失效。请在 设置 → 模型服务 中重新登录。"
   ));
 }
 

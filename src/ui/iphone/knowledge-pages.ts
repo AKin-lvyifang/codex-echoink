@@ -1,4 +1,6 @@
 import { attachNativeTooltip } from "../native-tooltip";
+import { NEXT, failureText, settingsErrorText } from "../../core/error-copy";
+import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import type { KnowledgePageSnapshot, KnowledgePageDirectory } from "../../home/knowledge-page-core";
 import type { KnowledgeBaseMaintenanceHistoryEntry } from "../../settings/settings";
 import type { KnowledgeMaintenanceRecord } from "../../knowledge-base/maintenance-record";
@@ -9,7 +11,7 @@ import { iphoneElement as el, iphoneButton, iphoneIcon, iphoneAvatar } from "./w
 
 const t = (ctx: IPhonePageContext, zh: string, en: string): string => ctx.host.settings().settingsLanguage === "en" ? en : zh;
 type Issue = "isolated" | "sources";
-const message = (error: unknown): string => error !== null && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : typeof error === "string" ? error : "读取失败";
+const message = (ctx: IPhonePageContext, error: unknown): string => settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, ctx.host.settings().settingsLanguage);
 const roleLabel = (ctx: IPhonePageContext, role: KnowledgePageDirectory["role"]): string => ({ raw: t(ctx, "资料来源", "Sources"), wiki: t(ctx, "知识成果", "Knowledge"), projects: t(ctx, "项目", "Projects"), inbox: t(ctx, "收件箱", "Inbox") })[role];
 
 /** A retained iPhone reader. Navigation and display never execute maintenance. */
@@ -40,12 +42,12 @@ class KnowledgeReader {
   section(parent: HTMLElement, title: string, key: string): HTMLElement { const section = el(this.ctx.document, "section", `ip-knowledge-section ip-knowledge-${key}`), head = el(this.ctx.document, "div", "ip-knowledge-section-head"); head.append(el(this.ctx.document, "h2", "", title)); section.append(head); parent.append(section); return section; }
   group(parent: HTMLElement): HTMLElement { const group = el(this.ctx.document, "div", "ip-knowledge-group"); parent.append(group); return group; }
   empty(parent: HTMLElement, text: string): void { parent.append(el(this.ctx.document, "p", "ip-knowledge-empty", text)); }
-  error(error?: unknown): void { if (!this.alive) return; this.feedback.setAttribute("role", "alert"); this.feedback.textContent = error === undefined ? "" : message(error); this.feedback.hidden = error === undefined; }
+  error(error?: unknown): void { if (!this.alive) return; this.feedback.setAttribute("role", "alert"); this.feedback.textContent = error === undefined ? "" : message(this.ctx, error); this.feedback.hidden = error === undefined; }
   region(parent: HTMLElement, error?: string): void { if (error) { const node = el(this.ctx.document, "p", "ip-knowledge-region-error", error); node.setAttribute("role", "alert"); parent.append(node); } }
   async read<T>(load: (signal: AbortSignal) => Promise<T>, render: (value: T) => void): Promise<void> {
     const ticket = ++this.generation; this.request?.abort(); this.feedback.setAttribute("role", "status"); this.feedback.textContent = t(this.ctx, "正在读取…", "Loading…"); this.feedback.hidden = false; const controller = new AbortController(); this.request = controller;
     try { const data = await load(controller.signal); if (this.alive && ticket === this.generation) { this.error(); render(data); } }
-    catch (error) { if (this.alive && ticket === this.generation && !controller.signal.aborted) { this.error(t(this.ctx, "读取失败，当前内容未更新。", "Read failed. Displayed content has not been updated.") + " " + message(error)); this.feedback.append(this.makeRetry(() => this.read(load, render))); } }
+    catch (error) { if (this.alive && ticket === this.generation && !controller.signal.aborted) { this.error(failureText(error, ["知识页未能读取，当前内容未更新。", "The knowledge page could not be read; the displayed content was not updated."], NEXT.retryLater, this.ctx.host.settings().settingsLanguage)); this.feedback.append(this.makeRetry(() => this.read(load, render))); } }
   }
   private makeRetry(action: () => Promise<void>): HTMLButtonElement { const parent = el(this.ctx.document, "div", ""); return this.button(parent, t(this.ctx, "重新读取", "Reload"), action); }
   async run(action: () => Promise<void>): Promise<boolean> {
@@ -78,7 +80,7 @@ export async function openIPhoneKnowledge(ctx: IPhonePageContext): Promise<void>
 }
 
 function directoryState(ctx: IPhonePageContext, directory: KnowledgePageDirectory): string {
-  const states = { disabled: t(ctx, "未启用", "Disabled"), unbound: t(ctx, "尚未绑定", "Not configured"), invalid: t(ctx, "位置失效", "Unavailable folder"), partial: t(ctx, "部分目录未读完", "Some folders could not be read"), unavailable: t(ctx, "目录暂时读不到", "Folders could not be read"), ready: "" };
+  const states = { disabled: t(ctx, "未启用", "Disabled"), unbound: t(ctx, "尚未绑定", "Not configured"), invalid: t(ctx, "位置失效", "Unavailable folder"), partial: t(ctx, "部分目录未读完", "Some folders could not be read"), unavailable: t(ctx, "目录暂时无法读取", "Folders could not be read"), ready: "" };
   return states[directory.state] || (directory.latestMtime > 0 ? formatMobileDateTime(directory.latestMtime, Date.now(), ctx.host.settings().settingsLanguage) : "");
 }
 function renderActivity(view: KnowledgeReader, parent: HTMLElement, data: KnowledgePageSnapshot, days: number): void {

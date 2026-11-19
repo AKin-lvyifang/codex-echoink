@@ -90,7 +90,7 @@ for (const source of [grouped, row]) {
   const menu = new Menu(), current = { view: { state: EditorState.create({ doc: source }) } };
   controller.groupMenu(menu, current as any, 0); assert.equal((menu as any).items.length, 2);
   const saved = current.view.state; current.view.state = EditorState.create({ doc: 'changed\n'+source }); (menu as any).items[0].run();
-  assert.equal((Notice as any).messages.at(-1), '图片内容已变化，请重新选择'); current.view.state = saved;
+  assert.equal((Notice as any).messages.at(-1), '图片内容已变化。请重新选择图片。'); current.view.state = saved;
 }
 const buffered = doc.createElement('div'); buffered.innerHTML = galleryNativeMarkup({ count: 2, buffers: true });
 validateGalleryMarkup(buffered);
@@ -101,7 +101,7 @@ validateGalleryMarkup(groupRoot); assert.ok(groupRoot.querySelector('[data-ei-ga
 groupRoot.querySelector('p')!.firstChild!.textContent = ' '; validateGalleryMarkup(groupRoot); assert.ok(!groupRoot.querySelector('[data-ei-gallery-invalid]')); assert.equal(groupRoot.querySelector('.callout')!.getAttribute('data-ei-gallery-count'), '1');
 const registered: any[] = []; const plugin = { settings: { settingsLanguage: 'zh-CN' }, app: { workspace: { containerEl: doc.body, on() {} } }, addCommand(command: any) { registered.push(command); }, registerEditorExtension() {}, registerMarkdownPostProcessor() {}, registerEvent() {}, register() {} };
 new GalleryController(plugin as any).register(); assert.equal(registered.length, 3);
-for (const command of registered) { command.editorCallback({}, {}); assert.equal((Notice as any).messages.at(-1), '需要配套主题 echoink-theme 才能拼排'); }
+for (const command of registered) { command.editorCallback({}, {}); assert.equal((Notice as any).messages.at(-1), '图片拼排需要配套主题 echoink-theme。请在 Obsidian 设置 → 外观 中启用该主题后重试。'); }
 async function editorLifecycle() {
   const runtime = new JSDOM('<html><body><div class="markdown-source-view"></div></body></html>', { pretendToBeVisual: true });
   installObsidianDom(runtime.window);

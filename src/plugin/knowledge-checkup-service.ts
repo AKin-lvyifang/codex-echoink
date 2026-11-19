@@ -38,6 +38,7 @@ import {
 } from "../knowledge-base/maintenance-tree-map";
 import { checkAgentCapability, requireAgentCapability } from "../agents/capability-policy";
 import { createPiAgentCapabilityContext } from "./pi-production-runtime-composition";
+import { userFacingErrorText, CAUSE } from "../core/error-copy";
 
 export type CheckupAction =
   "repair" | "ignore" | "later" | "relate" | "reverse" | "place" | "upgrade" | "maintain" | "verify" |
@@ -60,7 +61,7 @@ export class KnowledgeCheckupService {
   }
   quick() {
     const bindings = this.plugin.settings.knowledgeBase.folderBindings;
-    if (!bindings) throw new Error("先设置知识库目录。");
+    if (!bindings) throw new Error(CAUSE.knowledgeFolderMissing[0]);
     return scanKnowledgeCheckup(this.plugin.app, bindings);
   }
   private assertWrite() {
@@ -199,7 +200,7 @@ export class KnowledgeCheckupService {
           extras.decisions = previousExtras.decisions;
           row.affectedPaths = [];
           row.operationIds = [];
-          row.failure = error instanceof Error ? error.message : "提案没有通过校验，本项不写入。";
+          row.failure = userFacingErrorText(error, "提案未通过校验，本项不写入。请重新检查后再试。");
         }
         continue;
       }

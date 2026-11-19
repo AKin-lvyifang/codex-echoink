@@ -1,3 +1,4 @@
+import { CAUSE, joinErrorCopy } from "../core/error-copy";
 import { maintenancePageTitle } from "../knowledge-base/maintenance-page-metadata";
 import { knowledgeDecisionPaths } from "../knowledge-base/knowledge-pair-decisions";
 import type CodexForObsidianPlugin from "../main";
@@ -58,7 +59,7 @@ export function createKnowledgeDeepCheckupService(
   return new KnowledgeDeepCheckupTaskService({
     assertModel: () => {
       try { resolveKnowledgeMaintenanceSubmitSnapshot(plugin.settings); }
-      catch { throw new KnowledgeDeepCheckupModelMissing("请先配置可用模型，再开始深查。快查仍可使用。"); }
+      catch { throw new KnowledgeDeepCheckupModelMissing(joinErrorCopy(["深查未能开始，快查仍可使用。", "Deep check could not start; quick check is still available."], CAUSE.providerNotConfigured, "zh")); }
     },
     documents: async () => {
       const paths = (await plugin.getKnowledgeSurfaceService()!.checkup.quick()).candidates;

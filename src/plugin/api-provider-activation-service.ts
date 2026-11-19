@@ -1,3 +1,4 @@
+import { CAUSE } from "../core/error-copy";
 export type ApiProviderActivationFailureCode =
   | "provider_switch_busy"
   | "provider_switch_failed"
@@ -44,7 +45,7 @@ export class ProductActivityGate {
     if (this.switching || this.active > 0) {
       throw new ApiProviderActivationError(
         "provider_switch_busy",
-        "EchoInk 正在回答，当前模型暂时不能切换。"
+        CAUSE.busyAnswering[0]
       );
     }
     this.switching = true;
@@ -57,10 +58,10 @@ export class ProductActivityGate {
     options: { concurrent?: boolean } = {}
   ): Promise<T> {
     if (this.switching) {
-      throw new Error("EchoInk 正在切换模型，请稍后再试。");
+      throw new Error(CAUSE.providerSwitching[0]);
     }
     if (this.exclusive > 0 || (!options.concurrent && this.active > 0)) {
-      throw new Error("EchoInk 正在处理其他请求，请稍后再试。");
+      throw new Error(CAUSE.busyAnswering[0]);
     }
     this.active += 1;
     if (!options.concurrent) this.exclusive += 1;
@@ -92,7 +93,7 @@ export class ApiProviderActivationService {
     if (port.isBusy()) {
       throw new ApiProviderActivationError(
         "provider_switch_busy",
-        "EchoInk 正在回答，当前模型暂时不能切换。"
+        CAUSE.busyAnswering[0]
       );
     }
     port.beginSwitch();

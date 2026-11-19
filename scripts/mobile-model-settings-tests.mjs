@@ -83,7 +83,7 @@ await test("recovery settings save failure restores the original capability and 
   const f = fixture({ persist: async () => { throw new Error("synthetic save failure"); } });
   f.settings.apiProviders[0].models[1].toolCalling = false;
   const before = plain(f.settings);
-  await assert.rejects(f.config.enableToolCalling({ providerSettingsId: f.provider.id, modelId: "two" }), /设置保存失败/u);
+  await assert.rejects(f.config.enableToolCalling({ providerSettingsId: f.provider.id, modelId: "two" }), /设置未能保存/u);
   assert.deepEqual(plain(f.settings), before); assert.equal(f.calls.length, 0);
 });
 await test("recovery and normal model selection share the existing settings queue", async () => {
@@ -118,7 +118,7 @@ for (const [name, response, message] of [
   ["403", { status: 403, json: {} }, /API Key/u],
   ["429", { status: 429, json: {} }, /频繁/u],
   ["503", { status: 503, json: {} }, /不可用/u],
-  ["404", { status: 404, json: {} }, /404/u],
+  ["404", { status: 404, json: {} }, /模型或接口地址不存在/u],
   ["bad format", { status: 200, json: { models: [] } }, /格式/u]
 ]) await test(`discovery ${name} reports a safe actionable error`, async () => {
   const f = fixture({ request: async () => response });
@@ -147,7 +147,7 @@ await test("duplicate discovery coalesces and changed fields invalidate an old r
   assert.equal(first, duplicate); assert.equal(f.counts().calls, 1);
   f.provider.apiKey = "different-synthetic-key";
   pending.resolve({ status: 200, json: { data: [{ id: "stale" }] } });
-  await assert.rejects(first, /已变更/u);
+  await assert.rejects(first, /已变化/u);
 });
 await test("a newer discovery request wins when responses finish out of order", async () => {
   const old = deferred(), latest = deferred(); let calls = 0;
@@ -155,7 +155,7 @@ await test("a newer discovery request wins when responses finish out of order", 
   const draft = f.config.createDraft(f.provider), first = f.config.fetchModels(draft); draft.baseUrl = "https://next.example/v1";
   const second = f.config.fetchModels(draft);
   latest.resolve({ status: 200, json: { data: [{ id: "latest" }] } }); assert.equal((await second).models[0].id, "latest");
-  old.resolve({ status: 200, json: { data: [{ id: "old" }] } }); await assert.rejects(first, /已变更/u);
+  old.resolve({ status: 200, json: { data: [{ id: "old" }] } }); await assert.rejects(first, /已变化/u);
 });
 await test("model parameter bounds match desktop contract and reject invalid preferences", () => {
   for (const value of [1024, 2_000_000]) validateMobileModelParameters({ ...mobileModel("ok"), contextWindow: value, maxOutputTokens: 1 });
@@ -201,13 +201,13 @@ await test("connection timeout leaves all settings untouched", async () => {
 await test("malformed or empty connection success is not saved", async () => {
   for (const json of [{}, { choices: [{ message: { content: "" }, finish_reason: "stop" }] }]) {
     const f = fixture({ request: async () => ({ status: 200, json }) });
-    await assert.rejects(f.config.save(f.config.createDraft(f.provider)), /连接测试/u); assert.equal(f.counts().saves, 0);
+    await assert.rejects(f.config.save(f.config.createDraft(f.provider)), /连接测试|测试并保存/u); assert.equal(f.counts().saves, 0);
   }
 });
 await test("failed persistence restores the provider and shared default, retains unrelated edits and draft", async () => {
   const f = fixture({ persist: async settings => { settings.unrelated = { advanced: true }; throw new Error("synthetic-fixture-key"); } });
   const before = plain(f.provider), draft = f.config.createDraft(f.provider); draft.models = [draft.models[1]];
-  await assert.rejects(f.config.save(draft), error => /保存失败/u.test(error.message) && !error.message.includes(draft.apiKey));
+  await assert.rejects(f.config.save(draft), error => /未能保存/u.test(error.message) && !error.message.includes(draft.apiKey));
   assert.deepEqual(plain(f.settings.apiProviders[0]), before); assert.equal(f.settings.defaultModel, "one");
   assert.deepEqual(plain(f.settings.unrelated), { advanced: true }); assert.equal(draft.models[0].id, "two");
 });
@@ -222,22 +222,22 @@ await test("rollback never replaces an edit made while persistence is pending", 
   const draft = f.config.createDraft(f.provider); draft.name = "Mine";
   const saving = f.config.save(draft); await turn();
   f.settings.apiProviders[0].name = "Newer external edit";
-  pending.reject(new Error("disk")); await assert.rejects(saving, /保存失败/u);
+  pending.reject(new Error("disk")); await assert.rejects(saving, /未能保存/u);
   assert.equal(f.settings.apiProviders[0].name, "Newer external edit");
 });
 await test("optimistic conflict before testing never overwrites another editor", async () => {
   const f = fixture(), draft = f.config.createDraft(f.provider); draft.name = "Mine"; f.provider.name = "Other editor";
-  await assert.rejects(f.config.save(draft), /其他位置修改/u); assert.equal(f.provider.name, "Other editor"); assert.equal(f.counts().calls, 0);
+  await assert.rejects(f.config.save(draft), /其他位置被修改/u); assert.equal(f.provider.name, "Other editor"); assert.equal(f.counts().calls, 0);
 });
 await test("optimistic conflict during testing retains the newer edit", async () => {
   const pending = deferred(), f = fixture({ request: () => pending.promise }), draft = f.config.createDraft(f.provider);
   const saving = f.config.save(draft); await turn(); f.provider.future = { otherEdit: true }; pending.resolve(answer());
-  await assert.rejects(saving, /其他位置修改/u); assert.equal(f.counts().saves, 0); assert.deepEqual(plain(f.provider.future), { otherEdit: true });
+  await assert.rejects(saving, /其他位置被修改/u); assert.equal(f.counts().saves, 0); assert.deepEqual(plain(f.provider.future), { otherEdit: true });
 });
 await test("editing the tested draft while request is pending requires a fresh test", async () => {
   const pending = deferred(), f = fixture({ request: () => pending.promise }), draft = f.config.createDraft(f.provider);
   const saving = f.config.save(draft); await turn(); draft.baseUrl = "https://changed.example/v1"; pending.resolve(answer());
-  await assert.rejects(saving, /其他位置修改/u); assert.equal(f.counts().saves, 0);
+  await assert.rejects(saving, /其他位置被修改/u); assert.equal(f.counts().saves, 0);
 });
 await test("two endpoint instances serialize writes and reject the second stale edit", async () => {
   const pending = deferred(); let writes = 0;
@@ -246,13 +246,13 @@ await test("two endpoint instances serialize writes and reject the second stale 
   const firstDraft = f.config.createDraft(f.provider), secondDraft = other.createDraft(f.provider);
   firstDraft.name = "First"; secondDraft.name = "Second";
   const first = f.config.save(firstDraft), second = other.save(secondDraft); await turn(); assert.equal(writes, 1);
-  pending.resolve(); await first; await assert.rejects(second, /其他位置修改/u); assert.equal(f.settings.apiProviders[0].name, "First");
+  pending.resolve(); await first; await assert.rejects(second, /其他位置被修改/u); assert.equal(f.settings.apiProviders[0].name, "First");
 });
 await test("new provider is added atomically with a valid default and rollback permits retry", async () => {
   let fail = true;
   const f = fixture({ persist: async () => { if (fail) throw new Error("disk"); } }); f.settings.apiProviders = []; f.settings.activeApiProviderId = ""; f.settings.defaultModel = "";
   const draft = f.config.createDraft(); Object.assign(draft, { apiKey: "synthetic-new-key", baseUrl: "https://new.example/v1", models: [mobileModel("new")], defaultModelId: "missing" });
-  await assert.rejects(f.config.save(draft), /保存失败/u); assert.equal(f.settings.apiProviders.length, 0); assert.equal(f.settings.activeApiProviderId, "");
+  await assert.rejects(f.config.save(draft), /未能保存/u); assert.equal(f.settings.apiProviders.length, 0); assert.equal(f.settings.activeApiProviderId, "");
   fail = false; await f.config.save(draft); assert.equal(f.settings.activeApiProviderId, draft.id); assert.equal(f.settings.defaultModel, "new");
 });
 await test("default selection persists shared settings without inference or changing task drafts", async () => {
@@ -264,14 +264,14 @@ await test("default selection persists shared settings without inference or chan
 await test("failed default selection rolls back and queue remains usable", async () => {
   let fail = true; const f = fixture({ persist: async () => { if (fail) throw new Error("disk"); } });
   f.settings.providerMode = "codex";
-  await assert.rejects(f.config.selectDefault(f.provider.id, "two"), /保存失败/u); assert.equal(f.settings.defaultModel, "one");
+  await assert.rejects(f.config.selectDefault(f.provider.id, "two"), /未能保存/u); assert.equal(f.settings.defaultModel, "one");
   assert.equal(f.settings.providerMode, "codex");
   fail = false; await f.config.selectDefault(f.provider.id, "two"); assert.equal(f.settings.defaultModel, "two"); assert.equal(f.settings.providerMode, "api");
 });
 await test("failed persistence preserves a newer provider mode from another editor", async () => {
   const f = fixture({ persist: async settings => { settings.providerMode = "newer-mode"; throw new Error("disk"); } });
   f.settings.providerMode = "codex";
-  await assert.rejects(f.config.selectDefault(f.provider.id, "two"), /保存失败/u); assert.equal(f.settings.providerMode, "newer-mode");
+  await assert.rejects(f.config.selectDefault(f.provider.id, "two"), /未能保存/u); assert.equal(f.settings.providerMode, "newer-mode");
 });
 await test("remove chooses a supported fallback and never deletes desktop-only data", async () => {
   const f = fixture(), desktop = { ...structuredClone(f.provider), id: "desktop", providerId: "ollama" }, next = { ...structuredClone(f.provider), id: "next" };
@@ -281,7 +281,7 @@ await test("remove chooses a supported fallback and never deletes desktop-only d
 });
 await test("failed remove restores the service and original default", async () => {
   const f = fixture({ persist: async () => { throw new Error("disk"); } }), before = plain(f.settings);
-  await assert.rejects(f.config.remove(f.provider.id), /保存失败/u); assert.deepEqual(plain(f.settings), before);
+  await assert.rejects(f.config.remove(f.provider.id), /未能保存/u); assert.deepEqual(plain(f.settings), before);
 });
 const context = { systemPrompt: "Fixture", messages: [{ role: "user", content: "Only OK", timestamp: 1 }], tools: [] };
 const reasoningModel = (id, enabled = true, effort = "high") => ({ ...mobileModel(id), reasoning: true, reasoningEnabled: enabled, reasoningEffort: effort });
@@ -431,13 +431,13 @@ await test("streaming failures keep the Provider message, name a blocked stream,
   const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, model = piModel(provider, mobileModel("deepseek-v4-flash"));
   const run = async fetch => (await collect(mobileStream(provider, noRequest, undefined, "conversation", fetch)(model, context, {}))).message;
   const denied = await run(sseFetch(new TextEncoder().encode(JSON.stringify({ error: { message: "Authentication Fails" } })), [], 401, "application/json").fetch);
-  assert.equal(denied.stopReason, "error"); assert.match(denied.errorMessage, /401.*Authentication Fails/u);
+  assert.equal(denied.stopReason, "error"); assert.match(denied.errorMessage, /API Key 无效/u); assert.ok(!denied.errorMessage.includes("Authentication Fails"));
   const blocked = await run(async () => { throw new TypeError("Load failed"); });
   assert.equal(blocked.errorMessage, MOBILE_STREAM_BLOCKED); assert.deepEqual(plain(blocked.content), []);
   const cut = await run(sseFetch(sseBytes([{ choices: [{ delta: { content: "半句" } }] }])).fetch);
   assert.equal(cut.stopReason, "error"); assert.match(cut.errorMessage, /中断/u); assert.deepEqual(plain(cut.content), []);
   const midStream = await run(sseFetch(sseBytes([{ choices: [{ delta: { content: "先" } }] }, { error: { message: "rate limited" } }])).fetch);
-  assert.match(midStream.errorMessage, /rate limited/u);
+  assert.match(midStream.errorMessage, /模型服务未正常响应/u); assert.ok(!midStream.errorMessage.includes("rate limited"));
 });
 await test("Stop mid-stream aborts at once and late chunks cannot change the result or emit events", async () => {
   const provider = { ...mobileProvider("deepseek"), apiKey: "synthetic-fixture-key" }, controller = new AbortController();
