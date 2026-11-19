@@ -39,6 +39,17 @@
 
 笔记留在你的 Vault。可以自备模型 API Key，也可以用 AI 点数调用内置模型。
 
+<p align="center">
+  <img width="100%" alt="对总助说一句话，四位 Agent 同时开工" src="assets/readme/demo-agents-en.webp">
+</p>
+
+<p align="center">
+  <img width="49%" alt="记忆星图：打开一条记忆并固定为核心" src="assets/readme/demo-memory-en.webp">
+  <img width="49%" alt="添加本机 MCP 服务并发现它的工具" src="assets/readme/demo-mcp-en.webp">
+</p>
+
+<p align="center"><sub>演示为英文界面，录制于 EchoInk 2.9.0 演示库。</sub></p>
+
 ## 开始使用
 
 1. **安装**：[在 Obsidian 中打开 EchoInk](https://obsidian.md/plugins?id=codex-echoink)，或在社区插件中搜索 `EchoInk`。需要 Obsidian 1.11.4 及以上。

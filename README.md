@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.8.10 — start your one-person company" src="assets/releases/echoink-agent-2.8.10-release.png">
+    <img width="1024" alt="One sentence to your chief of staff, and four agents go to work" src="assets/readme/demo-agents-en.webp">
   </a>
 </p>
 
@@ -38,6 +38,13 @@
 | 🔌 **Your notes as context for other agents** | A local MCP server lets the agents you already use read the knowledge and memory you authorize. |
 
 Your notes stay in your vault. Bring your own model API key, or use the built-in models with AI credits.
+
+<p align="center">
+  <img width="49%" alt="Memory map: open a memory and pin it to core" src="assets/readme/demo-memory-en.webp">
+  <img width="49%" alt="Add a local MCP server and discover its tools" src="assets/readme/demo-mcp-en.webp">
+</p>
+
+<p align="center"><sub>Recorded in EchoInk 2.9.0 with a demo vault.</sub></p>
 
 ## Get started
 
