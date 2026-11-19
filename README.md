@@ -36,27 +36,29 @@
 | 🤖 **A small AI team** | An assistant plans and delegates, role agents do the work, and you approve the decisions. |
 | ✏️ **Create from your sources** | Generate notes, Canvas layouts, and drawings from the material you already have. |
 
-Your notes stay in your vault. Bring your own model API key — EchoInk does not resell model credits.
+Your notes stay in your vault. Bring your own model API key, or use the built-in models with AI credits.
 
 ## Get started
 
 1. **Install.** [Open EchoInk in Obsidian](https://obsidian.md/plugins?id=codex-echoink), or search `EchoInk` in Community plugins. Requires Obsidian 1.11.4+.
 2. **Set up.** Open the workbench and pick Automatic, Guided, or Manual setup. Your existing notes stay where they are.
-3. **Connect a model.** Add an API key for OpenAI or a compatible provider, then start chatting.
+3. **Connect a model.** Add an API key for OpenAI or a compatible provider, or sign in to use the built-in models, then start chatting.
 
-## Free and PRO
+## Free, PRO, and Max
 
-| | Free | PRO |
-| --- | :---: | :---: |
-| Chat, knowledge Q&A, knowledge base and checkups | ✅ | ✅ |
-| Long-term memory and memory constellation | ✅ | ✅ |
-| Journal, to-dos, workbench | ✅ | ✅ |
-| AI team, module owners, custom Skills | ✅ | ✅ |
-| @Agent inside notes, PDF reading | — | ✅ |
-| Finance, English diary | — | ✅ |
-| Expert hiring, official methodology Skills, EchoInk MCP server | — | ✅ |
+| | Free | PRO | Max |
+| --- | :---: | :---: | :---: |
+| Chat, knowledge Q&A, knowledge base and checkups | ✅ | ✅ | ✅ |
+| Long-term memory and memory constellation | ✅ | ✅ | ✅ |
+| Journal, to-dos, workbench | ✅ | ✅ | ✅ |
+| AI team, module owners, custom Skills | ✅ | ✅ | ✅ |
+| @Agent inside notes, PDF reading | — | ✅ | ✅ |
+| Finance, English diary | — | ✅ | ✅ |
+| Expert hiring, official methodology Skills, EchoInk MCP server | — | ✅ | ✅ |
+| Cloud sync | — | 1 GB | 5 GB |
+| AI credits for built-in models, per month | — | 500 | 3,000 |
 
-PRO does not include model credits. See [current plans and prices](https://echoink.cn/plans).
+You can bring your own model API key on any plan. See [current plans and prices](https://echoink.cn/plans).
 
 <details>
 <summary>Full feature list</summary>
