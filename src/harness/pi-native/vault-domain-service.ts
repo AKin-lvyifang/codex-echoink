@@ -14,11 +14,14 @@ import {
   type VaultTargetAdapter
 } from "./vault-target-resolver";
 
+import { maintenanceLineOffsets, type MaintenanceSourceSegment } from "../../knowledge-base/maintenance-read-coverage";
+import { VAULT_READ_TOOL_RESULT_LIMIT_BYTES, redactEchoInkLocalSecretsV1 } from "./vault-tool-result-safety";
+
 const { createHash } = getDesktopCrypto();
 const { TextDecoder } = getDesktopUtil();
 
 export const VAULT_SEARCH_RESULT_LIMIT = 20;
-export const VAULT_READ_RESULT_LIMIT_BYTES = 32_000;
+export const VAULT_READ_RESULT_LIMIT_BYTES = VAULT_READ_TOOL_RESULT_LIMIT_BYTES;
 export const VAULT_WRITE_RESULT_LIMIT_BYTES = 8_000;
 
 const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -59,6 +62,7 @@ export class VaultDomainAdapterError extends Error {
 
 export type VaultDomainErrorCode =
   | "invalid_input"
+  | "version_conflict"
   | "operation_cancelled"
   | "operation_identity_conflict"
   | "adapter_contract_invalid"
@@ -83,6 +87,7 @@ export interface VaultFileSnapshot {
   contentSha256: string;
   /** Full Raw body revision, independent of the public excerpt size. */
   bodyFingerprint?: string;
+  segment?: MaintenanceSourceSegment & { totalLength: number; lineStart: number; lineEnd: number; nextOffset?: number };
   truncated: boolean;
 }
 
@@ -200,6 +205,8 @@ export interface VaultSearchInput {
 export interface VaultNoteReadInput {
   vaultId: string;
   relativePath: string;
+  offset?: number;
+  expectedContentRevision?: string;
   signal?: AbortSignal;
 }
 
@@ -361,8 +368,10 @@ export class VaultDomainService {
     });
     assertOrdinaryNoteSource(target, this.adapter.configDir);
     throwIfAborted(input.signal);
+    const source = ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "");
+    const ranged = input.offset !== undefined;
     const snapshot = await this.adapter.readFile(target, {
-      maxBytes: ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "") ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
+      maxBytes: source || ranged ? Number.MAX_SAFE_INTEGER : VAULT_READ_RESULT_LIMIT_BYTES
     });
     if (!snapshot) {
       throw domainError(
@@ -370,11 +379,16 @@ export class VaultDomainService {
         "Vault file disappeared during an authorized read"
       );
     }
-    return Object.freeze({
-      snapshot: Object.freeze({ ...normalizeSnapshot(snapshot, target, VAULT_READ_RESULT_LIMIT_BYTES),
-        ...(!snapshot.truncated && ["raw", "inbox"].includes(knowledgePathRole(target.vaultRootPath, target.relativePath) ?? "") ? { bodyFingerprint: rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) } : {})
-      })
-    });
+    const bodyFingerprint = !snapshot.truncated && source ? rawDigestFingerprint(target.relativePath, Buffer.from(snapshot.content, "utf8")) : undefined;
+    if (ranged) {
+      const full = normalizeSnapshot(snapshot, target);
+      if (full.truncated) throw domainError("adapter_contract_invalid", "Could not read the current note version");
+      if (input.expectedContentRevision !== undefined && input.expectedContentRevision !== `sha256:${full.contentSha256}`) {
+        throw domainError("version_conflict", "原文版本已变化，请从 offset=0 重新读取");
+      }
+      return Object.freeze({ snapshot: boundedNoteSegment(full, input.offset, bodyFingerprint) });
+    }
+    return Object.freeze({ snapshot: Object.freeze({ ...normalizeSnapshot(snapshot, target, VAULT_READ_RESULT_LIMIT_BYTES), ...(bodyFingerprint ? { bodyFingerprint } : {}) }) });
   }
 
   async readback(
@@ -994,6 +1008,44 @@ function normalizeSearchCandidate(
     excerpt: requireString(value.excerpt, "search excerpt"),
     version: requireNonEmptyString(value.version, "search version")
   });
+}
+
+function boundedNoteSegment(full: Readonly<VaultFileSnapshot>, start: number, bodyFingerprint?: string): Readonly<VaultFileSnapshot> {
+  const text = full.content;
+  const splitsCharacter = (offset: number) => /[\uDC00-\uDFFF]/u.test(text.charAt(offset))
+    || text.charAt(offset - 1) === "\r" && text.charAt(offset) === "\n";
+  if (!Number.isSafeInteger(start) || start < 0 || start > text.length || splitsCharacter(start)) {
+    throw domainError("adapter_contract_invalid", "Invalid note read offset");
+  }
+  const lines = maintenanceLineOffsets(text);
+  const lineAt = (offset: number) => {
+    let lo = 0, hi = lines.length;
+    while (lo + 1 < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      if (lines[mid] <= offset) lo = mid;
+      else hi = mid;
+    }
+    return lo + 1;
+  };
+  const candidate = (end: number): VaultFileSnapshot => ({
+    ...full, content: text.slice(start, end), truncated: start !== 0 || end !== text.length,
+    ...(bodyFingerprint ? { bodyFingerprint } : {}),
+    segment: { start, end, sourceRevision: `sha256:${full.contentSha256}`, totalLength: text.length,
+      lineStart: lineAt(start), lineEnd: lineAt(Math.max(start, end - 1)),
+      ...(end < text.length ? { nextOffset: end } : {}) }
+  });
+  let lo = start, hi = Math.min(text.length, start + VAULT_READ_RESULT_LIMIT_BYTES);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const json = redactEchoInkLocalSecretsV1(JSON.stringify({ snapshot: candidate(mid) }));
+    if (Buffer.byteLength(json, "utf8") <= VAULT_READ_RESULT_LIMIT_BYTES) lo = mid;
+    else hi = mid - 1;
+  }
+  let end = splitsCharacter(lo) ? lo - 1 : lo;
+  const lineBoundary = lines[lineAt(end) - 1];
+  if (end < text.length && lineBoundary > start) end = lineBoundary;
+  if (end === start && start < text.length) throw domainError("adapter_contract_invalid", "Note read result has no room for content");
+  return Object.freeze(candidate(end));
 }
 
 function normalizeSnapshot(

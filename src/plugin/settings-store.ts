@@ -21,7 +21,7 @@ import {
 } from "../settings/settings";
 import { readKnowledgeBaseReportExcerpt, recoveredLintReportSummary, shouldRecoverKnowledgeBaseLintFailure } from "../knowledge-base/report";
 import { ResourceMutationError } from "./resource-mutation-authority";
-import { isEmptyEchoInkPluginData } from "../settings/onboarding";
+import { isEmptyEchoInkPluginData } from "../settings/plugin-data";
 import { DESKTOP_KNOWLEDGE_ROOT_ROLES, knowledgeRootDirectories, migrateKnowledgeFolderBindings, preferExistingBilingualKnowledgeDefaults, registerKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 
 const path = getDesktopPath();

@@ -1111,12 +1111,15 @@ export async function runPiKnowledgePickRuntimeTests(): Promise<void> {
     await fixture.runtime.createConversation({ conversationId, title: "Pick runtime", cwd: fixture.root });
     await fixture.runtime.activateConversation(conversationId);
     const low = await withTimeout(fixture.submit({ conversationId, text: "你还在吗", submittedAt: 1 }), "low judgment bypasses pending candidates");
+    assert.equal(low.productRunId, capturedTurnId);
     assert.equal(collectorSignal?.aborted, true, "discard the pending collector without awaiting it");
     assert.equal(retrievals, 0);
     fixture.latestSession().finishSuccessful("我在。"); await low.result;
     probability = 0.9;
     const high = await fixture.submit({ conversationId, text: "我的笔记里提过什么？", submittedAt: 2,
       onPreparationStage: value => { observations.push(value); } });
+    assert.equal(high.productRunId, capturedTurnId);
+    assert.notEqual(high.productRunId, low.productRunId);
     assert.equal(retrievals, 1);
     assert.deepEqual(recent, ["你还在吗", "我在。"]);
     assert.ok(observations.some(value => value.stage === "knowledge" && value.detail === "selecting_knowledge" && value.status === "active"));
@@ -1134,7 +1137,7 @@ export async function runPiKnowledgePickRuntimeTests(): Promise<void> {
         return { candidates: [], scannedHits: 0, pages: 1, stopReason: "exhausted" };
       },
       retrieveChat: async input => {
-        retrievals++; assert.equal(input.decisionTurnId, capturedTurnId); assert.notEqual(input.productRunId, capturedTurnId);
+        retrievals++; assert.equal(input.decisionTurnId, capturedTurnId); assert.equal(input.productRunId, capturedTurnId);
         assert.equal(input.knowledgePickApproved, true); assert.ok(input.candidates); await input.candidates;
         recent = input.recent ?? []; await input.onStage?.("selecting_knowledge");
         return { status: "no_evidence", references: [], providerResourceText: "No evidence" };
@@ -1579,11 +1582,10 @@ async function assertFreshnessRoutesExternalReadToolsAcrossWorkflows(): Promise<
     );
     session.finishSuccessful("未提交维护动作");
     await maintain.result;
-    await waitForTestCondition(() => reviewCount === 4);
     assert.equal(usageCount, 1,
       "only the successful normal Chat may write Skill usage state");
-    assert.equal(reviewCount, 4,
-      "all normal Chats are reviewed, while ask and maintain never enter Skill learning");
+    assert.equal(reviewCount, 0,
+      "chat without a successful tool and dedicated ask/maintain do not pay for Skill review");
   }, {
     knowledge,
     skills,
@@ -1907,6 +1909,7 @@ async function assertRuntimeAutoSkillSelectionAndReviewLifecycle(): Promise<void
       text: "请复验这个复杂问题并模拟复盘失败",
       submittedAt: 2
     });
+    fixture.latestSession().finishTool("skill-review-failure-read", "knowledge_read", { details: { status: "completed" } }, false);
     fixture.latestSession().finishSuccessful("任务本身已经完成");
     const secondResult = await second.result;
     assert.equal(secondResult.terminalState, "completed",

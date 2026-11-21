@@ -10,9 +10,10 @@ import { maintenanceInspection, type MaintenanceInspectionView } from "./mainten
 import { Phase3MaintenanceError } from "./phase3-maintenance-service";
 import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
+import { getDesktopUtil } from "../platform/desktop-runtime";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
 import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, SOURCE_FRONTMATTER_UNSAFE, type KnowledgeMaintenanceRecord } from "./maintenance-record";
-import type { MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
+import type { MaintenanceDecomposition, MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
 import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock, appendMaintenanceManagedBlock, assertMaintenanceQuoteSectionsPreserved } from "./maintenance-section-patch";
 import { appendMaintenanceAliases, maintenancePageTitle } from "./maintenance-page-metadata";
@@ -26,8 +27,10 @@ import type { MaintenanceDomainMapDraft, MaintenanceDomainMapEntry, MaintenanceK
 import { assertMaintenanceShortTitle, assertMaintenanceShortTarget, MAINTENANCE_SHORT_TITLE_POLICY } from "./maintenance-title";
 import { maintenanceReceiptForRecord } from "./maintenance-activity";
 import { maintenanceFailureText } from "./maintenance-user-copy";
+import { addMaintenanceRange, hasMaintenanceRange } from "./maintenance-read-coverage";
 
 const { createHash } = getDesktopCrypto();
+const { isDeepStrictEqual } = getDesktopUtil();
 
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const revision = (s: string) => `sha256:${hash(s)}`;
@@ -84,65 +87,53 @@ export class MaintenanceP1Workflow {
     const retry = maintenanceP1RetryRecord(records, input.conversationId, selected);
     record ??= retry;
     if (record && selected.length && (selected.some(p => !record!.sources.some(s => s.path === p)) || isP1Open(record) && record.sources.some(source => source.status !== "processed" && !selected.includes(source.path)))) throw new Error("本会话有未完清单，来源范围不同；请先继续原清单，不能静默换范围。");
-    if (action.stage === "decompose") {
+    if (action.stage === "decompose" || action.stage === "skip") {
       const replayId = `maintenance-${hash(`${input.productRunId}:${input.toolCallId}:p1`).slice(0, 32)}`;
       const replay = records.find(record => record.recordId === replayId && record.originConversationId === input.conversationId && record.p1);
       if (replay && !isP1Open(replay)) return this.receipt(replay, "该调用的清单已完成，保留成功页。");
-      if (record && hasP1PartialSettlement(record)) {
+      if (record && hasP1PartialSettlement(record) && action.stage === "decompose") {
         if (record.p1!.folderBindingsRevision !== input.folderBindingsRevision) throw new Error("维护期间目录配置已变化，原清单保留，停止写入。");
         await this.assertSources(record);
         await this.finalize(input, record);
         return this.receipt(record, "沿用原成果，只核对并补来源属性回写。");
       }
-      if (record && record.p1!.phase !== "decompose") return this.receipt(record, "已有未完成清单，使用resume继续；不会覆盖已存拆解。");
-      if (!selected.length || selected.length > 20) throw new Error("拆解须使用当前授权的1–20篇来源。");
+      if (!selected.length || selected.length > 20) throw new Error("拆解与跳过须使用当前授权的1–20篇来源。");
+      if (record && record.p1!.folderBindingsRevision !== input.folderBindingsRevision) throw new Error("维护期间目录配置已变化，原清单保留，停止写入。");
+      const canReopenPlan = record?.p1?.phase === "plan" && (action.stage === "skip"
+        || action.decompositions?.some(item => item?.segment?.start === 0
+          && item.segment.sourceRevision !== record!.p1!.segmentedSources?.[item.sourcePath]?.sourceRevision));
+      if (record && record.p1!.phase !== "decompose" && !canReopenPlan) {
+        if (action.stage === "skip") throw new Error("写作清单已固定，本批已进入写入，不能再跳过来源。");
+        return this.receipt(record, "已有未完成清单，使用resume继续；不会覆盖已存拆解。");
+      }
+      if (!record) {
+        const at = this.host.now();
+        record = { schemaVersion: 1, recordId: replayId, runId: `${input.productRunId}:${input.toolCallId}`, originConversationId: input.conversationId, at, date: this.host.date(),
+          summary: "拆解检查点已保存，尚未提炼完成", sources: selected.map(path => ({ path, fingerprint: "", status: "unread", evidencePaths: [] })),
+          result: createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "p1_pending", message: "维护阶段尚未完成" }] }),
+          p1: { version: 1, phase: "decompose", sourceFingerprints: {}, folderBindingsRevision: input.folderBindingsRevision, decompositions: [], writingPlan: [], drafts: {}, committedPages: {}, finalizedSources: [] } };
+      }
+      if (action.stage === "skip") {
+        const path = action.skip?.sourcePath;
+        const source = path && record.sources.find(item => item.path === path && selected.includes(item.path));
+        const reason = action.skip?.reason.trim();
+        if (!source || !reason || reason.length > 240) throw new Error("跳过须指定本批一篇来源和简短原因。");
+        if (!source.skipReason) {
+          this.invalidateDecompositions(record, source.path);
+          source.skipReason = reason;
+          await this.host.save(record);
+        }
+        return await this.advanceDecomposition(input, record);
+      }
       const decompositions = action.decompositions;
-      if (!isUnknownArray(decompositions) || !decompositions.length || decompositions.length > selected.length) throw new Error("decompositions须含本批至少1篇来源；可逐篇提交同一decompose阶段，全部齐备后才能plan。");
-      const fingerprints: Record<string, string> = { ...record?.p1!.sourceFingerprints };
-      const sourceTexts: MaintenanceKnowledgeSource[] = [];
-      for (const sourcePath of selected) {
-        const text = await this.host.read(sourcePath);
-        if (text === null) throw new Error(`来源不存在：${sourcePath}`);
-        const fingerprint = rawDigestFingerprint(sourcePath, Buffer.from(text));
-        if (fingerprints[sourcePath] && fingerprints[sourcePath] !== fingerprint) throw new Error(`来源已变化，原检查点保留：${sourcePath}`);
-        fingerprints[sourcePath] = fingerprint;
-        sourceTexts.push({ path: sourcePath, content: text, contentRevision: revision(text) });
-      }
-      const seen = new Set<string>();
+      if (!isUnknownArray(decompositions) || !decompositions.length || decompositions.length > selected.length
+        || new Set(decompositions.map(item => item?.sourcePath)).size !== decompositions.length) throw new Error("每次decompose须提交本批至少1篇来源，同篇分段请分次提交。");
+      const checkpointedSegments: NonNullable<PiKnowledgeMaintenanceToolResult["checkpointedSegments"]>[number][] = [];
       for (const d of decompositions) {
-        if (!d || typeof d.sourcePath !== "string" || !selected.includes(d.sourcePath) || seen.has(d.sourcePath) || typeof d.summary !== "string" || !d.summary.trim() || !isUnknownArray(d.units) || d.units.some(u => !u || typeof u !== "object" || !isUnknownArray(u.evidence) || !u.evidence.some(e => e.sourcePath === d.sourcePath))) throw new Error("拆解必须使用带七类型和本篇原句证据的结构化知识点；旧字符串仅供已有P1清单恢复。");
-        seen.add(d.sourcePath);
-        await this.host.current?.(input, "decompose", d.sourcePath);
-        for (const sourcePath of new Set([d.sourcePath, ...d.units.flatMap(u => typeof u === "string" ? [] : u.evidence.map(e => e.sourcePath))])) {
-          if (!selected.includes(sourcePath) || input.sourceBodyFingerprints?.[sourcePath] !== fingerprints[sourcePath]) throw new Error(`请先完整note_read当前来源再拆解：${sourcePath}`);
-        }
-        const existing = record?.p1!.decompositions.find(old => old.sourcePath === d.sourcePath);
-        // Inspect only newly submitted units; frozen decompositions are not migrated.
-        if (!existing) for (const unit of d.units) if (typeof unit !== "string") assertMaintenanceShortTitle(unit.title, `unit.id=${JSON.stringify(unit.id)}, sourcePath=${JSON.stringify(d.sourcePath)}`);
-        const combined = [...(record?.p1!.decompositions.filter(old => old.sourcePath !== d.sourcePath) ?? []), d];
-        const units = groundMaintenanceKnowledgeUnits(combined.flatMap(d => d.units) as MaintenanceKnowledgeUnit[], sourceTexts);
-        const grounded = new Map(units.map(unit => [unit.id, unit]));
-        const validated = { ...d, units: d.units.map(unit => grounded.get((unit as MaintenanceKnowledgeUnit).id)!) };
-        if (existing) {
-          if (JSON.stringify(existing) !== JSON.stringify(validated)) throw new Error(`已校验拆解不可覆盖：${d.sourcePath}；继续尚未拆解来源。`);
-          continue;
-        }
-        if (!record) {
-          const at = this.host.now();
-          record = { schemaVersion: 1, recordId: replayId, runId: `${input.productRunId}:${input.toolCallId}`, originConversationId: input.conversationId, at, date: this.host.date(), summary: "拆解检查点已保存，尚未提炼完成", sources: selected.map(p => ({ path: p, fingerprint: fingerprints[p], status: "unread", evidencePaths: [] })), result: createKnowledgeMaintenanceResultEnvelope({ status: "partial", issues: [{ code: "p1_pending", message: "维护阶段尚未完成" }] }), p1: { version: 1, phase: "decompose", sourceFingerprints: fingerprints, folderBindingsRevision: input.folderBindingsRevision, decompositions: [], writingPlan: [], drafts: {}, committedPages: {}, finalizedSources: [] } };
-        }
-        record.p1!.decompositions = [...record.p1!.decompositions, validated];
-        record.sources.find(source => source.path === d.sourcePath)!.status = "failed";
-        await this.host.save(record);
+        await this.checkpointDecomposition(input, record, d);
+        if (d.segment) checkpointedSegments.push({ path: d.sourcePath, ...d.segment });
       }
-      if (!record) throw new Error("没有通过校验的来源拆解。");
-      if (record.p1!.decompositions.length === selected.length) {
-        const candidates = await this.host.candidates(this.units(record));
-        record.p1!.p2 = { version: 2, candidates, finalization: [], committedFinalization: {}, templateNotice: await this.host.templateNotice?.() };
-        record.p1!.phase = "plan";
-        await this.host.save(record);
-      }
-      return this.receipt(record, record.p1!.phase === "plan" ? "全批拆解与Wiki候选已保存；候选不等于同知识点。先读候选，再stage=plan提交判断和写作清单。" : "本篇拆解校验检查点已保存；继续stage=decompose提交未完成来源，全部齐备后才开放plan。");
+      return { ...await this.advanceDecomposition(input, record), ...(checkpointedSegments.length ? { checkpointedSegments } : {}) };
     }
     if (!record) {
       if ((action.stage === "inspect" || action.stage === "resume") && selected.length > 0 && selected.length <= 20) {
@@ -159,17 +150,22 @@ export class MaintenanceP1Workflow {
     }
     const state = record.p1!;
     if (state.folderBindingsRevision !== input.folderBindingsRevision) throw new Error("维护期间目录配置已变化，原清单保留，停止写入。");
+    if (state.phase === "decompose" || state.phase === "plan") {
+      if (action.stage === "resume" || action.stage === "inspect") return this.receipt(record,
+        "继续原批拆解或汇总；检查 sourceProgress 后从 nextOffset 续读，写作清单固定前不执行写入。", action.view, action.offset);
+      if (state.phase === "decompose") throw new Error("全部来源校验拆完或跳过后才能提交plan。");
+      if (action.stage !== "plan") throw new Error("提交 plan 后才能写入。");
+    }
     await this.assertSources(record);
     if (action.stage === "inspect") return this.receipt(record, "只读分页；nextOffset不为空时继续inspect同view和offset，原文可用note_read重读。", action.view ?? "candidates", action.offset ?? 0);
     if (action.stage === "plan") {
-      if (state.phase === "decompose") throw new Error(`全部来源校验后才能plan；尚缺：${record.sources.filter(source => !state.decompositions.some(d => d.sourcePath === source.path)).map(source => source.path).join("、")}`);
       if (state.phase !== "plan") return this.receipt(record, "写作清单已固定，使用resume继续，不覆盖已有目标。");
       if (!isUnknownArray(action.writingPlan) || action.writingPlan.length > 100) throw new Error("需要明确的writingPlan数组。");
       const ids = new Set<string>(), targets = new Set<string>();
       const plan: MaintenanceWritingItem[] = [];
       const errors: string[] = [];
       for (const [index,item] of action.writingPlan.entries()) { try {
-        if (!item || !/^[A-Za-z0-9_-]{1,80}$/u.test(item.id) || ids.has(item.id) || !isUnknownArray(item.sourcePaths) || !item.sourcePaths.length || new Set(item.sourcePaths).size !== item.sourcePaths.length || item.sourcePaths.some(p => !record.sources.some(s => s.path === p))) throw new Error("清单ID、来源或条目无效。");
+        if (!item || !/^[A-Za-z0-9_-]{1,80}$/u.test(item.id) || ids.has(item.id) || !isUnknownArray(item.sourcePaths) || !item.sourcePaths.length || new Set(item.sourcePaths).size !== item.sourcePaths.length || item.sourcePaths.some(p => !record.sources.some(s => s.path === p && !s.skipReason))) throw new Error("清单ID、来源或条目无效。");
         const targetPath = await this.host.targetPath(item.targetPath);
         if (targets.has(targetPath)) throw new Error("同一目标只安排一页；先聚合重复知识点。");
         const before = await this.host.read(targetPath);
@@ -228,8 +224,6 @@ export class MaintenanceP1Workflow {
         return { status: "completed", recordId: record.recordId, maintenanceStage: "sections", processedSourcePaths: [], userReceipt: maintenanceReceiptForRecord(record), message: JSON.stringify({ stage: "sections", targetPath: item.targetPath, snapshot, ...(changed ? { draftDiscarded: true, next: "必须按此新snapshot提交新sectionPatches；旧region与旧draft均不可重放。" } : {}), virtualRegions: { sources: `${snapshot.revision}:sources:new`, related: `${snapshot.revision}:related:new` } }) };
       });
     }
-    if (state.phase === "decompose") return this.receipt(record, "拆解尚未齐备；继续stage=decompose提交未完成来源。");
-    if (state.phase === "plan") return this.receipt(record, "尚未汇总；请先stage=plan。");
     if (action.stage === "write") {
       const item = state.writingPlan.find(p => p.id === action.pageId);
       if (!item) throw new Error("pageId不在固定清单内。");
@@ -279,6 +273,145 @@ export class MaintenanceP1Workflow {
     await this.finalize(input, record);
     return this.receipt(record, state.phase === "completed" ? "清单与原文双链已完成。" : "清单保留；按pendingPages继续，成功页不重写。");
   }
+  private invalidateDecompositions(record: KnowledgeMaintenanceRecord, path: string): void {
+    const state = record.p1!;
+    const affected = new Set([path, ...state.decompositions.filter(item =>
+      item.units.some(unit => typeof unit !== "string" && unit.evidence.some(evidence => evidence.sourcePath === path)))
+      .map(item => item.sourcePath)]);
+    if (state.submittedUnitIds) for (const item of state.decompositions) {
+      if (affected.has(item.sourcePath)) for (const unit of item.units) {
+        if (typeof unit !== "string") delete state.submittedUnitIds[unit.id];
+      }
+    }
+    state.decompositions = state.decompositions.filter(item => !affected.has(item.sourcePath));
+    for (const source of record.sources) {
+      if (!affected.has(source.path)) continue;
+      source.status = "unread";
+      source.fingerprint = "";
+      delete state.sourceFingerprints[source.path];
+      if (state.segmentedSources) delete state.segmentedSources[source.path];
+    }
+    state.phase = "decompose";
+    delete state.p2;
+  }
+
+  private async checkpointDecomposition(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord, d: MaintenanceDecomposition): Promise<void> {
+    const state = record.p1!;
+    const source = record.sources.find(item => item.path === d?.sourcePath && !item.skipReason);
+    if (!source || typeof d.summary !== "string" || !d.summary.trim() || !isUnknownArray(d.units)
+      || d.units.some(unit => !unit || typeof unit !== "object" || !isUnknownArray(unit.evidence) || !unit.evidence.some(evidence => evidence?.sourcePath === d.sourcePath))) {
+      throw new Error("拆解必须使用本批未跳过的来源、摘要与带本篇原句证据的结构化知识点。");
+    }
+    await this.host.current?.(input, "decompose", source.path);
+    const sources: MaintenanceKnowledgeSource[] = [];
+    for (const path of new Set([source.path, ...d.units.flatMap(unit => (unit as MaintenanceKnowledgeUnit).evidence.map(evidence => evidence.sourcePath))])) {
+      if (!record.sources.some(item => item.path === path && !item.skipReason)) throw new Error(`拆解证据必须来自本批未跳过来源：${path}`);
+      const content = await this.host.read(path);
+      if (content === null) throw new Error(`来源不存在：${path}；可先跳过这篇再继续。`);
+      sources.push({ path, content, contentRevision: revision(content) });
+    }
+    const primary = sources[0], fingerprint = rawDigestFingerprint(primary.path, Buffer.from(primary.content));
+    const segment = d.segment;
+    const previousSegmented = state.segmentedSources?.[source.path];
+    if (previousSegmented && previousSegmented.sourceRevision !== primary.contentRevision) {
+      if (!segment || segment.start !== 0) throw new Error(`来源已变化，请从 offset=0 读取并重新拆解：${source.path}`);
+      this.invalidateDecompositions(record, source.path);
+    } else if (state.sourceFingerprints[source.path] && state.sourceFingerprints[source.path] !== fingerprint) {
+      if (!segment || segment.start !== 0 || state.decompositions.some(item => item.sourcePath === source.path)) {
+        throw new Error(`来源已变化，原检查点保留：${source.path}`);
+      }
+      this.invalidateDecompositions(record, source.path);
+    }
+    const previous = state.segmentedSources?.[source.path];
+    if (previous && !segment) throw new Error("此来源已按段拆解，请继续使用 segment 提交。");
+    if (segment && (segment.sourceRevision !== primary.contentRevision
+      || !Number.isSafeInteger(segment.start) || !Number.isSafeInteger(segment.end)
+      || segment.start < 0 || segment.end < segment.start || segment.end > primary.content.length)) throw new Error("segment 范围或版本无效，请使用本次读取返回的 segment。");
+    const allowed = new Map<string, NonNullable<Readonly<PiKnowledgeMaintenanceToolInput>["sourceReadCoverage"]>[string]["ranges"]>();
+    for (const item of sources) {
+      const observed = input.sourceReadCoverage?.[item.path];
+      const body = rawDigestFingerprint(item.path, Buffer.from(item.content));
+      if (state.sourceFingerprints[item.path] && state.sourceFingerprints[item.path] !== body) throw new Error(`来源已变化：${item.path}`);
+      const ranges = observed?.sourceRevision === item.contentRevision && observed.totalLength === item.content.length ? observed.ranges : [];
+      if (item.path === source.path && segment) {
+        if (!hasMaintenanceRange(ranges, segment)) throw new Error(`请先读取当前版本的这段原文：${source.path}`);
+        if (segment.end === segment.start && primary.content.length
+          && !(d.complete === true && !d.units.length && segment.end === primary.content.length
+            && hasMaintenanceRange(previous?.ranges ?? [], { start: 0, end: primary.content.length }))) {
+          throw new Error("请提交实际读过的非空原文段。");
+        }
+        allowed.set(item.path, [segment]);
+      } else if (input.sourceBodyFingerprints?.[item.path] !== body && !hasMaintenanceRange(ranges, { start: 0, end: item.content.length })) {
+        if (!segment || !ranges.length) throw new Error(`请先完整note_read当前来源再拆解：${item.path}`);
+        allowed.set(item.path, ranges);
+      }
+    }
+
+    const existing = state.decompositions.find(item => item.sourcePath === source.path);
+    const usedIds = new Set(this.units(record).map(unit => unit.id));
+    const units = groundMaintenanceKnowledgeUnits(d.units as MaintenanceKnowledgeUnit[], sources, (path, range) => {
+      const ranges = allowed.get(path);
+      return !ranges || hasMaintenanceRange(ranges, range);
+    }, true);
+    const savedUnits = [...existing?.units ?? []];
+    for (const unit of units) {
+      const replayed = savedUnits.some(old => typeof old !== "string"
+        && (old.id === unit.id || (state.submittedUnitIds && Object.hasOwn(state.submittedUnitIds, old.id)
+          && state.submittedUnitIds[old.id] === unit.id))
+        && isDeepStrictEqual(old, { ...unit, id: old.id }));
+      if (replayed) continue;
+      assertMaintenanceShortTitle(unit.title, `unit.id=${JSON.stringify(unit.id)}, sourcePath=${JSON.stringify(d.sourcePath)}`);
+      let id = unit.id;
+      if (usedIds.has(id)) {
+        for (let suffix = 2; usedIds.has(id); suffix++) id = `${unit.id}-${suffix}`;
+        state.submittedUnitIds = { ...state.submittedUnitIds, [id]: unit.id };
+      }
+      usedIds.add(id);
+      savedUnits.push({ ...unit, id });
+    }
+    if (existing && !previous) {
+      if (segment) throw new Error(`这篇已按全文拆解；后续请沿用全文拆解格式：${source.path}`);
+      if (savedUnits.length === existing.units.length) return;
+    }
+    const ranges = segment ? addMaintenanceRange(previous?.ranges ?? [], segment) : [];
+    const complete = !segment || d.complete === true || previous?.complete === true;
+    if (segment && complete && !hasMaintenanceRange(ranges, { start: 0, end: primary.content.length })) {
+      throw new Error(`这篇还有原文未读并提交拆解，请继续分段；最后一段才传complete=true：${source.path}`);
+    }
+    if (segment) {
+      state.segmentedSources ??= {};
+      state.segmentedSources[source.path] = { sourceRevision: primary.contentRevision, totalLength: primary.content.length, ranges, complete };
+    }
+    state.decompositions = [...state.decompositions.filter(item => item.sourcePath !== source.path),
+      { sourcePath: source.path, summary: previous?.complete ? existing!.summary : d.summary,
+        units: savedUnits }];
+    // Canonical fingerprints still protect writes; partial reads are tracked separately.
+    for (const item of sources) state.sourceFingerprints[item.path] = rawDigestFingerprint(item.path, Buffer.from(item.content));
+    source.fingerprint = fingerprint;
+    source.status = "failed";
+    await this.host.save(record);
+  }
+
+  private async advanceDecomposition(input: Readonly<PiKnowledgeMaintenanceToolInput>, record: KnowledgeMaintenanceRecord): Promise<PiKnowledgeMaintenanceToolResult> {
+    const state = record.p1!;
+    const active = record.sources.filter(source => !source.skipReason);
+    if (!active.length) {
+      await this.finalize(input, record);
+      return this.receipt(record, "本批全部跳过，没有写入。");
+    }
+    if (active.every(source => state.decompositions.some(d => d.sourcePath === source.path)
+      && state.segmentedSources?.[source.path]?.complete !== false)) {
+      await this.assertSources(record);
+      const candidates = await this.host.candidates(this.units(record));
+      state.p2 = { version: 2, candidates, finalization: [], committedFinalization: {}, templateNotice: await this.host.templateNotice?.() };
+      state.phase = "plan";
+      await this.host.save(record);
+      return this.receipt(record, "参与整理的来源已拆完，Wiki候选已保存；先读候选，再stage=plan。");
+    }
+    return this.receipt(record, "检查点已保存，按sourceProgress继续尚未拆完的来源。",
+      state.submittedUnitIds && Object.keys(state.submittedUnitIds).length ? "units" : undefined);
+  }
+
   private units(record: KnowledgeMaintenanceRecord): MaintenanceKnowledgeUnit[] {
     return record.p1!.decompositions.flatMap(d => d.units).filter((unit): unit is MaintenanceKnowledgeUnit => typeof unit !== "string");
   }
@@ -409,8 +542,11 @@ export class MaintenanceP1Workflow {
   private async assertSources(record: KnowledgeMaintenanceRecord): Promise<{ path: string; content: string }[]> {
     const sources: { path: string; content: string }[] = [];
     for (const source of record.sources) {
+      if (source.skipReason) continue;
       const text = await this.host.read(source.path);
-      if (text === null || rawDigestFingerprint(source.path, Buffer.from(text)) !== record.p1!.sourceFingerprints[source.path]) throw new Error(`来源已变化，停止剩余写入：${source.path}`);
+      const segmented = record.p1!.segmentedSources?.[source.path];
+      if (text === null || rawDigestFingerprint(source.path, Buffer.from(text)) !== record.p1!.sourceFingerprints[source.path]
+        || segmented && (record.p1!.phase === "decompose" || record.p1!.phase === "plan") && revision(text) !== segmented.sourceRevision) throw new Error(`来源已变化，停止剩余写入：${source.path}`);
       sources.push({ path: source.path, content: text });
     }
     return sources;
@@ -484,7 +620,7 @@ export class MaintenanceP1Workflow {
     if (state.p2 && pagesReady) await this.writeFinalization(input, record);
     const p2Ready = !state.p2 || (pagesReady && state.p2.finalization.every(item => state.p2!.committedFinalization[item.id]));
     for (const source of record.sources) {
-      if (!p2Ready || retryPaths && !retryPaths.has(source.path)) continue;
+      if (source.skipReason || !p2Ready || retryPaths && !retryPaths.has(source.path)) continue;
       if (state.finalizedSources.includes(source.path)) continue;
       const pages = state.writingPlan.filter(p => p.sourcePaths.includes(source.path));
       if (pages.some(p => !state.committedPages[p.id])) continue;
@@ -520,10 +656,10 @@ export class MaintenanceP1Workflow {
       state.finalizedSources.push(source.path); source.status = "processed"; source.evidencePaths = targetPaths;
       await this.host.save(record);
     }
-    if (record.sources.every(s => state.finalizedSources.includes(s.path))) { state.phase = "completed"; }
+    if (record.sources.every(s => s.skipReason || state.finalizedSources.includes(s.path))) { state.phase = "completed"; }
     else state.phase = state.writingPlan.every(p => state.committedPages[p.id]) ? "finalize" : "write";
     const formatIssues = record.result.issues.filter(issue => issue.code === SOURCE_FRONTMATTER_UNSAFE && !!issue.path && !!state.sourceFrontmatterFailures?.[issue.path]);
-    const partialSettled = pagesReady && p2Ready && record.sources.every(source => state.finalizedSources.includes(source.path)
+    const partialSettled = pagesReady && p2Ready && record.sources.every(source => source.skipReason || state.finalizedSources.includes(source.path)
       || state.sourceFrontmatterFailures?.[source.path] && formatIssues.some(issue => issue.path === source.path));
     if (state.phase !== "completed" && partialSettled) state.settlement = { version: 1, status: "partial" };
     const retainedIssues = record.result.issues.filter(issue => issue.code !== SOURCE_FRONTMATTER_UNSAFE && issue.code !== "p1_pending");
@@ -540,7 +676,14 @@ export class MaintenanceP1Workflow {
     const inspection = maintenanceInspection(state, view ?? (state.phase === "plan" ? "candidates" : "pages"), offset);
     const managed = state.p2?.finalization.filter(item => !state.p2!.committedFinalization[item.id]) ?? [];
     const userReceipt = maintenanceReceiptForRecord(record);
-    const summary = { recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, userReceipt, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
+    const sourceProgress = state.phase === "decompose" ? record.sources.map(source => {
+      const segmented = state.segmentedSources?.[source.path];
+      return { path: source.path, ...(source.skipReason ? { skipped: true } : segmented ? {
+        complete: segmented.complete, sourceRevision: segmented.sourceRevision,
+        nextOffset: segmented.ranges[0]?.start === 0 ? segmented.ranges[0].end : 0
+      } : { complete: state.decompositions.some(item => item.sourcePath === source.path) }) };
+    }) : undefined;
+    const summary = { sourceProgress, recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, userReceipt, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !source.skipReason && !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
     const notice = state.p2?.templateNotice ? `\n${state.p2.templateNotice}` : "";
     return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, userReceipt, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(!isP1Open(record) ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${hasP1PartialSettlement(record) ? "本批部分完成；部分来源属性无法安全回写，请修正属性后重试。" : !isP1Open(record) && record.result.status === "partial" ? "本批仍有未完成项，请查看具体错误。" : message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };
   }

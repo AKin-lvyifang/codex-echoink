@@ -623,6 +623,7 @@ export class PersonalMemoryRepository {
       to?: PersonalMemorySearchRequest["to"];
       /** Directory discovery only: keep eligible non-matching metadata without reading bodies. */
       includeUnmatchedCandidates?: boolean;
+      fixedOnly?: boolean;
       /** Directory-selected IDs take priority; an explicit empty list suppresses dynamic recall. */
       preferredCandidateIds?: readonly string[];
       associationJudgment?: MemoryAssociationJudgment;
@@ -643,6 +644,11 @@ export class PersonalMemoryRepository {
     return await this.withMutation(async () => {
       const manifest = await this.readManifest();
       const fixed = await this.loadFixedContextSnapshot(manifest, input.memoryMode);
+      const core = input.memoryMode === "normal" ? await Promise.all(manifest.records.filter(record => record.status === "current" && record.pinned).map(async metadata => {
+        const record = await this.readRecord(metadata);
+        return Object.freeze({ id: record.id, title: record.title, summary: Array.from(summarize(record.content)).slice(0, 80).join("") });
+      })) : [];
+      if (input.fixedOnly) return Object.freeze({ ...fixed, core: Object.freeze(core), scanned: 0, search: null });
       const index = await this.readSearchIndexSnapshot(manifest);
       const search = await this.prepareTurnSearchSnapshot(
         { ...input, query: input.query ?? "" },
@@ -650,10 +656,6 @@ export class PersonalMemoryRepository {
         index,
         input.selectCandidateIds
       );
-      const core = input.memoryMode === "normal" ? await Promise.all(manifest.records.filter(record => record.status === "current" && record.pinned).map(async metadata => {
-        const record = await this.readRecord(metadata);
-        return Object.freeze({ id: record.id, title: record.title, summary: Array.from(summarize(record.content)).slice(0, 80).join("") });
-      })) : [];
       return Object.freeze({ ...fixed, core: Object.freeze(core), scanned: index.catalog.length, search });
     });
   }

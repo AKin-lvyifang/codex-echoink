@@ -56,33 +56,99 @@ for (const [a, b, expected] of [["v2.10.0", "2.9.0", 1], ["2.7.0", "v2.7.0", 0],
   assert.equal(compareReleaseVersions(a, b), expected);
 }
 assert.throws(() => compareReleaseVersions("unknown", "2.7.0"));
+const snapshot = (...releases: { tag: string; url?: string; name?: string; body?: string; bodyEn?: string; prerelease?: boolean }[]) => ({ releases });
 let calls = 0;
 let finish!: (data: unknown) => void;
 const controller = new ReleaseUpdateController(() => { calls++; return new Promise(resolve => { finish = resolve; }); });
 assert.equal(calls, 0, "mounting the controller never requests an update");
 let observations = 0;
 const unsubscribe = controller.subscribe(() => { observations++; });
-const first = controller.check("2.7.0");
+const first = controller.checkIfStale("2.7.0");
 const repeated = controller.check("2.7.0");
 assert.equal(first, repeated);
 assert.equal(controller.state.status, "checking");
 await Promise.resolve(); assert.equal(calls, 1);
-finish({ tag_name: "v2.8.0", html_url: "https://github.com/AKin-lvyifang/codex-echoink/releases/tag/v2.8.0" });
+finish(snapshot({ tag: "v2.8.0", url: "https://github.com/AKin-lvyifang/codex-echoink/releases/tag/v2.8.0" }, { tag: "2.9.0-beta.1" }, { tag: "3.0.0", prerelease: true }));
 await first;
 assert.equal(controller.state.status, "available");
+assert.ok("version" in controller.state && controller.state.version === "2.8.0");
 assert.equal(observations, 2);
 unsubscribe();
 const second = controller.check("2.8.0"); await Promise.resolve();
-finish({ tag_name: "v2.7.0", html_url: "javascript:alert(1)" }); await second;
+finish(snapshot({ tag: "v2.7.0", url: "javascript:alert(1)" })); await second;
 assert.equal(controller.state.status, "current");
 assert.equal(observations, 2, "closed views are not updated by late responses");
 assert.ok("url" in controller.state && controller.state.url.startsWith("https://github.com/"));
-let fail = true;
-const retry = new ReleaseUpdateController(async () => { if (fail) throw new Error("offline"); return { tag_name: "v2.7.0" }; });
-await retry.check("2.7.0"); assert.equal(retry.state.status, "error");
-fail = false; await retry.check("2.7.0"); assert.equal(retry.state.status, "current");
-await new ReleaseUpdateController(async () => ({ tag_name: "not a version" })).check("2.7.0");
-console.log("PASS release check is click-only, single-flight, numeric, safe on failure and retry");
+const version = "2.9.0";
+const notes = {
+  tag: "v2.9.0", name: "2.9.0 · 整库云同步",
+  body: "## 更新内容\n\n- **同步** [帮助](https://echoink.cn)\n- ![图片](https://example.org/cover.png)\n- <img src=\"https://example.org/raw.png\">\n\n## 下载与升级\n\n不显示\n### 次级章节\n不显示\n\n## 如何使用\n\n说明",
+  bodyEn: "## What's new\n\n- Sync\n\n## Download and upgrade\n\nHide this"
+};
+const fakeStorage = () => {
+  const state = new Map<string, unknown>();
+  return { loadLocalStorage: (key: string) => state.get(key), saveLocalStorage: (key: string, value: unknown) => { state.set(key, structuredClone(value)); } };
+};
+const fresh = fakeStorage();
+let offline = true, retries = 0, now = 0;
+const retry = new ReleaseUpdateController(async () => {
+  retries++;
+  if (offline) throw new Error("offline");
+  return snapshot(notes);
+}, () => now);
+retry.initialize(fresh, version, true);
+await retry.checkIfStale(version);
+assert.equal(retry.state.status, "error");
+assert.deepEqual(retry.reminders(version, "zh-CN"), {});
+offline = false;
+now = 299_999;
+await retry.checkIfStale(version);
+assert.equal(retries, 1);
+now++;
+await retry.checkIfStale(version);
+assert.equal(retry.state.status, "current");
+assert.equal(retry.reminders(version, "zh-CN").notes, undefined, "offline first install is already baselined");
+now += 12 * 60 * 60 * 1000 - 1;
+await retry.checkIfStale(version);
+assert.equal(retries, 2);
+await retry.check(version);
+assert.equal(retries, 3, "manual check bypasses the successful cache");
+offline = true;
+await retry.check(version);
+assert.equal(retry.state.status, "error");
+const bad = new ReleaseUpdateController(async () => snapshot({ tag: "not a version" }));
+await bad.check(version);
+assert.equal(bad.state.status, "error");
+console.log("PASS release refresh uses published versions, shares in-flight work, and respects cache, cooldown and manual refresh");
+
+const legacy = fakeStorage();
+const start = async (installed: string, entries = snapshot({ tag: "2.9.1" }, notes), empty = false) => {
+  const update = new ReleaseUpdateController(async () => entries);
+  update.initialize(legacy, installed, empty);
+  await update.check(installed);
+  return update;
+};
+const migrated = await start(version);
+const firstNotes = migrated.reminders(version, "zh-CN").notes;
+assert.equal(firstNotes?.title, notes.name);
+assert.match(firstNotes?.markdown ?? "", /\*\*同步\*\* \[帮助\]\(https:\/\/echoink.cn\)/);
+assert.match(firstNotes?.markdown ?? "", /## 如何使用/);
+assert.doesNotMatch(firstNotes?.markdown ?? "", /下载与升级|不显示|!\[|<img/);
+assert.deepEqual(migrated.reminders(version, "en").notes, { version, title: "What's new in 2.9.0", markdown: "## What's new\n\n- Sync" });
+assert.equal(migrated.reminders(version, "zh-CN").updateVersion, "2.9.1");
+migrated.dismissUpdate("2.9.1");
+migrated.markNotesSeen(version);
+const restarted = await start(version);
+assert.equal(restarted.reminders(version, "zh-CN").notes, undefined);
+assert.equal(restarted.reminders(version, "zh-CN").updateVersion, undefined);
+const upgraded = await start("2.9.2", snapshot({ tag: "2.9.3" }, { tag: "2.9.2", body: "中文" }, notes));
+assert.equal(upgraded.reminders("2.9.2", "en").notes?.markdown, "中文");
+assert.equal(upgraded.reminders("2.9.2", "en").updateVersion, "2.9.3");
+upgraded.markNotesSeen("2.9.2");
+assert.equal((await start(version)).reminders(version, "zh-CN").notes, undefined, "a downgrade does not show an old note");
+assert.equal((await start("2.9.3", snapshot({ tag: "2.9.3" }))).reminders("2.9.3", "zh-CN").notes, undefined);
+assert.equal((await start("2.9.3", snapshot({ tag: "2.9.3", body: "到了" }))).reminders("2.9.3", "zh-CN").notes?.markdown, "到了");
+console.log("PASS release reminders persist per device, support first-upgrade notes, and filter localized Markdown");
 
 export async function runCompactAboutTests(repo: string): Promise<void> {
   installProviderBrowserHost();
@@ -136,7 +202,7 @@ export async function runCompactAboutTests(repo: string): Promise<void> {
         assert.deepEqual(logos, [false, true], "the existing hidden logo action retains Alt state");
         check.click(); check.click(); await tick();
         assert.equal(checks, 1); assert.equal(check.disabled, true); assert.equal(check.getAttribute("aria-busy"), "true");
-        release({ tag_name: "v2.8.0", html_url: "https://github.com/AKin-lvyifang/codex-echoink/releases/tag/v2.8.0" });
+        release(snapshot({ tag: "v2.8.0", url: "https://github.com/AKin-lvyifang/codex-echoink/releases/tag/v2.8.0" }));
         await tick();
         assert.equal(check.disabled, false);
         const status = parent.querySelector<HTMLElement>(".echoink-about-compact-status")!;
@@ -144,7 +210,7 @@ export async function runCompactAboutTests(repo: string): Promise<void> {
         const link = status.querySelector<HTMLAnchorElement>("a")!; link.click(); await tick();
         assert.equal(opened.at(-1), "https://github.com/AKin-lvyifang/codex-echoink/releases/tag/v2.8.0");
         cleanup(); const priorStatus = status.textContent;
-        const late = update.check("2.8.0"); await tick(); release({ tag_name: "v2.8.0" }); await late;
+        const late = update.check("2.8.0"); await tick(); release(snapshot({ tag: "v2.8.0" })); await late;
         assert.equal(status.textContent, priorStatus, "unsubscribed views are not changed by later checks");
       } finally { cleanup(); disposeOriginControls(parent); parent.remove(); }
     }

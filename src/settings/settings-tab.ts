@@ -50,7 +50,6 @@ import { renderProviderServicePicker } from "./provider-service-picker";
 import { renderCompactAbout } from "./about-section";
 import { CAUSE, NEXT, failureText, joinErrorCopy, mcpDiagnosticText, pickErrorCopy, userFacingErrorText, type ErrorCopy } from "../core/error-copy";
 import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
-import { ReleaseUpdateController } from "./release-update";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
 import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList } from "../agents/types";
 import { checkAgentSkill, mcpToolCapabilityId } from "../agents/capability-policy";
@@ -340,7 +339,6 @@ export class CodexSettingTab extends PluginSettingTab {
   private readonly moduleInputBaselines = new WeakMap<HTMLElement, string>();
   private readonly suspendedTabEditors = new Map<VisibleSettingsTab, string>();
   private readonly locationScroll = new Map<string, number>();
-  private readonly releaseUpdate = new ReleaseUpdateController();
 
   openDesktopRoute(route: DesktopSettingsRoute): void {
     if (!Platform.isDesktopApp) return;
@@ -1937,7 +1935,7 @@ export class CodexSettingTab extends PluginSettingTab {
     this.membershipRowsDisposers.push(renderCompactAbout(section, {
       version, language: this.plugin.settings.settingsLanguage,
       websiteUrl: membershipWebsiteLink("plugin.about"),
-      update: this.releaseUpdate,
+      update: this.plugin.releaseUpdate,
       onLogoClick: altKey => { if (this.plugin.developerMode.click(altKey)) this.renderSettingsContent(); }
     }));
   }

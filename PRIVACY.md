@@ -46,6 +46,8 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **Check-in credits.** When you submit a check-in to https://echoink.cn/api/check-ins, the server uses your account history to calculate credits. The existing check-in request includes your login token, date, and time zone. Credit grants are linked to your account and stored in the account database. Credits expire after 30 days. See the [website privacy policy](https://echoink.cn/support#privacy) for credit ledger retention.
 
+- **Update checks and release notes.** EchoInk reads public release information from https://echoink.cn/api/releases.
+
 ## Data sent to third-party services
 
 - **Model requests:** Your selected model service receives the prompts, notes, attachments, memory, and tool results needed for the current AI request. Model services may require their own account and charge separately; image input requires a vision-capable model.

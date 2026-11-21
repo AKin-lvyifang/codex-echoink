@@ -19,7 +19,7 @@ import { mobileMcpAdmitted, mobileMcpToolName } from "./remote-tools";
 import type { MobilePermission, MobileStore } from "./store";
 import { PI_FINANCE_TOOL_IDS, isFinanceTool, normalizeFinanceToolRequest, financeToolEffect, type PiFinanceToolId } from "../harness/pi-native/finance-tool-policy";
 
-const MOBILE_TOOLS = new Set(["task_update", "user_question", "approval_decide", "vault_search", "note_read", "note_create", "note_update", "memory_search", "memory_read", "memory_write", "web_search", "workspace_read", "workspace_create", "workspace_update", ...PI_FINANCE_TOOL_IDS,
+const MOBILE_TOOLS = new Set(["resource_lookup", "task_update", "user_question", "approval_decide", "vault_search", "note_read", "note_create", "note_update", "memory_search", "memory_read", "memory_write", "web_search", "workspace_read", "workspace_create", "workspace_update", ...PI_FINANCE_TOOL_IDS,
   // Company tools: capability-core still decides who may hold them (router vs worker).
   ...COMPANY_ROUTER_TOOLS, ...COMPANY_WORKER_TOOLS]);
 const scopedPolicies = new WeakMap<KnowledgeBodySearchPort, MobileCapabilityPolicy>();

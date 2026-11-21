@@ -1,14 +1,12 @@
 import type { FileConversationCatalog } from "../harness/pi-native/file-conversation-catalog";
+import { meaningfulTitleRequest } from "../harness/short-social-turn";
 import { isCompanyProgrammaticUserMessage } from "../company/report-presentation";
 
 export function conversationTitleRequests(messages: readonly { role: string; text: string }[], companyRole?: string): string[] {
   return messages.filter(message => message.role === "user" && !isCompanyProgrammaticUserMessage(message, companyRole)).map(message => message.text);
 }
 
-export function meaningfulTitleRequest(text: string): boolean {
-  const compact = text.replace(/[\s，。！？,.!?~～]+/gu, "").toLowerCase();
-  return !!compact && !/^(你好|您好|嗨|哈喽|在吗|在么|喂|hello|hi|hey|谢谢|多谢|thanks|thankyou|好的|好|ok|okay|嗯|啊)+$/u.test(compact);
-}
+export { meaningfulTitleRequest };
 export function shortConversationTitle(text: string): string {
   return Array.from(text.replace(/^[\s"'“”「」]+|[\s"'“”「」]+$/gu, "").replace(/\s+/gu, " ").trim()).slice(0, 14).join("");
 }

@@ -1,7 +1,7 @@
 import { knowledgeSystemReminderText } from "./knowledge-system-reminders";
 import { isP1Open, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { KnowledgeLinkingTask } from "./knowledge-linking-types";
-import { maintenanceFailureText } from "./maintenance-user-copy";
+import { maintenanceFailureText, maintenanceVisibleCopyIsSafe } from "./maintenance-user-copy";
 
 export const MAINTENANCE_ACTIVITY_STAGES = ["scan", "decompose", "plan", "write", "finalize"] as const;
 export type MaintenanceActivityStage = typeof MAINTENANCE_ACTIVITY_STAGES[number];
@@ -44,6 +44,7 @@ export interface MaintenanceActivity {
   stage: MaintenanceActivityStage;
   steps: readonly MaintenanceActivityStep[];
   sourceCount: number | null;
+  skippedSourceCount?: number;
   sourcePaths: readonly string[];
   pageCounts?: Readonly<MaintenancePageCounts>;
   batch: { index: number; total: number };
@@ -122,14 +123,16 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
   if (completed && progress?.completedAt === undefined) return null;
   const index = MAINTENANCE_ACTIVITY_STAGES.indexOf(stage);
   const finalized = new Set([...state.finalizedSources, ...Object.keys(state.p2?.committedFinalization ?? {})]).size;
+  const skippedSourceCount = record.sources.filter(source => source.skipReason).length;
+  const activeSourceCount = record.sources.length - skippedSourceCount;
   const pageTotal = ["write", "finalize", "completed"].includes(state.phase) ? new Set(state.writingPlan.map(p => p.targetPath)).size : null;
   const steps = MAINTENANCE_ACTIVITY_STAGES.map((step, i): MaintenanceActivityStep => ({
     stage: step,
-    completed: step === "decompose" ? new Set(state.decompositions.map(d => d.sourcePath)).size
+    completed: step === "decompose" ? state.decompositions.filter(d => state.segmentedSources?.[d.sourcePath]?.complete !== false).length
       : step === "write" ? new Set(Object.values(state.committedPages).map(p => p.path)).size
       : step === "finalize" ? finalized : step === "plan" ? (state.phase === "decompose" || state.phase === "plan" ? 0 : 1) : 0,
-    total: step === "decompose" ? record.sources.length : step === "write" ? pageTotal
-      : step === "finalize" ? (pageTotal === null ? null : record.sources.length + (state.p2?.finalization.length ?? 0))
+    total: step === "decompose" ? activeSourceCount : step === "write" ? pageTotal
+      : step === "finalize" ? (pageTotal === null ? null : activeSourceCount + (state.p2?.finalization.length ?? 0))
       : null,
     state: completed || i < index ? "completed" : i === index && !settled ? "running" : "pending"
   }));
@@ -139,7 +142,7 @@ export function projectMaintenanceActivity(record: Readonly<KnowledgeMaintenance
   const etaMs = status === "running" && current.completed >= 2 && current.total !== null && current.total > current.completed && elapsed > 0
     ? Math.round(elapsed / current.completed * (current.total - current.completed)) : null;
   return { kind: "maintenance", id: record.recordId, originConversationId: record.originConversationId, stage, status, steps,
-    sourceCount: record.sources.length, sourcePaths: record.sources.map(source => source.path), pageCounts: maintenancePageCounts(record), batch: progress?.batch ?? { index: 1, total: 1 }, ...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
+    sourceCount: record.sources.length, ...(skippedSourceCount ? { skippedSourceCount } : {}), sourcePaths: record.sources.map(source => source.path), pageCounts: maintenancePageCounts(record), batch: progress?.batch ?? { index: 1, total: 1 }, ...(progress?.currentPath ? { currentPath: progress.currentPath } : {}),
     activeElapsedMs: Object.values(progress?.elapsedMs ?? {}).reduce((sum, value) => sum + value, 0), etaMs,
     failures: [...(progress?.failures ?? []), ...record.result.issues.filter(issue => issue.code === "source_frontmatter_unsafe").map(issue => ({ key: issue.path ?? issue.code, message: issue.message, at: record.at }))], updatedAt: progress?.updatedAt ?? record.at,
     ...(progress?.completedAt ? { completedAt: progress.completedAt } : {}) };
@@ -154,10 +157,15 @@ export function maintenanceBatchContext(request: string): { index: number; total
 
 export function projectMaintenanceInitialActivity(initial: Readonly<MaintenanceInitialActivity>, conversationId: string, productRunId: string): MaintenanceActivity {
   const progress = initial.progress;
+  const completed = progress.status === "completed";
   return { kind: "maintenance", id: `run:${productRunId}`, originConversationId: conversationId, status: progress.status,
-    stage: progress.stage, steps: MAINTENANCE_ACTIVITY_STAGES.map(stage => ({ stage, completed: 0, total: stage === "decompose" && initial.sourcePaths.length ? initial.sourcePaths.length : null, state: stage === progress.stage ? "running" : "pending" })),
+    stage: completed ? "finalize" : progress.stage, steps: MAINTENANCE_ACTIVITY_STAGES.map(stage => ({
+      stage, completed: completed && stage === "decompose" ? initial.sourcePaths.length : 0,
+      total: stage === "decompose" && initial.sourcePaths.length ? initial.sourcePaths.length : null,
+      state: completed ? "completed" : stage === progress.stage ? "running" : "pending" })),
     sourceCount: initial.sourcePaths.length || null, sourcePaths: [...initial.sourcePaths], batch: progress.batch ?? { index: 1, total: 1 }, currentPath: progress.currentPath,
-    activeElapsedMs: Object.values(progress.elapsedMs).reduce((sum, n) => sum + n, 0), etaMs: null, failures: progress.failures, updatedAt: progress.updatedAt };
+    activeElapsedMs: Object.values(progress.elapsedMs).reduce((sum, n) => sum + n, 0), etaMs: null, failures: progress.failures, updatedAt: progress.updatedAt,
+    ...(completed ? { completedAt: progress.completedAt, pageCounts: { written: 0, created: 0, updated: 0 } } : {}) };
 }
 
 export function parseMaintenanceInitialActivity(value: unknown): MaintenanceInitialActivity {
@@ -184,7 +192,7 @@ export function maintenanceStageLabel(stage: MaintenanceActivityStage, english =
     : { scan: "扫描", decompose: "拆知识点", plan: "汇总查重", write: "写Wiki", finalize: "收尾" })[stage];
 }
 export interface MaintenancePageCounts { written: number; created: number; updated: number }
-export interface MaintenanceUserReceipt { version: 1; text: string; sourceCount?: number; pageCounts?: Readonly<MaintenancePageCounts> }
+export interface MaintenanceUserReceipt { version: 1; text: string; sourceCount?: number; skippedSourceCount?: number; pageCounts?: Readonly<MaintenancePageCounts> }
 export function maintenancePageCounts(record: Readonly<KnowledgeMaintenanceRecord>): MaintenancePageCounts {
   const pages = new Map<string, "missing" | "file">();
   for (const item of record.p1?.writingPlan ?? []) if (record.p1?.committedPages[item.id]) pages.set(item.targetPath, item.expectedTarget.kind);
@@ -203,7 +211,7 @@ export function maintenanceTaskTitle(activity: Pick<MaintenanceActivity, "source
   if (activity.sourceCount === null) return english ? "Organize knowledge" : "整理知识库";
   return english ? `Organize knowledge (${activity.sourceCount} sources)` : `整理知识库（${activity.sourceCount} 篇资料）`;
 }
-export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "sourceCount" | "pageCounts"> & Partial<Pick<MaintenanceActivity, "upgradeCounts" | "checkup" | "followupCount">>, english = false): string {
+export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "sourceCount" | "pageCounts"> & Partial<Pick<MaintenanceActivity, "upgradeCounts" | "checkup" | "followupCount" | "skippedSourceCount">>, english = false): string {
   if (activity.checkup) {
     const count = activity.upgradeCounts?.wikiCompleted ?? 0;
     if (!count && activity.followupCount) return english ? `${activity.followupCount} items to continue` : `${activity.followupCount} 项待继续`;
@@ -219,6 +227,12 @@ export function maintenanceCompletionText(activity: Pick<MaintenanceActivity, "s
   }
   const { sourceCount, pageCounts } = activity;
   if (sourceCount === null || !pageCounts) return english ? "Organizing completed." : "这次整理已完成。";
+  const skipped = activity.skippedSourceCount ?? 0;
+  if (skipped) {
+    const processed = sourceCount - skipped;
+    return english ? `Organized ${processed} sources, skipped ${skipped}. Wiki pages: ${pageCounts.written} (${pageCounts.created} new, ${pageCounts.updated} updated)`
+      : `已整理 ${processed} 篇，跳过 ${skipped} 篇。生成 ${pageCounts.written} 页 Wiki（新建 ${pageCounts.created} 页，更新 ${pageCounts.updated} 页）`;
+  }
   return english ? `Organized ${sourceCount} sources and produced ${pageCounts.written} Wiki pages (${pageCounts.created} new, ${pageCounts.updated} updated)`
     : `整理完 ${sourceCount} 篇资料，生成 ${pageCounts.written} 页 Wiki（新建 ${pageCounts.created} 页，更新 ${pageCounts.updated} 页）`;
 }
@@ -238,10 +252,18 @@ export function maintenanceStepText(step: Readonly<MaintenanceActivityStep>, eng
     : `${step.stage === "decompose" ? "已读完" : "已写好"} ${step.completed} ${unit}，还剩 ${remaining} ${unit}（共 ${step.total} ${unit}）`;
 }
 export function maintenanceReceiptForRecord(record: Readonly<KnowledgeMaintenanceRecord>): MaintenanceUserReceipt {
-  const state = record.p1!, pageCounts = maintenancePageCounts(record), sourceCount = new Set(record.sources.map(source => source.path)).size;
-  const text = state.phase === "completed" && record.result.status !== "partial" ? maintenanceCompletionText({ sourceCount, pageCounts })
-    : !isP1Open(record) ? maintenancePartialCompletionText(record)
-    : state.phase === "decompose" ? maintenanceStepText({ stage: "decompose", completed: new Set(state.decompositions.map(d => d.sourcePath)).size, total: sourceCount, state: "running" })
+  const state = record.p1!, pageCounts = maintenancePageCounts(record);
+  const skipped = record.sources.flatMap(source => source.skipReason ? [source.skipReason] : []);
+  const skippedSourceCount = skipped.length;
+  const total = record.sources.length;
+  const sourceCount = !isP1Open(record) ? record.sources.filter(source => source.status === "processed").length : total - skippedSourceCount;
+  const skipReasons = [...new Set(skipped.map(reason => maintenanceVisibleCopyIsSafe(reason) ? reason.replace(/\s+/gu, " ").slice(0, 80) : "按本批要求跳过"))].slice(0, 3).join("、");
+  const text = state.phase === "completed" && record.result.status !== "partial"
+    ? skippedSourceCount
+      ? `已整理 ${sourceCount} 篇，跳过 ${skippedSourceCount} 篇：${skipReasons}。生成 ${pageCounts.written} 页 Wiki（新建 ${pageCounts.created} 页，更新 ${pageCounts.updated} 页）`
+      : maintenanceCompletionText({ sourceCount, pageCounts })
+    : !isP1Open(record) ? maintenancePartialCompletionText(record) + (skippedSourceCount ? `跳过 ${skippedSourceCount} 篇：${skipReasons}。` : "")
+    : state.phase === "decompose" ? maintenanceStepText({ stage: "decompose", completed: state.decompositions.filter(d => state.segmentedSources?.[d.sourcePath]?.complete !== false).length, total: sourceCount, state: "running" })
     : state.phase === "write" ? maintenanceStepText({ stage: "write", completed: pageCounts.written, total: new Set(state.writingPlan.map(item => item.targetPath)).size, state: "running" })
     : state.phase === "finalize" ? "正在补链接和领域地图" : "正在汇总知识，核对已有内容。";
   const reminders = state.phase === "completed" ? state.p2?.finalization.filter(item => !!state.p2?.committedFinalization[item.id]).flatMap(item => item.reminders ?? []) ?? [] : [];
@@ -255,7 +277,7 @@ export function maintenanceReceiptForRecord(record: Readonly<KnowledgeMaintenanc
   const placementText = [placed ? `${placed} 篇放进分支` : "", pending ? `${pending} 篇待归位` : ""]
     .filter(Boolean).join("，");
   return { version: 1, text: text + (placementText ? `，${placementText}。` : "") +
-    (reminderText ? ` ${reminderText}` : ""), sourceCount, pageCounts };
+    (reminderText ? ` ${reminderText}` : ""), sourceCount, ...(skippedSourceCount ? { skippedSourceCount } : {}), pageCounts };
 }
 export function maintenanceActivityText(activity: Readonly<MaintenanceActivity>, english = false): string {
   if (activity.status === "completed") return maintenanceCompletionText(activity, english);

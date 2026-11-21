@@ -57,6 +57,8 @@ OLDER RELEASE CONTENT
     assert.equal(notes.type, type);
     assert.equal(notes.heroPath, "assets/releases/hero.png");
     assert.ok(notes.body.startsWith(`<!-- release-type: ${type} -->\n# ${title}\n`));
+    assert.equal(notes.body.includes(`类型：${zh}`), type !== "fix");
+    assert.equal(notes.body.includes(`Type: ${en}`), type !== "fix");
     assert.equal(notes.body.match(/<!-- release-type:/gu).length, 1);
     assert.ok(!notes.body.includes("OLDER RELEASE CONTENT"));
     assert.ok(!notes.body.includes(`## ${version} -`));

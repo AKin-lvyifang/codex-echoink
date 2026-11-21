@@ -63,12 +63,12 @@ const MODULE_SKILLS: Readonly<Record<string, AgentModuleCapability>> = {
   "obsidian-markdown": "knowledge", "obsidian-bases": "knowledge", "json-canvas": "knowledge",
   "finance-bill-import": "finance", "finance-analysis": "finance", "finance-operations": "finance", "todo-operations": "todos"
 };
-const BASE_TOOLS = new Set(["task_update", "user_question"]);
+const BASE_TOOLS = new Set(["task_update", "user_question", "resource_lookup"]);
 /** Router-card tools. Writes and networking remain the workers' job. */
 export const COMPANY_ROUTER_TOOLS = new Set(["company_roster", "task_dispatch", "task_message", "task_stop", "task_status", "project_propose", "project_accept"]);
 export const COMPANY_WORKER_TOOLS = new Set(["report_to_router"]);
 /** Read-only context helps the router understand requests and assign work. */
-const ROUTER_READ_TOOLS = new Set(["user_question", "task_update", "note_read", "memory_search", "memory_read", "knowledge_search", "knowledge_read", "explore_concept"]);
+const ROUTER_READ_TOOLS = new Set(["user_question", "task_update", "resource_lookup", "note_read", "memory_search", "memory_read", "knowledge_search", "knowledge_read", "explore_concept"]);
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
 const VAULT_TOOLS = new Set(["vault_search", "note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete"]);
 const ORDINARY_READ_CLI_COMMANDS = new Set(["read", "search", "search:context", "file", "files", "folder", "folders", "outline", "wordcount"]);

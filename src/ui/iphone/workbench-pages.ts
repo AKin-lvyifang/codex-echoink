@@ -12,6 +12,7 @@ import type { WorkbenchSignal, WorkbenchSnapshot } from "../../home/workbench-ty
 import type { MobileSession } from "../../mobile/store";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { shellIconButton } from "../mobile/shell-controls";
+import { mountMobileReleaseReminders } from "../mobile/workbench-release-reminders";
 import { createIPhoneComposer, createInlineQuestion, requestIPhoneTaskResume } from "./composer";
 import type { IPhonePageContext } from "./workbench-contract";
 import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
@@ -105,9 +106,12 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
     button.addEventListener("click", () => { void ctx.host.openModule(module.id).catch(error => ctx.error(error)); }); navigation.append(button);
   }
   const companySlot = el(ctx.document, "div", "ip-company-slot");
+  const releases = el(ctx.document, "div", "ip-rows echoink-mobile-release-reminders");
+  releases.setAttribute("aria-live", "polite");
+  const releaseReminders = mountMobileReleaseReminders(content, releases, ctx.host, "ip", { icon: iphoneIcon, button: iphoneButton }, ctx.shell);
   const topTasks = el(ctx.document, "div", "ip-task-groups"), signals = el(ctx.document, "div", "ip-signals"), bottomTasks = el(ctx.document, "div", "ip-completed-group"), todos = el(ctx.document, "div", "ip-home-todos");
   const readError = el(ctx.document, "div", "ip-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
-  content.append(header, strip, navigation, companySlot, topTasks, signals, bottomTasks, todos, readError);
+  content.append(header, strip, navigation, releases, companySlot, topTasks, signals, bottomTasks, todos, readError);
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, topTasks);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "";
   const questions = new Map<string, ReturnType<typeof createInlineQuestion>>();
@@ -254,7 +258,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
   };
   renderTasks(); void loadFacts();
   const unsubscribeRuntime = ctx.host.runtime.subscribe(() => { renderTasks(); });
-  const unsubscribeFacts = ctx.host.workbench.subscribe(() => { renderTasks(); void loadFacts(); });
+  const unsubscribeFacts = ctx.host.workbench.subscribe(() => { releaseReminders.refresh(); renderTasks(); void loadFacts(); });
   const unsubscribeIdentity = ctx.host.services.subscribeIdentity(() => { renderTasks(); renderFacts(); });
   const unsubscribeCompany = ctx.host.company?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
   const unsubscribeSync = ctx.host.syncOverview?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
@@ -276,7 +280,7 @@ export function createHomePage(ctx: IPhonePageContext): MobileShellPage {
       if (task && iphoneTaskStatus(task) === "running") card.querySelector(".ip-status")?.replaceWith(iphoneStatus(ctx.document, task));
     }
   }, 60_000);
-  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
+  return { id: "iphone-home", title: "工作台", header: "content", content, dispose() { disposed = true; window?.clearInterval(clock); releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot); questions.forEach(question => question.dispose()); questions.clear(); } };
 }
 
 export function createAgentPage(ctx: IPhonePageContext, agentId: string): MobileShellPage {

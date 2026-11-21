@@ -40,8 +40,10 @@ export function maintenanceUserReceiptFromResult(value: unknown): Readonly<impor
   if (receipt.version !== 1 || typeof receipt.text !== "string" || !receipt.text.trim() || receipt.text.length > 2_000 || !maintenanceVisibleCopyIsSafe(receipt.text)) return null;
   const integer = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   if (receipt.sourceCount !== undefined && !integer(receipt.sourceCount)) return null;
+  if (receipt.skippedSourceCount !== undefined && !integer(receipt.skippedSourceCount)) return null;
   const counts = receipt.pageCounts as Record<string, unknown> | undefined;
   if (counts && (!integer(counts.written) || !integer(counts.created) || !integer(counts.updated) || counts.created + counts.updated !== counts.written)) return null;
   return { version: 1, text: receipt.text, ...(receipt.sourceCount === undefined ? {} : { sourceCount: receipt.sourceCount }),
+    ...(receipt.skippedSourceCount === undefined ? {} : { skippedSourceCount: receipt.skippedSourceCount }),
     ...(counts ? { pageCounts: { written: counts.written as number, created: counts.created as number, updated: counts.updated as number } } : {}) };
 }

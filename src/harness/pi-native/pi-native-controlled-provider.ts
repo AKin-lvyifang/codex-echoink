@@ -16,6 +16,9 @@ import type {
   PiProviderRuntimeConfigPort
 } from "../pi/production-pi-model-resolver";
 import type { ApiProviderProtocol } from "../../settings/provider-presets";
+import { stableToolOrder } from "../pi/prompt-cache";
+import { finishLimitedSocialReply, shortSocialOutputLimit } from "../short-social-turn";
+import type { XiaoechoPurpose } from "../../membership/xiaoecho-turn";
 import { appendCurrentDateContext } from "../current-date-context";
 import {
   withDiscoveredPiReasoningModel,
@@ -30,6 +33,8 @@ export interface PiNativeProviderExecutionContext {
   conversationId: string;
   turnId: string;
   correlationId: string;
+  purpose?: XiaoechoPurpose;
+  shortReply?: boolean;
 }
 
 export type PiNativeModelMetadataErrorCode =
@@ -313,8 +318,10 @@ function controlledProviderStream(
       );
       const providerContext = cloneProviderContext(
         context,
-        options.supportsToolCalling !== false
+        options.supportsToolCalling !== false,
+        execution.shortReply === true
       );
+      const shortLimit = execution.shortReply ? shortSocialOutputLimit(providerContext.systemPrompt, providerContext.messages) : undefined;
       options.observeRequest?.({
         execution,
         model: registeredModel,
@@ -327,11 +334,11 @@ function controlledProviderStream(
         context: providerContext,
         options: {
           signal: streamOptions?.signal,
-          ...(streamOptions?.reasoning
+          ...(!execution.shortReply && streamOptions?.reasoning
             ? { reasoning: streamOptions.reasoning }
             : {}),
           ...requestMaxTokens(
-            streamOptions?.maxTokens,
+            shortLimit ?? streamOptions?.maxTokens,
             options.automaticOutputLimit ? undefined : options.maxTokens,
             registeredModel.maxTokens,
             registeredModel.api === "anthropic-messages" && !options.automaticOutputLimit
@@ -342,7 +349,9 @@ function controlledProviderStream(
             2,
             0
           ),
-          cacheRetention: "none",
+          cacheRetention: execution.purpose === "conversation" || execution.purpose === "tool_step"
+            ? execution.shortReply ? "none" : "short"
+            : "none",
           maxRetries: 0,
           timeoutMs: boundedInteger(
             options.timeoutMs,
@@ -353,7 +362,16 @@ function controlledProviderStream(
         }
       });
       let terminal: Extract<AssistantMessageEvent, { type: "done" | "error" }> | undefined;
-      for await (const event of upstream) {
+      for await (const incoming of upstream) {
+        let event = incoming;
+        if (execution.shortReply && incoming.type === "done" && (incoming.reason === "length" || incoming.reason === "toolUse")) {
+          const user = [...providerContext.messages].reverse().find(message => message.role === "user");
+          const userText = typeof user?.content === "string" ? user.content
+            : user?.content.flatMap(part => part.type === "text" ? [part.text] : []).join("") ?? "";
+          const draft = incoming.message.content.flatMap(part => part.type === "text" ? [part.text] : []).join("");
+          event = { type: "done", reason: "stop", message: { ...incoming.message, stopReason: "stop",
+            content: [{ type: "text", text: finishLimitedSocialReply(draft, userText) }] } };
+        }
         options.assertResponseAllowed?.();
         if (!options.assertResponseAllowed) {
           output.push(event);
@@ -390,20 +408,21 @@ function controlledProviderStream(
  */
 function cloneProviderContext(
   context: Context,
-  supportsToolCalling: boolean
+  supportsToolCalling: boolean,
+  shortReply: boolean
 ): Context {
   return deepFreeze({
-    systemPrompt: appendCurrentDateContext(context.systemPrompt),
+    systemPrompt: shortReply ? context.systemPrompt : appendCurrentDateContext(context.systemPrompt),
     messages: context.messages.map((message) => {
       if (message.role !== "toolResult") return structuredClone(message);
       const providerMessage = { ...message };
       Reflect.deleteProperty(providerMessage, "details");
       return structuredClone(providerMessage);
     }),
-    ...(!supportsToolCalling || context.tools === undefined
+    ...(!supportsToolCalling || shortReply || context.tools === undefined
       ? {}
       : {
-          tools: context.tools.map((tool) => ({
+          tools: stableToolOrder(context.tools).map((tool) => ({
             name: tool.name,
             description: tool.description,
             parameters: structuredClone(tool.parameters),
@@ -460,7 +479,9 @@ function captureExecutionContext(
     runId: input.runId,
     conversationId: input.conversationId,
     turnId: input.turnId,
-    correlationId: input.correlationId
+    correlationId: input.correlationId,
+    ...(input.purpose ? { purpose: input.purpose } : {}),
+    ...(input.shortReply ? { shortReply: true } : {})
   });
 }
 

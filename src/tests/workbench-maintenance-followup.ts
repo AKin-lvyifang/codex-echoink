@@ -37,6 +37,177 @@ const checklistContinuation = "/maintain 继续当前这批14篇来源的原维�
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  await scenario("large-source-segments-survive-reopen-and-bound-provider-context", async f => {
+    const large = "raw/articles/合成大文件.md";
+    const line = "这段合成观测记录只用于检验长文的读取和拆解范围。";
+    const content = Array.from({ length: 2000 }, (_, i) => `${line} PORTION_${i.toString().padStart(4, "0")} ${line}\n`).join("");
+    const sourceRevision = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    await f.write(large, content);
+    const scope = { mode: "batch", sourcePaths: [large] } as const;
+    const quote = content.split("\n")[0];
+    const unit = { ...fixtureKnowledgeUnit("large-unit", large, content, "维护成果"), evidence: [{ sourcePath: large, sourceRevision, quote }] };
+    const request = knowledgeMaintenanceBatchPrompt({ sourcePaths: [large], batchIndex: 0, expectedBatches: 1, origin: "workbench" });
+    let nextOffset = 0, chunks = 0;
+    const providerBytes: number[] = [];
+    const read = (tool: ScriptTool) => tool("note_read", { relativePath: large, offset: nextOffset, expectedContentRevision: sourceRevision });
+    const decompose = (body: ScriptBody, tool: ScriptTool) => {
+      const snapshot = JSON.parse(lastToolText(body)).snapshot;
+      const { start, end, nextOffset: next } = snapshot.segment;
+      assert.equal(start, nextOffset);
+      nextOffset = next ?? content.length;
+      chunks++;
+      const visibleRaw = body.messages.filter(message => message.role === "tool" && (String(message.content).match(/PORTION_/gu)?.length ?? 0) > 1);
+      assert.equal(visibleRaw.length, 1, "checkpointed source bodies are removed from later provider requests");
+      providerBytes.push(Buffer.byteLength(JSON.stringify(body.messages)));
+      return tool("knowledge_maintain", { stage: "decompose", decompositions: [{ sourcePath: large, summary: "合成观测与范围校验",
+        units: start === 0 ? [unit] : [], segment: { start, end, sourceRevision }, complete: next === undefined }] });
+    };
+    await f.runScripted(request, { maintenanceScope: scope }, (body, tool, call) =>
+      call === 0 ? read(tool) : call === 1 ? decompose(body, tool) : undefined);
+    assert.ok(nextOffset > 0 && nextOffset < content.length);
+    await f.compactBeforeReopen();
+    await f.reopen();
+    const before = await f.wiki();
+    const intro = createMaintenanceSectionSnapshot(before).regions.find(region => region.kind === "introduction")!;
+    const result = await f.runScripted("继续整理", {}, (body, tool, call) => {
+      if (call === 0) return tool("knowledge_maintain", { stage: "inspect", view: "units" });
+      const last = lastToolText(body);
+      if (last.includes('"snapshot"') && last.includes('"segment"')) return decompose(body, tool);
+      if (nextOffset < content.length) return read(tool);
+      if (last.includes('"phase":"plan"')) return tool("note_read", { relativePath: wiki });
+      if (last.includes('"snapshot"') && !last.includes('"stage":"sections"')) return tool("knowledge_maintain", { stage: "plan",
+        writingPlan: [{ id: "large", targetPath: wiki, sourcePaths: [large], expectedTarget: { kind: "file",
+          contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` },
+        knowledge: { unitIds: [unit.id], decision: { kind: "same_point", reason: "同一主题", candidatePath: wiki } } }] });
+      if (last.includes('"phase":"write"')) return tool("knowledge_maintain", { stage: "sections", targetPath: wiki });
+      if (last.includes('"stage":"sections"')) return tool("knowledge_maintain", { stage: "write", pageId: "large",
+        sectionPatches: [{ regionId: intro.id, operation: "replace", content: "来自完整长文的观测知识。\n\n" }] });
+      return undefined;
+    });
+    assert.equal(result.terminalState, "completed");
+    assert.ok(chunks >= 10);
+    assert.ok(Buffer.byteLength(content) >= 300_000);
+    assert.match(await f.wiki(), /来自完整长文的观测知识/u);
+    assert.match(await fs.readFile(path.join(f.vault, large), "utf8"), /提炼到:/u);
+    const run = await f.productRuns.read(result.productRunId);
+    assert.deepEqual(run?.maintenance?.processedSourcePaths, [large]);
+    const compactedRequests = f.bodies.filter(body => body.messages.some((message: { role: string; content: unknown }) =>
+      message.role === "tool" && String(message.content).includes("本段拆解已保存")));
+    assert.ok(compactedRequests.length);
+    for (const body of compactedRequests) {
+      const callIds = new Set(body.messages.flatMap((message: { tool_calls?: { id: string }[] }) => message.tool_calls?.map(call => call.id) ?? []));
+      for (const message of body.messages.filter((item: { role: string }) => item.role === "tool")) {
+        assert.ok(callIds.has(message.tool_call_id));
+        assert.ok(typeof message.content === "string" && message.content.trim());
+      }
+    }
+    console.log(JSON.stringify({ scenario: "large-source", sourceBytes: Buffer.byteLength(content), chunks, providerRequestMessagesPeakBytes: Math.max(...providerBytes) }));
+  });
+  await scenario("skip-from-conversation-keeps-selected-source-pending", async f => {
+    const paths = [source, other];
+    const support = await fs.readFile(path.join(f.vault, source), "utf8");
+    const original = await fs.readFile(path.join(f.vault, other), "utf8");
+    const before = await f.wiki();
+    const unit = fixtureKnowledgeUnit("skip-remaining", source, support, "维护成果");
+    await f.runScripted("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, (body, tool, call) => {
+      if (call === 0) return tool("note_read", { relativePath: source });
+      if (call === 1) return tool("knowledge_maintain", { stage: "decompose", decompositions: [{ sourcePath: source, summary: "可读资料", units: [unit] }] });
+      return undefined;
+    });
+    const moved = path.join(f.vault, "暂时不可用.md");
+    await fs.rename(path.join(f.vault, other), moved);
+    const skipped = await f.runScripted(`跳过 \`${other}\``, {}, (body, tool, call) => {
+      if (call === 0) return tool("note_read", { relativePath: other });
+      if (call === 1) return tool("knowledge_maintain", { stage: "skip", skip: { sourcePath: other, reason: "读取失败" } });
+      if (call === 2) return tool("note_read", { relativePath: wiki });
+      if (call === 3) return tool("knowledge_maintain", { stage: "plan", writingPlan: [{
+        id: "kept", targetPath: wiki, sourcePaths: [source], expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` },
+        knowledge: { unitIds: [unit.id], decision: { kind: "same_point", reason: "同一主题", candidatePath: wiki } }
+      }] });
+      if (call === 4) return tool("knowledge_maintain", { stage: "sections", targetPath: wiki });
+      if (call === 5) return tool("knowledge_maintain", { stage: "write", pageId: "kept", sectionPatches: [{ regionId: createMaintenanceSectionSnapshot(before).regions.find(region => region.kind === "introduction")!.id, operation: "replace", content: "可读资料整理结果。\n\n" }] });
+      return undefined;
+    });
+    await fs.rename(moved, path.join(f.vault, other));
+    assert.equal(skipped.terminalState, "completed");
+    const outcome = (await f.productRuns.read(skipped.productRunId))?.maintenance;
+    assert.deepEqual(outcome?.processedSourcePaths, [source]);
+    assert.deepEqual(outcome?.pendingSourcePaths, [other]);
+    assert.equal(await fs.readFile(path.join(f.vault, other), "utf8"), original);
+    const recent = (await f.branchEntries()).filter(entry => entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "knowledge_maintain").at(-1);
+    assert.match(JSON.stringify(recent), /已整理 1 篇，跳过 1 篇：读取失败/u);
+  });
+  await scenario("new-conversation-reorganizes-sources-after-removing-large-note", async f => {
+    await f.write(other, "旧版本读不完的原文".repeat(4000));
+    const paths = [source, other];
+    const unit = fixtureKnowledgeUnit("old-checkpoint", source, await fs.readFile(path.join(f.vault, source), "utf8"), "维护成果");
+    await f.runScripted("/maintain 旧批只拆解", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, (_body, tool, call) => {
+      if (call === 0) return tool("note_read", { relativePath: source });
+      if (call === 1) return tool("knowledge_maintain", { stage: "decompose", decompositions: [{ sourcePath: source, summary: "旧批检查点", units: [unit] }] });
+      return undefined;
+    });
+    await fs.rename(path.join(f.vault, other), path.join(f.vault, "移出后.md"));
+    await f.createConversation("fresh-after-move");
+    const fresh = await f.run("/maintain 整理剩余资料", { conversationId: "fresh-after-move", maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source);
+    assert.equal(fresh.result.terminalState, "completed");
+    assert.deepEqual((await f.productRuns.read(fresh.result.productRunId))?.maintenance?.processedSourcePaths, [source]);
+  });
+  await scenario("short-batch-still-reads-each-of-twenty-sources-once", async f => {
+    const paths = Array.from({ length: 20 }, (_, index) => `raw/articles/短笔记-${index}.md`);
+    for (const [index, relative] of paths.entries()) await f.write(relative, `# 短篇${index}\n短篇合成观测记录${index}。\n`);
+    const result = await f.run(knowledgeMaintenanceBatchPrompt({ sourcePaths: paths, batchIndex: 0, expectedBatches: 1, origin: "workbench" }),
+      { maintenanceScope: { mode: "batch", sourcePaths: paths } }, paths);
+    assert.equal(result.result.terminalState, "completed");
+    assert.deepEqual((await f.productRuns.read(result.result.productRunId))?.maintenance?.processedSourcePaths, paths);
+    const reads = (await f.branchEntries()).flatMap(entry => entry.type === "message" && entry.message.role === "assistant"
+      ? entry.message.content.filter(part => part.type === "toolCall" && part.name === "note_read") : []);
+    assert.equal(reads.length, 21, "one read per source plus the existing Wiki target");
+  });
+  await scenario("two-short-sources-share-the-model-id-and-write-in-one-turn", async f => {
+    const paths = [source, other];
+    const before = await f.wiki();
+    const units = await Promise.all(paths.map(async relative =>
+      fixtureKnowledgeUnit("s01_u1", relative, await fs.readFile(path.join(f.vault, relative), "utf8"), "维护成果")));
+    const result = await f.runScripted("/maintain 整理两份短文", { maintenanceScope: { mode: "batch", sourcePaths: paths } }, (body, tool, call) => {
+      if (call < 2) return tool("note_read", { relativePath: paths[call] });
+      if (call === 2) return tool("knowledge_maintain", { stage: "decompose", decompositions: paths.map((relative, index) => ({
+        sourcePath: relative, summary: "校准摘要", units: [units[index]]
+      })) });
+      if (call === 3) {
+        const receipt = JSON.parse(lastToolText(body).split("\n")[1]);
+        assert.deepEqual(receipt.inspection.items.filter((item: { sourcePath?: string }) => item.sourcePath).map((item: { unitId: string }) => item.unitId),
+          ["s01_u1", "s01_u1-2"]);
+        return tool("note_read", { relativePath: wiki });
+      }
+      if (call === 4) return tool("knowledge_maintain", { stage: "plan", writingPlan: [{ id: "both", targetPath: wiki, sourcePaths: paths,
+        expectedTarget: { kind: "file", contentRevision: `sha256:${createHash("sha256").update(before).digest("hex")}` },
+        knowledge: { unitIds: ["s01_u1", "s01_u1-2"], decision: { kind: "same_point", reason: "核对两份资料", candidatePath: wiki } } }] });
+      if (call === 5) return tool("knowledge_maintain", { stage: "sections", targetPath: wiki });
+      if (call === 6) return tool("knowledge_maintain", { stage: "write", pageId: "both", sectionPatches: [{
+        regionId: createMaintenanceSectionSnapshot(before).regions.find(region => region.kind === "introduction")!.id, operation: "replace", content: "两份资料已核对。\n\n"
+      }] });
+      return undefined;
+    });
+    assert.equal(result.terminalState, "completed");
+    assert.deepEqual((await f.productRuns.read(result.productRunId))?.maintenance?.processedSourcePaths, paths);
+    assert.equal((await f.branchEntries()).some(entry => entry.type === "message" && entry.message.role === "toolResult"
+      && entry.message.toolName === "knowledge_maintain" && entry.message.isError), false);
+  });
+  await scenario("provider-protocol-failure-does-not-report-an-earlier-tool-error", async f => {
+    const raw = await fs.readFile(path.join(f.vault, source), "utf8");
+    const unit = fixtureKnowledgeUnit("s01_u1", source, raw, "维护成果");
+    const result = await f.runScripted("/maintain 核对模型报错", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, (_body, tool, call) => {
+      if (call === 0) return tool("note_read", { relativePath: source });
+      if (call === 1 || call === 2) return tool("knowledge_maintain", { stage: "decompose", decompositions: [{ sourcePath: source,
+        summary: "合成摘要", units: [call === 2 ? unit : { ...unit, evidence: [{ ...unit.evidence[0], quote: "虚构引用" }] }] }] });
+      const malformed = tool("knowledge_maintain", { stage: "plan" });
+      malformed.function.arguments = '{"stage":"plan",';
+      return malformed;
+    });
+    assert.equal(result.terminalState, "failed");
+    assert.match(result.error ?? "", /^provider_protocol_failed\n.*provider_tool_arguments_json_invalid/su);
+    assert.doesNotMatch(result.error ?? "", /维护工具未执行|虚构引用/u);
+  });
   await scenario("r-da4ae1-partial-new-conversation-guard", async f => {
     await f.write(source, "---\n<% synthetic_template %>\n---\n# 星系专题\n星系专题记录可追溯的观测资料。\n");
     const settled = await f.run("/maintain 原批", { maintenanceScope: { mode: "batch", sourcePaths: [source] } }, source);
@@ -497,6 +668,13 @@ export async function runWorkbenchMaintenanceFollowupTests(root: string): Promis
   }
 }
 
+type ScriptBody = { messages: { role: string; content: unknown }[] };
+type ScriptTool = (name: string, args: object) => { id: string; type: string; function: { name: string; arguments: string } };
+
+function lastToolText(body: ScriptBody): string {
+  return String(body.messages.findLast(message => message.role === "tool")?.content ?? "");
+}
+
 async function fixture(root: string, name: string, emptyRaw = false) {
   const vault = await fs.mkdtemp(path.join(root, `v9-${name}-`));
   await fs.mkdir(path.join(vault, "raw/articles"), { recursive: true });
@@ -512,11 +690,31 @@ async function fixture(root: string, name: string, emptyRaw = false) {
   const replies: any[] = [], bodies: any[] = [], runs: any[] = [];
   let responseNumber = 0, callNumber = 0, blockNextRequest = false, injectUserEdit = false;
   let conflictRegionId: string | undefined;
+  let scriptedReply: ((body: ScriptBody) => unknown) | undefined;
   const server = createServer(async (req, res) => {
     let body = ""; for await (const chunk of req) body += chunk;
-    bodies.push(JSON.parse(body));
+    const payload = JSON.parse(body);
+    bodies.push(payload);
     if (blockNextRequest) { blockNextRequest = false; return; }
-    const message = replies.shift();
+    const discoversMaintenance = name === "unmatched-scope-readable" && bodies.length === 1;
+    if (discoversMaintenance) {
+      assert(payload.tools.some((tool: any) => tool.function.name === "resource_lookup"));
+      assert(!payload.tools.some((tool: any) => tool.function.name === "knowledge_maintain"));
+    }
+    const message = discoversMaintenance
+      ? {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: `v9-${++callNumber}`,
+          type: "function",
+          function: {
+            name: "resource_lookup",
+            arguments: JSON.stringify({ items: [{ action: "tools", id: "knowledge_maintain" }] }),
+          },
+        }],
+      }
+      : scriptedReply?.(payload) ?? replies.shift();
     if (!message) { res.writeHead(500); res.end("Unexpected extra provider request"); return; }
     if (injectUserEdit && message.tool_calls?.some((call: any) => call.function.name === "knowledge_maintain" && JSON.parse(call.function.arguments).stage === "write")) {
       injectUserEdit = false;
@@ -612,6 +810,16 @@ async function fixture(root: string, name: string, emptyRaw = false) {
     wiki: () => fs.readFile(path.join(vault, wiki), "utf8"),
     write: async (relative: string, text: string) => { await fs.mkdir(path.dirname(path.join(vault, relative)), { recursive: true }); await fs.writeFile(path.join(vault, relative), text); },
     setDecoyText: (text: string) => fs.writeFile(path.join(vault, other), `# 第二范围\n${text}。这篇不相关资料专门检测确认语被拿去检索。\n`),
+    compactBeforeReopen: async () => {
+      await bundle.runtime.releaseConversation("followup");
+      const conversation = (await catalog.get("followup"))!;
+      const manager = SessionManager.open(conversation.sessionFile!);
+      const keep = manager.getBranch().findLast(entry => entry.type === "message" && entry.message.role === "assistant");
+      assert.ok(keep?.type === "message" && keep.message.role === "assistant");
+      manager.appendCompaction("已保存首段拆解，继续同一原文版本。", keep.id, 120_000);
+      assert.equal(manager.buildSessionContext().messages.some(message => message.role === "toolResult" && message.toolName === "note_read"), false);
+      persistPiActiveLeaf({ sessionRoot: catalog.sessionRootPath, sessionManager: manager });
+    },
     reopen: async () => { await bundle.runtime.shutdown(); bundle = await createPiProductionRuntimeBundle(plugin, localData); observeRawQueries(); },
     close: async () => { await bundle.runtime.shutdown(); unbind(); await new Promise<void>(resolve => server.close(() => resolve())); },
     interruptConfirmation: async () => {
@@ -623,6 +831,19 @@ async function fixture(root: string, name: string, emptyRaw = false) {
       assert.ok(bodies.length > start, "the confirmation was accepted and its provider request began before interruption");
       await bundle.runtime.abort("followup");
       const result = await handle.result; runs.push({ text: confirmation, result }); return result;
+    },
+    runScripted: async (text: string, extra: Partial<PiChatSubmitRequest>, next: (body: ScriptBody, tool: ScriptTool, call: number) => ReturnType<ScriptTool> | undefined) => {
+      let call = 0;
+      const tool: ScriptTool = (name, args) => ({ id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
+      scriptedReply = (body) => {
+        const requested = next(body, tool, call++);
+        return requested ? { role: "assistant", content: null, tool_calls: [requested] } : { role: "assistant", content: "本轮依据工具真实结果结束。" };
+      };
+      try {
+        const handle = await bundle.runtime.submit({ conversationId: "followup", text, submittedAt: Date.now(), permission: "workspace-write",
+          runtimeProviderId: provider.runtimeProviderId, modelId: provider.models[0].id, reasoning: "none", memoryMode: "no_memory", ...extra });
+        return await handle.result;
+      } finally { scriptedReply = undefined; }
     },
     run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" | "concurrent-write" | "unread-sections" | "stale-region" = "all") => {
       const requestStart = bodies.length;

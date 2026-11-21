@@ -179,8 +179,17 @@ export async function resumeScenarios({ MobileRuntime, MobileStore, loadMobileSe
 
   await test("product tools persist the real run journal and a resumed model cannot duplicate a verified old write", async () => {
     const wait = gate(); let calls = 0;
-    const state = await fixture(async () => { calls++; if (calls === 2) return wait.promise; return calls === 1 || calls === 3 ? answer("openai-completions", "", [[`write-${calls}`, "note_create", { path: "输出/真实回执.md", content: "exact" }]]) : answer("openai-completions", "done"); });
-    const id = state.store.session.id, original = await state.runtime.submit("write once", id); await waitFor(() => calls === 2);
+    const state = await fixture(async request => {
+      calls++;
+      if (calls === 2) return wait.promise;
+      if (calls === 1 || calls === 3) {
+        const body = JSON.parse(request.body);
+        assert.ok(body.tools.some(tool => tool.function.name === "note_create"));
+        return answer("openai-completions", "", [[`write-${calls}`, "note_create", { path: "输出/真实回执.md", content: "exact" }]]);
+      }
+      return answer("openai-completions", "done");
+    });
+    const id = state.store.session.id, original = await state.runtime.submit("创建笔记 输出/真实回执.md，正文为 exact。", id); await waitFor(() => calls === 2);
     const operation = state.store.session.operations[0]; assert.equal(operation.runId, state.store.session.runs[0].id); assert.equal(operation.status, "completed");
     await state.runtime.stopTask(id); await original.completion; const next = await state.runtime.resumeTask(id); await next.completion;
     assert.equal(state.store.session.operations.length, 1); assert.deepEqual(state.store.session.operations[0], operation);

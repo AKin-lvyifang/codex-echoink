@@ -99,6 +99,7 @@ export interface SelectedRuntimeSkill {
 
 export interface SkillReviewLlmPort {
   call(input: Readonly<{
+    turn?: import("../../membership/xiaoecho-turn").XiaoechoTurn;
     systemPrompt: string;
     userPrompt: string;
     maxTokens: number;
@@ -106,6 +107,7 @@ export interface SkillReviewLlmPort {
 }
 
 export interface CompletedTaskSkillReviewInput {
+  readonly conversationId?: string;
   readonly productRunId: string;
   readonly request: string;
   readonly result: string;
@@ -764,6 +766,7 @@ export class SkillRuntimeCoordinator {
     );
     const raw = await llm.call({
       systemPrompt: skillReviewSystemPrompt(),
+      ...(input.conversationId ? { turn: { conversationId: input.conversationId, turnId: input.productRunId, purpose: "skill_review" as const } } : {}),
       userPrompt: JSON.stringify({
         trust: "untrusted-task-evidence",
         productRunId: input.productRunId,

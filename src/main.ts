@@ -1,4 +1,5 @@
 import { setXiaoechoLanguageProbe } from "./membership/xiaoecho-catalog";
+import { ReleaseUpdateController } from "./settings/release-update";
 import { forkPrefillText, syncForkSource, type RemoteConversationSummary, type SyncConversationMessage } from "./sync/conversations";
 import { XiaoechoCatalogService } from "./plugin/xiaoecho-catalog-service";
 import { obsidianProviderFetch } from "./plugin/pi-provider-configuration-service";
@@ -247,6 +248,7 @@ extends ActivatePiNativeConversationOptions {
 }
 
 export default class CodexForObsidianPlugin extends Plugin {
+  readonly releaseUpdate = new ReleaseUpdateController();
   private readonly reportLogin = new RunReportLogin();
   settings!: CodexForObsidianSettings;
   homeActivity: HomeActivityService | null = null;
@@ -402,6 +404,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     const dataRoot = await preparePluginDataRoot(this.getVaultPath(), this.manifest, this.app.vault.configDir);
     this.register(() => dataRoot.dispose());
     const settingsLoad = await this.loadSettings();
+    this.releaseUpdate.initialize(this.app, this.manifest.version, settingsLoad.emptyData);
     await loadNativeJournalSettings(this.app);
     registerKnowledgePrivateRoot(this.getVaultPath(), path.join(pluginDataDir(this.getVaultPath(), this.getPluginDataDirName()), "pi-agent-product-v1", "knowledge"));
     this.appearance = new EchoInkAppearance(this.app, () => this.settings.colorTheme, () => this.accountService);
@@ -1782,9 +1785,6 @@ export default class CodexForObsidianPlugin extends Plugin {
   /** Invoked only after the durable user entry has been accepted, independent of Views. */
   async onWorkbenchMessageAccepted(item: Readonly<QueuedTurnItem>): Promise<void> {
     if (!Platform.isDesktopApp) return;
-    const provider = this.settings.apiProviders.find(p => p.id === item.turnOptions.providerSettingsId);
-    const model = provider && getApiProviderModel(provider, item.turnOptions.model);
-    const draft = provider && model ? this.activePiProviderConfigurationDraft({ provider, model }) : undefined;
     const local = await this.ensurePiLocalData();
     const entry = await local.catalog.get(item.sessionId);
     if (entry?.titleSource === "pending" && !(entry.companyRole === "router" && item.turnOptions.companyProgrammatic) && !item.maintenanceScope
@@ -1792,8 +1792,6 @@ export default class CodexForObsidianPlugin extends Plugin {
       const requests = await this.readPiConversationProjection(item.sessionId).then(projection => conversationTitleRequests(projection.messages, entry?.companyRole)).catch(() => conversationTitleRequests([{ role: "user", text: item.text }], entry?.companyRole));
       await generateConversationTitle({ catalog: local.catalog, conversationId: item.sessionId,
         requests,
-        generate: draft ? prompt => this.getPiProviderConfigurationService().generateText({ draft,
-          systemPrompt: "为用户的对话生成简短标题，不超过14个字符。保持用户语言，只输出标题，不解释，不加引号。", userPrompt: prompt, timeoutMs: 12_000, maxTokens: 128 }) : undefined,
         changed: () => { void local.catalog.get(item.sessionId).then(updated => {
           const shell = this.settings.sessions.find(session => session.id === item.sessionId);
           if (updated && updated.titleSource !== "manual" && !this.manualTitleChanges.has(item.sessionId)) {
@@ -2426,7 +2424,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   async readKnowledgeInitialActivities(): Promise<import("./knowledge-base/maintenance-activity").MaintenanceActivity[]> {
     const local = await this.ensurePiLocalData();
     const visible = new Set((await local.catalog.list({ statuses: ["active"] })).map(entry => entry.conversationId));
-    return (await local.productRuns.list()).filter(run => visible.has(run.conversationId) && run.maintenanceActivity && !run.maintenanceActivity.recordId && run.maintenanceActivity.progress.status !== "completed")
+    return (await local.productRuns.list()).filter(run => visible.has(run.conversationId) && run.maintenanceActivity && !run.maintenanceActivity.recordId
+      && (run.maintenanceActivity.progress.status !== "completed" || (run.maintenanceActivity.progress.batch?.total ?? 1) > 1))
       .map(run => projectMaintenanceInitialActivity(run.maintenanceActivity!, run.conversationId, run.productRunId));
   }
   private initializeKnowledgeActivityStatusBar(): void {
@@ -2803,6 +2802,7 @@ export default class CodexForObsidianPlugin extends Plugin {
         requestId: input.requestId,
         runId: input.runId,
         stepId: input.stepId,
+        turn: input.turn,
         onUsage: input.onUsage,
         maxTokens: input.maxTokens
       })

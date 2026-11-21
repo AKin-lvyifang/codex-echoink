@@ -15,7 +15,7 @@ export interface KnowledgeMaintenanceRecord {
   at: number;
   date: string;
   result: KnowledgeMaintenanceResultEnvelope;
-  sources: { path: string; fingerprint: string; status: "processed" | "unread" | "failed"; evidencePaths: string[] }[];
+  sources: { path: string; fingerprint: string; status: "processed" | "unread" | "failed"; evidencePaths: string[]; skipReason?: string }[];
   summary: string;
   /** Only new maintenance WALs that explicitly delegated linking can carry this intent. */
   pendingLinking?: { taskId: string; sourcePaths: string[]; targetPaths: string[] };
@@ -42,7 +42,7 @@ export function hasP1PartialSettlement(record: Readonly<KnowledgeMaintenanceReco
   if (!state.writingPlan.every(item => state.committedPages[item.id]?.path === item.targetPath)
     || state.p2 && !state.p2.finalization.every(item => state.p2!.committedFinalization[item.id]?.path === item.targetPath)) return false;
   if (Object.keys(failures).some(path => !record.sources.some(source => source.path === path))) return false;
-  return record.sources.every(source => state.decompositions.some(item => item.sourcePath === source.path)
+  return record.sources.every(source => source.skipReason ? source.status === "unread" && !failures[source.path] : state.decompositions.some(item => item.sourcePath === source.path)
     && (state.finalizedSources.includes(source.path)
       ? source.status === "processed" && !failures[source.path]
       : source.status === "failed" && /^sha256:[a-f0-9]{64}$/u.test(failures[source.path]?.contentRevision ?? "")

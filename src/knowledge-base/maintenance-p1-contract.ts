@@ -46,6 +46,8 @@ export interface MaintenanceSectionPatch {
 export interface MaintenanceDecomposition {
   sourcePath: string;
   summary: string;
+  segment?: MaintenanceSourceSegment;
+  complete?: boolean;
   /** Strings are retained only for already persisted P1 records. */
   units: readonly (string | MaintenanceKnowledgeUnit)[];
 }
@@ -59,7 +61,8 @@ export interface MaintenanceWritingItem {
   newSections?: readonly string[];
 }
 export interface MaintenanceP1Action {
-  stage: "decompose" | "plan" | "write" | "resume" | "sections" | "inspect";
+  stage: "decompose" | "skip" | "plan" | "write" | "resume" | "sections" | "inspect";
+  skip?: { sourcePath: string; reason: string };
   decompositions?: readonly MaintenanceDecomposition[];
   writingPlan?: readonly MaintenanceWritingItem[];
   pageId?: string;
@@ -74,6 +77,9 @@ export interface MaintenanceP1State {
   p2?: MaintenanceP2State;
   phase: "decompose" | "plan" | "write" | "finalize" | "completed";
   sourceFingerprints: Record<string, string>;
+  /** Original model IDs for units that the host renamed within this batch. */
+  submittedUnitIds?: Record<string, string>;
+  segmentedSources?: Record<string, { sourceRevision: string; totalLength: number; ranges: MaintenanceTextRange[]; complete: boolean }>;
   decompositions: readonly MaintenanceDecomposition[];
   writingPlan: readonly MaintenanceWritingItem[];
   /** Version-bound regions. A changed, re-read uncommitted page may acquire a fresh snapshot. */
@@ -89,3 +95,4 @@ export interface MaintenanceP1State {
   /** Valid only together with all durable page/source checkpoints and issues. */
   settlement?: { version: 1; status: "partial" };
 }
+import type { MaintenanceSourceSegment, MaintenanceTextRange } from "./maintenance-read-coverage";

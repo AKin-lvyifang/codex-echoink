@@ -1,3 +1,4 @@
+import { appendRequestContext, applyPromptCacheBoundary, providerCacheKey, stableToolOrder } from "../harness/pi/prompt-cache";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import * as path from "node:path";
@@ -18,6 +19,16 @@ export function assertDatePrompt(prompt: string, date: string, weekday: string, 
 }
 
 export async function runCurrentDateContextTests(root: string): Promise<void> {
+  const first = applyPromptCacheBoundary({ system: [{ type: "text", text: appendRequestContext("stable", "old date") }] }, true);
+  const next = applyPromptCacheBoundary({ system: [{ type: "text", text: appendRequestContext("stable", "new date") }] }, true);
+  assert.deepEqual((first as any).system[0], { type: "text", text: "stable", cache_control: { type: "ephemeral" } });
+  assert.equal(JSON.stringify((first as any).system[0]), JSON.stringify((next as any).system[0]));
+  assert.deepEqual((next as any).system[1], { type: "text", text: "new date" });
+  assert.deepEqual(applyPromptCacheBoundary({ messages: [{ role: "system", content: appendRequestContext("stable", "date") }] }, false),
+    { messages: [{ role: "system", content: "stable\n\ndate" }] });
+  assert.deepEqual(stableToolOrder([{ name: "z" }, { name: "a" }]).map(tool => tool.name), ["a", "z"]);
+  assert.notEqual(providerCacheKey("a"), providerCacheKey("b"));
+
   const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const oldNow = Date.now;
   let now = new Date(2026, 10, 17, 23, 59).getTime();

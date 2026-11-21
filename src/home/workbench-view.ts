@@ -20,6 +20,8 @@ import type { TaskInterruptionInfo } from "../agents/task-resume";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
 import { workbenchGuideSteps, workbenchSetupTodos, setupTodoModuleName, type WorkbenchGuideStep, type WorkbenchSetupTodoKind } from "./workbench-setup-todos";
+import { releaseReminderRows } from "../ui/release-reminders";
+import { ReleaseNotesModal } from "./release-notes-modal";
 import { applyAmicroButton, setAmicroButtonPending } from "../settings/amicro-buttons";
 import { renderTaskAvatar } from "../ui/codex-view/agent-roster";
 import { ForegroundView } from "../ui/foreground-view";
@@ -193,6 +195,9 @@ export class EchoInkWorkbenchView extends ItemView {
     this.renderShell();
     this.observeKnowledgeActivity();
     this.foreground = new ForegroundView(this, active => this.foregroundChanged(active));
+    this.unsubscribers.push(this.plugin.releaseUpdate.subscribe(() => {
+      if (this.active()) this.renderReleaseReminders();
+    }));
     this.foregroundChanged(this.foreground.isActive());
     const service = this.plugin.getConversationRunService();
     this.unsubscribers.push(this.port.subscribe(() => this.scheduleRefresh()));
@@ -249,7 +254,9 @@ export class EchoInkWorkbenchView extends ItemView {
       this.clearTimers(); this.stopSearchWork(); this.refreshVersion++; this.refreshPending = true;
       return;
     }
+    void this.plugin.releaseUpdate.checkIfStale(this.plugin.manifest.version);
     if (this.languagePending) { this.languagePending = false; void this.refreshLanguage(); return; }
+    this.renderReleaseReminders();
     this.scheduleRefresh(0);
     if (this.searchOpen) this.scheduleSearch();
   }
@@ -342,7 +349,9 @@ export class EchoInkWorkbenchView extends ItemView {
     const doc = this.plugin.companyService?.doc;
     const companyPending = new Set(doc ? [...companyApprovals(this.plugin, doc, { includeJudging: true }).map(item => item.dispatch.id),
       ...pendingDecisions(doc).map(dispatch => dispatch.id)] : []);
-    return groupWorkbenchTasks((this.entries ?? []).filter(entry => !companyPending.has(entry.conversationId)), now, [...this.maintenance.values()]);
+    // Group from the original batch activities, just as the card does. The
+    // per-task display map has already collapsed those batches into one row.
+    return groupWorkbenchTasks((this.entries ?? []).filter(entry => !companyPending.has(entry.conversationId)), now, this.maintenanceActivities);
   }
   private taskState(entry: TaskEntry): keyof TaskGroups {
     const activity = this.maintenance.get(entry.conversationId);
@@ -515,6 +524,7 @@ export class EchoInkWorkbenchView extends ItemView {
     page.createDiv({ attr: { "data-wb": "cloud-sync" } });
     this.renderSearchShell(page);
     page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
+    page.createDiv({ attr: { "data-wb": "release-reminders", "aria-live": "polite" } }).hidden = true;
     page.createDiv({ attr: { "data-wb": "setup-todos", "aria-live": "polite" } });
     page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
@@ -622,6 +632,29 @@ export class EchoInkWorkbenchView extends ItemView {
     catch (error) { settings.setup.onboardingGuideDone = previous.done; settings.workbenchOnboardingDismissed = previous.dismissed; throw error; }
     this.plugin.notifyHomeSurfacesChanged(); this.render();
   }
+  private renderReleaseReminders(): void {
+    const host = this.field("release-reminders"), controller = this.plugin.releaseUpdate;
+    const rows = releaseReminderRows(controller, this.plugin.manifest.version, this.language, host.ownerDocument, notes => {
+      new ReleaseNotesModal(this.app, notes, this.language === "en", () => controller.markNotesSeen(notes.version)).open();
+    });
+    const signature = JSON.stringify([this.language, rows.map(row => [row.kind, row.version])]);
+    if (host.dataset.signature === signature) return;
+    this.disposeControls(host);
+    host.empty();
+    host.dataset.signature = signature;
+    host.hidden = !rows.length;
+    if (!rows.length) return;
+    const list = host.createDiv({ cls: "wb-setup-todos" });
+    for (const entry of rows) {
+      const row = list.createDiv({ cls: "wb-setup-todo", attr: { "data-release-reminder": entry.kind } });
+      setIcon(row.createSpan({ cls: "wb-setup-todo-lead", attr: { "aria-hidden": "true" } }), entry.icon);
+      row.createSpan({ cls: "wb-grow", text: entry.text });
+      const actions = row.createDiv({ cls: "wb-setup-todo-actions" });
+      this.button(actions, entry.action, `release:${entry.kind}`, entry.select).classList.add("is-small");
+      this.button(actions, entry.close, `release:${entry.kind}:dismiss`, entry.dismiss, "icon", "x");
+    }
+  }
+
   private renderSetupTodos(): void {
     const host = this.field("setup-todos"), english = this.language === "en";
     const items = workbenchSetupTodos(this.plugin.settings, workbenchHasPro(this.plugin));
@@ -762,6 +795,7 @@ export class EchoInkWorkbenchView extends ItemView {
     }
     this.scheduleNav();
     this.syncGuideVisibility();
+    this.renderReleaseReminders();
     this.renderSetupTodos();
     this.renderStatus();
     renderDiaryOrganizerBanner(this.field("diary-organizer"), this.plugin);

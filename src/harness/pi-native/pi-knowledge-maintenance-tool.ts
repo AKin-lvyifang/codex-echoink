@@ -30,6 +30,8 @@ import {
 import { MAINTENANCE_TOOL_PARAMETER_EXAMPLES } from "../../knowledge-base/knowledge-maintenance-protocol";
 import { isRawMarkdownPath } from "../../knowledge-base/raw-digest";
 import type { KnowledgeMaintenanceAssessment } from "../../knowledge-base/knowledge-maintenance-result";
+import { addMaintenanceRange, hasMaintenanceRange, maintenanceReadSlice, type MaintenanceReadCoverage } from "../../knowledge-base/maintenance-read-coverage";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
 const { isDeepStrictEqual } = getDesktopUtil();
 
@@ -45,7 +47,12 @@ export function recordMaintenanceSourceBodyFingerprint(fingerprints: Record<stri
 
 /** Reuse source versions already delivered in this conversation after reopening. */
 export function maintenanceSourceFingerprintsFromEntries(entries: readonly SessionEntry[], vaultRoot = ""): Record<string, string> {
+  return maintenanceSourceReadsFromEntries(entries, vaultRoot).fingerprints;
+}
+
+export function maintenanceSourceReadsFromEntries(entries: readonly SessionEntry[], vaultRoot = "") {
   const fingerprints: Record<string, string> = {};
+  const coverage: Record<string, MaintenanceReadCoverage> = {};
   const reads = new Map<string, string>();
   for (const entry of entries) {
     if (entry.type !== "message") continue;
@@ -68,13 +75,52 @@ export function maintenanceSourceFingerprintsFromEntries(entries: readonly Sessi
         for (const [relative, revision] of Object.entries(details.sourceBodyFingerprints)) adopt(relative, revision);
       }
     } else if (["note_read", "knowledge_read"].includes(message.toolName)) {
-      if (message.isError) { const relative = reads.get(message.toolCallId); if (relative) delete fingerprints[relative]; continue; }
+      if (message.isError) {
+        const relative = reads.get(message.toolCallId);
+        if (relative) { delete fingerprints[relative]; delete coverage[relative]; }
+        continue;
+      }
+      const slice = maintenanceReadSlice(details.maintenanceReadSlice);
+      if (slice && ["raw", "inbox"].includes(knowledgePathRole(vaultRoot, slice.path) ?? "")) {
+        const previous = coverage[slice.path];
+        if (previous?.sourceRevision !== slice.sourceRevision || fingerprints[slice.path] !== slice.bodyFingerprint) delete fingerprints[slice.path];
+        const ranges = addMaintenanceRange(previous?.sourceRevision === slice.sourceRevision ? previous.ranges : [], slice);
+        coverage[slice.path] = { sourceRevision: slice.sourceRevision, totalLength: slice.totalLength, bodyFingerprint: slice.bodyFingerprint, ranges };
+        if (hasMaintenanceRange(ranges, { start: 0, end: slice.totalLength })) adopt(slice.path, slice.bodyFingerprint);
+      }
       // Legacy citation SHA values do not identify which digest was used.
       // A missing explicit body digest requires a new complete source read.
       for (const [relative, fingerprint] of Object.entries((details.sourceBodyFingerprints ?? {}) as Record<string, unknown>)) adopt(relative, fingerprint);
     }
   }
-  return fingerprints;
+  return { fingerprints, coverage };
+}
+
+/** Keep the original tool receipts durable; only compact their model-facing copies. */
+export function compactCheckpointedMaintenanceReads(messages: readonly AgentMessage[]): AgentMessage[] {
+  const checkpointed = new Map<string, MaintenanceReadCoverage["ranges"]>();
+  const compacted = [...messages];
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "toolResult" || message.isError || !message.details || typeof message.details !== "object") continue;
+    const details = message.details as Record<string, unknown>;
+    if (message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID && details.source === "echoink-knowledge-maintenance"
+      && isUnknownArray(details.checkpointedSegments)) {
+      for (const checkpoint of details.checkpointedSegments as NonNullable<PiKnowledgeMaintenanceToolResult["checkpointedSegments"]>) {
+        const key = `${checkpoint.path}\0${checkpoint.sourceRevision}`;
+        checkpointed.set(key, addMaintenanceRange(checkpointed.get(key) ?? [], checkpoint));
+      }
+    } else if (message.toolName === "note_read" || message.toolName === "knowledge_read") {
+      const slice = maintenanceReadSlice(details.maintenanceReadSlice);
+      if (!slice || !hasMaintenanceRange(checkpointed.get(`${slice.path}\0${slice.sourceRevision}`) ?? [], slice)) continue;
+      compacted[index] = { ...message, content: [{ type: "text", text: JSON.stringify({
+        path: slice.path, segment: { start: slice.start, end: slice.end, sourceRevision: slice.sourceRevision },
+        ...(slice.end < slice.totalLength ? { nextOffset: slice.end } : {}),
+        message: "本段拆解已保存，可继续下一段。"
+      }) }] };
+    }
+  }
+  return compacted;
 }
 
 export type PiKnowledgeMaintenanceCommandContext = Readonly<{
@@ -272,6 +318,7 @@ implements PiVaultAdditionalToolSecurityPort {
           piSessionId: execution.identity.piSessionId,
           status: execution.result.status,
           ...(execution.result.userReceipt ? { userReceipt: execution.result.userReceipt } : {}),
+          ...(execution.result.checkpointedSegments ? { checkpointedSegments: execution.result.checkpointedSegments } : {}),
           ...(execution.result.maintenanceStage ? { maintenanceStage: execution.result.maintenanceStage } : {}),
           ...(execution.result.protocolVersion
             ? { protocolVersion: execution.result.protocolVersion }
@@ -331,13 +378,16 @@ export function createPiKnowledgeMaintenanceToolDefinition(
   return defineTool({
     name: PI_KNOWLEDGE_MAINTAIN_TOOL_ID,
     label: "维护知识库",
-    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（每篇摘要与七类结构化知识点/原句版本证据，可逐篇检查点，全批齐备后返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。禁止生成关键原句小节，已有同名用户小节逐字保留。只有全部页与原文三个字段成功才已提炼。\n" +
+    description: "仅在显式 /maintain 范围内串行维护。必须 decompose（每篇摘要与七类结构化知识点/原句版本证据，长文按已读segment逐次提交并落盘，最后一段 complete=true，全批拆完或跳过后返回Wiki候选）→plan（knowledge.unitIds、同知识点decision/理由与related关系，固定逐页写作清单）→write（每次一页），成功页不重写；失败后 resume 仅补未完成。新页提供content；已有页先sections取得完整快照regionId，再sectionPatches只追加/替换选中区域。来源/相关条目为独立区，错误编号重新sections，不猜不整页覆盖。禁止生成关键原句小节，已有同名用户小节逐字保留。只有全部页与原文三个字段成功才已提炼。用户指定跳过或来源读失败时，在写作清单锁定前调用stage=skip,skip:{sourcePath,reason}，保留根sourcePaths。\n" +
       "最终回复的归位情况以 userReceipt 的正式结果为准；归不进去就说待归位，不说新分组或新分支。只有地图已成立的分支才能说放进某分支。\n" +
       `证据每个知识点最多${MAINTENANCE_EVIDENCE_MAX_QUOTES}条，每条最多${MAINTENANCE_EVIDENCE_MAX_CHARS}字符，合计最多${MAINTENANCE_EVIDENCE_TOTAL_CHARS}字符；写入正文须提炼，过量复制会拒绝，请改写该页后重发。\n` + MAINTENANCE_TOOL_PARAMETER_EXAMPLES,
     parameters: diagnosticParameters(Type.Object({
-      stage: Type.Union(["decompose", "plan", "write", "resume", "sections", "inspect"].map(value => Type.Literal(value))),
+      stage: Type.Union(["decompose", "skip", "plan", "write", "resume", "sections", "inspect"].map(value => Type.Literal(value))),
       sourcePaths: Type.Optional(Type.Array(Type.String(), { minItems: 1, maxItems: 20 })),
-      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(), units: Type.Array(Type.Object({ id: Type.String(), type: Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value))), typePendingConfirmation: Type.Optional(Type.Boolean()), domain: Type.String(), title: Type.String(), aliases: Type.Optional(Type.Array(Type.String())), points: Type.Array(Type.String(), { minItems: 1 }), evidence: Type.Array(Type.Object({ sourcePath: Type.String(), sourceRevision: Type.String(), quote: Type.String({ maxLength: MAINTENANCE_EVIDENCE_MAX_CHARS }) }, { additionalProperties: false }), { minItems: 1, maxItems: MAINTENANCE_EVIDENCE_MAX_QUOTES }) }, { additionalProperties: false })) }, { additionalProperties: false }), { maxItems: 20 })),
+      skip: Type.Optional(Type.Object({ sourcePath: Type.String(), reason: Type.String({ minLength: 1, maxLength: 240 }) }, { additionalProperties: false })),
+      decompositions: Type.Optional(Type.Array(Type.Object({ sourcePath: Type.String(), summary: Type.String(),
+        segment: Type.Optional(Type.Object({ start: Type.Integer({ minimum: 0 }), end: Type.Integer({ minimum: 0 }), sourceRevision: Type.String() }, { additionalProperties: false })),
+        complete: Type.Optional(Type.Boolean()), units: Type.Array(Type.Object({ id: Type.String(), type: Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value))), typePendingConfirmation: Type.Optional(Type.Boolean()), domain: Type.String(), title: Type.String(), aliases: Type.Optional(Type.Array(Type.String())), points: Type.Array(Type.String(), { minItems: 1 }), evidence: Type.Array(Type.Object({ sourcePath: Type.String(), sourceRevision: Type.String(), quote: Type.String({ maxLength: MAINTENANCE_EVIDENCE_MAX_CHARS }) }, { additionalProperties: false }), { minItems: 1, maxItems: MAINTENANCE_EVIDENCE_MAX_QUOTES }) }, { additionalProperties: false })) }, { additionalProperties: false }), { maxItems: 20 })),
       writingPlan: Type.Optional(Type.Array(Type.Object({ id: Type.String(), targetPath: Type.String(), sourcePaths: Type.Array(Type.String(), { minItems: 1, maxItems: 20 }), newSections: Type.Optional(Type.Array(Type.String(), { maxItems: 20 })), expectedTarget: Type.Union([Type.Object({ kind: Type.Literal("missing") }), Type.Object({ kind: Type.Literal("file"), contentRevision: Type.String() })]), knowledge: Type.Object({ unitIds: Type.Array(Type.String(), { minItems: 1 }), decision: Type.Object({ kind: Type.Union([Type.Literal("new"), Type.Literal("same_point"), Type.Literal("uncertain")]), reason: Type.String(), candidatePath: Type.Optional(Type.String()) }, { additionalProperties: false }), related: Type.Optional(Type.Array(Type.Object({ targetPath: Type.String(), type: Type.Union(MAINTENANCE_RELATION_TYPES.map(value => Type.Literal(value))), reason: Type.String(), reverseReason: Type.String() }, { additionalProperties: false }))), type: Type.Optional(Type.Union(MAINTENANCE_KNOWLEDGE_TYPES.map(value => Type.Literal(value)))), domain: Type.Optional(Type.String()) }, { additionalProperties: false }) }, { additionalProperties: false }), { maxItems: 100 })),
       view: Type.Optional(Type.Union([Type.Literal("candidates"), Type.Literal("units"), Type.Literal("pages")])), offset: Type.Optional(Type.Integer({ minimum: 0 })),
       pageId: Type.Optional(Type.String()), targetPath: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
@@ -400,7 +450,7 @@ function normalizeArguments(
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
   const p1 = normalizeP1(value);
-  const allowedKeys = new Set(["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"]);
+  const allowedKeys = new Set(["stage", "sourcePaths", "skip", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"]);
   if (
     keys.some((key) => !allowedKeys.has(key))
     || (record.candidateActions !== undefined && (!Array.isArray(record.candidateActions) || record.candidateActions.length > 100))
@@ -681,14 +731,23 @@ function rejectedResult(
 function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("knowledge_maintenance_stage_required");
   const r = value as Record<string, unknown>;
-  if (!["decompose", "plan", "write", "resume", "sections", "inspect"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
+  if (!["decompose", "skip", "plan", "write", "resume", "sections", "inspect"].includes(String(r.stage))) throw new TypeError("knowledge_maintenance_stage_required: decompose -> plan -> write; resume 补未完");
   const errors: string[] = [];
   const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
   const keys = (item: Record<string, unknown>, allowed: string[], location: string) => { for (const key of Object.keys(item)) if (!allowed.includes(key)) errors.push(`${location}.${key}不是允许字段；按工具完整示例的嵌套层级提交。`); };
   const text = (value: unknown, location: string) => { if (typeof value !== "string" || !value.trim()) errors.push(`${location}须为非空字符串。`); };
   const list = (value: unknown, location: string, maximum = 100): value is unknown[] => { if (!Array.isArray(value) || value.length > maximum) { errors.push(`${location}须为最多${maximum}项的数组。`); return false; } return true; };
   const strings = (value: unknown, location: string, nonempty = false) => { if (list(value, location)) { if (nonempty && !value.length) errors.push(`${location}不能为空。`); value.forEach((item,index) => text(item, `${location}[${index}]`)); } };
-  keys(r, ["stage", "sourcePaths", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"], "root");
+  keys(r, ["stage", "sourcePaths", "skip", "decompositions", "writingPlan", "pageId", "targetPath", "content", "sectionPatches", "view", "offset"], "root");
+  if (r.stage === "skip") {
+    if (!object(r.skip)) errors.push("skip须为含sourcePath和reason的对象。");
+    else {
+      keys(r.skip, ["sourcePath", "reason"], "skip");
+      text(r.skip.sourcePath, "skip.sourcePath");
+      text(r.skip.reason, "skip.reason");
+      if (typeof r.skip.reason === "string" && r.skip.reason.trim().length > 240) errors.push("跳过原因须在240字内。");
+    }
+  } else if (r.skip !== undefined) errors.push("skip只用于stage=skip。");
   const requestedView = String(r.view);
   if (r.view !== undefined && !["candidates", "units", "pages"].includes(requestedView)) errors.push("view只可为candidates/units/pages。");
   if (r.offset !== undefined && (!Number.isSafeInteger(r.offset) || Number(r.offset) < 0)) errors.push("offset须为非负整数。");
@@ -697,7 +756,18 @@ function normalizeP1(value: unknown): Readonly<MaintenanceP1Action> {
   if (r.decompositions !== undefined || r.stage === "decompose") if (list(r.decompositions, "decompositions", 20)) r.decompositions.forEach((d,index) => {
     const at = `decompositions[${index}]`;
     if (!object(d)) { errors.push(`${at}须含sourcePath/summary/units的对象。`); return; }
-    keys(d, ["sourcePath", "summary", "units"], at); text(d.sourcePath, `${at}.sourcePath`); text(d.summary, `${at}.summary`);
+    keys(d, ["sourcePath", "summary", "units", "segment", "complete"], at);
+    if (d.segment !== undefined) {
+      if (!object(d.segment)) errors.push(`${at}.segment须为读取回执的start/end/sourceRevision。`);
+      else {
+        keys(d.segment, ["start", "end", "sourceRevision"], `${at}.segment`);
+        if (typeof d.segment.start !== "number" || typeof d.segment.end !== "number" || !Number.isSafeInteger(d.segment.start)
+          || !Number.isSafeInteger(d.segment.end) || d.segment.start < 0 || d.segment.end < d.segment.start
+          || typeof d.segment.sourceRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(d.segment.sourceRevision)) errors.push(`${at}.segment范围或版本无效。`);
+      }
+    }
+    if (d.complete !== undefined && (typeof d.complete !== "boolean" || d.segment === undefined)) errors.push(`${at}.complete仅在分段提交时使用布尔值。`);
+    text(d.sourcePath, `${at}.sourcePath`); text(d.summary, `${at}.summary`);
     if (list(d.units, `${at}.units`)) d.units.forEach((unit,j) => {
       const path = `${at}.units[${j}]`;
       if (!object(unit)) { errors.push(`${path}须为七类型结构化对象，不能是旧字符串。`); return; }

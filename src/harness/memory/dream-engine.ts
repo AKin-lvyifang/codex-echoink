@@ -112,6 +112,7 @@ import {
 export interface DreamLlmPort {
   readonly inputTokenBudget?: number;
   call(input: Readonly<{
+    turn?: import("../../membership/xiaoecho-turn").XiaoechoTurn;
     runId?: string;
     stepId?: string;
     requestId?: string;

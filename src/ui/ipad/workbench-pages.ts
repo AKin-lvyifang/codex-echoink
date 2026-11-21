@@ -10,6 +10,7 @@ import type { MobileSession } from "../../mobile/store";
 import { formatMobileWorkbenchDate } from "../../mobile/workbench-format";
 import type { MobileShellPage } from "../mobile/shell-types";
 import { shellIconButton } from "../mobile/shell-controls";
+import { mountMobileReleaseReminders } from "../mobile/workbench-release-reminders";
 import { createInlineQuestion } from "./composer";
 import { disposeCompanyTree } from "../mobile/company-ui";
 import { ipadCompanyHidden, renderIPadCompanyHome } from "./company-pages";
@@ -75,7 +76,10 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   todos.heading.append(ipadButton(ctx.document, "全部待办", () => { void ctx.host.openModule("todos").catch(error => ctx.error(error)); }, "is-text pd-section-more", "chevron-right"));
   const readError = el(ctx.document, "div", "pd-error"); readError.setAttribute("role", "alert"); readError.hidden = true;
   const companySlot = el(ctx.document, "div", "pd-company-slot");
-  content.append(header, navigation, companySlot, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
+  const releases = el(ctx.document, "div", "pd-rows echoink-mobile-release-reminders");
+  releases.setAttribute("aria-live", "polite");
+  const releaseReminders = mountMobileReleaseReminders(content, releases, ctx.host, "pd", { icon: ipadIcon, button: ipadButton }, ctx.shell);
+  content.append(header, navigation, releases, companySlot, ...taskGroups.map(group => group.element), signals.element, completed.element, todos.element, readError);
   if (ctx.host.store.unavailableReason) content.insertBefore(readError, taskGroups[0].element);
   let disposed = false, showAll = false, snapshot: WorkbenchSnapshot | undefined, loading = false, reload = false, signature = "", factsFailure = "";
   let nextFactRefresh = Infinity;
@@ -265,7 +269,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
 
   renderTasks(); void loadFacts();
   const unsubscribeRuntime = ctx.host.runtime.subscribe(() => renderTasks());
-  const unsubscribeFacts = ctx.host.workbench.subscribe(() => { renderTasks(); void loadFacts(); });
+  const unsubscribeFacts = ctx.host.workbench.subscribe(() => { releaseReminders.refresh(); renderTasks(); void loadFacts(); });
   const unsubscribeIdentity = ctx.host.services.subscribeIdentity(() => { renderTasks(); renderFacts(); });
   const unsubscribeCompany = ctx.host.company?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
   const unsubscribeSync = ctx.host.syncOverview?.()?.subscribe(() => { renderTasks(true); }) ?? (() => {});
@@ -284,7 +288,7 @@ export function createHomePage(ctx: IPadPageContext): MobileShellPage {
   }, 1000);
   return { id: "ipad-home", title: "工作台", header: "content", content, dispose() {
     if (disposed) return; disposed = true; window?.clearInterval(clock);
-    unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot);
+    releaseReminders.dispose(); unsubscribeRuntime(); unsubscribeFacts(); unsubscribeIdentity(); unsubscribeCompany(); unsubscribeSync(); unsubscribeRequests(); disposeCompanyTree(companySlot);
     for (const card of cards.values()) card.question?.dispose(); cards.clear(); signalCache.clear(); todoCache.clear();
   } };
 }

@@ -1,4 +1,4 @@
-import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceCompletionText, maintenancePartialCompletionText, maintenancePageCounts, maintenanceRecordStage, newMaintenanceProgress, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
+import { MAINTENANCE_ACTIVITY_STAGES, maintenanceBatchContext, maintenanceCompletionText, maintenancePartialCompletionText, maintenancePageCounts, maintenanceRecordStage, newMaintenanceProgress, projectMaintenanceInitialActivity, type MaintenanceActivity, type MaintenanceActivityLifecycle, type MaintenanceActivityProgress, type MaintenanceInitialActivity } from "../knowledge-base/maintenance-activity";
 import { isP1Open, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import type { PiKnowledgeMaintenanceToolInput } from "../harness/pi-native/contracts";
 import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
@@ -52,10 +52,17 @@ export class MaintenanceActivityController {
       if (event.type === "start") {
         if (active?.runId === event.productRunId) return;
         const record = (await this.host.records()).filter(r => r.originConversationId === event.conversationId && isP1Open(r)).sort((a,b) => b.at - a.at)[0];
-        const prior = record ? undefined : (await this.host.runs?.list(event.conversationId))?.filter(run => run.maintenanceActivity && !run.maintenanceActivity.recordId && run.maintenanceActivity.progress.status !== "completed").sort((a,b) => b.createdAt - a.createdAt)[0]?.maintenanceActivity;
+        const batch = maintenanceBatchContext(event.request ?? "");
+        const prior = record ? undefined : (await this.host.runs?.list(event.conversationId))?.filter(run => {
+          const activity = run.maintenanceActivity;
+          return activity && !activity.recordId && activity.progress.status !== "completed"
+            && (!event.sourcePaths || (event.sourcePaths.length === activity.sourcePaths.length
+              && event.sourcePaths.every(path => activity.sourcePaths.includes(path))))
+            && (batch.total === 1 || (activity.progress.batch?.index === batch.index && activity.progress.batch.total === batch.total));
+        }).sort((a,b) => b.createdAt - a.createdAt)[0]?.maintenanceActivity;
         const progress = structuredClone(record?.progress ?? prior?.progress ?? newMaintenanceProgress(this.host.now()));
         progress.waitingReasons = []; progress.status = "running";
-        progress.batch ??= maintenanceBatchContext(event.request ?? "");
+        progress.batch ??= batch;
         active = { runId: event.productRunId, recordId: record?.recordId, initial: { version: 1, sourcePaths: [...(record?.sources.map(s => s.path) ?? prior?.sourcePaths ?? event.sourcePaths ?? [])], progress }, liveSince: this.host.now() };
         this.active.set(event.conversationId, active);
         if (record) await this.patch(active, record.recordId, progress => { progress.status = "running"; progress.waitingReasons = []; });
@@ -96,6 +103,7 @@ export class MaintenanceActivityController {
       if (!active || active.runId !== input.productRunId) return;
       await this.mutate(input.conversationId, active, progress => {
         if (!["completed", "waiting"].includes(progress.status)) progress.status = "running";
+        if (!active.recordId && progress.stage === "scan" && (input.p1?.stage === "decompose" || input.p1?.stage === "skip")) progress.stage = "decompose";
         progress.currentPath = input.p1?.decompositions?.[0]?.sourcePath ?? input.p1?.targetPath ?? progress.currentPath;
       });
     });
@@ -109,7 +117,7 @@ export class MaintenanceActivityController {
         if (current.p1 && !isP1Open(current)) { progress.status = current.p1.phase === "completed" && current.result.status !== "partial" ? "completed" : "partial"; progress.completedAt ??= this.host.now(); progress.waitingReasons = []; progress.currentPath = undefined; }
         return progress;
       });
-      if (active && !active.recordId) {
+      if (active && active.initial.recordId !== record.recordId) {
         active.recordId = record.recordId;
         // Once bound this ProductRun carries only the pointer, never a second advancing ledger.
         active.initial.recordId = record.recordId;
@@ -146,8 +154,9 @@ export class MaintenanceActivityController {
       this.advance(active.initial.progress, active);
       active.initial.progress.status = "completed"; active.initial.progress.completedAt ??= this.host.now();
       active.liveSince = null;
-      await this.persistRun(active);
-      this.active.delete(conversationId); this.host.onInitialSettled?.(`run:${runId}`);
+      if ((active.initial.progress.batch?.total ?? 1) > 1) await this.persistInitial(conversationId, active);
+      else { await this.persistRun(active); this.host.onInitialSettled?.(`run:${runId}`); }
+      this.active.delete(conversationId);
       if (!this.active.size) this.disarm();
     });
   }
@@ -167,7 +176,7 @@ export class MaintenanceActivityController {
       const key = complete ? "completed" : `settled:${runId}`;
       if (progress.notified.includes(key)) return;
       progress.notified.push(key);
-      if (complete) { progress.status = "completed"; progress.completedAt ??= this.host.now(); notice = maintenanceCompletionText({ sourceCount: new Set(record.sources.map(source => source.path)).size, pageCounts: maintenancePageCounts(record) }); }
+      if (complete) { progress.status = "completed"; progress.completedAt ??= this.host.now(); notice = maintenanceCompletionText({ sourceCount: record.sources.length, skippedSourceCount: record.sources.filter(source => source.skipReason).length, pageCounts: maintenancePageCounts(record) }); }
       else if (record.p1 && !isP1Open(record)) { progress.status = "partial"; progress.completedAt ??= this.host.now(); notice = maintenancePartialCompletionText(record); }
       else {
         const count = Object.keys(record.p1!.committedPages).length;
@@ -211,11 +220,7 @@ export class MaintenanceActivityController {
   }
   private async persistInitial(conversationId: string, active: ActiveMaintenance): Promise<void> {
     await this.persistRun(active);
-    const progress = active.initial.progress;
-    this.host.onInitial?.({ kind: "maintenance", id: `run:${active.runId}`, originConversationId: conversationId, status: progress.status,
-      stage: progress.stage, steps: MAINTENANCE_ACTIVITY_STAGES.map(stage => ({ stage, completed: 0, total: stage === "decompose" && active.initial.sourcePaths.length ? active.initial.sourcePaths.length : null, state: stage === progress.stage ? "running" : "pending" })),
-      sourceCount: active.initial.sourcePaths.length || null, sourcePaths: [...active.initial.sourcePaths], batch: progress.batch ?? { index: 1, total: 1 }, currentPath: progress.currentPath,
-      activeElapsedMs: Object.values(progress.elapsedMs).reduce((sum, n) => sum + n, 0), etaMs: null, failures: progress.failures, updatedAt: progress.updatedAt });
+    this.host.onInitial?.(projectMaintenanceInitialActivity(active.initial, conversationId, active.runId));
   }
   private arm(): void {
     if (this.timer || !this.host.liveCheckpoint) return;

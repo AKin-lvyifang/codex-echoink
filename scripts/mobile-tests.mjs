@@ -188,6 +188,24 @@ await test("plugin shared settings queue isolates failed Agent identity and publ
 await profileScenarios(module.exports, test, settings);
 await financeSettingsNavigationScenarios(module.exports, test, settings, dom);
 
+await test("Xiaoecho mobile greetings send a single 64-token short-reply request", async () => {
+  const requests = [];
+  const state = await setup("openai-completions", async request => {
+    requests.push(JSON.parse(request.body));
+    return answer("openai-completions", "你好呀！");
+  });
+  try {
+    state.config.apiProviders[0].runtimeProviderId = "xiaoecho";
+    await state.store.patchSession(state.store.session.id, { notePath: "" });
+    await state.runtime.send("你好");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].max_tokens, 64);
+    assert.equal(requests[0].tools, undefined);
+    assert.equal(requests[0].echoink_turn.purpose, "conversation");
+    assert.equal(requests[0].echoink_turn.shortReply, true);
+  } finally { state.runtime.dispose(); }
+});
+
 for (const protocol of ["openai-completions", "openai-responses"]) await test(`${protocol}: real Agent read → memory + Markdown tools → answer; reopen and recall`, async () => {
   let requests = 0;
   const state = await setup(protocol, async request => {
@@ -219,7 +237,11 @@ for (const protocol of ["openai-completions", "openai-responses"]) await test(`$
   await reopened.createSession(); let recallCalls = 0;
   const recall = new MobileRuntime(state.app, reopened, () => state.config, async request => {
     const body = JSON.parse(request.body);
-    if (recallCalls++ === 0) return answer(protocol, "", [["recall_1", "memory_search", { query: "解释" }]]);
+    if (recallCalls++ === 0) {
+      assert.ok(body.tools.some(tool => (tool.name ?? tool.function?.name) === "resource_lookup"));
+      assert.ok(!body.tools.some(tool => (tool.name ?? tool.function?.name) === "memory_search"));
+      return answer(protocol, "", [["recall_1", "resource_lookup", { items: [{ action: "find", kind: "memory", query: "解释" }] }]]);
+    }
     assert.ok(JSON.stringify(body.input ?? body.messages).includes("先说结论"));
     return answer(protocol, "你喜欢解释技术问题时先说结论。");
   });

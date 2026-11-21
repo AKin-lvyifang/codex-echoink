@@ -1,3 +1,4 @@
+import { lowCostRecallModel } from "../membership/recall-model";
 import { PersonalMemoryRecallHarness, selectMemoryRecallPreviousUserContext } from '../harness/memory/personal-memory-recall-harness';
 import { estimateTokenValueAsync } from '../harness/usage/token-estimator';
 import { summarize } from '../harness/memory/memory-turn-snapshot';
@@ -272,15 +273,17 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
       if (run.dreamEligible && !run.dreamExperienceRecorded && mobileExperienceTerminalState(run)) await this.recordDreamExperience(task.id, run.id);
     }
   }
-  async prepareTurnMemory(input: {taskId:string;runId:string;text:string;history:readonly {role:string;content:string}[];availableInputTokens:number;provider:ApiProviderConfig;model:ApiProviderModelConfig;signal:AbortSignal}) {
+  async prepareTurnMemory(input: {taskId:string;runId:string;text:string;history:readonly {role:string;content:string}[];availableInputTokens:number;fixedOnly?:boolean;provider:ApiProviderConfig;model:ApiProviderModelConfig;signal:AbortSignal}) {
     const allowed=()=>{if(input.signal.aborted)throw new Error('已停止');};allowed();
     await this.initialize();allowed();
     const snapshot=await this.snapshot();allowed();
-    const harness=new PersonalMemoryRecallHarness(this.repository,{decisions:{diagnostic:turnId=>getDecisionClient()?.memoryDiagnostic(turnId),judgeMemory:async request=>getDecisionClient()?.judgeMemory(request)??null},
-      directory:{modelInputBudget:Math.max(0,input.model.contextWindow-input.model.maxOutputTokens-256),llm:{call:async request=>({text:await mobileGenerateText(input.provider,input.model,this.options.request,request.systemPrompt,request.userPrompt,request.maxTokens,request.signal,this.usage),usage:undefined})}}});
+    const recallModel = lowCostRecallModel(input.provider, input.model.id);
+    const harness=new PersonalMemoryRecallHarness(this.repository,{completeCatalog:true,includeNavigation:false,decisions:{diagnostic:turnId=>getDecisionClient()?.memoryDiagnostic(turnId),judgeMemory:async request=>getDecisionClient()?.judgeMemory(request)??null},
+      ...(recallModel ? { directory: { modelInputBudget: recallModel.contextWindow-recallModel.maxOutputTokens-256,
+        llm:{call:async request=>({text:await mobileGenerateText(input.provider,recallModel,this.options.request,request.systemPrompt,request.userPrompt,request.maxTokens,request.signal,this.usage,"background",undefined,{conversationId:input.taskId,turnId:input.runId,purpose:"memory"}),usage:undefined})} } } : {})});
     const fixedTokens=await estimateTokenValueAsync({user:snapshot.user,core:snapshot.records.filter(record=>record.status==='current'&&record.pinned).map(record=>({id:record.id,title:record.title,summary:Array.from(summarize(record.content)).slice(0,80).join('')}))});
     allowed();
-    return harness.prepareTurnContext({memoryMode:'normal',skipDirectory:input.availableInputTokens<=fixedTokens+256,query:input.text,recentConversation:selectMemoryRecallPreviousUserContext(input.history),tokenBudget:Math.max(1,Math.min(1200,Math.floor(input.availableInputTokens-fixedTokens-256))),availableInputTokens:input.availableInputTokens,
+    return harness.prepareTurnContext({memoryMode:'normal',fixedOnly:input.fixedOnly,skipDirectory:input.availableInputTokens<=fixedTokens+256,query:input.text,recentConversation:selectMemoryRecallPreviousUserContext(input.history),tokenBudget:Math.max(1,Math.min(1200,Math.floor(input.availableInputTokens-fixedTokens-256))),availableInputTokens:input.availableInputTokens,
       vaultId:snapshot.manifest.vaultId,conversationId:input.taskId,piSessionId:`mobile:${this.options.store.instanceId}`,productRunId:input.runId,decisionTurnId:input.runId,signal:input.signal});
   }
   dreamStatus(): MobileDreamStatus { return { ...clone(this.status), ...(this.status.dayKey !== this.day() ? { dayKey: this.day(), attemptsToday: 0 } : {}), dailyLimit: this.readSettings().dreamRunsPerDay }; }

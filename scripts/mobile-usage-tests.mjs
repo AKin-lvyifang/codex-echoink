@@ -50,7 +50,16 @@ async function runtimeFixture(request){
 }
 const completed=text=>({status:200,json:{usage:{prompt_tokens:999999999,completion_tokens:999999999},choices:[{message:{role:'assistant',content:text},finish_reason:'stop'}]}});
 {
-  let requests=0;const f=await runtimeFixture(async()=>++requests===1?{status:200,json:{choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'lookup',type:'function',function:{name:'memory_search',arguments:'{"query":"usage"}'}}]},finish_reason:'tool_calls'}]}}:completed('two requests completed'));
+  let requests=0;const f=await runtimeFixture(async request=>{
+    const body=JSON.parse(request.body);
+    if(++requests===1){
+      assert.ok(body.tools.some(tool=>tool.function.name==='resource_lookup'));
+      const args={items:[{action:'find',kind:'memory',query:'usage'}]};
+      return {status:200,json:{choices:[{message:{role:'assistant',content:null,tool_calls:[{id:'lookup',type:'function',function:{name:'resource_lookup',arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}]}};
+    }
+    assert.ok(body.messages.some(message=>message.role==='tool'));
+    return completed('two requests completed');
+  });
   await f.runtime.send('run two actual provider requests');const evidence=JSON.parse(files.get(f.usage.path));assert.equal(evidence.requests.length,2);assert.equal(evidence.completedTurns.length,1);assert.ok(evidence.requests.every(item=>item.source==='conversation'&&item.status==='completed'));assert.ok(f.usage.readStatistics().totalTokens<1000000);await f.runtime.shutdown();
 }
 {

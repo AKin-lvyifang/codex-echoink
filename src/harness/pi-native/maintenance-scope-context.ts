@@ -39,7 +39,12 @@ export function freezeMaintenanceScopeContext(value: unknown): Readonly<Maintena
 }
 
 /** A narrow confirmation grammar prevents unrelated ordinary messages inheriting. */
+export function isMaintenanceSkipRequest(text: string): boolean {
+  return /^(?:\/maintain\s+)?(?:(?:请|帮我|先)[，,\s]*)*(?:跳过|略过)\s*\S|^(?:\/maintain\s+)?skip\s+\S/iu.test(text.trim());
+}
+
 export function isMaintenanceScopeConfirmation(text: string): boolean {
+  if (isMaintenanceSkipRequest(text)) return true;
   const value = text.trim().replace(/^\/maintain\s*/iu, "").replace(/[\s，。！？、,.!?；;]+$/gu, "");
   // A reference to the original checklist may carry execution instructions.
   // Explicit replacement sources/queries still take precedence over recovery.
@@ -55,6 +60,7 @@ export function isMaintenanceScopeConfirmation(text: string): boolean {
  * 正则没认出来但判断很有把握是“继续”时继续。写明了新来源或替换范围的句子始终不算继续。
  */
 export function maintenanceConfirmationWithJudgment(text: string, judgment?: Readonly<{ continue: number; new: number; stop: number; discuss: number }>, threshold = 0.8): boolean {
+  if (isMaintenanceSkipRequest(text)) return true;
   const regex = isMaintenanceScopeConfirmation(text);
   if (!judgment) return regex;
   if (regex) return judgment.stop < threshold && judgment.new < threshold;

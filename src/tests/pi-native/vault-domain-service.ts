@@ -1025,6 +1025,21 @@ async function assertWorkspacePermissionDispatchAndJournalWrites(fixture: Fixtur
   await fixture.write(rawPath, "\\".repeat(20_000));
   assert.equal((await fixture.service.noteRead({ vaultId: identity.vaultId, relativePath: rawPath })).snapshot.truncated, false);
   assert.deepEqual(restored(await call("note_read", { relativePath: rawPath })), {}, "egress truncation cannot establish full reading either");
+  const segments = [];
+  let offset = 0;
+  do {
+    const result = await call("note_read", { relativePath: rawPath, offset,
+      ...(offset ? { expectedContentRevision: `sha256:${sha256("\\".repeat(20_000))}` } : {}) });
+    assert.equal(result.isError, false);
+    const payload = JSON.parse(result.content[0].text);
+    assert.equal(payload.snapshot.segment.start, offset);
+    segments.push(result);
+    offset = payload.snapshot.segment.nextOffset;
+  } while (offset !== undefined);
+  assert.ok(segments.length > 1);
+  assert.deepEqual(maintenanceSourceFingerprintsFromEntries(segments.map(result => ({
+    type: "message", message: { role: "toolResult", toolName: "note_read", isError: false, details: result.details }
+  })) as never, fixture.root), { [rawPath]: rawDigestFingerprint(rawPath, Buffer.from("\\".repeat(20_000))) });
   for (const workflow of ["chat", "ask", "maintain", "daily-journal"]) {
     for (const toolName of ["note_create", "note_update", "metadata_update", "note_move", "note_delete", "memory_write", "knowledge_maintain", "external_write"]) {
       assert.deepEqual(await call(toolName, { relativePath: "journal/existing.md", content: workflow }), { block: true, reason: "tool_policy_blocked" });

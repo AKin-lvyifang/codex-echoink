@@ -13,6 +13,7 @@ import {
 } from "./tool-authorization";
 import {
   VaultDomainService,
+  VAULT_READ_RESULT_LIMIT_BYTES,
   type VaultMetadataPatch,
   type VaultOperationResult
 } from "./vault-domain-service";
@@ -45,7 +46,6 @@ export const PI_VAULT_TOOL_EGRESS_POLICY =
 export const PI_VAULT_TOOL_REDACTION_POLICY =
   "echoink-local-secrets-v1" as const;
 
-const READ_RESULT_LIMIT_BYTES = 32_000;
 const WRITE_RESULT_LIMIT_BYTES = 8_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const RESULT_PENDING_SAFETY = "vault_tool_result_pending_safety";
@@ -69,6 +69,8 @@ export interface VaultSearchToolArguments {
 
 export interface NoteReadToolArguments {
   readonly relativePath: string;
+  readonly offset?: number;
+  readonly expectedContentRevision?: string;
 }
 
 export interface NoteCreateToolArguments {
@@ -225,7 +227,9 @@ export const PI_VAULT_TOOL_SCHEMAS: Readonly<Record<PiVaultToolId, TSchema>> =
       scopePath: Type.Optional(Type.String())
     }, { additionalProperties: false }),
     note_read: Type.Object({
-      relativePath: Type.String({ minLength: 1 })
+      relativePath: Type.String({ minLength: 1 }),
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: "Start with 0 for a bounded segment; continue using snapshot.segment.nextOffset." })),
+      expectedContentRevision: Type.Optional(Type.String({ pattern: "^sha256:[a-f0-9]{64}$", description: "Pass snapshot.segment.sourceRevision on continuation." }))
     }, { additionalProperties: false }),
     note_create: Type.Object({
       relativePath: Type.String({ minLength: 1 }),
@@ -274,11 +278,17 @@ export function normalizePiVaultToolArguments<T extends PiVaultToolId>(
           ? {}
           : { scopePath: requireString(input.scopePath) })
       }) as Readonly<PiVaultToolArgumentsById[T]>;
-    case "note_read":
-      requireExactKeys(input, ["relativePath"]);
+    case "note_read": {
+      requireExactKeys(input, ["relativePath"], ["offset", "expectedContentRevision"]);
+      const { offset, expectedContentRevision } = input;
+      if (offset !== undefined && (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0)
+        || expectedContentRevision !== undefined && (offset === undefined || typeof expectedContentRevision !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(expectedContentRevision))
+        || typeof offset === "number" && offset > 0 && expectedContentRevision === undefined) throw new TypeError("vault_tool_schema_invalid");
       return freeze({
-        relativePath: requireNonEmptyString(input.relativePath)
+        relativePath: requireNonEmptyString(input.relativePath),
+        ...(offset === undefined ? {} : { offset, ...(expectedContentRevision === undefined ? {} : { expectedContentRevision }) })
       }) as Readonly<PiVaultToolArgumentsById[T]>;
+    }
     case "note_create":
       requireExactKeys(input, ["relativePath", "content"]);
       return freeze({
@@ -491,7 +501,7 @@ async function callVaultDomainService(
       const input = args as NoteReadToolArguments;
       return await service.noteRead({
         vaultId: authorization.vaultId,
-        relativePath: input.relativePath,
+        ...input,
         signal
       });
     }
@@ -608,7 +618,7 @@ function readPolicy(
     approvalPolicy: "none",
     executionMode: "parallel",
     timeoutMs: DEFAULT_TIMEOUT_MS,
-    resultSizeLimit: READ_RESULT_LIMIT_BYTES,
+    resultSizeLimit: VAULT_READ_RESULT_LIMIT_BYTES,
     redactionPolicy: PI_VAULT_TOOL_REDACTION_POLICY,
     egressPolicy: PI_VAULT_TOOL_EGRESS_POLICY,
     domainService
@@ -751,7 +761,7 @@ function toolLabel(toolId: PiVaultToolId): string {
 function toolDescription(toolId: PiVaultToolId): string {
   const descriptions: Record<PiVaultToolId, string> = {
     vault_search: "Search notes inside the current Vault and return bounded excerpts.",
-    note_read: "Read one note inside the current Vault with its current version.",
+    note_read: "Read a note inside the current Vault. For bounded segments pass offset=0, then use snapshot.segment.nextOffset and expectedContentRevision=snapshot.segment.sourceRevision. Offsets count UTF-16 code units; use the returned cursor.",
     note_create: "Create one note after explicit approval.",
     note_update: "Update one note only when its expected version still matches.",
     metadata_update: "Update only the approved frontmatter fields of one note.",

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.9.1 - 2026-11-21
+<!-- release-type: fix -->
+### 2.9.1 · 小echo 寒暄更省点
+
+### 中文
+
+类型：修复
+
+#### 更新内容
+
+- **小echo 寒暄更省点。** 在 auto 档发一句「你好」，实测约扣 0.02 点。实际扣点按模型和用量计算。
+- **在工作台看更新。** 有新版本发布时，点「去更新」可打开 Obsidian 社区插件页。升级后，点「查看」即可阅读本版说明。版本信息和说明来自 EchoInk 官网。
+- **长笔记整理更完整。** 修复了知识库整理长笔记时可能遗漏后半段的问题。需要跳过的资料会显示原因。
+- **多批整理任务分组更准确。** 批次交错进行时，工作台会按每一批的实际进度归类。
+
+### English
+
+**2.9.1 · Spend fewer credits on quick greetings**
+
+Type: Fixes
+
+#### What's new
+
+- **Quick greetings cost fewer xiaoecho credits.** Sending “Hello” in auto mode used about 0.02 credits in a test. Actual charges depend on the model and usage.
+- **See updates in the workbench.** When a new version is released, choose Update to open the Obsidian Community plugins page. After upgrading, choose View to read the release notes. Version information and notes come from the EchoInk website.
+- **Knowledge review covers long notes more reliably.** Fixed an issue that could leave the latter part of a long note unread. When a source is skipped, the review shows why.
+- **Batch tasks are grouped more accurately.** When several review batches overlap, the workbench groups each one by its actual progress.
+
 ## 2.9.0 - 2026-11-19
 <!-- release-type: feat -->
 ### 2.9.0 · 整库云同步，跨设备接着聊

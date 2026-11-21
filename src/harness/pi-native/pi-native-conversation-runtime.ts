@@ -1,6 +1,8 @@
+import { GENERAL_ASSISTANT_ID } from "../../agents/types";
+import { COMPANY_ROUTER_TOOLS } from "../../agents/capability-core";
 import { ToolRoundBudget } from "../../agents/tool-round-budget";
 import { requiresProductFreshnessVerification } from "../resources/skill-routing";
-import { DEFAULT_DECISION_THRESHOLDS, newDecisionId, type DecisionThresholds, type TurnCheck, type TurnJudgment, type TurnJudgmentInput, type TurnSkillOption } from "../../membership/decision-client";
+import { DEFAULT_DECISION_THRESHOLDS, type DecisionThresholds, type TurnCheck, type TurnJudgment, type TurnJudgmentInput, type TurnSkillOption } from "../../membership/decision-client";
 import { runErrors } from "../../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
@@ -44,7 +46,7 @@ import {
   type Model,
   type ModelThinkingLevel
 } from "@earendil-works/pi-ai";
-import { assistantProviderFailureText, isReasoningOutputLimit, type AssistantProviderFailure, safeProviderFailureCode } from "../pi/provider-failure";
+import { assistantProviderFailureText, isReasoningOutputLimit, type AssistantProviderFailure, safeProviderFailureCode, providerFailureDetailText, PROVIDER_FAILURE_DETAIL_PREFIX } from "../pi/provider-failure";
 import { appendOutputContinuationText, outputContinuationFromSessionEntry, PI_OUTPUT_CONTINUATION_ENTRY_TYPE, type PiOutputContinuationRecord } from "./pi-output-continuation";
 import { knowledgeVerificationFromSessionEntry, PI_KNOWLEDGE_VERIFICATION_ENTRY_TYPE, PI_KNOWLEDGE_FRESHNESS_ENTRY_TYPE, type PiKnowledgeVerificationSkippedRecord } from "./pi-knowledge-verification";
 import {
@@ -120,13 +122,15 @@ import { PI_IMAGE_INPUT_UNSUPPORTED_MESSAGE } from "./contracts";
 import { normalizePiChatNoteMentions } from "./pi-note-mentions";
 import { normalizeSelectionAnnotations } from "./pi-selection-annotations";
 import { freezeWorkbenchTaskSource, workbenchTaskSourceFromEntries } from "../../home/workbench-context";
-import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, maintenanceConfirmationWithJudgment, isNewMaintenanceScopeRequest, isFrozenMaintenanceBatchSuccessor, maintenanceTopicBoundary, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
+import { MAINTENANCE_SCOPE_CONTEXT_TYPE, MAINTENANCE_SCOPE_REQUIRED_MESSAGE, freezeMaintenanceScopeContext, isMaintenanceSkipRequest, maintenanceConfirmationWithJudgment, isNewMaintenanceScopeRequest, isFrozenMaintenanceBatchSuccessor, maintenanceTopicBoundary, maintenanceScopeContextFromEntries, maintenanceScopePaths, type MaintenanceScopeContext } from "./maintenance-scope-context";
 import type { WorkbenchTaskSource } from "../../home/workbench-types";
 import type { SelectionAnnotation } from "../../types/selection-annotations";
 import {
   normalizePiChatPreparedDocuments,
   preflightPiAnthropicDocumentRequest
 } from "./pi-document-context";
+import { RESOURCE_LOOKUP, directResourceToolNames } from "../resource-lookup";
+import { shortSocialTurn } from "../short-social-turn";
 import type { PersonalMemorySourceReference } from "../../settings/settings";
 import { calculatePiEffectiveInputBudget, latestPiContextLedger } from "./pi-context-budget";
 import {
@@ -274,6 +278,9 @@ export interface PiNativeAgentSessionFactoryInput {
   ensureKnowledgeReadWorkflow?(): Promise<void>;
   currentMaintenanceCommand?(options?: Readonly<{ activateMaintenance?: boolean }>): Promise<Readonly<PiKnowledgeMaintenanceCommandContext>>;
   currentSkillTurnContext?(): Readonly<PiNativeSkillTurnContext> | null;
+  currentShortReply?(): boolean;
+  currentDiscoverableTools?(): readonly string[];
+  enableDiscoveredTools?(names: readonly string[]): void;
   currentMemoryTurnContext?(): Readonly<PiNativeMemoryTurnContext> | null;
   currentSelectionAnnotationTurnContext?(): readonly SelectionAnnotation[];
   currentNoteMentionTurnContext?(): Readonly<PiNativeNoteMentionTurnContext> | null;
@@ -478,6 +485,7 @@ export interface PiRuntimeSkillPort {
   ): Promise<Readonly<PiRuntimeResolvedSkill>>;
   recordUse(skillId: string, usedAt: number): Promise<void>;
   reviewCompletedTask(input: Readonly<{
+    conversationId?: string;
     productRunId: string;
     request: string;
     result: string;
@@ -786,6 +794,12 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  shortReply?: boolean;
+  admittedToolNames?: readonly string[];
+  directlyBoundTools?: boolean;
+  savedAutoCompaction?: boolean;
+  providerToolStep?: boolean;
+  providerCompacting?: boolean;
   onPreparationStage?: PreparationObserver;
   companyProgrammatic?: boolean;
   /** 智能判断：本轮 turnId 与 /turn 结果（null 表示没拿到，走原来的规则）。 */
@@ -1606,14 +1620,40 @@ export class PiNativeConversationRuntime {
         : routeKnowledgeConversationCommand(request.text);
 
     const ordinaryTurn = !request.companyProgrammatic && !request.inlineProposalRequest && !request.generationRequest && !request.pdfTaskRequest && !request.englishDiarySourcePath;
-    const automaticSkill = ordinaryTurn && !request.skillId && !request.skillPath && !catalog.defaultSkillId && mode !== "plan" && knowledgeCommand.kind !== "maintain";
-    const decisionTurnId = newDecisionId();
+    const mayBeShort = ordinaryTurn && mode !== "plan" && knowledgeCommand.kind === "chat"
+      && !request.skillPath && !request.skillId && !request.skillName && !catalog.defaultSkillId && !catalog.projectId
+      && (!catalog.agentId || catalog.agentId === GENERAL_ASSISTANT_ID) && catalog.companyRole !== "worker"
+      && !catalog.pendingResponse && !["running", "waiting", "interrupted"].includes(catalog.taskStatus ?? "")
+      && !catalog.businessKey && !request.maintenanceScope && !request.resumeContext && !request.workbenchSource
+      && !request.drawingRequested && !request.draftId && !promptImages.length && !noteMentions.length && !documents.length
+      && !selectionAnnotations.length && shortSocialTurn(request.text, false);
+    let shortReply = false;
+    if (mayBeShort) {
+      const manager = this.active.get(catalog.conversationId)?.sessionManager ?? (await this.openCatalogSession(catalog)).sessionManager;
+      const branch = manager.getBranch();
+      const plan = activeTaskPlanFromBranch(branch);
+      const previousRuns = await this.productRuns.listReadOnly(catalog.conversationId);
+      const last = previousRuns.at(-1);
+      const hasMaintenanceScope = branch.some(entry => entry.type === "custom" && entry.customType === MAINTENANCE_SCOPE_CONTEXT_TYPE);
+      const maintenanceScope = hasMaintenanceScope
+        ? maintenanceScopeContextFromEntries(branch, previousRuns.filter(run => run.piSessionId === catalog.piSessionId), { vaultRootPath: await this.options.resolveConversationCwd(catalog.conversationId) })
+        : null;
+      const pendingScope = maintenanceScope ? await this.options.knowledge?.pendingMaintenanceSourcePaths?.(maintenanceScopePaths(maintenanceScope.scope))
+        ?? maintenanceScopePaths(maintenanceScope.scope) : [];
+      shortReply = !plan && !pdfTaskRequestFromEntries(branch) && !englishDiaryTaskContextFromEntries(branch)
+        && !pendingScope.length && (!hasMaintenanceScope || !await this.openMaintenanceSelection({ catalog, sessionManager: manager }))
+        && (!last || last.terminalState === "completed")
+        && shortSocialTurn(request.text, branch.some(entry => entry.type === "message" && entry.message.role === "user"));
+    }
+    const automaticSkill = ordinaryTurn && !shortReply && !request.skillId && !request.skillPath && !catalog.defaultSkillId && mode !== "plan" && knowledgeCommand.kind !== "maintain";
+    const productRunId = this.nextId("product-run");
+    const decisionTurnId = productRunId;
     const decisionRecent = this.decisionRecent(catalog.conversationId);
     // 智能判断和读草稿同时进行，只减少等待，不改结果；judgeTurn 自己吞掉失败。
-    const judging = ordinaryTurn && mode !== "plan"
+    const judging = ordinaryTurn && !shortReply && mode !== "plan"
       ? this.judgeTurn(catalog, request.text, decisionTurnId, automaticSkill, request.onPreparationStage, request.signal)
       : Promise.resolve(null);
-    const candidates = ordinaryTurn && mode !== "plan" && knowledgeCommand.kind === "chat"
+    const candidates = ordinaryTurn && !shortReply && mode !== "plan" && knowledgeCommand.kind === "chat"
       && this.options.decisions && this.options.decisions.ready?.() !== false
       && this.options.knowledge?.shouldPreflightChat?.(catalog.conversationId) !== false
       ? this.options.knowledge?.collectChatCandidates?.({ conversationId: catalog.conversationId, question: request.text,
@@ -1632,7 +1672,7 @@ export class PiNativeConversationRuntime {
       ? { skillId: turnJudgment.skill.id, ...(turnJudgment.fresh !== undefined ? { fresh: turnJudgment.fresh >= this.decisionThresholds().fresh } : {}) }
       : undefined;
 
-    const selectedRuntimeSkill = ordinaryTurn
+    const selectedRuntimeSkill = ordinaryTurn && !shortReply
       ? request.skillId && this.options.skills?.resolveById
         ? await this.options.skills.resolveById({ id: request.skillId, catalog })
         : !request.skillPath && catalog.defaultSkillId
@@ -1731,7 +1771,6 @@ export class PiNativeConversationRuntime {
       );
     }
 
-    const productRunId = this.nextId("product-run");
     const memoryMode = request.generationRequest ? "no_memory" : request.memoryMode ?? catalog.defaultMemoryMode;
     const projectId = resolveExplicitMemoryProjectId(request.text);
     const channel = new PiRuntimeEventChannel();
@@ -1742,6 +1781,12 @@ export class PiNativeConversationRuntime {
         ? [request.skillId.trim()]
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
+      shortReply,
+      directlyBoundTools: Boolean(request.skillId || request.skillPath || catalog.defaultSkillId
+        || promptImages.length || documents.length || noteMentions.length || selectionAnnotations.length
+        || request.maintenanceScope || request.resumeContext || request.drawingRequested || request.workbenchSource
+        || catalog.projectId || catalog.companyRole === "worker" || request.companyProgrammatic || pdfTaskRequest
+        || catalog.agentId && catalog.agentId !== GENERAL_ASSISTANT_ID),
       onPreparationStage: request.onPreparationStage,
       toolRoundBudget: new ToolRoundBudget(),
       ...(request.companyProgrammatic ? { companyProgrammatic: true } : {}),
@@ -1836,6 +1881,10 @@ export class PiNativeConversationRuntime {
         type: "reasoning_summary",
         summary: cloneReasoningSummary(execution.reasoningSummary)
       });
+      if (shortReply && typeof active.session.setAutoCompactionEnabled === "function") {
+        execution.savedAutoCompaction = active.session.autoCompactionEnabled;
+        active.session.setAutoCompactionEnabled(false);
+      }
       this.configureToolsForTurn(active, knowledgeCommand, mode, memoryMode);
       if (knowledgeCommand.kind === "chat" && !execution.maintenanceScope && !execution.inlineProposal && !execution.generation && !englishDiarySourcePath && !pdfTaskRequest
         && isNewMaintenanceScopeRequest(request.text, active.cwd)) {
@@ -1914,7 +1963,7 @@ export class PiNativeConversationRuntime {
           providerResourceText: preflight.providerResourceText,
           references: preflight.references
         });
-      } else if (!request.companyProgrammatic && mode !== "plan"
+      } else if (!shortReply && !request.companyProgrammatic && mode !== "plan"
         && knowledgeCommand.kind === "chat"
         && this.options.knowledge?.retrieveChat
         && this.options.knowledge.shouldPreflightChat?.(catalog.conversationId) !== false
@@ -2338,7 +2387,7 @@ export class PiNativeConversationRuntime {
     }
   }
 
-  private async openMaintenanceSelection(active: ActiveConversation) {
+  private async openMaintenanceSelection(active: Pick<ActiveConversation, "catalog" | "sessionManager">) {
     const branch = new Set(active.sessionManager.getBranch().map(entry => entry.id));
     const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId))
       .filter(run => run.piSessionId === active.catalog.piSessionId && branch.has(run.userEntryId));
@@ -2381,7 +2430,7 @@ export class PiNativeConversationRuntime {
       if (original) {
         if (original.folderBindingsRevision !== undefined && original.folderBindingsRevision !== getKnowledgeFolderBindings(active.cwd)?.revision) throw new Error("目录配置已变化，请重新说明要维护哪些资料。");
         if (original.sourcePaths.some(relative => !["raw", "inbox"].includes(knowledgePathRole(active.cwd, relative) ?? ""))) throw new Error("原维护范围不在当前资料目录中，请说明要维护哪些资料。");
-        return { scope: { mode: "batch", sourcePaths: original.sourcePaths, folderBindingsRevision: original.folderBindingsRevision }, request: "继续原维护清单" };
+        return { scope: { mode: "batch", sourcePaths: original.sourcePaths, folderBindingsRevision: original.folderBindingsRevision }, request: isMaintenanceSkipRequest(request) ? request : "继续原维护清单" };
       }
       const runs = (await this.productRuns.listReadOnly(active.catalog.conversationId)).filter(prior => prior.piSessionId === active.catalog.piSessionId);
       const saved = maintenanceScopeContextFromEntries(active.sessionManager.getBranch(), runs, {
@@ -2425,7 +2474,7 @@ export class PiNativeConversationRuntime {
     mode: PiChatMode,
     memoryMode: PiConversationMemoryMode
   ): void {
-    if (active.currentRun?.inlineProposal || active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
+    if (active.currentRun?.shortReply || active.currentRun?.inlineProposal || active.currentRun?.generation) { active.session.setActiveToolsByName([]); return; }
     if (!active.supportsToolCalling) { active.session.setActiveToolsByName([]); return; }
     const names = resolvePiTurnToolNames({
       commandKind: command.kind,
@@ -2441,6 +2490,8 @@ export class PiNativeConversationRuntime {
         active.currentRun?.requiresFreshnessVerification === true
     }).filter(name => active.isToolCurrentlyEnabled?.(name) !== false);
     if (active.currentRun?.englishDiarySourcePath && names.length !== 1) throw new PiNativeConversationRuntimeError("agent_session_invalid", "英文日记能力、功能开关或 PRO 当前不可用。");
+    const run = active.currentRun;
+    if (run) run.admittedToolNames = names;
     if (mode === "plan") {
       if (
         names.length === 0
@@ -2454,6 +2505,22 @@ export class PiNativeConversationRuntime {
         );
       }
       active.session.setActiveToolsByName([...names]);
+      return;
+    }
+    if (run && command.kind === "chat" && !run.englishDiarySourcePath && !run.directlyBoundTools && names.includes(RESOURCE_LOOKUP)) {
+      const direct = new Set(directResourceToolNames(run.requestText, names));
+      if (active.catalog.companyRole === "router") {
+        for (const name of COMPANY_ROUTER_TOOLS) direct.add(name);
+      }
+      const branch = active.sessionManager.getBranch();
+      if (run.requiresFreshnessVerification) direct.add("web_search");
+      if (activeTaskPlanFromBranch(branch)) direct.add("task_update");
+      const maintenanceFollowup = maintenanceConfirmationWithJudgment(run.requestText, run.turnJudgment?.maintenance)
+        || branch.some(entry => entry.type === "custom" && entry.customType === MAINTENANCE_SCOPE_CONTEXT_TYPE);
+      if (maintenanceFollowup || isNewMaintenanceScopeRequest(run.requestText, active.cwd)) {
+        for (const name of [PI_KNOWLEDGE_MAINTAIN_TOOL_ID, "note_read", "vault_search", "knowledge_search", "knowledge_read", "task_update"]) direct.add(name);
+      }
+      active.session.setActiveToolsByName(names.filter(name => name === RESOURCE_LOOKUP || name === "user_question" || direct.has(name)));
       return;
     }
     active.session.setActiveToolsByName([...names]);
@@ -2476,6 +2543,7 @@ export class PiNativeConversationRuntime {
     active: ActiveConversation,
     execution: ActiveProductRun
   ): void {
+    if (execution.savedAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.savedAutoCompaction);
     if (execution.inlineProposal?.previousAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.inlineProposal.previousAutoCompaction);
     if (execution.generation?.previousAutoCompaction !== undefined) active.session.setAutoCompactionEnabled(execution.generation.previousAutoCompaction);
     execution.releaseSubmissionAbort?.();
@@ -3225,7 +3293,9 @@ export class PiNativeConversationRuntime {
             });
           }, 1_000);
         }
-        return execution;
+        return run ? { ...execution, shortReply: run.shortReply,
+          purpose: run.providerCompacting ? "compaction" : run.providerToolStep ? "tool_step" : "conversation"
+        } : { ...execution, purpose: "compaction" };
       },
       currentToolExecutionContext: () => {
         const active = holder.active;
@@ -3325,6 +3395,14 @@ export class PiNativeConversationRuntime {
       },
       currentSkillTurnContext: () =>
         holder.active?.currentRun?.skillTurnContext ?? null,
+      currentShortReply: () => holder.active?.currentRun?.shortReply === true,
+      currentDiscoverableTools: () => holder.active?.currentRun?.admittedToolNames ?? [],
+      enableDiscoveredTools: names => {
+        const active = holder.active, admitted = active?.currentRun?.admittedToolNames;
+        if (!active || !admitted) return;
+        const requested = new Set([...active.session.getActiveToolNames(), ...names]);
+        active.session.setActiveToolsByName(admitted.filter(name => requested.has(name) && active.isToolCurrentlyEnabled?.(name) !== false));
+      },
       currentMemoryTurnContext: () => {
         const active = holder.active;
         const run = active?.currentRun;
@@ -3624,6 +3702,8 @@ export class PiNativeConversationRuntime {
     active.unsubscribe = created.session.subscribe((event) => {
       const execution = active.currentRun;
       if (!execution) return;
+      if (event.type === "compaction_start" || event.type === "compaction_end") execution.providerCompacting = event.type === "compaction_start";
+      if (event.type === "tool_execution_start") execution.providerToolStep = true;
       active.eventLane = active.eventLane.then(async () => {
         await this.handleAgentSessionEvent(active, execution, event);
       }).catch((error) => {
@@ -3749,7 +3829,7 @@ export class PiNativeConversationRuntime {
         );
       }
 
-      promptError = await this.continueLimitedOutput(active, execution, promptError);
+      if (!execution.shortReply) promptError = await this.continueLimitedOutput(active, execution, promptError);
 
       let entries = active.sessionManager.getEntries();
       let runEntries = entries.filter(
@@ -4365,6 +4445,9 @@ export class PiNativeConversationRuntime {
       ].sort());
       if (
         this.options.skills
+        && !execution.shortReply
+        && (execution.successfulCapabilityIds.size > 0
+          || /(?:可复用|可重复使用|reusable).{0,28}(?:方法|流程|步骤|模板|process|workflow|template|method)/iu.test(execution.requestText))
         && !execution.inlineProposal
         && !execution.generation
         && terminalState === "completed"
@@ -4372,6 +4455,7 @@ export class PiNativeConversationRuntime {
         && execution.commandKind === "chat"
       ) {
         void this.options.skills.reviewCompletedTask({
+          conversationId: active.catalog.conversationId,
           productRunId: execution.productRunId,
           request: execution.requestText,
           result: lastAssistantEntry(runEntries)
@@ -4389,6 +4473,7 @@ export class PiNativeConversationRuntime {
       }
       if (
         execution.memoryMode === "normal"
+        && !execution.shortReply
         && !execution.inlineProposal
         && terminalState !== "cancelled"
         && assistantEntryId
@@ -4649,7 +4734,7 @@ export class PiNativeConversationRuntime {
           this.now()
         );
         const text = publicMessageText(event.message);
-        if (!execution.outputContinuation && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && execution.generation?.request.outputKind !== "canvas" && isAssistantMessage(event.message)
+        if (!execution.outputContinuation && !execution.shortReply && !execution.inlineProposal && execution.generation?.request.outputKind !== "excalidraw" && execution.generation?.request.outputKind !== "canvas" && isAssistantMessage(event.message)
           && (event.message.stopReason === "length" || event.message.errorMessage === "provider_output_limit_reached")) {
           execution.outputContinuation = {
             messageKey: key, firstFingerprint: messageFingerprint(event.message), text,
@@ -5497,7 +5582,7 @@ export class PiNativeConversationRuntime {
     if (event.toolName === PI_USER_QUESTION_TOOL_ID) return;
     if (active.registeredToolNames.has(event.toolName)) {
       if (!event.isError && !reasoningToolWasCancelled(event.result)) {
-        execution.successfulCapabilityIds.add(event.toolName);
+        if (event.toolName !== RESOURCE_LOOKUP) execution.successfulCapabilityIds.add(event.toolName);
       }
       this.updateReasoningActivitySafely(execution, {
         id: stableId("reasoning-tool", event.toolCallId),
@@ -6689,6 +6774,7 @@ function collectKnowledgeToolReferences(
         entry.message.toolName !== "knowledge_search"
         && entry.message.toolName !== "knowledge_read"
         && entry.message.toolName !== "note_read"
+        && entry.message.toolName !== RESOURCE_LOOKUP
       )
       || entry.message.isError
       || !entry.message.details
@@ -7095,6 +7181,18 @@ function safeProductRunErrorCode(
   if (promptError instanceof PiSessionDurabilityError) {
     return `pi_session_${promptError.code}`;
   }
+  // A failed Provider turn can follow a tool rejection that the model already corrected.
+  if (assistant?.stopReason === "error") {
+    const code = safeProviderFailureCode(assistant.errorMessage);
+    const detail = (assistant as AssistantProviderFailure).echoInkProviderFailure;
+    if (code) {
+      const diagnostic = detail?.code || detail?.message ? providerFailureDetailText(detail) : "";
+      return diagnostic ? `${code}\n${PROVIDER_FAILURE_DETAIL_PREFIX}${diagnostic}` : code;
+    }
+    if (detail) return assistantProviderFailureText(assistant);
+    if (assistant.errorMessage) return knowledgeErrorDetail(assistant.errorMessage);
+  }
+  if (promptError) return knowledgeErrorDetail(promptError);
   for (const entry of [...entries].reverse()) {
     if (entry.type !== "message" || entry.message.role !== "toolResult") continue;
     const result = knowledgeMaintenanceEnvelopeFromToolResult(entry.message);
@@ -7104,7 +7202,6 @@ function safeProductRunErrorCode(
       if (text.trim()) return knowledgeErrorDetail(`维护工具未执行：${text}`);
     }
   }
-  if (promptError) return knowledgeErrorDetail(promptError);
   const providerAssistant: AssistantProviderFailure | undefined = assistant;
   if (providerAssistant?.echoInkProviderFailure) return assistantProviderFailureText(providerAssistant);
   if (assistant?.errorMessage) return knowledgeErrorDetail(assistant.errorMessage);

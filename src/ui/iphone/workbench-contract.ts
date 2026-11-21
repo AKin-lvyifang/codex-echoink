@@ -20,6 +20,7 @@ import type { CloudSyncController } from "../../sync/cloud/controller";
 
 export interface IPhoneWorkbenchHost {
   app: App;
+  releaseUpdate?: import("../../settings/release-update").ReleaseUpdateController;
   store: MobileStore;
   runtime: MobileRuntime;
   services: MobileServices;

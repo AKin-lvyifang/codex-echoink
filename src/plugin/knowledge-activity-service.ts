@@ -28,11 +28,13 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
       // Reconcile only after both independent reads, regardless of completion order.
       const latestInitial = new Map<string, Readonly<MaintenanceActivity>>();
       for (const [id, initial] of this.maintenance) if (id.startsWith("run:")) {
-        const previous = latestInitial.get(initial.originConversationId);
+        const key = maintenanceBatchKey(initial);
+        const previous = latestInitial.get(key);
         if (previous && previous.updatedAt > initial.updatedAt) this.maintenance.delete(id);
-        else { if (previous) this.maintenance.delete(previous.id); latestInitial.set(initial.originConversationId, initial); }
+        else { if (previous) this.maintenance.delete(previous.id); latestInitial.set(key, initial); }
       }
-      for (const [id, initial] of this.maintenance) if (id.startsWith("run:") && [...this.maintenance.values()].some(record => !record.id.startsWith("run:") && record.originConversationId === initial.originConversationId && record.updatedAt >= initial.updatedAt)) this.maintenance.delete(id);
+      for (const [id, initial] of this.maintenance) if (id.startsWith("run:") && [...this.maintenance.values()].some(record => !record.id.startsWith("run:")
+        && maintenanceBatchKey(record) === maintenanceBatchKey(initial) && record.updatedAt >= initial.updatedAt)) this.maintenance.delete(id);
       this.restored = true; this.publish();
     });
   }
@@ -50,11 +52,14 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
   }
   updateInitial(activity: Readonly<MaintenanceActivity>): void {
     // Binding replaces the ProductRun entry; it never creates a second task card.
-    for (const [id, old] of this.maintenance) if (id.startsWith("run:") && old.originConversationId === activity.originConversationId) this.maintenance.delete(id);
+    for (const [id, old] of this.maintenance) if (id.startsWith("run:") && maintenanceBatchKey(old) === maintenanceBatchKey(activity)) this.maintenance.delete(id);
     this.maintenance.set(activity.id, activity); this.publish();
   }
   bind(record: Readonly<KnowledgeMaintenanceRecord>): void {
-    for (const [id, old] of this.maintenance) if (id.startsWith("run:") && old.originConversationId === record.originConversationId) this.maintenance.delete(id);
+    const activity = projectMaintenanceActivity(record);
+    if (activity) for (const [id, old] of this.maintenance) {
+      if (id.startsWith("run:") && maintenanceBatchKey(old) === maintenanceBatchKey(activity) && old.updatedAt <= activity.updatedAt) this.maintenance.delete(id);
+    }
     this.update(record, !!record.p1 && !isP1Open(record));
   }
   settle(recordId: string): void {
@@ -83,6 +88,9 @@ export class KnowledgeActivityService implements KnowledgeActivitySource {
     this.visibleSignature = signature;
     for (const listener of this.listeners) { try { listener(this.value); } catch (error) { console.error("Knowledge activity subscriber failed", error); } }
   }
+}
+function maintenanceBatchKey(activity: Readonly<MaintenanceActivity>): string {
+  return JSON.stringify([activity.originConversationId, activity.batch.index, activity.batch.total]);
 }
 function deepFreeze<T>(value: T): Readonly<T> {
   if (value && typeof value === "object" && !Object.isFrozen(value)) { for (const child of Object.values(value)) deepFreeze(child); Object.freeze(value); }

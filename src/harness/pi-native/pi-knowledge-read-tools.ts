@@ -1,5 +1,6 @@
 import { knowledgeSpanReferenceId, sliceKnowledgeSourceSpan, sourceSpanHasMore, boundKnowledgeSourceSpan } from "../../knowledge-base/source-span";
 import { rawDigestFingerprint } from "../../knowledge-base/raw-digest";
+import { maintenanceLineOffsets, type MaintenanceReadSlice } from "../../knowledge-base/maintenance-read-coverage";
 import { KNOWLEDGE_SEARCH_KINDS, type BodySearchInclusionReason, type BodySearchMatchSource, type KnowledgeDocumentOutline } from "../../knowledge-base/search/contracts";
 import { fitKnowledgeNavigation, locateKnowledgeAnchor, normalizeKnowledgeDocumentOutline } from "../../knowledge-base/search/markdown-navigation";
 import { getDesktopUtil } from "../../platform/desktop-runtime";
@@ -27,6 +28,7 @@ import type {
 import type { PiVaultAdditionalToolSecurityPort } from "./pi-vault-tool-security-extension";
 import {
   secureVaultToolResult,
+  VAULT_READ_TOOL_RESULT_LIMIT_BYTES,
   type VaultToolResultEgressPort
 } from "./vault-tool-result-safety";
 
@@ -41,7 +43,7 @@ export type PiKnowledgeReadToolId =
 
 const RESULT_PENDING = "knowledge_read_result_pending_safety";
 const SEARCH_RESULT_LIMIT_BYTES = 16_000;
-const READ_RESULT_LIMIT_BYTES = 32_000;
+const READ_RESULT_LIMIT_BYTES = VAULT_READ_TOOL_RESULT_LIMIT_BYTES;
 const MAX_READ_LINES = 80;
 
 export interface KnowledgeSearchToolArguments {
@@ -121,6 +123,7 @@ interface KnowledgeReadToolResult {
   readonly kind: "read";
   /** Canonical Raw body fingerprint only when the entire source was delivered. */
   readonly sourceBodyFingerprint?: string;
+  readonly maintenanceReadSlice?: MaintenanceReadSlice;
   readonly reference: Readonly<PiKnowledgeReference>;
   readonly hasMore: boolean;
   readonly nextLineStart?: number;
@@ -315,6 +318,8 @@ implements PiVaultAdditionalToolSecurityPort {
               && Boolean(call.arguments.cursor)
           } : {}),
           ...(references.length ? { references } : {}),
+          ...(call.result.kind === "read" && references.length && call.result.maintenanceReadSlice
+            ? { maintenanceReadSlice: call.result.maintenanceReadSlice } : {}),
           ...(sourceBodyFingerprint ? { sourceBodyFingerprints: { [references[0].vaultRelativePath]: sourceBodyFingerprint } } : {})
         }),
         isError: event.isError
@@ -591,10 +596,14 @@ export function readToolResult(
     ...(snapshot.related ? { related: snapshot.related } : {}),
     ...(anchorLocation ? { anchorLocation } : {})
   });
+  const fingerprint = snapshot.kind === "raw" ? rawDigestFingerprint(snapshot.vaultRelativePath, Buffer.from(snapshot.content, "utf8")) : undefined;
+  const offsets = fingerprint ? maintenanceLineOffsets(snapshot.content) : [];
+  const end = partialLastLine ? offsets[lineEnd - 1] + span.columnEnd! : offsets[lineEnd] ?? snapshot.content.length;
   const read: Readonly<KnowledgeReadToolResult> = Object.freeze({
     kind: "read" as const,
-    ...(snapshot.kind === "raw" && lineStart === 1 && (span.columnStart ?? 0) === 0 && !sourceSpanHasMore(lines, span)
-      ? { sourceBodyFingerprint: rawDigestFingerprint(snapshot.vaultRelativePath, Buffer.from(snapshot.content, "utf8")) } : {}),
+    ...(fingerprint ? { maintenanceReadSlice: { path: snapshot.vaultRelativePath, sourceRevision: snapshot.contentRevision,
+      start: offsets[lineStart - 1] + (span.columnStart ?? 0), end, totalLength: snapshot.content.length, bodyFingerprint: fingerprint } } : {}),
+    ...(fingerprint && !sourceSpanHasMore(lines, span) ? { sourceBodyFingerprint: fingerprint } : {}),
     reference,
     related: snapshot.related,
     applicability: { subjects: snapshot.subjects, applicableTime: snapshot.applicableTime, documentKind: snapshot.documentKind },
@@ -646,6 +655,9 @@ export function toolResultForProvider(
     related: result.related,
     applicability: result.applicability,
     hasMore: result.hasMore,
+    ...(result.maintenanceReadSlice ? { segment: {
+      start: result.maintenanceReadSlice.start, end: result.maintenanceReadSlice.end, sourceRevision: result.maintenanceReadSlice.sourceRevision
+    } } : {}),
     ...(result.nextLineStart
       ? { nextLineStart: result.nextLineStart, nextColumnStart: result.nextColumnStart }
       : {}),

@@ -241,9 +241,23 @@ export function knowledgeMaintenanceBatchAt(sourcePaths: readonly string[], curs
   return Object.freeze(sourcePaths.slice(cursor, cursor + KNOWLEDGE_MAINTENANCE_BATCH_SIZE));
 }
 
-export function splitKnowledgeMaintenanceSources(sourcePaths: readonly string[]): readonly (readonly string[])[] {
-  const unique = [...new Set(sourcePaths)], batches: (readonly string[])[] = [];
-  for (let cursor = 0; cursor < unique.length; cursor += KNOWLEDGE_MAINTENANCE_BATCH_SIZE) batches.push(knowledgeMaintenanceBatchAt(unique, cursor));
+export const KNOWLEDGE_MAINTENANCE_BATCH_BYTES = 200_000;
+
+export function splitKnowledgeMaintenanceSources(sourcePaths: readonly string[], sourceBytes?: ReadonlyMap<string, number>): readonly (readonly string[])[] {
+  const batches: (readonly string[])[] = [];
+  let batch: string[] = [];
+  let bytes = 0;
+  for (const path of new Set(sourcePaths)) {
+    const size = sourceBytes?.get(path) ?? 0;
+    if (batch.length && (batch.length >= KNOWLEDGE_MAINTENANCE_BATCH_SIZE || bytes + size > KNOWLEDGE_MAINTENANCE_BATCH_BYTES)) {
+      batches.push(Object.freeze(batch));
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(path);
+    bytes += size;
+  }
+  if (batch.length) batches.push(Object.freeze(batch));
   return Object.freeze(batches);
 }
 
@@ -251,7 +265,7 @@ export function knowledgeMaintenanceBatchPrompt(input: Readonly<{
   sourcePaths: readonly string[]; batchIndex: number; expectedBatches: number; origin?: "workbench"; request?: string;
 }>): string {
   if (!input.sourcePaths.length || input.sourcePaths.length > KNOWLEDGE_MAINTENANCE_BATCH_SIZE) throw new Error("知识维护每批必须为1–20篇资料。");
-  return `/maintain 用户已确认${input.origin === "workbench" ? "从工作台整理资料" : "知识库初始化"}，本批 ${input.batchIndex + 1}/${input.expectedBatches}。请只阅读并处理以下指定来源，复用已有知识，按需提炼；无需新增可自然说明。未读或失败来源单列待处理。沿用当前工作区权限；执行受当前权限约束，不需要再次询问是否执行本批，也不要扩展为全库勘查。${input.request ? `\n用户本次要求：${input.request}` : ""}\n本批来源：\n${input.sourcePaths.map(source => JSON.stringify(source)).join("\n")}`;
+  return `/maintain 用户已确认${input.origin === "workbench" ? "从工作台整理资料" : "知识库初始化"}，本批 ${input.batchIndex + 1}/${input.expectedBatches}。请只阅读并处理以下指定来源，复用已有知识，按需提炼；无需新增可自然说明。长文用note_read从offset=0分段读取，每段读完立即提交拆解，末段标记完成。用户指定或读失败的来源用维护工具跳过并登记原因。沿用当前工作区权限；执行受当前权限约束，不需要再次询问是否执行本批，也不要扩展为全库勘查。${input.request ? `\n用户本次要求：${input.request}` : ""}\n本批来源：\n${input.sourcePaths.map(source => JSON.stringify(source)).join("\n")}`;
 }
 const MAX_PROVIDER_ATTEMPTS = 1;
 const FIXED_ROOTS = new Set<string>(KNOWLEDGE_INITIALIZATION_ROOTS);

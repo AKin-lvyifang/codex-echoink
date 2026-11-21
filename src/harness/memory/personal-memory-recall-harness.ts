@@ -14,6 +14,7 @@ import type { PersonalMemoryRepository } from "./personal-memory-repository";
 import type { PersonalMemoryTurnCatalogCandidate } from "./personal-memory-repository";
 import {
   selectMemoryDirectory,
+  selectCompleteMemoryDirectory,
   type MemoryDirectoryEntry,
   type MemoryDirectoryLlmPort,
   type MemoryDirectorySelectionResult
@@ -51,11 +52,13 @@ export interface PersonalMemoryPreparedTurnContext {
 }
 
 export interface PersonalMemoryRecallHarnessOptions {
+  readonly completeCatalog?: boolean;
+  readonly includeNavigation?: boolean;
   readonly directory?: Readonly<{ llm: MemoryDirectoryLlmPort; modelInputBudget: number }>;
   /** 智能判断（PRO）挑记忆；返回 null 时回到 directory 的大模型挑选。 */
   readonly decisions?: Readonly<{
     diagnostic?(turnId: string): Readonly<{ reason?: string; threshold?: number; orderEnsemble?: "full" | "partial" }> | undefined;
-    judgeMemory(input: Readonly<{ turnId: string; text: string; recent?: readonly string[]; memories: readonly MemoryDirectoryEntry[] }>): Promise<Readonly<{ selected: readonly string[]; probabilities: Readonly<Record<string, number>> }> | null>;
+    judgeMemory(input: Readonly<{ turnId: string; conversationId?: string; text: string; recent?: readonly string[]; memories: readonly MemoryDirectoryEntry[] }>): Promise<Readonly<{ selected: readonly string[]; probabilities: Readonly<Record<string, number>> }> | null>;
   }>;
 }
 
@@ -102,6 +105,7 @@ export class PersonalMemoryRecallHarness {
     memoryMode: PersonalMemoryMode;
     preview?: boolean;
     skipDirectory?: boolean;
+    fixedOnly?: boolean;
     signal?: AbortSignal;
     now?: number;
     query: string;
@@ -133,7 +137,7 @@ export class PersonalMemoryRecallHarness {
     await input.onProgress?.("loading");
     if (input.signal?.aborted) throw new Error("memory_recall_aborted");
     const tokenBudget = normalizeTokenBudget(input.tokenBudget);
-    const query = input.memoryMode === "normal"
+    const query = input.memoryMode === "normal" && !input.fixedOnly
       ? await buildBoundedRecallQuery(
           input.query,
           input.recentConversation ?? [],
@@ -165,6 +169,10 @@ export class PersonalMemoryRecallHarness {
     } : undefined;
     let directorySelection: MemoryDirectorySelectionResult | undefined;
     let associationJudgment: MemoryAssociationJudgment | undefined;
+    if (input.fixedOnly) {
+      const { scanned: _scanned, search: _search, ...fixed } = await this.repository.prepareTurnSnapshot({ ...request, fixedOnly: true }, runtime);
+      return Object.freeze({ ...fixed, recall: null });
+    }
     const decisions = input.decisionTurnId ? this.options.decisions : undefined;
     if ((this.options.directory || decisions) && input.memoryMode === "normal" && !input.preview && !input.skipDirectory) {
       let catalog: readonly MemoryDirectoryEntry[] = [];
@@ -192,11 +200,24 @@ export class PersonalMemoryRecallHarness {
       if (decisions && catalog.length) {
         const startedAt = Date.now();
         // Drex owns its model budget/chunking. A small chat model must not trim the cloud catalog.
-        const sent = await prepareMemoryCatalog(catalog, { tokenBudget: Number.POSITIVE_INFINITY, maxEntries: 1_000 });
-        let judged = sent.entries.length ? await decisions.judgeMemory({
-          turnId: input.decisionTurnId!, text: selectionQuery, recent: input.recentConversation,
-          memories: sent.entries
-        }).catch(() => null) : null;
+        const sent = await prepareMemoryCatalog(catalog, { tokenBudget: Number.POSITIVE_INFINITY,
+          ...(this.options.completeCatalog ? {} : { maxEntries: 1_000 }) });
+        const cloudBatches = this.options.completeCatalog && sent.entries.length > 250
+          ? Array.from({ length: Math.ceil(sent.entries.length / 250) }, (_, index) => sent.entries.slice(index * 250, (index + 1) * 250))
+          : [sent.entries];
+        const cloudResults: NonNullable<Awaited<ReturnType<typeof decisions.judgeMemory>>>[] = [];
+        for (const memories of cloudBatches) {
+          if (!memories.length || input.signal?.aborted) break;
+          const response = await decisions.judgeMemory({
+            turnId: input.decisionTurnId!, conversationId: input.conversationId, text: selectionQuery, recent: input.recentConversation, memories
+          }).catch(() => null);
+          if (!response) break;
+          cloudResults.push(response);
+        }
+        let judged = cloudResults.length === cloudBatches.length ? {
+          selected: cloudResults.flatMap(response => response.selected),
+          probabilities: Object.assign({}, ...cloudResults.map(response => response.probabilities)) as Record<string, number>
+        } : null;
         const invalidProbabilities = judged && !sent.entries.every(entry => typeof judged!.probabilities?.[entry.id] === "number"
           && Number.isFinite(judged!.probabilities[entry.id]) && judged!.probabilities[entry.id] >= 0 && judged!.probabilities[entry.id] <= 1);
         if (invalidProbabilities) judged = null;
@@ -219,7 +240,8 @@ export class PersonalMemoryRecallHarness {
       }
       const pickDirectory = async (reason?: string) => {
         const directory = this.options.directory!;
-        const result = await selectMemoryDirectory({ entries: catalog, query: selectionQuery, now: input.now,
+        const select = this.options.completeCatalog ? selectCompleteMemoryDirectory : selectMemoryDirectory;
+        const result = await select({ entries: catalog, query: selectionQuery, now: input.now,
           recentConversation: input.recentConversation, modelInputBudget: directory.modelInputBudget,
           llm: directory.llm, memoryMode: input.memoryMode, signal: input.signal });
         associationJudgment = result.status === "selected" ? { route: "directory", seenIds: result.stats.sentIds ?? [] } : undefined;
@@ -277,7 +299,7 @@ export class PersonalMemoryRecallHarness {
     );
     const delivered = new Set([...candidates.map(candidate => candidate.id), ...(fixed.core ?? []).map(core => core.id)]);
     const fixedTokens = await estimateTokenValueAsync({ user: fixed.user, core: fixed.core, recall: finalInjectionText(candidates, search.total) });
-    const navigation = !input.preview && !input.skipDirectory ? await buildMemoryNavigation(search.directory ?? [], delivered,
+    const navigation = this.options.includeNavigation !== false && !input.preview && !input.skipDirectory ? await buildMemoryNavigation(search.directory ?? [], delivered,
       Math.max(0, (input.availableInputTokens ?? this.options.directory?.modelInputBudget ?? 0) - fixedTokens - 128)) : undefined;
     const remaining = search.remaining;
     const exhaustive = search.exhausted;
@@ -298,7 +320,9 @@ export class PersonalMemoryRecallHarness {
       selectionReceipt: {
         schemaVersion: 1 as const,
         route: receiptRoute,
-        ...(attempts.length ? {} : { reason: input.preview ? "preview" : input.skipDirectory ? "skip_directory" : "no_semantic_provider" }),
+        ...(directorySelection?.status !== "selected" && !input.preview && !input.skipDirectory
+          ? { reason: "semantic_recall_degraded" }
+          : attempts.length ? {} : { reason: input.preview ? "preview" : input.skipDirectory ? "skip_directory" : "no_semantic_provider" }),
         ...(navigation ? { navigation: { total: navigation.total, listed: navigation.listed, truncated: navigation.truncated, tokens: navigation.tokens } } : {}),
         expandedIds: candidates.filter(candidate => candidate.relatedFrom).map(candidate => candidate.id),
         expandedFrom: Object.fromEntries(candidates.filter(candidate => candidate.relatedFrom).map(candidate => [candidate.id, candidate.relatedFrom!.id])),

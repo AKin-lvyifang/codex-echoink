@@ -7,6 +7,7 @@ import { App, Platform } from "obsidian";
 import { installProviderModalDomFixture, ProviderModalTestElement } from "echoink:test-settings-dom";
 import Plugin from "../main";
 import { CodexSettingTab } from "../settings/settings-tab";
+import { ReleaseUpdateController } from "../settings/release-update";
 import { DEFAULT_SETTINGS } from "../settings/settings";
 import { PiLocalDataService } from "../plugin/pi-local-data-service";
 import { ProductActivityGate } from "../plugin/api-provider-activation-service";
@@ -96,6 +97,7 @@ async function settingsDomLifecycle(): Promise<void> {
   settings.settingsTab = "general";
   settings.settingsLanguage = "zh-CN";
   const plugin = {
+    releaseUpdate: new ReleaseUpdateController(async () => ({ releases: [] })),
     applyAppearanceTheme: () => undefined,
     getQuickChatWindowController: () => null,
     register: () => undefined, onConversationCatalogChanged: () => () => undefined,

@@ -227,10 +227,22 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
     let calls = 0, target, system, missing = false; const directoryIds = [];
     const state = await fixture(async request => {
       const body = JSON.parse(request.body); system = body.messages[0].content;
-      if (calls++ % 2 === 0) return { status: 200, json: { choices: [{ message: { role: "assistant", content: null, tool_calls: [{ id: `read-${calls}`, type: "function", function: { name: "memory_read", arguments: JSON.stringify({ id: missing ? "mem_missing" : target }) } }] }, finish_reason: "tool_calls" }] } };
+      if (calls++ % 2 === 0) {
+        assert.ok(body.tools.some(tool => tool.function.name === "resource_lookup"));
+        return answer("openai-completions", "", [[`read-${calls}`, "resource_lookup", {
+          items: [{ action: "read", kind: "memory", id: missing ? "mem_missing" : target }]
+        }]]);
+      }
       return answer("openai-completions", "ok");
     });
-    const memory = new MobileMemoryService({ adapter: state.adapter, store: state.store, settings: () => state.settings, saveSettings: async () => {}, request: async request => answer("openai-completions", JSON.stringify(JSON.parse(JSON.parse(request.body).messages.at(-1).content).query.includes("北斗发布") ? directoryIds : [])), changed() {}, isBusy: () => false });
+    const provider = state.settings.apiProviders[0];
+    provider.providerId = "deepseek";
+    provider.models.push(mobileModel("deepseek-v4-flash"));
+    const memory = new MobileMemoryService({ adapter: state.adapter, store: state.store, settings: () => state.settings, saveSettings: async () => {}, request: async request => {
+      const body = JSON.parse(request.body);
+      assert.equal(body.model, "deepseek-v4-flash");
+      return answer("openai-completions", JSON.stringify(JSON.parse(body.messages.at(-1).content).query.includes("北斗发布") ? directoryIds : []));
+    }, changed() {}, isBusy: () => false });
     await memory.initialize(); state.runtime.setMemory(() => memory); state.store.bindCanonicalMemory(() => memory.recordsForRuntime());
     try {
       const core = await memory.commitToolMemory(await memory.prepareToolMemory({ kind: "fact", title: "用药安全", content: "对青霉素过敏。".repeat(50), recallWhen: "用药时", basis: "explicit" }, "task", "core", "create"), () => {});
@@ -247,7 +259,7 @@ export async function taskScenarios({ MobileRuntime, MobileStore, loadMobileSett
       assert.equal(state.store.session.runs.at(-1).memorySources.length, ordinary.length + 1);
       const counts = JSON.stringify(after.records); missing = true;
       await state.runtime.send("换个话题，聊月球");
-      assert.equal(JSON.stringify((await memory.memoryActivity()).records), counts, "失败的 memory_read 不计数，核心无关时不积累活跃度");
+      assert.equal(JSON.stringify((await memory.memoryActivity()).records), counts, "失败的批量读取不计数，核心无关时不积累活跃度");
     } finally { state.runtime.dispose(); }
   });
 

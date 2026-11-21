@@ -1,3 +1,4 @@
+import { selectCompleteMemoryDirectory } from "../harness/memory/memory-directory-selector";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -57,6 +58,23 @@ import { searchMemories } from "../mobile/tools";
 import { memoryTemporalContext } from "../harness/memory/memory-relevance";
 
 export async function runMemoryRecallHarnessContractScenarios(): Promise<void> {
+  const entries = Array.from({ length: 93 }, (_, index) => ({
+    id: `mem_complete_${index}`, title: `案例 ${index}`, summary: "迁移前先确认备份。",
+    recallWhen: "核对旧项目", activity: 0, score: 0
+  }));
+  const seen: string[] = [];
+  const directory = await selectCompleteMemoryDirectory({ entries, query: "找不含相同词的项目", memoryMode: "normal", modelInputBudget: 60_000,
+    llm: { call: async request => {
+      const ids = Array.from(request.systemPrompt.matchAll(/"id":"(mem_complete_\d+)"/gu), match => match[1]!);
+      seen.push(...ids);
+      return { text: JSON.stringify(ids.slice(0, 1)) };
+    } }
+  });
+  assert.equal(directory.status, "selected");
+  assert.equal(directory.stats.truncated, 0);
+  assert.deepEqual(new Set(seen), new Set(entries.map(entry => entry.id)), "batches deliver every eligible title and summary");
+  assert.equal(seen.length, entries.length);
+
   await scenarioAutomaticQueryFiltering();
   await scenarioSharedRelevanceAndTemporalHints();
   await scenarioRecallWhenIsNewWriteOldReadCompatible();

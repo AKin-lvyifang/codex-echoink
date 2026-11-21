@@ -28,6 +28,7 @@ import {
   type PiProviderConfigurationDraft
 } from "../plugin/pi-provider-configuration-service";
 import { PiChatUiProjector } from "../harness/pi-native/pi-chat-ui-projector";
+import { shortSocialOutputLimit } from "../harness/short-social-turn";
 
 const context: Context = { messages: [{ role: "user", content: "fixture", timestamp: 1 }] };
 const headers = {
@@ -335,15 +336,20 @@ async function assertNormalGenerationAndTransport(): Promise<void> {
     assert.equal(signals.length, 1, "ordinary generateText uses the same request observer");
     const transport = new PiProviderProtocolTransport({ authorityId: "fixture", storeSetId: "fixture", resolveAuthToken: () => "fixture-token", dispatcher });
     const output = await transport.stream({
-      runId: "r", turnId: "t", conversationId: "c", correlationId: "x", model: model(), context,
+      runId: "r", turnId: "t", conversationId: "c", correlationId: "x", purpose: "conversation", shortReply: true, model: model(), context,
       provider: { providerId: "xiaoecho", baseUrl: model().baseUrl, apiProtocol: "openai-completions", modelRef: "retired-model", authMode: "account" },
-      options: { maxRetries: 0, maxTokens: 64, cacheRetention: "none", temperature: 0 }
+      options: { maxRetries: 0, maxTokens: shortSocialOutputLimit(undefined, context.messages), cacheRetention: "none", temperature: 0 }
     });
     const { result } = await collect(output);
     assert.equal(result.model, "auto", "the normal conversation transport preserves the message attribution for persistence");
     await assertColdSessionAttribution(result);
     assert.equal(signals.length, 2);
     assert.equal(fixture.calls.length, 2);
+    const wire = fixture.calls[1]!.options;
+    assert.equal(wire.maxTokens, 64);
+    assert.deepEqual(await wire.onPayload?.({ max_tokens: wire.maxTokens }, model()), {
+      max_tokens: 64, echoink_turn: { conversationId: "c", turnId: "t", purpose: "conversation", shortReply: true }
+    });
   });
 }
 

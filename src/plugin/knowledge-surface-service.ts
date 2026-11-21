@@ -605,11 +605,22 @@ export class EchoInkKnowledgeSurfaceService {
     text: string; maintenanceScope: Extract<PiKnowledgeMaintenanceScope, { mode: "batch" }>;
   }>[]> {
     if (source.signalId !== 7 || source.moduleId !== "knowledge-base") throw new Error("这条提醒不属于资料维护。");
-    const pending = await privateMaintenanceSourceScope(this.plugin.getVaultPath(), { limit: Infinity, processedSources: this.plugin.settings.knowledgeBase.processedSources });
+    const vaultRoot = this.plugin.getVaultPath();
+    const pending = await privateMaintenanceSourceScope(vaultRoot, { limit: Infinity, processedSources: this.plugin.settings.knowledgeBase.processedSources });
     const selected = new Set(source.objects);
     const retries = pending.retryGroups.map(group => group.sourcePaths.filter(relative => selected.has(relative))).filter(paths => paths.length);
     const retryPaths = new Set(retries.flat());
-    const batches = [...retries.flatMap(paths => splitKnowledgeMaintenanceSources(paths)), ...splitKnowledgeMaintenanceSources(pending.sourcePaths.filter(relative => selected.has(relative) && !retryPaths.has(relative)))];
+    const fresh = pending.sourcePaths.filter(relative => selected.has(relative) && !retryPaths.has(relative));
+    const sourceBytes = new Map<string, number>();
+    for (const relative of [...retryPaths, ...fresh]) {
+      const stat = await fsp.lstat(path.join(vaultRoot, relative)).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (stat?.isFile()) sourceBytes.set(relative, stat.size);
+    }
+    const split = (paths: readonly string[]) => splitKnowledgeMaintenanceSources(paths.filter(relative => sourceBytes.has(relative)), sourceBytes);
+    const batches = [...retries.flatMap(split), ...split(fresh)];
     if (!batches.length && pending.deferredSourcePaths.some(relative => selected.has(relative))) throw new Error(`部分来源属性回写失败，请修正属性后重试：${pending.deferredSourcePaths.filter(relative => selected.has(relative)).join("、")}`);
     if (!batches.length) throw new Error("这批资料已处理或不再属于维护范围，请刷新工作台。");
     return Object.freeze(batches.map((paths, batchIndex) => Object.freeze({

@@ -1001,6 +1001,7 @@ async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, 
     || payload.sources.some((source) => !isRecord(source)
       || typeof source.path !== "string" || typeof source.fingerprint !== "string"
       || !["processed", "unread", "failed"].includes(String(source.status))
+      || source.skipReason !== undefined && (source.status !== "unread" || typeof source.skipReason !== "string" || !source.skipReason.trim() || source.skipReason.length > 240)
       || !Array.isArray(source.evidencePaths) || source.evidencePaths.some((value) => typeof value !== "string"))) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   const result = parseKnowledgeMaintenanceResultEnvelope(payload.result);
   if (!result) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");

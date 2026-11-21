@@ -7,6 +7,7 @@ import * as assert from "node:assert/strict";
 import { App, Platform, Setting, TFolder } from "obsidian";
 import { openTestModals } from "./obsidian-shim";
 import { CodexSettingTab } from "../settings/settings-tab";
+import { ReleaseUpdateController } from "../settings/release-update";
 import { DEFAULT_SETTINGS, createApiProviderConfig, activateApiProvider, type SettingsLanguage, type SettingsTab } from "../settings/settings";
 import { settingsCopy } from "../settings/i18n";
 import { disposeOriginControls, type OriginCheckElement } from "../settings/origin-controls";
@@ -110,6 +111,7 @@ export function fixture(win: Window & typeof globalThis, language: SettingsLangu
   settings.settingsTab = "providers";
   let journalService: JournalFormatService | undefined;
   const plugin = {
+    releaseUpdate: new ReleaseUpdateController(async () => ({ releases: [] })),
     getJournalFormatService: () => journalService ??= new JournalFormatService(plugin.app, { directory: ".obsidian/plugins/journal-test", settings: () => settings, model: () => null, generate: async () => { throw new Error("No model calls"); }, changed: () => {} }),
     app: Object.assign(new App(), {
       setting: { close: () => { memoryNavigation.push("close"); } },

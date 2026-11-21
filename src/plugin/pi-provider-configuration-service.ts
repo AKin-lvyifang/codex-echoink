@@ -1,3 +1,4 @@
+import { withXiaoechoTurn } from "../membership/xiaoecho-turn";
 import type {
   AssistantMessage,
   Context,
@@ -99,6 +100,7 @@ export type PiProviderConnectionTestResult =
   };
 
 export interface PiProviderTextGenerationInput {
+  readonly turn?: import("../membership/xiaoecho-turn").XiaoechoTurn;
   readonly requestId?: string;
   readonly runId?: string;
   readonly stepId?: string;
@@ -254,6 +256,7 @@ export class PiProviderConfigurationService {
             input.maxTokens ?? 4_096
           )),
           temperature: 0,
+          ...(input.turn ? { onPayload: (payload: unknown) => withXiaoechoTurn(payload, model.provider, input.turn) } : {}),
           cacheRetention: "none",
           maxRetries: 0,
           timeoutMs

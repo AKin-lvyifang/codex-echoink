@@ -19,7 +19,33 @@ export function taskStateLabel(entry: TaskEntry, language: SettingsLanguage = "z
 }
 /** Same-task business facts override catalog display without creating another state store. */
 export function maintenanceActivityForTask(entry: TaskEntry, activities: readonly Readonly<MaintenanceActivity>[]): Readonly<MaintenanceActivity> | undefined {
-  const latest = activities.filter(activity => activity.originConversationId === entry.conversationId).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const ordered = activities.filter(activity => activity.originConversationId === entry.conversationId)
+    .sort((a, b) => b.updatedAt - a.updatedAt || b.batch.index - a.batch.index);
+  const latest = ordered[0];
+  if (latest && latest.batch.total > 1) {
+    const batches = new Map<number, Readonly<MaintenanceActivity>>();
+    for (const item of ordered) {
+      if (item.batch.total !== latest.batch.total) break;
+      if (!batches.has(item.batch.index)) batches.set(item.batch.index, item);
+    }
+    const current = [...batches.values()].reduce((a, b) => a.batch.index > b.batch.index ? a : b);
+    const allCompleted = batches.size === current.batch.total && [...batches.values()].every(batch => batch.status === "completed");
+    if (allCompleted && (current.completedAt === undefined || (entry.taskStartedAt ?? 0) > current.completedAt)) return undefined;
+    const sourcePaths = [...new Set([...batches.values()].flatMap(batch => batch.sourcePaths))];
+    const status = current.status === "completed" && !allCompleted
+      ? taskState(entry) === "running" ? "running" : "interrupted"
+      : current.status;
+    return { ...current, status, sourcePaths, sourceCount: sourcePaths.length || null,
+      completedAt: allCompleted ? current.completedAt : undefined,
+      ...(allCompleted ? {
+        skippedSourceCount: [...batches.values()].reduce((total, batch) => total + (batch.skippedSourceCount ?? 0), 0),
+        pageCounts: [...batches.values()].reduce((counts, batch) => ({
+          written: counts.written + (batch.pageCounts?.written ?? 0),
+          created: counts.created + (batch.pageCounts?.created ?? 0),
+          updated: counts.updated + (batch.pageCounts?.updated ?? 0)
+        }), { written: 0, created: 0, updated: 0 })
+      } : {}) };
+  }
   return latest?.status === "completed" && (latest.completedAt === undefined || (entry.taskStartedAt ?? 0) > latest.completedAt) ? undefined : latest;
 }
 export function taskEntryWithMaintenance(entry: TaskEntry, activities: readonly Readonly<MaintenanceActivity>[]): TaskEntry {

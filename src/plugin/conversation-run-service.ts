@@ -288,6 +288,9 @@ export class ConversationRunService {
           const waiting = pending && (pending.status === "pending" || pending.status === "submitting");
           const maintenance = this.plugin.getKnowledgeActivitySource()?.snapshot().maintenance.filter(activity => activity.originConversationId === session.id && (activity.status !== "completed" || (activity.completedAt ?? 0) >= state.turnStartedAt)).sort((a,b) => b.updatedAt - a.updatedAt)[0];
           const businessComplete = !maintenance || maintenance.status === "completed";
+          // A Provider can finish speaking while this batch still needs work.
+          // Leave subsequent batches queued until the current checkpoint settles.
+          if (outcome === "completed" && !waiting && maintenance && maintenance.batch.total > 1 && !businessComplete) outcome = "failed";
           const queued = this.turnQueue.itemsForSession(session.id).length > 0 && !this.turnQueue.isSessionQueuePaused(session.id);
           const continuing = outcome === "completed" && !waiting && queued;
           await this.plugin.setPiConversationTaskMetadata(session.id, continuing ? { taskStatus: "running", taskCompletedAt: undefined }
@@ -301,6 +304,8 @@ export class ConversationRunService {
               new Notice(joinErrorCopy(["任务已完成，但工作台事项尚未更新。", "The task finished, but the workbench item was not updated."], NEXT.retryLater, this.plugin.settings.settingsLanguage));
             });
           }
+        } else if (source === "queue" && frozen.maintenanceScope?.mode === "batch" && outcome === "failed") {
+          await this.plugin.setPiConversationTaskMetadata(session.id, { taskStatus: "interrupted", taskInterruptedAt: Date.now(), taskCompletedAt: undefined });
         }
         return outcome;
       } catch (error) {

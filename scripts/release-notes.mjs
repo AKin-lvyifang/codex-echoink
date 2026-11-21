@@ -79,7 +79,14 @@ export function compileReleaseNotes(source, { version, repository, isTrackedFile
   requireContract(englishType.line === `Type: ${labels.en}`,
     `English type must be Type: ${labels.en} immediately below its translated title.`);
 
-  const bodyLines = lines.filter((_, index) => index !== marker.index)
+  const omittedLines = new Set([marker.index]);
+  if (type === "fix") {
+    for (const index of [chineseType.index, englishType.index]) {
+      omittedLines.add(index);
+      if (lines[index + 1] === "") omittedLines.add(index + 1);
+    }
+  }
+  const bodyLines = lines.filter((_, index) => !omittedLines.has(index))
     .map((line) => line === theme.line ? `# ${title}` : line);
   return {
     title, englishTitle: englishTitle.line.slice(2, -2), type, heroPath,

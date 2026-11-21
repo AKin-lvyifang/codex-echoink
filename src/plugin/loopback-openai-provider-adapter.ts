@@ -434,6 +434,13 @@ function loopbackFailureMessage(
           ? "provider_protocol_failed"
           : "provider_network_error");
   const errorMessage = preventProviderRetryAfterPartial(safeCode, partial);
+  // A successful HTTP status can still deliver an invalid SSE frame/tool call.
+  // Preserve the decoder's content-free diagnostic, never the stream payload.
+  const protocolDetail = safeCode === "provider_protocol_failed"
+    && /^provider_(?:sse_[a-z_]+|tool_arguments_json_invalid)$/u.test(message)
+    ? sanitizeProviderFailureDetail(status, { code: message })
+    : undefined;
+  const detail = failureDetail ?? protocolDetail;
   return {
     ...(partial ?? {
       role: "assistant",
@@ -459,7 +466,7 @@ function loopbackFailureMessage(
     }),
     stopReason: aborted ? "aborted" : "error",
     errorMessage,
-    ...(failureDetail ? { echoInkProviderFailure: failureDetail } : {})
+    ...(detail ? { echoInkProviderFailure: detail } : {})
   };
 }
 

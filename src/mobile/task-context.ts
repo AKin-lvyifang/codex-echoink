@@ -42,7 +42,7 @@ function safeBoundaries(messages: readonly AgentMessage[]): number[] {
 }
 
 export async function prepareMobileTaskContext(input: {
-  store: MobileStore; taskId: string; messages: AgentMessage[]; text: string; systemPrompt: string;
+  store: MobileStore; taskId: string; turnId?: string; messages: AgentMessage[]; text: string; systemPrompt: string;
   tools: AgentTool[]; provider: ApiProviderConfig; model: ApiProviderModelConfig;
   request: MobileRequest; signal: AbortSignal; assertAllowed: () => void; repairInterruptedTools?: boolean; usage?: MobileUsageObserver;
 }): Promise<{ messages: AgentMessage[]; prefix: AgentMessage[]; systemPrompt: string }> {
@@ -84,7 +84,8 @@ export async function prepareMobileTaskContext(input: {
         if (await count(source.slice(offset, offset + size)) <= room) { take = size; low = size + 1; } else high = size - 1;
       }
       if (!take) throw new Error("历史片段无法压缩，原文已保留。");
-      const next = await mobileGenerateText(input.provider, model, input.request, prompt, header + source.slice(offset, offset + take), summaryLimit, signal, input.usage);
+      const next = await mobileGenerateText(input.provider, model, input.request, prompt, header + source.slice(offset, offset + take), summaryLimit, signal, input.usage, "background", undefined,
+        input.turnId ? { conversationId: taskId, turnId: input.turnId, purpose: "compaction" } : undefined);
       stopped(signal); input.assertAllowed();
       if (!next.trim()) throw new Error("模型未返回有效摘要，旧摘要和原文已保留。");
       summary = next; offset += take;

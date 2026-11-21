@@ -459,6 +459,7 @@ function noteReadKnowledgeReferenceDetails(
   schemaVersion: 1;
   references: readonly Readonly<PiKnowledgeReference>[];
   sourceBodyFingerprints?: Readonly<Record<string, string>>;
+  maintenanceReadSlice?: MaintenanceReadSlice;
 }> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const snapshotValue = (value as { snapshot?: unknown }).snapshot;
@@ -477,6 +478,8 @@ function noteReadKnowledgeReferenceDetails(
   ) return null;
 
   const relativePath = snapshot.relativePath.trim().replace(/\\/gu, "/");
+  const segment = completeResult && snapshot.segment && typeof snapshot.segment === "object"
+    ? maintenanceReadSlice({ ...snapshot.segment, path: relativePath, bodyFingerprint: snapshot.bodyFingerprint }) : undefined;
   const lines = snapshot.content.split(/\r?\n/u);
   const firstEvidenceIndex = Math.max(0, lines.findIndex((line) => {
     const text = line.trim();
@@ -508,7 +511,8 @@ function noteReadKnowledgeReferenceDetails(
   return Object.freeze({
     type: "echoink.knowledge-references.v1" as const,
     schemaVersion: 1 as const,
-    references: Object.freeze([reference]),
+    references: Object.freeze(snapshot.segment && snapshot.truncated ? [] : [reference]),
+    ...(segment ? { maintenanceReadSlice: segment } : {}),
     ...(completeResult && snapshot.truncated === false && typeof snapshot.bodyFingerprint === "string"
       && /^sha256:\d+:[a-f0-9]{64}$/u.test(snapshot.bodyFingerprint)
       ? { sourceBodyFingerprints: Object.freeze({ [relativePath]: snapshot.bodyFingerprint }) }
@@ -576,3 +580,4 @@ function rejectedResult(
     isError: true
   });
 }
+import { maintenanceReadSlice, type MaintenanceReadSlice } from "../../knowledge-base/maintenance-read-coverage";

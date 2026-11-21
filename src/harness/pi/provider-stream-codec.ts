@@ -381,7 +381,11 @@ class OpenAICompatibleSseDecoder implements ProviderSseStreamDecoder {
       if (!state.toolCall.id || !state.toolCall.name) {
         throw new Error("provider_tool_delta_invalid");
       }
-      state.toolCall.arguments = parseRecord(state.argumentsText || "{}");
+      try {
+        state.toolCall.arguments = parseRecord(state.argumentsText || "{}");
+      } catch (error) {
+        throw new Error("provider_tool_arguments_json_invalid", { cause: error });
+      }
       state.ended = true;
       this.input.stream.push({
         type: "toolcall_end",

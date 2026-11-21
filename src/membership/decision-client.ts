@@ -23,7 +23,7 @@ export interface TurnSkillOption { id: string; name: string; description: string
 export interface TurnJudgmentInput {
   turnId: string;
   signal?: AbortSignal;
-  /** Local only (never sent): lets the expert prompt reuse this turn's result. */
+  /** Opaque conversation identifier used to correlate judgment and billing. */
   conversationId?: string;
   text: string;
   recent?: readonly string[];
@@ -38,6 +38,7 @@ export interface TurnJudgment {
   maintenance?: { continue: number; new: number; stop: number; discuss: number };
 }
 export interface MemoryJudgmentInput {
+  conversationId?: string;
   turnId: string;
   text: string;
   recent?: readonly string[];
@@ -45,6 +46,7 @@ export interface MemoryJudgmentInput {
 }
 export interface MemoryJudgment { probabilities: Record<string, number>; selected: string[]; threshold: number }
 export interface KnowledgeJudgmentInput {
+  conversationId?: string;
   turnId: string;
   text: string;
   recent?: readonly string[];
@@ -258,7 +260,7 @@ export class DecisionClient {
     const skills = (input.skills ?? []).slice(0, SKILL_LIMIT).map(skill => ({ id: skill.id, name: clip(skill.name, 120), description: clip(skill.description, 200) }));
     if (!skills.length && !checks.length) return null;
     const json = await this.post("/api/decisions/turn", {
-      requestId: this.uuid(), turnId: input.turnId, text: clip(input.text, TEXT_LIMIT),
+      requestId: this.uuid(), turnId: input.turnId, conversationId: input.conversationId, text: clip(input.text, TEXT_LIMIT),
       recent: this.recent(input.recent), skills, checks
     }, this.timeout("turn"), { signal: input.signal });
     if (!json) return null;
@@ -290,7 +292,7 @@ export class DecisionClient {
       ...(memory.kind ? { kind: memory.kind } : {}), ...(memory.date ? { date: memory.date } : {}) }));
     if (!memories.length) { failureReason = "empty_catalog"; return failed(); }
     const json = await this.post("/api/decisions/memory", {
-      requestId: this.uuid(), turnId: input.turnId, text: `英文名大小写不改变相关性。\n${clip(input.text, TEXT_LIMIT - 20)}`, recent: this.recent(input.recent), memories
+      requestId: this.uuid(), turnId: input.turnId, conversationId: input.conversationId, text: `英文名大小写不改变相关性。\n${clip(input.text, TEXT_LIMIT - 20)}`, recent: this.recent(input.recent), memories
     }, this.timeout("memory"), { turnId: input.turnId, onFailure: reason => { failureReason = reason; } });
     if (!json || !isRecord(json.probabilities)) return failed();
     const known = new Set(memories.map(memory => memory.id));
@@ -318,7 +320,7 @@ export class DecisionClient {
     // Explicit DTO: never forward local paths, hits or reference metadata.
     const notes = input.notes.map(note => ({ id: note.id, title: clip(note.title, 120), excerpt: clip(note.excerpt, 400) }));
     const json = await this.post("/api/decisions/knowledge", {
-      requestId: this.uuid(), turnId: input.turnId, text: clip(input.text, TEXT_LIMIT), recent: this.recent(input.recent), notes
+      requestId: this.uuid(), turnId: input.turnId, conversationId: input.conversationId, text: clip(input.text, TEXT_LIMIT), recent: this.recent(input.recent), notes
     }, this.timeout("knowledge"), { turnId: input.turnId, signal: input.signal });
     if (!json || !isRecord(json.probabilities)) return null;
     const threshold = probability(json.threshold);

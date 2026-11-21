@@ -30,6 +30,8 @@ export interface ControlledPiStreamInput {
   conversationId: string;
   turnId: string;
   correlationId: string;
+  purpose?: import("../../membership/xiaoecho-turn").XiaoechoPurpose;
+  shortReply?: boolean;
   provider: PiProviderRuntimeConfig;
   model: Model<Api>;
   context: Context;

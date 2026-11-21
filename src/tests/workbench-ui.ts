@@ -3,6 +3,7 @@ import { WorkspaceLeaf, TFile } from "obsidian";
 import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, WORKBENCH_NAVIGATION_DELAY_MS, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
 import { openWorkbenchModule } from "../home/module-navigation";
 import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
+import { ReleaseUpdateController } from "../settings/release-update";
 import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
 import type { KnowledgeLinkingTask } from "../knowledge-base/knowledge-linking-types";
 import { knowledgeLinkingProgressText } from "../ui/codex-view/knowledge-linking-progress";
@@ -77,6 +78,8 @@ export async function runWorkbenchUiTests(): Promise<void> {
   (globalThis as unknown as { __p5WorkbenchPort: WorkbenchDataPort }).__p5WorkbenchPort = port;
   const files = Array.from({ length: 8 }, (_, index) => Object.assign(new TFile(), { path: `wiki/note-${index}.md`, basename: `笔记 ${index}`, stat: { mtime: now + index, size: 30 } }));
   const host = {
+    manifest: { version: "2.9.0" },
+    releaseUpdate: new ReleaseUpdateController(async () => ({ releases: [{ tag: "2.9.1" }, { tag: "2.9.0", body: "更新内容" }] })),
     app: {
       vault: { getMarkdownFiles: () => files, cachedRead: async () => "正文检索测试", getAbstractFileByPath: (path: string) => files.find(file => file.path === path) },
       metadataCache: { getFileCache: () => ({ frontmatter: { aliases: ["别名"] }, tags: [{ tag: "#fixture" }] }) },
@@ -162,6 +165,9 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0, "unread groups never claim zero");
     await tick();
     const reminder = content.querySelector<HTMLElement>('[data-wb="setup-todos"]')!;
+    const releaseReminders = content.querySelector<HTMLElement>('[data-wb="release-reminders"]')!;
+    assert.equal(releaseReminders.nextElementSibling, reminder);
+    assert.deepEqual(Array.from(releaseReminders.querySelectorAll("[data-release-reminder]"), row => row.getAttribute("data-release-reminder")), ["update", "notes"]);
     const todoTexts = () => Array.from(reminder.querySelectorAll<HTMLElement>(".wb-setup-todo .wb-grow"), node => node.textContent);
     const guide = () => reminder.querySelector<HTMLElement>(".wb-guide");
     assert.equal(content.querySelector(".wb-deck"), null, "the starter carousel is gone");
@@ -202,6 +208,12 @@ export async function runWorkbenchUiTests(): Promise<void> {
     host.settings.workbenchOnboardingDismissed = false; await view.refresh();
     assert.ok(guide()); await click("guide-dismiss-all");
     assert.equal(host.settings.workbenchOnboardingDismissed, true); assert.equal(guide(), null, "dismissing all leaves the setup to-dos without a group");
+    assert.equal(releaseReminders.querySelectorAll("[data-release-reminder]").length, 2, "dismissing onboarding preserves both release reminders");
+    await click("release:notes:dismiss");
+    assert.equal(releaseReminders.querySelector('[data-release-reminder="notes"]'), null);
+    assert.equal(releaseReminders.hidden, false);
+    await click("release:update:dismiss");
+    assert.equal(releaseReminders.hidden, true, "the release container leaves no empty space");
     assert.equal(reminder.hidden, false, "knowledge setup reminder is independent of conversation onboarding");
     await click("setup-todo-dismiss:knowledge");
     assert.notEqual(host.settings.knowledgeBase.initialized, true);
@@ -237,7 +249,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelector(".wb-memory-notice details"), null, "an English internal reason gets no Details disclosure");
     assert.ok(!content.querySelector(".wb-memory-notice")?.textContent?.includes(memoryNotice.reason), "the raw reason never reaches the banner");
     const memoryHost = content.querySelector<HTMLElement>('[data-wb="memory-notice"]')!;
-    assert.equal(memoryHost.nextElementSibling?.getAttribute("data-wb"), "setup-todos", "memory explanation precedes getting started and task groups");
+    assert.equal(memoryHost.nextElementSibling, releaseReminders, "memory explanation precedes release reminders and getting started");
     const useMemory = memoryHost.querySelector<HTMLButtonElement>(".is-primary")!;
     assert.equal(useMemory.textContent, "沿用这份记忆"); useMemory.click(); await tick();
     assert.deepEqual(calls.at(-1), ["resolve-memory", "adopt"]); assert.equal(memoryHost.children.length, 0);
@@ -542,6 +554,19 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(completedCard.textContent?.includes(maintenanceCompletionText(activity)));
     assert.equal(completedCard.querySelector(".wb-row-title")?.textContent, "整理知识库（20 篇资料）");
     assert.deepEqual(Array.from(content.querySelectorAll("[data-wb-group] h2")).map(node => node.textContent), ["可以交给 Agent", "今天完成"], "maintenance never renames visible groups");
+    const firstBatch = { ...activity, batch: { index: 1, total: 2 }, sourcePaths: ["Raw/长文.md"],
+      status: "completed" as const, completedAt: Date.now() };
+    const secondBatch = { ...activity, id: "second-record", batch: { index: 2, total: 2 }, sourcePaths: ["Raw/笔记甲.md", "Raw/笔记乙.md"],
+      stage: "plan" as const, status: "failed" as const, updatedAt: firstBatch.updatedAt + 1 };
+    publishActivities(firstBatch, secondBatch);
+    assert.match(content.querySelector('[data-wb-group="interrupted"] [data-task="maintenance"]')?.textContent ?? "", /第 2 批.*第 3 步.*汇总查重/u);
+    const batchesCompletedAt = Date.now();
+    publishActivities(firstBatch, { ...secondBatch, stage: "finalize", status: "completed", completedAt: batchesCompletedAt });
+    assert.equal(content.querySelector('[data-wb-group="interrupted"]'), null, "completed batches leave no interrupted group");
+    assert.equal(content.querySelector('[data-wb-group="completed"] [data-task="maintenance"] .wb-row-title')?.textContent, "整理知识库（3 篇资料）");
+    tasks = [{ ...maintenanceTask, taskStartedAt: batchesCompletedAt + 1 }]; await view.refresh();
+    assert.equal(content.querySelector('[data-wb-group="running"] [data-task="maintenance"] .wb-task-title')?.textContent, maintenanceTask.title);
+    tasks = [maintenanceTask]; await view.refresh();
     const upgrade = { ...activity, taskKind: "upgrade" as const, upgradeCounts: { sourceTotal: 20, sourceCompleted: 20, linkTotal: 4, linksCompleted: 4, wikiTotal: 3, wikiCompleted: 3 } };
     publishActivities(upgrade);
     assert.equal(content.querySelector('[data-task="maintenance"] .wb-task-title')?.textContent, "升级旧知识");

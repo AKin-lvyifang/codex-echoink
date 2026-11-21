@@ -170,6 +170,7 @@ export interface PiContextLedgerRecorderOptions {
 }
 
 export interface PiContextLedgerExecutionIdentity {
+  readonly purpose?: import("../../membership/xiaoecho-turn").XiaoechoPurpose;
   readonly runId: string;
   readonly conversationId: string;
 }
@@ -252,10 +253,9 @@ export class PiContextLedgerRecorder {
     if (execution.conversationId !== this.options.conversationId) {
       return null;
     }
-    const requestKind: PiContextLedgerRequestKind = this.expectedSystemPrompt
-      && context.systemPrompt === this.expectedSystemPrompt
-      ? "agent"
-      : "summarization";
+    const requestKind: PiContextLedgerRequestKind = execution.purpose
+      ? execution.purpose === "compaction" ? "summarization" : "agent"
+      : this.expectedSystemPrompt && context.systemPrompt === this.expectedSystemPrompt ? "agent" : "summarization";
     this.requestSequence += 1;
     return {
       conversationId: this.options.conversationId,

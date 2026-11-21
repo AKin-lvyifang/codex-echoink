@@ -1,4 +1,6 @@
 import { settingsErrorText } from "../core/error-copy";
+import { ReleaseUpdateController } from "../settings/release-update";
+import { isEmptyEchoInkPluginData } from "../settings/plugin-data";
 import { createCloudSyncController } from "../sync/cloud/host";
 import type { CloudSyncController } from "../sync/cloud/controller";
 import { MOBILE_DEVICE_SETTING_KEYS, deviceSettingsSnapshot, mergeExternalSettings, overlayDeviceSettings, readDeviceSettings, writeDeviceSettings } from "../sync/device-settings";
@@ -51,6 +53,7 @@ import { workspacePath } from "../workspace/service";
 export { MOBILE_VIEW } from "./workspace";
 export default class EchoInkMobilePlugin extends Plugin {
   readonly reportLogin = new RunReportLogin();
+  readonly releaseUpdate = new ReleaseUpdateController();
   store!: MobileStore;
   settings!: MobileSettings;
   runtime!: MobileRuntime;
@@ -82,6 +85,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     runErrors.reset(() => ({ secrets: configuredReportSecrets(this.settings ?? {}), vaultPath: (this.app.vault.adapter as typeof this.app.vault.adapter & { getBasePath?: () => string }).getBasePath?.() }));
     try {
       const saved: unknown = await this.loadData();
+      this.releaseUpdate.initialize(this.app, this.manifest.version, isEmptyEchoInkPluginData(saved));
       this.settings = loadMobileSettings(saved);
       overlayDeviceSettings(this.settings, readDeviceSettings(this.app), MOBILE_DEVICE_SETTING_KEYS);
       const savedRecord = saved && typeof saved === "object" ? saved as Record<string, unknown> : {};
@@ -458,6 +462,7 @@ export class EchoInkIPhoneView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      releaseUpdate: this.plugin.releaseUpdate,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,
@@ -506,6 +511,7 @@ export class EchoInkIPadView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      releaseUpdate: this.plugin.releaseUpdate,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
       modelRequest: this.plugin.modelRequest, modelFetch: this.plugin.modelFetch,

@@ -123,6 +123,15 @@ export async function runWorkbenchMaintenanceSourceTests(root: string): Promise<
       assert.equal(await fs.readFile(path.join(vault, relative), "utf8"), text, "legacy compatibility is read-only; never add state markers to make tests pass");
       compatibilityMatrix.push({ id: item.id, state: item.expected, pending });
     }
+    const twenty = before.formal.sourcePaths.slice(0, 20);
+    for (const relative of twenty) await write(relative, "a".repeat(25_000));
+    const volumeBatches = await service.prepareWorkbenchMaintenance(
+      { version: 1, signalId: 7, moduleId: "knowledge-base", businessKey: "raw-fixture", objects: twenty, capturedAt: Date.now(), prompt: "" });
+    assert.deepEqual(volumeBatches.map(batch => batch.maintenanceScope.sourcePaths.length), [8, 8, 4]);
+    await write(twenty[0], "大".repeat(100_000));
+    const oversized = await service.prepareWorkbenchMaintenance(
+      { version: 1, signalId: 7, moduleId: "knowledge-base", businessKey: "raw-fixture", objects: twenty, capturedAt: Date.now(), prompt: "" });
+    assert.deepEqual(oversized[0].maintenanceScope.sourcePaths, [twenty[0]]);
     const report = { compatibilityMatrix, eligible: after.formal.sourcePaths, count: after.dashboard.raw.changedCount, batches: batches.map((batch: any) => batch.maintenanceScope), bindingsBefore: bindings, bindingsAfter: corrected, filesMoved: 0 };
     await fs.writeFile(path.join(root, "maintenance-sources.json"), JSON.stringify(report, null, 2));
     console.log("Workbench maintenance sources: PASS (configured defaults, custom preservation, legacy new source, dashboard equality, <=20 batches, Raw+Inbox scheme A)");

@@ -6,13 +6,19 @@ export type MaintenanceInspectionView = "candidates" | "units" | "pages";
 const INSPECTION_BYTES = 5_600;
 export function maintenanceInspection(state: MaintenanceP1State, view: MaintenanceInspectionView, offset = 0) {
   const units = state.decompositions.flatMap(decomposition => decomposition.units).filter((unit): unit is MaintenanceKnowledgeUnit => typeof unit !== "string");
+  const sources = new Map(state.decompositions.flatMap(decomposition => decomposition.units.flatMap(unit =>
+    typeof unit === "string" ? [] : [[unit.id, decomposition.sourcePath] as const])));
+  const unitIdentity = (id: string) => ({
+    unitId: id, sourcePath: sources.get(id),
+    ...(state.submittedUnitIds && Object.hasOwn(state.submittedUnitIds, id) ? { submittedId: state.submittedUnitIds[id] } : {})
+  });
   let rows: unknown[];
   if (view === "candidates") rows = (state.p2?.candidates ?? []).flatMap(result => {
     const unit = units.find(unit => unit.id === result.unitId)!;
-    return [{ unitId: result.unitId, title: unit?.title, type: unit?.type, domain: unit?.domain, batchUnitIds: result.batchUnitIds, candidateCount: result.candidates.length }, ...result.candidates.map(candidate => ({ unitId: result.unitId, path: candidate.path, title: candidate.title, matches: candidate.matches }))];
+    return [{ ...unitIdentity(result.unitId), title: unit?.title, type: unit?.type, domain: unit?.domain, batchUnitIds: result.batchUnitIds, candidateCount: result.candidates.length }, ...result.candidates.map(candidate => ({ unitId: result.unitId, path: candidate.path, title: candidate.title, matches: candidate.matches }))];
   });
   else if (view === "units") rows = units.flatMap(unit => [
-    { unitId: unit.id, type: unit.type, typePendingConfirmation: unit.typePendingConfirmation, domain: unit.domain, title: unit.title, aliases: unit.aliases },
+    { ...unitIdentity(unit.id), type: unit.type, typePendingConfirmation: unit.typePendingConfirmation, domain: unit.domain, title: unit.title, aliases: unit.aliases },
     ...unit.points.map(point => ({ unitId: unit.id, point })),
     ...unit.evidence.map(evidence => ({ unitId: unit.id, sourcePath: evidence.sourcePath, sourceRevision: evidence.sourceRevision }))
   ]);

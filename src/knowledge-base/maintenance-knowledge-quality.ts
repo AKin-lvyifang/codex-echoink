@@ -286,9 +286,12 @@ function normalizedRange(content: string, range: TextRange, typography = false):
   return { text, starts, ends };
 }
 
-function findQuote(source: GroundingSource, quote: string): { start: number; end: number; match: "literal" | "whitespace" | "typography" } | null {
-  const literal = source.body.indexOf(quote);
-  if (literal >= 0) return { start: source.bodyStart + literal, end: source.bodyStart + literal + quote.length, match: "literal" };
+function findQuote(source: GroundingSource, quote: string, allows: (range: TextRange) => boolean = () => true): { start: number; end: number; match: "literal" | "whitespace" | "typography" } | null {
+  if (!quote.length) return null;
+  for (let index = source.body.indexOf(quote); index >= 0; index = source.body.indexOf(quote, index + 1)) {
+    const range = { start: source.bodyStart + index, end: source.bodyStart + index + quote.length };
+    if (allows(range)) return { ...range, match: "literal" };
+  }
   const trimmed = quote.trim();
   if (trimmed.split(/\r\n|\n|\r/u).some((line) => !line.trim())) return null;
   const normalizedQuote = collapseWhitespace(trimmed);
@@ -296,14 +299,19 @@ function findQuote(source: GroundingSource, quote: string): { start: number; end
   source.proseRanges ??= ordinaryProseRanges(source.content, source.bodyStart);
   for (const range of source.proseRanges) {
     const normalized = normalizedRange(source.content, range);
-    const index = normalized.text.indexOf(normalizedQuote);
-    if (index >= 0) return { start: normalized.starts[index], end: normalized.ends[index + normalizedQuote.length - 1], match: "whitespace" };
+    for (let index = normalized.text.indexOf(normalizedQuote); index >= 0; index = normalized.text.indexOf(normalizedQuote, index + 1)) {
+      const match = { start: normalized.starts[index], end: normalized.ends[index + normalizedQuote.length - 1] };
+      if (allows(match)) return { ...match, match: "whitespace" };
+    }
   }
   const typographyQuote = normalizedRange(trimmed, { start: 0, end: trimmed.length }, true).text;
+  if (!typographyQuote) return null;
   for (const range of source.proseRanges) {
     const normalized = normalizedRange(source.content, range, true);
-    const index = normalized.text.indexOf(typographyQuote);
-    if (index >= 0) return { start: normalized.starts[index], end: normalized.ends[index + typographyQuote.length - 1], match: "typography" };
+    for (let index = normalized.text.indexOf(typographyQuote); index >= 0; index = normalized.text.indexOf(typographyQuote, index + 1)) {
+      const match = { start: normalized.starts[index], end: normalized.ends[index + typographyQuote.length - 1] };
+      if (allows(match)) return { ...match, match: "typography" };
+    }
   }
   return null;
 }
@@ -369,7 +377,9 @@ export function validateMaintenanceKnowledgeUnits(
 /** Pure grounding: return source slices and recomputed UTF-16 locations, never edit Raw or inputs. */
 export function groundMaintenanceKnowledgeUnits(
   units: readonly MaintenanceKnowledgeUnit[],
-  sources: readonly MaintenanceKnowledgeSource[]
+  sources: readonly MaintenanceKnowledgeSource[],
+  allowsEvidence?: (sourcePath: string, range: TextRange) => boolean,
+  allowRepeatedInputIds = false
 ): MaintenanceKnowledgeUnit[] {
   if (!isUnknownArray(units) || !isUnknownArray(sources)) throw new Error("Knowledge units and sources must be arrays.");
   const sourceByPath = new Map<string, GroundingSource>();
@@ -401,7 +411,7 @@ export function groundMaintenanceKnowledgeUnits(
       continue;
     }
     if (!nonempty(unit.id)) fail("id", "Knowledge unit id must be nonempty；修复：补充非空知识点ID。");
-    else if (ids.has(unit.id)) fail("id", "Knowledge unit ids must be unique；修复：为重复单元使用唯一ID。");
+    else if (!allowRepeatedInputIds && ids.has(unit.id)) fail("id", "Knowledge unit ids must be unique；修复：为重复单元使用唯一ID。");
     else ids.add(unit.id);
     if (!knownType(unit.type)) fail("type", "Knowledge unit type must be one of seven types；修复：选择七种知识类型之一。");
     if (!nonempty(unit.domain)) fail("domain", "Knowledge unit domain must be nonempty；修复：补充非空领域。");
@@ -450,7 +460,7 @@ export function groundMaintenanceKnowledgeUnits(
       }
       if (revision !== undefined && revision !== source.revision) fail(field("sourceRevision"), "全文版本不匹配：sourceRevision does not match the source's full-file revision；修复：重读该来源并使用全文版本。", evidence.sourcePath);
       if (!nonempty(evidence.quote)) continue;
-      const match = findQuote(source, evidence.quote);
+      const match = findQuote(source, evidence.quote, allowsEvidence ? range => allowsEvidence(evidence.sourcePath, range) : undefined);
       if (!match) {
         failureCount += 1;
         if (failures.length < MAX_QUOTE_FAILURES) failures.push({ unitIndex, unitId, sourcePath: evidence.sourcePath, quoteIndex, quote: evidence.quote });

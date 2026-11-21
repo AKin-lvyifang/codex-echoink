@@ -1,8 +1,11 @@
+import { finishLimitedSocialReply } from "../harness/short-social-turn";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Message, Model, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
 import type { RequestUrlParam } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
+import { anthropicCacheRoute, applyPromptCacheBoundary, providerCacheKey, stableToolOrder } from "../harness/pi/prompt-cache";
+import { withXiaoechoTurn, type XiaoechoTurn } from "../membership/xiaoecho-turn";
 import { apiProviderRequestUrl } from "../settings/provider-presets";
 import { applyEchoInkProviderReasoningWirePolicy, resolveEchoInkProviderReasoningWirePolicy, withEchoInkProviderReasoningWirePolicy } from "../harness/pi/provider-reasoning-wire-policy";
 import { observeUsageStream, type ObserveUsageOptions, type UsageSource } from "../harness/usage/usage-stream";
@@ -120,8 +123,10 @@ function usage(value: unknown, responses: boolean): Usage {
   const data = record(value);
   const input = Number(responses ? data.input_tokens : data.prompt_tokens) || 0;
   const output = Number(responses ? data.output_tokens : data.completion_tokens) || 0;
-  const cached = Number(record(responses ? data.input_tokens_details : data.prompt_tokens_details).cached_tokens) || 0;
-  return { input: Math.max(0, input - cached), output, cacheRead: cached, cacheWrite: 0, totalTokens: Number(data.total_tokens) || input + output, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+  const details = record(responses ? data.input_tokens_details : data.prompt_tokens_details);
+  const cached = Math.max(0, Math.min(input, Number(details.cached_tokens ?? data.cached_tokens ?? data.prompt_cache_hit_tokens) || 0));
+  const cacheWrite = Math.max(0, Math.min(input - cached, Number(details.cache_write_tokens) || 0));
+  return { input: Math.max(0, input - cached - cacheWrite), output, cacheRead: cached, cacheWrite, totalTokens: Number(data.total_tokens) || input + output, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
 function toolArguments(value: unknown): Record<string, unknown> {
   const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value;
@@ -152,9 +157,9 @@ function transcript(context: Context, responses: boolean): unknown[] {
   }
   return result;
 }
-export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context, reasoning?: ModelThinkingLevel, stream = false): RequestUrlParam {
+export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api>, context: Context, reasoning?: ModelThinkingLevel, stream = false, turn?: XiaoechoTurn): RequestUrlParam {
   const responses = provider.apiProtocol === "openai-responses";
-  const tools = context.tools?.map(tool => responses
+  const tools = context.tools && stableToolOrder(context.tools).map(tool => responses
     ? { type: "function", name: tool.name, description: tool.description, parameters: tool.parameters, strict: false }
     : { type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } });
   const body: Record<string, unknown> = responses
@@ -167,9 +172,13 @@ export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api
     delete body.max_completion_tokens;
   }
   applyMobileReasoning(body, provider, model, reasoning);
+  const useCache = turn?.cache === true;
+  if (useCache && (provider.providerId === "openai" || provider.runtimeProviderId === "openai"
+    || model.provider === "xiaoecho" && /^gpt-/u.test(model.id))) body.prompt_cache_key = providerCacheKey(turn.conversationId);
+  const prepared = applyPromptCacheBoundary(body, useCache && anthropicCacheRoute(model.provider, model.id, model.api));
   const url = new URL(apiProviderRequestUrl(provider.baseUrl, provider.apiProtocol));
   for (const [key, value] of Object.entries(provider.queryParams ?? {})) url.searchParams.set(key, value);
-  return { url: url.toString(), method: "POST", contentType: "application/json", headers: provider.apiKey.trim() ? { Authorization: `Bearer ${provider.apiKey.trim()}` } : {}, body: JSON.stringify(body), throw: false };
+  return { url: url.toString(), method: "POST", contentType: "application/json", headers: provider.apiKey.trim() ? { Authorization: `Bearer ${provider.apiKey.trim()}` } : {}, body: JSON.stringify(withXiaoechoTurn(prepared, model.provider, turn)), throw: false };
 }
 function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return pending;
@@ -181,7 +190,7 @@ function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 /** With streamFetch the answer streams; the stored message keeps the buffered shape either way. */
-export function mobileStream(provider: ApiProviderConfig, request: MobileRequest, observer?: MobileUsageObserver, source: UsageSource = "conversation", streamFetch?: MobileStreamFetch): StreamFn {
+export function mobileStream(provider: ApiProviderConfig, request: MobileRequest, observer?: MobileUsageObserver, source: UsageSource = "conversation", streamFetch?: MobileStreamFetch, currentTurn?: () => XiaoechoTurn): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
     let outputTokens = 0;
@@ -192,7 +201,8 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
       try {
         if (options?.signal?.aborted) throw new Error("已停止");
         stream.push({ type: "start", partial: live?.partial ?? message });
-        const built = buildMobileRequest(provider, model, context, options?.reasoning, !!live);
+        const turn = currentTurn?.();
+        const built = buildMobileRequest(provider, model, context, options?.reasoning, !!live, turn);
         const response = await abortable(live && streamFetch
           ? streamedResponse(streamFetch, built, provider.apiProtocol === "openai-responses", live, options?.signal)
           : request(built), options?.signal);
@@ -240,6 +250,11 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
           if (choice.finish_reason === "content_filter") throw new Error(CAUSE.contentFiltered[0]);
         }
         if (message.content.some(c => c.type === "toolCall")) message.stopReason = "toolUse";
+        if (turn?.cache === false && (message.stopReason === "length" || message.stopReason === "toolUse")) {
+          const user = [...context.messages].reverse().find(item => item.role === "user");
+          message.content = [{ type: "text", text: finishLimitedSocialReply(textContent(message), user ? textContent(user) : "") }];
+          message.stopReason = "stop";
+        }
         stream.push({ type: "done", reason: message.stopReason as "stop" | "length" | "toolUse", message });
       } catch (error) {
         // Partial streamed output still counts toward usage.
@@ -406,9 +421,9 @@ export function visibleReasoning(message: AssistantMessage): string {
 
 /** Independent one-shot inference: no conversation state or tools are involved. */
 export async function mobileGenerateText(provider: ApiProviderConfig, model: ApiProviderModelConfig, request: MobileRequest,
-  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal, observer?: MobileUsageObserver, source: UsageSource = "background", streamFetch?: MobileStreamFetch): Promise<string> {
+  systemPrompt: string, user: string, maxTokens: number, signal: AbortSignal, observer?: MobileUsageObserver, source: UsageSource = "background", streamFetch?: MobileStreamFetch, turn?: XiaoechoTurn): Promise<string> {
   const selected = { ...piModel(provider, model), maxTokens: Math.min(model.maxOutputTokens, maxTokens) };
-  const stream = await mobileStream(provider, request, observer, source, streamFetch)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
+  const stream = await mobileStream(provider, request, observer, source, streamFetch, turn ? () => turn : undefined)(selected, { systemPrompt, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal });
   const result = await stream.result();
   if (signal.aborted || result.stopReason === "aborted") throw new Error("已停止");
   if (result.stopReason === "error") throw new Error(result.errorMessage || ANSWER_FAILED);

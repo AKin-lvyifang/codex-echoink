@@ -144,7 +144,10 @@ export async function profileScenarios(api, test, settings) {
     for (const text of [habits[0].text, "用户画像独有证据", "旧记忆独有证据"]) assert.ok(!off.includes(text));
     assert.ok(!reads.some(path => /shared-user\/(USER|MEMORY)\.md$/u.test(path)));
     await store.setMemoryEnabled(true); await runtime.send("on"); const on = payload.messages.find(item => item.role === "system").content;
-    for (const text of ["用户画像独有证据", "旧记忆独有证据"]) assert.ok(on.includes(text));
+    assert.ok(on.includes("用户画像独有证据"));
+    assert.ok(!on.includes("旧记忆独有证据"), "unrelated Memory navigation is loaded on demand");
+    await runtime.send("帮我回忆旧记忆独有证据");
+    assert.ok(payload.messages.find(item => item.role === "system").content.includes("旧记忆独有证据"));
     assert.ok(!on.includes(habits[0].text)); assert.equal(host.files.get(agentPath), original[agentPath]);
     await services.dispose();
   });

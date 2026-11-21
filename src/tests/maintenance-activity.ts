@@ -5,6 +5,7 @@ import { maintenanceFailureText, maintenanceVisibleCopyIsSafe } from "../knowled
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fixture } from "./knowledge-maintain-p2";
+import { maintenanceActivityForTask, type TaskEntry } from "../agents/task-presentation";
 import { KnowledgeActivityService } from "../plugin/knowledge-activity-service";
 import { PiAgentApprovalBroker } from "../plugin/pi-agent-approval-broker";
 import { MaintenanceActivityController } from "../plugin/maintenance-activity-controller";
@@ -27,6 +28,7 @@ const page = (title: string) => `---\n类型: 概念\naliases: []\n---\n# ${titl
 
 export async function runMaintenanceActivityTests(root: string): Promise<void> {
   assertMaintenanceUserPresentation();
+  await assertMultiBatchTaskPresentation();
   await fs.mkdir(root, { recursive: true });
   let now = 1_800_000_000_000;
   const links = linkingSource(), source = new KnowledgeActivityService(links, async () => []), notices: string[] = [];
@@ -56,9 +58,9 @@ export async function runMaintenanceActivityTests(root: string): Promise<void> {
     assert.equal(count("decompose"), 2, "validated replay cannot double-count a source");
     const early = await call({ stage: "plan", writingPlan: [] });
     assert.equal(early.status, "failed"); assert.match(early.message, /全部来源校验/u);
-    const duplicate = await call({ stage: "decompose", decompositions: [{ sourcePath: paths[2], summary: "第三篇", units: [{ ...units[2], id: units[0].id }] }] });
-    assert.equal(duplicate.status, "failed"); assert.equal(count("decompose"), 2, "global ID validation precedes the next checkpoint");
-    // Retry only the rejected unit, retaining the same frozen batch.
+    const rejected = await call({ stage: "decompose", decompositions: [{ sourcePath: paths[2], summary: "第三篇",
+      units: [{ ...units[2], id: units[0].id, evidence: units[2].evidence.map(evidence => ({ ...evidence, quote: "这条引文不在原文里。" })) }] }] });
+    assert.equal(rejected.status, "failed"); assert.equal(count("decompose"), 2, "a repeated ID does not bypass evidence validation");
     await call({ stage: "inspect", view: "units" });
     const wait = (reason: string, waiting: boolean) => f.port.maintenanceActivity({ type: "waiting", conversationId: "p2-fixture", productRunId: runId, reason, waiting });
     await wait("question:real-question-id", true);
@@ -82,10 +84,15 @@ export async function runMaintenanceActivityTests(root: string): Promise<void> {
     assert.equal(count("decompose"), 2); assert.equal(current().activeElapsedMs, stoppedElapsed);
     await call({ stage: "resume" });
     assert.equal(current().activeElapsedMs, stoppedElapsed, "offline and stopped time is never inferred from a timestamp");
-    f.ok(await call({ stage: "decompose", decompositions: [{ sourcePath: paths[2], summary: "第三篇", units: [units[2]] }] }));
+    const thirdUnit = { ...units[2], id: units[0].id };
+    const saved = await call({ stage: "decompose", decompositions: [{ sourcePath: paths[2], summary: "第三篇", units: [thirdUnit, thirdUnit] }] });
+    f.ok(saved);
+    const actualId = `${units[0].id}-2`;
+    assert.ok(saved.message.includes(`"unitId":"${actualId}","sourcePath":"${paths[2]}","submittedId":"${units[0].id}"`));
+    assert.equal((await readPrivateMaintenanceRecords(f.privateRoot))[0].p1!.decompositions.find(d => d.sourcePath === paths[2])!.units.length, 1);
     assert.equal(current().stage, "plan"); assert.equal(current().steps.find(step => step.stage === "plan")!.total, null);
     assert.doesNotMatch(maintenanceActivityText(current()), /汇总查重.*汇总查重/u);
-    const items = paths.map((file, index) => f.item(`page-${index}`, `wiki/知识点${index + 1}.md`, [file], [units[index].id]));
+    const items = paths.map((file, index) => f.item(`page-${index}`, `wiki/知识点${index + 1}.md`, [file], [index === 2 ? actualId : units[index].id]));
     f.ok(await call({ stage: "plan", writingPlan: items }));
     f.ok(await call({ stage: "write", pageId: "page-0", content: page("知识点1") }));
     assert.equal(count("write"), 1); assert.equal(current().etaMs, null);
@@ -156,6 +163,30 @@ function assertProtectedQuoteSections(): void {
   assert.doesNotThrow(() => assertMaintenanceQuoteSectionsPreserved(undefined, fake), "a fenced example is not a real generated section");
   assert.match(maintenanceKnowledgeTypePrompt(), /硬规则高于模板与用户内容偏好/u);
   assert.deepEqual(maintenanceBatchContext("/maintain 用户已确认知识库初始化，本批 3/5。"), { index: 3, total: 5 });
+}
+
+async function assertMultiBatchTaskPresentation(): Promise<void> {
+  const entry = { conversationId: "split-task", taskStatus: "running", taskStartedAt: 10 } as TaskEntry;
+  const stub = (index: number, paths: string[], stage: MaintenanceActivity["stage"], status: MaintenanceActivity["status"]): MaintenanceActivity => ({
+    kind: "maintenance", id: `run:batch-${index}`, originConversationId: entry.conversationId, status, stage, steps: [],
+    sourcePaths: paths, sourceCount: paths.length, pageCounts: { written: 1, created: 1, updated: 0 },
+    batch: { index, total: 2 }, activeElapsedMs: 10, etaMs: null, failures: [], updatedAt: 100 * index,
+    ...(status === "completed" ? { completedAt: 100 * index } : {})
+  });
+  const first = stub(1, ["raw/long.md"], "finalize", "completed");
+  const failed = stub(2, ["raw/short-a.md", "raw/short-b.md"], "plan", "failed");
+  const source = new KnowledgeActivityService(linkingSource(), async () => [], async () => [first]);
+  await source.ready;
+  assert.equal(maintenanceActivityForTask(entry, source.snapshot().maintenance)?.status, "running", "the first batch cannot complete the task card");
+  source.updateInitial(failed);
+  assert.equal(maintenanceActivityForTask(entry, source.snapshot().maintenance)?.stage, "plan", "a failed second batch retains its real step");
+  assert.equal(maintenanceActivityForTask(entry, source.snapshot().maintenance)?.status, "failed");
+  source.updateInitial(stub(2, failed.sourcePaths.slice(), "finalize", "completed"));
+  const completed = maintenanceActivityForTask(entry, source.snapshot().maintenance)!;
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.sourceCount, 3);
+  assert.deepEqual(completed.pageCounts, { written: 2, created: 2, updated: 0 });
+  source.dispose();
 }
 
 async function assertInitialFailureSettlement(): Promise<void> {

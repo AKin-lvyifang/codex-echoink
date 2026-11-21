@@ -111,7 +111,8 @@ async function clientScenarios() {
     assert.equal(turnRequests[0].auth, "Bearer token-1");
     assert.equal(turnRequests[0].body?.turnId, "turn-1");
     assert.equal((turnRequests[0].body?.recent as string[]).length, 3, "at most three recent lines");
-    assert.equal("conversationId" in (turnRequests[0].body ?? {}), false, "local conversation id never leaves the device");
+    assert.equal((turnRequests[0].body as { conversationId?: string }).conversationId, "c1",
+      "EchoInk judgment correlates an opaque conversation id with point requests");
     assert.equal(server.seen.find(item => item.path === "/api/decisions/memory")?.body?.turnId, "turn-1", "/memory carries the same turnId");
     assert.equal(ok.instance.status()?.quota?.used, 186, "quota follows the latest response");
     assert.deepEqual((await ok.instance.judgeFinanceImport({ rows: [{ id: "r1", counterparty: "拉扎斯", product: "外卖", method: "花呗", amount: 32.5, direction: "expense", time: "2026-11-08 12:31" }], categories: [{ id: "餐饮", name: "餐饮", description: "" }], merchants: [], accounts: [], icons: [] }))?.[0].category, { id: "餐饮", probability: 0.99 });

@@ -386,10 +386,12 @@ export interface PiKnowledgeMaintenanceToolInput extends PiKnowledgeRunIdentity 
   readonly assessments?: readonly Readonly<KnowledgeMaintenanceAssessment>[];
   /** Existing source reads supplied by the host, never model-authored. */
   readonly sourceBodyFingerprints?: Readonly<Record<string, string>>;
+  readonly sourceReadCoverage?: Readonly<Record<string, import("../../knowledge-base/maintenance-read-coverage").MaintenanceReadCoverage>>;
   readonly signal?: AbortSignal;
 }
 
 export interface PiKnowledgeMaintenanceToolResult {
+  readonly checkpointedSegments?: readonly Readonly<import("../../knowledge-base/maintenance-read-coverage").MaintenanceSourceSegment & { path: string }>[];
   /** Product-owned UI copy; message remains the full model-facing protocol. */
   readonly userReceipt?: Readonly<import("../../knowledge-base/maintenance-activity").MaintenanceUserReceipt>;
   /** Trusted intermediate stage, never a terminal maintenance outcome. */

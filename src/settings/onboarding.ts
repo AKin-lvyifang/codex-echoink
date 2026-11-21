@@ -5,6 +5,7 @@ import {
   type SetupSettings,
   type SettingsTab
 } from "./settings";
+export { isEmptyEchoInkPluginData } from "./plugin-data";
 
 export const ECHOINK_ONBOARDING_VERSION = "onboarding-v3";
 
@@ -281,14 +282,4 @@ export function onboardingCompletionCopy(zh: boolean) {
     previousLabel: zh ? "再看一遍" : "Show me again",
     actionLabel: zh ? "回到工作台" : "Back to my workspace"
   });
-}
-
-export function isEmptyEchoInkPluginData(value: unknown): boolean {
-  return value === null
-    || value === undefined
-    || (
-      typeof value === "object"
-      && !Array.isArray(value)
-      && Object.keys(value).length === 0
-    );
 }

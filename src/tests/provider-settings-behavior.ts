@@ -163,6 +163,7 @@ import { ProviderModelModal } from "../settings/provider-model-modal";
 import { providerBrandSvg } from "../settings/provider-brand-icons";
 import { settingsCopy } from "../settings/i18n";
 import { CodexSettingTab } from "../settings/settings-tab";
+import { ReleaseUpdateController } from "../settings/release-update";
 import { DesktopKnowledgeSettings } from "../settings/desktop-knowledge-settings";
 import { DesktopMemorySettings } from "../settings/desktop-memory-settings";
 import { renderCompactAbout } from "../settings/about-section";
@@ -11777,6 +11778,7 @@ function withSettingsTabDefaults<T extends object>(plugin: T) {
     testNotification: async () => ({ ok: false, error: "unavailable" as const })
   };
   return {
+    releaseUpdate: new ReleaseUpdateController(async () => ({ releases: [] })),
     getJournalFormatService: () => journalService ??= new JournalFormatService(candidate.app!, { directory: ".obsidian/plugins/journal-test", settings: () => candidate.settings!, model: () => null,
       generate: async () => { throw new Error("No model calls in settings tests"); }, changed: () => {} }),
     register: () => undefined,

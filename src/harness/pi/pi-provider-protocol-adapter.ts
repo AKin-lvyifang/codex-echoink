@@ -1,3 +1,5 @@
+import { anthropicCacheRoute, applyPromptCacheBoundary, providerCacheKey } from "./prompt-cache";
+import { withXiaoechoTurn } from "../../membership/xiaoecho-turn";
 import { xiaoechoFailureCode } from "../../membership/xiaoecho-catalog";
 import { publishXiaoechoModelSignal } from "../../membership/xiaoecho-model-signal";
 import { XIAOECHO_RETRY_DELAY_MS, xiaoechoBusyCode } from "./xiaoecho-retry";
@@ -387,18 +389,23 @@ implements ControlledPiStreamPort {
             : { maxTokens: input.options.maxTokens }),
           temperature: input.options.temperature,
           cacheRetention: input.options.cacheRetention,
+          ...(input.options.cacheRetention === "short" ? { sessionId: providerCacheKey(input.conversationId) } : {}),
           maxRetries: input.options.maxRetries,
           timeoutMs: input.options.timeoutMs,
-          ...(injectNativeDocuments && this.options.documentInput
-            ? {
-                onPayload: (payload: unknown) =>
-                  applyPiAnthropicDocumentPayload({
-                    payload,
-                    documents: nativeDocuments,
-                    capabilityTarget: this.options.documentInput!.capabilityTarget
-                  })
-              }
-            : {}),
+          onPayload: (payload: unknown) => {
+            const prepared = injectNativeDocuments && this.options.documentInput
+              ? applyPiAnthropicDocumentPayload({ payload, documents: nativeDocuments, capabilityTarget: this.options.documentInput.capabilityTarget })
+              : payload;
+            const separated = applyPromptCacheBoundary(prepared, input.options.cacheRetention === "short"
+              && anthropicCacheRoute(input.model.provider, input.model.id, input.model.api));
+            const cachePayload = input.options.cacheRetention === "short" && input.model.provider === "xiaoecho"
+              && /^gpt-/u.test(input.model.id) && separated && typeof separated === "object"
+              ? { ...separated, prompt_cache_key: providerCacheKey(input.conversationId) }
+              : separated;
+            return withXiaoechoTurn(cachePayload, input.model.provider, input.purpose ? {
+              conversationId: input.conversationId, turnId: input.turnId, purpose: input.purpose, shortReply: input.shortReply
+            } : undefined);
+          },
           onResponse: (response) => {
             responseStatus = response.status;
           }

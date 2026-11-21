@@ -12,6 +12,7 @@ export interface ChatKnowledgePickClient {
 export async function pickChatKnowledge(input: {
   question: string;
   decisionTurnId: string;
+  conversationId?: string;
   recent?: readonly string[];
   candidates: Promise<ChatKnowledgeCandidatesResult | null>;
   client: ChatKnowledgePickClient;
@@ -43,7 +44,7 @@ export async function pickChatKnowledge(input: {
   check();
   let judgment: KnowledgeJudgment | null;
   try {
-    judgment = await input.client.judgeKnowledge({ turnId: input.decisionTurnId, text: input.question,
+    judgment = await input.client.judgeKnowledge({ turnId: input.decisionTurnId, conversationId: input.conversationId, text: input.question,
       recent: input.recent, notes: candidates.map(candidate => candidate.note), signal: input.signal });
   } catch { check(); return null; }
   check();
