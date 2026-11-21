@@ -72,7 +72,23 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = [];
   assert.deepEqual(snapshot.capabilityIds, ["knowledge", "web-search"]);
   agentId = "organizer";
-  assert.equal(checkAgentCapability(context(), "knowledge").allowed, false);
+  assert.equal(checkAgentCapability(context(), "knowledge").reason, "agent_disabled");
+  const organizer = settings.agentRegistry.agents.find(agent => agent.id === "organizer")!;
+  const diary = "journal/synthetic.md";
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: "ordinary/synthetic.md" }).allowed, true);
+  organizer.capabilityIds = ["knowledge", "journal"];
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: diary }).allowed, true);
+  organizer.disabledCapabilityIds = ["journal"];
+  assert.equal(checkAgentTool(context(), "knowledge_maintain", { stage: "inspect", sourcePaths: [diary] }).allowed, true);
+  assert.equal(checkAgentTool(context(), "knowledge_maintain", { stage: "decompose", decompositions: [
+    { sourcePath: diary, units: [{ evidence: [{ sourcePath: diary }] }] }
+  ] }).allowed, true);
+  assert.equal(checkAgentTool(context(), "note_update", { relativePath: diary }).reason, "agent_disabled");
+  assert.equal(checkAgentTool(context(), "knowledge_maintain", { stage: "plan", writingPlan: [
+    { targetPath: diary, sourcePaths: [diary] }
+  ] }).reason, "agent_disabled");
+  assert.equal(checkAgentTool({ ...context(), access: { ...access, permission: "read-only" } }, "knowledge_maintain", { stage: "write", pageId: "p" }).reason, "read_only");
+  organizer.disabledCapabilityIds = [];
   settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds = ["knowledge", "web-search"];
   assert.equal(checkAgentTool(context(), "finance_query", { action: "records" }).allowed, false);
   assert.equal(checkAgentTool(context(), "task_update", {}).allowed, true);
@@ -112,6 +128,20 @@ export async function runAgentCapabilitiesTests(root: string): Promise<void> {
   assert.equal(checkAgentSkill(context(), "new-custom").allowed, false);
   settings.agentRegistry.agents.find(agent => agent.id === "organizer")!.capabilityIds!.push(vaultSkillCapabilityId(custom.id));
   assert.equal(checkAgentSkill(context(), "new-custom").allowed, true);
+  const expert = { ...organizer, id: "expert-socrates", kind: "expert" as const, capabilityIds: ["journal"],
+    expert: { expertId: "socrates", packageVersion: "fixture", hired: true, summary: "", disclosureShown: false, events: [] } };
+  settings.agentRegistry.agents.push(expert);
+  agentId = expert.id;
+  assert.equal(checkAgentTool(context(), "finance_query", { action: "records" }).reason, "agent_disabled");
+  assert.equal(checkAgentSkill(context(), custom.id).reason, "agent_disabled");
+  for (const id of [vaultSkillCapabilityId(custom.id), "skill:new-custom"]) {
+    expert.capabilityIds = ["journal", id];
+    assert.equal(checkAgentSkill(context(), custom.id).allowed, true);
+    assert.equal(checkAgentSkill(context(), "new-custom").allowed, true);
+  }
+  pro = false;
+  assert.equal(checkAgentSkill(context(), custom.id).reason, "pro_required");
+  pro = true;
   agentId = "sol";
   console.log("PASS actual Skill selection, resource loading, explicit custom resource IDs and revocation before body expansion");
 
@@ -343,7 +373,7 @@ export function runDesktopDirectoryCapabilityTests(): void {
   }
   bindings.roles.work.enabled = false;
   settings.agentRegistry.agents.push({ id: "journal-only", name: "日记员", avatar: { kind: "default" }, position: "日记", styleId: "analysis", capabilityIds: ["journal"] },
-    { id: "knowledge-only", name: "知识员", avatar: { kind: "default" }, position: "知识", styleId: "analysis", capabilityIds: ["knowledge"] });
+    { id: "knowledge-only", name: "知识员", avatar: { kind: "default" }, position: "知识", styleId: "analysis", capabilityIds: ["knowledge"], disabledCapabilityIds: ["journal"] });
   const context: AgentCapabilityContext = { settings, agentId: "journal-only", vaultRoot: "/synthetic/desktop-policy", resources: [], access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
   for (const relativePath of ["日记/旧工作/day.md", "日记/旧存档/day.md"]) {
     assert(checkAgentTool(context, "note_update", { relativePath }).allowed, "retired bindings cannot shadow the active journal scope, enabled or disabled");
@@ -357,7 +387,7 @@ export function runDesktopDirectoryCapabilityTests(): void {
   assert.equal(checkAgentTool(worker, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).reason, "folder_grant_required", "a dispatched worker writes ordinary folders only when the assistant opened them");
   assert(checkAgentTool({ ...worker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/个人财务/账本.md" }).allowed, "an assistant grant opens that folder");
   assert.equal(checkAgentTool({ ...worker, folderGrants: ["02-Areas/个人财务"] }, "note_update", { relativePath: "02-Areas/其他/a.md" }).reason, "folder_grant_required", "a grant covers only its folder");
-  assert(checkAgentTool({ ...worker, agentId: "knowledge-only", folderGrants: ["日记"] }, "note_update", { relativePath: "日记/day.md" }).allowed, "a grant also opens another module's folder");
+  assert.equal(checkAgentTool({ ...worker, agentId: "knowledge-only", folderGrants: ["日记"] }, "note_update", { relativePath: "日记/day.md" }).reason, "agent_disabled", "a folder grant cannot override a basic capability explicitly turned off");
   assert(checkAgentTool(worker, "note_update", { relativePath: "日记/day.md" }).allowed, "a worker always writes its own module folder");
   assert.equal(checkAgentTool({ ...worker, folderGrants: ["02-Areas"], access: { permission: "read-only", mode: "agent", memoryMode: "normal" } }, "note_update", { relativePath: "02-Areas/a.md" }).reason, "read_only", "a grant never lifts read-only");
   console.log("PASS desktop module folders, open reads and assistant folder grants");
@@ -540,7 +570,7 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   ], results: [], writeConfirmed: true });
   const deniedStore = new KnowledgeLinkingStateStore(path.join(root, "denied-state", "state.json"));
   await deniedStore.save(task("denied-task"));
-  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.capabilityIds = [];
+  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.disabledCapabilityIds = ["knowledge"];
   const denied = new KnowledgeLinkingService(createProductionKnowledgeLinkingHost(plugin as never), deniedStore);
   await denied.ready; await denied.resume(); await denied.waitForIdle();
   assert.equal(await readFile(path.join(root, "wiki/a.md"), "utf8"), "A before\n");
@@ -551,7 +581,7 @@ async function linkingWriteAndHandoffTests(root: string): Promise<void> {
   assert.equal(reloadedDenied.snapshot()?.originConversationId, "origin-task");
   await assert.rejects(createProductionKnowledgeLinkingHost(plugin as never).write("wiki/a.md", "A before\n", "forbidden", reloadedDenied.snapshot()!), /agent_capability_agent_disabled/);
   await reloadedDenied.dispose();
-  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.capabilityIds = ["knowledge"];
+  f.plugin.settings.agentRegistry.agents.find(agent => agent.id === "origin-agent")!.disabledCapabilityIds = [];
   await assert.rejects(production.write("wiki/a.md", "A before\n", "forbidden", { authorizationSource: "unknown" }), /origin_unknown/);
   const unknownStore = new KnowledgeLinkingStateStore(path.join(root, "unknown-state", "state.json"));
   const oldTask = task("old-unknown-task"); delete oldTask.originConversationId; delete oldTask.authorizationSource;

@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "process";
 import { reactDomScriptResourcesPlugin } from "./scripts/react-dom-script-resources.mjs";
-import { assemblePlatformBundle } from "./scripts/mobile-build.mjs";
+import { assemblePlatformBundle, membershipBuildDefines } from "./scripts/mobile-build.mjs";
 import { financeBrandsPlugin, agentAvatarAssetsPlugin, profileStringsPlugin, profileModulesPlugin } from "./scripts/bundle-shared-assets.mjs";
 import { piBraceExpansionPlugin } from "./scripts/pi-brace-expansion.mjs";
 import { radixIconsEsmPlugin, pinyinDictionaryCompressionPlugin } from "./scripts/bundle-static-data.mjs";
@@ -593,8 +593,7 @@ var __echoInkPiModuleUrl = require("node:url").pathToFileURL(
   // Controlled Chat never uses Pi's package-relative CLI assets or extensions.
   define: {
     "process.env.NODE_ENV": JSON.stringify(isProd ? "production" : "development"),
-    __ECHOINK_MEMBERSHIP_API_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_API_URL || "https://echoink.cn"),
-    __ECHOINK_MEMBERSHIP_WEBSITE_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_WEBSITE_URL || "https://echoink.cn"),
+    ...membershipBuildDefines,
     "import.meta.url": "__echoInkPiModuleUrl"
   },
   entryPoints: [

@@ -172,17 +172,18 @@ export class MobileSkillsService {
     const freshness = decision.fresh ? find("evidence-freshness-audit") : undefined;
     return [...(freshness && await this.decisionUsable(freshness, agentId) ? [freshness] : []), ...(chosen && chosen !== freshness ? [chosen] : [])];
   }
-  async resolveRunSkills(taskId: string, agentId: string, text: string, selectedId?: string, recordUsage = true, decision?: Readonly<{ skillId: string | null; fresh?: boolean }>): Promise<ResolvedSkillContent[]> {
+  async resolveRunSkills(taskId: string, agentId: string, text: string, selection?: string | readonly string[], recordUsage = true, decision?: Readonly<{ skillId: string | null; fresh?: boolean }>): Promise<ResolvedSkillContent[]> {
     await this.prepare();
+    const selectedIds = typeof selection === "string" ? [selection] : selection;
     const normalized = normalizeTaskText(text), policy = this.policy(agentId);
-    const decided = !selectedId && decision && !isSimpleTask(normalized) ? await this.decidedCandidates(decision, agentId) : null;
-    const candidates = selectedId ? [this.entry(selectedId)] : decided ? decided : isSimpleTask(normalized) ? [] : this.entries().filter(item => item.enabled && isBuiltinSkillId(item.id) && builtinTrigger(item.id, normalized).matched)
+    const decided = !selectedIds && decision && !isSimpleTask(normalized) ? await this.decidedCandidates(decision, agentId) : null;
+    const candidates = selectedIds ? selectedIds.map(id => this.entry(id)) : decided ? decided : isSimpleTask(normalized) ? [] : this.entries().filter(item => item.enabled && isBuiltinSkillId(item.id) && builtinTrigger(item.id, normalized).matched)
       .sort((a, b) => builtinTrigger(b.id as Parameters<typeof builtinTrigger>[0], normalized).score - builtinTrigger(a.id as Parameters<typeof builtinTrigger>[0], normalized).score);
     const resolved: ResolvedSkillContent[] = [], roles = new Set<string>();
     for (const item of candidates) {
-      if (!item.enabled) { if (selectedId) throw new Error("此 Skill 已停用。"); continue; }
-      try { policy.assertSkill(item.id); } catch (error) { if (selectedId) throw error; continue; }
-      if (!selectedId && isRemoteOnlySkill(item.id) && !this.contentResolver.hasRemoteAccess() && !await this.contentResolver.isUserCopy(item.id, item.path)) continue;
+      if (!item.enabled) { if (selectedIds) throw new Error("此 Skill 已停用。"); continue; }
+      try { policy.assertSkill(item.id); } catch (error) { if (selectedIds) throw error; continue; }
+      if (!selectedIds && isRemoteOnlySkill(item.id) && !this.contentResolver.hasRemoteAccess() && !await this.contentResolver.isUserCopy(item.id, item.path)) continue;
       const role = ["deep-understanding", "multi-lens-problem-solving", "obsidian-markdown", "obsidian-bases", "json-canvas", "obsidian-cli", "knowledge-review"].includes(item.id) ? "analysis" : item.id;
       if (roles.has(role)) continue;
       const raw = await this.raw(item);

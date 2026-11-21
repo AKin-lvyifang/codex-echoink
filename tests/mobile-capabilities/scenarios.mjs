@@ -107,8 +107,10 @@ export async function runMobileCapabilityScenarios(api) {
     f.search.dispose();
   });
 
-  await test("ordinary whitelist and sol disabled list gate direct tools with zero side effects", async () => {
+  await test("default journal access, explicit per-Agent opt-out and specialized grants gate direct tools", async () => {
     const f = await setup(); const writer = tool(f, "note_create");
+    assert.doesNotThrow(() => f.policy.assertTool("note_create", { path: "journal/默认.md" }));
+    f.grant.disabledCapabilityIds = ["journal"];
     await assert.rejects(writer.execute("write", { path: "journal/越权.md", content: "不能写" }, signal()), code(/agent_disabled:journal/u));
     await assert.rejects(writer.execute("write", { path: "finance/transactions/越权.md", content: "不能写" }, signal()), code(/agent_disabled:finance/u));
     assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
@@ -213,6 +215,7 @@ export async function runMobileCapabilityScenarios(api) {
       assert.equal(f.policy.canReadPath(path), false);
       await assert.rejects(write.execute("write", { path, content: "禁止" }, signal()));
     }
+    f.grant.disabledCapabilityIds = ["journal"];
     const oldSignature = f.policy.signature();
     f.settings.knowledgeBase.folderBindings.roles.journal.readPaths = ["raw"];
     f.settings.knowledgeBase.folderBindings.revision++;
@@ -224,13 +227,12 @@ export async function runMobileCapabilityScenarios(api) {
   await test("revocation while exists awaits prevents mkdir/create; every later mkdir boundary is checked", async () => {
     // Writes into a module folder are what a capability revocation can still stop.
     const f = await setup(), write = tool(f, "note_create"), exists = f.adapter.exists.bind(f.adapter);
-    f.grant.capabilityIds = ["journal"];
-    f.adapter.exists = async path => { if (path.endsWith("禁止.md")) f.grant.capabilityIds = []; return exists(path); };
+    f.adapter.exists = async path => { if (path.endsWith("禁止.md")) f.grant.disabledCapabilityIds = ["journal"]; return exists(path); };
     await assert.rejects(write.execute("write", { path: "journal/新目录/禁止.md", content: "禁止" }, signal()), code(/agent_disabled/u));
     assert.equal(f.calls.folders.length, 0); assert.equal(f.calls.create.length, 0);
-    f.grant.capabilityIds = ["journal"];
+    f.grant.disabledCapabilityIds = [];
     const mkdir = f.app.vault.createFolder;
-    f.app.vault.createFolder = async path => { await mkdir(path); f.grant.capabilityIds = []; };
+    f.app.vault.createFolder = async path => { await mkdir(path); f.grant.disabledCapabilityIds = ["journal"]; };
     await assert.rejects(write.execute("write", { path: "journal/新目录2/次级/禁止2.md", content: "禁止" }, signal()), code(/agent_disabled/u));
     assert.equal(f.calls.folders.length, 1); assert.equal(f.calls.create.length, 0); f.search.dispose();
   });
@@ -272,7 +274,7 @@ export async function runMobileCapabilityScenarios(api) {
     assert.ok(!f.policy.signature().includes("never-in-signature"));
     for (const change of [() => { f.paid.active = true; }, () => { f.settings.englishDiary.enabled = false; },
       () => { f.settings.resources.catalog.push({ id: "skill", kind: "skill", enabled: false }); }, () => { f.settings.knowledgeBase.folderBindings.revision++; },
-      () => { f.grant.capabilityIds = []; }]) {
+      () => { f.grant.disabledCapabilityIds = ["journal"]; }]) {
       const before = f.policy.signature(); change(); assert.notEqual(f.policy.signature(), before);
     }
     assert.deepEqual([...snapshot.capabilityIds], ["knowledge"]);

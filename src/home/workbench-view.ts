@@ -4,6 +4,7 @@ import { bindPressFeedback } from "../ui/press-feedback";
 import { moduleOwnerLabel } from "../ui/module-owner-modal";
 import { ownedEl, ownedDiv } from "../ui/owned-dom";
 import { openTaskMenu } from "../ui/codex-view/task-menu";
+import { changeManagedTaskStatus } from "../plugin/task-management";
 import { isImeKeyEvent, watchImeComposition, isComposingInput } from "../ui/ime-composition";
 import { attachNativeTooltip } from "../ui/native-tooltip";
 import { isAnimateIconName, renderAnimateIcon } from "../ui/animate-icon";
@@ -1023,15 +1024,23 @@ export class EchoInkWorkbenchView extends ItemView {
       const footer = card.createDiv({ cls: "wb-task-footer" });
       const info = this.interruptions.get(entry.conversationId);
       const interruptedAt = info?.at ?? entry.taskInterruptedAt ?? entry.updatedAt;
-      footer.createSpan({ cls: "wb-interruption wb-grow", text: recovery ? `${localDateLabel(interruptedAt, Date.now(), this.language)} ${localTaskTime(interruptedAt)}` : activity ? this.summary(entry) : this.interruptionText(entry, info) });
       const key = `resume-${entry.conversationId}`;
+      const archiveKey = `archive-${entry.conversationId}`;
       const pending = this.busy.has(key) || !!this.plugin.isTaskResuming?.(entry.conversationId);
+      const archiving = this.busy.has(archiveKey);
+      footer.createSpan({ cls: "wb-interruption wb-grow", text: recovery ? `${localDateLabel(interruptedAt, Date.now(), this.language)} ${localTaskTime(interruptedAt)}` : activity ? info?.failureMessage ?? this.summary(entry) : this.interruptionText(entry, info) });
+      if (activity?.status === "failed") {
+        const archive = this.button(footer, this.t("归档任务", "Archive task"), archiveKey,
+          () => this.runAction(archiveKey, () => changeManagedTaskStatus(this.plugin, entry.conversationId, "archived")), "tertiary");
+        archive.classList.add("is-small"); archive.disabled = pending || archiving;
+        setAmicroButtonPending(archive, archiving);
+      }
       const report = this.button(footer, this.t("上报问题", "Report a problem"), `report-${entry.conversationId}`, () => this.plugin.openRunReport(entry.conversationId), "secondary");
-      report.classList.add("is-small"); report.disabled = pending; report.dataset.action = "report-task";
+      report.classList.add("is-small"); report.disabled = pending || archiving; report.dataset.action = "report-task";
       report.dataset.wbBusy = key; report.dataset.wbSource = "tasks";
       const resume = this.button(footer, pending ? this.t("正在核对…", "Checking…") : recovery?.enable ? this.t("开启工具调用并继续", "Enable tools and continue") : this.t("继续", "Continue"), key,
         () => this.runAction(key, async () => { this.selectedTask = entry.conversationId; await this.plugin.resumeTaskAndOpenDetail(entry.conversationId); }), "primary");
-      resume.classList.add("is-small"); resume.disabled = !!this.taskError || pending; setAmicroButtonPending(resume, pending);
+      resume.classList.add("is-small"); resume.disabled = !!this.taskError || pending || archiving; setAmicroButtonPending(resume, pending);
       resume.dataset.wbMemory = "true"; resume.dataset.wbBusy = key; resume.dataset.wbSource = "tasks"; resume.dataset.wbResume = "true";
     } else if (activity?.taskKind === "upgrade" && state === "running") {
       const footer = card.createDiv({ cls: "wb-task-footer" }), key = `stop-upgrade-${entry.conversationId}`;

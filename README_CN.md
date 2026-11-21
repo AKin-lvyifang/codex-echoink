@@ -1,12 +1,12 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.9.0：整库云同步，跨设备接着聊" src="assets/releases/echoink-agent-2.9.0-release.png">
+    <img width="1024" alt="EchoInk 2.9.2：专家可定制，也能投稿" src="assets/releases/echoink-agent-2.9.2-release.png">
   </a>
 </p>
 
 <h1 align="center">EchoInk Agent</h1>
 
-<p align="center">你的笔记，有了 AI 搭档。住在 Obsidian 里。<br>和笔记对话、帮你整理知识，并用看得见、改得了的记忆记住重要的事。</p>
+<p align="center">住在 Obsidian 里的 AI Agent 插件，你的笔记有了 AI 搭档。<br>和笔记对话、知识库问答、帮你整理笔记，并用看得见、改得了的记忆记住重要的事。</p>
 
 <p align="center"><a href="https://obsidian.md/plugins?id=codex-echoink"><b>在 Obsidian 中安装</b></a></p>
 
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Obsidian 社区插件下载量"></a>
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.0"><img src="https://img.shields.io/badge/version-2.9.0-0EA5E9?style=flat-square" alt="版本 2.9.0"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.2"><img src="https://img.shields.io/badge/version-2.9.2-0EA5E9?style=flat-square" alt="版本 2.9.2"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="桌面端与移动端 Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT 基础版 + 商业许可 PRO，范围见 LICENSE"></a>
 </p>
@@ -66,7 +66,7 @@
 | AI 团队、模块负责人、自建 Skill | ✅ | ✅ | ✅ |
 | @Agent 正文管家、PDF 精读 | — | ✅ | ✅ |
 | 财务、英文日记 | — | ✅ | ✅ |
-| 专家聘请、官方方法论 Skill、EchoInk MCP 服务 | — | ✅ | ✅ |
+| 专家聘请与投稿、官方方法论 Skill、EchoInk MCP 服务 | — | ✅ | ✅ |
 | 云同步 | — | 1 GB | 5 GB |
 | 内置模型 AI 点数（每月） | — | 500 | 3000 |
 
@@ -96,7 +96,7 @@
 | 记忆星图 | 电脑端查看画像、记忆与来源，从「设置 → 记忆」打开；可修正、固定或恢复记忆 | ✅ | ✅ |
 | Skill（内置与自建） | 内置基础 Skill、自建 Skill 和基础复盘 | ✅ | ✅ |
 | 官方方法论 Skill 与知识复盘增强版 | 7 个官方方法论 Skill 与知识复盘增强版按需联网下载 | ❌ | ✅ |
-| EchoInk MCP 服务 | 电脑端向同机外部 Agent 提供获准的知识、画像与记忆；默认关闭、只读 | ❌ | ✅ |
+| EchoInk MCP 服务 | 电脑端向同机外部 Agent 只读共享获准的知识、画像和记忆，可一次获取任务相关内容；默认关闭 | ❌ | ✅ |
 
 ### 📅 每天的生活
 
@@ -115,7 +115,8 @@
 | 一人公司 | 电脑、iPhone 与 iPad 由总助派活，开工卡确认后推进项目；问题与审批集中在「等你定」；移动端为 Beta | ✅ | ✅ |
 | 模块负责人 | 在 Agent 设置指定各模块的角色 Agent；未指定时先选人再开始，付费模块仍沿用各自权益 | ✅ | ✅ |
 | 多 Agent 任务 | 查看员工任务与产出；中断后核对并继续，项目和员工会话暂不跨设备查看、接续 | ✅ | ✅ |
-| 专家聘请 | 电脑端浏览并聘请专家，从头像继续对话；解聘保留原对话 | ❌ | ✅ |
+| Agent 人格导入 | 新建 Agent 时可粘贴已有的人设 | ✅ | ✅ |
+| 专家聘请与投稿 | 聘请后可改名、换头像、选用自己的 Skill 和 MCP；PRO 用户可投稿自建 Agent，收录后展示作者和聘请人数 | ❌ | ✅ |
 
 </details>
 
@@ -134,10 +135,10 @@
 
 - **笔记默认留在本地**：对话、知识、记忆、日记和财务记录保存在你的 Vault。只有你开启云同步后，所选范围内的文件才会加密上传到 echoink.cn。
 - **AI 请求发给你选择的模型服务**，只带该请求所需的内容：用自己的 API Key 时直连该服务，选择小echo 时经 echoink.cn 转发并扣除 AI 点数。
-- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、云同步、小echo、智能判断、资讯、PRO Skill 与专家内容下载、可选的天气、工作台签到、你登录后主动上报的问题报告，以及检查更新和版本说明。PRO 需要 EchoInk 账号，用自备模型的对话和知识库不需要。
+- **会联网到 echoink.cn 的功能**：账号登录与 PRO 授权、云同步、小echo、智能判断、资讯、PRO Skill 下载、专家浏览与下载、投稿、聘请上报和收录状态检查、可选的天气、工作台签到、你登录后主动上报的问题报告，以及检查更新和版本说明。PRO 需要 EchoInk 账号，用自备模型的对话和知识库不需要。
 - **可选的第三方服务**：联网搜索（Tavily 或 DeepSeek，默认关闭）和 MinerU PDF 解析，账号与费用各自另计。
 - **电脑端可以访问 Vault 外的文件**，范围取决于你选择的权限；也会运行你配置的本机 MCP 命令。
-- **不采集客户端使用遥测。**
+- **统计与公开展示**：EchoInk 不做插件端遥测。聘请成功后由官网按账号为该专家计数，目录公开显示汇总人数。
 
 完整内容见[隐私与数据说明](PRIVACY_CN.md)。
 
@@ -165,7 +166,7 @@
 
 ## 最近更新
 
-**2.9.0**（2026-11-19）：整库云同步和跨设备接续对话。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
+**2.9.2**（2026-11-21）：专家可定制，也能投稿；MCP 一次取齐任务相关资料。完整记录见 [CHANGELOG](CHANGELOG.md) 与 [Releases](https://github.com/AKin-lvyifang/codex-echoink/releases)。
 
 ## 许可
 

@@ -1,4 +1,6 @@
 import type { MaintenanceTreeAnalysisRequest, MaintenanceTreeAnalysisResult } from "../knowledge-base/maintenance-tree-analysis";
+import { AgentCapabilityDeniedError } from "../agents/capability-denial";
+import type { AgentCapabilityDecision } from "../agents/capability-core";
 import { isGeneralKnowledgeWiki, knowledgeWikiProperties } from "../knowledge-base/knowledge-wiki-policy";
 import { MaintenanceActivityController } from "./maintenance-activity-controller";
 import type { KnowledgeActivityService } from "./knowledge-activity-service";
@@ -91,6 +93,7 @@ export interface KnowledgeMaintenanceTerminalEvent {
 }
 
 export interface CreateProductionPiKnowledgeMaintenanceOptions {
+  readonly checkWriteTarget?: (conversationId: string, targetPath: string) => Promise<AgentCapabilityDecision>;
   readonly treePlacement?: (input: MaintenanceTreeAnalysisRequest) => Promise<import("../knowledge-base/maintenance-p2-contract").MaintenanceTreePlan>;
   readonly productRuns?: Pick<FileProductRunStore, "read" | "setMaintenanceActivity" | "list">;
   readonly activitySource?: KnowledgeActivityService;
@@ -147,6 +150,7 @@ implements PiKnowledgeMaintenanceToolPort {
   private readonly userId: string;
   private readonly deviceId: string;
   private readonly domainService: VaultDomainService;
+  private readonly checkWriteTarget?: CreateProductionPiKnowledgeMaintenanceOptions["checkWriteTarget"];
   private readonly knowledgeAgentIndex?: Pick<
     KnowledgeAgentIndex,
     "readReliableKnowledgeForRaw"
@@ -181,6 +185,7 @@ implements PiKnowledgeMaintenanceToolPort {
     this.userId = requireNonEmpty(options.userId, "userId");
     this.deviceId = requireNonEmpty(options.deviceId, "deviceId");
     this.domainService = options.domainService;
+    this.checkWriteTarget = options.checkWriteTarget;
     this.knowledgeAgentIndex = options.knowledgeAgentIndex;
     this.maintenanceIndex = options.knowledgeAgentIndex?.scanLinkingDocuments && options.knowledgeAgentIndex?.search && options.knowledgeAgentIndex?.refresh
       ? options.knowledgeAgentIndex as Pick<KnowledgeAgentIndex, "scanLinkingDocuments" | "search" | "refresh">
@@ -221,6 +226,10 @@ implements PiKnowledgeMaintenanceToolPort {
       save: record => this.activity.save(record),
       current: (input, stage, currentPath) => this.activity.lifecycle({ type: "stage", conversationId: input.conversationId, productRunId: input.productRunId, stage, currentPath }),
       read: async relative => { const file = await readImmutableFileIfPresent(this.vaultRootPath, relative); return file ? UTF8_DECODER.decode(file.bytes) : null; },
+      isReadOnlySource: async (input, relative) => {
+        const decision = await this.checkWriteTarget?.(input.conversationId, relative);
+        return decision?.capabilityId === "journal" && (decision.reason === "agent_disabled" || decision.reason === "module_disabled");
+      },
       recoverBeforeRebase: async () => { await this.createService(new UnavailableMaintenanceProposalPort()).recoverPendingOrThrow(this.vaultId); },
       committedPageReceipt: (record, item, draft) => this.committedP1PageReceipt(record, item, draft),
       sourcePath: relative => { const actual = resolveKnowledgePath(this.vaultRootPath, normalizeVaultRelativePath(relative), false); if (!["raw", "inbox"].includes(knowledgePathRole(this.vaultRootPath, actual) ?? "") || !isKnowledgeMaintenanceSourcePath(actual)) throw new Error("来源不在Raw/Inbox范围"); return actual; },
@@ -280,9 +289,9 @@ implements PiKnowledgeMaintenanceToolPort {
     await this.activity.beforeTool(input);
     let result = await this.p1.execute(input);
     await this.activity.afterTool(input, result.status === "failed", result.message);
-    if (result.maintenanceResult && result.recordId) {
+    if (result.maintenanceResult && result.recordId && input.p1?.stage !== "inspect") {
       try { await this.onTerminal?.({ input, result, at: this.now() }); } catch (error) { console.error("EchoInk maintenance history could not be saved", knowledgeErrorDetail(error)); }
-      if (result.producedPaths?.length && this.onCommitted && result.recordId && input.p1?.stage !== "decompose") {
+      if (result.producedPaths?.length && this.onCommitted && input.p1?.stage !== "decompose") {
         const record = await readPrivateMaintenanceRecord(this.privateKnowledgeRootPath, result.recordId, this.vaultId);
         if (record?.p1 && !record.result.linkingTaskId) {
           record.pendingLinking ??= { taskId: record.recordId, sourcePaths: [...result.producedPaths], targetPaths: record.p1.writingPlan.filter(item => item.expectedTarget.kind === "missing").map(item => item.targetPath) };
@@ -519,6 +528,10 @@ implements PiKnowledgeMaintenanceToolPort {
       pathPolicy: (relative) => this.maintenancePolicy(relative),
       bindingRevision: () => getKnowledgeFolderBindings(this.vaultRootPath)?.revision ?? 0,
       privateRecords: true,
+      writeDenial: async (conversationId, target) => {
+        const decision = await this.checkWriteTarget?.(conversationId, target);
+        return decision && !decision.allowed ? new AgentCapabilityDeniedError(decision.reason, decision.capabilityId).message : undefined;
+      },
       finalizeRecord: async (wal) => { await this.faultInjector?.("before-private-record"); await this.state.finalizeRecord(wal); await this.faultInjector?.("after-private-record"); },
       domain: this.domainService,
       sources: this.sources,
@@ -1001,6 +1014,7 @@ async function readPrivateMaintenanceRecord(rootPath: string, recordId: string, 
     || payload.sources.some((source) => !isRecord(source)
       || typeof source.path !== "string" || typeof source.fingerprint !== "string"
       || !["processed", "unread", "failed"].includes(String(source.status))
+      || source.readOnly !== undefined && (source.readOnly !== true || source.status !== "processed")
       || source.skipReason !== undefined && (source.status !== "unread" || typeof source.skipReason !== "string" || !source.skipReason.trim() || source.skipReason.length > 240)
       || !Array.isArray(source.evidencePaths) || source.evidencePaths.some((value) => typeof value !== "string"))) throw new Error("维护记录已损坏，无法读取。请点击“上报问题”。");
   const result = parseKnowledgeMaintenanceResultEnvelope(payload.result);

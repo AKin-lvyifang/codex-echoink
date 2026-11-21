@@ -17,7 +17,7 @@ export function runModuleOwnerTests(): void {
   assert.equal(getModuleOwner(migrated, "journal")?.id, "writer");
   assert.equal(getModuleOwner(migrated, "todos"), null);
   assert.ok(migrated.agents.find(a => a.id === "writer")!.capabilityIds!.includes("journal"));
-  assert.ok(!migrated.agents.find(a => a.id === "generalist")!.disabledCapabilityIds!.includes("finance"));
+  assert.ok(migrated.agents.find(a => a.id === "generalist")!.disabledCapabilityIds!.includes("finance"), "preserve the generalist's explicit exclusion while migrating ownership");
   assert.deepEqual(normalizeAgentRegistry(migrated), migrated, "migration is idempotent");
   const cleared = setModuleOwner(migrated, "finance", "");
   assert.equal(getModuleOwner(normalizeAgentRegistry(JSON.parse(JSON.stringify(cleared))), "finance"), null);

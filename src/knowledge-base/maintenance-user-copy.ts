@@ -5,6 +5,7 @@ export function maintenancePageLabel(path: string): string {
 }
 
 export function maintenanceFailureText(message: string, currentPath?: string, english = false): string {
+  if (/没有未完成清单/u.test(message)) return english ? "No progress was saved. Continue to start organizing the original sources." : "还没有保存整理进度。继续会从原来的资料开始。";
   if (/复制来源过多|maintenance_copy_limit/u.test(message)) return english ? "This page copied too much source text and was not saved. It needs a summary with only necessary short quotes." : "这一页带入了太多原文，暂未保存，需要先提炼要点、只保留必要短引用。";
   const path = message.match(/(?:[^\s：:；;，,《》"'`]+\/)+[^\s；;，,《》"'`]+\.(?:md|markdown)/iu)?.[0] ?? currentPath;
   const page = path ? maintenancePageLabel(path) : "该页面";

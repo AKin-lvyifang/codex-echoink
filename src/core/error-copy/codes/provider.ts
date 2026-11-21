@@ -106,6 +106,9 @@ export const XIAOECHO_CODES: Readonly<Record<string, ErrorCopy>> = {
 };
 
 const CAPABILITY_LABELS: Readonly<Record<string, ErrorCopy>> = {
+  conversation: ["对话", "Conversation"],
+  memory: ["记忆", "Memory"],
+  "vault-notes": ["库内笔记", "Vault notes"],
   knowledge: ["知识库", "Knowledge"],
   journal: ["日记", "Journal"],
   todos: ["待办", "Tasks"],

@@ -136,6 +136,7 @@ body:not(.is-mobile) .echoink-agent-editor-identity-group .echoink-agent-editor-
 .echoink-agent-editor-avatar-details { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 12px; }
 .echoink-agent-editor-avatar-details[hidden] { display: none; }
 .echoink-agent-editor-persona-frame { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border: 1px solid var(--agent-editor-line); border-radius: 10px; }
+.echoink-agent-editor-persona-frame [data-action="paste-persona"] { align-self: flex-start; }
 .echoink-agent-editor-persona-frame .echoink-agent-editor-persona { width: 100%; min-height: 220px; box-sizing: border-box; padding: 10px 12px; border: 1px solid var(--agent-editor-line); border-radius: 8px; background: var(--agent-editor-bg); color: var(--agent-editor-text); font-family: inherit; font-size: inherit; line-height: 1.7; resize: vertical; outline: none; box-shadow: none; }
 .echoink-agent-editor.is-settings .echoink-agent-editor-persona { min-height: 300px; }
 .echoink-agent-editor-persona-frame .echoink-agent-editor-persona:focus { border-color: var(--agent-editor-line); background: var(--agent-editor-hover); outline: none; box-shadow: none; }

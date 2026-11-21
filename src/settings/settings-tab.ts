@@ -51,7 +51,7 @@ import { renderCompactAbout } from "./about-section";
 import { CAUSE, NEXT, failureText, joinErrorCopy, mcpDiagnosticText, pickErrorCopy, userFacingErrorText, type ErrorCopy } from "../core/error-copy";
 import { SETTINGS_SCENE } from "../core/error-copy/codes/settings";
 import { DESKTOP_SETTINGS_TABS, desktopSettingsTabLabel, normalizeDesktopSettingsRoute, resolveDesktopSettingsRoute, resolveDesktopSettingsSearchRoute, type DesktopSettingsRoute, type DesktopSettingsTab } from "./desktop-settings-route";
-import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, hasAgentCapabilityGrant } from "../agents/types";
 import { checkAgentSkill, mcpToolCapabilityId } from "../agents/capability-policy";
 import { Component, MarkdownRenderer, Modal, Notice, Platform, PluginSettingTab, Setting, TFolder, setIcon, setTooltip } from "obsidian";
 import type { SettingGroup, SettingsCategoryGroupDefinition } from "../types/obsidian-settings";
@@ -1476,6 +1476,10 @@ export class CodexSettingTab extends PluginSettingTab {
       loadResources: async () => resources = await plugin.buildRuntimeEchoInkResourceCatalog(),
       saveAgent: (agent, modules, baseline) => plugin.saveAgentDefinition(agent, modules, baseline),
       openExpertHall: () => plugin.openExpertHall(), dismissExpert: id => plugin.dismissExpert(id), showExpertAbout: id => plugin.showExpertAbout(id),
+      get expertSubmission() {
+        const service = plugin.experts?.content.submissions;
+        return service && { service, readSkill: (path: string) => plugin.app.vault.adapter.read(path) };
+      },
       deleteAgent: id => plugin.deleteAgent(id), getDeleteCounts: id => plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => plugin.getAgentCapabilityAvailability(id, resources),
       setAgentModuleOwner: (module, id) => plugin.setAgentModuleOwner(module, id)
@@ -4200,7 +4204,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (activeTab === "tools") {
       toolbar.remove();
       const tools = wrapper.createDiv({ cls: "codex-capability-tools", attr: { id: RESOURCE_PANEL_ID, role: "tabpanel", "aria-labelledby": resourceTabDomId("tools"), tabindex: "0" } });
-      const count = this.plugin.settings.agentRegistry.agents.filter(agent => usesDisabledCapabilityList(agent.id) ? !agent.disabledCapabilityIds?.includes("web-search") : agent.capabilityIds?.includes("web-search")).length;
+      const count = this.plugin.settings.agentRegistry.agents.filter(agent => hasAgentCapabilityGrant(agent, "web-search")).length;
       tools.createDiv({ cls: "codex-resource-assignment", text: this.agentAssignmentLabel(count) });
       renderTavilySettings(tools, this.plugin, undefined, () => { void this.activateSettingsTab("models", true); });
       const toolsButton = activeButton as HTMLButtonElement | null;
@@ -5298,8 +5302,7 @@ export class CodexSettingTab extends PluginSettingTab {
     if (resource.kind === "mcp-server") {
       const tools = resolveMcpConnectionRecord(resource, settings.resources)?.tools ?? [];
       const capabilities = tools.map(tool => mcpToolCapabilityId(resource.id, tool.name));
-      return settings.agentRegistry.agents.filter(agent => capabilities.some(capability => usesDisabledCapabilityList(agent.id)
-        ? !agent.disabledCapabilityIds?.includes(capability) : agent.capabilityIds?.includes(capability))).length;
+      return settings.agentRegistry.agents.filter(agent => capabilities.some(capability => hasAgentCapabilityGrant(agent, capability))).length;
     }
     if (resource.kind !== "skill") return 0;
     const catalog = this.currentEchoInkResourceCatalog().map(item => item.id === resource.id ? { ...item, enabled: true } : item);

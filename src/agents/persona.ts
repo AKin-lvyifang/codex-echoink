@@ -1,6 +1,7 @@
 import { AGENT_STYLES } from "./styles";
 import { normalizeExpertDisclosure } from "../experts/disclosure";
 import type { AgentDefinition, AgentStyleId, ExpertAgentState } from "./types";
+import { normalizeAgentAvatar, normalizeAgentDisplayName } from "../harness/memory/agent-identity-model";
 
 export const AGENT_PERSONA_MAX_LENGTH = 4000;
 
@@ -60,34 +61,40 @@ export function normalizeExpertAgentState(value: unknown): ExpertAgentState | un
     events.push({ id: event.id, at: event.at, ...(typeof event.conversationId === "string" && event.conversationId ? { conversationId: event.conversationId } : {}) });
   }
   const disclosure = normalizeExpertDisclosure(raw.disclosure);
+  const displayNameOverride = typeof raw.displayNameOverride === "string" ? normalizeAgentDisplayName(raw.displayNameOverride) : null;
+  const avatarOverride = normalizeAgentAvatar(raw.avatarOverride);
   return { expertId: raw.expertId, hired: raw.hired === true, packageVersion: typeof raw.packageVersion === "string" ? raw.packageVersion : "",
+    ...(raw.source === "community" || raw.source === "official" ? { source: raw.source } : {}),
+    ...(displayNameOverride ? { displayNameOverride } : {}),
+    ...(avatarOverride ? { avatarOverride } : {}),
     ...(disclosure ? { disclosure } : {}),
     summary: typeof raw.summary === "string" ? raw.summary : "", disclosureShown: raw.disclosureShown === true,
     ...(typeof raw.lastConversationId === "string" && raw.lastConversationId ? { lastConversationId: raw.lastConversationId } : {}), events };
 }
 
-const EXPERT_LOCK_FIELDS = ["id", "name", "avatar", "position", "positionDescription", "styleId", "persona", "kind", "expert", "capabilityIds", "disabledCapabilityIds", "identityEdited"] as const;
+const EXPERT_LOCK_FIELDS = ["id", "position", "positionDescription", "styleId", "persona", "kind", "expert", "companyApprovalMode", "companyFolderGrants"] as const;
 function canonical(value: unknown): string | undefined {
   return JSON.stringify(value, (_key, entry: unknown) => entry && typeof entry === "object" && !Array.isArray(entry)
     ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
 }
 
-/** Ordinary writes may change module ownership only. Hiring/state changes use a dedicated service path. */
+/** Hiring and package state can only change through the expert lifecycle. */
 export function assertExpertAgentLocks(previous: AgentDefinition | undefined, next: AgentDefinition | undefined): void {
   if (!previous || !isExpertAgent(previous)) {
     if (next && isExpertAgent(next)) throw new Error("expert_agent_requires_hiring_flow");
     return;
   }
-  if (!next || EXPERT_LOCK_FIELDS.some(key => canonical(previous[key]) !== canonical(next[key]))) throw new Error("expert_agent_locked");
+  if (!next || EXPERT_LOCK_FIELDS.some(key => canonical(previous[key]) !== canonical(next[key]))
+    || !previous.expert.hired && canonical(previous) !== canonical(next)) throw new Error("expert_agent_locked");
 }
 
-/** Merge stale editor drafts while retaining the latest locked expert identity/state. */
-export function preserveExpertAgentLocks(previous: AgentDefinition, next: AgentDefinition): AgentDefinition {
-  if (!isExpertAgent(previous)) return next;
-  const preserved = { ...next };
-  for (const key of EXPERT_LOCK_FIELDS) {
-    if (previous[key] === undefined) delete preserved[key];
-    else Object.assign(preserved, { [key]: structuredClone(previous[key]) });
-  }
-  return preserved;
+/** Called in the registry write lane, after checking the draft against current package state. */
+export function applyExpertIdentityOverrides(previous: AgentDefinition | undefined, next: AgentDefinition): AgentDefinition {
+  if (!isExpertAgent(previous) || !isExpertAgent(next)) return next;
+  const name = normalizeAgentDisplayName(next.name);
+  const avatar = normalizeAgentAvatar(next.avatar);
+  if (!name || !avatar) throw new Error("agent_definition_invalid");
+  return { ...next, name, avatar, expert: { ...next.expert,
+    ...(name !== previous.name ? { displayNameOverride: name } : {}),
+    ...(canonical(avatar) !== canonical(previous.avatar) ? { avatarOverride: avatar } : {}) } };
 }

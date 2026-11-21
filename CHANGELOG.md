@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.9.2 - 2026-11-21
+<!-- release-type: feat -->
+### 2.9.2 · 专家可定制，也能投稿
+
+![EchoInk 2.9.2：专家可定制，也能投稿](https://raw.githubusercontent.com/AKin-lvyifang/codex-echoink/2.9.2/assets/releases/echoink-agent-2.9.2-release.png)
+
+### 中文
+
+类型：新功能
+
+#### 更新内容
+
+- **把聘来的专家调成你顺手的样子。** 可以改名字、换头像，给专家选用自己的 Skill 和 MCP 工具。新建 Agent 时，也可以把已有的人设直接粘贴进「人格」。
+- **把做好的 Agent 投稿到专家团。** PRO 用户可以从自建 Agent 的编辑页提交，先预览人设、随稿 Skill 和公开署名。审核收录后，其他用户可以聘请，目录会显示作者和聘请人数。
+- **Agent 的基础能力默认可用。** 对话、记忆、库内笔记、日记、知识整理和联网搜索沿用全局配置与当前权限。你主动关过的选项会保留。
+- **外部 Agent 一次拿到当前任务的背景。** 桌面 EchoInk MCP 服务新增 `get_context`，一次返回已授权的画像、相关记忆和笔记片段。相同请求可短时间复用已筛选的结果；智能判断关闭或次数用完时，会返回候选清单，由外部 Agent 自行挑选。刚启动时如果笔记搜索超时，下一次会重新找。
+- **整理日记卡住后可以接着做。** 修复日记作为资料来源时可能被误拦的问题。失败后点「继续」会接回原批，点「归档任务」可以收起失败任务并保留记录。
+- **清理了 Obsidian 社区检查标出的样式和代码问题。**
+
+#### 下载与升级
+
+在 Obsidian 的第三方插件页检查更新。手动升级时，从本页下载同一版本的 `main.js`、`manifest.json` 和 `styles.css`，替换插件目录里的同名文件，保留 `data.json`。需要 Obsidian 1.11.4 或更新版本。
+
+### English
+
+**2.9.2 · Customize experts and submit your own**
+
+Type: New
+
+#### What's new
+
+- **Make hired experts work the way you want.** Rename them, change their avatars, and give them your own Skills and MCP tools. When creating an Agent, paste an existing persona straight into the persona field.
+- **Submit an Agent to the Expert Hall.** PRO users can submit a custom Agent from its edit page and preview its persona, included Skills, and public byline before sending it. Once approved, other users can hire it. The catalog shows the author and hire count.
+- **Core Agent capabilities are available by default.** Chat, memory, vault notes, journals, knowledge organization, and web search still follow your global settings and permissions. Options you turned off stay off.
+- **Give an external agent the background it needs in one call.** The desktop EchoInk MCP server's new `get_context` tool returns the authorized profile, relevant memories, and note excerpts. Repeated requests can reuse selected results for a short time. If smart judgment is off or has reached its allowance, the external agent receives candidates to review. If note search times out on startup, the next request searches again.
+- **Pick up interrupted journal organization.** Fixed an issue that could block a journal used as source material. Choose Continue to resume the same batch or Archive task to clear the card and keep the record.
+- **Addressed style and code issues flagged by Obsidian's Community checks.**
+
+#### Download and upgrade
+
+Check for updates in Obsidian's Community plugins settings. For a manual update, download `main.js`, `manifest.json`, and `styles.css` from this release, replace the matching files in the plugin folder, and keep `data.json`. Requires Obsidian 1.11.4 or later.
+
+
 ## 2.9.1 - 2026-11-21
 <!-- release-type: fix -->
 ### 2.9.1 · 小echo 寒暄更省点

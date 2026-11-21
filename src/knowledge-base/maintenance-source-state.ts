@@ -8,7 +8,7 @@ export interface MaintenanceSourceLegacyEvidence {
   /** Optional current body digest, inspected only by the upgrade preview. */
   fingerprint?: () => string;
   registry?: RawDigestRegistryEntry;
-  maintenance?: Readonly<{ fingerprint: string; status: "processed" | "unread" | "failed" }>;
+  maintenance?: Readonly<{ fingerprint: string; status: "processed" | "unread" | "failed"; readOnly?: true }>;
   previous?: Readonly<{ fingerprint?: string }>;
   hasTrackerHint?: boolean;
 }
@@ -25,6 +25,12 @@ function canonicalState(value: MaintenanceCanonicalSourceStatus): KnowledgeBaseR
 
 /** Shared transition rule for maintenance, workbench and dashboard; never writes old notes. */
 export function resolveMaintenanceSourceState(markdown: string, evidence: MaintenanceSourceLegacyEvidence = {}): MaintenanceSourceResolution {
+  const receipt = evidence.maintenance;
+  if (receipt?.readOnly && receipt.status === "processed" && evidence.fingerprint) {
+    return evidence.fingerprint() === receipt.fingerprint
+      ? { state: "digested", origin: "private", reason: "私有记录确认已按当前版本整理" }
+      : { state: "changed", origin: "private", reason: "原文在只读整理后已变化" };
+  }
   const current = readMaintenanceSourceStateProperty(markdown);
   if (isMaintenanceCanonicalSourceStatus(current.value)) {
     return { state: canonicalState(current.value), origin: "new", reason: "采用当前标准提炼状态" };

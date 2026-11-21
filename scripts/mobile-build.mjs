@@ -5,6 +5,11 @@ import { usageTokenWorkerPlugin } from "./usage-token-worker.mjs";
 import { poolDesktopStrings, assertDesktopMarkersPreserved } from "./desktop-string-pool.mjs";
 import { financeBrandsPlugin, agentAvatarAssetsPlugin, profileStringsPlugin, profileModulesPlugin, sharedAssetsBundle } from "./bundle-shared-assets.mjs";
 
+export const membershipBuildDefines = {
+  __ECHOINK_MEMBERSHIP_API_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_API_URL || "https://echoink.cn"),
+  __ECHOINK_MEMBERSHIP_WEBSITE_URL__: JSON.stringify(process.env.ECHOINK_MEMBERSHIP_WEBSITE_URL || "https://echoink.cn"),
+};
+
 // Keep Pi's real Agent, event stream and tool validation. Exclude the Node
 // provider/auth catalog: mobile always injects its own requestUrl streamFn.
 export const mobilePiPlugin = {
@@ -28,7 +33,8 @@ export function mobileBuildOptions(entry = "src/mobile/plugin.ts") {
   return { entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "browser", target: "es2022", external: ["obsidian", "@codemirror/state", "@codemirror/view", "@codemirror/commands"], loader: { ".md": "text", ".svg": "dataurl" }, plugins: [usageTokenWorkerPlugin, mobilePiPlugin, financeBrandsPlugin(), agentAvatarAssetsPlugin(), profileStringsPlugin()], logLevel: "silent" };
 }
 export async function assemblePlatformBundle(desktopCode, minify) {
-  const mobile = await esbuild.build({ ...mobileBuildOptions(), plugins: [usageTokenWorkerPlugin, profileModulesPlugin(), mobilePiPlugin, financeBrandsPlugin(true), agentAvatarAssetsPlugin(true), profileStringsPlugin(true)], metafile: true, minify });
+  const mobile = await esbuild.build({ ...mobileBuildOptions(), define: membershipBuildDefines,
+    plugins: [usageTokenWorkerPlugin, profileModulesPlugin(), mobilePiPlugin, financeBrandsPlugin(true), agentAvatarAssetsPlugin(true), profileStringsPlugin(true)], metafile: true, minify });
   const selector = await esbuild.build({ ...mobileBuildOptions("src/platform-entry.ts"), minify });
   const wrap = (name, code) => `function ${name}(){var module={exports:{}};var exports=module.exports;\n${code}\nreturn module.exports;}\n`;
   const desktop = minify ? poolDesktopStrings(desktopCode).code : desktopCode;

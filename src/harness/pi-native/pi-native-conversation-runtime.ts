@@ -5,6 +5,7 @@ import { requiresProductFreshnessVerification } from "../resources/skill-routing
 import { DEFAULT_DECISION_THRESHOLDS, type DecisionThresholds, type TurnCheck, type TurnJudgment, type TurnJudgmentInput, type TurnSkillOption } from "../../membership/decision-client";
 import { runErrors } from "../../run-reports/recent-errors";
 import { interruptionErrorDetail } from "../../agents/task-interruption-copy";
+import { knownAgentCapabilityDenial } from "../../agents/capability-denial";
 import { freezeInlineModelRequest, inlineProposalContextContent, INLINE_PROPOSAL_SYSTEM_PROMPT, parseInlineModelOutput, type InlineModelRequest, type InlineModelOutput } from "../../inline-agent/protocol";
 import { estimateTokenValue } from "../usage/token-estimator";
 import { assertGenerationInputBudget, freezeGenerationRequest, generationModelPrompt, GENERATION_REQUEST_ENTRY, GENERATION_RESULT_ENTRY } from "../../generation/request";
@@ -271,6 +272,7 @@ export interface PiNativeAgentSessionFactoryInput {
   currentPdfTaskRequest?(): Readonly<PdfTaskRequest> | undefined;
   currentDrawingRequested?(): boolean;
   currentRequestText?(): string;
+  currentVerifiedCommunityExpert?(): import("../../experts/service").ResolvedExpertPackage | undefined;
   currentCompanyProgrammatic?(): boolean;
   currentEnglishDiaryRequest?(): Readonly<EnglishDiaryTaskContext> | null;
   currentKnowledgeTurnContext(): Readonly<PiNativeKnowledgeTurnContext> | null;
@@ -510,6 +512,7 @@ export interface PiRuntimeResolvedSkill {
 
 export interface PiNativeConversationRuntimeOptions {
   generation?: GenerationRuntimePort;
+  verifyCommunityExpertRun?(agentId: string): Promise<import("../../experts/service").ResolvedExpertPackage | undefined>;
   verifyPdfTaskDelivery?(request: Readonly<PdfTaskRequest> | string, noNewSourcePaths: readonly string[]): Promise<void>;
   resolveAgentRunSnapshot?: (catalog: Readonly<PiConversationCatalogEntry>) => AgentRunSnapshot;
   assertAgentActionAllowed?: (input: Readonly<{ catalog: Readonly<PiConversationCatalogEntry>; action: "knowledge-read" | "knowledge-write"; access?: Readonly<PiWorkspaceAccess> }>) => void | Promise<void>;
@@ -794,6 +797,7 @@ interface ActiveConversation {
 }
 
 interface ActiveProductRun {
+  verifiedCommunityExpert?: import("../../experts/service").ResolvedExpertPackage;
   shortReply?: boolean;
   admittedToolNames?: readonly string[];
   directlyBoundTools?: boolean;
@@ -1614,6 +1618,10 @@ export class PiNativeConversationRuntime {
     }
 
     assertPiSubmissionActive(request.signal);
+    // Pi's extension callbacks are observational and cannot veto the SDK's prompt.
+    // Verify before judgment or any model work, then keep the package private to this run.
+    const verifiedCommunityExpert = catalog.agentId ? await this.options.verifyCommunityExpertRun?.(catalog.agentId) : undefined;
+    assertPiSubmissionActive(request.signal);
     const knowledgeCommand: KnowledgeConversationCommand =
       request.companyProgrammatic || request.inlineProposalRequest || request.generationRequest || mode === "plan" || !this.options.knowledge
         ? Object.freeze({ kind: "chat", originalText: request.text })
@@ -1782,6 +1790,7 @@ export class PiNativeConversationRuntime {
         : request.skillName ? [request.skillName] : []);
     const execution: ActiveProductRun = {
       shortReply,
+      verifiedCommunityExpert,
       directlyBoundTools: Boolean(request.skillId || request.skillPath || catalog.defaultSkillId
         || promptImages.length || documents.length || noteMentions.length || selectionAnnotations.length
         || request.maintenanceScope || request.resumeContext || request.drawingRequested || request.workbenchSource
@@ -3396,6 +3405,7 @@ export class PiNativeConversationRuntime {
       currentSkillTurnContext: () =>
         holder.active?.currentRun?.skillTurnContext ?? null,
       currentShortReply: () => holder.active?.currentRun?.shortReply === true,
+      currentVerifiedCommunityExpert: () => holder.active?.currentRun?.verifiedCommunityExpert,
       currentDiscoverableTools: () => holder.active?.currentRun?.admittedToolNames ?? [],
       enableDiscoveredTools: names => {
         const active = holder.active, admitted = active?.currentRun?.admittedToolNames;
@@ -7199,6 +7209,7 @@ function safeProductRunErrorCode(
     if (result && ["failed", "write_uncertain"].includes(result.status) && result.issues.length) return knowledgeErrorDetail(result.issues.map((issue) => `${issue.code}${issue.path ? ` (${issue.path})` : ""}: ${issue.message}`).join("\n"));
     if (!result && entry.message.toolName === PI_KNOWLEDGE_MAINTAIN_TOOL_ID && entry.message.isError) {
       const text = entry.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+      if (knownAgentCapabilityDenial(text.trim())) return text.trim();
       if (text.trim()) return knowledgeErrorDetail(`维护工具未执行：${text}`);
     }
   }

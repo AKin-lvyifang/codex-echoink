@@ -7,9 +7,12 @@ import { mobileAtomicFilePort } from "../mobile/finance-store";
 import { sha256Hex } from "../utils/sha256";
 import { MAX_EXPERT_OFFLINE_MS, MAX_EXPERT_PACKAGE_BYTES, parseExpertCatalog, parseExpertDelivery, parseExpertPackage,
   validExpertId, type ExpertCatalog, type ExpertDeliveryResponse, type ExpertMetadata, type ExpertPackageResponse, type ExpertLicense, type ExpertPlatform } from "./contracts";
-import { buildExpertTransientPrompt, type ExpertPromptInput } from "./prompt";
+import { isCommunityExpert } from "./source";
+import { buildExpertTransientPrompt, type ExpertPromptInput, type ExpertSkillOption } from "./prompt";
+import { ExpertSubmissionService } from "./submission-service";
 
-export type ExpertDeliveryAccount = Pick<AccountService, "apiUrl" | "skillAuthorization" | "getExpertCatalog" | "getExpertPackage">;
+export type ExpertDeliveryAccount = Pick<AccountService, "apiUrl" | "skillAuthorization" | "getExpertCatalog" | "getExpertPackage">
+  & Partial<Pick<AccountService, "expertHireReporter" | "expertSubmissionOwner" | "getExpertAvatarPresets" | "submitExpert">>;
 export interface ExpertContentFiles {
   read(path: string): Promise<string | null>;
   write(path: string, content: string): Promise<void>;
@@ -22,7 +25,7 @@ export interface ResolvedExpertPackage {
   /** Return only for a transient private system context, never messages or persisted run reports. */
   buildTransientPrompt(input: ExpertPromptInput): string;
   /** 智能判断用的技能清单：只有 id、名称和说明，不含正文。 */
-  skillOptions(): { id: string; name: string; description: string }[];
+  skillOptions(): ExpertSkillOption[];
   /** Public licenses are the sole full texts exposed to the About UI. */
   licenseTexts(): ExpertLicense[];
 }
@@ -37,15 +40,19 @@ export class ExpertContentService {
   private catalogOwner: ExpertDeliveryAccount | null | undefined;
   private catalogFlight: Promise<ExpertCatalog> | null = null;
   private resolutions = new Map<string, Promise<ResolvedExpertPackage>>();
-  private readonly listeners = new Set<() => void>();
+  private readonly listeners = new Set<(catalog?: ExpertCatalog) => void>();
   private readonly states = new Map<string, { binding: string; value: ExpertDeliveryState }>();
+  readonly submissions: ExpertSubmissionService;
   constructor(private readonly options: {
     files: ExpertContentFiles; cacheRoot: string; account(): ExpertDeliveryAccount | null | undefined;
     pluginVersion: string; platform: ExpertPlatform; now?: () => number;
-  }) { safeExpertCachePath(options.cacheRoot); }
+  }) {
+    safeExpertCachePath(options.cacheRoot);
+    this.submissions = new ExpertSubmissionService(options);
+  }
   private now(): number { return this.options.now?.() ?? Date.now(); }
-  subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
-  private emit(): void { for (const listener of this.listeners) listener(); }
+  subscribe(listener: (catalog?: ExpertCatalog) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
+  private emit(catalog?: ExpertCatalog): void { for (const listener of this.listeners) listener(catalog); }
   hasRemoteAccess(): boolean { return !!this.options.account()?.skillAuthorization(); }
   catalogEntry(id: string): ExpertMetadata | undefined { return this.catalog?.experts.find(expert => expert.id === id); }
   compatible(metadata: ExpertMetadata): boolean {
@@ -79,7 +86,7 @@ export class ExpertContentService {
     const flight = (async () => {
       if (!account) throw new Error("账号服务暂时不可用，未能加载专家。请稍后重试。");
       let catalog: ExpertCatalog;
-      try { catalog = await account.getExpertCatalog(); }
+      try { catalog = await account.getExpertCatalog(this.options.pluginVersion); }
       catch (error) {
         // Public metadata may be retained offline. Never hide an online invalid response.
         if (!(error instanceof MembershipNetworkError)) throw error;
@@ -96,13 +103,31 @@ export class ExpertContentService {
     this.catalogFlight = flight;
     return flight;
   }
-  async resolve(id: string): Promise<ResolvedExpertPackage> {
+  hireReporter(id: string): () => void {
+    const account = this.options.account(), report = account?.expertHireReporter?.(id);
+    return () => {
+      if (!report) return;
+      void report().then(async () => {
+        if (this.options.account() !== account) return;
+        this.catalogAt = -Infinity;
+        const catalog = await this.publicCatalog(true);
+        this.emit(catalog);
+      }).catch(() => {});
+    };
+  }
+  async resolve(id: string, requireOnline = false): Promise<ResolvedExpertPackage> {
     if (!validExpertId(id)) throw new Error("专家信息无效。请刷新专家列表后重试。");
     const account = this.options.account(), auth = account?.skillAuthorization();
     if (!account || !auth) throw new Error("PRO_REQUIRED");
     const key = `${auth.scope}:${auth.session}:${id}`, existing = this.resolutions.get(key);
-    if (existing) return existing;
-    const flight = this.remote(id, account, auth).catch((error: unknown) => {
+    if (existing) {
+      if (!requireOnline) return existing;
+      // A previous in-flight result cannot authorize this run. Let its cache write finish first.
+      await existing.catch(() => {});
+      this.assertAuthorization(account, auth);
+      return this.resolve(id, true);
+    }
+    const flight = this.remote(id, account, auth, requireOnline).catch((error: unknown) => {
       this.setState(id, auth, { kind: "error", message: userFacingErrorText(error, "专家暂时不可用。请稍后重试。") });
       throw error;
     }).finally(() => { if (this.resolutions.get(key) === flight) this.resolutions.delete(key); });
@@ -152,25 +177,33 @@ export class ExpertContentService {
       avatar: { kind: "custom", mimeType: avatar.mimeType, dataUrl: `data:${avatar.mimeType};base64,${avatar.base64}`, width: 256, height: 256 },
       assertAvailable,
       buildTransientPrompt: input => { assertAvailable(); return buildExpertTransientPrompt(body, input); },
-      skillOptions: () => body.skills.map(skill => ({ id: skill.id, name: skill.name, description: skill.description })),
+      skillOptions: () => body.skills.map(({ id, name, description, keywords }) => ({ id, name, description, ...(keywords ? { keywords } : {}) })),
       licenseTexts: () => { assertAvailable(); return body.licenses.map(license => ({ ...license })); },
     };
   }
-  private async remote(id: string, account: ExpertDeliveryAccount, auth: SkillAuthorization): Promise<ResolvedExpertPackage> {
+  private async remote(id: string, account: ExpertDeliveryAccount, auth: SkillAuthorization, requireOnline: boolean): Promise<ResolvedExpertPackage> {
     this.assertAuthorization(account, auth);
     const previous = await this.cached(id, auth, account);
-    await this.publicCatalog(); this.assertAuthorization(account, auth);
+    if (!requireOnline) await this.publicCatalog();
+    this.assertAuthorization(account, auth);
     const metadata = this.catalogEntry(id);
-    if (!metadata) throw new Error("此专家已不在当前目录中。请刷新后重试。");
-    if (!this.compatible(metadata)) throw new Error("当前插件版本或设备不支持此专家。请更新插件，或在支持的设备上使用。");
+    if (!metadata && !requireOnline) throw new Error("此专家已不在当前目录中。请刷新后重试。");
+    if (!requireOnline && metadata && !this.compatible(metadata)) throw new Error("当前插件版本或设备不支持此专家。请更新插件，或在支持的设备上使用。");
     let response: ExpertDeliveryResponse;
     try {
       response = await account.getExpertPackage(id, { pluginVersion: this.options.pluginVersion, platform: this.options.platform,
         ...(previous && this.validCache(previous.response) ? { knownVersion: previous.response.version } : {}) });
     } catch (error) {
       this.assertAuthorization(account, auth);
+      if (error instanceof Error && "code" in error && error.code === "NOT_FOUND" && isCommunityExpert(id, metadata?.source)) {
+        throw new Error("此专家已下架，无法继续运行。");
+      }
+      if (error instanceof MembershipNetworkError && (requireOnline || isCommunityExpert(id, metadata?.source))) {
+        throw new Error("无法联网确认此专家仍在收录中，请联网后重试。");
+      }
       if (!(error instanceof MembershipNetworkError) || !previous || !this.validCache(previous.response)) throw error;
       const resolved = this.resolved(previous, account, auth);
+      if (isCommunityExpert(id, resolved.meta.source)) throw new Error("无法联网确认此专家仍在收录中，请联网后重试。");
       this.setState(id, auth, { kind: "offline", until: Math.min(account.skillAuthorization()!.validUntil,
         previous.response.issuedAt + Math.min(MAX_EXPERT_OFFLINE_MS, previous.response.maxOfflineSeconds * 1000)) });
       return resolved;

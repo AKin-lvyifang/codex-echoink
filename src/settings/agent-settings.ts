@@ -127,6 +127,7 @@ export class DesktopAgentSettings {
       loadResources: () => this.host.loadResources(), getCapabilityAvailability: id => this.host.getCapabilityAvailability?.(id) ?? { available: true },
       saveAgent: (agent, modules, baseline) => this.host.saveAgent(agent, modules, baseline), deleteAgent: id => this.host.deleteAgent(id), getDeleteCounts: id => this.host.getDeleteCounts(id),
       dismissExpert: id => host.dismissExpert!(id), showExpertAbout: id => host.showExpertAbout?.(id),
+      expertSubmission: host.expertSubmission,
       onClose: id => {
         const focus = id ?? this.focusAgent;
         this.clearEditor();

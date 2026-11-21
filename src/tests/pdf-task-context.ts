@@ -76,11 +76,14 @@ function capabilities(root: string): AgentCapabilityContext {
   bindings.roles.raw = { ...bindings.roles.raw, enabled: true, readPaths: ["Raw"], writePath: "Raw" };
   bindings.roles.wiki = { ...bindings.roles.wiki, enabled: true, readPaths: ["Wiki"], writePath: "Wiki" };
   settings.knowledgeBase.folderBindings = bindings;
-  settings.agentRegistry.agents.push({ ...settings.agentRegistry.agents[0], id: "pdf-only", name: "PDF负责人", capabilityIds: ["pdf-reading"], disabledCapabilityIds: [] });
+  const pdfAgent = { ...settings.agentRegistry.agents[0], id: "pdf-only", name: "PDF负责人", capabilityIds: ["pdf-reading"] };
+  settings.agentRegistry.agents.push(pdfAgent);
   const context: AgentCapabilityContext = { settings, agentId: "pdf-only", vaultRoot: root, resources: [], proAccess: paidTestAccess,
     access: { permission: "workspace-write", mode: "agent", memoryMode: "normal" } };
-  assert.equal(checkAgentCapability(context, "knowledge").allowed, false);
   const target = (reading: boolean, summary: boolean) => ({ originalPath: "Raw/original.pdf", rawDirectory: "Raw", options: { reading, summary, translation: true } });
+  assert.equal(checkAgentCapability(context, "knowledge").reason, "agent_disabled", "dedicated Knowledge tools need their own grant");
+  assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(true, false)).allowed, true, "PDF findings use ordinary notebook write access");
+  pdfAgent.disabledCapabilityIds = ["knowledge"];
   assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(false, false)).allowed, true, "PDF-only Agent can extract or translate without general Knowledge writes");
   assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(true, false)).reason, "agent_disabled");
   assert.equal(checkAgentTool(context, "pdf_reading_process", {}, target(false, true)).reason, "agent_disabled");

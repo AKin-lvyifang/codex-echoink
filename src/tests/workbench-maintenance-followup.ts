@@ -24,6 +24,7 @@ import { persistPiActiveLeaf, inspectPiSessionJsonl } from "../harness/pi-native
 import { diskApp } from "./workbench-maintenance-chain";
 import type { PiChatSubmitRequest } from "../harness/pi-native/contracts";
 import { maintenanceVisibleCopyIsSafe } from "../knowledge-base/maintenance-user-copy";
+import { privateMaintenanceSourceScope, readPrivateMaintenanceRecords } from "../plugin/pi-knowledge-maintenance-production";
 
 const source = "raw/articles/星系专题.md";
 const other = "raw/articles/第二范围.md";
@@ -37,6 +38,34 @@ const checklistContinuation = "/maintain 继续当前这批14篇来源的原维�
 export async function runWorkbenchMaintenanceFollowupTests(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const report: object[] = [];
+  for (const diaryEnabled of [true, false]) await scenario(`dual-bound-diary-${diaryEnabled ? "writable" : "read-only"}`, async f => {
+    const diary = "00-日记库/合成日记.md";
+    const original = "---\n提炼状态: 未提炼\n---\n# 日记\n合成的观测记录具有可追溯的实验依据。\n";
+    await f.useDiaryOrganizer(diaryEnabled);
+    await f.write(diary, original);
+    const batch = { mode: "batch", sourcePaths: [diary] } as const;
+    const request = knowledgeMaintenanceBatchPrompt({ sourcePaths: [diary], batchIndex: 0, expectedBatches: 1, origin: "workbench" });
+    assert.deepEqual((await privateMaintenanceSourceScope(f.vault)).sourcePaths, [diary]);
+    if (!diaryEnabled) {
+      const denied = await f.runScripted(request, { maintenanceScope: batch }, (_body, tool, call) => call === 0
+        ? tool("note_update", { relativePath: diary, expectedVersion: "missing", content: "must never write" })
+        : call === 1 ? tool("knowledge_maintain", { stage: "plan", writingPlan: [{ targetPath: diary, sourcePaths: [diary] }] }) : undefined);
+      assert.equal(denied.terminalState, "failed");
+      assert.match(String(denied.error), /agent_capability_agent_disabled:journal/u);
+      assert.equal(await fs.readFile(path.join(f.vault, diary), "utf8"), original);
+    }
+    const completed = await f.run(request, { maintenanceScope: batch }, diary, "diary");
+    assert.equal(completed.result.terminalState, "completed");
+    assert.equal(completed.tool.isError, false);
+    assert.match(await f.wiki(), /合成日记/u);
+    const after = await fs.readFile(path.join(f.vault, diary), "utf8");
+    if (diaryEnabled) assert.match(after, /已提炼/u);
+    else assert.equal(after, original);
+    await f.reopen();
+    assert.deepEqual((await privateMaintenanceSourceScope(f.vault)).sourcePaths, []);
+    const records = await readPrivateMaintenanceRecords(path.join(f.vault, ".obsidian/plugins/echoink/pi-agent-product-v1/knowledge"));
+    assert.ok(records.some(record => record.sources.some(item => item.path === diary && item.status === "processed" && item.evidencePaths.includes(wiki))));
+  }, true);
   await scenario("large-source-segments-survive-reopen-and-bound-provider-context", async f => {
     const large = "raw/articles/合成大文件.md";
     const line = "这段合成观测记录只用于检验长文的读取和拆解范围。";
@@ -780,6 +809,15 @@ async function fixture(root: string, name: string, emptyRaw = false) {
     assert.ok(inspection.valid); return inspection.entries;
   };
   return { vault, catalog, productRuns, approvals, receipts, bodies, runs, rawQueries, createConversation, branchEntries,
+    useDiaryOrganizer: async (enabled: boolean) => {
+      const directory = "00-日记库";
+      bindings.roles.raw.readPaths.push(directory);
+      bindings.roles.journal = { enabled: true, readPaths: [directory], writePath: directory, allowedSubdirectories: [] };
+      settings.agentRegistry.agents.push({ id: "organizer", name: "整理员", avatar: { kind: "default" }, position: "", styleId: "analysis",
+        capabilityIds: ["knowledge"], ...(enabled ? {} : { disabledCapabilityIds: ["journal"] }) });
+      const entry = (await catalog.get("followup"))!;
+      await catalog.updateTaskMetadata(entry.conversationId, { agentId: "organizer" }, entry.taskMetadataUpdatedAt, Date.now());
+    },
     preflight: (text: string, extra: Partial<PiChatSubmitRequest>) => bundle.runtime.submit({ conversationId: "followup", text, submittedAt: Date.now(), permission: "workspace-write", runtimeProviderId: provider.runtimeProviderId, modelId: provider.models[0].id, reasoning: "none", memoryMode: "no_memory", ...extra }),
     withLegacyScopeBehavior: async (operation: () => Promise<void>) => {
       const options = (bundle.runtime as any).options;
@@ -845,11 +883,11 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         return await handle.result;
       } finally { scriptedReply = undefined; }
     },
-    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" | "concurrent-write" | "unread-sections" | "stale-region" = "all") => {
+    run: async (text: string, extra: Partial<PiChatSubmitRequest> = {}, maintainSource?: string | readonly string[], stages: "all" | "diary" | "plan" | "resume" | "invalid-write" | "inspect" | "resume-only" | "bad-decompose" | "bad-plan" | "omitted-aliases" | "omitted-root-source-paths" | "narrowed-write-root" | "concurrent-write" | "unread-sections" | "stale-region" = "all") => {
       const requestStart = bodies.length;
       const toolCall = (name: string, args: object) => {
         let parameters=args;
-        if(name==="knowledge_maintain"&&stages==="omitted-root-source-paths")parameters=Object.fromEntries(Object.entries(args).filter(([key])=>key!=="sourcePaths"));
+        if(name==="knowledge_maintain"&&(stages==="omitted-root-source-paths" || stages==="diary"))parameters=Object.fromEntries(Object.entries(args).filter(([key])=>key!=="sourcePaths"));
         if(name==="knowledge_maintain"&&stages==="narrowed-write-root"&&(args as {stage?:string}).stage==="write")parameters={...args,sourcePaths:[typeof maintainSource==="string"?maintainSource:maintainSource![0]]};
         return { id: `v9-${++callNumber}`, type: "function", function: { name, arguments: JSON.stringify(parameters) } };
       };
@@ -869,7 +907,7 @@ async function fixture(root: string, name: string, emptyRaw = false) {
         const inspect = toolCall("knowledge_maintain", { stage: "inspect", sourcePaths: paths, view: "pages" });
         const badDecompose = toolCall("knowledge_maintain", { stage: "decompose", sourcePaths: paths, debugPayload: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), decompositions: [{ sourcePath: paths[0], summary: 123, units: [{ id: 1, type: "unknown", title: null, domain: "", aliases: null, points: [], evidence: [{ sourcePath: 1, sourceRevision: 5, quote: [] }] }, "old string"] }] });
         const badPlan = toolCall("knowledge_maintain", { stage: "plan", sourcePaths: paths, extra: "DO_NOT_ECHO_THIS_BODY".repeat(5_000), writingPlan: [{ id: "p1", targetPath: wiki, sourcePaths: paths, summary: "unknown extra", unitIds: ["source-0"], expectedTarget: { kind: "file" }, knowledge: { unitIds: [], decision: null } }] });
-        const ordered = stages === "bad-decompose" ? [badDecompose] : stages === "bad-plan" ? [badPlan] : stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "unread-sections" ? [sections] : stages === "plan" ? [decomposition, plan] : stages === "resume" || stages === "stale-region" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
+        const ordered = stages === "bad-decompose" ? [badDecompose] : stages === "bad-plan" ? [badPlan] : stages === "inspect" ? [inspect] : stages === "resume-only" ? [resume] : stages === "unread-sections" ? [sections] : stages === "diary" ? [decomposition, inspect, plan, sections, maintenance] : stages === "plan" ? [decomposition, plan] : stages === "resume" || stages === "stale-region" ? [resume, sections, maintenance] : [decomposition, plan, sections, maintenance];
         maintenanceCallId = ordered.at(-1)!.id;
         for (const stage of ordered) replies.push({ role: "assistant", content: null, tool_calls: [stage] });
       }

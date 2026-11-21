@@ -3,14 +3,15 @@ import { AGENT_PRESETS } from "../../agents/presets";
 import { Notice, setIcon } from "obsidian";
 import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { getModuleOwner, grantModuleCapabilities, moduleCapability, setModuleOwner } from "../../agents/registry";
+import { createMobileExpertSubmissionEntry } from "../mobile/expert-submission";
+import { pasteAgentPersona } from "../agent-persona-paste";
 import { createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
 import type { AgentEditorCreationOptions } from "../codex-view/agent-editor-contract";
 import { AGENT_STYLES } from "../../agents/styles";
 import { AGENT_PERSONA_MAX_LENGTH, agentPersonaLength, getAgentPersonaTemplate, hasCustomAgentPersona, isExpertAgent, normalizeAgentPersona } from "../../agents/persona";
-import { AGENT_MODULE_NAMES, GENERAL_ASSISTANT_ID, isUndeletableAgent, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId } from "../../agents/types";
-import { mcpToolCapabilityId, skillCapabilityIds } from "../../agents/capability-core";
+import { AGENT_MODULE_NAMES, GENERAL_ASSISTANT_ID, hasAgentCapabilityGrant, isBasicAgentCapability, isCommunityExpertAgent, isUndeletableAgent, setAgentCapabilityGrant, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId } from "../../agents/types";
+import { isLocalUserSkill, mcpToolCapabilityId, resourceSkillCapabilityIds } from "../../agents/capability-core";
 import { normalizeAgentDisplayName, type AgentAvatarState } from "../../harness/memory/agent-identity-model";
-import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
 import type { MobileAgentRegistrySnapshot } from "../../mobile/agent-registry-service";
 import { AGENT_AVATAR_PRESETS } from "../agent-avatar-presets";
 import type { MobileShellPage } from "../mobile/shell-types";
@@ -19,7 +20,7 @@ import { iphoneAvatar, iphoneButton, iphoneElement as el } from "./workbench-ele
 
 const FORM_AVATAR_ORDER = ["sol", "nova", "rio", "lin", "aya", "han", "bo", "cleo", "dev", "emi", "finn", "gia", "ivo", "june", "mica"];
 const FORM_MODULES: readonly AgentModuleId[] = ["knowledge-base", "journal", "review", "todos", "finance", "english-diary", "pdf-reading"];
-const CAPABILITIES = [["knowledge", "知识整理"], ["journal", "日记"], ["review", "复盘"], ["todos", "待办"], ["finance", "财务"], ["english-diary", "英文日记"], ["pdf-reading", "PDF 精读"], ["web-search", "联网搜索"], ["obsidian-plugins", "Obsidian 插件管理"]] as const;
+const CAPABILITIES = [["conversation", "对话"], ["memory", "记忆"], ["vault-notes", "库内笔记"], ["knowledge", "知识整理"], ["journal", "日记"], ["review", "复盘"], ["todos", "待办"], ["finance", "财务"], ["english-diary", "英文日记"], ["pdf-reading", "PDF 精读"], ["web-search", "联网搜索"], ["obsidian-plugins", "Obsidian 插件管理"]] as const;
 
 export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, creation: AgentEditorCreationOptions = {}): MobileShellPage {
   const content = el(ctx.document, "div", "ip-agent-form"), fields = el(ctx.document, "fieldset", "ip-form-fields");
@@ -27,10 +28,10 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
   const loading = el(ctx.document, "div", "ip-empty", "正在读取…"); content.append(loading, fields, error);
   const footer = el(ctx.document, "div", "ip-form-footer"), leaveArea = el(ctx.document, "div", "ip-leave-confirm"), actbar = el(ctx.document, "div", "ip-form-actbar"); footer.append(leaveArea, actbar);
   let snapshot: MobileAgentRegistrySnapshot | undefined, draft: AgentDefinition | undefined, baseline = "", selectedPreset = "";
-  let avatarExpanded = false;
+  let avatarExpanded = false, openingSubmission = false;
   let modules = new Set<AgentModuleId>(), disposed = false, busy = false, allowLeave = false, leaveResolve: ((allowed: boolean) => void) | undefined;
   const expertHooks = ctx.host.services as typeof ctx.host.services & { dismissExpert?: (agentId: string, version: string) => Promise<void>; showExpertAbout?: (agentId: string) => void | Promise<void> };
-  const selected = (id: string) => usesDisabledCapabilityList(draft!.id) ? !draft!.disabledCapabilityIds?.includes(id) : !!draft!.capabilityIds?.includes(id);
+  const selected = (id: string) => hasAgentCapabilityGrant(draft!, id);
   const signature = () => draft ? JSON.stringify({ ...draft, capabilityIds: [...(draft.capabilityIds ?? [])].sort(), disabledCapabilityIds: [...(draft.disabledCapabilityIds ?? [])].sort(), modules: [...modules].sort() }) : "";
   const changed = () => { error.hidden = true; };
   const showError = (failure: unknown) => { error.textContent = settingsErrorText(failure, SETTINGS_FALLBACK.mobileSettings, ctx.host.settings().settingsLanguage); error.hidden = false; };
@@ -40,7 +41,7 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
   const page: MobileShellPage = { id: `iphone-agent-form-${agentId ?? "new"}`, title: agentId ? `${ctx.host.settings().agentRegistry.agents.find(agent => agent.id === agentId)?.name ?? "Agent"}` : "新建 Agent", content, footer };
 
   const dirty = el(ctx.document, "span", "ip-form-dirty"); dirty.setAttribute("role", "status"); actbar.prepend(dirty);
-  const refreshSave = () => { save.disabled = busy || !draft || !normalizeAgentDisplayName(draft.name); dirty.textContent = draft && signature() !== baseline ? "有未保存的修改" : ""; };
+  const refreshSave = () => { save.disabled = busy || !draft || !normalizeAgentDisplayName(draft.name) || agentPersonaLength(draft.persona ?? "") > AGENT_PERSONA_MAX_LENGTH; dirty.textContent = draft && signature() !== baseline ? "有未保存的修改" : ""; };
   const group = (label: string, parent = fields): HTMLElement => {
     const section = el(ctx.document, "section", "ip-agent-group"), heading = el(ctx.document, "h3", "ip-agent-group-title", label), box = el(ctx.document, "div", "ip-agent-group-box");
     section.append(heading, box); parent.append(section); return box;
@@ -51,7 +52,7 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
     input.addEventListener("change", () => { change(input.checked); changed(); refreshSave(); }); parent.append(row); return input;
   };
   const capabilityChecks = new Map<HTMLInputElement, readonly string[]>();
-  const required = (id: string) => [...modules].some(module => moduleCapability(module) === id);
+  const required = (id: string) => !isBasicAgentCapability(id) && [...modules].some(module => moduleCapability(module) === id);
   const refreshCapabilities = () => { for (const [check, ids] of capabilityChecks) {
     check.checked = ids.length > 0 && ids.every(selected); check.indeterminate = ids.some(selected) && !ids.every(selected);
     check.disabled = !ids.length || ids.some(required); check.parentElement?.classList.toggle("is-required", ids.some(required));
@@ -62,8 +63,7 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
   } };
   const capability = (parent: HTMLElement, ids: string[], name: string, hint?: string) => {
     const input = checkbox(parent, name, ids.length > 0 && ids.every(selected), enabled => {
-      const key = usesDisabledCapabilityList(draft!.id) ? "disabledCapabilityIds" : "capabilityIds", values = new Set(draft![key] ?? []);
-      for (const id of ids) { if (usesDisabledCapabilityList(draft!.id) ? !enabled : enabled) values.add(id); else values.delete(id); } draft![key] = [...values];
+      for (const id of ids) setAgentCapabilityGrant(draft!, id, enabled);
     }, hint);
     capabilityChecks.set(input, ids);
     input.parentElement?.addEventListener("click", () => { if (ids.some(required)) new Notice("负责这个模块，必须能用"); });
@@ -85,37 +85,33 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
       area.append(presets);
     }
     const identity = group("身份");
-    if (!expert) {
-      const row = el(ctx.document, "div", "ip-agent-avatar-row");
-      const preview = el(ctx.document, "span", "ip-agent-avatar-preview"); preview.append(iphoneAvatar(ctx.document, current));
-      const change = iphoneButton(ctx.document, "更换", () => { avatarExpanded = !avatarExpanded; avatars.hidden = !avatarExpanded; change.setAttribute("aria-expanded", String(avatarExpanded)); }, "is-text"); change.setAttribute("aria-expanded", String(avatarExpanded));
-      row.append(el(ctx.document, "span", "ip-grow", "头像"), preview, change); identity.append(row);
-      const avatars = el(ctx.document, "div", "ip-agent-avatar-expanded"); avatars.hidden = !avatarExpanded;
-      const grid = el(ctx.document, "div", "ip-avatar-picker"); grid.setAttribute("role", "group"); grid.setAttribute("aria-label", "选择头像");
-      for (const preset of [...AGENT_AVATAR_PRESETS].sort((a, b) => FORM_AVATAR_ORDER.indexOf(a.id) - FORM_AVATAR_ORDER.indexOf(b.id))) {
-        const avatar: AgentAvatarState = { kind: "preset", presetId: preset.id }, selected = current.avatar.kind === "preset" && current.avatar.presetId === preset.id;
-        const button = el(ctx.document, "button", `ip-avatar-option${selected ? " is-selected" : ""}`); button.type = "button"; button.setAttribute("aria-label", `头像 ${preset.labelZh}`); button.setAttribute("aria-pressed", String(selected));
-        button.append(iphoneAvatar(ctx.document, { name: preset.labelZh, avatar }));
-        button.addEventListener("click", () => { if (busy) return; current.avatar = avatar; preview.replaceChildren(iphoneAvatar(ctx.document, current)); changed(); refreshSave(); for (const item of Array.from(grid.querySelectorAll("button"))) { item.classList.toggle("is-selected", item === button); item.setAttribute("aria-pressed", String(item === button)); } }); grid.append(button);
-      }
-      const file = el(ctx.document, "input", ""); file.type = "file"; file.accept = "image/svg+xml"; file.hidden = true; file.dataset.field = "avatar-file";
-      file.addEventListener("change", () => {
-        const image = file.files?.[0]; if (!image || busy) return; setBusy(true);
-        void processAgentAvatar(image, image.type, image.size, createBrowserAvatarRenderer()).then(avatar => { if (disposed) return; current.avatar = avatar; changed(); }).catch(() => showError(new Error("头像处理失败，请选择安全的正方形 SVG（不超过 4MB）。"))).finally(() => { if (!disposed) { setBusy(false); render(); } });
-      });
-      avatars.append(grid, iphoneButton(ctx.document, "上传 SVG", () => file.click(), "is-text", "upload"), file); identity.append(avatars);
-    } else {
-      const summary = el(ctx.document, "div", "ip-expert-identity"); summary.setAttribute("aria-label", "身份，只读");
-      summary.append(iphoneAvatar(ctx.document, current), el(ctx.document, "div", "ip-expert-name", current.name), el(ctx.document, "div", "ip-expert-position", current.position));
-      const lock = el(ctx.document, "span", "ip-expert-lock"); lock.setAttribute("aria-hidden", "true"); setIcon(lock, "lock"); summary.append(lock); identity.append(summary);
+    const row = el(ctx.document, "div", "ip-agent-avatar-row");
+    const preview = el(ctx.document, "span", "ip-agent-avatar-preview"); preview.append(iphoneAvatar(ctx.document, current));
+    const change = iphoneButton(ctx.document, "更换", () => { avatarExpanded = !avatarExpanded; avatars.hidden = !avatarExpanded; change.setAttribute("aria-expanded", String(avatarExpanded)); }, "is-text"); change.setAttribute("aria-expanded", String(avatarExpanded));
+    row.append(el(ctx.document, "span", "ip-grow", "头像"), preview, change); identity.append(row);
+    const avatars = el(ctx.document, "div", "ip-agent-avatar-expanded"); avatars.hidden = !avatarExpanded;
+    const grid = el(ctx.document, "div", "ip-avatar-picker"); grid.setAttribute("role", "group"); grid.setAttribute("aria-label", "选择头像");
+    for (const preset of [...AGENT_AVATAR_PRESETS].sort((a, b) => FORM_AVATAR_ORDER.indexOf(a.id) - FORM_AVATAR_ORDER.indexOf(b.id))) {
+      const avatar: AgentAvatarState = { kind: "preset", presetId: preset.id }, selected = current.avatar.kind === "preset" && current.avatar.presetId === preset.id;
+      const button = el(ctx.document, "button", `ip-avatar-option${selected ? " is-selected" : ""}`); button.type = "button"; button.setAttribute("aria-label", `头像 ${preset.labelZh}`); button.setAttribute("aria-pressed", String(selected));
+      button.append(iphoneAvatar(ctx.document, { name: preset.labelZh, avatar }));
+      button.addEventListener("click", () => { if (busy) return; current.avatar = avatar; preview.replaceChildren(iphoneAvatar(ctx.document, current)); changed(); refreshSave(); for (const item of Array.from(grid.querySelectorAll("button"))) { item.classList.toggle("is-selected", item === button); item.setAttribute("aria-pressed", String(item === button)); } }); grid.append(button);
     }
+    const file = el(ctx.document, "input", ""); file.type = "file"; file.accept = "image/svg+xml"; file.hidden = true; file.dataset.field = "avatar-file";
+    file.addEventListener("change", () => {
+      const image = file.files?.[0]; if (!image || busy) return; setBusy(true);
+      void processAgentAvatar(image, image.type, image.size, createBrowserAvatarRenderer()).then(avatar => { if (disposed) return; current.avatar = avatar; changed(); }).catch(() => showError(new Error("头像处理失败，请选择安全的正方形 SVG（不超过 4MB）。"))).finally(() => { if (!disposed) { setBusy(false); render(); } });
+    });
+    avatars.append(grid, iphoneButton(ctx.document, "上传 SVG", () => file.click(), "is-text", "upload"), file); identity.append(avatars);
     const textField = (label: string, value: string, placeholder: string, change: (value: string) => void, maxLength?: number) => {
       const area = el(ctx.document, "label", "ip-form-field"), input = el(ctx.document, "input", "ip-input"); input.type = "text"; input.value = value; input.placeholder = placeholder; input.setAttribute("aria-label", label);
       if (maxLength) input.maxLength = maxLength; input.addEventListener("input", () => { change(input.value); changed(); refreshSave(); }); area.append(el(ctx.document, "span", "ip-field-label", label), input); identity.append(area); return input;
     };
-    if (!expert) {
-      textField("名字", current.name, "输入名字", value => { current.name = value; }, 96);
-      if (!main) { textField("职位", current.position, "输入职位", value => { current.position = value; }); textField("一句话简介", current.positionDescription ?? "", "一句话描述职责", value => { current.positionDescription = value; }); }
+    textField("名字", current.name, "输入名字", value => { current.name = value; }, 96);
+    if (expert) identity.append(el(ctx.document, "div", "ip-expert-position", current.position));
+    else if (!main) {
+      textField("职位", current.position, "输入职位", value => { current.position = value; });
+      textField("一句话简介", current.positionDescription ?? "", "一句话描述职责", value => { current.positionDescription = value; });
     }
     const persona = group("人格"); persona.classList.add("ip-persona-field");
     if (expert) {
@@ -128,9 +124,16 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
       templates.setAttribute("role", "group"); templates.setAttribute("aria-label", "人格模板");
       const input = el(ctx.document, "textarea", "ip-persona-input"); input.value = current.persona ?? "";
       input.placeholder = "描述 Agent 的做事风格"; input.setAttribute("aria-label", "人格正文"); input.dataset.field = "persona";
-      const counter = el(ctx.document, "div", "ip-persona-count"); counter.id = `ip-persona-count-${current.id}`; input.setAttribute("aria-describedby", counter.id);
-      const updateCount = () => { counter.textContent = `${agentPersonaLength(input.value)} / ${AGENT_PERSONA_MAX_LENGTH}`; };
-      const update = () => { const value = normalizeAgentPersona(input.value); if (value !== input.value) input.value = value; current.persona = value; updateCount(); changed(); refreshSave(); };
+      const counter = el(ctx.document, "div", "ip-persona-count"); counter.id = `ip-persona-count-${current.id}`;
+      const tooLong = el(ctx.document, "div", "ip-error", "请缩短到 4000 字以内"); tooLong.id = `ip-persona-limit-${current.id}`;
+      const updateCount = () => {
+        const length = agentPersonaLength(input.value), overLimit = length > AGENT_PERSONA_MAX_LENGTH;
+        counter.textContent = `${length} / ${AGENT_PERSONA_MAX_LENGTH}`;
+        tooLong.hidden = !overLimit;
+        input.setAttribute("aria-describedby", overLimit ? `${counter.id} ${tooLong.id}` : counter.id);
+        input.setAttribute("aria-invalid", String(overLimit));
+      };
+      const update = () => { const value = agentId ? normalizeAgentPersona(input.value) : input.value; if (value !== input.value) input.value = value; current.persona = value; updateCount(); changed(); refreshSave(); };
       input.addEventListener("input", event => { if (!(event as InputEvent).isComposing) update(); }); input.addEventListener("compositionend", update);
       for (const style of AGENT_STYLES) {
         const apply = () => { current.styleId = style.id; current.persona = getAgentPersonaTemplate(style.id); changed(); render(); fields.querySelector<HTMLTextAreaElement>("[data-field=persona]")?.focus(); };
@@ -143,7 +146,16 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
         template.dataset.personaTemplate = style.id; template.classList.add("ip-persona-template");
         template.classList.toggle("is-selected", current.styleId === style.id); template.setAttribute("aria-pressed", String(current.styleId === style.id)); templates.append(template);
       }
-      const bottom = el(ctx.document, "div", "ip-persona-bottom"); bottom.append(templates, counter); updateCount(); persona.append(input, bottom, confirmation);
+      if (!agentId) {
+        const paste = iphoneButton(ctx.document, "粘贴导入", () => {
+          void pasteAgentPersona(input, text => { input.value = text; update(); }, () => new Notice("请在下方人格框内粘贴。"));
+        }, "is-text");
+        paste.dataset.action = "paste-persona"; persona.append(paste);
+      }
+      const bottom = el(ctx.document, "div", "ip-persona-bottom"); bottom.append(templates, counter); updateCount();
+      persona.append(input);
+      if (!agentId) persona.append(tooLong);
+      persona.append(bottom, confirmation);
     }
     if (main) {
       const area = group("员工审批"); area.classList.add("ip-agent-approval"); area.setAttribute("role", "radiogroup"); area.setAttribute("aria-label", "员工审批");
@@ -160,23 +172,31 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
         const input = checkbox(ownerRows, name, modules.has(moduleId), on => { if (on) { modules.add(moduleId); grantModuleCapabilities(current, moduleId); } else modules.delete(moduleId); refreshCapabilities(); }, owner && owner.id !== current.id ? owner.name : undefined);
         input.dataset.moduleId = moduleId;
       }
-      if (!expert) {
-        const capabilities = group("能用的能力"); capabilities.classList.add("ip-agent-capabilities");
-        capabilities.parentElement!.querySelector("h3")!.append(iphoneButton(ctx.document, "刷新", render, "is-text"));
-        const builtins = el(ctx.document, "div", "ip-agent-capability-section"); builtins.append(el(ctx.document, "h4", "ip-capability-group-label", "内置技能")); const builtinRows = el(ctx.document, "div", "ip-agent-capability-grid");
-        for (const [id, name] of CAPABILITIES) capability(builtinRows, [id], name); builtins.append(builtinRows); capabilities.append(builtins);
-        const resources = ctx.host.settings().resources, custom = resources.catalog.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id));
-        const mine = el(ctx.document, "div", "ip-agent-capability-section"); mine.append(el(ctx.document, "h4", "ip-capability-group-label", "我的 Skill"));
-        for (const resource of custom) {
-          const ids = skillCapabilityIds(resource.id), enabled = !ids.some(id => current.disabledCapabilityIds?.includes(id)) && (usesDisabledCapabilityList(current.id) || ids.some(id => current.capabilityIds?.includes(id)));
-          checkbox(mine, resource.name, enabled, value => { current.capabilityIds = (current.capabilityIds ?? []).filter(id => !ids.includes(id)); current.disabledCapabilityIds = (current.disabledCapabilityIds ?? []).filter(id => !ids.includes(id)); if (value) current.capabilityIds.push(ids[0]); else current.disabledCapabilityIds.push(ids[0]); }, resource.enabled ? undefined : "未启用");
-        }
-        if (!custom.length) mine.append(el(ctx.document, "div", "ip-form-empty", "暂无自建 Skill")); capabilities.append(mine);
-        const mcp = el(ctx.document, "div", "ip-agent-capability-section"); mcp.append(el(ctx.document, "h4", "ip-capability-group-label", "MCP"));
-        const remote = resources.catalog.filter(resource => resource.kind === "mcp-server" && resources.mcpConnections[resource.id]?.transport === "http");
-        for (const resource of remote) { const connection = resources.mcpConnections[resource.id], ids = (connection?.tools ?? []).map(tool => mcpToolCapabilityId(resource.id, tool.name)); capability(mcp, ids, `${resource.name} · 远程`, !ids.length ? "尚未发现工具" : !resource.enabled ? "未启用" : undefined); }
-        if (!remote.length) mcp.append(el(ctx.document, "div", "ip-form-empty", "暂无远程 MCP 服务")); capabilities.append(mcp); refreshCapabilities();
+      const capabilities = group("能用的能力"); capabilities.classList.add("ip-agent-capabilities");
+      capabilities.parentElement!.querySelector("h3")!.append(iphoneButton(ctx.document, "刷新", render, "is-text"));
+      const builtins = el(ctx.document, "div", "ip-agent-capability-section"); builtins.append(el(ctx.document, "h4", "ip-capability-group-label", "模块工具")); const builtinRows = el(ctx.document, "div", "ip-agent-capability-grid");
+      for (const [id, name] of CAPABILITIES) {
+        const legacyDisabled = snapshot.registry.agents.find(agent => agent.id === current.id)?.disabledCapabilityIds?.includes(id);
+        if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(current)) || legacyDisabled) capability(builtinRows, [id], name);
+      } builtins.append(builtinRows); capabilities.append(builtins);
+      const resources = ctx.host.settings().resources, custom = resources.catalog.filter(isLocalUserSkill);
+      const mine = el(ctx.document, "div", "ip-agent-capability-section"); mine.append(el(ctx.document, "h4", "ip-capability-group-label", "我的 Skill"));
+      for (const resource of custom) {
+        const ids = resourceSkillCapabilityIds(resource), enabled = !ids.some(id => current.disabledCapabilityIds?.includes(id)) && (usesDisabledCapabilityList(current.id) || ids.some(id => current.capabilityIds?.includes(id)));
+        checkbox(mine, resource.name, enabled, value => { current.capabilityIds = (current.capabilityIds ?? []).filter(id => !ids.includes(id)); current.disabledCapabilityIds = (current.disabledCapabilityIds ?? []).filter(id => !ids.includes(id)); if (value) current.capabilityIds.push(ids[0]); else current.disabledCapabilityIds.push(ids[0]); }, resource.enabled ? undefined : "未启用");
       }
+      if (!custom.length) mine.append(el(ctx.document, "div", "ip-form-empty", "暂无自建 Skill")); capabilities.append(mine);
+      const mcp = el(ctx.document, "div", "ip-agent-capability-section"); mcp.append(el(ctx.document, "h4", "ip-capability-group-label", "MCP"));
+      const remote = resources.catalog.filter(resource => resource.kind === "mcp-server" && resources.mcpConnections[resource.id]?.transport === "http");
+      for (const resource of remote) {
+        const connection = resources.mcpConnections[resource.id], tools = connection.tools;
+        const service = el(ctx.document, "details", "ip-agent-capability-section");
+        service.append(el(ctx.document, "summary", "ip-field-label", resource.name));
+        for (const tool of tools) capability(service, [mcpToolCapabilityId(resource.id, tool.name)], tool.name, !resource.enabled ? "未启用" : undefined);
+        if (!tools.length) service.append(el(ctx.document, "div", "ip-form-empty", "尚未发现工具"));
+        mcp.append(service);
+      }
+      if (!remote.length) mcp.append(el(ctx.document, "div", "ip-form-empty", "暂无远程 MCP 服务")); capabilities.append(mcp); refreshCapabilities();
     }
     if (expert && agentId) {
       const actions = el(ctx.document, "div", "ip-expert-actions"), dismiss = iphoneButton(ctx.document, "解聘", () => { void dismissExpert(); }, "is-danger"); dismiss.dataset.action = "dismiss-expert"; dismiss.disabled = !expertHooks.dismissExpert; actions.append(dismiss); fields.append(actions);
@@ -186,10 +206,22 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
         choices.append(iphoneButton(ctx.document, "保留", () => { confirm.remove(); remove.hidden = false; }), iphoneButton(ctx.document, "删除并交通才", () => { void removeAgent(); }, "is-danger")); confirm.append(choices); danger.append(confirm);
       }, "is-danger", "trash-2"); danger.append(remove); fields.append(danger);
     }
+
+    if (agentId && !expert) {
+      const entry = createMobileExpertSubmissionEntry({ document: ctx.document, agent: current, app: ctx.host.app,
+        services: ctx.host.services, language: ctx.host.settings().settingsLanguage,
+        resources: () => ctx.host.settings().resources.catalog, button: iphoneButton, error: ctx.error,
+        open: async page => {
+          openingSubmission = true;
+          try { return await ctx.shell.push(page); }
+          finally { openingSubmission = false; }
+        } });
+      if (entry) fields.append(entry);
+    }
     refreshSave();
   };
   async function persist(): Promise<void> {
-    if (!snapshot || !draft || busy) return;
+    if (!snapshot || !draft || busy || agentPersonaLength(draft.persona ?? "") > AGENT_PERSONA_MAX_LENGTH) return;
     const name = normalizeAgentDisplayName(draft.name); if (!name) { showError(new Error("请输入 1–24 个字符的名字。")); fields.querySelector<HTMLInputElement>("input[type=text]")?.focus(); return; }
     const candidate = isExpertAgent(draft) ? structuredClone(draft) : structuredClone({ ...draft, name, position: draft.position.trim(), identityEdited: true }), owned = new Set(modules); setBusy(true); error.hidden = true;
     try {
@@ -229,7 +261,7 @@ export function createAgentFormPage(ctx: IPhonePageContext, agentId?: string, cr
   }
   page.canLeave = () => {
     if (busy) return false;
-    if (allowLeave || !draft || signature() === baseline) return true;
+    if (openingSubmission || allowLeave || !draft || signature() === baseline) return true;
     if (leaveResolve) return false;
     return new Promise<boolean>(resolve => {
       leaveResolve = resolve; const confirm = el(ctx.document, "div", "ip-confirm", "Agent 还有未保存的修改。"), choices = el(ctx.document, "div", "ip-confirm-actions");

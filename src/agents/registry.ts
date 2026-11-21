@@ -2,11 +2,12 @@ import { normalizeAgentAvatar, normalizeAgentDisplayName } from "../harness/memo
 import { normalizeAgentStyleId } from "./styles";
 import { normalizeAgentPosition } from "./identity";
 import { isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "./persona";
-import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, isUndeletableAgent, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId, type AgentRegistry } from "./types";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, isUndeletableAgent, setAgentCapabilityGrant, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId, type AgentRegistry } from "./types";
+import { OFFICIAL_EXPERT_MODULES } from "./expert-capabilities";
 
 export function defaultAgentRegistry(): AgentRegistry {
   return {
-    schemaVersion: 1, legacyMigrationVersion: 0, moduleOwnerMigrationVersion: 1,
+    schemaVersion: 1, legacyMigrationVersion: 0, moduleOwnerMigrationVersion: 1, capabilityMigrationVersion: 1,
     agents: [{ id: GENERAL_ASSISTANT_ID, name: "总助", avatar: { kind: "preset", presetId: "sol" }, position: "", positionDescription: "听你说话、派活、收汇报", styleId: "execution", companyApprovalMode: "user", disabledCapabilityIds: [] }, defaultGeneralist()],
     moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => [id, ""])) as AgentRegistry["moduleOwners"]
   };
@@ -41,6 +42,17 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
       ...(usesDisabledCapabilityList(id)
         ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds), ...(Array.isArray(agent.capabilityIds) ? { capabilityIds: normalizeCapabilityIds(agent.capabilityIds) } : {}) }
         : { capabilityIds: normalizeCapabilityIds(agent.capabilityIds), ...(Array.isArray(agent.disabledCapabilityIds) ? { disabledCapabilityIds: normalizeCapabilityIds(agent.disabledCapabilityIds) } : {}) }) });
+    const normalized = agents[agents.length - 1];
+    if (expert?.displayNameOverride) normalized.name = expert.displayNameOverride;
+    if (expert?.avatarOverride) normalized.avatar = expert.avatarOverride;
+    if (raw.capabilityMigrationVersion !== 1) {
+      if (expert) {
+        normalized.capabilityIds = [...new Set([...(normalized.capabilityIds ?? []),
+          ...(OFFICIAL_EXPERT_MODULES[expert.expertId] ?? []).map(moduleCapability)])];
+      } else if (!usesDisabledCapabilityList(id) && !normalized.capabilityIds?.includes("web-search")) {
+        setAgentCapabilityGrant(normalized, "web-search", false);
+      }
+    }
   }
   if (!seen.has(GENERAL_ASSISTANT_ID)) agents.unshift(fallback.agents[0]);
   // Appended, so an existing roster keeps its order; the generalist only fills in.
@@ -48,7 +60,7 @@ export function normalizeAgentRegistry(value: unknown): AgentRegistry {
   const owners = record(raw.moduleOwners);
   const migrated: AgentRegistry = {
     schemaVersion: 1, legacyMigrationVersion: raw.legacyMigrationVersion === 1 ? 1 : 0, ...(raw.legacyIdentitySyncVersion === 1 ? { legacyIdentitySyncVersion: 1 as const } : {}), agents,
-    moduleOwnerMigrationVersion: 1,
+    moduleOwnerMigrationVersion: 1, capabilityMigrationVersion: 1,
     moduleOwners: Object.fromEntries(AGENT_MODULE_IDS.map(id => {
       const owner = raw.moduleOwnerMigrationVersion !== 1 && owners?.[id] === GENERAL_ASSISTANT_ID ? GENERALIST_AGENT_ID : owners?.[id];
       return [id, typeof owner === "string" && owner !== GENERAL_ASSISTANT_ID && agents.some(agent => agent.id === owner && isAgentHired(agent)) ? owner : ""];
@@ -76,10 +88,8 @@ export function getModuleOwner(registry: AgentRegistry, moduleId: AgentModuleId)
 
 export const moduleCapability = (moduleId: AgentModuleId): string => moduleId === "knowledge-base" ? "knowledge" : moduleId;
 export function grantModuleCapabilities(agent: AgentDefinition, moduleId: AgentModuleId): void {
-  if (isExpertAgent(agent)) return;
   const capability = moduleCapability(moduleId);
-  if (usesDisabledCapabilityList(agent.id)) agent.disabledCapabilityIds = (agent.disabledCapabilityIds ?? []).filter(id => id !== capability);
-  else agent.capabilityIds = [...new Set([...(agent.capabilityIds ?? []), capability])];
+  if (!usesDisabledCapabilityList(agent.id)) setAgentCapabilityGrant(agent, capability, true);
 }
 
 export class ModuleOwnerRequired extends Error {

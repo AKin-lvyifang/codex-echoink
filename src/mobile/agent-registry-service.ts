@@ -2,7 +2,7 @@ import type { DataAdapter } from "obsidian";
 import { normalizeAgentId, normalizeAgentRegistry, removeAgentDefinition, setModuleOwner } from "../agents/registry";
 import { agentPositionDescription } from "../agents/identity";
 import { AGENT_STYLES, styleFromLegacyTemplate } from "../agents/styles";
-import { assertAgentPersonaLength, assertExpertAgentLocks, isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "../agents/persona";
+import { applyExpertIdentityOverrides, assertAgentPersonaLength, assertExpertAgentLocks, isAgentHired, isExpertAgent, normalizeAgentPersona, normalizeExpertAgentState } from "../agents/persona";
 import { GENERAL_ASSISTANT_ID, type AgentDefinition, type AgentModuleId, type AgentRegistry, type AgentStyleId, type AgentRunSnapshot } from "../agents/types";
 import { AGENT_IDENTITY_STATE_SCHEMA, DEFAULT_AGENT_DISPLAY_NAME, normalizeAgentAvatar, normalizeAgentDisplayName, parseAgentIdentityState, type AgentAvatarState } from "../harness/memory/agent-identity-model";
 import { parseAgentCurrentSelf, stableSelfKey, type PublicAgentSelfProfile } from "../harness/memory/agent-self-model";
@@ -125,7 +125,11 @@ export class MobileAgentRegistryService {
     change(next);
     if (!expertChange) {
       for (const previous of this.settings.agentRegistry.agents) assertExpertAgentLocks(previous, next.agents.find(agent => agent.id === previous.id));
-      for (const agent of next.agents) assertExpertAgentLocks(this.settings.agentRegistry.agents.find(previous => previous.id === agent.id), agent);
+      next.agents = next.agents.map(agent => {
+        const previous = this.settings.agentRegistry.agents.find(item => item.id === agent.id);
+        assertExpertAgentLocks(previous, agent);
+        return applyExpertIdentityOverrides(previous, agent);
+      });
     } else {
       // Dismissal retains the identity and all historical attribution.
       for (const previous of this.settings.agentRegistry.agents) if (isExpertAgent(previous) && !next.agents.some(agent => agent.id === previous.id && isExpertAgent(agent))) throw new Error("expert_agent_history_required");

@@ -62,6 +62,8 @@ result.root.walkDecls(declaration => {
   const variable = motionVariables[declaration.prop];
   if (variable && !declaration.value.startsWith(`var(${variable},`)) declaration.value = `var(${variable}, ${declaration.value})`;
 });
+// Obsidian's review flags the text-decoration longhands as partially supported; the plain shorthand is equivalent here.
+result.root.walkDecls("text-decoration-line", declaration => { declaration.prop = "text-decoration"; });
 result.css = result.root.toString();
 assertScopedSelectors(result.root);
 if (result.css.includes(`${scope} &`)) throw new Error("Nested Magic UI selector was prefixed twice");

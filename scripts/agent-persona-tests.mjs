@@ -46,7 +46,7 @@ try {
     const registry = api.defaultAgentRegistry(); registry.agents.push({ id: "writer", name: "写作者", avatar: { kind: "default" }, position: "写作", positionDescription: "写文章", styleId: "creative", capabilityIds: ["knowledge", "custom-tool"], persona: "正文😀" }, plain(expert));
     registry.moduleOwners.journal = "writer"; registry.moduleOwners.todos = expert.id;
     const normalized = api.normalizeAgentRegistry(registry);
-    assert.deepEqual(plain(normalized.agents.find(a => a.id === "writer")), { ...registry.agents.find(a => a.id === "writer"), capabilityIds: ["knowledge", "custom-tool", "journal"] }); assert.deepEqual(plain(normalized.agents.find(a => a.id === expert.id)), expert);
+    assert.deepEqual(plain(normalized.agents.find(a => a.id === "writer")), { ...registry.agents.find(a => a.id === "writer"), capabilityIds: ["knowledge", "custom-tool", "journal"] }); assert.deepEqual(plain(normalized.agents.find(a => a.id === expert.id)), { ...expert, capabilityIds: ["knowledge", "todos"] });
     assert.equal(normalized.moduleOwners.journal, "writer"); assert.equal(normalized.moduleOwners.todos, expert.id);
     assert.equal(api.normalizeAgentRegistry(api.defaultAgentRegistry()).agents[0].persona, undefined);
     const dirty = plain(expert); dirty.persona = "private body must never enter an editor"; registry.agents[registry.agents.findIndex(a => a.id === expert.id)] = dirty;
@@ -87,7 +87,12 @@ try {
     const { service } = fixture(); let state = await service.snapshot();
     await assert.rejects(service.createAgent(plain(expert), state.version), /hiring_flow/u);
     state = await service.updateExpert(registry => { registry.agents.push(plain(expert)); }, state.version);
-    for (const patch of [{ name: "改名" }, { position: "改职位" }, { positionDescription: "改简介" }, { avatar: { kind: "default" } }, { persona: "私有正文" }, { capabilityIds: [] }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...expert.expert, hired: false } }, { expert: { ...expert.expert, disclosure: "自己修改开场" } }, { expert: { ...expert.expert, disclosure: undefined } }]) {
+    state = await service.patchAgent(expert.id, { name: "改名", avatar: { kind: "default" }, capabilityIds: ["vault-skill:local"] }, state.version);
+    const edited = state.registry.agents.find(agent => agent.id === expert.id);
+    assert.equal(edited.expert.displayNameOverride, "改名");
+    assert.equal(edited.expert.avatarOverride.kind, "default");
+    assert.deepEqual(plain(edited.capabilityIds), ["vault-skill:local"]);
+    for (const patch of [{ position: "改职位" }, { positionDescription: "改简介" }, { persona: "私有正文" }, { styleId: "creative" }, { kind: "custom", expert: undefined }, { expert: { ...edited.expert, hired: false } }, { expert: { ...edited.expert, disclosure: "自己修改开场" } }, { expert: { ...edited.expert, disclosure: undefined } }]) {
       await assert.rejects(service.patchAgent(expert.id, patch, state.version), /expert_agent_locked/u);
     }
     await assert.rejects(service.update(registry => { registry.agents = registry.agents.filter(agent => agent.id !== expert.id); }, state.version), /expert_agent_locked/u);
@@ -125,13 +130,15 @@ try {
       button(root, "保存").click(); await flush(); assert.equal(api.agentPersonaLength(settings.agentRegistry.agents[0].persona), 4000); assert.equal(settings.agentRegistry.agents[0].styleId, "creative");
       page.dispose(); root.remove();
     });
-    await test(`${device} expert form reveals only public introduction and uses dismissal hook`, async () => {
+    await test(`${device} expert form exposes editable identity and tools, keeps persona private and uses dismissal hook`, async () => {
       const registry = api.defaultAgentRegistry(); registry.agents.push(plain(expert)); const { service, settings } = fixture(registry);
       let dismissals = 0, about = 0; const root = document.createElement("main"); document.body.append(root);
       const ctx = { document, root, host: { settings: () => settings, agents: service, services: { refreshAgentIdentity: async () => {}, dismissExpert: async id => { assert.equal(id, expert.id); dismissals++; }, showExpertAbout: () => { about++; } } }, shell: { back: async () => true }, navigate: async () => {}, error: failure => { throw failure; } };
       const page = create(ctx, expert.id); root.append(page.content, page.footer); await flush();
-      assert.equal(root.querySelectorAll("textarea,input[type=text],[data-persona-template]").length, 0); assert.equal(root.querySelector(`.${prefix}-expert-summary`).textContent, "公开简介");
-      assert.doesNotMatch(root.textContent, /能用的能力|删除这个 Agent/u); assert.equal(root.querySelectorAll(`.${prefix}-expert-lock`).length, 2);
+      assert.equal(root.querySelectorAll("textarea,[data-persona-template]").length, 0); assert.equal(root.querySelector(`.${prefix}-expert-summary`).textContent, "公开简介");
+      assert.ok(root.querySelector('input[aria-label="名字"]'));
+      assert.match(root.textContent, /能用的能力/u); assert.doesNotMatch(root.textContent, /删除这个 Agent/u);
+      assert.equal(root.querySelectorAll(`.${prefix}-expert-lock`).length, 1);
       assert.equal([...root.querySelectorAll("button")].some(node => ["关于", "About"].includes(node.textContent.trim())), false);
       assert.equal(about, 0, "the form never exposes or invokes the retained internal About hook");
       button(root, "解聘").click(); await flush(); assert.equal(dismissals, 1);

@@ -35,6 +35,8 @@ import { parseExpertCatalog, parseExpertDelivery, validExpertId,
 
 import { membershipErrorText, membershipFailureText } from "./messages";
 import { PRO_ACCESS_COPY } from "../core/error-copy/codes/account";
+import { MembershipNetworkError } from "./network-error";
+import { parseExpertAvatarPresets, parseExpertSubmissionReceipt, type ExpertSubmissionPayload } from "../experts/submission-contract";
 
 function hasTimerUnref(value: unknown): value is { unref(): void } {
   return value !== null && typeof value === "object" && "unref" in value && typeof value.unref === "function";
@@ -52,6 +54,7 @@ export type MembershipTransport = (
   method: string,
   body: unknown,
   token?: string,
+  headers?: Readonly<Record<string, string>>,
 ) => Promise<unknown>;
 interface Operation {
   generation: number;
@@ -274,12 +277,53 @@ export class AccountService implements CapabilityAccess {
     }
   }
 
-  async getExpertCatalog(): Promise<ExpertCatalog> {
+  async getExpertCatalog(pluginVersion?: string): Promise<ExpertCatalog> {
     const operation = this.operation();
     if (!this.apiUrl) throw new MembershipApiError("SERVICE_UNAVAILABLE");
-    const result = await this.transport("/api/experts/catalog", "GET", undefined);
+    const result = await this.transport("/api/experts/catalog", "GET", undefined, undefined,
+      pluginVersion ? { "X-EchoInk-Plugin-Version": pluginVersion } : undefined);
     this.assertCurrent(operation);
     return parseExpertCatalog(result, this.apiUrl);
+  }
+
+  expertSubmissionOwner(): string | null {
+    const { token, accountId } = this.operation();
+    return !this.closed && token && accountId && hasProPluginAccess(this)
+      ? sha256Hex(JSON.stringify([this.apiUrl, accountId])) : null;
+  }
+
+  async getExpertAvatarPresets() {
+    const operation = this.operation();
+    const response = await this.call("/api/experts/avatar-presets", "GET", undefined, operation);
+    this.assertCurrent(operation);
+    return parseExpertAvatarPresets(response, this.apiUrl);
+  }
+
+  async submitExpert(owner: string, payload: ExpertSubmissionPayload, id?: string) {
+    const operation = this.operation();
+    if (this.expertSubmissionOwner() !== owner) throw new MembershipApiError("OPERATION_CANCELLED");
+    if (id !== undefined && !validExpertId(id)) throw new MembershipApiError("NOT_FOUND");
+    const path = id ? `/api/experts/submissions/${encodeURIComponent(id)}` : "/api/experts/submissions";
+    const response = await this.call(path, "POST", payload, operation);
+    // Preserve the receipt under the initiating account even if the user signs out during upload.
+    return parseExpertSubmissionReceipt(response, id);
+  }
+
+  expertHireReporter(id: string): (() => Promise<void>) | undefined {
+    const operation = this.operation();
+    if (!operation.token || !operation.accountId || !validExpertId(id)) return undefined;
+    const report = async () => {
+      const result = await this.call(`/api/experts/${encodeURIComponent(id)}/hires`, "POST", {}, operation);
+      if ((result as { ok?: unknown } | null)?.ok !== true) throw new Error("专家聘请统计回执无效。");
+    };
+    return async () => {
+      try { await report(); }
+      catch (error) {
+        if (!(error instanceof MembershipNetworkError)) throw error;
+        await new Promise<void>(resolve => window.setTimeout(resolve, 1000));
+        await report();
+      }
+    };
   }
 
   async getExpertPackage(id: string, input: { pluginVersion: string; platform: ExpertPlatform; knownVersion?: string }): Promise<ExpertDeliveryResponse> {

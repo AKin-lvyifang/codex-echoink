@@ -6,7 +6,8 @@ import type { CapabilityAccess } from "../membership/types";
 import { isExpertAgent, isAgentHired } from "./persona";
 import { AGENT_STYLES } from "./styles";
 import { agentPositionDescription } from "./identity";
-import { GENERAL_ASSISTANT_ID, usesDisabledCapabilityList, type AgentDefinition, type AgentRegistry, type AgentRunSnapshot } from "./types";
+import { isBuiltinSkillId } from "../harness/resources/builtin-skills";
+import { GENERAL_ASSISTANT_ID, hasAgentCapabilityGrant, isBasicAgentCapability, isCommunityExpertAgent, usesDisabledCapabilityList, type AgentDefinition, type AgentRegistry, type AgentRunSnapshot } from "./types";
 
 export const AGENT_MODULE_CAPABILITIES = ["journal", "todos", "finance", "knowledge", "english-diary", "pdf-reading", "review"] as const;
 export type AgentModuleCapability = typeof AGENT_MODULE_CAPABILITIES[number];
@@ -72,7 +73,7 @@ const ROUTER_READ_TOOLS = new Set(["user_question", "task_update", "resource_loo
 const MEMORY_TOOLS = new Set(["memory_search", "memory_read", "memory_write"]);
 const VAULT_TOOLS = new Set(["vault_search", "note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete"]);
 const ORDINARY_READ_CLI_COMMANDS = new Set(["read", "search", "search:context", "file", "files", "folder", "folders", "outline", "wordcount"]);
-const KNOWLEDGE_TOOLS = new Set(["knowledge_system_read", "knowledge_system_propose", "explore_concept", "knowledge_search", "knowledge_read", "knowledge_maintain", "knowledge_linking_propose"]);
+const KNOWLEDGE_TOOLS = new Set(["knowledge_system_read", "knowledge_system_propose", "explore_concept", "knowledge_search", "knowledge_read", "knowledge_linking_propose"]);
 const PATH_FIELDS = new Set(["path", "paths", "relativepath", "relativepaths", "vaultrelativepath", "vaultpath", "scopepath", "sourcepath", "sourcepaths", "targetpath", "targetpaths", "destinationpath", "folder", "directory", "dailypath", "recordpath", "file", "files", "filepath", "filepaths", "fileuri", "fileurl"]);
 export function isAgentCapabilityPathField(key: string): boolean { return PATH_FIELDS.has(key.replaceAll("_", "").replaceAll("-", "").toLowerCase()); }
 
@@ -83,6 +84,14 @@ export function skillCapabilityIds(resourceId: string, skillId = resourceId): re
   const legacy = `skill:${encodeURIComponent(skillId)}`;
   return BASE_SKILLS.has(skillId) || skillId === "obsidian-cli" || MODULE_SKILLS[skillId]
     ? [legacy] : [...new Set([vaultSkillCapabilityId(resourceId), legacy, `skill:${encodeURIComponent(resourceId)}`])];
+}
+export function resourceSkillCapabilityIds(resource: EchoInkResource): readonly string[] {
+  return skillCapabilityIds(resource.id, typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : resource.id);
+}
+export function isLocalUserSkill(resource: EchoInkResource): boolean {
+  if (resource.kind !== "skill" || resource.metadata?.contentSource === "official-remote") return false;
+  if (resource.metadata?.contentSource === "user" || resource.metadata?.userModified === true) return true;
+  return resource.metadata?.builtin !== true && !isBuiltinSkillId(resource.metadata?.resourceId ?? resource.id);
 }
 export function mcpToolCapabilityId(resourceId: string, toolName: string): string { return `mcp:${encodeURIComponent(resourceId)}:${encodeURIComponent(toolName)}`; }
 export function resolveAgentRunSnapshot(settings: Pick<AgentCapabilitySettings, "agentRegistry">, agentId = GENERAL_ASSISTANT_ID): AgentRunSnapshot {
@@ -105,17 +114,21 @@ function currentAgent(context: AgentCapabilityContext): AgentDefinition | undefi
 /** Agent grants only; module switches, PRO and workspace access still apply per action. */
 function hasAllModuleCapabilities(context: AgentCapabilityContext): boolean {
   const agent = currentAgent(context);
-  return !!agent && (isExpertAgent(agent) || AGENT_MODULE_CAPABILITIES.every(capability => usesDisabledCapabilityList(agent.id)
-    ? !agent.disabledCapabilityIds?.includes(capability)
-    : agent.capabilityIds?.includes(capability)));
+  return !!agent && AGENT_MODULE_CAPABILITIES.every(capability => hasAgentCapabilityGrant(agent, capability));
 }
 export function checkAgentCapability(context: AgentCapabilityContext, capabilityId: string, effect: Effect = "read"): AgentCapabilityDecision {
+  return decideAgentCapability(context, capabilityId, effect, false);
+}
+function decideAgentCapability(context: AgentCapabilityContext, capabilityId: string, effect: Effect, notebookPath: boolean): AgentCapabilityDecision {
   const agent = currentAgent(context);
   if (!agent || !isAgentHired(agent)) return decision(capabilityId, "agent_missing");
   if (isExpertAgent(agent) && !hasProPluginAccess(context.proAccess ?? unavailableCapabilityAccess)) return decision(capabilityId, "pro_required");
-  // These are explicit product fundamentals, not an unknown-ID allow-all rule.
-  const fundamental = capabilityId === "conversation" || capabilityId === "memory";
-  if (!fundamental && !isExpertAgent(agent) && !(context.companyRole === "router" && agent.id === GENERAL_ASSISTANT_ID && effect === "read") && (usesDisabledCapabilityList(agent.id) ? agent.disabledCapabilityIds?.includes(capabilityId) : !agent.capabilityIds?.includes(capabilityId))) return decision(capabilityId, "agent_disabled");
+  const routerRead = !isBasicAgentCapability(capabilityId) && context.companyRole === "router" && agent.id === GENERAL_ASSISTANT_ID && effect === "read";
+  // Ordinary note edits in journal/knowledge folders use the shared notebook
+  // permission. Dedicated module Tools still require their own grant.
+  const sharedNotebookPath = notebookPath && (capabilityId === "journal" || capabilityId === "knowledge");
+  const granted = sharedNotebookPath ? !agent.disabledCapabilityIds?.includes(capabilityId) : hasAgentCapabilityGrant(agent, capabilityId);
+  if (!routerRead && !granted) return decision(capabilityId, "agent_disabled");
   if (effect === "write" && (!context.access || context.access.permission === "read-only" || context.access.mode === "plan")) return decision(capabilityId, "read_only");
   const s = context.settings;
   if (capabilityId === "memory" && (s.memory.useLongTermMemory === false || context.access?.memoryMode === "no_memory")) return decision(capabilityId, "memory_disabled");
@@ -131,15 +144,23 @@ export function checkAgentCapability(context: AgentCapabilityContext, capability
   return decision(capabilityId, "allowed");
 }
 export function checkAgentSkill(context: AgentCapabilityContext, skillId: string): AgentCapabilityDecision {
-  if (isExpertAgent(currentAgent(context))) return decision(skillId, "resource_disabled");
-  const resource = context.resources.find(item => item.kind === "skill" && (item.metadata?.resourceId === skillId || item.id === skillId));
+  const resource = context.resources.find(item => item.kind === "skill" && item.id === skillId)
+    ?? context.resources.find(item => item.kind === "skill" && item.metadata?.resourceId === skillId);
   if (!resource) return decision(skillId, "unknown_resource");
   if (!resource.enabled) return decision(skillId, "resource_disabled");
   if (resource.metadata?.contentSource === "official-remote" && !hasProPluginAccess(context.proAccess ?? unavailableCapabilityAccess)) return decision(skillId, "pro_required");
-  const capability = BASE_SKILLS.has(skillId) || skillId === "obsidian-cli" ? "conversation" : MODULE_SKILLS[skillId] ?? vaultSkillCapabilityId(resource.id);
-  const agent = currentAgent(context), skillGrants = skillCapabilityIds(resource.id, skillId);
-  if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id))) return decision(capability, "agent_disabled");
-  if (!agent || !skillGrants.some(id => agent.capabilityIds?.includes(id))) return checkAgentCapability(context, capability, "resource");
+  const runtimeId = typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : skillId;
+  const capability = BASE_SKILLS.has(runtimeId) || runtimeId === "obsidian-cli" ? "conversation" : MODULE_SKILLS[runtimeId] ?? vaultSkillCapabilityId(resource.id);
+  const agent = currentAgent(context), skillGrants = resourceSkillCapabilityIds(resource);
+  if (isExpertAgent(agent)) {
+    if (!isLocalUserSkill(resource)) return decision(skillId, "resource_disabled");
+    if (skillGrants.some(id => agent.disabledCapabilityIds?.includes(id)) || !skillGrants.some(id => agent.capabilityIds?.includes(id))) return decision(capability, "agent_disabled");
+    return checkAgentCapability(context, "conversation", "resource");
+  }
+  if (skillGrants.some(id => agent?.disabledCapabilityIds?.includes(id)) || agent?.disabledCapabilityIds?.includes(capability)) return decision(capability, "agent_disabled");
+  if (!agent || !skillGrants.some(id => agent.capabilityIds?.includes(id))) {
+    return checkAgentCapability(context, capability, "resource");
+  }
   // A Skill grant never changes the Agent's other tools or bypasses module/PRO checks.
   const permitted = agent.id === GENERAL_ASSISTANT_ID
     ? { ...agent, disabledCapabilityIds: agent.disabledCapabilityIds?.filter(id => id !== capability) }
@@ -156,12 +177,6 @@ export function checkAgentSkillPath(context: AgentCapabilityContext, value: stri
 }
 function relativeTarget(context: AgentCapabilityContext, value: string): string | null { return context.relativeTarget(value); }
 function inside(value: string, root: string): boolean { return value === root || value.startsWith(root + "/"); }
-/** Ordinary reads skip directory availability only, preserving live grants and module switches. */
-function checkOrdinaryReadCapability(context: AgentCapabilityContext, capability: string): AgentCapabilityDecision {
-  if (capability !== "knowledge" && capability !== "journal") return checkAgentCapability(context, capability, "read");
-  return checkAgentCapability({ ...context, settings: { ...context.settings,
-    knowledgeBase: { ...context.settings.knowledgeBase, folderBindings: null } } }, capability, "read");
-}
 /** Reading notes is open to every hired Agent; module grants only decide where it may write. */
 function checkUnscopedOrdinaryRead(context: AgentCapabilityContext, result: AgentCapabilityDecision): AgentCapabilityDecision {
   return result.allowed ? result : checkAgentCapability(context, "conversation", "read");
@@ -175,7 +190,7 @@ export function checkAgentTarget(context: AgentCapabilityContext, target: string
   _options: { readonly ordinaryRead?: boolean } = {}): AgentCapabilityDecision {
   const value = relativeTarget(context, target);
   if (!value) return decision(target, "invalid_target");
-  if (effect === "read") return checkAgentCapability(context, "conversation", "read");
+  if (effect === "read") return checkAgentCapability(context, "vault-notes", "read");
   const matches: Array<{ root: string; capability: AgentModuleCapability; enabled: boolean }> = [];
   if (context.isRootJournalPath?.(value)) matches.push({ root: value, capability: "journal", enabled: true });
   for (const [capability, roots] of Object.entries(context.modulePaths ?? {})) for (const root of roots ?? []) if (root && (inside(value, root) || broad && inside(root, value))) matches.push({ root, capability: capability as AgentModuleCapability, enabled: true });
@@ -187,15 +202,17 @@ export function checkAgentTarget(context: AgentCapabilityContext, target: string
   const granted = !!context.folderGrants?.some(root => inside(value, root));
   const ordinary = () => checkAgentCapability(context, "conversation", effect);
   if (!relevant.length) {
-    if (context.companyRole !== "worker" || granted || checkAgentCapability(context, "knowledge", effect).allowed) return ordinary();
+    const agent = currentAgent(context);
+    const legacyKnowledgeGrant = agent && hasAgentCapabilityGrant(agent, "knowledge");
+    if (context.companyRole !== "worker" || granted || legacyKnowledgeGrant && checkAgentCapability(context, "knowledge", effect).allowed) return ordinary();
     const base = ordinary();
     return base.allowed ? decision(value, "folder_grant_required") : base;
   }
   for (const match of relevant) {
     if (!match.enabled) return decision(match.capability, "module_disabled");
-    const result = checkAgentCapability(context, match.capability, effect);
+    const result = decideAgentCapability(context, match.capability, effect, true);
     if (result.allowed) continue;
-    if (granted && result.reason === "agent_disabled") { const fallback = ordinary(); if (fallback.allowed) continue; }
+    if (granted && result.reason === "agent_disabled" && !currentAgent(context)?.disabledCapabilityIds?.includes(match.capability)) { const fallback = ordinary(); if (fallback.allowed) continue; }
     return result;
   }
   return decision(relevant[0].capability, "allowed");
@@ -230,6 +247,7 @@ function declaredMcpTargets(schema: unknown, args: unknown): string[] {
   return result;
 }
 export function checkAgentTool(context: AgentCapabilityContext, toolName: string, args?: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, mcp?: AgentMcpCapabilityTarget): AgentCapabilityDecision {
+  if (toolName === "note_delete" && isCommunityExpertAgent(currentAgent(context))) return decision(toolName, "agent_disabled");
   if (context.companyRole === "router" && context.agentId !== GENERAL_ASSISTANT_ID) return decision(toolName, "agent_disabled");
   if (COMPANY_ROUTER_TOOLS.has(toolName)) return context.companyRole === "router" && context.agentId === GENERAL_ASSISTANT_ID ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
   if (COMPANY_WORKER_TOOLS.has(toolName)) return context.companyRole === "worker" ? checkAgentCapability(context, "conversation") : decision(toolName, "agent_disabled");
@@ -265,7 +283,9 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     // The prepared target contains the host-frozen choices, including legacy job options.
     const options = target?.options && typeof target.options === "object" ? target.options as Record<string, unknown> : args;
     if (options && (options.reading === true || options.summary === true)) {
-      const knowledge = checkAgentCapability(context, "knowledge", "write"); if (!knowledge.allowed) return knowledge;
+      // Writing the result into a Knowledge folder is a notebook write by
+      // the PDF module. It doesn't grant the dedicated Knowledge tools.
+      const knowledge = decideAgentCapability(context, "knowledge", "write", true); if (!knowledge.allowed) return knowledge;
     }
     // PDF extraction is allowed in the bound source area without granting general Knowledge writes.
     // The controller validates live bound directories again at every publication boundary.
@@ -289,11 +309,15 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
   if (toolName === "obsidian_context") return checkAgentCapability(context, "journal");
   if (toolName === "obsidian_plugin_search") return checkAgentCapability(context, "obsidian-plugins");
   if (toolName === "obsidian_cli") {
-    if (!args) return checkAgentCapability(context, "conversation");
+    if (!args) return checkAgentCapability(context, "vault-notes");
     const { request, scope } = context.toolAdapters.obsidianCli({ ...args });
     const capability = scope.capability;
     const ordinaryRead = !scope.write && typeof request.command === "string" && ORDINARY_READ_CLI_COMMANDS.has(request.command);
     const targets = structuredTargets(resolvedTarget ?? { ...args, file: undefined });
+    if (ordinaryRead || targets.length || scope.exactTarget) {
+      const notes = checkAgentCapability(context, "vault-notes", scope.write ? "write" : "read");
+      if (!notes.allowed) return notes;
+    }
     if (!targets.length && scope.broad && scope.write && currentAgent(context) && !hasAllModuleCapabilities(context)) return decision(capability, "scope_required");
     // Ordinary file commands derive their module from the resolved path. A
     // journal-only Agent does not need Knowledge permission to read its diary.
@@ -305,20 +329,36 @@ export function checkAgentTool(context: AgentCapabilityContext, toolName: string
     if (!targets.length && scope.exactTarget) return decision(capability, "scope_required");
     return targets.length ? checkTargets(context, targets, scope.write ? "write" : "read", scope.broad, ordinaryRead) : result;
   }
+  if (toolName === "knowledge_maintain") {
+    // Inspect is a read of the maintenance checkpoint, inside a write-enabled
+    // maintenance task. Other stages may persist the plan or resume writes.
+    const effect = args?.stage === "inspect" ? "read" : "write";
+    const knowledge = checkAgentCapability(context, "knowledge", effect);
+    if (!knowledge.allowed) return knowledge;
+    if (effect === "read" && (!context.access || context.access.permission === "read-only" || context.access.mode === "plan")) return decision("knowledge", "read_only");
+    const notes = checkAgentCapability(context, "vault-notes", effect);
+    if (!notes.allowed || !args) return notes;
+    if (args.stage === "inspect" || args.stage === "sections") return checkTargets(context, structuredTargets(args), "read");
+    const { writingPlan, targetPath, ...sourceArgs } = args;
+    const entries: readonly unknown[] = Array.isArray(writingPlan) ? writingPlan : [];
+    const plan = entries.filter((item): item is { sourcePaths?: unknown; targetPath?: unknown; knowledge?: { related?: unknown } } =>
+      !!item && typeof item === "object");
+    const read = checkTargets(context, structuredTargets({ ...sourceArgs, sources: plan.map(item => ({ sourcePaths: item.sourcePaths })) }), "read");
+    if (!read.allowed) return read;
+    return checkTargets(context, structuredTargets({ targetPath, targets: plan.map(item => ({ targetPath: item.targetPath, related: item.knowledge?.related })) }), "write");
+  }
   if (KNOWLEDGE_TOOLS.has(toolName)) {
     // Linking classification only records a proposal; its production write port
     // separately authorizes the eventual patch.
-    const effect = toolName === "knowledge_maintain" ? "write" : "read";
-    const result = checkAgentCapability(context, "knowledge", effect); if (!result.allowed) return result;
-    return args ? checkTargets(context, structuredTargets(args), effect) : result;
+    const result = checkAgentCapability(context, "knowledge", "read"); if (!result.allowed) return result;
+    return args ? checkTargets(context, structuredTargets(args), "read") : result;
   }
   if (VAULT_TOOLS.has(toolName)) {
     const ordinaryRead = toolName === "vault_search" || toolName === "note_read";
     const effect = ordinaryRead ? "read" : "write";
-    if (!args) {
-      const allowed = AGENT_MODULE_CAPABILITIES.some(capability => (ordinaryRead ? checkOrdinaryReadCapability(context, capability) : checkAgentCapability(context, capability, effect)).allowed);
-      return allowed ? decision("conversation", "allowed") : decision("knowledge", "agent_disabled");
-    }
+    const notes = checkAgentCapability(context, "vault-notes", effect);
+    if (!notes.allowed) return notes;
+    if (!args) return notes;
     const targets = [args.relativePath, args.sourcePath, args.targetPath, args.scopePath].filter((value): value is string => typeof value === "string");
     if (!targets.length) {
       const result = hasAllModuleCapabilities(context) ? checkAgentCapability(context, "knowledge", effect) : decision("knowledge", "scope_required");

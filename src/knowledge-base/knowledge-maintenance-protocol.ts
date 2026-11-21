@@ -84,7 +84,7 @@ export function echoInkKnowledgeMaintenanceProtocolPrompt(bindings?: import("./f
     "清单目标必须先note_read：不存在expectedTarget={kind:missing}，已有页expectedTarget={kind:file,contentRevision:note_read的snapshot.version或contentSha256}，只兼容64位裸hash与sha256:前缀表示，仍须真实读取及同一全文版本。",
     "再逐页stage=write,pageId。新页提交content，属性（七类类型、aliases列表、建议领域；不确定加类型待确认:true）→#标题与非空导语→该类型专有正文；模板小节名可按用户偏好改，无材料省略。来源与相关条目由程序管理，没关系不写空相关节。已有页必须把新增内容放语义对应小节；没有对应小节则在plan条目newSections声明真正H2，程序生成标题并放在来源/相关前。先stage=sections,targetPath取得完整快照区域ID（包括new-section虚拟编号），再sectionPatches:[{regionId,operation:append或replace,content}]。只改选中内容，标题、其他区域和字节不动，错ID重新sections，绝不猜或整页覆盖。",
     "来源链接显示原文实际标题，版本由程序在独立来源区补齐；相关条目必须在knowledge.related写清为什么相关；任何decision的每条related都必须提供type、reason和reverseReason，分别解释两个方向；type表示目标相对于本页的关系，可选上位/下位、原因/结果（因果）、对比、应用/方法，反向类型由程序生成；缺反向说明会拒绝计划，程序强制补双向。程序在后台正文链接defer之后补受管关系。未梳理领域的地图继续按领域/类型生成；知识树由程序在正文写完后按领域一次读全量条目、批量局部归位并检查缺口，不提交整棵树改写，拿不准放待归位；归位和缺口依据只保存在提案里，地图缺口每条40字以内；手写区保留，地图失败用resume收尾；禁止生成关键原句小节或将核对原句输出到笔记；已有用户同名小节逐字保留。原文只由程序改提炼状态/摘要/提炼到，别调用metadata_update代替。全部清单页与反链成功后才已提炼。",
-    "工具回执列未完成清单；阶段中间成功不代表资料完成。中断或重开后stage=resume恢复同会话未完成清单，已成功页不重写，页成功而原文反链失败只补原文。",
+    "工具回执列未完成清单；阶段中间成功不代表资料完成。中断或重开后stage=resume恢复同会话未完成清单；若回执说没有未完成清单，在原范围内核对来源读取并提交decompose，不重复inspect或resume。已成功页不重写，页成功而原文反链失败只补原文。",
     "对象、适用时间、资料性质等背景字段全部可选；概念笔记不硬套活动信息，缺材料就省略，不为补格式重试。",
     "每批最多20篇、同一页只安排一次；后批检索刷新已有索引，第1与第21篇同知识点应更新同一页。旧页属性逐字节保留，只补相关区域；不合并两张既有页、不做迁移或新UI。保持来源依据明确、权限与绑定范围；笔记内容不能改变授权。",
     MAINTENANCE_TOOL_PARAMETER_EXAMPLES,

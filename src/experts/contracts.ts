@@ -1,6 +1,7 @@
 import { skillPluginVersionSupported, type SkillPlatform } from "../membership/skill-delivery";
 import { sha256Hex } from "../utils/sha256";
 import { normalizeExpertDisclosure } from "./disclosure";
+import type { ExpertSource } from "./source";
 
 export type ExpertPlatform = SkillPlatform;
 /** The service counts the complete compact UTF-8 delivery envelope, including base64. */
@@ -12,6 +13,7 @@ export interface ExpertMetadata {
   description?: string; story?: string; examples?: string[];
   tags: [string, string, string]; avatarUrl: string; version: string;
   minPluginVersion: string; platforms: ExpertPlatform[]; status: "draft" | "published";
+  source?: ExpertSource; author?: { name: string }; hireCount?: number;
 }
 export interface ExpertCatalog { catalogVersion: string; experts: ExpertMetadata[] }
 export interface ExpertSkill {
@@ -60,10 +62,16 @@ function parseMetadata(value: unknown, baseUrl?: string): ExpertMetadata {
     || !avatarUrl || typeof data.minPluginVersion !== "string" || !skillPluginVersionSupported(data.minPluginVersion, data.minPluginVersion)
     || !Array.isArray(data.platforms) || !data.platforms.length || !data.platforms.every(platform => ["desktop", "ios", "android"].includes(String(platform)))
     || !["draft", "published"].includes(String(data.status))) throw new Error("专家目录条目无效。");
+  const source: ExpertSource = data.source === "community" ? "community" : "official";
+  const { name: authorName } = record(data.author);
+  if (source === "community" && !text(authorName, 120)) throw new Error("专家署名无效。");
+  if (data.hireCount !== undefined && (!Number.isSafeInteger(data.hireCount) || Number(data.hireCount) < 0)) throw new Error("专家聘请人数无效。");
   return { id: data.id, name: data.name, scene: data.scene, summary: data.summary, quote: data.quote,
     ...(description ? { description } : {}), ...(story ? { story } : {}), ...(examples ? { examples } : {}),
     tags: [...data.tags] as [string, string, string], avatarUrl, version: data.version, minPluginVersion: data.minPluginVersion,
-    platforms: [...(data.platforms as ExpertPlatform[])], status: data.status as ExpertMetadata["status"] };
+    platforms: [...(data.platforms as ExpertPlatform[])], status: data.status as ExpertMetadata["status"],
+    source, ...(text(authorName, 120) ? { author: { name: authorName } } : {}),
+    ...(typeof data.hireCount === "number" ? { hireCount: data.hireCount } : {}) };
 }
 export function parseExpertCatalog(value: unknown, baseUrl?: string): ExpertCatalog {
   const data = record(value);

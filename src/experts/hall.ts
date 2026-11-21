@@ -73,6 +73,8 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
     const text = element(document, top, "div", "echoink-expert-identity");
     element(document, text, detail ? "h2" : "h3", detail ? "echoink-expert-detail-title" : "echoink-expert-name", expert.name);
     element(document, text, "p", "echoink-expert-scene", expert.scene);
+    const attribution = [expert.author?.name, expert.hireCount === undefined ? undefined : `${expert.hireCount} 人聘请`].filter(value => value !== undefined).join(" · ");
+    if (attribution) element(document, text, "p", "echoink-expert-scene echoink-expert-attribution", attribution);
   };
   const tags = (parent: HTMLElement, expert: ExpertMetadata): void => {
     const list = element(document, parent, "ul", "echoink-expert-tags");
@@ -166,7 +168,12 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
     const previous = view; view = null; options.onViewChange?.(); draw();
     if (previous) focus(`card:${previous}`);
   };
-  const unsubscribe = options.service.subscribe(() => { if (!disposed && !loading) draw(); });
+  const unsubscribe = options.service.subscribe(updated => {
+    if (!disposed && !loading) {
+      if (updated) { catalog = updated.experts; catalogReady = true; loadError = ""; }
+      draw();
+    }
+  });
   void refresh();
   return { refresh, showDetail, showAbout: showDetail, showHall, dispose() { disposed = true; ++generation; unsubscribe(); root.remove(); } };
 }

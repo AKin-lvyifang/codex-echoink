@@ -1,5 +1,6 @@
 import type { AgentDefinition, AgentModuleId } from "../../agents/types";
 import type { EchoInkResource } from "../../resources/types";
+import type { ExpertSubmissionService } from "../../experts/submission-service";
 import type { CodexForObsidianSettings } from "../../settings/settings";
 
 export interface AgentEditorSaveBaseline {
@@ -30,6 +31,7 @@ export interface AgentEditorHost {
   /** Dedicated expert lifecycle; never route dismissal through deleteAgent. */
   dismissExpert?(agentId: string): Promise<void>;
   showExpertAbout?(agentId: string): void | Promise<void>;
+  expertSubmission?: { service: ExpertSubmissionService; readSkill(path: string): Promise<string> };
   getDeleteCounts(agentId: string): Promise<{ total: number; running: number }>;
   onClose(agentId?: string): void;
 }

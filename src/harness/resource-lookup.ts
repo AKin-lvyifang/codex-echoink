@@ -57,6 +57,9 @@ export function directResourceToolNames(text: string, available: readonly string
     // The batch entry already exposes knowledge search. Keep direct Vault search for files outside the knowledge index.
     add(["vault_search", "note_read", "knowledge_read"]);
   }
+  if (/(?:做(?:成|一个|个)|制作|生成|保存|make|build|create|save)/iu.test(text) && /(?:\bhtml\b|\bdemo\b|可点(?:击)?的原型)/iu.test(text)) {
+    add(["workspace_read", "workspace_create", "workspace_update"]);
+  }
   if (/(?:写入|保存|新建|创建|修改|更新|移动|删除|整理|归档|生成|做一篇|create|write|save|update|delete|move)/iu.test(text)) {
     if (/(?:记忆|记住|忘记|memor)/iu.test(text)) add(["memory_search", "memory_read", "memory_write"]);
     if (/(?:笔记|文档|\.md\b|wiki|markdown|note|file)/iu.test(text)) add(["note_read", "note_create", "note_update", "metadata_update", "note_move", "note_delete", "knowledge_maintain"]);

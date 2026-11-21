@@ -3,19 +3,21 @@ import { ownedEl } from "../owned-dom";
 import { attachNativeTooltip } from "../native-tooltip";
 import type { AgentEditorCreationOptions, AgentEditorHost, AgentEditorSaveBaseline } from "./agent-editor-contract";
 import { setIcon } from "obsidian";
-import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, isUndeletableAgent, usesDisabledCapabilityList, type AgentDefinition, type AgentModuleId } from "../../agents/types";
+import { AGENT_MODULE_IDS, GENERAL_ASSISTANT_ID, hasAgentCapabilityGrant, isBasicAgentCapability, isCommunityExpertAgent, isUndeletableAgent, setAgentCapabilityGrant, type AgentDefinition, type AgentModuleId } from "../../agents/types";
 import { AGENT_PRESETS } from "../../agents/presets";
 import { agentPositionDescription } from "../../agents/identity";
 import { AGENT_STYLES } from "../../agents/styles";
 import { AGENT_PERSONA_MAX_LENGTH, agentPersonaLength, getAgentPersonaTemplate, hasCustomAgentPersona, isExpertAgent, normalizeAgentPersona } from "../../agents/persona";
 import { mcpToolCapabilityId, vaultSkillCapabilityId } from "../../agents/capability-policy";
-import { BUILTIN_SKILL_IDS } from "../../harness/resources/builtin-skills";
+import { isLocalUserSkill, resourceSkillCapabilityIds } from "../../agents/capability-core";
+import { pasteAgentPersona } from "../agent-persona-paste";
 import { normalizeAgentDisplayName } from "../../harness/memory/agent-identity-model";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { AvatarProcessingError, createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
 import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
-import { applySettingsBackButton, showSettingsInlineConfirmation } from "../../settings/settings-v2";
+import { applySettingsBackButton, createSettingsNavigationRow, createSettingsPage, showSettingsInlineConfirmation } from "../../settings/settings-v2";
+import { renderExpertSubmission } from "../../experts/submission-view";
 import { resolveMcpConnectionRecord } from "../../resources/mcp-connections";
 import type { EchoInkResource } from "../../resources/types";
 import { userFacingErrorText } from "../../core/error-copy";
@@ -23,6 +25,7 @@ import { userFacingErrorText } from "../../core/error-copy";
 const MODULE_NAMES: Record<AgentModuleId, string> = { journal: "日记", todos: "待办", finance: "财务", "knowledge-base": "知识库", "english-diary": "英文日记", "pdf-reading": "PDF 精读", review: "复盘" };
 const MODULE_CAPABILITY = (id: AgentModuleId) => id === "knowledge-base" ? "knowledge" : id;
 const CAPABILITIES = [
+  ["conversation", "对话", "Conversation"], ["memory", "记忆", "Memory"], ["vault-notes", "库内笔记", "Vault notes"],
   ["journal", "日记", "Journal"], ["todos", "待办", "To-dos"], ["finance", "财务", "Finance"], ["knowledge", "知识整理", "Knowledge organization"],
   ["english-diary", "英文日记", "English diary"], ["pdf-reading", "PDF 精读", "PDF reading"], ["review", "复盘", "Review"],
   ["web-search", "联网搜索", "Web search"], ["obsidian-plugins", "Obsidian 插件管理", "Obsidian plugin management"]
@@ -43,6 +46,7 @@ let editorSequence = 0;
 export class AgentEditorController {
   private readonly instanceId = `echoink-agent-editor-${++editorSequence}`;
   private root: HTMLElement | null = null;
+  private submission: ReturnType<typeof renderExpertSubmission> | null = null;
   private draft: EditorDraft | null = null;
   private editingId: string | undefined;
   private cacheKey = "new";
@@ -77,7 +81,7 @@ export class AgentEditorController {
   hasUnsavedChanges(): boolean {
     return !!this.draft && (this.draft.dirty || !this.editingId && !!(this.draft.presetId || this.draft.agent.name.trim() || this.draft.agent.position.trim() || this.draft.agent.positionDescription?.trim()));
   }
-  isPending(): boolean { return this.busy !== null; }
+  isPending(): boolean { return this.busy !== null || this.submission?.canLeave() === false; }
   public submitOnboarding(): Promise<void> {
     if (!this.isOnboardingCreation() || this.disposed || !this.draft) return Promise.resolve();
     if (this.onboardingSubmission) return this.onboardingSubmission;
@@ -88,7 +92,11 @@ export class AgentEditorController {
     return submission;
   }
   requestLeave(done: () => void): void {
-    if (this.busy) return;
+    if (this.isPending()) return;
+    if (this.submission) {
+      this.submission.dispose(); this.submission = null;
+      if (this.root) this.render(this.root);
+    }
     if (!this.hasUnsavedChanges()) { formDrafts.get(this.host.draftCacheKey)?.delete(this.cacheKey); this.draft = null; done(); return; }
     const root = this.root;
     const trigger = root?.querySelector<HTMLButtonElement>(".echoink-agent-editor-back");
@@ -147,11 +155,13 @@ export class AgentEditorController {
     this.syncRequiredCapabilities();
     this.persistDraft();
     this.loadingResources = false;
-    if (!isExpertAgent(this.draft.agent) && this.draft.agent.id !== GENERAL_ASSISTANT_ID) void this.reloadResources();
+    if (this.draft.agent.id !== GENERAL_ASSISTANT_ID) void this.reloadResources();
   }
 
   render(root: HTMLElement): void {
     if (!this.draft || this.disposed) return;
+    if (this.submission && root === this.root) return;
+    this.submission?.dispose(); this.submission = null;
     if (this.root) disposeOriginControls(this.root);
     this.root = root;
     root.replaceChildren(); root.lang = this.host.settings.settingsLanguage === "en" ? "en" : "zh-CN"; root.classList.add("echoink-agent-editor", "echoink-theme-boundary");
@@ -172,11 +182,7 @@ export class AgentEditorController {
     }
     const avatar = this.el(header, "span", "echoink-agent-editor-avatar-preview"); avatar.setAttribute("aria-hidden", "true"); this.renderAvatar(avatar);
     const heading = this.el(header, "div", "echoink-agent-editor-heading");
-    const title = this.el(heading, "h2", "echoink-agent-editor-title", this.editingId ? this.draft.agent.name : this.t("新建 Agent", "New Agent"));
-    if (expert) {
-      const lock = this.el(title, "span", "echoink-agent-editor-lock");
-      lock.setAttribute("aria-label", this.t("只读", "Read only")); setIcon(lock, "lock");
-    }
+    this.el(heading, "h2", "echoink-agent-editor-title", this.editingId ? this.draft.agent.name : this.t("新建 Agent", "New Agent"));
 
     const body = this.el(root, "div", "echoink-agent-editor-body");
     const fields = this.el(body, "fieldset", "echoink-agent-editor-fields");
@@ -186,9 +192,14 @@ export class AgentEditorController {
     this.renderCompanyApproval(fields);
     if (this.draft.agent.id !== GENERAL_ASSISTANT_ID) this.renderResponsibilities(fields);
     this.resourceArea = null;
-    if (!isExpertAgent(this.draft.agent) && this.draft.agent.id !== GENERAL_ASSISTANT_ID) {
+    if (this.draft.agent.id !== GENERAL_ASSISTANT_ID) {
       this.resourceArea = this.el(fields, "section", "echoink-agent-editor-resources echoink-agent-editor-major");
       this.renderResources();
+    }
+    if (this.editingId && !expert && this.host.expertSubmission?.service.owner()) {
+      const title = this.t("投稿到专家团", "Submit to Expert Hall");
+      const row = createSettingsNavigationRow(body, { title, onActivate: () => this.openSubmission(title) });
+      row.dataset.action = "expert-submission";
     }
     this.deleteArea = expert ? null : this.el(body, "section", "echoink-agent-editor-delete");
     if (!expert) this.renderDelete();
@@ -209,6 +220,7 @@ export class AgentEditorController {
   }
 
   dispose(): void {
+    this.submission?.dispose(); this.submission = null;
     this.persistDraft(); this.disposed = true; this.generation++;
     if (this.root) {
       disposeOriginControls(this.root); this.root.replaceChildren();
@@ -216,6 +228,27 @@ export class AgentEditorController {
     }
     this.root = null; this.status = null; this.saveButton = null; this.nameInput = null; this.nameError = null;
     this.resourceArea = null; this.deleteArea = null; this.ownership.clear(); this.capabilityChecks.clear(); this.mcpChecks = [];
+  }
+
+  private openSubmission(title: string): void {
+    const root = this.root, draft = this.draft, portal = this.host.expertSubmission;
+    if (!root || !draft || !portal?.service.owner() || this.busy || this.submission) return;
+    const scroll = root.querySelector<HTMLElement>(".echoink-agent-editor-body")?.scrollTop ?? 0;
+    disposeOriginControls(root); root.replaceChildren();
+    const page = createSettingsPage(root, { title, detail: true, backLabel: draft.agent.name, onBack: () => {
+      if (!this.submission?.canLeave()) return;
+      this.submission.dispose(); this.submission = null; this.render(root);
+      const body = root.querySelector<HTMLElement>(".echoink-agent-editor-body");
+      root.querySelector<HTMLElement>('[data-action="expert-submission"]')?.focus({ preventScroll: true });
+      if (body) body.scrollTop = scroll;
+    } });
+    page.classList.add("echoink-agent-submission-page");
+    const body = this.el(page, "div");
+    this.submission = renderExpertSubmission(body, { ...portal, agent: structuredClone(draft.agent),
+      language: this.host.settings.settingsLanguage, resources: () => this.host.loadResources(),
+      button: (parent, label, action, primary) => this.button(parent, label, primary ? "primary" : "secondary", action),
+      input: createOriginInput, checkbox: createOriginCheck, clearControls: disposeOriginControls });
+    page.focus();
   }
 
   private el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, cls = "", text?: string): HTMLElementTagNameMap[K] {
@@ -310,19 +343,6 @@ export class AgentEditorController {
   }
 
   private renderIdentity(parent: HTMLElement): void {
-    if (isExpertAgent(this.draft!.agent)) {
-      const section = this.el(parent, "section", "echoink-agent-editor-identity");
-      for (const [field, label, value] of [
-        ["name", this.t("名字", "Name"), this.draft!.agent.name],
-        ["position", this.t("职位", "Role"), this.draft!.agent.position],
-        ["positionDescription", this.t("一句话简介", "Short description"), agentPositionDescription(this.draft!.agent)]
-      ]) {
-        const row = this.el(section, "div", "echoink-agent-editor-section");
-        this.el(row, "div", "echoink-agent-editor-label", label);
-        const copy = this.el(row, "div", `echoink-agent-editor-readonly${field === "positionDescription" ? " echoink-agent-editor-expert-summary" : ""}`, value || "—"); copy.dataset.identityField = field;
-      }
-      return;
-    }
     const settingsPresentation = this.root?.classList.contains("is-settings");
     const outer = this.section(parent, this.t("身份", "Identity"));
     outer.classList.add("echoink-agent-editor-identity");
@@ -383,6 +403,19 @@ export class AgentEditorController {
     // The avatar field precedes the name, while preserving its existing draft handlers.
     section.prepend(avatar);
     if (this.draft!.agent.id === GENERAL_ASSISTANT_ID) return;
+    if (isExpertAgent(this.draft!.agent)) {
+      const agent = this.draft!.agent;
+      for (const [field, label, value] of [
+        ["position", this.t("职位", "Role"), agent.position],
+        ["positionDescription", this.t("一句话简介", "Short description"), agentPositionDescription(agent)]
+      ]) {
+        const row = this.el(section, "div", "echoink-agent-editor-section");
+        this.el(row, "div", "echoink-agent-editor-label", label);
+        const copy = this.el(row, "div", "echoink-agent-editor-readonly", value || "—");
+        copy.dataset.identityField = field;
+      }
+      return;
+    }
     const positionField = this.el(section, "div", "echoink-agent-editor-identity-field");
     const positionId = `${this.instanceId}-position`;
     const positionLabel = this.el(positionField, "label", "echoink-agent-editor-label", this.t("职位", "Role")); positionLabel.htmlFor = positionId;
@@ -418,16 +451,25 @@ export class AgentEditorController {
     if (!this.draft || this.draft.agent.id === GENERAL_ASSISTANT_ID) return;
     for (const id of this.draft.moduleIds) grantModuleCapabilities(this.draft.agent, id);
   }
-  private requiredCapability(id: string): boolean { return this.draft!.moduleIds.some(module => moduleCapability(module) === id); }
+  private requiredCapability(id: string): boolean { return !isBasicAgentCapability(id) && this.draft!.moduleIds.some(module => moduleCapability(module) === id); }
   private selected(id: string): boolean {
-    if (isExpertAgent(this.draft!.agent)) return true;
-    return usesDisabledCapabilityList(this.draft!.agent.id) ? !this.draft!.agent.disabledCapabilityIds?.includes(id) : this.draft!.agent.capabilityIds?.includes(id) === true;
+    const skill = this.resources.find(resource => resource.kind === "skill" && vaultSkillCapabilityId(resource.id) === id);
+    if (skill) {
+      const aliases = resourceSkillCapabilityIds(skill), agent = this.draft!.agent;
+      return !aliases.some(alias => agent.disabledCapabilityIds?.includes(alias)) && aliases.some(alias => hasAgentCapabilityGrant(agent, alias));
+    }
+    return hasAgentCapabilityGrant(this.draft!.agent, id);
   }
   private setCapability(id: string, enabled: boolean): void {
     const agent = this.draft!.agent;
-    const key = usesDisabledCapabilityList(agent.id) ? "disabledCapabilityIds" : "capabilityIds";
-    const contains = key === "disabledCapabilityIds" ? !enabled : enabled;
-    const ids = new Set(agent[key] ?? []); if (contains) ids.add(id); else ids.delete(id); agent[key] = [...ids];
+    const skill = this.resources.find(resource => resource.kind === "skill" && vaultSkillCapabilityId(resource.id) === id);
+    if (skill) {
+      const aliases = resourceSkillCapabilityIds(skill);
+      agent.capabilityIds = (agent.capabilityIds ?? []).filter(alias => !aliases.includes(alias));
+      agent.disabledCapabilityIds = (agent.disabledCapabilityIds ?? []).filter(alias => !aliases.includes(alias));
+      id = aliases[0];
+    }
+    setAgentCapabilityGrant(agent, id, enabled);
   }
   private capability(parent: HTMLElement, id: string, name: string, resource?: EchoInkResource, extraReason?: string): void {
     const row = this.el(parent, "label", "echoink-agent-editor-choice");
@@ -451,15 +493,18 @@ export class AgentEditorController {
     const group = this.el(area, "div", "echoink-agent-editor-resource-group");
     group.setAttribute("role", "group"); group.setAttribute("aria-labelledby", title.id);
     const builtIn = this.el(group, "section", "echoink-agent-editor-resource-section");
-    this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("内置技能", "Built-in Skills"));
+    this.el(builtIn, "h4", "echoink-agent-editor-resource-heading", this.t("模块工具", "Module tools"));
     this.button(builtIn, this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }).classList.add("echoink-agent-resource-refresh");
     const base = this.el(builtIn, "div", "echoink-agent-editor-capabilities");
-    for (const [id] of CAPABILITIES) this.capability(base, id, this.capabilityName(id));
+    for (const [id] of CAPABILITIES) {
+      if (!isBasicAgentCapability(id) || (id === "web-search" && isCommunityExpertAgent(this.draft!.agent))
+        || this.draft!.baseline?.agent.disabledCapabilityIds?.includes(id)) this.capability(base, id, this.capabilityName(id));
+    }
     const customGroup = this.el(group, "section", "echoink-agent-editor-resource-section");
     const bar = this.el(customGroup, "div", "echoink-agent-editor-resource-heading"); this.el(bar, "h4", "", this.t("我的 Skill", "My Skills"));
     const reload = this.button(bar, this.loadingResources ? this.t("正在读取…", "Loading…") : this.t("刷新", "Refresh"), "tertiary", () => { void this.reloadResources(); }); reload.disabled = this.loadingResources;
     if (this.resourceError) this.el(customGroup, "div", "echoink-agent-editor-error", this.resourceError).setAttribute("role", "alert");
-    const custom = this.resources.filter(resource => resource.kind === "skill" && !(BUILTIN_SKILL_IDS as readonly string[]).includes(typeof resource.metadata?.resourceId === "string" ? resource.metadata.resourceId : ""));
+    const custom = this.resources.filter(isLocalUserSkill);
     if (custom.length) {
       const skills = this.el(customGroup, "div", "echoink-agent-editor-options");
       for (const resource of custom) this.capability(skills, vaultSkillCapabilityId(resource.id), resource.name, resource);
@@ -544,10 +589,26 @@ export class AgentEditorController {
     const counter = this.el(templates, "div", "echoink-agent-editor-persona-count");
     counter.id = `${this.instanceId}-persona-count`; input.setAttribute("aria-describedby", counter.id);
     const update = () => {
-      const value = normalizeAgentPersona(input.value); if (input.value !== value) input.value = value;
-      this.draft!.agent.persona = value; counter.textContent = `${agentPersonaLength(value)} / ${AGENT_PERSONA_MAX_LENGTH}`; this.changed();
+      const value = this.editingId ? normalizeAgentPersona(input.value) : input.value;
+      if (input.value !== value) input.value = value;
+      this.draft!.agent.persona = value; updateCount(); this.changed();
     };
-    counter.textContent = `${agentPersonaLength(input.value)} / ${AGENT_PERSONA_MAX_LENGTH}`;
+    const updateCount = () => {
+      const length = agentPersonaLength(input.value), overLimit = length > AGENT_PERSONA_MAX_LENGTH;
+      counter.textContent = `${length} / ${AGENT_PERSONA_MAX_LENGTH}${overLimit ? this.t(" · 请缩短到 4000 字以内", " · Shorten to 4,000 characters or fewer") : ""}`;
+      input.setAttribute("aria-invalid", String(overLimit));
+    };
+    updateCount();
+    if (!this.editingId) {
+      const paste = this.button(frame, this.t("粘贴导入", "Paste to import"), "secondary", () => {
+        void pasteAgentPersona(input, text => { input.value = text; update(); }, () => {
+          this.error = this.t("请在下方人格框内粘贴。", "Paste into the persona field.");
+          this.refresh();
+        });
+      });
+      paste.dataset.action = "paste-persona";
+      frame.prepend(paste);
+    }
     input.addEventListener("input", event => { if (!(event as InputEvent).isComposing) update(); });
     input.addEventListener("compositionend", update);
   }
@@ -561,7 +622,7 @@ export class AgentEditorController {
     const fields = this.root.querySelector("fieldset"); if (fields) fields.disabled = !!this.busy;
     this.root.setAttribute("aria-busy", String(!!this.busy));
     for (const button of Array.from(this.root.querySelectorAll<HTMLButtonElement>(".echoink-agent-editor-back,.echoink-agent-editor-header button,.echoink-agent-editor-footer button"))) button.disabled = !!this.busy;
-    if (this.saveButton) { this.saveButton.disabled = !!this.busy || invalidName && !this.canUseOnboardingPreset() || this.invalidAgent() || this.loadingResources || !!this.deleteCounts; setAmicroButtonPending(this.saveButton, this.busy === "save"); }
+    if (this.saveButton) { this.saveButton.disabled = !!this.busy || agentPersonaLength(this.draft.agent.persona ?? "") > AGENT_PERSONA_MAX_LENGTH || invalidName && !this.canUseOnboardingPreset() || this.invalidAgent() || this.loadingResources || !!this.deleteCounts; setAmicroButtonPending(this.saveButton, this.busy === "save"); }
     for (const [id, element] of this.ownership) {
       const selected = this.draft.moduleIds.includes(id);
       const owner = getModuleOwner(this.host.settings.agentRegistry, id);
@@ -576,12 +637,20 @@ export class AgentEditorController {
   }
   private async save(): Promise<void> {
     if (!this.draft || this.busy || this.invalidAgent()) return;
+    if (agentPersonaLength(this.draft.agent.persona ?? "") > AGENT_PERSONA_MAX_LENGTH) {
+      this.root?.querySelector<HTMLTextAreaElement>("[data-field=persona]")?.focus();
+      return;
+    }
     if (this.loadingResources) { this.submittedWhileLoading = true; this.error = ""; this.refresh(); return; }
     if (this.canUseOnboardingPreset()) this.applyPreset("organizer");
     const name = normalizeAgentDisplayName(this.draft.agent.name);
     if (!name) { this.draft.dirty = true; this.refresh(); this.nameInput?.focus(); return; }
     const generation = this.generation, key = this.cacheKey, revision = this.draft.revision;
-    const agent = { ...structuredClone(this.draft.agent), name, position: this.draft.agent.position.trim(), positionDescription: agentPositionDescription(this.draft.agent).trim() };
+    const agent = { ...structuredClone(this.draft.agent), name };
+    if (!isExpertAgent(agent)) {
+      agent.position = agent.position.trim();
+      agent.positionDescription = agentPositionDescription(agent).trim();
+    }
     this.busy = "save"; this.error = ""; this.refresh();
     try {
       await this.host.saveAgent(agent, [...this.draft.moduleIds], this.draft.baseline ? structuredClone(this.draft.baseline) : undefined);

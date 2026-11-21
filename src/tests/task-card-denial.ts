@@ -38,7 +38,8 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
   disposeOriginControls(view.rootEl); view.rootEl.remove();
 
   const agent = f.settings.agentRegistry.agents.find((item: any) => item.id === "colleague");
-  const granted = agent.capabilityIds, bindings = f.settings.knowledgeBase.folderBindings, language = f.settings.settingsLanguage;
+  const disabled = agent.disabledCapabilityIds, bindings = f.settings.knowledgeBase.folderBindings, language = f.settings.settingsLanguage;
+  const listRuns = f.productRuns.listReadOnly;
   const mount = doc.body.createDiv();
   try {
     const runtime = createProductionPiKnowledgeRuntime({ vaultRootPath: f.plugin.getVaultPath(),
@@ -47,17 +48,20 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       conversationKnowledgeDecision: async () => checkAgentCapability(createPiAgentCapabilityContext(f.plugin, "colleague", []), "knowledge") });
     for (const en of [false, true]) for (const cause of ["agent_disabled", "module_disabled"] as const) {
       f.settings.settingsLanguage = en ? "en" : "zh-CN";
-      agent.capabilityIds = cause === "agent_disabled" ? [] : ["knowledge"];
+      agent.disabledCapabilityIds = cause === "agent_disabled" ? ["knowledge"] : [];
       f.settings.knowledgeBase.folderBindings = emptyKnowledgeFolderBindings();
       await assert.rejects(runtime.retrieveAsk({ vaultId: "agent-runs", conversationId: "A", piSessionId: "s", productRunId: "denied", question: "test", explicitPaths: [], includeUnrefined: false }), error => {
         assert.equal(knownAgentCapabilityDenial(error)?.reason, cause);
         assert.match(agentCapabilityErrorText(error, f.settings.settingsLanguage)!, cause === "agent_disabled" ? (en ? /Knowledge organization is off/ : /未开启「知识整理」.*能用的能力/u) : (en ? /Knowledge.*unavailable/ : /知识库.*不可用.*检查目录配置/u)); return true;
       });
     }
-    f.settings.knowledgeBase.folderBindings = bindings; agent.capabilityIds = granted;
+    f.settings.knowledgeBase.folderBindings = bindings; agent.disabledCapabilityIds = disabled;
     await f.service.run(f.item("C", "accepted before revocation"));
+    const run = (await f.productRuns.listReadOnly("C")).at(-1);
+    f.productRuns.listReadOnly = async (id: string) => (await listRuns.call(f.productRuns, id)).map(
+      (item: { productRunId: string }) => item.productRunId === run.productRunId ? { ...item, error: "agent_capability_agent_disabled:knowledge" } : item);
     await f.plugin.setPiConversationTaskMetadata("C", { taskStatus: "interrupted", taskInterruptedAt: Date.now() });
-    agent.capabilityIds = [];
+    agent.disabledCapabilityIds = ["knowledge"];
     for (const en of [false, true]) {
       f.settings.settingsLanguage = en ? "en" : "zh-CN";
       const info = await f.plugin.readTaskInterruption("C");
@@ -69,14 +73,15 @@ export async function runTaskCardDenialTests(f: any, doc: Document): Promise<voi
       assert.doesNotMatch(mount.textContent!, /agent_capability_|意外中断|unexpected.*interrupt/iu);
       assert.match(mount.textContent!, en ? /Knowledge organization is off/ : /未开启「知识整理」.*能用的能力/u);
     }
-    agent.capabilityIds = granted;
+    agent.disabledCapabilityIds = disabled;
     const reopened = await f.plugin.readTaskInterruption("C");
-    assert.equal(reopened.resumeBlocked, undefined, "current policy is re-read, without persisting a new task state");
+    assert.equal(reopened.resumeBlocked, false, "current policy is re-read, without persisting a new task state");
     renderTaskInterruption(mount, { info: reopened, pending: false, language: "en", onResume() {} });
     assert.ok(mount.querySelector("[data-action=resume-task]"));
     for (const code of ["agent_capability_catalog_missing", "agent_capability_workspace_unavailable", "tool_policy_blocked"]) assert.equal(agentCapabilityErrorText(code, "zh-CN"), undefined);
   } finally {
-    agent.capabilityIds = granted; f.settings.knowledgeBase.folderBindings = bindings; f.settings.settingsLanguage = language;
+    f.productRuns.listReadOnly = listRuns;
+    agent.disabledCapabilityIds = disabled; f.settings.knowledgeBase.folderBindings = bindings; f.settings.settingsLanguage = language;
     await f.plugin.setPiConversationTaskMetadata("C", { taskStatus: "completed", taskInterruptedAt: undefined, taskCompletedAt: Date.now() });
     disposeOriginControls(mount); mount.remove();
   }

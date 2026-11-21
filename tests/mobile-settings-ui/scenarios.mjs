@@ -142,7 +142,9 @@ export async function runMobileSettingsScenarios(api, win) {
     assert.equal(moduleCheck.checked,true);assert.equal(cap.checked,true);assert.equal(cap.disabled,true);assert.equal(button(root,'创建').disabled,true);
     assert.equal(form.querySelector('[class$="agent-avatar-expanded"]').hidden,true,'avatars start collapsed');await click(root,'更换');assert.equal(form.querySelectorAll('[class$="avatar-picker"] button').length,15);
     const name='模块验收员工'+width;field(win,form,'名字',name);field(win,form,'一句话简介','只写这一轮的验收资料');
-    field(win,form,'人格正文','𠮷'.repeat(4002));assert.equal([...form.querySelector('[aria-label="人格正文"]').value].length,4000);
+    field(win,form,'人格正文','𠮷'.repeat(4002));assert.equal([...form.querySelector('[aria-label="人格正文"]').value].length,4002);
+    assert.equal(button(root,'创建').disabled,true);
+    field(win,form,'人格正文','𠮷'.repeat(4000));
     await click(root,'创建');await until(()=>[...root.querySelectorAll('select[data-module-owner="pdf-reading"]')].some(n=>visible(n)&&n.selectedOptions[0]?.textContent===name),'creation returns to owners');
     const employee=settings.agentRegistry.agents.find(a=>a.name===name);assert.ok(employee);assert.ok(employee.capabilityIds.includes('pdf-reading'));assert.equal([...employee.persona].length,4000);
     assert.equal(settings.agentRegistry.moduleOwners['pdf-reading'],employee.id);assert.equal(store.state.sessions.length,count);assert.equal(requests.length,req);

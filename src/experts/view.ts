@@ -31,6 +31,7 @@ export class ExpertHallView extends ItemView {
     if (this.opened) {
       if (this.expertId) await this.hall?.showDetail(this.expertId);
       else this.hall?.showHall();
+      await this.refresh(true);
     }
     await super.setState(state, result);
   }
@@ -46,7 +47,7 @@ export class ExpertHallView extends ItemView {
       onUpgrade: () => this.host.upgrade(),
       onViewChange: expertId => { this.expertId = expertId; this.app.workspace.requestSaveLayout(); },
     });
-    await this.refresh();
+    await this.refresh(true);
   }
   async onClose(): Promise<void> {
     this.opened = false; this.hall?.dispose(); this.hall = undefined;

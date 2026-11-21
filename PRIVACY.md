@@ -22,7 +22,11 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **Skill requests and cache:** Skill downloads use the account service to send the login token, Skill ID, device ID, current signed lease, plugin version, platform and optional cached version. They send no notes or conversations. Versioned Markdown is cached in **`skill-cache/`** under the current Vault’s actual plugin data directory, following its configured directory and existing data-root selection, isolated by account, service URL and device. These are ordinary local files and can be copied. Every use requires a valid device lease and less than 7 days since the full content’s `issuedAt`. Cache reads and “not modified” responses never extend that period. Only temporary network failures permit fallback to a still-valid cache. Sign-out, expiry, device revocation or a known entitlement revocation stops access; a fully offline device cannot immediately learn of remote revocation. Each run fixes one content version; updates apply to a later run. Skill text grants no tools or permissions.
 
-- **Expert catalogs and content:** Expert catalogs and content are fetched from echoink.cn. Content downloads require active PRO and device authorization. Requests include the expert ID, device ID, signed lease, plugin version, platform, and optional cached version; these download requests send no notes or conversations. Downloaded content is cached in `expert-cache/` under the current plugin directory.
+- **Expert catalogs and content:** The public catalog request sends the plugin version to echoink.cn so the server can return compatible experts. Content downloads require active PRO and device authorization. Requests include the expert ID, device ID, signed lease, plugin version, platform, and optional cached version; these download requests send no notes or conversations. Downloaded content is cached in `expert-cache/` under the current plugin directory. Before each run, a community expert needs an online check to confirm it is still listed.
+
+- **Community expert submissions:** When you confirm a submission, echoink.cn receives the name, use case, summary, quote, tags, example questions, persona, attached vault Skill text, avatar choice or image, and the public name you approve. EchoInk stores the submission with your account for review. If accepted, public details and attribution appear in the catalog. People who hire the expert receive the persona and Skill text on their devices for use with their chosen model.
+
+- **Expert hire statistics:** After a successful local hire, the plugin reports the expert ID with your signed-in session. EchoInk counts each account once per expert, across devices, vaults and repeat hires. The catalog shows the aggregate count.
 
 - **Weather:** Weather is optional. Searching for a city sends the search text to echoink.cn. Once you select a city, EchoInk stores its ID and name in this vault's plugin settings and sends only the city ID to echoink.cn when the workbench opens and every 30 minutes while visible. Weather requests contain no login token or account data; EchoInk does not read device location or store weather history. Weather is a near-term estimate from MET Norway, not a local observation. Weather and city sources, licenses and adaptations remain visible in General settings.
 
@@ -70,10 +74,14 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **EchoInk MCP server:** EchoInk’s desktop MCP server is PRO, off by default, read-only, and listens only on this computer’s loopback address while Obsidian is running. You separately authorize Knowledge and personal memory/profile access. External Agents can receive note excerpts, source paths and revisions, concept links, your profile and memories, and may send them to their model providers or retain them. EchoInk cannot control those records or recall content already sent. Turn off sharing or regenerate the token to stop future access.
 
+- **MCP task context:** An external agent calling `get_context` sends the task and optional recent conversation. When smart judgment is enabled and available, the task, recent context, memory summaries, and authorized note excerpts needed for selection may be processed under the smart judgment terms above. Selected results stay in local memory for up to 10 minutes. Turning smart judgment off stops reuse of cached selections. When it is off or the allowance runs out, the tool returns authorized candidates. Results from a timed-out note search are not cached.
+
 - **Knowledge retrieval scope:** Knowledge retrieval excludes the private-memory and internal plugin data folders. This is not a global access restriction for every file tool or third-party service.
 
 - **Folder access when dispatching work.** The assistant can grant assigned agents access to regular folders by default. You can turn this off in the desktop assistant editor. Project folders can also be opened to project staff. Agents can read ordinary notes for their tasks. Writes remain subject to module ownership and the applicable permissions. This rule makes no network request. Any content an agent reads and sends to a model follows that provider's policy.
 
-## What the plugin does not do
+## Website and account service
 
-- **Client telemetry:** The plugin has no client usage telemetry. Website and account-service data handling is described in the [privacy policy](https://echoink.cn/support#privacy).
+- EchoInk does not collect client-side telemetry. See above for data handling for website sign-in, hire counts, and other network requests.
+
+See the website [privacy policy](https://echoink.cn/support#privacy) for website and account-service data handling.

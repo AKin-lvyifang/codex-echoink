@@ -835,6 +835,7 @@ export class CodexView extends ItemView {
       deleteAgent: async id => { await this.plugin.deleteAgent(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
       dismissExpert: async id => { await this.plugin.dismissExpert(id); this.taskEditorReturnPage = { kind: "list", agentId: GENERAL_ASSISTANT_ID }; await this.reloadTaskCatalog(); },
       showExpertAbout: id => this.plugin.showExpertAbout(id),
+      expertSubmission: { service: plugin.experts.content.submissions, readSkill: path => plugin.app.vault.adapter.read(path) },
       getDeleteCounts: id => this.plugin.getAgentDeleteCounts(id),
       getCapabilityAvailability: id => this.taskCapabilityAvailability(id),
       onClose: id => {

@@ -383,6 +383,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
   bindingRevision?: () => number;
   privateRecords?: boolean;
   finalizeRecord?: (wal: Readonly<Phase3MaintenanceWalRecord>) => Promise<void>;
+  writeDenial?: (conversationId: string, targetPath: string) => Promise<string | undefined>;
   createPreviewId?: () => string;
   now?: () => number;
   faultInjector?: (
@@ -399,6 +400,7 @@ export interface Phase3KnowledgeMaintenanceServiceOptions {
 export class Phase3KnowledgeMaintenanceService {
   private readonly privateRecords: boolean;
   private readonly finalizeRecord?: (wal: Readonly<Phase3MaintenanceWalRecord>) => Promise<void>;
+  private readonly writeDenial?: Phase3KnowledgeMaintenanceServiceOptions["writeDenial"];
   private readonly pathPolicy: (relativePath: string) => string;
   private readonly bindingRevision: () => number;
   private readonly resolvePath: (relativePath: string) => string;
@@ -417,6 +419,7 @@ export class Phase3KnowledgeMaintenanceService {
   constructor(options: Readonly<Phase3KnowledgeMaintenanceServiceOptions>) {
     this.privateRecords = options.privateRecords === true;
     this.finalizeRecord = options.finalizeRecord;
+    this.writeDenial = options.writeDenial;
     this.pathPolicy = options.pathPolicy ?? knowledgeRolePath;
     this.bindingRevision = options.bindingRevision ?? (() => 0);
     this.resolvePath = options.resolvePath ?? ((value) => value);
@@ -924,6 +927,11 @@ export class Phase3KnowledgeMaintenanceService {
       if (!sameTargetBinding(current, entry.action.expected)) {
         const message = `Target revision changed before batch write: ${entry.action.targetPath}`;
         wal = await this.saveWalAction(wal, index, { status: "failed", error: message });
+        continue;
+      }
+      const denial = await this.writeDenial?.(wal.authorization.contract.conversationId, entry.action.targetPath);
+      if (denial) {
+        wal = await this.saveWalAction(wal, index, { status: "failed", error: denial });
         continue;
       }
       const result = await this.executeAction(

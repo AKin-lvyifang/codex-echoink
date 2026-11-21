@@ -4,7 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { getDesktopHttp, getDesktopNet } from "../platform/desktop-network";
 import { getDesktopBuffer } from "../platform/desktop-runtime";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
-import { ECHOINK_MCP_INSTRUCTIONS, echoInkMcpSetupText } from "./instructions";
+import { echoInkMcpInstructions, echoInkMcpSetupText } from "./instructions";
 import { EchoInkMcpReadTools, type McpReadAccess } from "./tools";
 
 type HttpModule = ReturnType<typeof getDesktopHttp>;
@@ -109,7 +109,10 @@ export class EchoInkMcpServer {
     const epoch = this.epoch;
     const assertRequest = () => { if (epoch !== this.epoch || !tokenMatches(request.headers.authorization, this.options.token())) throw Object.assign(new Error("Request revoked"), { code: "request_revoked" }); };
     // Stateless HTTP: each request owns a transport and request identity. No chat sessions or retained data.
-    const server = new McpServer({ name: "EchoInk", version: this.options.version }, { capabilities: { tools: { listChanged: true } }, instructions: ECHOINK_MCP_INSTRUCTIONS });
+    // Only the handshake carries instructions; the notes are read fresh so a revoked memory grant stops them at once.
+    const notes = (parsedBody as { method?: unknown } | null)?.method === "initialize" ? await this.options.tools.collaborationNotes().catch(() => null) : null;
+    assertRequest();
+    const server = new McpServer({ name: "EchoInk", version: this.options.version }, { capabilities: { tools: { listChanged: true } }, instructions: echoInkMcpInstructions(notes) });
     server.server.setRequestHandler(ListToolsRequestSchema, async () => { assertRequest(); return { tools: this.options.tools.list() }; });
     server.server.setRequestHandler(CallToolRequestSchema, async input => {
       const envelope = await this.options.tools.call(input.params.name, input.params.arguments ?? {}, randomUUID(), assertRequest);

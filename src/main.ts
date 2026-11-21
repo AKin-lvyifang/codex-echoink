@@ -16,7 +16,7 @@ import { loadNativeJournalSettings } from "./home/native-journal";
 import { getExcalidrawService } from "./excalidraw/service";
 import { getDesktopCrypto } from "./platform/desktop-crypto";
 import { DesktopExpertController } from "./plugin/expert-controller";
-import { isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
+import { applyExpertIdentityOverrides, isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
 import type { AgentRegistry } from "./agents/types";
 import { EXPERT_HALL_VIEW_TYPE, type ExpertHallHost } from "./experts/view";
 import { createObsidianWorkspaceService, type WorkspaceService } from "./workspace/service";
@@ -320,7 +320,10 @@ export default class CodexForObsidianPlugin extends Plugin {
   }
   dismissExpert(agentId: string): Promise<void> { return this.experts.dismiss(agentId); }
   showExpertAbout(agentId: string): Promise<void> { return this.experts.about(agentId); }
-  prepareExpertRuntime(agentId: string, conversationId: string, text: string) { return this.experts.prepare(agentId, conversationId, text); }
+  verifyCommunityExpertRun(agentId: string) { return this.experts.verifyCommunityRun(agentId); }
+  prepareExpertRuntime(agentId: string, conversationId: string, text: string, verified?: import("./experts/service").ResolvedExpertPackage) {
+    return this.experts.prepare(agentId, conversationId, text, verified);
+  }
   expertDecisionSkills(agentId: string) { return this.experts.decisionSkills(agentId); }
   getExpertHallHost(): ExpertHallHost { return { content: this.experts.content, getAgents: () => this.settings.agentRegistry.agents,
     hire: async id => { await this.experts.hire(id); }, dismiss: id => this.dismissExpert(id),
@@ -1395,7 +1398,9 @@ export default class CodexForObsidianPlugin extends Plugin {
       || (last ? readDurableTaskInterruptionStage({ catalogStore: local.catalog, catalog: entry, runs, productRunId: last.productRunId }) : "");
     const detail = last?.interruption?.detail ?? last?.error;
     const recordedDenial = knownAgentCapabilityDenial(detail);
-    const requiredCapabilities = recordedDenial ? [recordedDenial.capabilityId]
+    const maintenanceResume = !!safety?.maintenanceContext || last?.knowledge?.workflow === "maintain";
+    const requiredCapabilities = maintenanceResume ? ["knowledge", "vault-notes"]
+      : recordedDenial ? [recordedDenial.capabilityId]
       : last?.knowledge?.workflow === "ask" || detail === "agent_capability_knowledge_denied" ? ["knowledge"] : [];
     let failureMessage = agentCapabilityErrorText(detail, this.settings.settingsLanguage);
     let resumeBlocked = false;
@@ -1483,7 +1488,8 @@ export default class CodexForObsidianPlugin extends Plugin {
     const validation = validateApiProvider(provider);
     if (validation.length) throw new Error(`当前模型配置不可用：${validation.join("；")}`);
     if (!frozenTurnReasoningSelectionIsValid(this.settings, selection)) throw new Error("当前模型或思考强度已变化，请重新选择后继续。");
-    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations, last.knowledge?.workflow === "ask" ? ["knowledge"] : []);
+    const requiredCapabilities = inspected.maintenanceContext || last.knowledge?.workflow === "maintain" ? ["knowledge", "vault-notes"] : last.knowledge?.workflow === "ask" ? ["knowledge"] : [];
+    await assertTaskResumeCapabilities(this, local.catalog, taskId, { permission: selection.permission, mode: selection.mode === "plan" ? "plan" : "agent", memoryMode: this.settings.memory.useLongTermMemory === false ? "no_memory" : "normal" }, last?.agentSnapshot, inspected.operations, requiredCapabilities);
     assertPiSubmissionActive(signal);
     const routerResume = Platform.isDesktopApp && (entry.agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID;
     const safety = routerResume ? inspected : await prepareTaskResumeSafety({ ...snapshotInput, reconcileDiagram: async creation => {
@@ -1494,6 +1500,9 @@ export default class CodexForObsidianPlugin extends Plugin {
     } });
     assertPiSubmissionActive(signal);
     if (!routerResume && safety.fileConflicts.length) throw new Error(`文件已被修改，任务未继续执行，文件不会被覆盖：${safety.fileConflicts.map(conflict => conflict.relativePath).join("、")}`);
+    if (!routerResume && safety.maintenanceContext && !frozenItem && !message?.trim()) {
+      item.text = "/maintain 继续原维护清单";
+    }
     const interruption = {
       ...failure,
       at: last?.interruption?.at ?? entry.taskInterruptedAt ?? last?.updatedAt ?? entry.updatedAt,
@@ -1609,7 +1618,8 @@ export default class CodexForObsidianPlugin extends Plugin {
       if (!baseline && current) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was already created. Reopen it to edit." : "这个 Agent 已经创建，请重新打开后编辑。你的输入已保留。");
       if (baseline && (!current || baseline.agent.id !== agent.id)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent was deleted. Your draft has been kept." : "这个 Agent 已被删除，你的输入已保留。");
       if (baseline && JSON.stringify(current) !== JSON.stringify(baseline.agent)) throw new Error(this.settings.settingsLanguage === "en" ? "This Agent changed elsewhere. Reopen it before saving." : "这个 Agent 已在别处修改，请重新打开后核对。你的输入已保留。");
-      let candidate = normalizeAgentRegistry({ ...previous, agents: current ? previous.agents.map(entry => entry.id === agent.id ? { ...agent, identityEdited: true } : entry) : [...previous.agents, { ...agent, identityEdited: true }] });
+      const edited = applyExpertIdentityOverrides(current, { ...agent, identityEdited: true });
+      let candidate = normalizeAgentRegistry({ ...previous, agents: current ? previous.agents.map(entry => entry.id === agent.id ? edited : entry) : [...previous.agents, edited] });
       if (!candidate.agents.some(entry => entry.id === agent.id)) throw new Error("agent_definition_invalid");
       for (const id of AGENT_MODULE_IDS) {
         // Unchanged assignments belong to the current registry, not an old editor.

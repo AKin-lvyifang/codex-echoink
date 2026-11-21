@@ -17,7 +17,7 @@ export function createMembershipTransport(apiUrl: string, request = requestUrl):
     if (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname)))
       throw new Error("会员服务仅支持HTTPS或本机测试地址。");
   }
-  return async (endpoint, method, body, token) => {
+  return async (endpoint, method, body, token, headers) => {
     let payload: string | ArrayBuffer | undefined, contentType = "application/json";
     if (body instanceof FormData) {
       const multipart = new Response(body);
@@ -28,6 +28,7 @@ export function createMembershipTransport(apiUrl: string, request = requestUrl):
       const response = await Promise.race([
         request({ url: new URL(endpoint, apiUrl).href, method, headers: {
           "Content-Type": contentType, "X-EchoInk-Client": "plugin",
+          ...headers,
           ...(token ? { Authorization: `Bearer ${token}` } : {})
         }, body: payload, throw: false }),
         new Promise<never>((_, reject) => { timer = window.setTimeout(() => reject(new Error("NETWORK")), 15000); })

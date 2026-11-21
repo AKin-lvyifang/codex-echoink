@@ -53,7 +53,8 @@ import { PiTodoToolSecurity, createPiTodoToolDefinitions, PI_TODO_TOOL_IDS } fro
 import { getTodoProjects } from "../home/todo-projects";
 import { agentTaskSystemPrompt, checkAgentCapability, checkAgentSkill, checkAgentSkillPath, checkAgentTool, isAgentCapabilityPathField, requireAgentCapability, resolveAgentRunSnapshot, type AgentCapabilityContext } from "../agents/capability-policy";
 import { FINANCE_DEFAULT_ROOT, FINANCE_BILINGUAL_ROOT, FINANCE_LEGACY_ROOT } from "../lifestyle/finance-paths";
-import { GENERAL_ASSISTANT_ID, type AgentRunSnapshot } from "../agents/types";
+import { GENERAL_ASSISTANT_ID, isBasicAgentCapability, isCommunityExpertAgent, type AgentRunSnapshot } from "../agents/types";
+import type { ResolvedExpertPackage } from "../experts/service";
 import type { TaskResumeContext } from "../agents/task-resume";
 import { assertTaskResumeToolAllowed, type TaskResumePendingAction } from "./task-resume-safety";
 import type { CapabilityAccess } from "../membership/types";
@@ -338,7 +339,8 @@ export interface PiProductionPluginHost {
   readonly companyApprovalCoordinator?: CompanyApprovalCoordinator | null;
   getKnowledgeSystemService?(): import("../knowledge-base/knowledge-system-task").KnowledgeSystemTaskService;
   getWorkspaceFiles?(): WorkspaceService;
-  prepareExpertRuntime?(agentId: string, conversationId: string, text: string): Promise<{ prompt: string; assertAvailable(): void }>;
+  verifyCommunityExpertRun?(agentId: string): Promise<ResolvedExpertPackage | undefined>;
+  prepareExpertRuntime?(agentId: string, conversationId: string, text: string, verified?: ResolvedExpertPackage): Promise<{ prompt: string; assertAvailable(): void }>;
   /** 智能判断：专家的技能清单（只有名称和说明）。 */
   expertDecisionSkills?(agentId: string): Promise<readonly { id: string; name: string; description: string }[]>;
   getKnowledgeSurfaceService?(): { activity: import("./knowledge-activity-service").KnowledgeActivityService } | null;
@@ -670,6 +672,13 @@ export async function createPiProductionRuntimeBundle(
     userId: localPiVaultUserId(deviceScope.deviceIdDigest),
     deviceId: deviceScope.deviceIdDigest,
     domainService: maintenanceVaultDomainService,
+    // New calls already passed workspace permission checks. WAL recovery
+    // also rechecks the current Agent before attempting a previously authorized write.
+    checkWriteTarget: async (conversationId, relativePath) => {
+      const context = await currentAgentCapabilityContext(plugin, catalog, conversationId, { permission: "workspace-write", mode: "agent", memoryMode: "normal" });
+      const knowledge = checkPiKnowledgeAction(context, "write");
+      return knowledge.allowed ? checkAgentTool(context, "note_update", { relativePath }) : knowledge;
+    },
     treePlacement: request => proposeMaintenanceTreePlacement(plugin, localData, request),
     productRuns, activitySource: plugin.getKnowledgeSurfaceService?.()?.activity, notice: message => new Notice(message),
     knowledgeAgentIndex,
@@ -721,6 +730,7 @@ export async function createPiProductionRuntimeBundle(
       catalog,
       productRuns,
       sessionApi,
+      verifyCommunityExpertRun: agentId => plugin.verifyCommunityExpertRun?.(agentId) ?? Promise.resolve(undefined),
       verifyPdfTaskDelivery: plugin.verifyPdfTaskDelivery
         ? (request, noNewSourcePaths) => plugin.verifyPdfTaskDelivery!(request, noNewSourcePaths)
         : undefined,
@@ -2293,8 +2303,17 @@ async function createProductionAgentSession(input: {
 }): Promise<PiNativeAgentSessionFactoryResult> {
   const agentRuntimeContext = createCompanyRuntimeContext({
     prepareExpertRuntime: input.plugin.prepareExpertRuntime
-      ? (agentId, conversationId, text) => input.plugin.prepareExpertRuntime!(agentId, conversationId, text) : undefined
+      ? (agentId, conversationId, text) => input.plugin.prepareExpertRuntime!(agentId, conversationId, text, input.input.currentVerifiedCommunityExpert?.()) : undefined
   });
+  const assertExpertRuntimeAvailable = () => {
+    const agent = input.plugin.settings.agentRegistry.agents.find(item => item.id === input.input.catalog.agentId);
+    const verified = input.input.currentVerifiedCommunityExpert?.();
+    if (verified || isCommunityExpertAgent(agent)) {
+      if (!verified || verified.id !== agent?.expert?.expertId || !agent?.expert?.hired) throw new Error("未能确认此专家仍在收录中，本次运行已停止。");
+      verified.assertAvailable();
+    }
+    agentRuntimeContext.assertAvailable();
+  };
   const routerIdentity = (input.input.catalog.agentId ?? GENERAL_ASSISTANT_ID) === GENERAL_ASSISTANT_ID;
   const linkingBatch = routerIdentity ? null : getPiKnowledgeLinkingBatch(input.input.catalog.conversationId);
   const systemService = input.plugin.getKnowledgeSystemService?.();
@@ -2318,7 +2337,7 @@ async function createProductionAgentSession(input: {
       ? (event) => input.plugin.recordModelUsage?.(event)
       : undefined,
     observeRequest: async (context, execution, additionalInputTokens) => {
-      agentRuntimeContext.assertAvailable();
+      assertExpertRuntimeAvailable();
       assertInlineDispatch(context, execution, additionalInputTokens);
       await contextLedger.recordProviderRequestAsync(context, execution, additionalInputTokens);
     },
@@ -2388,7 +2407,7 @@ async function createProductionAgentSession(input: {
   // The task ID exists before a run is bound (Skill loading happens during activation).
   const liveCapabilityContext = async () => await currentAgentCapabilityContext(input.plugin, input.catalog, input.input.catalog.conversationId, input.input.currentWorkspaceAccess?.());
   const assertToolAllowed = async (name: string, args: Readonly<Record<string, unknown>>, resolvedTarget?: unknown, currentOperation?: Readonly<{ productRunId: string; toolCallId: string }>) => {
-    agentRuntimeContext.assertAvailable();
+    assertExpertRuntimeAvailable();
     if (input.input.currentInlineProposalRequest?.()) throw new Error("inline_proposal_tool_scope_blocked");
     if (input.input.currentGenerationContext?.()) throw new Error("generation_tool_scope_blocked");
     if (input.input.currentEnglishDiaryRequest?.() && name !== "english_diary_generate") throw new Error("english_diary_task_scope_required");
@@ -2697,7 +2716,7 @@ async function createProductionAgentSession(input: {
   const workspaceSecurity = workspaceService ? new PiWorkspaceToolSecurity({ service: workspaceService,
     currentRunIdentity: () => input.input.currentToolExecutionContext(), assertToolAllowed,
     guard: (operation, target) => {
-      agentRuntimeContext.assertAvailable();
+      assertExpertRuntimeAvailable();
       const base = createPiAgentCapabilityContext(input.plugin, input.input.catalog.agentId ?? "sol", [], input.input.currentWorkspaceAccess?.());
       requireAgentCapability(checkAgentTool(withCompanyContext(input.plugin, base, companyRole, input.input.catalog.conversationId), `workspace_${operation}`, { path: target }));
     }
@@ -2990,7 +3009,7 @@ async function createProductionAgentSession(input: {
     supportsToolCalling: configured.toolCalling,
     currentExecutionContext: () => input.input.currentExecutionContext(),
     ...(isExpertAgent(input.plugin.settings.agentRegistry.agents.find(agent => agent.id === input.input.catalog.agentId))
-      ? { assertResponseAllowed: () => agentRuntimeContext.assertAvailable() } : {})
+      ? { assertResponseAllowed: assertExpertRuntimeAvailable } : {})
   }));
   const inlineExtension = createPiKnowledgeInlineExtension({
     knowledgeBindings: () => input.plugin.settings.knowledgeBase.folderBindings,
@@ -3433,7 +3452,7 @@ export async function assertTaskResumeCapabilities(
   if (previousSnapshot?.agentId === current.agentId) {
     const removed = current.agentId === "sol"
       ? (current.disabledCapabilityIds ?? []).filter(id => !previousSnapshot.disabledCapabilityIds?.includes(id))
-      : (previousSnapshot.capabilityIds ?? []).filter(id => !current.capabilityIds?.includes(id));
+      : (previousSnapshot.capabilityIds ?? []).filter(id => !isBasicAgentCapability(id) && !current.capabilityIds?.includes(id));
     if (removed.length) fail("agent_disabled", removed[0]);
   }
   for (const action of actions) {

@@ -15,6 +15,10 @@ import type { AgentDefinition } from "../agents/types";
 import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
 import { hireExpert } from "../agents/expert-lifecycle";
 import { assertExpertAgentLocks } from "../agents/persona";
+import { hasAgentCapabilityGrant, setAgentCapabilityGrant } from "../agents/types";
+import { collectExpertSubmissionSkills } from "../experts/submission-service";
+import { vaultSkillCapabilityId } from "../agents/capability-core";
+import type { EchoInkResource } from "../resources/types";
 
 export async function runExpertContentTests(): Promise<void> {
   const root = await mkdtemp(path.join(os.tmpdir(), "echoink-expert-content-"));
@@ -28,6 +32,43 @@ export async function runExpertContentTests(): Promise<void> {
       const catalog = parseExpertCatalog({ catalogVersion: "new", experts: [{ ...meta, id: "another-new-expert" }] }, "https://fixture.invalid");
       assert.equal(catalog.experts[0].id, "another-new-expert");
       assert.equal("persona" in catalog.experts[0], false);
+    });
+    await test("community attribution survives delivery and search starts disabled until explicitly granted", async () => {
+      const author = { name: "合成署名" }, community = { source: "community" as const, status: "published" as const, author };
+      const catalog = parseExpertCatalog({ catalogVersion: "open", experts: [{ ...expertFixtureBody(), ...community, hireCount: 2 }] }, "https://fixture.invalid");
+      assert.deepEqual(catalog.experts[0].author, author);
+      assert.equal(catalog.experts[0].hireCount, 2);
+      const accountFixture = await account({ bodyFields: community });
+      const service = new ExpertContentService({ files: expertFixtureFiles(path.join(root, "community")), cacheRoot: "expert-cache",
+        account: () => accountFixture.service, pluginVersion: "2.9.2", platform: "desktop", now: accountFixture.now });
+      const registry = defaultAgentRegistry(), pack = await service.resolve(fixtureExpertId);
+      const agent = hireExpert(registry, pack);
+      assert.equal(agent.expert?.source, "community");
+      assert.equal(hasAgentCapabilityGrant(agent, "web-search"), false);
+      setAgentCapabilityGrant(agent, "web-search", true);
+      assert.equal(hasAgentCapabilityGrant(hireExpert(registry, pack), "web-search"), true);
+      const before = accountFixture.calls.length;
+      await service.resolve(fixtureExpertId, true);
+      await service.resolve(fixtureExpertId, true);
+      assert.equal(accountFixture.calls.slice(before).filter(call => call.path.endsWith("/package")).length, 2);
+      accountFixture.offline(true);
+      await assert.rejects(service.resolve(fixtureExpertId, true), /无法联网确认/u);
+    });
+    await test("submission sends only explicitly attached vault Skill instructions", async () => {
+      const skill = (id: string): EchoInkResource => ({ id: `echoink-local:skill:${id}`, source: "echoink-local", kind: "skill",
+        name: id, description: "合成说明", enabled: true, bridgeMode: "prompt-only",
+        contentPath: `.echoink/resources/skills/${id}/SKILL.md`, metadata: { resourceId: id } });
+      const own = skill("my-instructions"), paid = skill("deep-understanding"), script = skill("my-script"), other = skill("not-attached");
+      const agent = { ...defaultAgentRegistry().agents[1], capabilityIds: [own, paid, script].map(item => vaultSkillCapabilityId(item.id)) };
+      const read: string[] = [];
+      const skills = await collectExpertSubmissionSkills(agent, [own, paid, script, other], async path => {
+        read.push(path);
+        return path === script.contentPath ? "---\nentry: run.js\n---\nNOT FOR UPLOAD"
+          : "---\nentry: instruction\nsecret: fixture\n---\nRead the sample. api_key=mock-secret-value";
+      });
+      assert.deepEqual(read, [own.contentPath, script.contentPath]);
+      assert.equal(skills.length, 1);
+      assert.equal(skills[0].content, "Read the sample. api_key=[REDACTED_SECRET]");
     });
     await test("optional public detail fields preserve content and tolerate absent or empty older metadata", () => {
       const body = expertFixtureBody(), examples = ["公开问题一", "公开问题二", "公开问题三"];

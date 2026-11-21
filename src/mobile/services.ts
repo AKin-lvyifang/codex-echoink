@@ -49,7 +49,10 @@ import { MobileCapabilitiesService } from "./capabilities";
 import type { MobileRequest, MobileUsageObserver } from "./transport";
 import { MobileMemoryService } from "./memory-service";
 import { ExpertContentService, adapterExpertContentFiles } from "../experts/service";
+import { expertLocalSkillPrompt, expertSkillOptions, planExpertSkills } from "../experts/prompt";
+import { redactEchoInkLocalSecretsV1 } from "../security/local-secrets";
 import { hireExpert, dismissExpert, rememberExpertConversation } from "../agents/expert-lifecycle";
+import { isCommunityExpertAgent } from "../agents/types";
 import { isAgentHired, isExpertAgent } from "../agents/persona";
 import { createObsidianWorkspaceService, type WorkspaceService } from "../workspace/service";
 
@@ -106,9 +109,11 @@ export class MobileServices implements HomeHost {
     await this.host.openWorkspacePreview(path);
   }
   async hireExpert(expertId: string): Promise<void> {
+    const report = this.experts.hireReporter(expertId);
     const pack = await this.experts.resolve(expertId); pack.assertAvailable();
     const before = await this.profileProtocol.snapshot();
     await this.profileProtocol.updateExpert(registry => { pack.assertAvailable(); hireExpert(registry, pack); }, before.version);
+    report();
     this.host.runtime.unblockAgent(`expert-${expertId}`); await this.refreshAgentIdentity();
   }
   async openExpert(agentId: string): Promise<void> {
@@ -143,11 +148,11 @@ export class MobileServices implements HomeHost {
     const agent = this.settings.agentRegistry.agents.find(agent => agent.id === turn.agentSnapshot.agentId);
     if (!isExpertAgent(agent)) return undefined;
     if (!isAgentHired(agent) || agent.expert.expertId !== turn.agentSnapshot.expertId) throw new Error("专家身份已变化或已解聘。");
-    const pack = await this.experts.resolve(agent.expert.expertId); pack.assertAvailable();
+    const pack = await this.experts.resolve(agent.expert.expertId, isCommunityExpertAgent(agent)); pack.assertAvailable();
     const current = await this.profileProtocol.snapshot();
     const live = current.registry.agents.find(item => item.id === agent.id);
     if (!isExpertAgent(live) || !isAgentHired(live)) throw new Error("专家已解聘。");
-    if (live.expert.packageVersion !== pack.version || live.expert.disclosure !== pack.disclosure) await this.profileProtocol.updateExpert(registry => {
+    if (live.expert.packageVersion !== pack.version || live.expert.disclosure !== pack.disclosure || pack.meta.source === "community" && live.expert.source !== "community") await this.profileProtocol.updateExpert(registry => {
       const latest = registry.agents.find(item => item.id === agent.id);
       if (!isExpertAgent(latest) || !isAgentHired(latest)) throw new Error("专家已解聘。");
       pack.assertAvailable(); hireExpert(registry, pack);
@@ -158,11 +163,14 @@ export class MobileServices implements HomeHost {
       if (!isExpertAgent(latest) || !isAgentHired(latest) || latest.expert.expertId !== pack.id || latest.expert.packageVersion !== pack.version) throw new Error("专家身份、版本或聘用状态已变化，本次任务已停止。");
     };
     assertAvailable();
-    // 专家对话的 /turn 带专家技能清单（只有名称和说明）；拿不到时按关键词选。
+    const options = expertSkillOptions(pack.skillOptions(), await this.capabilities.skillDecisionOptions(agent.id).catch(() => []));
     const judged = getDecisionClient()?.ready() ? await judgeMobileTurn({ turnId: turn.id, sessionId, text: turn.text,
-      recent: this.decisionRecent(this.host.store.getSession(sessionId)?.messages ?? [], turn.text), skills: pack.skillOptions() }) : null;
-    const decision = judged?.skill ? { decidedSkillId: judged.skill.id } : {};
-    return { prompt: `${pack.buildTransientPrompt({ text: turn.text, ...decision })}\n首次视角声明由产品在会话中展示，不重复声明。`, packageVersion: pack.version, assertAvailable,
+      recent: this.decisionRecent(this.host.store.getSession(sessionId)?.messages ?? [], turn.text), skills: options }) : null;
+    const { selectedPackageSkillIds, localSkillIds } = planExpertSkills(options, { text: turn.text, decidedSkillId: judged?.skill?.id });
+    const skills = localSkillIds.length ? await this.capabilities.resolveRunSkills(sessionId, agent.id, turn.text, localSkillIds) : [];
+    const localPrompt = expertLocalSkillPrompt(skills.map(({ id, content }) => ({ id, content: redactEchoInkLocalSecretsV1(content) })));
+    assertAvailable();
+    return { prompt: `${pack.buildTransientPrompt({ text: turn.text, selectedPackageSkillIds })}${localPrompt}\n首次视角声明由产品在会话中展示，不重复声明。`, packageVersion: pack.version, assertAvailable,
       recordConversation: async () => {
         assertAvailable(); const snapshot = await this.profileProtocol.snapshot();
         await this.profileProtocol.updateExpert(registry => { assertAvailable(); rememberExpertConversation(registry, agent.id, sessionId, turn.createdAt); }, snapshot.version);
@@ -447,8 +455,8 @@ export class MobileServices implements HomeHost {
     const recent = turn ? this.decisionRecent(session?.messages ?? [], turn.text) : [];
     if (turn && (getDecisionClient()?.ready() || memoryAllowed)) reportPreparation(preparation, { stage: "thinking", status: "completed" });
     if (turn && getDecisionClient()?.ready()) reportPreparation(preparation, { stage: "judgment", status: "active" });
-    const judging = turn ? (async () => judgeMobileTurn({ turnId: turn.id, sessionId, text: turn.text, recent,
-      skills: expert || skillId || !getDecisionClient()?.ready() ? [] : await this.capabilities.skillDecisionOptions(agentId).catch(() => []) }))() : Promise.resolve(null);
+    const judging = turn && !expert ? (async () => judgeMobileTurn({ turnId: turn.id, sessionId, text: turn.text, recent,
+      skills: skillId || !getDecisionClient()?.ready() ? [] : await this.capabilities.skillDecisionOptions(agentId).catch(() => []) }))() : Promise.resolve(null);
     const judged = await judging;
     if (turn && getDecisionClient()?.ready()) reportPreparation(preparation, { stage: "judgment", status: "completed" });
     reportPreparation(preparation, { stage: "thinking", status: "active" });

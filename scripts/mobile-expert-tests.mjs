@@ -34,25 +34,29 @@ async function fixture(providerAction = async () => answer("openai-completions",
   settings.apiProviders = [provider]; settings.activeApiProviderId = provider.id; settings.defaultModel = "fixture";
   const store = new api.MobileStore(host.adapter, "plugin/mobile", "expert-fixture"); await store.load(); await store.setMemoryEnabled(false);
   let services, available = true, failDownload = false, version = "draft-1", ordinarySkills = 0;
-  const requests = [], opens = [], savedSettings = [];
+  const requests = [], opens = [], savedSettings = [], hireReports = [];
   const access = { checkCapability: () => available, requireCapability() { if (!available) throw new Error("PRO revoked"); }, subscribe: () => () => {} };
   const runtime = new api.MobileRuntime(host.app, store, () => settings, async request => { requests.push(JSON.parse(request.body)); return providerAction(request, { revoke: () => { available = false; } }); }, (id, turn) => services.context(id, turn), async () => {}, () => access);
   services = new api.MobileServices({ app: host.app, settings, store, runtime, navigation: {}, accountService: access, manifest: { version: "2.8.8" },
     saveSettings: async registry => { savedSettings.push(JSON.stringify(registry ?? settings)); }, registerEvent() {}, showPage: async () => {},
     openExpertConversation: async (agentId, id) => { opens.push({ agentId, id }); await store.update(state => { state.activeSessionId = id; state.page = { kind: "detail", taskId: id }; }); }
   }, "plugin/mobile");
-  Object.defineProperty(services, "experts", { value: { async resolve(id) {
+  Object.defineProperty(services, "experts", { value: { hireReporter: id => () => {
+    assert.ok(savedSettings.some(snapshot => JSON.parse(snapshot).agents?.some(agent => agent.expert?.expertId === id && agent.expert.hired)));
+    hireReports.push(id);
+  }, async resolve(id) {
     if (failDownload) throw new Error("synthetic download failed");
     const resolvedVersion = version;
     const assertAvailable = () => { if (!available) throw new Error("synthetic expert authorization revoked"); };
     assertAvailable();
     return { id, name: "测试专家", summary: "测试公开简介", version: resolvedVersion, meta: { scene: "测试" }, avatar: { kind: "custom", mimeType: "image/webp", dataUrl: "data:image/webp;base64,UklGRgAAAABXRUJQ", width: 256, height: 256 },
-      assertAvailable, buildTransientPrompt: () => { assertAvailable(); return `<expert-private-context>${PRIVATE_PERSONA}\n${PRIVATE_SKILL} ${resolvedVersion}</expert-private-context>`; }, licenseTexts: () => [] };
+      assertAvailable, skillOptions: () => [{ id: "check", name: "检查方案", description: "检查测试方案" }],
+      buildTransientPrompt: () => { assertAvailable(); return `<expert-private-context>${PRIVATE_PERSONA}\n${PRIVATE_SKILL} ${resolvedVersion}</expert-private-context>`; }, licenseTexts: () => [] };
   } } });
   await services.agents.initialize(); await runtime.initialize();
   const capabilities = services.capabilities;
   capabilities.resolveRunSkills = async () => { ordinarySkills++; throw new Error("expert must never resolve ordinary Skills"); };
-  return { ...host, settings, services, runtime, store, requests, opens, savedSettings, get ordinarySkills() { return ordinarySkills; },
+  return { ...host, settings, services, runtime, store, requests, opens, savedSettings, hireReports, get ordinarySkills() { return ordinarySkills; },
     revoke() { available = false; }, downloadFail(value) { failDownload = value; }, version(value) { version = value; },
     async dispose() { await runtime.shutdown(); runtime.dispose(); await services.dispose(); }
   };
@@ -153,9 +157,11 @@ try {
     const f = await fixture();
     try {
       f.downloadFail(true); await assert.rejects(f.services.hireExpert("synthetic"), /download failed/u); assert.deepEqual(JSON.parse(JSON.stringify(f.settings.agentRegistry.agents.map(agent => agent.id))), ["sol", "generalist"]);
+      assert.deepEqual(f.hireReports, []);
       f.downloadFail(false); await f.services.hireExpert("synthetic"); await f.services.openExpert("expert-synthetic"); const id = f.opens.at(-1).id;
       f.version("draft-2"); const submission = await f.runtime.submit("update package", id); await submission.completion;
       assert.equal(f.settings.agentRegistry.agents.find(agent => agent.id === "expert-synthetic").expert.packageVersion, "draft-2");
+      assert.deepEqual(f.hireReports, ["synthetic"], "refreshing the package does not count as a hire");
       assert.equal(f.store.getSession(id).runs.at(-1).agentSnapshot.expertPackageVersion, "draft-2"); assertPublicPersistence(f);
     } finally { await f.dispose(); }
   });

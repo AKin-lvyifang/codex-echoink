@@ -132,7 +132,8 @@ export async function runOnboardingAgentEditorTests(win: Window & typeof globalT
     assert.equal(f.saved[0].agent.name, "我的同事"); assert.equal(f.saved[0].agent.id, f.allocatedIds[0]);
     assert.equal(f.saved[0].agent.position, change === "position" ? "用户自己填写的职位" : "");
     assert.deepEqual(f.saved[0].moduleIds, change === "module" ? ["journal"] : []);
-    assert.deepEqual(f.saved[0].agent.capabilityIds, ["module", "capability"].includes(change) ? ["journal"] : []);
+    assert.deepEqual(f.saved[0].agent.capabilityIds, change === "module" || change === "capability" ? ["journal"] : []);
+    assert.deepEqual(f.saved[0].agent.disabledCapabilityIds ?? [], []);
     if (change === "avatar") assert.deepEqual(f.saved[0].agent.avatar, { kind: "preset", presetId: "nova" });
     if (change === "style") assert.equal(f.saved[0].agent.styleId, "analysis");
     f.dispose();

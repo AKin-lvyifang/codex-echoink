@@ -41,6 +41,7 @@ export interface MaintenanceP1Host {
   save(record: KnowledgeMaintenanceRecord): Promise<void>;
   current?(input: Readonly<PiKnowledgeMaintenanceToolInput>, stage: import("./maintenance-activity").MaintenanceActivityStage, path: string): Promise<void>;
   read(path: string): Promise<string | null>;
+  isReadOnlySource?(input: Readonly<PiKnowledgeMaintenanceToolInput>, path: string): Promise<boolean>;
   /** Resolve/reject pending WALs before replacing the basis of an uncommitted page. */
   recoverBeforeRebase(): Promise<void>;
   /** Existing WAL/readback proof, independent of later user edits to the target. */
@@ -271,7 +272,7 @@ export class MaintenanceP1Workflow {
       }
     }
     await this.finalize(input, record);
-    return this.receipt(record, state.phase === "completed" ? "清单与原文双链已完成。" : "清单保留；按pendingPages继续，成功页不重写。");
+    return this.receipt(record, state.phase === "completed" ? record.summary : "清单保留；按pendingPages继续，成功页不重写。");
   }
   private invalidateDecompositions(record: KnowledgeMaintenanceRecord, path: string): void {
     const state = record.p1!;
@@ -634,6 +635,16 @@ export class MaintenanceP1Workflow {
       await this.assertSources(record);
       const before = await this.host.read(source.path);
       if (before === null) throw new Error("原文暂不可读，反链待恢复。");
+      if (await this.host.isReadOnlySource?.(input, source.path)) {
+        if (rawDigestFingerprint(source.path, Buffer.from(before)) !== source.fingerprint) throw new Error(`来源已变化：${source.path}`);
+        source.readOnly = true;
+        state.finalizedSources.push(source.path);
+        source.status = "processed";
+        source.evidencePaths = targetPaths;
+        if (state.sourceFrontmatterFailures) delete state.sourceFrontmatterFailures[source.path];
+        await this.host.save(record);
+        continue;
+      }
       const fields: MaintenanceSourceFields = { status: "已提炼", summary: state.decompositions.find(d => d.sourcePath === source.path)!.summary, targetPaths };
       let content: string;
       try { content = patchMaintenanceSourceFrontmatter(before, fields); }
@@ -667,7 +678,7 @@ export class MaintenanceP1Workflow {
       status: state.phase === "completed" && !retainedIssues.length ? state.writingPlan.length ? "completed" : "noop" : "partial",
       issues: [...retainedIssues, ...formatIssues, ...(!partialSettled ? [{ code: "p1_pending", message: "维护阶段尚未完成" }] : [])],
       notes: state.writingPlan.filter(p => state.committedPages[p.id]).map(p => knowledgeMaintenanceNoteFromReadback({ operation: p.expectedTarget.kind === "missing" ? "created" : "updated", path: p.targetPath, content: state.drafts[p.id].content })) });
-    record.summary = state.phase === "completed" ? retainedIssues.length ? "知识与来源已保存，仍有未完成项" : "知识清单与原文双链已完成" : partialSettled ? "本批部分完成，来源属性回写失败" : "清单部分完成，保留未完页与反链";
+    record.summary = state.phase === "completed" ? retainedIssues.length ? "知识与来源已保存，仍有未完成项" : record.sources.some(source => source.readOnly) ? "知识整理已完成，只读来源的处理结果已保存在维护记录" : "知识清单与原文双链已完成" : partialSettled ? "本批部分完成，来源属性回写失败" : "清单部分完成，保留未完页与反链";
     await this.host.save(record);
     if (!isP1Open(record)) releaseMaintenancePages(record.recordId);
   }

@@ -209,6 +209,10 @@ async function programmaticTurnBoundaries(root: string): Promise<void> {
     sessionApi: { codingAgentVersion: VERSION, currentSessionVersion: CURRENT_SESSION_VERSION,
       open: (file, sessionRoot, cwd) => SessionManager.open(file, sessionRoot, cwd) },
     resolveConversationCwd: () => root, idFactory: () => `program-run-${++sequence}`,
+    verifyCommunityExpertRun: async agentId => {
+      if (agentId === "expert-community-fixture") throw new Error("此专家已下架，无法继续运行。");
+      return undefined;
+    },
     knowledge: { retrieveAsk: retrieve, retrieveChat: retrieve, recordUsage: async () => undefined,
       verifyAskReferences: async (input: { references: readonly unknown[] }) => ({ status: "verified", references: input.references }) } as never,
     createAgentSession: async input => {
@@ -244,6 +248,11 @@ async function programmaticTurnBoundaries(root: string): Promise<void> {
     await backgroundCompany.recordStaffActivity({ conversationId: "direct-staff", piSessionId: "staff-session", turnId: "staff-turn", agentId: "generalist",
       title: "直接交办任务", summary: "STAFF-ONLY-BACKGROUND", at: 1 });
     await runtime.initialize();
+    await runtime.createConversation({ conversationId: "unlisted-expert", agentId: "expert-community-fixture", title: "社区专家", cwd: root });
+    await assert.rejects(runtime.submit({ conversationId: "unlisted-expert", text: "下架后的测试请求", submittedAt: Date.now(),
+      permission: "workspace-write", reasoning: "none", runtimeProviderId: "company-offline", modelId: "company-offline-model" }), /已下架/u);
+    assert.equal(scopes.length, 0, "the desktop run is blocked before the Pi session can start");
+    assert.equal(providers, 0);
     await runtime.createConversation({ conversationId: "router-turns", agentId: "sol", companyRole: "router", title: "总助", cwd: root });
     const submit = async (programmatic: boolean, approvalKey?: string, text = "请按我的知识库总结项目计划") => {
       const handle = await runtime.submit({ conversationId: "router-turns", text, submittedAt: Date.now(),

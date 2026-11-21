@@ -606,10 +606,8 @@ export class MobileRuntime {
     if (this.blockedAgents.has(run.turn.agentSnapshot.agentId)) throw new Error("Agent 已停止接收新任务。");
     run.policy.assertTool("task_update");
     run.expertContext?.assertAvailable();
-    if (!run.turn.agentSnapshot.expertId) {
-      if (run.turn.skillId) run.policy.assertSkill(run.turn.skillId);
-      this.capabilities?.().assertRunSkills(run.taskId);
-    }
+    if (run.turn.skillId) run.policy.assertSkill(run.turn.skillId);
+    this.capabilities?.().assertRunSkills(run.taskId);
     if (run.turn.notePath) run.policy.assertReadPath(run.turn.notePath);
     const provider = this.settings().apiProviders.find(item => item.id === run.provider.id);
     const model = provider?.models.find(item => item.id === run.model.id);
@@ -678,7 +676,7 @@ export class MobileRuntime {
         "user_question", ...directResourceToolNames(turn.text, admittedNames),
         ...(run.companyRole === "router" ? COMPANY_ROUTER_TOOLS : [])
       ]);
-      const specialized = run.resume || run.expertContext || run.companyProgrammatic || run.companyApprovalKey || run.companyRole === "worker"
+      const specialized = run.resume || run.companyProgrammatic || run.companyApprovalKey || run.companyRole === "worker"
         || companySession?.projectId || turn.notePath || turn.skillId
         || run.draftContext?.attachments?.length || /^\s*\/(ask|maintain)(?:\s|$)/iu.test(turn.text);
       let tools = specialized ? admittedTools : admittedTools.filter(tool => defaultTools.has(tool.name));

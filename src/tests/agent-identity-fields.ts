@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { agentDisplayTitle, agentPositionDescription } from "../agents/identity";
 import { defaultAgentRegistry, normalizeAgentRegistry } from "../agents/registry";
 import { AGENT_PRESETS } from "../agents/presets";
-import { assertExpertAgentLocks, preserveExpertAgentLocks } from "../agents/persona";
+import { applyExpertIdentityOverrides, assertExpertAgentLocks } from "../agents/persona";
 import { agentTaskSystemPrompt, resolveAgentRunSnapshot } from "../agents/capability-core";
-import { hireExpert } from "../agents/expert-lifecycle";
-import type { AgentDefinition } from "../agents/types";
+import { dismissExpert, hireExpert } from "../agents/expert-lifecycle";
+import { hasAgentCapabilityGrant, type AgentDefinition } from "../agents/types";
 import type { ResolvedExpertPackage } from "../experts/service";
 import { renderAgentTaskList } from "../ui/codex-view/task-list";
 import { renderAgentRoster } from "../ui/codex-view/agent-roster";
@@ -45,16 +45,35 @@ export function runAgentIdentityFieldsTests(document: Document): void {
 
   const expert: AgentDefinition = { id: "expert-socrates", name: "苏格拉底", position: "思考伙伴", avatar: { kind: "default" }, styleId: "analysis", kind: "expert",
     expert: { expertId: "socrates", hired: true, packageVersion: "1", summary: "帮你把问题想清楚", disclosureShown: false, events: [] } };
-  const experts = normalizeAgentRegistry({ ...defaultAgentRegistry(), agents: [expert] });
+  const oldRegistry = defaultAgentRegistry();
+  delete oldRegistry.capabilityMigrationVersion;
+  oldRegistry.agents[0].disabledCapabilityIds = ["web-search"];
+  oldRegistry.agents[1].disabledCapabilityIds = ["finance"];
+  oldRegistry.agents.push(expert, { ...writer, capabilityIds: [] }, { ...writer, id: "researcher", capabilityIds: ["web-search"] });
+  oldRegistry.moduleOwners.finance = expert.id;
+  const experts = normalizeAgentRegistry(oldRegistry);
   const normalizedExpert = experts.agents.find(agent => agent.id === expert.id)!;
   assert.equal(normalizedExpert.position, "思考伙伴");
   assert.equal(normalizedExpert.positionDescription, expert.expert!.summary);
   assert.deepEqual(normalizeAgentRegistry(experts), experts);
+  assert.equal(hasAgentCapabilityGrant(experts.agents.find(agent => agent.id === writer.id)!, "web-search"), false);
+  assert.equal(hasAgentCapabilityGrant(experts.agents.find(agent => agent.id === "researcher")!, "web-search"), true);
+  assert.deepEqual(experts.agents.slice(0, 2).map(agent => agent.disabledCapabilityIds), [["web-search"], ["finance"]]);
+  assert.deepEqual(normalizedExpert.capabilityIds, ["journal", "knowledge", "finance"]);
   assert.throws(() => assertExpertAgentLocks(normalizedExpert, { ...normalizedExpert, positionDescription: "修改简介" }), /expert_agent_locked/u);
-  assert.equal(preserveExpertAgentLocks(normalizedExpert, { ...normalizedExpert, positionDescription: "过期草稿" }).positionDescription, expert.expert!.summary);
+  const draft: AgentDefinition = { ...normalizedExpert, name: "苏老师", avatar: { kind: "preset", presetId: "lin" },
+    capabilityIds: [...normalizedExpert.capabilityIds!, "vault-skill:synthetic", "mcp:synthetic:lookup"] };
+  assertExpertAgentLocks(normalizedExpert, draft);
+  experts.agents[experts.agents.indexOf(normalizedExpert)] = applyExpertIdentityOverrides(normalizedExpert, draft);
   const pack = { id: "socrates", name: "苏格拉底", version: "2", avatar: expert.avatar, summary: "新的公开简介", meta: { scene: "哲学顾问" } } as ResolvedExpertPackage;
   const hired = hireExpert(experts, pack);
   assert.equal(hired.position, "哲学顾问"); assert.equal(hired.positionDescription, pack.summary);
+  assert.equal(hired.name, draft.name); assert.deepEqual(hired.avatar, draft.avatar);
+  dismissExpert(experts, expert.id);
+  const rehired = hireExpert(normalizeAgentRegistry(experts), { ...pack, version: "3" });
+  assert.equal(rehired.name, draft.name); assert.deepEqual(rehired.avatar, draft.avatar);
+  assert.deepEqual(rehired.capabilityIds, draft.capabilityIds);
+  assert.equal(rehired.persona, undefined);
 
   const snapshot = resolveAgentRunSnapshot({ agentRegistry: migrated }, "writer");
   writer.positionDescription = "后续修改";

@@ -3,6 +3,8 @@ import { AGENT_MODULE_IDS } from "./types";
 import { isExpertAgent } from "./persona";
 import { normalizeExpertDisclosure } from "../experts/disclosure";
 import type { ResolvedExpertPackage } from "../experts/service";
+import { OFFICIAL_EXPERT_MODULES } from "./expert-capabilities";
+import { grantModuleCapabilities } from "./registry";
 
 /** No package body or credential belongs in the Agent registry. */
 export function hireExpert(registry: AgentRegistry, pack: ResolvedExpertPackage, at = Date.now()): AgentDefinition {
@@ -14,14 +16,21 @@ export function hireExpert(registry: AgentRegistry, pack: ResolvedExpertPackage,
   const expert = previous?.expert;
   const disclosure = normalizeExpertDisclosure(pack.disclosure);
   const next: AgentDefinition = {
-    id, kind: "expert", name: pack.name, position: pack.meta.scene, positionDescription: pack.summary, avatar: pack.avatar,
+    id, kind: "expert", name: expert?.displayNameOverride ?? pack.name, position: pack.meta.scene, positionDescription: pack.summary, avatar: expert?.avatarOverride ?? pack.avatar,
     styleId: "execution", identityEdited: true,
+    capabilityIds: [...(previous?.capabilityIds ?? [])],
+    ...(previous?.disabledCapabilityIds ? { disabledCapabilityIds: [...previous.disabledCapabilityIds] } : {}),
     expert: { expertId: pack.id, hired: true, packageVersion: pack.version, summary: pack.summary,
+      ...(pack.meta.source ? { source: pack.meta.source } : {}),
+      ...(expert?.displayNameOverride ? { displayNameOverride: expert.displayNameOverride } : {}),
+      ...(expert?.avatarOverride ? { avatarOverride: expert.avatarOverride } : {}),
       ...(disclosure ? { disclosure } : {}),
       disclosureShown: expert?.disclosureShown ?? false,
       ...(expert?.lastConversationId ? { lastConversationId: expert.lastConversationId } : {}),
       events: [...(expert?.events ?? []), ...(rehired ? [{ id: crypto.randomUUID(), at }] : [])] }
   };
+  if (!previous) for (const moduleId of OFFICIAL_EXPERT_MODULES[pack.id] ?? []) grantModuleCapabilities(next, moduleId);
+  for (const moduleId of AGENT_MODULE_IDS) if (registry.moduleOwners[moduleId] === id) grantModuleCapabilities(next, moduleId);
   if (previous) registry.agents[registry.agents.indexOf(previous)] = next;
   else registry.agents.push(next);
   return next;

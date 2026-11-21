@@ -12,6 +12,8 @@ import { EchoInkMcpServer } from "./server";
 import { EchoInkMcpReadTools } from "./tools";
 import type { EchoInkMcpServerSettings } from "./settings";
 import { createConceptExplorerPort } from "../knowledge-base/obsidian-concept-explorer";
+import { collectChatKnowledgeCandidates } from "../knowledge-base/chat-knowledge-candidates";
+import { getDecisionClient } from "../membership/decision-client";
 
 const { randomBytes, createHash } = getDesktopCrypto();
 const path = getDesktopPath();
@@ -22,6 +24,7 @@ export class EchoInkMcpController {
   private readonly body: VaultBodySearch;
   private readonly releaseEvents: () => void;
   private readonly vaultKey: string;
+  private readonly tools: EchoInkMcpReadTools;
   private disposed = false;
   private signature = "";
   private tail = Promise.resolve();
@@ -42,11 +45,15 @@ export class EchoInkMcpController {
     });
     const index = new KnowledgeAgentIndex({ vaultPath: vaultRoot, storageRootPath: storage, bodySearch: this.body,
       linkResolver: (link, source) => plugin.app.metadataCache.getFirstLinkpathDest(link, source)?.path });
-    this.releaseEvents = bindVaultBodySearchEvents(plugin.app, { invalidate: relative => index.invalidate(relative) });
+    // `tools` is assigned below, before any Vault event can fire.
+    this.releaseEvents = bindVaultBodySearchEvents(plugin.app, { invalidate: relative => { tools.invalidateContext(); return index.invalidate(relative); } });
     const concept = createConceptExplorerPort(plugin.app, index, this.body);
-    const tools = new EchoInkMcpReadTools({ knowledge: { ...concept, search: input => index.search(input), scopeKey: () => this.body.scopeKey(), allowsPath: value => this.body.allowsPath(value) },
+    const tools = this.tools = new EchoInkMcpReadTools({ knowledge: { ...concept, search: input => index.search(input), scopeKey: () => this.body.scopeKey(), allowsPath: value => this.body.allowsPath(value) },
       memory: async () => { const local = await plugin.getKnowledgeUpgradeLocalData(); return { repository: local.personalMemory, vaultId: local.vaultIdentity.vaultId }; },
-      access: () => this.access() });
+      access: () => this.access(),
+      // Cold MCP searches also check the filesystem identity of eligible notes.
+      context: { decisions: () => getDecisionClient(),
+        noteCandidates: task => collectChatKnowledgeCandidates({ vaultPath: vaultRoot, agentIndex: index, question: task, timeBudgetMs: 8_000 }) } });
     this.server = new EchoInkMcpServer({ tools, access: () => this.access(), token: () => plugin.settings.mcpServer.token, version: plugin.manifest.version });
     this.releaseAccount = (plugin.accountService ?? unavailableCapabilityAccess).subscribe(() => {
       if (!this.access().pro) this.server.revoke();
@@ -59,7 +66,7 @@ export class EchoInkMcpController {
     const signature = JSON.stringify([this.plugin.settings.mcpServer, this.access().pro]);
     if (signature !== this.signature) { this.signature = signature; this.server.revoke(); }
     this.tail = this.tail.catch(() => undefined).then(async () => {
-      if (!this.access().enabled || !this.access().pro) { await this.server.stop(); return; }
+      if (!this.access().enabled || !this.access().pro) { this.tools.invalidateContext(); await this.server.stop(); return; }
       const settings = this.plugin.settings.mcpServer;
       if (!settings.token || settings.tokenVault !== this.vaultKey) {
         settings.token = randomBytes(32).toString("hex"); settings.tokenVault = this.vaultKey;
@@ -87,5 +94,5 @@ export class EchoInkMcpController {
     try { await this.plugin.persistPiNativeSettings(); await this.sync(); }
     catch (error) { this.plugin.settings.mcpServer.token = previous; await this.sync(); throw error; }
   }
-  dispose(): void { this.disposed = true; this.releaseAccount(); this.releaseEvents(); this.server.revoke(); void this.server.stop(); this.body.dispose(); }
+  dispose(): void { this.disposed = true; this.tools.invalidateContext(); this.releaseAccount(); this.releaseEvents(); this.server.revoke(); void this.server.stop(); this.body.dispose(); }
 }
