@@ -8,6 +8,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Type, type TSchema } from "@earendil-works/pi-ai";
 import {
+  isPersonalMemoryKind,
   type PersonalMemoryKind,
   type PersonalMemoryRecord,
   type PersonalMemoryRuntimeContext,
@@ -611,7 +612,7 @@ function normalizeWriteRequest(
     requireExactKeys(input, ["operation", "kind", "title", "content", "recallWhen"], ["scope", "asOf", "due", "remindAt", "reason"]);
     return Object.freeze({
       operation,
-      kind: requireEnum(input.kind, isKind),
+      kind: requireEnum(input.kind, isPersonalMemoryKind),
       title: requireString(input.title, 200),
       content: requireString(input.content, 24_000),
       recallWhen: requireString(input.recallWhen, 500),
@@ -968,7 +969,7 @@ function requireEnumArray<T extends string>(value: unknown, guard: (item: unknow
 }
 
 function isKind(value: unknown): value is PersonalMemoryKind {
-  return ["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(String(value));
+  return isPersonalMemoryKind(String(value));
 }
 
 function isStatus(value: unknown): value is PersonalMemoryStatus {

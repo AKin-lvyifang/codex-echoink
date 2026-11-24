@@ -186,35 +186,65 @@ export async function mobileStartupConflictScenarios({ code, dom, test, FileView
     });
     await test(`production reload contains an old instance's late shutdown commit: ${tablet ? "iPad" : "iPhone"}`, async () => {
       const f = fixture(tablet), old = f.create(); await old.onload();
-      const path = old.store.statePath, original = f.files.get(path), entered = deferred(), release = deferred();
+      const path = old.store.statePath, entered = deferred(), release = deferred();
       const write = f.adapter.write.bind(f.adapter); let held = false;
       f.adapter.write = async (file, bytes) => {
         if (!held && file.startsWith(`${path}.`) && file.endsWith(".tmp")) { held = true; entered.resolve(); await release.promise; }
         return write(file, bytes);
       };
-      const stopped = old.runtime.shutdown("plugin_disabled"); old.onunload(); dom.window.clearInterval(old.interval);
+      const lateSave = old.store.patchSession(old.store.session.id, { title: "退出前保存的任务" });
       await entered.promise;
-      const read = f.adapter.read.bind(f.adapter); let loaded = false, latest;
+      old.onunload(); dom.window.clearInterval(old.interval);
+      const read = f.adapter.read.bind(f.adapter); let reads = 0;
       f.adapter.read = async file => {
-        if (!loaded && file === path) {
-          loaded = true; const bytes = await read(file); release.resolve(); await stopped; latest = f.files.get(path); return bytes;
-        }
+        if (file === path) reads++;
         return read(file);
+      };
+      const plugin = f.create();
+      const opening = plugin.onload();
+      try {
+        await tick();
+        assert.equal(reads, 0, "the new plugin waits for the old write");
+        release.resolve(); await lateSave; await opening;
+        assert.equal(plugin.store.session.title, "退出前保存的任务");
+        assert.equal(plugin.store.unavailableReason, undefined);
+        assert.equal(plugin.store.taskFileChanged, false);
+        const latest = f.files.get(path);
+        await plugin.runtime.shutdown("app_backgrounded"); await plugin.runtime.foreground();
+        assert.equal(f.files.get(path), latest, "idle startup and backgrounding leave bytes and revision unchanged");
+      } finally { release.resolve(); await opening; await close(plugin); await old.services.dispose(); }
+    });
+    await test(`startup task file conflict has no Notice and reload starts deferred services: ${tablet ? "iPad" : "iPhone"}`, async () => {
+      const { f, path } = await seed(tablet), read = f.adapter.read.bind(f.adapter);
+      let replaced = false;
+      f.adapter.read = async file => {
+        const bytes = await read(file);
+        if (file === path && !replaced) {
+          replaced = true;
+          const state = JSON.parse(bytes);
+          state.sessions[0].title = "外部更新的任务";
+          f.files.set(path, JSON.stringify(state));
+        }
+        return bytes;
       };
       const plugin = f.create();
       try {
         await plugin.onload();
-        assert.notEqual(latest, original, "the real old shutdown committed after the new Store read");
-        assert.equal(f.files.get(path), latest, "cold recovery never overwrites the late commit");
-        assert.match(plugin.store.unavailableReason, /资料已变化/u);
-        await assertAvailableShell(f, plugin);
-        await plugin.runtime.shutdown("plugin_disabled"); await tick();
-        assert.equal(f.files.get(path), latest, "disabled shutdown never retries the stale snapshot");
-      } finally { release.resolve(); await stopped; await close(plugin); await old.services.dispose(); }
+        assert.equal(plugin.store.unavailableReason, undefined);
+        assert.equal(plugin.store.taskFileChanged, true);
+        assert.equal(plugin.cloudSync, null);
+        assert.deepEqual(f.notices, []);
+        await plugin.reloadTaskFile();
+        assert.equal(plugin.store.taskFileChanged, false);
+        assert.equal(plugin.store.session.title, "外部更新的任务");
+        assert.ok(plugin.cloudSync);
+        assert.deepEqual(f.notices, []);
+      } finally { f.adapter.read = read; await close(plugin); }
     });
   }
   for (const stage of ["store", "memory", "cold-recovery"]) await test(`production startup still rejects unexpected ${stage} I/O failures`, async () => {
     const { f, path } = await seed(false), plugin = f.create();
+    if (stage === "cold-recovery") f.files.set(path, JSON.stringify({ ...JSON.parse(f.files.get(path)), taskRuntimeVersion: 1 }));
     const read = f.adapter.read.bind(f.adapter), write = f.adapter.write.bind(f.adapter);
     f.adapter.read = async file => {
       if (stage === "store" && file === path || stage === "memory" && file === `${shared}.runtime/manifest.json`) throw new Error("UNEXPECTED_IO_FAILURE");

@@ -3,6 +3,7 @@ import { NewsPageView, NEWS_PAGE_VIEW_TYPE } from "../home/news-page";
 import { EnglishDiaryPageView, ENGLISH_DIARY_PAGE_VIEW_TYPE } from "../home/english-diary-page";
 import { KnowledgePageView, KNOWLEDGE_PAGE_VIEW_TYPE } from "../home/knowledge-page";
 import { MemoryPageView, MEMORY_PAGE_VIEW_TYPE } from "../home/memory/memory-page";
+import { ExpertHallView, EXPERT_HALL_VIEW_TYPE } from "../experts/view";
 import type { MemoryPageRequest } from "../home/memory/memory-page-types";
 import { TodoPageView, TODO_PAGE_VIEW_TYPE } from "../home/todo-page";
 import { PROJECT_PAGE_VIEW_TYPE } from "../home/project-page";
@@ -14,6 +15,7 @@ import type { SettingsTab } from "../settings/settings";
 import { resolveDesktopSettingsRoute } from "../settings/desktop-settings-route";
 import { EchoInkHomeView, VIEW_TYPE_ECHOINK_HOME } from "../home/home-view";
 import { EchoInkWorkbenchView } from "../home/workbench-view";
+import { embeddedWorkbenchViews } from "../home/workbench-module-panel";
 import { openObsidianGraphLeaf } from "../home/open-native-graph";
 import { isReviewHtmlPath } from "../review/schedule";
 import { ReviewPreviewView, VIEW_TYPE_REVIEW_PREVIEW } from "../review/preview-view";
@@ -39,7 +41,19 @@ export class EchoInkViewService {
     this.plugin.app.workspace.setActiveLeaf(leaf, { focus: true });
     // onOpen and Vault events own data loading. Native journal settings can
     // change while away, but merely revealing an unchanged home is free.
+    if (leaf.view instanceof EchoInkWorkbenchView) await leaf.view.showOverview();
     if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshIfSettingsChanged();
+  }
+
+  refreshWorkbenchNavigation(): void {
+    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home")]) {
+      if (leaf.view instanceof EchoInkWorkbenchView) leaf.view.refreshNavigation();
+    }
+  }
+
+  /** Module pages in their own tabs plus those shown inside a workbench. */
+  private moduleViews(...types: string[]): unknown[] {
+    return [...types.flatMap(type => this.plugin.app.workspace.getLeavesOfType(type).map(leaf => leaf.view as unknown)), ...embeddedWorkbenchViews()];
   }
 
   async activateJournalView(): Promise<void> {
@@ -158,9 +172,9 @@ export class EchoInkViewService {
   refreshKnowledgeBaseSurfaces(): void {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(MEMORY_PAGE_VIEW_TYPE)) if (leaf.view instanceof MemoryPageView) void leaf.view.refresh();
     this.getCodexView()?.refreshKnowledgeBaseDashboard();
-    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)]) {
-      if (leaf.view instanceof EchoInkHomeView || leaf.view instanceof EchoInkWorkbenchView || leaf.view instanceof EchoInkJournalView || leaf.view instanceof TodoPageView || leaf.view instanceof KnowledgePageView || leaf.view instanceof EnglishDiaryPageView || leaf.view instanceof PdfReadingPageView) {
-        void leaf.view.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
+    for (const view of this.moduleViews(VIEW_TYPE_ECHOINK_HOME, "echoink-legacy-home", VIEW_TYPE_ECHOINK_JOURNAL, TODO_PAGE_VIEW_TYPE, KNOWLEDGE_PAGE_VIEW_TYPE, ENGLISH_DIARY_PAGE_VIEW_TYPE, PDF_READING_PAGE_VIEW_TYPE)) {
+      if (view instanceof EchoInkHomeView || view instanceof EchoInkWorkbenchView || view instanceof EchoInkJournalView || view instanceof TodoPageView || view instanceof KnowledgePageView || view instanceof EnglishDiaryPageView || view instanceof PdfReadingPageView) {
+        void view.refresh().catch((error) => console.warn("EchoInk 首页刷新失败", error));
       }
     }
   }
@@ -171,14 +185,17 @@ export class EchoInkViewService {
     for (const leaf of this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_CODEX)) {
       if (leaf.view instanceof CodexView) leaf.view.refreshLanguage();
     }
-    for (const leaf of [...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_HOME), ...this.plugin.app.workspace.getLeavesOfType("echoink-legacy-home"), ...this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOINK_JOURNAL), ...this.plugin.app.workspace.getLeavesOfType(TODO_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(KNOWLEDGE_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(ENGLISH_DIARY_PAGE_VIEW_TYPE), ...this.plugin.app.workspace.getLeavesOfType(PDF_READING_PAGE_VIEW_TYPE)]) {
-      if (!(leaf.view instanceof EchoInkHomeView) && !(leaf.view instanceof EchoInkWorkbenchView) && !(leaf.view instanceof EchoInkJournalView) && !(leaf.view instanceof TodoPageView) && !(leaf.view instanceof KnowledgePageView) && !(leaf.view instanceof EnglishDiaryPageView) && !(leaf.view instanceof PdfReadingPageView)) continue;
-      refreshes.push(Promise.resolve(leaf.view.refreshLanguage()).catch((error) => {
+    for (const view of this.moduleViews(VIEW_TYPE_ECHOINK_HOME, "echoink-legacy-home", VIEW_TYPE_ECHOINK_JOURNAL, TODO_PAGE_VIEW_TYPE, KNOWLEDGE_PAGE_VIEW_TYPE, ENGLISH_DIARY_PAGE_VIEW_TYPE, PDF_READING_PAGE_VIEW_TYPE)) {
+      if (!(view instanceof EchoInkHomeView) && !(view instanceof EchoInkWorkbenchView) && !(view instanceof EchoInkJournalView) && !(view instanceof TodoPageView) && !(view instanceof KnowledgePageView) && !(view instanceof EnglishDiaryPageView) && !(view instanceof PdfReadingPageView)) continue;
+      refreshes.push(Promise.resolve(view.refreshLanguage()).catch((error) => {
         console.warn("EchoInk 首页语言刷新失败", error);
       }));
     }
-    for (const leaf of this.plugin.app.workspace.getLeavesOfType(NEWS_PAGE_VIEW_TYPE)) if (leaf.view instanceof NewsPageView) leaf.view.refreshLanguage();
+    for (const view of this.moduleViews(NEWS_PAGE_VIEW_TYPE)) if (view instanceof NewsPageView) view.refreshLanguage();
+    for (const view of this.moduleViews(EXPERT_HALL_VIEW_TYPE)) if (view instanceof ExpertHallView) view.refreshLanguage();
     await Promise.all(refreshes);
+    const workspace = this.plugin.app.workspace;
+    (workspace as typeof workspace & { updateTitle?: () => void }).updateTitle?.();
   }
 
   async openWorkspaceResourceSettings(tab: ResourceManagementTab = "plugins"): Promise<void> {

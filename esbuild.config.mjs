@@ -211,8 +211,11 @@ const piRuntimeSurfacePlugin = {
           loader: "js",
           resolveDir: path.dirname(args.path),
           contents: `
+export const VERSION = ${JSON.stringify(piCodingAgentInstalledVersion)};
+
 export {
   CURRENT_SESSION_VERSION,
+  getLatestCompactionEntry,
   SessionManager,
   sessionEntryToContextMessages
 } from "./core/session-manager.js";
@@ -221,6 +224,7 @@ export { ModelRuntime } from "./core/model-runtime.js";
 export { SettingsManager } from "./core/settings-manager.js";
 
 export { createAgentSession } from "./core/sdk.js";
+export { estimateTokens } from "./core/compaction/index.js";
 
 export {
   createExtensionRuntime,

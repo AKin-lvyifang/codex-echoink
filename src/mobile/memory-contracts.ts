@@ -1,5 +1,6 @@
+import { isPersonalMemoryKind, type PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
+import { PersonalMemoryAccessError } from "../harness/memory/personal-memory-error";
 import type { DreamCorrectionEvent } from "../harness/memory/dream-correction-core";
-import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
 import type { UserProfileItem, UserProfileSlotDefinition } from "../harness/memory/user-profile-state";
 import type { MobileSession } from "./store";
 
@@ -44,4 +45,10 @@ export interface MobileMemorySettingsPort {
   listArchives(): Promise<MobileArchiveItem[]>;
   readArchive(id: string): Promise<MobileSession>;
   restoreArchive(id: string): Promise<void>;
+}
+
+export function validateMobileMemoryWriteEnums(kind: unknown, basis: unknown): void {
+  if (!isPersonalMemoryKind(kind) || (basis !== "explicit" && basis !== "observed")) {
+    throw new PersonalMemoryAccessError("invalid_request", "新增或修正记忆需要有效的类型、标题、正文、触发场景和依据。");
+  }
 }

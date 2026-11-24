@@ -4,7 +4,7 @@ import type { FinanceBillPlan, FinanceEntry } from "./store-core";
 import { effectiveFinanceEntries, financeSpendingFacts, filterFinanceEntries, localDate, type FinanceFilters } from "./finance-domain";
 
 export function validateFinanceBillPlan(plan: FinanceBillPlan): void {
-  if (!plan.id || !plan.name.trim()) throw new Error("请填写账单名称");
+  if (!plan.id || !plan.name.trim()) throw new Error("请填写专项预算名称");
   if (!Number.isSafeInteger(plan.budgetCents) || plan.budgetCents <= 0) throw new Error("总预算须为正金额，最多两位小数");
   let allocated=0;
   for(const [name,amount] of Object.entries(plan.allocations??{})) {

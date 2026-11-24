@@ -20,6 +20,7 @@ import type { EchoInkReasoningActivity } from "../../types/reasoning-summary";
 import { stableHashedIdentity } from "../../core/mapping";
 import { piToolCallIdFromProjectedMessageId } from "../../harness/pi-native/pi-chat-ui-projector";
 import { shouldDisplayReasoning } from "./reasoning-visibility";
+import { localizeKnownConversationSystemCopy } from "./ui-i18n";
 
 const ACTIVE_STATUSES = new Set([
   "running",
@@ -133,7 +134,6 @@ export function buildAgentTurns(
   messages: ChatMessage[],
   language: SettingsLanguage = "zh-CN"
 ): AgentTurnView[] {
-  const copy = conversationCopy(language);
   const indicesByKey = new Map<string, number[]>();
   messages.forEach((message, index) => {
     if (!isAssistantTurnMember(message)) return;
@@ -149,7 +149,7 @@ export function buildAgentTurns(
     const firstIndex = indices[0];
     const lastIndex = indices[indices.length - 1];
     if (hasForeignTurnBetween(messages, firstIndex, lastIndex, key)) continue;
-    turns.push(buildAgentTurn(messages, indices, key, copy));
+    turns.push(buildAgentTurn(messages, indices, key, language));
   }
   return turns.sort((left, right) => left.anchorIndex - right.anchorIndex);
 }
@@ -261,8 +261,9 @@ function buildAgentTurn(
   allMessages: ChatMessage[],
   indices: number[],
   key: string,
-  copy: ConversationCopy
+  language: SettingsLanguage
 ): AgentTurnView {
+  const copy = conversationCopy(language);
   const messages = indices.map((index) => allMessages[index]);
   const explicitTurn = latestExplicitTurn(messages);
   const providerReasoningSegments = explicitTurn
@@ -292,7 +293,7 @@ function buildAgentTurn(
         updatedAt
       ], updatedAt)
     : undefined;
-  const processNodes = buildProcessNodes(messages, explicitTurn?.processNodes ?? [], copy);
+  const processNodes = buildProcessNodes(messages, explicitTurn?.processNodes ?? [], copy, language);
   const currentNode = status === "waiting_for_user"
     ? undefined
     : processNodes.slice().reverse().find((node) => node.status === "running");
@@ -347,7 +348,8 @@ function buildAgentTurn(
 function buildProcessNodes(
   messages: readonly ChatMessage[],
   explicitNodes: readonly Readonly<EchoInkTurnProcessNode>[],
-  copy: ConversationCopy
+  copy: ConversationCopy,
+  language: SettingsLanguage
 ): Readonly<EchoInkTurnProcessNode>[] {
   const readNotes = uniqueNotePaths(messages.flatMap(message => knowledgeUsageMessageData(message).references.map(reference => reference.vaultRelativePath))).length;
   const explicitTurn = latestExplicitTurn(messages);
@@ -481,7 +483,7 @@ function buildProcessNodes(
   return nodes
     .map((node, index) => ({
       node: node.status === "failed" && node.title === copy.process.activityTitle("provider") && providerFailureText
-        ? { ...node, summary: providerFailureText }
+        ? { ...node, summary: localizeKnownConversationSystemCopy(language, providerFailureText) }
         : node,
       index
     }))

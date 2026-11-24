@@ -18,7 +18,7 @@ export async function openIPhoneFinanceSettings(ctx: IPhonePageContext, catalog?
     if (!view.alive) return; view.body.replaceChildren(); const settings = ctx.host.settings().lifestyle.finance, group = view.group();
     settingsSwitch(ctx, group, "启用财务", () => ctx.host.settings().lifestyle.finance.enabled, async value => { await setMobileModuleEnabled(ctx.host, "finance", value); render(); });
     if (settings.enabled) {
-      settingsCheck(ctx, group, "AI 分析", settings.aiEnabled, value => { void saveOption("aiEnabled", value); });
+      settingsCheck(ctx, group, "AI 结账报告", settings.aiEnabled, value => { void saveOption("aiEnabled", value); });
       settingsCheck(ctx, group, "导入时智能整理", settings.importAiEnabled, value => { void saveOption("importAiEnabled", value); });
       settingsCheck(ctx, group, "在首页显示", ctx.host.settings().homeModules.finance !== false, value => { void saveOption("showOnHome", value); });
     }

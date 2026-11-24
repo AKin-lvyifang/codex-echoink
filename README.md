@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://echoink.cn">
-    <img width="1024" alt="EchoInk 2.9.2 — customize experts and submit your own" src="assets/releases/echoink-agent-2.9.2-release.png">
+    <img width="1024" alt="EchoInk 2.9.3 — new to-dos and redesigned finance" src="assets/releases/echoink-agent-2.9.3-release.png">
   </a>
 </p>
 
@@ -20,7 +20,7 @@
 
 <p align="center">
   <a href="https://obsidian.md/plugins?id=codex-echoink"><img src="https://img.shields.io/badge/dynamic/json?logo=obsidian&color=7C3AED&label=downloads&query=%24%5B%22codex-echoink%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json&style=flat-square" alt="Downloads from Obsidian community plugins"></a>
-  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.2"><img src="https://img.shields.io/badge/version-2.9.2-0EA5E9?style=flat-square" alt="Version 2.9.2"></a>
+  <a href="https://github.com/AKin-lvyifang/codex-echoink/releases/tag/2.9.3"><img src="https://img.shields.io/badge/version-2.9.3-0EA5E9?style=flat-square" alt="Version 2.9.3"></a>
   <img src="https://img.shields.io/badge/platform-Desktop%20%2B%20Mobile%20Beta-16A34A?style=flat-square" alt="Desktop and Mobile Beta">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20base%20%2B%20Commercial%20PRO-475569?style=flat-square" alt="MIT base + Commercial PRO — see LICENSE"></a>
 </p>
@@ -32,7 +32,7 @@
 | 💬 **Chat with your notes** | Ask anything about your vault. Answers cite the notes they actually used. |
 | 📚 **Turn sources into knowledge** | Organize new material into a knowledge base, with health checkups and previewed repairs. |
 | 🧠 **Memory you can see and edit** | EchoInk learns about you over time. Browse, correct, pin, or forget any memory. |
-| 📅 **Journal, to-dos, and finances** | Write your day once. EchoInk can turn journal entries into tasks and records. |
+| 📅 **Journal, to-dos, and finances** | Add a task or log an expense in one line, and see your schedule and spending on a calendar. EchoInk can also pull tasks and expenses from your journal. |
 | 🤖 **A small AI team** | An assistant plans and delegates, role agents do the work, and you approve the decisions. |
 | ✏️ **Create from your sources** | Generate notes, Canvas layouts, and drawings from the material you already have. |
 | 🔌 **Your notes as context for other agents** | A local MCP server lets the agents you already use read the knowledge and memory you authorize. |
@@ -102,10 +102,10 @@ You can bring your own model API key on any plan. See [current plans and prices]
 
 | Feature | Description | Basic | PRO |
 | --- | --- | --- | --- |
-| Workbench | View tasks, reminders, starter cards, and weather for your chosen city in one place on desktop | ✅ | ✅ |
+| Workbench | See tasks, reminders, starter cards, and weather on desktop. Switch modules in the same workbench tab and customize its navigation | ✅ | ✅ |
 | Journal | Customize naming; preview moves for older journals and undo those moves on desktop | ✅ | ✅ |
-| To-dos | Manage categories, due dates and times, and completion; enable automatic journal-to-task organization on desktop | ✅ | ✅ |
-| Finance | Manage income, expenses, budgets, bill imports, and analysis | ❌ | ✅ |
+| To-dos | Group by date, add tasks in one line, and use subtasks and category colors. View the calendar by month, week, or day and drag to reschedule on desktop | ✅ | ✅ |
+| Finance | View income and expenses by month or year, add transactions in one line, manage fixed expenses and special budgets, and generate AI closing reports after importing bills | ❌ | ✅ |
 | English diary | Generate English drafts on desktop, correct errors or clearly unnatural English, and collect useful expressions | ❌ | ✅ |
 
 ### 🤖 Agent team
@@ -116,7 +116,7 @@ You can bring your own model API key on any plan. See [current plans and prices]
 | Module owners | Assign role agents to modules in Agent settings; choose an owner before starting. Paid modules retain their own entitlement requirements | ✅ | ✅ |
 | Multi-agent tasks | View employee tasks and outputs; review interruptions before resuming. Projects and employee conversations cannot yet be viewed or resumed across devices | ✅ | ✅ |
 | Agent persona import | Paste an existing persona when creating an Agent | ✅ | ✅ |
-| Expert hiring and submissions | Rename hired experts, change their avatars, and attach your own Skills and MCP tools. PRO users can submit an Agent. Approved entries show the author and hire count | ❌ | ✅ |
+| Expert hiring and submissions | Rename hired experts, change their avatars, and attach your own Skills and MCP tools. PRO users can submit an Agent and view the review status and reason on desktop, iPhone, and iPad. Approved entries show the author and hire count | ❌ | ✅ |
 
 </details>
 
@@ -135,7 +135,7 @@ You can bring your own model API key on any plan. See [current plans and prices]
 
 - **Your notes stay local by default.** Conversations, knowledge, memory, journals, and finances are stored in your vault. Only if you turn on Cloud Sync are files in the selected scope encrypted and uploaded to echoink.cn.
 - **AI requests go to the model service you choose**, with only the content needed for that request: directly to that service with your own API key, or through echoink.cn using AI credits when you choose xiaoecho.
-- **echoink.cn is used for** account sign-in and PRO authorization, Cloud Sync, xiaoecho, smart judgment, news, PRO Skill downloads, expert browsing, downloads, submissions, hire reporting and online availability checks, optional weather, workbench check-in, problem reports you choose to send after signing in, and update checks and release notes. PRO requires an EchoInk account; chat and knowledge with your own model do not.
+- **echoink.cn is used for** account sign-in and PRO authorization, Cloud Sync, xiaoecho, smart judgment, news, PRO Skill downloads, expert browsing, downloads, submissions and review receipts, hire reporting and online availability checks, optional weather, workbench check-in, problem reports you choose to send after signing in, and update checks and release notes. PRO requires an EchoInk account; chat and knowledge with your own model do not.
 - **Optional third-party services:** web search (Tavily or DeepSeek, off by default) and MinerU PDF parsing, each with its own account and billing.
 - **On desktop, EchoInk can access files outside the vault** according to the permission mode you select, and can run the local MCP commands you configure.
 - **Statistics and public counts.** EchoInk does not collect client-side telemetry. After a successful hire, the website counts each account once per expert and shows the total in the catalog.
@@ -166,7 +166,7 @@ The plugin file exceeds Obsidian Sync Standard's 5 MB per-file limit. Install or
 
 ## What's new
 
-**2.9.2** (2026-11-21) — Customize experts, submit your own, and fetch context in one MCP call. See the [changelog](CHANGELOG.md) and [releases](https://github.com/AKin-lvyifang/codex-echoink/releases).
+**2.9.3** (2026-11-24) — Add to-dos in one line and reschedule them on the calendar. Finance adds monthly closing reports. See the [changelog](CHANGELOG.md) and [releases](https://github.com/AKin-lvyifang/codex-echoink/releases).
 
 ## License
 

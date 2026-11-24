@@ -8,7 +8,7 @@ import { displayedTooltipsForTests, openTestMarkdownRenders } from "./obsidian-s
 import { buildFinanceAnalysisInput, financeDailyWeeks, parseFinanceAnalysisResponse,
   FinanceAnalysisValidationError, type FinanceAnalysisErrorCode } from "../lifestyle/finance-analysis";
 import { FINANCE_ANALYSIS_OUTPUT_PROTOCOL, FINANCE_ANALYSIS_SKILL } from "../harness/resources/finance-analysis-skill";
-import type { FinanceSummary } from "../lifestyle/finance-domain";
+import { localDate, type FinanceImportRow, type FinanceSummary } from "../lifestyle/finance-domain";
 import { financeGoalProgress, goalPeriod } from "../lifestyle/finance-goals";
 import { FINANCE_ANALYSIS_PROMPT_VERSION, LifestyleFinanceService as ProductionFinanceService } from "../lifestyle/finance-service";
 import { FinanceWorkspace } from "../lifestyle/finance-view";
@@ -294,6 +294,9 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
   assertCode('{"conclusion":"未完成', "invalid-json");
   assertCode(`${report("正常说明")} trailing`, "invalid-json");
   assertCode(JSON.stringify({ conclusion: "{{gross}}", charts: [{ id: "absent", explanation: "说明" }], suggestions: [] }), "invalid-chart");
+  const monthlyResponse = JSON.stringify({ version: 9, quotes: [], suggestions: ["记录中最显著的支出是什么"] });
+  const longMonthlyResponse = JSON.stringify({ version: 9, quotes: [], suggestions: ["长建议".repeat(20)] });
+  const partialMonthlyResponse = JSON.stringify({ version: 9, quotes: [{ id: "absent", quote: "不存在的原话" }], suggestions: ["一条建议", "两条建议", "三条建议", "<b>四</b>"] });
   const directory = await fsp.mkdtemp(path.join(os.tmpdir(), "echoink-finance-analysis-"));
   try {
     const store = new LifestyleStore(path.join(directory, "lifestyle.json"));
@@ -307,7 +310,8 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     let calls = 0, resolutions = 0, uses = 0, available = true, skill = FINANCE_ANALYSIS_SKILL;
     const systemPrompts: string[] = [];
     let hold = false, release: (() => void) | null = null;
-    let responseText = versionedResponse;
+    let responseText = monthlyResponse;
+    let failedMonth: string | undefined;
     const service = { store, plugin: { app, settings, registerEvent: () => undefined,
       getSkillRuntimeCoordinator: () => ({ resolveById: async (id: string) => { assert.equal(id, "finance-analysis"); resolutions++; },
         recordUse: async (id: string) => { assert.equal(id, "finance-analysis"); uses++; } }),
@@ -315,7 +319,9 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
       readEchoInkBuiltinSkill: async () => ({ fileStatus: "ready", content: skill }),
       generateLifestyleText: async (system: string, prompt: string) => {
         calls++; systemPrompts.push(system);
-        assert.ok(JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).有效交易明细.length > 0); assert.doesNotMatch(prompt, /coverageCompleteness|moneyCents|sourceId|银行卡号/u);
+        const facts = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1)).报告事实;
+        assert.ok(facts.支出); assert.doesNotMatch(prompt, /coverageCompleteness|moneyCents|sourceId|银行卡号/u);
+        if (failedMonth === facts.月份) throw new Error("合成模型故障");
         if (hold) await new Promise<void>((resolve) => { release = resolve; });
         return responseText;
       }
@@ -375,20 +381,20 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     responseText = oversizedResponse;
     await assert.rejects(finance.analyze("2026-09", true), /过长/u);
     assert.equal(finance.latestReport("2026-09"), null, "oversized response cannot restore the prior report");
-    responseText = longVersionedResponse;
+    responseText = longMonthlyResponse;
     const refreshed = await finance.analyze("2026-09", true);
     assert.notEqual(refreshed.id, changed.id, "valid refresh writes a new snapshot");
     assert.ok(refreshed.createdAt >= changed.createdAt);
     assert.equal(finance.latestReport("2026-09")?.id, refreshed.id);
-    responseText = partialVersionedResponse;
+    responseText = partialMonthlyResponse;
     const partial = await finance.analyze("2026-09", true);
-    assert.notEqual(partial.id, refreshed.id, "verified core with a rejected optional suggestion saves a new report");
-    assert.equal((partial.financeSnapshot as { omittedSuggestionCount: number }).omittedSuggestionCount, 2);
+    assert.notEqual(partial.id, refreshed.id, "unverifiable quotes and extra suggestions are dropped, the report still saves");
+    assert.deepEqual((partial.financeSnapshot as { suggestions: string[] }).suggestions, ["一条建议", "两条建议"]);
     assert.equal(finance.latestReport("2026-09")?.id, partial.id);
     responseText = validResponse;
     await assert.rejects(finance.analyze("2026-09", true), /暂时无法显示/u);
     assert.equal(finance.latestReport("2026-09"), null, "failed refresh does not fall back to the last report");
-    responseText = partialVersionedResponse;
+    responseText = partialMonthlyResponse;
     hold = true;
     const pendingA = finance.analyze("2026-09", true);
     const pendingB = finance.analyze("2026-09", true);
@@ -404,9 +410,10 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.equal(calls, 9);
     assert.equal(finance.latestReport("2026-09"), null, "cancellation leaves no stale current report");
     hold = false;
-    responseText = partialVersionedResponse;
+    responseText = partialMonthlyResponse;
     const displayReport = await finance.analyze("2026-09", true);
     assert.equal(calls, 10);
+    await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = parseFinanceAnalysisResponse(partialVersionedResponse, finance.analysisInput("2026-09")); });
     await finance.ledger.add(row("transfer-only", 50_000, "transfer", "其他", { date: "2026-08-20 10:00:00" }));
     await assert.rejects(finance.analyze("2026-08", true), /暂无可分析/u);
     assert.equal(calls, 10, "transfer-only months do not call the model");
@@ -416,7 +423,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     const document = new TestDocument();
     const parent = document.body.createDiv();
     openTestMarkdownRenders.length = 0;
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(parent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(parent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.equal(calls, 10, "rendering the analysis card never starts an automatic model call");
     assert.equal(openTestMarkdownRenders.length, 3, "text, chart explanation and action each use the Markdown renderer");
     assert.match(parent.textContent, /有 2 条建议未能完整生成，未展示/u);
@@ -427,7 +434,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
       "a text-first v8 report receives a readable introduction without rewriting its content");
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = allOmitted; });
     const allOmittedParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(allOmittedParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(allOmittedParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.match(allOmittedParent.textContent, /有 2 条建议未能完整生成，未展示/u);
     assert.doesNotMatch(allOmittedParent.textContent, /可以试试/u, "all omitted suggestions leave no empty heading");
     await store.update((draft) => {
@@ -435,7 +442,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
       delete snapshot.omittedSuggestionCount;
     });
     const legacyParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(legacyParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(legacyParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.doesNotMatch(legacyParent.textContent, /未能完整生成|undefined/u, "older snapshots without omission metadata remain readable");
     assert.equal(legacyParent.querySelector(".echoink-finance-ai-legacy-summary")?.querySelector("p")?.textContent,
       allOmitted.conclusion, "old conclusions keep their original text while only facts gain emphasis");
@@ -443,11 +450,11 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
       allOmitted.charts.length, "old chart snapshots remain visible");
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = versioned; });
     const versionedParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(versionedParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(versionedParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.match(versionedParent.textContent, /记录中最显著的支出是什么.*收支差额如何理解/u);
     assert.equal(versionedParent.querySelector(".echoink-finance-ai-table-panel")?.querySelectorAll("table").length, 1);
     assert.equal(versionedParent.querySelectorAll(".echoink-finance-ai-chart").length, 2);
-    assert.equal(versionedParent.querySelector(".echoink-finance-section-head")?.querySelector("button")?.textContent, "刷新分析");
+    assert.equal(versionedParent.querySelector(".echoink-finance-report-actions")?.querySelectorAll("button").at(-1)?.textContent, "重新生成");
     assert.equal(versionedParent.children.filter((node) => node.tagName === "button").length, 0);
     assert.doesNotMatch(versionedParent.textContent, /支出原额.*退款超过消费/u);
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = savedReport; });
@@ -456,7 +463,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.deepEqual(reopenedStore.snapshot().reports.find(item => item.id === displayReport.id)!.financeSnapshot, savedReport,
       "saved large/merchant chart and merchant table snapshots survive storage reload");
     const savedParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(savedParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(savedParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.equal(savedParent.querySelectorAll(".echoink-finance-ai-chart").length, 2);
     assert.ok(savedParent.querySelector(".echoink-finance-ai-stack"), "saved large chart still renders");
     assert.equal(savedParent.querySelector(".echoink-finance-ai-table-panel")?.querySelectorAll("table").length, 1);
@@ -464,7 +471,7 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = naturalParsed; });
     const naturalParent = document.body.createDiv();
     const naturalRenderStart = openTestMarkdownRenders.length;
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(naturalParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(naturalParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.deepEqual(openTestMarkdownRenders.slice(naturalRenderStart).map((render) => render.markdown),
       [naturalBlocks[0].markdown!, naturalBlocks[1].markdown!, naturalBlocks[2].explanation!, naturalBlocks[3].explanation!,
         naturalBlocks[4].items![0]].map((markdown) => markdown.normalize("NFKC")),
@@ -474,21 +481,21 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.equal(naturalParent.querySelector(".echoink-finance-ai-table-panel")?.querySelectorAll("table").length, 1);
     assert.doesNotMatch(naturalParent.textContent, /未能完整生成/u);
     await store.update((draft) => { draft.reports.find((item) => item.id === displayReport.id)!.financeSnapshot = versioned; });
-    const workspaceState = workspace as unknown as { analysisError: { month: string; message: string; reportId: string | null } | null;
+    const workspaceState = workspace as unknown as { analysisErrors: Map<string, { message: string; reportId: string | null }>;
       state: { month: string } };
-    workspaceState.analysisError = { month: "2026-09", message: "合成存储失败", reportId: displayReport.id };
+    workspaceState.analysisErrors.set("2026-09", { message: "合成存储失败", reportId: displayReport.id });
     const failedParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(failedParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(failedParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.equal(failedParent.querySelector(".echoink-finance-ai-report"), null, "failure hides a saved report even if storage retained it");
     assert.doesNotMatch(failedParent.textContent, /合成 Provider|记录中最显著的支出是什么/u);
     assert.match(failedParent.textContent, /合成存储失败/u);
-    assert.equal(failedParent.querySelector(".echoink-finance-section-head")?.querySelector("button")?.textContent, "重试分析");
+    assert.equal(failedParent.querySelector(".echoink-finance-report-actions")?.querySelectorAll("button").at(-1)?.textContent, "重新生成");
     workspaceState.state.month = "2026-08";
     const isolatedParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(isolatedParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(isolatedParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.doesNotMatch(isolatedParent.textContent, /合成存储失败/u, "failure is scoped to its original month");
     workspaceState.state.month = "2026-09";
-    workspaceState.analysisError = null;
+    workspaceState.analysisErrors.delete("2026-09");
     const dailyParent = document.body.createDiv();
     (workspace as unknown as { renderAnalysisChart(parent: HTMLElement, chart: unknown): void }).renderAnalysisChart(dailyParent as unknown as HTMLElement,
       { ...input.candidates.find((candidate) => candidate.id === "daily")!, explanation: "核对日期。" });
@@ -521,59 +528,44 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     (workspace as unknown as { state: { month: string } }).state.month = "2026-09";
     await Promise.resolve();
     assert.equal(openTestMarkdownRenders[0].component.unloaded, false);
-    const chartsParent = document.body.createDiv();
-    const composeParent = document.body.createDiv();
-    const composeWorkspace = workspace as unknown as { composition(parent: HTMLElement, summary: FinanceSummary): void; summary(): FinanceSummary };
-    composeWorkspace.composition(composeParent as unknown as HTMLElement, composeWorkspace.summary());
-    assert.match(composeParent.textContent, /支出原额.*退款另列.*净支出/u, "composition separates gross spending and refunds");
-    (workspace as unknown as { spendingCharts(parent: HTMLElement): void }).spendingCharts(chartsParent as unknown as HTMLElement);
-    const bins = chartsParent.querySelectorAll(".echoink-finance-bin");
-    assert.equal(bins.length, 5);
-    assert.equal(bins[0].getAttribute("role"), "img", "amount rows are read-only details");
-    assert.match(bins[0].accessibleName, /合计/u, "keyboard description exposes total amount");
-    const legend = chartsParent.querySelectorAll(".echoink-finance-chart-row");
-    const sectors = chartsParent.querySelectorAll(".echoink-finance-donut-sector");
-    assert.equal(legend.length, sectors.length, "every category has a matching SVG sector");
-    assert.equal(chartsParent.querySelector(".echoink-finance-donut-svg")?.getAttribute("viewBox"), "0 0 200 200");
-    legend[0].click();
-    const state = (workspace as unknown as { state: { chartCategory?: string | null; recentDate?: string | null; page: string; filters: { date?: string } } }).state;
-    assert.match(chartsParent.querySelector(".echoink-finance-chart-selection")?.textContent ?? "", /已选/u);
-    assert.equal(sectors[0].getAttribute("aria-pressed"), "true");
-    assert.equal(state.page, "overview", "chart selection stays on the overview");
-    assert.equal(state.filters.date, undefined);
-    legend[0].click();
-    assert.equal(state.chartCategory, null, "selecting the same category clears the filter");
-    legend[0].click();
-    chartsParent.querySelector(".echoink-finance-chart-selection")!.querySelector("button")!.click();
-    assert.equal(state.chartCategory, null, "clear restores all categories");
-    const calendarParent = document.body.createDiv();
-    (workspace as unknown as { dailyCalendar(parent: HTMLElement): void }).dailyCalendar(calendarParent as unknown as HTMLElement);
-    const spendingDay = calendarParent.querySelectorAll(".echoink-finance-day").find((node) => node.accessibleName.includes("2026-09-20"));
-    assert.ok(spendingDay?.accessibleName.includes("超额"), "daily limit reports actual overspend");
-    spendingDay!.click();
+    const state = (workspace as unknown as { state: { recentDate?: string | null; page: string; filters: { category: string } } }).state;
+    const overviewParent = document.body.createDiv();
+    (workspace as unknown as { overviewPage(parent: HTMLElement): void }).overviewPage(overviewParent as unknown as HTMLElement);
+    assert.match(overviewParent.textContent, /9 月支出/u, "the monthly overview leads with this month's spending");
+    assert.ok(overviewParent.querySelectorAll(".echoink-finance-rank-row").length >= 1, "every spending category is ranked");
+    const day = overviewParent.querySelectorAll(".echoink-finance-day-cell").find((node) => node.accessibleName.includes("2026-09-20"));
+    assert.ok(day && !day.disabled, "a spending day is selectable");
+    day!.click();
     assert.equal(state.recentDate, "2026-09-20");
-    assert.equal(state.page, "overview", "calendar filters the recent list without navigation");
+    assert.equal(state.page, "overview", "the calendar filters the side list without navigation");
     (workspace as unknown as { changeMonth(delta: number): void }).changeMonth(1);
-    assert.equal(state.recentDate, null);
-    assert.equal(state.chartCategory, null, "month changes clear local chart selection");
+    assert.equal(state.recentDate, null, "month changes clear the selected day");
+    (workspace as unknown as { state: { month: string } }).state.month = "2026-09";
+    const rankParent = document.body.createDiv();
+    (workspace as unknown as { overviewPage(parent: HTMLElement): void }).overviewPage(rankParent as unknown as HTMLElement);
+    const firstRank = rankParent.querySelector(".echoink-finance-rank-row")!;
+    firstRank.click();
+    assert.equal(state.page, "ledger", "a category opens the ledger");
+    assert.ok(state.filters.category, "the ledger carries the category filter");
+    state.page = "overview";
     (workspace as unknown as { state: { month: string } }).state.month = "2026-09";
     const observedWorkspace = new FinanceWorkspace(service);
-    (observedWorkspace as unknown as { state: { month: string }; overview: () => void }).state.month = "2026-08";
-    (observedWorkspace as unknown as { overview: () => void }).overview = () => undefined;
+    (observedWorkspace as unknown as { state: { month: string }; overviewPage: () => void }).state.month = "2026-08";
+    (observedWorkspace as unknown as { overviewPage: () => void }).overviewPage = () => undefined;
     observedWorkspace.render(document.body.createDiv() as unknown as HTMLElement);
     let busyUpdates = 0;
     (observedWorkspace as unknown as { redraw: () => void }).redraw = () => { busyUpdates++; };
-    responseText = versionedResponse; hold = true; release = null;
-    workspaceState.analysisError = { month: "2026-09", message: "旧一次分析失败", reportId: displayReport.id };
+    responseText = monthlyResponse; hold = true; release = null;
+    workspaceState.analysisErrors.set("2026-09", { message: "旧一次分析失败", reportId: displayReport.id });
     const callsBeforeRefresh = calls;
     const busyPromise = finance.analyze("2026-09", true);
     assert.equal(busyUpdates, 1, "another month view hears the busy transition");
     const busyParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(busyParent as unknown as HTMLElement);
-    const busyAction = busyParent.querySelector(".echoink-finance-section-head")?.querySelector("button");
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(busyParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
+    const busyAction = busyParent.querySelector(".echoink-finance-report-actions")?.querySelectorAll("button").at(-1);
     assert.equal(busyAction?.disabled, true);
     assert.equal(busyAction?.getAttribute("aria-busy"), "true");
-    assert.match(busyParent.textContent, /正在根据最新账目生成本次报告/u);
+    assert.match(busyParent.textContent, /正在生成/u);
     assert.doesNotMatch(busyParent.textContent, /旧一次分析失败/u, "new generation takes priority over a prior failure");
     assert.equal(busyParent.querySelector(".echoink-finance-ai-report"), null, "old body is hidden as soon as the new flight starts");
     assert.doesNotMatch(busyParent.textContent, /合成 Provider|记录中最显著的支出是什么/u,
@@ -581,8 +573,8 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     busyAction?.click();
     (workspace as unknown as { state: { month: string } }).state.month = "2026-08";
     const otherMonthParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(otherMonthParent as unknown as HTMLElement);
-    assert.match(otherMonthParent.textContent, /2026-09 的分析正在生成/u);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(otherMonthParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
+    assert.equal(otherMonthParent.querySelector(".echoink-finance-report-actions")?.querySelectorAll("button").at(-1)?.disabled, true, "another month waits for the running report");
     for (let index = 0; index < 200 && !release; index++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(release); release!(); hold = false;
     const busyResult = await busyPromise;
@@ -590,13 +582,13 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
     assert.equal(finance.latestReport("2026-09")?.id, busyResult.id, "successful refresh only exposes the new report");
     assert.equal(store.snapshot().reports.filter((item) => item.kind === "finance" && item.period === "2026-09").length, 1);
     workspaceState.state.month = "2026-09";
-    workspaceState.analysisError = { month: "2026-09", message: "另一个视图此前失败", reportId: displayReport.id };
+    workspaceState.analysisErrors.set("2026-09", { message: "另一个视图此前失败", reportId: displayReport.id });
     const recoveredParent = document.body.createDiv();
-    (workspace as unknown as { aiCard(parent: HTMLElement): void }).aiCard(recoveredParent as unknown as HTMLElement);
+    (workspace as unknown as { reportBody(parent: HTMLElement, month: string): void }).reportBody(recoveredParent as unknown as HTMLElement, (workspace as unknown as { state: { month: string } }).state.month);
     assert.match(recoveredParent.textContent, /记录中最显著的支出是什么/u,
       "a newer same-month report supersedes a stale failure from another view");
     assert.doesNotMatch(recoveredParent.textContent, /另一个视图此前失败/u);
-    workspaceState.analysisError = null;
+    workspaceState.analysisErrors.delete("2026-09");
     await new Promise((resolve) => setImmediate(resolve));
     assert.ok(busyUpdates >= 2, "another month view hears completion and can re-enable its action");
     observedWorkspace.detach();
@@ -612,6 +604,56 @@ export async function runLifestyleFinanceAnalysisTests(): Promise<void> {
       "a saved Skill already ending in the current protocol remains compatible without another copy");
     assert.equal(systemPrompts.at(-1)!.split(FINANCE_ANALYSIS_OUTPUT_PROTOCOL).length - 1, 1);
     workspace.detach();
+    // Import completion hands automatic closing the months of the notes that actually changed.
+    const importRow = (entry: FinanceEntry, diaryId?: string): FinanceImportRow => ({
+      entry, error: "", raw: [], ...(diaryId ? { duplicateDecision: { action: "same", id: diaryId } } : {})
+    });
+    const duplicate = row("import-duplicate", 500, "expense", "餐饮", { date: "2026-01-01" });
+    const diary = row("closing-diary", 600, "expense", "餐饮", { source: "diary", date: "2026-05-31", journalPath: "Journal/2026-05-31.md" });
+    const diaryTransfer = row("closing-diary-transfer", 700, "transfer", "其他", { source: "diary", date: "2026-07-06", journalPath: "Journal/2026-07-06.md" });
+    await finance.ledger.add(duplicate);
+    await finance.ledger.add(diary);
+    await finance.ledger.add(diaryTransfer);
+    settings.lifestyle.finance.importAiEnabled = false;
+    const mixedImport = await finance.confirmImport([
+      importRow(duplicate),
+      importRow(row("closing-fail", 900, "expense", "餐饮", { date: "2026-02-01" })),
+      importRow(row("closing-good", 1100, "expense", "餐饮", { date: "2026-03-01" })),
+      importRow(row("closing-diary-link", 600, "expense", "餐饮", { date: "2026-06-01" }), diary.id),
+      importRow(row("closing-already", 1200, "expense", "餐饮", { date: "2026-09-21" })),
+      importRow(row("closing-current", 1300, "expense", "餐饮", { date: localDate() }))
+    ]);
+    assert.deepEqual(mixedImport.affectedMonths.sort(), ["2026-02", "2026-03", "2026-05", "2026-09", localDate().slice(0, 7)].sort());
+    assert.deepEqual([mixedImport.added, mixedImport.linked, mixedImport.duplicates], [4, 1, 1]);
+    const signal = new AbortController().signal;
+    const organization = await finance.prepareImport(mixedImport.created, signal);
+    const suggestions = await finance.applyImportSuggestions(mixedImport.created, organization.rows, signal);
+    assert.equal(await finance.completeImport(mixedImport, { organization, suggestions }), true);
+    const linkedOnly = await finance.confirmImport([
+      importRow(row("closing-transfer-link", 700, "transfer", "其他", { date: "2026-07-06" }), diaryTransfer.id)
+    ]);
+    assert.deepEqual([linkedOnly.added, linkedOnly.linked, linkedOnly.affectedMonths], [0, 1, ["2026-07"]]);
+    assert.equal(await finance.completeImport(linkedOnly), true);
+    const outcomes: string[][] = [];
+    const onResult = (month: string, result: PromiseSettledResult<unknown>) => {
+      outcomes.push([month, result.status === "rejected" ? String(result.reason) : result.status]);
+    };
+    settings.lifestyle.finance.aiEnabled = false;
+    assert.deepEqual(finance.closeImportedMonths(mixedImport.affectedMonths, onResult).months, []);
+    settings.lifestyle.finance.aiEnabled = true;
+    const denied = new ProductionFinanceService(service, { ...paidTestAccess, checkCapability: () => false });
+    assert.deepEqual(denied.closeImportedMonths(mixedImport.affectedMonths, onResult).months, []);
+    failedMonth = "2026-02";
+    const queued = finance.closeImportedMonths(mixedImport.affectedMonths, onResult);
+    const linked = finance.closeImportedMonths(linkedOnly.affectedMonths, onResult);
+    assert.deepEqual(queued.months, ["2026-02", "2026-03", "2026-05"]);
+    assert.deepEqual(linked.months, ["2026-07"]);
+    assert.deepEqual(finance.closeImportedMonths(mixedImport.affectedMonths, onResult).months, [], "queued months are not duplicated");
+    await Promise.all([queued.done, linked.done]);
+    assert.deepEqual(outcomes, [["2026-02", "Error: 合成模型故障"], ["2026-03", "fulfilled"], ["2026-05", "fulfilled"], ["2026-07", "fulfilled"]]);
+    assert.equal(finance.latestReport("2026-01"), null, "an unchanged duplicate month is left alone");
+    assert.equal(finance.latestReport("2026-06"), null, "the linked diary date supplies the canonical month");
+    assert.match(finance.latestReport("2026-07")?.inputSummary ?? "", /1 笔有效账目/u);
     assert.ok(openTestMarkdownRenders.every((render) => render.component.unloaded), "redraw or close releases every Markdown component");
   } finally { await fsp.rm(directory, { recursive: true, force: true }); }
   console.log("OK lifestyle finance analysis facts, Skill chain, fresh reload, cache and cancellation");

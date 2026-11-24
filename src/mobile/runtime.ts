@@ -28,7 +28,7 @@ import { isAgentHired } from "../agents/persona";
 import { normalizeAgentId } from "../agents/registry";
 import type { TaskDraft } from "../agents/task-workspace";
 import { parseMobileWorkbenchSource } from "../home/workbench-source";
-import { MobileStore, newId, newSession, type MobileSession, type MobilePermission } from "./store";
+import { MobileStore, MobileTaskFileChanged, newId, newSession, type MobileSession, type MobilePermission } from "./store";
 import { mobileStream, piModel, visibleReasoning, type MobileRequest, type MobileStreamFetch, type MobileUsageObserver } from "./transport";
 import { SHORT_SOCIAL_SYSTEM, shortSocialOutputLimit, shortSocialTurn } from "../harness/short-social-turn";
 import { appendCurrentDateContext } from "../harness/current-date-context";
@@ -187,7 +187,7 @@ export class MobileRuntime {
       return result;
     } catch (error) {
       if ((error as { code?: string })?.code === "mobile_resume_review_required") { record.phase = "review"; this.composerSubmissions.notify(); throw error; }
-      if (!record.cancelled) this.composerSubmissions.fail(id, this.userError(error));
+      if (!record.cancelled && !(error instanceof MobileTaskFileChanged)) this.composerSubmissions.fail(id, this.userError(error));
       throw error;
     }
   }
@@ -308,7 +308,7 @@ export class MobileRuntime {
   isBusy(id: string): boolean { return this.runs.has(id); }
   stateFor(id: string): MobileTaskViewState {
     const session = this.store.getSession(id);
-    return { taskId: id, busy: this.isBusy(id), error: this.store.unavailableReason ?? this.errors.get(id) ?? toolCallTextFailureMessage(session?.interruption?.toolCallTextFailure) ?? "", queuedCount: session?.queue?.length ?? 0,
+    return { taskId: id, busy: this.isBusy(id), error: this.store.taskFileChanged ? "" : this.store.unavailableReason ?? this.errors.get(id) ?? toolCallTextFailureMessage(session?.interruption?.toolCallTextFailure) ?? "", queuedCount: session?.queue?.length ?? 0,
       ...(session?.interruption ? { interruption: session.interruption } : {}), resuming: this.resumes.has(id), ...(this.reviews.has(id) ? { resumeReview: this.reviews.get(id)! } : {}),
       paused: session?.queuePaused === true || this.pausedTasks.has(id), ...(session?.interaction ? { interaction: session.interaction } : {}), ...this.liveState(id) };
   }
@@ -341,7 +341,7 @@ export class MobileRuntime {
         if (task.interaction?.status === "pending") task.interaction.status = "cancelled";
         delete task.pendingResponse;
       }
-    });
+    }, { skipUnchanged: true });
   }
   private async ready(signal?: AbortSignal): Promise<void> {
     const generation = this.lifecycleGeneration;
@@ -370,18 +370,20 @@ export class MobileRuntime {
     const preparing = [...this.resumes.keys()].map(id => this.cancelResume(id));
     const pending = (async () => {
       await Promise.all(preparing); await this.memory?.().suspend();
-      if (!this.store.unavailableReason) await this.initialize();
-      await Promise.all(active.map(run => run.finished.promise));
+      const outcomes = await Promise.allSettled(active.map(run => run.finished.promise));
+      const failed = outcomes.find(outcome => outcome.status === "rejected");
+      if (failed) throw failed.reason;
       // A conflict may disable persistence while a Provider is still pending.
       // Abort those runs above, but never save through the disabled partition.
-      if (this.store.unavailableReason) return;
+      if (this.store.unavailableReason || this.store.taskFileChanged) return;
+      await this.initialize();
       await this.store.update(latest => {
         for (const task of latest.sessions) {
           if (active.some(run => run.taskId === task.id) || task.queue?.length) task.queuePaused = true;
           if (task.interaction?.status === "pending") task.interaction.status = "cancelled";
           delete task.pendingResponse;
         }
-      });
+      }, { skipUnchanged: true });
       await this.store.flush();
     })();
     this.shutdownFlight = pending; return pending;
@@ -392,6 +394,25 @@ export class MobileRuntime {
     return pending.then(() => {
       if (!this.disposed && this.foregroundRequested) { this.suspended = false; this.shutdownFlight = undefined; void this.memory?.().resumeDream(); }
     });
+  }
+  /** Stop executors before replacing their view of tasks. A reload never resumes a queued turn. */
+  async reloadTaskFile(): Promise<void> {
+    const previousIds = this.store.state.sessions.map(task => task.id);
+    const stopping = this.shutdown("app_backgrounded");
+    const generation = this.lifecycleGeneration;
+    try {
+      await stopping.catch(error => {
+        if (!(error instanceof MobileTaskFileChanged)) throw error;
+      });
+      await this.store.reloadTaskFile();
+      this.initialization = undefined;
+      await this.initialize();
+      this.errors.clear(); this.reviews.clear();
+      for (const id of new Set([...previousIds, ...this.store.state.sessions.map(task => task.id)])) this.notify(id);
+    } finally {
+      if (this.shutdownFlight === stopping) this.shutdownFlight = undefined;
+      if (!this.disposed && this.lifecycleGeneration === generation) this.suspended = false;
+    }
   }
   resumeTask(id: string, text?: string, confirmationFingerprint?: string, submissionId?: string): Promise<MobileTaskSubmission> {
     const existing = this.resumes.get(id); if (existing) return existing.promise;
@@ -929,7 +950,10 @@ ${context}${run.expertContext ? `\n${run.expertContext.prompt}` : ""}${run.resum
         const cached = this.searches.get(id); cached?.release(); cached?.search.dispose(); this.searches.delete(id); this.pausedTasks.delete(id);
       }
       if (failed) runErrors.record("mobile.runtime", failure, { conversationId: id, runId: turn.id });
-      if (failed) { if (!run.candidate || run.accepted) this.errors.set(id, errorText(failure)); run.admission.reject(failure); run.completion.reject(failure); }
+      if (failed) {
+        if ((!run.candidate || run.accepted) && !(failure instanceof MobileTaskFileChanged)) this.errors.set(id, errorText(failure));
+        run.admission.reject(failure); run.completion.reject(failure);
+      }
       else { run.admission.resolve(); run.completion.resolve(); }
       if (saveFailed || run.persistenceFailed) run.finished.reject(saveFailed ? persistenceFailure : run.persistenceError);
       else run.finished.resolve();
@@ -1108,7 +1132,10 @@ ${context}${run.expertContext ? `\n${run.expertContext.prompt}` : ""}${run.resum
   dispose(): void {
     if (this.disposed) return;
     const stopped = this.shutdown("plugin_disabled"); this.disposed = true; this.submissionScrollTargets.clear();
-    void stopped.catch(error => { this.errors.set(this.store.session.id, errorText(error)); new Notice(this.copy("中断记录未能保存，原有内容未受影响。请重新打开 EchoInk。", "The interruption record could not be saved; your content is unaffected. Reopen EchoInk.")); });
+    void stopped.catch(error => {
+      if (error instanceof MobileTaskFileChanged) return;
+      this.errors.set(this.store.session.id, errorText(error)); new Notice(this.copy("中断记录未能保存，原有内容未受影响。请重新打开 EchoInk。", "The interruption record could not be saved; your content is unaffected. Reopen EchoInk."));
+    });
     for (const cached of this.searches.values()) { cached.release(); cached.search.dispose(); } this.searches.clear();
     this.listeners.clear(); this.legacyChange = () => {};
     for (const timer of this.liveTimers.values()) window.clearTimeout(timer); this.liveTimers.clear(); this.liveListeners.clear();

@@ -849,7 +849,7 @@ export function mountAccountMembership(parent: HTMLElement, options: PageOptions
   el(skillInfo, "p", "", t("7 个方法论 Skill 与知识复盘增强版按需联网下发，并持续更新。内置基础 Skill、自建 Skill 和基础复盘继续免费。", "7 methodology Skills and enhanced knowledge review are downloaded on demand and updated over time. Built-in basic Skills, custom Skills and basic knowledge review remain free."));
   const featureGrid = el(features, "div", "two-columns");
   const groups = [
-    { name: t("财务", "Finance"), symbol: "folder-kanban", rows: [[t("AI 整理", "AI organization"), true, t("体验整理", "Organize")], [t("账单计划", "Bill plans"), true, t("新建计划", "New plan")], [t("AI 财务分析", "AI financial analysis"), true, t("生成分析", "Analyze")], [t("CSV 导出", "CSV export"), true, t("导出", "Export")]] },
+    { name: t("财务", "Finance"), symbol: "folder-kanban", rows: [[t("AI 整理", "AI organization"), true, t("体验整理", "Organize")], [t("专项预算", "Special budgets"), true, t("新建预算", "New budget")], [t("AI 月度结账", "AI monthly closing"), true, t("生成报告", "Generate")], [t("CSV 导出", "CSV export"), true, t("导出", "Export")]] },
     { name: t("英语日记", "English Diary"), symbol: "feather", rows: [[t("已保存的原文与对照", "Saved original and translation"), false, t("查看已有", "View saved")], [t("生成中英对照", "Generate bilingual diary"), true, t("生成对照", "Translate")], [t("表达讲解", "Expression explanations"), true, t("生成讲解", "Explain")], [t("自动归入表达库", "Expression collection"), true, t("收藏表达", "Collect")], [t("跨日表达回顾", "Expression timeline"), true, t("查看回顾", "Review")]] }
   ];
   for (const group of groups) {

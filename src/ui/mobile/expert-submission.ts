@@ -4,7 +4,7 @@ import { isExpertAgent } from "../../agents/persona";
 import { renderExpertSubmission } from "../../experts/submission-view";
 import type { MobileServices } from "../../mobile/services";
 import type { EchoInkResource } from "../../resources/types";
-import { createOriginCheck, createOriginInput } from "./origin-controls";
+import { createOriginCheck, createOriginInput, createOriginPagination } from "./origin-controls";
 import { shellElement } from "./shell-controls";
 import type { MobileShellPage } from "./shell-types";
 
@@ -18,11 +18,15 @@ export function createMobileExpertSubmissionEntry(options: {
   if (isExpertAgent(options.agent)) return;
   const service = options.services.experts?.submissions;
   if (!service?.owner()) return;
-  const title = options.language === "en" ? "Submit to Expert Hall" : "投稿到专家团";
+  const title = service.canSubmit()
+    ? (options.language === "en" ? "Submit to Expert Hall" : "投稿到专家团")
+    : (options.language === "en" ? "Submission receipts" : "投稿回执");
   const row = options.button(options.document, title, () => { void open().catch(error => options.error(error)); }, "is-text");
   row.classList.add("echoink-expert-submission-entry");
   row.dataset.action = "expert-submission";
-  row.querySelector(".ip-button-visible, .pd-button-visible")?.append(shellElement(options.document, "span", "echoink-expert-submission-chevron", "›"));
+  const chevron = shellElement(options.document, "span", "echoink-expert-submission-chevron", "›");
+  chevron.setAttribute("aria-hidden", "true");
+  row.querySelector(".ip-button-visible, .pd-button-visible")?.append(chevron);
 
   async function open() {
     if (row.disabled || !service?.owner()) return;
@@ -31,7 +35,7 @@ export function createMobileExpertSubmissionEntry(options: {
     try {
       const view = renderExpertSubmission(content, { service, agent: structuredClone(options.agent), language: options.language,
         resources: async () => options.resources(), readSkill: path => options.app.vault.adapter.read(path),
-        input: createOriginInput, checkbox: createOriginCheck,
+        input: createOriginInput, checkbox: createOriginCheck, pagination: createOriginPagination,
         button: (parent, text, action, primary) => {
           const control = options.button(parent.ownerDocument, text, action, primary ? "is-primary" : "");
           parent.append(control); return control;

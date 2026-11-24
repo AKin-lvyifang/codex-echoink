@@ -1244,7 +1244,8 @@ export async function startChatTurn(view: CodexViewTurnContext, session: StoredS
       // The raw error stays in the run record for "Report a problem"; the Notice only shows plain words.
       new Notice(localizedPiChatErrorMessage(
         view,
-        settledRun.error?.split(`\n${PROVIDER_FAILURE_DETAIL_PREFIX}`)[0],
+        providerFailureText(settledRun.error, view.plugin.settings.settingsLanguage)
+          ?? settledRun.error?.split(`\n${PROVIDER_FAILURE_DETAIL_PREFIX}`)[0],
         uiText(view, "本次回答未完成。请重新发送；如问题持续，请点击“上报问题”。", "The answer could not be completed. Send it again; if the problem persists, click Report a problem.")
       ));
     }

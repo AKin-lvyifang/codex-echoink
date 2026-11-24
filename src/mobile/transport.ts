@@ -6,6 +6,8 @@ import type { RequestUrlParam } from "obsidian";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
 import { anthropicCacheRoute, applyPromptCacheBoundary, providerCacheKey, stableToolOrder } from "../harness/pi/prompt-cache";
 import { withXiaoechoTurn, type XiaoechoTurn } from "../membership/xiaoecho-turn";
+import { withOpenCodeRequestHeaders } from "../harness/pi/opencode-go-headers";
+import { providerFailureText, providerPlanFailureCode } from "../harness/pi/provider-failure";
 import { apiProviderRequestUrl } from "../settings/provider-presets";
 import { applyEchoInkProviderReasoningWirePolicy, resolveEchoInkProviderReasoningWirePolicy, withEchoInkProviderReasoningWirePolicy } from "../harness/pi/provider-reasoning-wire-policy";
 import { observeUsageStream, type ObserveUsageOptions, type UsageSource } from "../harness/usage/usage-stream";
@@ -178,7 +180,11 @@ export function buildMobileRequest(provider: ApiProviderConfig, model: Model<Api
   const prepared = applyPromptCacheBoundary(body, useCache && anthropicCacheRoute(model.provider, model.id, model.api));
   const url = new URL(apiProviderRequestUrl(provider.baseUrl, provider.apiProtocol));
   for (const [key, value] of Object.entries(provider.queryParams ?? {})) url.searchParams.set(key, value);
-  return { url: url.toString(), method: "POST", contentType: "application/json", headers: provider.apiKey.trim() ? { Authorization: `Bearer ${provider.apiKey.trim()}` } : {}, body: JSON.stringify(withXiaoechoTurn(prepared, model.provider, turn)), throw: false };
+  const headers = withOpenCodeRequestHeaders(model, {
+    headers: provider.apiKey.trim() ? { Authorization: `Bearer ${provider.apiKey.trim()}` } : {},
+    ...(turn?.conversationId ? { sessionId: providerCacheKey(turn.conversationId) } : {})
+  }).headers as Record<string, string>;
+  return { url: url.toString(), method: "POST", contentType: "application/json", headers, body: JSON.stringify(withXiaoechoTurn(prepared, model.provider, turn)), throw: false };
 }
 function abortable<T>(pending: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return pending;
@@ -214,7 +220,10 @@ export function mobileStream(provider: ApiProviderConfig, request: MobileRequest
         if (response.status < 200 || response.status >= 300 || data.error || data.status === "failed") {
           const providerError = record(data.error).message;
           const status = response.status >= 200 && response.status < 300 ? 0 : response.status;
-          throw new Error(status ? providerStatusCopy(status)[0] : ANSWER_FAILED, { cause: `HTTP ${response.status}: ${typeof providerError === "string" ? providerError : ""}` });
+          const providerErrorType = record(data.error).type;
+          const planCode = providerPlanFailureCode(`${typeof providerErrorType === "string" ? providerErrorType : ""} ${typeof providerError === "string" ? providerError : ""}`);
+          const planText = planCode ? providerFailureText(planCode) : null;
+          throw new Error(planText ?? (status ? providerStatusCopy(status)[0] : ANSWER_FAILED), { cause: `HTTP ${response.status}: ${typeof providerError === "string" ? providerError : ""}` });
         }
         message.usage = usage(data.usage, responses);
         message.responseId = typeof data.id === "string" ? data.id : undefined;

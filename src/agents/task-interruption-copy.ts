@@ -19,7 +19,7 @@ export function taskInterruptionExplanation(info: (Pick<TaskInterruptionRecord, 
   if (info.reason !== "run_failed" || !info.detail) return;
   // The raw detail stays in the record for "Report a problem"; the card only shows plain words.
   const firstLine = info.detail.split(`\n${PROVIDER_FAILURE_DETAIL_PREFIX}`)[0];
-  const knownText = providerFailureText(firstLine, language) ?? undefined;
+  const knownText = providerFailureText(info.detail, language) ?? undefined;
   if (info.retryAttempts) {
     const stopped: ErrorCopy = [`已自动重试 ${info.retryAttempts} 次仍未成功，任务已停止。`, `Retried automatically ${info.retryAttempts} times without success, so the task was stopped.`];
     return joinErrorCopy(stopped, knownText ? [knownText, knownText] : RETRY_LATER_CONTINUE, language);

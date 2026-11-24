@@ -200,7 +200,7 @@ phrase 取保留有用含义的最小惯用搭配，采用无具体人称和时�
   ),
   ...OBSIDIAN_BUILTIN_SKILLS,
   skill("finance-bill-import", "微信与支付宝账单整理", "基础入库后，整理微信或支付宝新账目的商户、账户、分类、消费说明与品牌图标。", FINANCE_IMPORT_SKILL),
-  skill("finance-analysis", "财务回看分析", "用户主动生成或刷新时，结合当月已记录账目与统计，分析消费影响并给出有依据的安排建议。", FINANCE_ANALYSIS_SKILL),
+  skill("finance-analysis", "财务月度结账", "导入完上月账单或用户点重新生成时，按固定格式生成月度结账报告：摘出日记原话并给出下月建议。", FINANCE_ANALYSIS_SKILL),
   skill("finance-operations", "财务对话操作", "用自然话查询、记账、修改、删除，调整月度或默认预算，创建账单与关联明确账目。", FINANCE_OPERATIONS_SKILL),
   skill("todo-operations", "待办安排", "查询待办，新增、改期或完成指定事项，并关联已有项目。", `## 用途
 

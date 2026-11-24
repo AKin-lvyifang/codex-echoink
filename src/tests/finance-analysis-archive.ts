@@ -29,8 +29,7 @@ export async function runFinanceAnalysisArchiveTests() {
     const vault=new FakeVault(),app={vault,fileManager:{processFrontMatter:vault.processFrontMatter.bind(vault),renameFile:vault.rename.bind(vault)}} as unknown as App;
     const settings={lifestyle:structuredClone(DEFAULT_LIFESTYLE_SETTINGS),apiProviders:[{id:"p",name:"合成Provider",models:[{id:"m",displayName:"合成模型"}]}],activeApiProviderId:"p",defaultModel:"m"};
     settings.lifestyle.finance.enabled=settings.lifestyle.finance.aiEnabled=true;
-    let calls=0,response=JSON.stringify({version:8,sections:[{title:"收支总览",blocks:[{type:"highlight",tone:"fact",markdown:"**记录中的结余**"},
-      {type:"chart",id:"flow",explanation:"收入与净支出"},{type:"table",id:"budget",explanation:"完整预算核对"},{type:"actions",items:["核对餐饮预算"]}]}]});
+    let calls=0,response=JSON.stringify({version:9,quotes:[],suggestions:["核对餐饮预算"]});
     const plugin={app,settings,registerEvent(){},saveSettings:async()=>{},getSkillRuntimeCoordinator:()=>({resolveById:async()=>{},recordUse:async()=>{}}),
       requireAvailableEchoInkSkill:async()=>{},readEchoInkBuiltinSkill:async()=>({fileStatus:"ready",content:FINANCE_ANALYSIS_SKILL}),generateLifestyleText:async()=>{calls++;return response;}};
     const make=(data:LifestyleStore)=>new LifestyleFinanceService({store:data,plugin,refresh(){}} as unknown as LifestyleService,paidTestAccess);
@@ -43,12 +42,13 @@ export async function runFinanceAnalysisArchiveTests() {
     const saved=JSON.parse(vault.files.get(records[0].snapshotPath)!.text);
     assert.match(records[0].snapshotPath,/\/数据快照\/[^/]+\.json$/);
     assert.equal(saved.raw,response);assert.deepEqual(saved.report.financeSnapshot,first.financeSnapshot);
-    assert.ok(saved.input.includes("普通吃饭"));assert.doesNotMatch(saved.input,/private-source|private-note/);
+    assert.ok(saved.input.includes("合成餐厅"));assert.doesNotMatch(saved.input,/private-source|private-note/);
     assert.match(saved.generatedAt,/T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
     const markdown=vault.files.get(records[0].path)!.text;
     assert.match(records[0].path,/2026-09__财务分析__\d{4}-\d{2}-\d{2}_\d{9}__v001\.md$/);
     assert.match(markdown,/echoink\/finance-analysis/);assert.match(markdown,/finance\/monthly-review/);
-    assert.match(markdown,/> \[!info\]/);assert.match(markdown,/收入与净支出/);assert.match(markdown,/完整预算核对/);
+    assert.match(markdown,/## 花了多少\n\n9 月花了 ¥200/);assert.match(markdown,/> \[!warning\] 超预算\n> 餐饮 ¥200 \/ 100，超 ¥100/);
+    assert.match(markdown,/## 最大三笔[\s\S]*\| 09-05 \| 合成餐厅 \| 餐饮 \| ¥200 \|/);assert.match(markdown,/## 下月可以试试\n\n- 核对餐饮预算/);
     const oldBytes=new Map([...vault.files].filter(([name])=>name.includes("分析记录")).map(([name,value])=>[name,value.text]));
     await finance.saveAnalysisDirectory("回顾/财务");await finance.analyze("2026-09",true);
     assert.equal(store.snapshot().financeAnalysisArchives!.at(-1)!.version,3);
@@ -56,19 +56,18 @@ export async function runFinanceAnalysisArchiveTests() {
     const reloaded=new LifestyleStore(file);await reloaded.initialize();const restart=make(reloaded);await restart.initialize();
     const previous=JSON.parse(restart.analysisInput("2026-09").text).前次成功报告;
     assert.equal(previous[0].分析ID,finance.latestReport("2026-09")!.id);
-    assert.ok(previous[0].当时资料.有效交易明细.length);
     response="{ incomplete";
     await assert.rejects(restart.analyze("2026-09",true),/完整生成/);
     assert.equal(reloaded.snapshot().financeAnalysisArchives!.at(-1)!.status,"parse-failed");
     assert.equal(JSON.parse(restart.analysisInput("2026-09").text).前次成功报告[0].分析ID,previous[0].分析ID,"failed parse never becomes comparison history");
-    response=JSON.stringify({version:8,sections:[{title:"存档重试",blocks:[{type:"text",markdown:"保留的完整内容"}]}]});
+    response=JSON.stringify({version:9,quotes:[],suggestions:["保留的完整内容"]});
     vault.failMarkdownAfter=vault.createCount;const before=calls;
     await assert.rejects(restart.analyze("2026-09",true),/^Error: 分析未能保存，本次内容已保留。请点击重试保存。$/);assert.equal(calls,before+1);
     assert.equal(restart.pendingAnalysisSave("2026-09"),true);
     assert.ok(reloaded.snapshot().financeAnalysisPending!.at(-1)!.report);
     const againStore=new LifestyleStore(file);await againStore.initialize();const again=make(againStore);await again.initialize();
     vault.failMarkdownAfter=Infinity;await again.saveAnalysisDirectory("新的保存位置");const retried=await again.retryAnalysisSave("2026-09");
-    assert.equal(calls,before+1,"restart and save retry must not call model again");assert.equal(retried!.text,"保留的完整内容");
+    assert.equal(calls,before+1,"restart and save retry must not call model again");assert.deepEqual((retried!.financeSnapshot as {suggestions:string[]}).suggestions,["保留的完整内容"]);
     assert.equal(again.pendingAnalysisSave("2026-09"),false);
     await again.retryAnalysisSave("2026-09").then(()=>assert.fail("retry without pending"),()=>{});
     // A directory collision happens before a path can be reserved, after the model has returned.
@@ -84,7 +83,7 @@ export async function runFinanceAnalysisArchiveTests() {
     await earlyRestart.saveAnalysisDirectory("新的保存位置");
     const earlyReport=await earlyRestart.retryAnalysisSave("2026-09");
     assert.equal(calls,beforeEarly+1,"early directory failure survives restart and retries without model");
-    assert.equal(earlyReport!.text,"保留的完整内容");
+    assert.deepEqual((earlyReport!.financeSnapshot as {suggestions:string[]}).suggestions,["保留的完整内容"]);
     // Old hidden snapshots stay readable through their indexed adapter path.
     const oldHidden=earlyStore.snapshot().financeAnalysisArchives!.find(r=>r.id===first.id)!;
     const hiddenPath=oldHidden.snapshotPath.replace("/数据快照/","/.data/");

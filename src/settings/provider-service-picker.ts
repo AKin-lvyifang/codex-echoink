@@ -52,6 +52,7 @@ function providerDescription(preset: ApiProviderPreset, language: "zh-CN" | "en"
     deepseek: ["DeepSeek 模型", "DeepSeek models"],
     qwen: ["阿里云百炼 · 通义千问", "Alibaba Cloud Model Studio · Qwen"],
     "qwen-token-plan": ["通义千问 Token Plan 专用接口", "Dedicated Qwen Token Plan endpoint"],
+    "opencode-go": ["使用 OpenCode Go 套餐额度", "Use your OpenCode Go plan allowance"],
     ollama: ["运行在本机的模型", "Models running on your computer"],
     custom: ["接入兼容的模型服务", "Connect a compatible model service"]
   };

@@ -97,7 +97,7 @@ async function financeHeader() {
     [...header.querySelectorAll("button")].find(item => item.textContent === "设置")!.click();
     await tick(); assert.deepEqual([backs, settingsOpens], [1, 1]);
     assert.deepEqual([...content.querySelectorAll('[role="tab"]')].map(item => item.children[1]?.textContent),
-      ["财务总览", "收支明细", "月度预算", "账单计划"]);
+      ["总览", "明细", "计划", "报告"]);
     // Change the actual workspace through its rendered month controls. Do not
     // stub getSelectedMonth or supply a made-up header month.
     const initial = finance.getSelectedMonth();

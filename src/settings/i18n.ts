@@ -11,7 +11,8 @@ import type {
 import type { PermissionMode, UiMode } from "../types/app-server";
 import type { KnowledgeBaseRunCompletion } from "../knowledge-base/types";
 import { judgmentResultText, knowledgeResultText } from "../types/composer-submission";
-import type { PiProviderConnectionFailureKind } from "../harness/pi/pi-provider-protocol-adapter";
+import type { PiProviderConnectionFailure } from "../plugin/pi-provider-configuration-service";
+import { PROVIDER_CODES } from "../core/error-copy/codes/provider";
 import { CAUSE, NEXT, type ErrorCopy } from "../core/error-copy";
 import { SETTINGS_SCENE, joinCopyPair } from "../core/error-copy/codes/settings";
 
@@ -31,8 +32,10 @@ function connectionFailures(index: 0 | 1) {
     proxy: copyAt(CAUSE.providerProxy, index),
     timeout: copyAt(CAUSE.providerTimeout, index),
     request: copyAt(CAUSE.providerRejectedOnTest, index),
-    provider: copyAt(CAUSE.providerUnavailable, index)
-  } satisfies Record<PiProviderConnectionFailureKind, string>;
+    provider: copyAt(CAUSE.providerUnavailable, index),
+    provider_plan_subscription_required: copyAt(PROVIDER_CODES.provider_plan_subscription_required, index),
+    provider_plan_usage_limited: copyAt(PROVIDER_CODES.provider_plan_usage_limited, index)
+  } satisfies Record<PiProviderConnectionFailure, string>;
 }
 
 const ZH_CN = {

@@ -244,25 +244,32 @@ export class PiContextLedgerRecorder {
     return input ? this.persistLedger(input.tokenCounter ? buildPiContextLedger(input) : await buildPiContextLedgerAsync(input)) : null;
   }
 
+  async estimateProviderInputAsync(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens: number): Promise<number> {
+    const input = this.providerLedgerInput(context, execution, additionalInputTokens, false);
+    if (!input) throw new PiContextBudgetError("Pi context budget preview has no matching execution");
+    return (await buildPiContextLedgerAsync(input)).totalInputTokens;
+  }
+
   private persistLedger(ledger: PiContextLedger): PiContextLedger {
     this.options.sessionManager.appendCustomEntry(PI_CONTEXT_LEDGER_CUSTOM_TYPE, ledger);
     return ledger;
   }
 
-  private providerLedgerInput(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens: number): BuildPiContextLedgerInput | null {
+  private providerLedgerInput(context: Readonly<Context>, execution: Readonly<PiContextLedgerExecutionIdentity>, additionalInputTokens: number, recordRequest = true): BuildPiContextLedgerInput | null {
     if (execution.conversationId !== this.options.conversationId) {
       return null;
     }
     const requestKind: PiContextLedgerRequestKind = execution.purpose
       ? execution.purpose === "compaction" ? "summarization" : "agent"
       : this.expectedSystemPrompt && context.systemPrompt === this.expectedSystemPrompt ? "agent" : "summarization";
-    this.requestSequence += 1;
+    const requestSequence = this.requestSequence + 1;
+    if (recordRequest) this.requestSequence = requestSequence;
     return {
       conversationId: this.options.conversationId,
       piSessionId: this.options.piSessionId,
       productRunId: execution.runId,
       requestKind,
-      requestSequence: this.requestSequence,
+      requestSequence,
       requestLeafId: this.options.sessionManager.getLeafId(),
       recordedAt: this.now(),
       model: this.options.model,
@@ -398,7 +405,7 @@ export function buildPiContextLedger(
       ? ["按 EchoInk 通用 Token 标准估算输入内容；不等同于模型服务的账单。"]
       : []),
     ...(overBudgetTokens > 0
-      ? ["本轮输入估算已超过 effectiveInputBudget，Pi 将按同一边界触发原生 Compaction。"]
+      ? ["本次模型请求的输入估算超过有效输入预算。"]
       : []),
     ...unexpectedToolDiagnostics(
       input.context,

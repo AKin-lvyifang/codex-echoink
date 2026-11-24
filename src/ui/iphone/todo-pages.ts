@@ -2,44 +2,26 @@ import { settingsRow } from "./settings-elements";
 import type { MobileTodoSnapshot } from "../../mobile/module-contracts";
 import type { TodoInput } from "../../home/todo-store";
 import type { ParsedTodoRecord } from "../../home/todo-markdown";
-import { todoPageRecords } from "../../home/todo-page-model";
-import { resolveTodoProject } from "../../home/todo-projects";
+import { newMobileTodoPlannerState, renderMobileTodoPlanner } from "../mobile/todo-planner-view";
 import { parsePeopleNames, joinPeopleNames } from "../../home/todo-people";
-import { createOriginCheck, createOriginPagination } from "../mobile/origin-controls";
-import { iphoneButton, iphoneElement as el, iphoneIcon } from "./workbench-elements";
+import { iphoneButton, iphoneElement as el } from "./workbench-elements";
 import type { IPhonePageContext } from "./workbench-contract";
-import { IPhoneModulePage, moduleDate, moduleSegments, moduleText } from "./module-elements";
-import { formatMobileDueDate } from "../../mobile/date-display";
+import { IPhoneModulePage, moduleDate, moduleText } from "./module-elements";
 import { settingsMessage } from "./settings-language";
 
 export async function openIPhoneTodos(ctx: IPhonePageContext): Promise<void> {
   const id = "iphone-module-todos"; if (ctx.shell.hasPage(id)) { await ctx.shell.backTo(id); return; }
   const view = new IPhoneModulePage(ctx, id, "待办", "todos", "帮我把今天和本周的待办排个顺序"), api = ctx.host.services.modules.todos;
-  let snapshot: MobileTodoSnapshot | undefined, status: "open" | "done" | "all" = "open", category: string | null = null, project: string | null = null, date = "all", page = 1, revision = 0, filtersOpen = false;
+  let snapshot: MobileTodoSnapshot | undefined, revision = 0;
+  const state = newMobileTodoPlannerState(moduleDate(new Date())), host = el(ctx.document, "div", "ip-todo-planner");
   const render = () => {
-    if (!view.alive || !snapshot) return; view.body.replaceChildren(); const toolbar = el(ctx.document, "div", "ip-todo-toolbar"), advanced = el(ctx.document, "details", "ip-todo-more-filters"), filters = el(ctx.document, "div", "ip-module-filters");
-    advanced.open = filtersOpen; advanced.addEventListener("toggle", () => { filtersOpen = advanced.open; }); const filterSummary = el(ctx.document, "summary", ""); filterSummary.append(el(ctx.document, "span", "", moduleText(ctx, "更多筛选", "More filters")), iphoneIcon(ctx.document, "chevron-down")); advanced.append(filterSummary, filters); view.body.append(toolbar);
-    moduleSegments(view, toolbar, "待办状态", [["open", "未完成"], ["done", "已完成"], ["all", "全部"]], status, value => { status = value as typeof status; page = 1; render(); });
-    const projectSelect = view.select(toolbar, "按项目筛选", [["all", moduleText(ctx, "全部项目")], ["none", moduleText(ctx, "不属于项目")], ...snapshot.projects.map(item => [`path:${item.path}`, item.label] as const)], project ?? "all", value => { project = value === "all" ? null : value; page = 1; render(); }); projectSelect.parentElement!.classList.add("ip-todo-project");
-    view.select(filters, "待办分类", [["all", moduleText(ctx, "全部分类")], ...[...new Set([...snapshot.categories.map(item => item.name), ...snapshot.records.map(item => item.categoryName).filter(Boolean)])].map(name => [name, name] as const)], category ?? "all", value => { category = value === "all" ? null : value; page = 1; render(); });
-    view.select(filters, "待办日期", [["all", moduleText(ctx, "全部日期")], ["today", moduleText(ctx, "今天")], ["overdue", moduleText(ctx, "已逾期")], ["none", moduleText(ctx, "无日期")]], date, value => { date = value; page = 1; render(); });
-    const today = moduleDate(new Date()), available = snapshot.records.filter(record => date === "all" || (date === "none" ? !record.dueDate : date === "today" ? record.dueDate === today : !!record.dueDate && record.dueDate < today && !record.done));
-    const result = todoPageRecords(available, snapshot.projects, { status, category, project, page }); page = result.page;
-    const count = el(ctx.document, "div", "ip-todo-count"); count.append(el(ctx.document, "span", "", moduleText(ctx, `${result.total}/${snapshot.records.length} 项`, `${result.total}/${snapshot.records.length} items`)), el(ctx.document, "span", "", moduleText(ctx, `累计完成 ${snapshot.completion.total} · 今日完成 ${snapshot.completion.today}`, `Total completed ${snapshot.completion.total} · Today ${snapshot.completion.today}`))); view.body.append(count);
+    if (!view.alive || !snapshot) return; if (!host.isConnected) { view.body.replaceChildren(host); }
+    renderMobileTodoPlanner(host, snapshot, state, { platform: "iphone", language: ctx.host.settings().settingsLanguage, today: moduleDate(new Date()), rerender: render,
+      toggle: async (record, done) => { await view.run(async () => { await api.toggle(record, done, snapshot!.contentVersion, snapshot!.sourcePath); await refresh(); }); render(); },
+      add: async input => { if (!await view.run(async () => { await api.add(input, snapshot!.contentVersion, snapshot!.sourcePath); await refresh(); })) throw new Error("not saved"); },
+      open: record => { void openTodoForm(ctx, snapshot!, record, refresh).catch(error => ctx.error(error)); },
+      sheet: (title, content) => ctx.shell.openSheet({ title, content }), closeSheet: () => { ctx.shell.closeSheet(); } });
     if (snapshot.warnings.length) view.error.show(moduleText(ctx, `有 ${snapshot.warnings.length} 行无法解析，原文件已保留。`, `${snapshot.warnings.length} lines could not be parsed. The source was kept.`));
-    const list = el(ctx.document, "div", "ip-todo-rows"); view.body.append(list);
-    for (const record of result.records) {
-      const row = el(ctx.document, "div", `ip-todo-row${record.done ? " is-done" : ""}`); row.dataset.todoId = record.id;
-      const check = createOriginCheck(row, { cls: "ip-todo-check", attr: { "aria-label": moduleText(ctx, `${record.done ? "取消完成" : "完成"} ${record.title}`, `${record.done ? "Reopen" : "Complete"} ${record.title}`) } }); check.checked = record.done;
-      check.addEventListener("change", () => { const value = check.checked; check.disabled = true; void view.run(async () => { await api.toggle(record, value, snapshot!.contentVersion); await refresh(); }).finally(() => { if (view.alive && check.isConnected) { check.checked = snapshot?.records.find(item => item.id === record.id)?.done ?? record.done; check.disabled = false; } }); });
-      const title = iphoneButton(ctx.document, record.title, () => { void openTodoForm(ctx, snapshot!, record, refresh).catch(error => ctx.error(error)); }, "is-text"); title.classList.add("ip-todo-main");
-      const label = title.querySelector(".ip-button-visible")!; const projectName = resolveTodoProject(record.project, snapshot.projects).label;
-      label.append(el(ctx.document, "span", "ip-sub", [record.categoryName, projectName === "—" ? "" : projectName].filter(Boolean).join(" · "))); row.append(title);
-      if (record.dueDate) { const time = el(ctx.document, "time", `ip-todo-date${!record.done && record.dueDate < today ? " is-overdue" : !record.done && record.dueDate === today ? " is-today" : ""}`, formatMobileDueDate(record.dueDate, Date.now(), ctx.host.settings().settingsLanguage)); time.dateTime = record.dueDate + (record.dueTime ? `T${record.dueTime}` : ""); row.append(time); } list.append(row);
-    }
-    if (!result.records.length) view.empty(list, "没有符合条件的待办");
-    if (result.pages > 1) createOriginPagination(view.body, result.page, result.pages, value => { page = value; render(); });
-    const actions = el(ctx.document, "div", "ip-settings-actions"), add = view.button(actions, "新增待办", () => openTodoForm(ctx, snapshot!, null, refresh)); add.querySelector(".ip-button-visible")?.prepend(iphoneIcon(ctx.document, "plus")); view.body.append(advanced, actions);
   };
   const refresh = async () => { const ticket = ++revision; try { const next = await api.read(); if (!view.alive || ticket !== revision) return; snapshot = next; view.error.show(); render(); } catch (error) { if (view.alive && ticket === revision) view.error.show(error); } };
   view.cleanup(api.subscribe(() => { if (!view.busy) void refresh(); })); view.empty(view.body, "正在加载…"); await view.push(); if (view.alive) await refresh();

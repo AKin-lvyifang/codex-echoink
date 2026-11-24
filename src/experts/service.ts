@@ -12,7 +12,8 @@ import { buildExpertTransientPrompt, type ExpertPromptInput, type ExpertSkillOpt
 import { ExpertSubmissionService } from "./submission-service";
 
 export type ExpertDeliveryAccount = Pick<AccountService, "apiUrl" | "skillAuthorization" | "getExpertCatalog" | "getExpertPackage">
-  & Partial<Pick<AccountService, "expertHireReporter" | "expertSubmissionOwner" | "getExpertAvatarPresets" | "submitExpert">>;
+  & Partial<Pick<AccountService, "expertHireReporter" | "expertSubmissionOwner" | "expertSubmissionHistoryOwner"
+    | "getExpertSubmissionHistory" | "getExpertAvatarPresets" | "submitExpert" | "subscribe">>;
 export interface ExpertContentFiles {
   read(path: string): Promise<string | null>;
   write(path: string, content: string): Promise<void>;

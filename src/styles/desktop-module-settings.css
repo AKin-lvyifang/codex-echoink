@@ -115,3 +115,7 @@
   .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel { align-items: stretch; flex-direction: column; }
   .echoink-settings-demo .echoink-journal-template-management .echoink-journal-import-panel > button { align-self: flex-end; }
 }
+
+/* To-do category color: a dot button opens the shared preset palette in place. */
+.echoink-todo-category-swatch { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--finance-swatch); }
+.echoink-todo-category-palette { padding: 10px 18px 14px; border-top: 1px solid var(--background-modifier-border); }

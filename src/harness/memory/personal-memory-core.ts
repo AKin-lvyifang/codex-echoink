@@ -1,4 +1,4 @@
-import { PERSONAL_MEMORY_SCHEMA, type PersonalMemoryRecord, type PersonalMemoryKind, type PersonalMemoryStatus, type PersonalMemoryBasis, type PersonalMemoryContentOrigin } from "./personal-memory-contracts";
+import { PERSONAL_MEMORY_SCHEMA, isPersonalMemoryKind, isPersonalMemoryBasis, isPersonalMemoryContentOrigin, type PersonalMemoryRecord, type PersonalMemoryKind, type PersonalMemoryStatus, type PersonalMemoryBasis, type PersonalMemoryContentOrigin } from "./personal-memory-contracts";
 import { sha256Hex } from "../../utils/sha256";
 export interface CanonicalMemoryMetadata extends Omit<PersonalMemoryRecord, "content"> { contentHash?: string }
 export interface CanonicalMemoryTombstone { recordId: string; forgottenAt: number; reason: string; backupFile: string; source: string }
@@ -20,8 +20,8 @@ export function parseCanonicalMemoryManifest(raw: string): CanonicalMemoryManife
     || value.fixedFileHashes !== undefined && (!value.fixedFileHashes || !/^[a-f0-9]{64}$/u.test(value.fixedFileHashes.agent) || !/^[a-f0-9]{64}$/u.test(value.fixedFileHashes.user))
     || value.records.some(record => !record || typeof record.id !== "string" || typeof record.file !== "string"
       || !/^[a-zA-Z0-9_-]{3,96}$/u.test(record.id) || !/^shared-user\/memory\/(facts|views|decisions|active|episodes)\/[a-zA-Z0-9_-]{3,96}\.md$/u.test(record.file)
-      || !["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(record.kind)
-      || !["current", "superseded", "closed"].includes(record.status) || !["explicit", "observed", "inferred"].includes(record.basis)
+      || !isPersonalMemoryKind(record.kind)
+      || !["current", "superseded", "closed"].includes(record.status) || !isPersonalMemoryBasis(record.basis)
       || !Number.isSafeInteger(record.revision) || record.revision < 1 || typeof record.title !== "string" || typeof record.source !== "string" || typeof record.date !== "string"
       || record.pinned !== undefined && typeof record.pinned !== "boolean"
       || record.contentHash !== undefined && !/^[a-f0-9]{64}$/u.test(record.contentHash))
@@ -182,7 +182,7 @@ function validateDateTime(value: unknown, name: string): string {
 }
 
 function isMemoryKind(value: unknown): value is PersonalMemoryKind {
-  return ["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(String(value));
+  return isPersonalMemoryKind(String(value));
 }
 
 function isMemoryStatus(value: unknown): value is PersonalMemoryStatus {
@@ -190,12 +190,12 @@ function isMemoryStatus(value: unknown): value is PersonalMemoryStatus {
 }
 
 function isMemoryBasis(value: unknown): value is PersonalMemoryBasis {
-  return ["explicit", "observed", "inferred"].includes(String(value));
+  return isPersonalMemoryBasis(String(value));
 }
 
 function requireContentOrigin(value: unknown): PersonalMemoryContentOrigin {
-  const origin = cleanRequired(value, "content_origin", 64) as PersonalMemoryContentOrigin;
-  if (!["user_statement", "user_edit", "dream_correction", "confirmed_change", "current_instruction", "quotation", "code", "hypothesis", "knowledge", "tool_output"].includes(origin)) {
+  const origin = cleanRequired(value, "content_origin", 64);
+  if (!isPersonalMemoryContentOrigin(origin)) {
     throw new CanonicalMemoryFormatError("invalid_request", "content_origin is invalid");
   }
   return origin;

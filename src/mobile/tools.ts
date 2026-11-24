@@ -6,7 +6,9 @@ import type { KnowledgeFolderBindings } from "../knowledge-base/folder-bindings"
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { App } from "obsidian";
 import { Type } from "typebox";
-import { PERSONAL_MEMORY_SCHEMA, type PersonalMemoryKind, type PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
+import { PERSONAL_MEMORY_KINDS, PERSONAL_MEMORY_SCHEMA, type PersonalMemoryKind, type PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
+import { PersonalMemoryAccessError } from "../harness/memory/personal-memory-error";
+import { validateMobileMemoryWriteEnums } from "./memory-contracts";
 import { MobileStore, newId } from "./store";
 import { createScopedMobileBodySearch, defaultMobileCapabilityPolicy, isScopedMobileBodySearch, requireMobileAgentCapability, type MobileCapabilityPolicy } from "./capability-policy";
 import { sha256Hex } from "../utils/sha256";
@@ -161,14 +163,18 @@ export function mobileTools(app: App, store: MobileStore, selectedNote: () => st
     }, {
       name: "memory_write", label: "保存记忆", description: "忠实保存用户明确陈述或当前对话中可观察的长期信息。禁止把引用、文档知识、假设、工具输出或模型猜测写成用户事实。先搜索避免重复；修正旧记忆时提供 targetId。不能删除记忆。用户本轮明确要求固定或取消固定时，传operation=pin/unpin、targetId和逐字evidenceQuote；其余字段用于新增或修正。", parameters: Type.Object({
         operation: Type.Optional(Type.Union([Type.Literal("pin"), Type.Literal("unpin")])), evidenceQuote: Type.Optional(Type.String()),
-        kind: Type.Optional(Type.Union(["fact", "view", "decision", "goal", "task", "open_loop", "episode"].map(k => Type.Literal(k)))), title: Type.Optional(Type.String({ minLength: 1 })), content: Type.Optional(Type.String({ minLength: 1 })), recallWhen: Type.Optional(Type.String()), basis: Type.Optional(Type.Union([Type.Literal("explicit"), Type.Literal("observed")])), targetId: Type.Optional(Type.String())
+        kind: Type.Optional(Type.Union(PERSONAL_MEMORY_KINDS.map(kind => Type.Literal(kind)))), title: Type.Optional(Type.String({ minLength: 1 })), content: Type.Optional(Type.String({ minLength: 1 })), recallWhen: Type.Optional(Type.String()), basis: Type.Optional(Type.Union([Type.Literal("explicit"), Type.Literal("observed")])), targetId: Type.Optional(Type.String())
       }),
       async execute(toolCallId, args: { operation?: "pin" | "unpin"; evidenceQuote?: string; targetId?: string; kind: PersonalMemoryKind; content: string; title: string; recallWhen: string; basis: "explicit" | "observed" }, signal) {
         enabled("memory_write", signal);
+        if (args.operation === undefined) validateMobileMemoryWriteEnums(args.kind, args.basis);
+        else if (args.operation !== "pin" && args.operation !== "unpin") {
+          throw new PersonalMemoryAccessError("invalid_request", "记忆写入操作无效。");
+        }
         await assertMobileResumeObservations(app, store, execution?.resume, signal, finance);
         enabled("memory_write", signal);
         if (args.operation && (!args.targetId || !args.evidenceQuote?.trim() || !execution?.userText?.includes(args.evidenceQuote))) throw new Error("固定或取消固定必须引用用户本轮明确要求的原话。");
-        if (!args.operation && (!args.title?.trim() || !args.content?.trim() || !args.recallWhen?.trim() || !["explicit", "observed"].includes(args.basis) || !["fact", "view", "decision", "goal", "task", "open_loop", "episode"].includes(args.kind))) throw new Error("新增或修正记忆需要有效的类型、标题、正文、触发场景和依据。");
+        if (!args.operation && (!args.title?.trim() || !args.content?.trim() || !args.recallWhen?.trim())) throw new Error("新增或修正记忆需要有效的类型、标题、正文、触发场景和依据。");
         if (memory) {
           const plan = args.operation ? await memory.preparePin(args.targetId!, args.operation === "pin") : await memory.prepareToolMemory(args, sessionId, execution?.runId ?? "", toolCallId);
           const semanticKey = args.operation ? mobileMemoryWriteKey(mobileMemoryWriteHash(plan.record), args.targetId) : mobileMemoryWriteKey(mobileMemoryWriteHash(args), args.targetId), now = Date.now();

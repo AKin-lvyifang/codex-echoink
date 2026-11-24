@@ -20,6 +20,7 @@ export interface MobileShellOptions {
   onRootBack?: () => void;
   /** Interface language for the shell's own error text. */
   language?: () => string | undefined;
+  pageNotice?: (pageId: string) => HTMLElement | undefined;
 }
 
 export interface MobileShellSheet {

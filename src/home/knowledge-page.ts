@@ -179,7 +179,7 @@ export class KnowledgePageView extends ItemView {
     if (!header.firstChild) {
       const title = header.createDiv({ cls: "knowledge-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
-      back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); setIcon(back, "arrow-left"); title.createEl("h1");
+      back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); back.dataset.echoinkWorkbenchBack = ""; setIcon(back, "arrow-left"); title.createEl("h1").dataset.echoinkModuleTitle = "";
       this.button(header, "", () => prefillWorkbenchModule(this.plugin, "knowledge-base", this.t("帮我看看知识库里有哪些值得整理的内容", "Help me review what is worth organizing in my knowledge base")), "is-primary").dataset.knowledge = "owner";
     }
     header.querySelector("h1")!.setText(this.t("知识库", "Knowledge"));

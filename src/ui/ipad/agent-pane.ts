@@ -4,6 +4,8 @@ import { isAgentHired } from "../../agents/persona";
 import { mobileAgentCreationChoice } from "../mobile/expert-ui";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
+import { MobileTaskFileChanged } from "../../mobile/store";
+import { createTaskFileRecovery } from "../mobile/task-file-recovery";
 import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { GENERAL_ASSISTANT_ID } from "../../agents/types";
 import { IPadShell } from "./shell";
@@ -13,7 +15,7 @@ import { createAgentFormPage } from "./agent-form";
 import { createTaskPage } from "./task-detail";
 import { requestIPadTaskResume } from "./composer";
 import type { IPadAgentRoute, IPadPageContext, IPadWorkbenchHost } from "./workbench-contract";
-import { ipadAvatar, ipadElement as el, ipadIcon, ipadTasks, ipadTaskProjection, ipadTaskStatus, ipadTaskUnread } from "./workbench-elements";
+import { ipadAvatar, ipadButton, ipadElement as el, ipadIcon, ipadTasks, ipadTaskProjection, ipadTaskStatus, ipadTaskUnread } from "./workbench-elements";
 
 /** The host owns sidebar tabs and visibility; this controller owns only its content. */
 export class IPadAgentPane {
@@ -37,7 +39,10 @@ export class IPadAgentPane {
     this.releasePress = bindMobilePressFeedback(root);
     this.strip = el(root.ownerDocument, "nav", "pd-agent-strip"); this.strip.setAttribute("aria-label", "Agents");
     this.pane = el(root.ownerDocument, "div", "pd-agent-shell"); root.append(this.strip, this.pane);
-    this.shell = new IPadShell(this.pane, { onError: error => this.error(error) });
+    const recovery = createTaskFileRecovery(root.ownerDocument, host, (label, action) => ipadButton(root.ownerDocument, label, action, "is-primary"));
+    if (recovery) this.unsubscribe.push(recovery.dispose);
+    this.shell = new IPadShell(this.pane, { onError: error => this.error(error),
+      pageNotice: id => /^(ipad-agent-(?!form)|task:)/u.test(id) ? recovery?.element : undefined });
     this.context = { root, host, document: root.ownerDocument, shell: this.shell,
       navigate: (route, replace) => route.kind === "home" ? host.openHome() : route.kind === "project" ? host.openProject?.(route.projectId, route.deviceId) ?? Promise.resolve() : route.kind === "remote-conversation" ? host.openRemoteConversation?.(route.deviceId, route.conversationId) ?? Promise.resolve() : this.navigate(route, replace), error: error => this.error(error) };
     const Observer = root.ownerDocument.defaultView?.MutationObserver;
@@ -72,7 +77,7 @@ export class IPadAgentPane {
       const page = createTaskPage(this.context, task.id);
       if (!await this.shell.push(page)) page.dispose?.();
     }
-    this.renderStrip(); await this.syncActivePage();
+    this.renderStrip(); await this.syncActivePage().catch(error => { if (!(error instanceof MobileTaskFileChanged)) throw error; });
   }
 
   navigate(route: IPadAgentRoute, replace = false): Promise<void> {
@@ -101,7 +106,7 @@ export class IPadAgentPane {
         const moved = replaceForm ? await this.shell.replace(page) : await this.shell.push(page);
         if (!moved) { page.dispose?.(); return; }
       }
-      this.renderStrip(); await this.syncActivePage();
+      this.renderStrip(); await this.syncActivePage().catch(error => { if (!(error instanceof MobileTaskFileChanged)) throw error; });
     });
     this.serial = next; return next;
   }
@@ -192,7 +197,11 @@ export class IPadAgentPane {
     this.activeSync = { id: pageId, promise }; return promise;
   }
 
-  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage)); }
+  private error(error: unknown): void {
+    if (error instanceof MobileTaskFileChanged) return;
+    runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined });
+    new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage));
+  }
   dispose(): void {
     if (this.closed) return; this.closed = true; this.observer?.disconnect(); this.unsubscribe.forEach(unsubscribe => unsubscribe());
     this.releasePress();

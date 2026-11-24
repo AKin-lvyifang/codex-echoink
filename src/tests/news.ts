@@ -6,7 +6,7 @@ import { openTestNoticeMessages } from "obsidian";
 import { NewsPageView, type NewsPageDeps } from "../home/news-page";
 import { createNewsFetch } from "../membership/transport";
 import { escapeNewsMarkdown, newsAgentPrompt, newsNoteContent, newsNoteFileName } from "../news/actions";
-import { newsDayGroups, newsDayLabel, newsEventItem, newsHotEvents, newsLeadItems, newsMatchesQuery, newsSourceCount, newsUpdatedLabel, parseNewsFeed, safeNewsUrl, type NewsFeed } from "../news/feed";
+import { newsDayGroups, newsDayLabel, newsEventItem, newsHotEvents, newsLeadItems, newsMatchesQuery, newsSourceCount, newsUpdatedLabel, localizeNewsFeed, parseNewsFeed, safeNewsUrl, type NewsFeed } from "../news/feed";
 import { buildNewsRelevanceIndex, matchNewsRelevance, newsReasonText, newsTerms, NEWS_RELEVANCE_MAX_NOTES } from "../news/relevance";
 import { addRssSubscription, NewsRssError, NewsRssService, normalizeRssSubscriptions, normalizeRssUrl, parseRssFeed } from "../news/rss";
 import { NEWS_REFRESH_MS, NewsService, type NewsCacheStore, type NewsFetchResult } from "../news/service";
@@ -34,6 +34,18 @@ function feedTests(): void {
   assert.ok(hot.every((event, index) => index === 0 || hot[index - 1].heat >= event.heat));
   assert.equal(newsEventItem(feed, hot[0])?.id, "e804e32defe03406");
   assert.ok(newsMatchesQuery(feed.items[0], " longcat ")); assert.ok(newsMatchesQuery(feed.items[0], "百万上下文")); assert.ok(!newsMatchesQuery(feed.items[0], "迪士尼"));
+
+  // 英文界面换用服务端英文字段；没有英文的条目保留原文，中文界面不变。
+  const bilingual = raw(); bilingual.items[0] = { ...bilingual.items[0], titleEn: "Meituan open-sources LongCat", summaryEn: "An English summary." };
+  bilingual.items[1] = { ...bilingual.items[1], titleEn: "English title only" };
+  bilingual.items[2] = { ...bilingual.items[2], summaryEn: "English summary only." };
+  bilingual.events[0] = { ...bilingual.events[0], titleEn: "English event" };
+  const parsed = parseNewsFeed(bilingual), en = localizeNewsFeed(parsed, true);
+  assert.equal(en.items[0].title, "Meituan open-sources LongCat"); assert.equal(en.items[0].summary, "An English summary.");
+  assert.equal(en.items[1].title, "English title only"); assert.equal(en.items[1].summary, parsed.items[1].summary);
+  assert.equal(en.items[2].title, parsed.items[2].title); assert.equal(en.items[2].summary, "English summary only.");
+  assert.equal(en.items[3].title, parsed.items[3].title); assert.equal(en.events[0].title, "English event");
+  assert.equal(localizeNewsFeed(parsed, false), parsed);
 
   // 顶层结构不对整体拒绝。
   for (const broken of [null, [], { ...raw(), version: 2 }, { ...raw(), items: {} }, { ...raw(), paused: "no" }, { ...raw(), generatedAt: "昨天" }]) assert.throws(() => parseNewsFeed(broken), /NEWS_RESPONSE_INVALID/u);
@@ -281,8 +293,10 @@ async function viewTests(dom: JSDOM): Promise<void> {
     ? new Promise<{ status: number; text: string }>(resolve => { releaseSlowRss = resolve; })
     : url.includes("bad") ? { status: 200, text: "<html></html>" } : { status: 200, text: RSS };
   const deps: NewsPageDeps = { service: new NewsService({ fetch: async etag => { fetches.push(etag); return response; }, token: () => "token", store, now: () => now }), rss: new NewsRssService(request, NEWS_REFRESH_MS, () => now), request, now: () => now };
-  const view: any = new NewsPageView({} as any, plugin, deps);
-  Object.assign(view, { app, contentEl: root, containerEl: root });
+  let headerRefreshes = 0;
+  const view: any = new NewsPageView({ updateHeader: () => { headerRefreshes++; } } as any, plugin, deps);
+  const titleEl = win.document.createElement("div");
+  Object.assign(view, { app, contentEl: root, containerEl: root, titleEl });
   const $ = (selector: string) => root.querySelector(selector) as HTMLElement | null, all = (selector: string) => Array.from(root.querySelectorAll(selector)) as HTMLElement[];
   const text = () => root.textContent ?? "";
   const byText = (selector: string, label: string) => all(selector).find(node => node.textContent === label || node.getAttribute("aria-label") === label || node.getAttribute("aria-labelledby") && win.document.getElementById(node.getAttribute("aria-labelledby"))?.textContent === label);
@@ -422,6 +436,8 @@ async function viewTests(dom: JSDOM): Promise<void> {
   await view.refresh(true); await tick(); assert.match(text(), /资讯是 PRO 功能/u);
   // 英文界面。
   plugin.settings.settingsLanguage = "en"; view.refreshLanguage(); assert.match(text(), /News is a PRO feature/u);
+  assert.equal(headerRefreshes, 1);
+  assert.equal(titleEl.textContent, "News");
 
   await view.onClose(); assert.equal(root.childElementCount, 0); assert.equal(accountListeners.size, 0);
 }

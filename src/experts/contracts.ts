@@ -14,6 +14,12 @@ export interface ExpertMetadata {
   tags: [string, string, string]; avatarUrl: string; version: string;
   minPluginVersion: string; platforms: ExpertPlatform[]; status: "draft" | "published";
   source?: ExpertSource; author?: { name: string }; hireCount?: number;
+  /** Optional English display copy; persona and skills stay in the package. */
+  en?: ExpertLocalizedText;
+}
+export interface ExpertLocalizedText {
+  name: string; scene: string; summary: string; quote: string; tags: [string, string, string];
+  description?: string; story?: string; examples?: string[];
 }
 export interface ExpertCatalog { catalogVersion: string; experts: ExpertMetadata[] }
 export interface ExpertSkill {
@@ -54,6 +60,21 @@ export function safeExpertUrl(value: string, baseUrl?: string): string | null {
     return !url.username && !url.password && (url.protocol === "https:" || url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) ? url.href : null;
   } catch { return null; }
 }
+function parseLocalized(value: unknown): ExpertLocalizedText | undefined {
+  if (value === undefined || value === null) return undefined;
+  const data = record(value);
+  if (!text(data.name, 300) || !text(data.scene, 300) || !text(data.summary) || !text(data.quote)
+    || !Array.isArray(data.tags) || data.tags.length !== 3 || !data.tags.every(tag => text(tag, 300))) return undefined;
+  let description: string | undefined, story: string | undefined, examples: string[] | undefined;
+  try { description = optionalPublicText(data.description); story = optionalPublicText(data.story); examples = optionalPublicExamples(data.examples); } catch { return undefined; }
+  return { name: data.name, scene: data.scene, summary: data.summary, quote: data.quote, tags: [...data.tags] as [string, string, string],
+    ...(description ? { description } : {}), ...(story ? { story } : {}), ...(examples ? { examples } : {}) };
+}
+/** Display-only view of an expert in the reader's language; falls back to the primary (Chinese) copy. */
+export function localizeExpert(expert: ExpertMetadata, english: boolean): ExpertMetadata {
+  if (!english || !expert.en) return expert;
+  return { ...expert, ...expert.en };
+}
 function parseMetadata(value: unknown, baseUrl?: string): ExpertMetadata {
   const data = record(value), avatarUrl = typeof data.avatarUrl === "string" ? safeExpertUrl(data.avatarUrl, baseUrl) : null;
   const description = optionalPublicText(data.description), story = optionalPublicText(data.story), examples = optionalPublicExamples(data.examples);
@@ -66,8 +87,9 @@ function parseMetadata(value: unknown, baseUrl?: string): ExpertMetadata {
   const { name: authorName } = record(data.author);
   if (source === "community" && !text(authorName, 120)) throw new Error("专家署名无效。");
   if (data.hireCount !== undefined && (!Number.isSafeInteger(data.hireCount) || Number(data.hireCount) < 0)) throw new Error("专家聘请人数无效。");
+  const en = parseLocalized(data.en);
   return { id: data.id, name: data.name, scene: data.scene, summary: data.summary, quote: data.quote,
-    ...(description ? { description } : {}), ...(story ? { story } : {}), ...(examples ? { examples } : {}),
+    ...(en ? { en } : {}), ...(description ? { description } : {}), ...(story ? { story } : {}), ...(examples ? { examples } : {}),
     tags: [...data.tags] as [string, string, string], avatarUrl, version: data.version, minPluginVersion: data.minPluginVersion,
     platforms: [...(data.platforms as ExpertPlatform[])], status: data.status as ExpertMetadata["status"],
     source, ...(text(authorName, 120) ? { author: { name: authorName } } : {}),

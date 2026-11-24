@@ -14,6 +14,8 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **Conversations and work records from other devices.** Share data with other devices is on by default on desktop, phone, and tablet. It writes device names and activity times, work projects and their progress, conversation titles and message text, and brief tool steps to `EchoInk/同步数据` in the current vault. The first pass mirrors conversations updated in the last 30 days. Later passes update a conversation when it produces a new result. Creating the mirror and opening received records require no EchoInk account. If you enable EchoInk Cloud Sync, these records are encrypted and transferred as described below. If you include this folder in Obsidian Sync or another tool, that service stores its copies under its own privacy and retention terms. Turning off mirroring stops future writes. Files already created stay in the vault and can still be transferred by a sync service you have enabled. On desktop, continuing a chat can create a new local conversation with the received messages. On mobile, the received text is first added to the draft. When you send it, the selected model service's policy applies.
 
+- **To-dos and finance.** Tasks, subtasks, categories, and financial records are stored in the current vault. Text entered for a quick task or transaction is parsed on your device. With finance AI enabled, importing bills for a completed month can generate a closing report. Report generation sends that month's financial summary, dates, merchants, categories and amounts for selected transactions, and relevant journal excerpts to the selected model. When a model or smart judgment is used, the corresponding service terms below apply.
+
 ## Features that connect to echoink.cn
 
 - **Account and authorization:** EchoInk's account service at **https://echoink.cn** handles registration, sign-in, email verification, redemption, subscriptions, and device authorization. It receives the account information and authorization data required for those requests, including a generated device identity. An EchoInk account and an active entitlement are required for PRO plugins; ordinary chat and Knowledge do not require an EchoInk account.
@@ -25,6 +27,8 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 - **Expert catalogs and content:** The public catalog request sends the plugin version to echoink.cn so the server can return compatible experts. Content downloads require active PRO and device authorization. Requests include the expert ID, device ID, signed lease, plugin version, platform, and optional cached version; these download requests send no notes or conversations. Downloaded content is cached in `expert-cache/` under the current plugin directory. Before each run, a community expert needs an online check to confirm it is still listed.
 
 - **Community expert submissions:** When you confirm a submission, echoink.cn receives the name, use case, summary, quote, tags, example questions, persona, attached vault Skill text, avatar choice or image, and the public name you approve. EchoInk stores the submission with your account for review. If accepted, public details and attribution appear in the catalog. People who hire the expert receive the persona and Skill text on their devices for use with their chosen model.
+
+- **Expert submission receipts.** When you open submission receipts while signed in, the plugin sends your login token and page number to echoink.cn to retrieve your account's records. Receipts show submission times, statuses, and review reasons. Only the submitting account can view them.
 
 - **Expert hire statistics:** After a successful local hire, the plugin reports the expert ID with your signed-in session. EchoInk counts each account once per expert, across devices, vaults and repeat hires. The catalog shows the aggregate count.
 
@@ -55,6 +59,8 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 ## Data sent to third-party services
 
 - **Model requests:** Your selected model service receives the prompts, notes, attachments, memory, and tool results needed for the current AI request. Model services may require their own account and charge separately; image input requires a vision-capable model.
+
+- **OpenCode Go.** Choosing this plan for a request or running a connection test sends your OpenCode Go API key, the content needed for that request, a session identifier, and the EchoInk client identifier to `https://opencode.ai/inference/go/v1`. OpenCode's terms govern plans, usage, and data retention.
 
 - **Web search:** Web search is off by default, with a choice of Tavily or DeepSeek. When enabled, queries go to the selected service at `api.tavily.com` or `api.deepseek.com`, and returned snippets and links go to your model. Each service uses its own account and API key and bills usage separately; connection tests also perform a real search. Tavily connection tests use basic search and consume one credit; see [Tavily's pricing policy](https://docs.tavily.com/documentation/api-credits). DeepSeek query limits and billing are described in its [search documentation](https://api-docs.deepseek.com/guides/search/).
 

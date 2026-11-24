@@ -155,9 +155,10 @@ export function serializeTodoRecord(record: ParsedTodoRecord): string {
         if (values[key] === oldValues[key]) result.push(line);
         else if (values[key]) result.push(`${meta[1]}${key}${meta[3]}${values[key]}`);
       }
-      for (const [key, value] of Object.entries(values)) {
-        if (value && !seen.has(key)) result.push(`  - ${key}：${value}`);
-      }
+      // New metadata goes before native subtask lines so the task header stays together.
+      const subtaskAt = result.findIndex((line, index) => index > 0 && /^\s+[-*]\s+\[[ xX]\]/u.test(line));
+      const added = Object.entries(values).filter(([key, value]) => value && !seen.has(key)).map(([key, value]) => `  - ${key}：${value}`);
+      result.splice(subtaskAt < 0 ? result.length : subtaskAt, 0, ...added);
       return result.join("\n");
     }
   }

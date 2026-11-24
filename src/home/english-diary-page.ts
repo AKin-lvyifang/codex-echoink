@@ -182,7 +182,7 @@ export class EnglishDiaryPageView extends ItemView {
     if (!header.firstChild) {
       const title = header.createDiv({ cls: "english-page-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
-      back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); setIcon(back, "arrow-left"); title.createEl("h1");
+      back.setAttribute("aria-label", this.t("返回工作台", "Back to workbench")); back.dataset.echoinkWorkbenchBack = ""; setIcon(back, "arrow-left"); title.createEl("h1").dataset.echoinkModuleTitle = "";
       header.createSpan({ cls: "english-page-note", attr: { "data-english-diary": "review-reason" } });
       this.button(header, "", () => this.reviewExpressions(), "is-primary").dataset.englishDiary = "owner";
     }

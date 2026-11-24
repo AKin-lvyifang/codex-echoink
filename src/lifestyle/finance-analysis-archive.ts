@@ -4,6 +4,7 @@ import { TFile, type App } from "obsidian";
 import { stringify } from "yaml";
 import type { FinanceAnalysisInput, FinanceReportSnapshot, FinanceTableSnapshot } from "./finance-analysis";
 import type { LifeReport, LifestyleStoreCore } from "./store-core";
+import { financeMonthlyReportMarkdown, isFinanceMonthlyReportSnapshot } from "./finance-monthly-report";
 
 export interface FinanceAnalysisArchiveRecord {
   id: string; period: string; version: number; createdAt: number;
@@ -44,6 +45,7 @@ function tableMarkdown(table: FinanceTableSnapshot) {
     ...table.rows.map(row=>`| ${row.map(tableEscape).join(" | ")} |`)].join("\n");
 }
 export function financeReportMarkdown(report: LifeReport): string {
+  if (isFinanceMonthlyReportSnapshot(report.financeSnapshot)) return financeMonthlyReportMarkdown(report.financeSnapshot);
   const snapshot = report.financeSnapshot as FinanceReportSnapshot | undefined;
   const chart = (value: FinanceReportSnapshot["charts"][number]) => `### ${value.title}\n\n${tableMarkdown({ id:"category",title:value.title,
     headers:["项目","实际 · 元",...(value.points.some(p=>p.comparisonCents!==undefined)?["预算 · 元"]:[])],

@@ -1,12 +1,23 @@
 import * as assert from "node:assert/strict";
 import { setXiaoechoLanguageProbe, xiaoechoFailureText, xiaoechoFailureCode } from "../membership/xiaoecho-catalog";
 import { XIAOECHO_RETRY_DELAY_MS, xiaoechoBusyCode } from "../harness/pi/xiaoecho-retry";
-import { assistantProviderFailureText, xiaoechoProviderFailureText, sanitizeProviderFailureDetail } from "../harness/pi/provider-failure";
+import { assistantProviderFailureText, xiaoechoProviderFailureText, xiaoechoProviderFailureDetail,
+  sanitizeProviderFailureDetail, providerFailureDetailText, providerFailureText, PROVIDER_FAILURE_DETAIL_PREFIX } from "../harness/pi/provider-failure";
 
 /** 小echo 排队与错误文案（方哥 11-08 定）：SERVER_BUSY 静默重试一次（2 秒），再失败才用 xiaoechoFailureText 的人话提示。 */
 export async function runXiaoechoRetryTests(): Promise<void> {
   assert.equal(xiaoechoFailureCode('HTTP 503: {"error":"SERVER_BUSY"}'), "SERVER_BUSY");
   assert.equal(xiaoechoFailureCode('ECONNREFUSED secret=DO_NOT_SHOW'), "XIAOECHO_UNAVAILABLE");
+  assert.equal(xiaoechoFailureCode('HTTP 400: {"error":"BODY_TOO_LARGE"}'), "CONTENT_TOO_LONG");
+  assert.equal(xiaoechoFailureCode({ status: 400, message: "NEW_GATE_DENIAL_2" }), "NEW_GATE_DENIAL_2");
+  assert.equal(xiaoechoFailureCode('HTTP 400: {"error":{"code":"new_limit","message":"Do not show this"}}'), "new_limit");
+  assert.equal(xiaoechoFailureCode({ message: "Unstructured server detail" }), "XIAOECHO_REQUEST_REJECTED");
+  const unknown = xiaoechoProviderFailureDetail(sanitizeProviderFailureDetail(400, '{"error":"NEW_GATE_DENIAL_2"}'));
+  const persisted = `provider_request_rejected\n${PROVIDER_FAILURE_DETAIL_PREFIX}${providerFailureDetailText(unknown)}`;
+  assert.equal(assistantProviderFailureText({ errorMessage: "provider_request_rejected", echoInkProviderFailure: unknown }),
+    "模型服务没有接受这次请求（错误码 NEW_GATE_DENIAL_2）。");
+  assert.equal(providerFailureText(persisted, "zh"), "模型服务没有接受这次请求（错误码 NEW_GATE_DENIAL_2）。");
+  assert.deepEqual(xiaoechoProviderFailureDetail({ message: "BODY_TOO_LARGE" }), { message: "CONTENT_TOO_LONG" });
   for (const code of ["XIAOECHO_DISABLED", "NEW_API_NOT_CONFIGURED", "NEW_API_UNAUTHORIZED", "NEW_API_UNREACHABLE"]) {
     assert.equal(xiaoechoFailureText(code,"zh-CN"), "模型服务暂时不可用。请稍后重试。");
     assert.equal(xiaoechoFailureText(code,"en"), "The model service is temporarily unavailable. Try again later.");
@@ -40,6 +51,9 @@ export async function runXiaoechoRetryTests(): Promise<void> {
   assert.equal(xiaoechoFailureText("SERVER_BUSY", "en"), "The model service is temporarily unavailable. Try again later.");
   assert.equal(xiaoechoFailureText("NOT_A_CODE", "en"), null);
   setXiaoechoLanguageProbe(() => "en");
+  assert.equal(assistantProviderFailureText({ errorMessage: "provider_request_rejected", echoInkProviderFailure: unknown }),
+    "The model service did not accept this request (error code NEW_GATE_DENIAL_2).");
+  assert.equal(providerFailureText(persisted, "en"), "The model service did not accept this request (error code NEW_GATE_DENIAL_2).");
   assert.equal(assistantProviderFailureText({ errorMessage: "provider_service_unavailable", echoInkProviderFailure: busy }), "The model service is temporarily unavailable. Try again later.");
   assert.equal(assistantProviderFailureText({ errorMessage: "provider_request_rejected", echoInkProviderFailure: poor }), "Not enough AI points. Check in to earn AI points, then try again.");
   setXiaoechoLanguageProbe(() => "zh-CN");

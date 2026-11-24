@@ -126,7 +126,7 @@ try {
   let entries = Array.from({ length: 61 }, (_, index) => ({ id: `row-${index}`, source: "manual", sourceId: `row-${index}`, merchant: `商户${index}`, category: index < 41 ? "餐饮" : "交通", amountCents: 1000 + index, date: `2026-10-${String(index % 28 + 1).padStart(2,"0")}`, billPlanId: "trip", kind: "expense", status: "completed", currency: "CNY", account: "微信", description: "合成记录", note: "" }));
   const allEntries = [...entries];
   const settings = structuredClone(api.DEFAULT_LIFESTYLE_SETTINGS); settings.finance.enabled = true;
-  const finance = { access: api.paidTestAccess, accessState() { return api.getProPluginAccess(this.access, settings.finance.enabled); }, exportCsv: api.financeEntryCsv, entries: () => entries, billPlans: () => data.financeBillPlans, billPlanStats: id => api.financeBillPlanStats(data.financeBillPlans.find(plan => plan.id === id), entries), subscribe: () => () => {}, issues: () => [], monthlyPlan: month => ({ month, goals: [], dailyLimitCents: null }), goals: () => [], latestReport: () => null, busyMonth: () => null };
+  const finance = { access: api.paidTestAccess, accessState() { return api.getProPluginAccess(this.access, settings.finance.enabled); }, exportCsv: api.financeEntryCsv, entries: () => entries, billPlans: () => data.financeBillPlans, recurring: () => data.financeRecurring ?? [], billPlanStats: id => api.financeBillPlanStats(data.financeBillPlans.find(plan => plan.id === id), entries), subscribe: () => () => {}, issues: () => [], monthlyPlan: month => ({ month, goals: [], dailyLimitCents: null }), goals: () => [], latestReport: () => null, busyMonth: () => null };
   const hostViewport = win.document.body.createDiv({ cls: "echoink-lifestyle-view" }); const host = hostViewport.createDiv();
   const workspace = new api.FinanceWorkspace({ store: { snapshot: () => data }, finance, plugin: { app: {}, settings: { lifestyle: settings } } }); workspace.state.month = "2026-10"; workspace.state.page = "ledger"; workspace.render(host); await flush();
   const rows = () => host.querySelectorAll(".echoink-finance-ledger-list .echoink-finance-transaction"); const next = () => host.querySelector('[aria-label="下一页"]'); const page = () => host.querySelector('[aria-current="page"]')?.textContent;
@@ -135,7 +135,7 @@ try {
   const originalCreate = URL.createObjectURL; URL.createObjectURL = blob => { csv = blob; return "https://finance-fixture.invalid/csv"; }; const originalClick = win.HTMLAnchorElement.prototype.click; win.HTMLAnchorElement.prototype.click = () => {}; workspace.exportCsv(); assert.equal((await csv.text()).trimEnd().split("\n").length, 62); URL.createObjectURL = originalCreate; win.HTMLAnchorElement.prototype.click = originalClick;
   const search = host.querySelector('input[type="search"]'); search.value = "商户0"; search.dispatchEvent(new win.Event("input")); assert.equal(page(), "1"); assert.equal(rows().length, 1); assert.notEqual(host.querySelector(".echoink-finance-ledger-metrics").textContent, metrics); assert.ok(host.querySelector(".echoink-finance-ledger-metrics").textContent.includes("筛选净支出"));
   search.value = ""; search.dispatchEvent(new win.Event("input")); next().click(); next().click(); next().click(); entries = entries.slice(0, 21); workspace.redraw(); assert.equal(page(), "2"); assert.equal(rows().length, 1); workspace.changeMonth(-1); assert.equal(page(), "1");
-  entries = allEntries; workspace.state.page = "billPlans"; workspace.redraw(); host.querySelector('[data-plan-focus="plan:trip"]').click(); assert.equal(host.querySelectorAll(".echoink-finance-bill-detail-rows .echoink-finance-transaction").length, 20); next().click(); assert.equal(page(), "2"); const sort = host.querySelector(".echoink-finance-bill-details select"); sort.value = "amount-desc"; sort.dispatchEvent(new win.Event("change")); assert.equal(page(), "1"); next().click(); host.querySelector('.echoink-finance-bill-category-row[data-category="餐饮"]').click(); assert.equal(page(), "1"); assert.equal(workspace.state.page, "billPlans"); assert.ok(host.querySelector(".echoink-finance-bill-detail-rows").textContent.includes("显示 41 / 61 笔")); host.querySelector('.echoink-finance-bill-category-row[data-category="餐饮"]').click(); assert.equal(workspace.billPlanView.state.category, null);
+  entries = allEntries; workspace.state.page = "plan"; workspace.redraw(); host.querySelector('[data-plan-focus="plan:trip"]').click(); assert.equal(host.querySelectorAll(".echoink-finance-bill-detail-rows .echoink-finance-transaction").length, 20); next().click(); assert.equal(page(), "2"); const sort = host.querySelector(".echoink-finance-bill-details select"); sort.value = "amount-desc"; sort.dispatchEvent(new win.Event("change")); assert.equal(page(), "1"); next().click(); host.querySelector('.echoink-finance-bill-category-row[data-category="餐饮"]').click(); assert.equal(page(), "1"); assert.equal(workspace.state.page, "plan"); assert.ok(host.querySelector(".echoink-finance-bill-detail-rows").textContent.includes("显示 41 / 61 笔")); host.querySelector('.echoink-finance-bill-category-row[data-category="餐饮"]').click(); assert.equal(workspace.billPlanView.state.category, null);
   next().click(); workspace.billPlanView.showPlan("party"); assert.equal(page(), "1");
   finance.access = { ...api.paidTestAccess, checkCapability: capability => capability !== "finance.bill_plan.write" };
   workspace.redraw();
@@ -152,7 +152,7 @@ try {
   assert.ok(host.querySelector('.echoink-finance-tabs button:not([disabled])'));
   workspace.changeMonth(-1); workspace.changeMonth(1);
   finance.access = api.paidTestAccess;
-  data.budgets = [{ month: "2026-10", totalCents: 1000000, allocations: {} }]; workspace.state.month = "2026-10"; workspace.state.page = "budget"; workspace.redraw(); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); frame(); frame(); const remainingFlow = host.querySelectorAll(tag)[1]; assert.ok(remainingFlow); data.budgets[0].totalCents = 100; workspace.redraw(); await flush(); assert.equal(host.querySelectorAll(tag)[1], remainingFlow); assert.ok(host.textContent.includes("超出预算"));
+  data.budgets = [{ month: "2026-10", totalCents: 1000000, allocations: {} }]; workspace.state.month = "2026-10"; workspace.state.page = "plan"; workspace.state.billPlans.section = "list"; workspace.redraw(); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); frame(); frame(); const remainingFlow = host.querySelectorAll(tag)[1]; assert.ok(remainingFlow); data.budgets[0].totalCents = 100; workspace.redraw(); await flush(); assert.equal(host.querySelectorAll(tag)[1], remainingFlow); assert.ok(host.textContent.includes("超出预算"));
   data.financeDefaultBudget = { totalCents:400000,allocations:{ "存量停用分类":120000 } }; data.budgets = []; workspace.state.month = "2026-09"; workspace.redraw(); assert.ok(host.textContent.includes("存量停用分类")); assert.ok(host.textContent.includes("沿用每月默认"));
   // Filtered summary covers all results, while invalid rows/transfer do not count.
   entries = [ ["expense",10000],["refund",2000],["income",30000],["transfer",700000] ].map(([kind,amountCents],index) => ({ ...allEntries[0],id:`facts-${index}`,merchant:"验收",kind,amountCents,date:"2026-10-01" })); entries.push({ ...entries[0],id:"failed",status:"failed",amountCents:100000 },{ ...entries[0],id:"foreign",currency:"USD",amountCents:100000 });
@@ -160,7 +160,7 @@ try {
   const values = () => [...host.querySelectorAll(".echoink-finance-ledger-metrics strong")].map(node => node.getAttribute("aria-label")); assert.deepEqual(values(),["¥ 300.00","¥ 80.00","¥ 220.00"]);
   const metricFlow = host.querySelectorAll(".echoink-finance-ledger-metrics strong")[1].querySelector(tag); let filterSearch = host.querySelector('input[type="search"]'); filterSearch.value = "验收"; filterSearch.dispatchEvent(new win.Event("input")); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); const beforeNoChange = animationCount; frame(); assert.equal(animationCount,beforeNoChange); assert.equal(host.querySelectorAll(".echoink-finance-ledger-metrics strong")[1].querySelector(tag),metricFlow);
   filterSearch.value = "不存在"; filterSearch.dispatchEvent(new win.Event("input")); assert.deepEqual(values(),["¥ 0.00","¥ 0.00","¥ 0.00"]); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); frame(); assert.equal(host.querySelectorAll(".echoink-finance-ledger-metrics strong")[1].querySelector(tag),metricFlow);
-  workspace.go("budget"); workspace.go("ledger"); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); assert.notEqual(host.querySelectorAll(".echoink-finance-ledger-metrics strong")[1].querySelector(tag),metricFlow); frame(); frame(); workspace.state.filters.search = "";
+  workspace.go("plan"); workspace.go("ledger"); await flush(); for (const node of [...observed.keys()]) if (host.contains(node)) visibility(node,true); assert.notEqual(host.querySelectorAll(".echoink-finance-ledger-metrics strong")[1].querySelector(tag),metricFlow); frame(); frame(); workspace.state.filters.search = "";
   // The production dialog retains drafts, validates all scopes, and saves one batch.
   data.financeDefaultBudget = null; data.budgets = [{ month:"2026-10",totalCents:100000,allocations:{ "餐饮":20000 } }]; let budgetWrites = 0; let failSave = false;
   finance.saveBudgetChanges = async changes => { budgetWrites++; if (failSave) throw new Error("模拟预算保存失败"); api.applyFinanceBudgetChanges(data,changes); };
@@ -172,6 +172,73 @@ try {
   let picker = modalRoot().querySelector('input[type="month"]'); picker.value = "2026-12"; action("新增"); assert.equal(total().value,"4000.01"); type(total(),"5000.03"); picker = modalRoot().querySelector('input[type="month"]'); picker.value = "2026-10"; action("新增"); assert.equal(total().value,"1500.02"); assert.equal(modalRoot().querySelectorAll("[data-budget-month]").length,2); assert.equal(modalRoot().querySelector('[role="alert"]').textContent,"");
   action("2026-12"); type(total(),""); action("2026-10"); assert.equal([...modalRoot().querySelectorAll("button")].find(node => node.textContent === "保存预算").disabled,true); assert.ok(modalRoot().querySelector('[role="alert"]').textContent.includes("2026-12")); action("2026-12"); type(total(),"5000.03"); action("2026-10"); action("恢复默认"); assert.ok(data.budgets.some(budget => budget.month === "2026-10"),"restore waits for save");
   failSave = true; action("保存预算"); await flush(); assert.equal(budgetWrites,1); assert.equal(total().value,"5000.03"); assert.ok(modalRoot().querySelector('[role="alert"]').textContent.includes("保存失败")); assert.deepEqual(data,snapshot); failSave = false; action("保存预算"); await flush(); assert.equal(budgetWrites,2); assert.equal(api.openTestModals.length,0); assert.equal(data.financeDefaultBudget.totalCents,400001); assert.deepEqual(data.budgets.map(budget => budget.month),["2026-12"]); assert.equal(data.budgets[0].totalCents,500003);
+  // 一句话记账：解析成可改标签，回车或点“记下”才保存；保存后清空等下一笔。
+  const manual = []; finance.addManual = async entry => { manual.push(entry); return { ...entry, id: `manual-${manual.length}`, source: "manual", sourceId: `m${manual.length}` }; };
+  entries = allEntries; workspace.state.month = "2026-10"; workspace.state.page = "overview"; workspace.state.range = "month"; workspace.state.quickOpen = true; workspace.redraw(); await flush();
+  let quick = host.querySelector(".echoink-finance-quick input"); assert.ok(quick, "记一笔 opens the one-line panel");
+  quick.value = "15号 午饭 35 微信"; quick.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const chip = selector => host.querySelector(`.echoink-finance-quick-chips ${selector}`);
+  assert.equal(chip(".is-amount").value, "35.00"); assert.equal(chip('[aria-label="日期"]').value, "2026-10-15"); assert.equal(chip('[aria-label="分类"]').value, "餐饮"); assert.equal(manual.length, 0, "parsing alone never saves");
+  chip('[aria-label="分类"]').value = "交通"; chip('[aria-label="分类"]').dispatchEvent(new win.Event("change"));
+  quick.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); await flush();
+  assert.equal(manual.length, 1); assert.deepEqual([manual[0].amountCents, manual[0].category, manual[0].date, manual[0].kind], [3500, "交通", "2026-10-15 12:00:00", "expense"], "edited chips are what gets saved");
+  quick = host.querySelector(".echoink-finance-quick input"); assert.equal(quick.value, "", "the panel stays open and empty for the next entry");
+  quick.value = "午饭"; quick.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  assert.equal([...host.querySelectorAll(".echoink-finance-quick-chips button")].find(button => button.textContent === "记下").disabled, true, "no amount, no save");
+  quick.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); assert.equal(host.querySelector(".echoink-finance-quick"), null);
+  // 总览：月度概况、分类变化、近 6 个月、日历大额日、三张小卡；点分类进明细并带筛选。
+  workspace.state.quickOpen = false; workspace.redraw(); await flush();
+  assert.match(host.querySelector(".echoink-finance-month-summary").textContent, /10 月支出/u);
+  assert.equal(host.querySelectorAll(".echoink-finance-month-history .echoink-finance-column").length, 6);
+  assert.equal(host.querySelectorAll(".echoink-finance-month-minis > *").length, 3);
+  host.querySelector(".echoink-finance-rank-row").click(); assert.equal(workspace.state.page, "ledger"); assert.ok(workspace.state.filters.category);
+  assert.equal(host.querySelectorAll(".echoink-finance-distributions .echoink-finance-card").length, 2, "account and amount distributions moved to the ledger");
+  [...host.querySelectorAll("button")].find(button => button.textContent.includes("返回总览")).click(); assert.equal(workspace.state.page, "overview");
+  // 年视图与月视图切换
+  [...host.querySelectorAll(".echoink-finance-range button")].find(button => button.textContent === "年").click();
+  assert.equal(host.querySelectorAll(".echoink-finance-year-months .echoink-finance-column").length, 12);
+  host.querySelectorAll(".echoink-finance-year-months .echoink-finance-column")[9].click(); assert.equal(workspace.state.range, "month"); assert.equal(workspace.state.month, "2026-10");
+  // 计划：固定支出新增、编辑、删除都走服务；识别出的候选可一键设为固定支出。
+  const recurringWrites = []; data.financeRecurring = [];
+  finance.saveRecurring = async item => { recurringWrites.push(["save", item]); data.financeRecurring = [...data.financeRecurring.filter(existing => existing.id !== item.id), item]; };
+  finance.deleteRecurring = async id => { recurringWrites.push(["delete", id]); data.financeRecurring = data.financeRecurring.filter(item => item.id !== id); };
+  workspace.go("plan"); await flush();
+  assert.deepEqual([...host.querySelectorAll(".echoink-finance-plan-section h2")].map(node => node.textContent), ["月度预算", "固定支出", "专项预算"]);
+  [...host.querySelectorAll(".echoink-finance-plan-section button")].find(button => button.textContent === "新增").click();
+  let recurringModal = api.openTestModals.at(-1); const field = label => [...recurringModal.contentEl.querySelectorAll("label")].find(node => node.textContent.startsWith(label)).querySelector("input,select");
+  field("名称").value = "房租"; field("金额").value = "3000"; field("扣款日").value = "1"; recurringModal.contentEl.querySelector("form").dispatchEvent(new win.Event("submit", { bubbles: true, cancelable: true })); await flush();
+  assert.equal(recurringWrites.length, 1); assert.deepEqual([recurringWrites[0][1].name, recurringWrites[0][1].amountCents, recurringWrites[0][1].cadence, recurringWrites[0][1].day], ["房租", 300000, "monthly", 1]);
+  assert.equal(host.querySelectorAll(".echoink-finance-recurring-row").length, 1);
+  host.querySelector(".echoink-finance-recurring-row").click(); recurringModal = api.openTestModals.at(-1);
+  [...recurringModal.contentEl.querySelectorAll("button")].find(button => button.textContent.includes("删除")).click(); await flush();
+  assert.deepEqual(recurringWrites.at(-1), ["delete", recurringWrites[0][1].id]); assert.equal(host.querySelectorAll(".echoink-finance-recurring-row").length, 0);
+  // 未生成报告的月份也可从报告页首次生成，月列表只从有效账目取数。
+  const currentDate = new Date();
+  const currentMonth = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}`;
+  entries = [...allEntries,
+    { ...entries[0], id: "historical-report", date: "2025-03-02" },
+    { ...entries[0], id: "foreign-only", date: "2025-04-02", currency: "USD" },
+    { ...entries[0], id: "failed-only", date: "2025-05-02", status: "failed" },
+    { ...entries[0], id: "transfer-only", date: "2025-06-02", kind: "transfer" },
+    { ...entries[0], id: "current-report", date: `${currentMonth}-01`, kind: "transfer", source: "diary" }
+  ];
+  settings.finance.aiEnabled = true;
+  const reportRequests = [];
+  finance.analyze = async (month, force) => { reportRequests.push([month, force]); return null; };
+  workspace.state.month = currentMonth;
+  workspace.go("report"); await flush();
+  const reportTabs = () => [...host.querySelectorAll(".echoink-finance-report-list button")];
+  const reportAction = () => host.querySelector(".echoink-finance-report-actions button");
+  assert.match(host.querySelector(".echoink-finance-report-page").textContent, /结账/u);
+  assert.doesNotMatch(host.textContent, /财务总览|收支明细|账单计划/u);
+  assert.equal(reportTabs().find(tab => tab.getAttribute("aria-selected") === "true").textContent, `${currentDate.getMonth() + 1} 月未生成`);
+  assert.equal(reportAction().disabled, false);
+  reportAction().click(); await flush();
+  reportTabs().find(tab => tab.textContent.startsWith("2025 年 3 月")).click();
+  assert.equal(reportAction().disabled, false);
+  reportAction().click(); await flush();
+  assert.deepEqual(reportRequests, [[currentMonth, true], ["2025-03", true]]);
+  assert.ok(!reportTabs().some(tab => /2025 年 [456] 月/u.test(tab.textContent)));
   workspace.detach(); assert.equal(host.querySelector("[data-slot=pagination]"), null); hostViewport.remove(); frame();
   for (const animation of [...animations]) animation.finish(); assert.equal(resizeObservers.size, 0); assert.equal(observed.size, 0); assert.equal(mediaListeners.size, 0);
   const css = await readFile(path.join(root,"styles.css"),"utf8"); assert.ok(css.includes(".echoink-finance-ledger-metrics{position:sticky")); assert.ok(css.includes("select,textarea,[data-slot=select-trigger]")); let neutralFocus = false;
@@ -185,7 +252,7 @@ try {
     for (const id of ["bill-preview-close", "bill-preview-theme", "bill-preview-palette"]) stage.createEl("button", { attr: { id } }); stage.createEl("input", { attr: { id: "bill-preview-fail", type: "checkbox" } });
     win.eval(await readFile(path.join(root,"docs/internal/prototypes/work/2026-10-06-finance-bill-plans/preview.js"),"utf8")); await flush();
     const previewHost = stage.querySelector("#bill-plan-workspace");
-    for (const label of ["财务总览", "收支明细", "月度预算", "账单计划"]) { const tab = [...previewHost.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.includes(label)); assert.ok(tab); tab.click(); await flush(); for (const node of [...observed.keys()]) if (previewHost.contains(node)) visibility(node,true); frame(); frame(); assert.equal(previewHost.querySelector('[role="tab"][aria-selected=true]').textContent.includes(label), true); if (label !== "账单计划") assert.equal(previewHost.querySelectorAll(tag).length, { "财务总览": 4, "收支明细": 3, "月度预算": 2 }[label]); }
+    for (const label of ["总览", "明细", "计划", "报告"]) { const tab = [...previewHost.querySelectorAll('[role="tab"]')].find(tab => tab.textContent.includes(label)); assert.ok(tab); tab.click(); await flush(); for (const node of [...observed.keys()]) if (previewHost.contains(node)) visibility(node,true); frame(); frame(); assert.equal(previewHost.querySelector('[role="tab"][aria-selected=true]').textContent.includes(label), true); if (label !== "账单计划") assert.equal(previewHost.querySelectorAll(tag).length, { "财务总览": 4, "收支明细": 3, "月度预算": 2 }[label]); }
     previewHost.querySelector('[data-plan-focus="plan:trip"]').click(); await flush(); for (const node of [...observed.keys()]) if (previewHost.contains(node)) visibility(node,true); frame(); frame(); assert.equal(previewHost.querySelectorAll(tag).length, 3); assert.equal(previewHost.querySelectorAll(".echoink-finance-bill-detail-rows .echoink-finance-transaction").length, 20); assert.ok(previewHost.querySelector('[aria-label="下一页"]'));
     [...previewHost.querySelectorAll("button")].find(button => button.textContent.includes("关联已有记录")).click(); assert.equal(previewHost.querySelectorAll("[data-plan-entry-id]").length, 191); win.dispatchEvent(new win.Event("pagehide")); stage.remove(); frame(); assert.equal(observed.size, 0); assert.equal(mediaListeners.size, 0); assert.equal(resizeObservers.size, 0);
     console.log("PASS rebuilt private preview DOM smoke: four production pages, budget/month fixtures, 20 associated rows and 191-row unpaginated association, pagehide cleanup. No browser opened.");

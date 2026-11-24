@@ -14,7 +14,7 @@ import { pasteAgentPersona } from "../agent-persona-paste";
 import { normalizeAgentDisplayName } from "../../harness/memory/agent-identity-model";
 import { AGENT_AVATAR_PRESETS, resolveAgentAvatarUrl } from "../agent-avatar-presets";
 import { AvatarProcessingError, createBrowserAvatarRenderer, processAgentAvatar } from "../agent-avatar-processor";
-import { createOriginButton, createOriginCheck, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
+import { createOriginButton, createOriginCheck, createOriginPagination, createOriginInput, createOriginRadioGroup, disposeOriginControls, type OriginCheckElement } from "../../settings/origin-controls";
 import { applyAmicroButton, applyDeleteButton, setAmicroButtonPending } from "../../settings/amicro-buttons";
 import { applySettingsBackButton, createSettingsNavigationRow, createSettingsPage, showSettingsInlineConfirmation } from "../../settings/settings-v2";
 import { renderExpertSubmission } from "../../experts/submission-view";
@@ -197,7 +197,8 @@ export class AgentEditorController {
       this.renderResources();
     }
     if (this.editingId && !expert && this.host.expertSubmission?.service.owner()) {
-      const title = this.t("投稿到专家团", "Submit to Expert Hall");
+      const title = this.host.expertSubmission.service.canSubmit()
+        ? this.t("投稿到专家团", "Submit to Expert Hall") : this.t("投稿回执", "Submission receipts");
       const row = createSettingsNavigationRow(body, { title, onActivate: () => this.openSubmission(title) });
       row.dataset.action = "expert-submission";
     }
@@ -247,7 +248,7 @@ export class AgentEditorController {
     this.submission = renderExpertSubmission(body, { ...portal, agent: structuredClone(draft.agent),
       language: this.host.settings.settingsLanguage, resources: () => this.host.loadResources(),
       button: (parent, label, action, primary) => this.button(parent, label, primary ? "primary" : "secondary", action),
-      input: createOriginInput, checkbox: createOriginCheck, clearControls: disposeOriginControls });
+      input: createOriginInput, checkbox: createOriginCheck, pagination: createOriginPagination, clearControls: disposeOriginControls });
     page.focus();
   }
 

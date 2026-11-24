@@ -9,6 +9,7 @@ export const API_PROVIDER_IDS = [
   "deepseek",
   "qwen",
   "qwen-token-plan",
+  "opencode-go",
   "ollama",
   "custom",
   // Compatibility-only OpenAI identity remains readable so an existing saved
@@ -50,6 +51,8 @@ export const QWEN_TOKEN_PLAN_API_BASE_URL =
   "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1";
 const QWEN_TOKEN_PLAN_API_HOST = "token-plan.cn-beijing.maas.aliyuncs.com";
 const QWEN_TOKEN_PLAN_API_BASE_PATH = "/compatible-mode/v1";
+export const OPENCODE_GO_API_BASE_URL = "https://opencode.ai/inference/go/v1";
+const OPENCODE_API_HOST = "opencode.ai";
 
 export interface ApiProviderModelPreset {
   readonly id: string;
@@ -76,6 +79,7 @@ export interface ApiProviderPreset {
     | "deepseek"
     | "qwen"
     | "qwen-token-plan"
+    | "opencode-go"
     | "ollama"
     | "custom">;
   readonly name: string;
@@ -263,6 +267,22 @@ export const API_PROVIDER_PRESETS: readonly ApiProviderPreset[] =
       models: []
     }),
     preset({
+      id: "opencode-go",
+      name: "OpenCode Go",
+      group: "token-plan",
+      runtimeProviderId: "opencode-go",
+      baseUrl: OPENCODE_GO_API_BASE_URL,
+      docsUrl: "https://opencode.ai/docs/console/go/",
+      apiProtocol: "openai-completions",
+      apiKeyRequired: true,
+      modelDiscovery: "supported",
+      models: [
+        model("glm-5.3", 1_000_000, 131_072, true, false, true, "GLM-5.3"),
+        model("kimi-k3", 1_048_576, 131_072, true, true, true, "Kimi K3"),
+        model("deepseek-v4.1-flash", 1_000_000, 384_000, true, true, true, "DeepSeek V4.1 Flash")
+      ]
+    }),
+    preset({
       id: "ollama",
       name: "Ollama 本地 / Ollama",
       group: "provider",
@@ -404,6 +424,10 @@ export function normalizeApiProviderId(
   const normalizedBaseUrl = baseUrl.toLowerCase();
   const normalizedName = name.trim().toLowerCase();
   if (
+    isOpenCodeGoApiProviderUrl(baseUrl)
+    || normalizedName === "opencode go"
+  ) return "opencode-go";
+  if (
     normalizedBaseUrl.includes("chatgpt.com/backend-api")
     || normalizedName === "openai codex"
     || normalizedName === "openai codex beta"
@@ -513,6 +537,17 @@ export function isLocalNetworkApiProviderUrl(baseUrl: string): boolean {
   try {
     const parsed = new URL(baseUrl);
     return parsed.protocol === "http:" && isLocalNetworkHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** OpenCode Go 套餐接口：新地址 /inference/go，旧地址 /zen/go 仍可用。 */
+export function isOpenCodeGoApiProviderUrl(baseUrl: string): boolean {
+  try {
+    const parsed = new URL(baseUrl);
+    return parsed.hostname.toLowerCase() === OPENCODE_API_HOST
+      && /^\/(?:inference|zen)\/go(?:\/|$)/u.test(parsed.pathname);
   } catch {
     return false;
   }

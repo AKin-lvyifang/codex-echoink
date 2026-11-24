@@ -316,7 +316,7 @@ function controlledProviderStream(
       const execution = captureExecutionContext(
         options.currentExecutionContext()
       );
-      const providerContext = cloneProviderContext(
+      const providerContext = buildPiNativeProviderContext(
         context,
         options.supportsToolCalling !== false,
         execution.shortReply === true
@@ -406,8 +406,8 @@ function controlledProviderStream(
  * type. Their runtime-only execute/prepare callbacks must stay with the Agent
  * loop; the Provider boundary only needs the serializable tool declaration.
  */
-function cloneProviderContext(
-  context: Context,
+export function buildPiNativeProviderContext(
+  context: Readonly<Context>,
   supportsToolCalling: boolean,
   shortReply: boolean
 ): Context {

@@ -36,8 +36,8 @@ let passed = 0;
 async function test(name, run) { await run(); console.log(`OK ${++passed} ${name}`); }
 
 await test("six addable presets and legacy API-key compatibility preserve stored desktop providers", () => {
-  assert.deepEqual(plain(MOBILE_MODEL_GROUPS.flatMap(group => group.ids)), ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"]);
-  assert.deepEqual(plain(mobilePresets.map(preset => preset.id)), ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"]);
+  assert.deepEqual(plain(MOBILE_MODEL_GROUPS.flatMap(group => group.ids)), ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "opencode-go", "custom"]);
+  assert.deepEqual(plain(mobilePresets.map(preset => preset.id)), ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "opencode-go", "custom"]);
   const f = fixture();
   for (const providerId of ["openai-codex", "anthropic", "minimax", "ollama"]) assert.equal(supportedProvider({ ...f.provider, providerId }), false);
   for (const providerId of ["openai", "custom", undefined]) assert.equal(supportedProvider({ ...f.provider, providerId }), true);
@@ -474,5 +474,34 @@ await test("connection test uses the streaming path when streaming is on and kee
   await assert.rejects(blocked.save(blocked.createDraft(f.settings.apiProviders[0])), error => error.message === MOBILE_STREAM_BLOCKED);
   const off = blocked.createDraft(f.settings.apiProviders[0]); off.mobileStreaming = false; await blocked.save(off);
   assert.equal(f.settings.apiProviders[0].mobileStreaming, false, "turning streaming off falls back to requestUrl and saves");
+});
+await test("streaming test-and-save reads OpenCode Go plan errors and preserves other HTTP status copy", async () => {
+  for (const [providerId, status, type, expected] of [
+    ["opencode-go", 403, "EntitlementError", /未开通该模型服务的套餐/u],
+    ["opencode-go", 429, "GoUsageLimitError", /套餐额度已用完/u],
+    ["opencode-go", 401, "AuthenticationError", /API Key 无效/u],
+    ["custom", 403, "EntitlementError", /API Key 无效/u]
+  ]) {
+    const key = "synthetic-fixture-key";
+    const provider = { ...mobileProvider(providerId), apiKey: key, mobileStreaming: true, models: [mobileModel("fixture")] };
+    if (providerId === "custom") provider.baseUrl = "https://opencode.ai/zen/v1";
+    const settings = loadMobileSettings({ apiProviders: [] });
+    const bytes = new TextEncoder().encode(JSON.stringify({ error: { type, message: `raw upstream diagnostic ${key}` } }));
+    const { fetch, calls } = sseFetch(bytes, [], status, "application/json");
+    let bufferedCalls = 0;
+    const configuration = new MobileModelConfiguration(() => settings, async () => assert.fail("failed probe must not persist"), async () => {
+      bufferedCalls++;
+      return answer();
+    }, undefined, fetch);
+    const draft = configuration.createDraft(provider);
+    await assert.rejects(configuration.save(draft), error => {
+      assert.match(error.message, expected);
+      assert.doesNotMatch(error.message, /raw upstream diagnostic|synthetic-fixture-key/u);
+      return true;
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(bufferedCalls, 0);
+    assert.equal(settings.apiProviders.length, 0);
+  }
 });
 console.log(`OK ${passed} mobile model settings tests; browser-only shared service; fixtures stay in memory`);

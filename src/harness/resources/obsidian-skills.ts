@@ -74,7 +74,7 @@ obsidian_cli 使用官方公开 CLI 二进制，通过异步参数数组调用�
 
 ## 对话记账
 
-EchoInk 财务 Base 新增记录必须走现有财务服务。示例：{"command":"base:create","path":"finance/ledger.base","finance":{"date":"2026-10-09","merchant":"早餐店","kind":"expense","amountCents":1200,"category":"餐饮","account":"现金"}}。path 必须是当前现有账本，实际路径以查询结果为准。amountCents 是整数分，1200 表示 12 元；缺少关键事实时先补齐。服务继续验证会员权限、金额、身份、来源和账单计划。结果 engine/backend 为 echoink-finance-service，不能称为 CLI 直接写入。
+EchoInk 财务 Base 新增记录必须走现有财务服务。示例：{"command":"base:create","path":"finance/ledger.base","finance":{"date":"2026-10-09","merchant":"早餐店","kind":"expense","amountCents":1200,"category":"餐饮","account":"现金"}}。path 必须是当前现有账本，实际路径以查询结果为准。amountCents 是整数分，1200 表示 12 元；缺少关键事实时先补齐。服务继续验证会员权限、金额、身份、来源和专项预算。结果 engine/backend 为 echoink-finance-service，不能称为 CLI 直接写入。
 
 ## 搜索与管理插件
 

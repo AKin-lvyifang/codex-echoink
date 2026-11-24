@@ -4,7 +4,7 @@ import type { ConversationTaskMetadata, ConversationTaskStatus } from "../agents
 import type { TaskDraft, TaskPage } from "../agents/task-workspace";
 import type { AgentRunSnapshot } from "../agents/types";
 import type { PersonalMemoryRecord } from "../harness/memory/personal-memory-contracts";
-import { readMobileFile, replaceMobileFile } from "./replace-file";
+import { readMobileFile, replaceMobileFile, sameMobileJson } from "./replace-file";
 import { assertMobileTaskInstanceId } from "./task-identity";
 import { toolCallTextFailureMessage } from "../harness/tool-call-text";
 import type { MobileContextSummary, MobileQueuedTurn, MobileTaskInteraction, MobileTaskInterruption, MobileWriteOperation } from "./task-contracts";
@@ -79,6 +79,10 @@ export function newSession(agentId = "sol"): MobileSession {
 
 /** Expected data/version conflicts are recoverable at the plugin bootstrap boundary. */
 export class MobileDataConflictError extends Error {}
+export class MobileTaskFileChanged extends MobileDataConflictError {
+  readonly name = "MobileTaskFileChanged";
+  constructor() { super("The mobile task file changed or is temporarily unavailable."); }
+}
 export function isMobileDataConflict(error: unknown): error is Error {
   return error instanceof MobileDataConflictError || error instanceof AggregateError
     && error.errors.length > 0 && error.errors.every(isMobileDataConflict);
@@ -293,6 +297,10 @@ function migrateV1(content: string, instanceId: string): MobileState {
     page: { kind: "detail", taskId: activeSessionId }, newTaskDrafts: {} }), instanceId);
 }
 
+// A reloaded plugin can evaluate a new bundle while the old writer is still draining.
+const shutdowns = Symbol.for("echoink.mobile-task-shutdowns");
+type TaskAdapter = MobileStorageAdapter & { [shutdowns]?: Map<string, Promise<void>> };
+
 /** One authority per instance; only verified commits are visible to readers. */
 export class MobileStore {
   private canonicalMemory?: () => Promise<readonly PersonalMemoryRecord[]>;
@@ -303,10 +311,27 @@ export class MobileStore {
   private loaded = false;
   private blocked = false;
   private expected: string | null = null;
+  private fileChanged = false;
+  private readonly fileListeners = new Set<() => void>();
   readonly statePath: string;
   get m2BackupPath(): string { return `${this.statePath}.m2-backup.json`; }
   get m3BackupPath(): string { return `${this.statePath}.m3-backup.json`; }
   get unavailableReason(): string | undefined { return this.storageIssue; }
+  get taskFileChanged(): boolean { return this.fileChanged; }
+  subscribeTaskFile(listener: () => void): () => void {
+    this.fileListeners.add(listener); return () => this.fileListeners.delete(listener);
+  }
+  private setFileChanged(changed: boolean): void {
+    if (this.fileChanged === changed) return;
+    this.fileChanged = changed;
+    for (const listener of this.fileListeners) { try { listener(); } catch { /* Views cannot affect persistence. */ } }
+  }
+  trackShutdown(work: Promise<void>): void {
+    const pending = ((this.adapter as TaskAdapter)[shutdowns] ??= new Map());
+    const drain = work.catch(() => {}).then(() => this.flush().catch(() => {}));
+    pending.set(this.statePath, drain);
+    void drain.then(() => { if (pending.get(this.statePath) === drain) pending.delete(this.statePath); });
+  }
   disableWrites(reason: string): void {
     this.storageIssue ??= `${reason} 任务暂不可用，请核对原资料并关闭旧实例后重新打开插件。`;
     this.blocked = true;
@@ -332,13 +357,10 @@ export class MobileStore {
     // A temporary in-memory shell is never a replacement task partition.
     if (this.unavailableReason) return Promise.resolve();
     return this.enqueue(async () => {
+      await (this.adapter as TaskAdapter)[shutdowns]?.get(this.statePath);
       if (this.loaded) return;
       if (this.blocked) throw new MobileDataConflictError("移动端资料恢复尚未完成，请恢复备份后重新打开。");
-      if (!await this.adapter.exists(this.statePath) && await this.adapter.exists(this.recoveryPath)) {
-        parseV2(await this.adapter.read(this.recoveryPath), this.instanceId);
-        await this.adapter.rename(this.recoveryPath, this.statePath);
-      }
-      const content = await readMobileFile(this.adapter as DataAdapter, this.statePath);
+      const content = await this.readTaskFile();
       if (content !== null) {
         this.committed = parseV2(content, this.instanceId); this.expected = content; this.loaded = true; return;
       }
@@ -354,6 +376,35 @@ export class MobileStore {
       await this.commit(next); this.loaded = true;
     });
   }
+  private async readTaskFile(): Promise<string | null> {
+    const adapter = this.adapter as DataAdapter;
+    if (!await adapter.exists(this.statePath) && await adapter.exists(this.recoveryPath)) {
+      parseV2(await adapter.read(this.recoveryPath), this.instanceId);
+      await adapter.rename(this.recoveryPath, this.statePath);
+    }
+    return readMobileFile(adapter, this.statePath);
+  }
+  reloadTaskFile(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.blocked || this.unavailableReason) throw new Error(this.unavailableReason ?? "移动端资料恢复尚未完成，请恢复备份后重新打开。");
+      const content = await this.readTaskFile();
+      if (content === null) throw this.taskFileConflict();
+      this.committed = parseV2(content, this.instanceId);
+      this.expected = content; this.loaded = true;
+      this.setFileChanged(false);
+    });
+  }
+  private taskFileConflict(): MobileTaskFileChanged {
+    this.setFileChanged(true); return new MobileTaskFileChanged();
+  }
+  private readonly sameTaskFile = (left: string | null, right: string | null): boolean =>
+    sameMobileJson(left, right, raw => parseV2(raw, this.instanceId));
+  private async checkTaskFile(): Promise<string | null> {
+    const current = await readMobileFile(this.adapter as DataAdapter, this.statePath);
+    if (!this.sameTaskFile(current, this.expected)) throw this.taskFileConflict();
+    this.expected = current;
+    return current;
+  }
   private async mkdir(): Promise<void> {
     let parent = "";
     for (const part of this.statePath.slice(0, this.statePath.lastIndexOf("/")).split("/")) {
@@ -366,9 +417,7 @@ export class MobileStore {
     const snapshot = JSON.stringify(next);
     const validated = parseV2(snapshot, this.instanceId);
     await this.mkdir();
-    const conflict = () => new MobileDataConflictError("移动端资料已变化，请重新打开后再编辑；原资料已保留。");
-    const current = await readMobileFile(this.adapter as DataAdapter, this.statePath);
-    if (current !== this.expected) { const error = conflict(); this.disableWrites(error.message); throw error; }
+    const current = await this.checkTaskFile();
     if (current !== null && await this.adapter.exists(this.recoveryPath)) await this.adapter.remove(this.recoveryPath);
     const verifiedAdapter = {
       exists: (path: string) => this.adapter.exists(path), read: (path: string) => this.adapter.read(path),
@@ -393,8 +442,9 @@ export class MobileStore {
       }
     };
     try {
-      await replaceMobileFile(verifiedAdapter as DataAdapter, this.statePath, snapshot, this.expected, this.recoveryPath, conflict);
+      await replaceMobileFile(verifiedAdapter as DataAdapter, this.statePath, snapshot, current, this.recoveryPath, () => new MobileTaskFileChanged(), this.sameTaskFile);
     } catch (error) {
+      if (error instanceof MobileTaskFileChanged) throw this.taskFileConflict();
       try {
         if (await readMobileFile(this.adapter as DataAdapter, this.statePath) !== this.expected) {
           this.blocked = true;
@@ -405,12 +455,14 @@ export class MobileStore {
       throw error;
     }
     this.expected = snapshot; this.committed = validated;
+    this.setFileChanged(false);
     // A leftover recovery copy does not invalidate the verified commit.
     try { if (await this.adapter.exists(this.recoveryPath)) await this.adapter.remove(this.recoveryPath); } catch { /* Keep both intact. */ }
   }
-  update(change: (draft: MobileState) => void): Promise<void> {
+  update(change: (draft: MobileState) => void, options?: { skipUnchanged: boolean }): Promise<void> {
     return this.enqueue(async () => {
       if (this.unavailableReason) throw new Error(this.unavailableReason);
+      if (!this.loaded && this.fileChanged) throw new MobileTaskFileChanged();
       if (!this.loaded || this.blocked) throw new Error("移动端本地资料尚未成功加载或恢复，未保存改动。");
       const draft = structuredClone(this.committed);
       const result: unknown = change(draft);
@@ -418,11 +470,17 @@ export class MobileStore {
         void Promise.resolve(result).catch(() => {});
         throw new Error("移动端资料更新必须同步完成。");
       }
-      draft.version = 2; draft.instanceId = this.instanceId; draft.revision = this.committed.revision + 1;
+      draft.version = 2; draft.instanceId = this.instanceId; draft.revision = this.committed.revision;
       if (draft.taskRuntimeVersion !== undefined && draft.taskRuntimeVersion !== 1 && draft.taskRuntimeVersion !== 2) throw dataError();
       const m4Fields = draft.sessions.some(task => task.operations !== undefined || task.interruption !== undefined || task.runs?.some(run => run.interruption !== undefined));
       if (m4Fields || (this.committed.taskRuntimeVersion === 2 && (draft.taskRuntimeVersion === undefined || draft.taskRuntimeVersion === 1))) draft.taskRuntimeVersion = 2;
       else if (draft.taskRuntimeVersion !== 2 && draft.sessions.some(task => task.queue !== undefined || task.queuePaused !== undefined || task.interaction !== undefined || task.contextSummary !== undefined)) draft.taskRuntimeVersion = 1;
+      if (options?.skipUnchanged && JSON.stringify(draft) === JSON.stringify(this.committed)) {
+        await this.checkTaskFile();
+        return;
+      }
+      draft.revision++;
+      if (draft.taskRuntimeVersion !== this.committed.taskRuntimeVersion) await this.checkTaskFile();
       if (draft.taskRuntimeVersion !== undefined && this.committed.taskRuntimeVersion === undefined && this.expected !== null) {
         const created = !await this.adapter.exists(this.m2BackupPath);
         if (created) await this.adapter.write(this.m2BackupPath, this.expected);

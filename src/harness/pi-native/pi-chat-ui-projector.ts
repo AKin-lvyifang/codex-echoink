@@ -1665,7 +1665,7 @@ export class PiChatUiProjector {
     const provisionalId = runtimeCompactionId(scope, event.productRunId, event.reason);
     const id = event.entryId ? entryMessageId(scope, event.entryId) : provisionalId;
     const existing = view.messages.find((message) => message.id === provisionalId);
-    const status = event.aborted ? (event.error ? "failed" : "interrupted") : "completed";
+    const status = event.error ? "failed" : event.aborted || !event.entryId ? "interrupted" : "completed";
     removeMessage(view.messages, provisionalId);
     upsertMessage(view.messages, {
       ...(existing ?? {
@@ -1677,9 +1677,9 @@ export class PiChatUiProjector {
         createdAt: event.occurredAt
       }),
       id,
-      title: event.aborted ? "上下文压缩未完成" : "上下文已压缩",
+      title: status === "completed" ? "上下文已压缩" : "上下文压缩未完成",
       details: compactionReasonLabel(event.reason),
-      text: event.error || (event.aborted ? "本次上下文压缩已停止" : "上下文压缩完成"),
+      text: event.error || (status === "completed" ? "上下文压缩完成" : "本次上下文压缩已停止"),
       status,
       completedAt: event.occurredAt
     });

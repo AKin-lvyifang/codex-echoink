@@ -145,6 +145,7 @@ export const local = [
   "scripts/native-settings-search-tests.mjs",
   "scripts/obsidian-review-contract-tests.mjs",
   "scripts/ollama-http-400-tests.mjs",
+  "scripts/opencode-go-provider-tests.mjs",
   "scripts/onboarding-agent-editor-tests.mjs",
   "scripts/onboarding-agent-transaction-tests.mjs",
   "scripts/output-location-tests.mjs",
@@ -232,6 +233,7 @@ export const orchestrators = ["scripts/run-tests.mjs"];
 
 // Modes are additional invocations, not additional file classifications.
 export const modes = [
+  { file: "scripts/workbench-reliability-tests.mjs", args: ["--midrun-compaction"], group: "local" },
   { file: "scripts/smart-judgment-tests.mjs", args: ["--knowledge-pick"], group: "local" },
   { file: "scripts/pi-brace-expansion-tests.mjs", args: ["--production"], group: "local", reason: "Validate the current production build graph." },
   { file: "scripts/finance-ui-tests.mjs", args: ["--preview"], group: "integration", reason: "Requires private docs/internal/prototypes/work/2026-10-06-finance-bill-plans/preview.js." },

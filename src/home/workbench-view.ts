@@ -13,11 +13,12 @@ import { WorkbenchWeatherStage } from "./workbench-weather";
 import { workbenchModuleSetupReason, renderWorkbenchModuleSetup } from "./workbench-module-setup";
 import { workbenchResultType, type WorkbenchResultType } from "./workbench-result";
 import { getTodoProjects, resolveTodoProject } from "./todo-projects";
-import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
+import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip, type ViewStateResult } from "obsidian";
 import type CodexForObsidianPlugin from "../main";
 import { GENERAL_ASSISTANT_ID, GENERALIST_AGENT_ID, type AgentDefinition, type AgentModuleId } from "../agents/types";
 import { isUserTask, localDateLabel, localTaskTime, maintenanceActivityForTask, taskCardHintSummary, taskState, taskStateLabel, taskSummary, type TaskEntry } from "../agents/task-presentation";
 import type { TaskInterruptionInfo } from "../agents/task-resume";
+import { providerFailureText } from "../harness/pi/provider-failure";
 import type { EchoInkQuestionPrompt, EchoInkTurnInteraction } from "../types/conversation-turn";
 import { createOriginButton, createOriginCheck, createOriginInput, disposeOriginControls } from "../settings/origin-controls";
 import { workbenchGuideSteps, workbenchSetupTodos, setupTodoModuleName, type WorkbenchGuideStep, type WorkbenchSetupTodoKind } from "./workbench-setup-todos";
@@ -56,19 +57,16 @@ import { pendingDecisions } from "../company/logic";
 import { agentLookup } from "./project-parts";
 import { workbenchProjectCard, workbenchProjectSignature, workbenchProjects } from "./workbench-projects";
 import { mountWorkbenchCloudSync } from "./cloud-sync-status";
+import { isWorkbenchPanelId, visibleWorkbenchNavigation, WORKBENCH_NAVIGATION, WORKBENCH_OVERVIEW, type WorkbenchNavigationItem, type WorkbenchPanelId } from "./workbench-navigation";
+import { WorkbenchModulePanel, type WorkbenchEmbeddedView } from "./workbench-module-panel";
+import type { WorkbenchNavigationId } from "../settings/workbench-navigation-settings";
 
 // Preserve existing desktop workspace restoration; the old view has its own ID.
 export const VIEW_TYPE_ECHOINK_WORKBENCH = "codex-echoink-home";
 type TaskGroups = Record<"interrupted" | "waiting" | "running" | "completed", TaskEntry[]>;
 let viewId = 0;
 export const WORKBENCH_NAVIGATION_DELAY_MS = 240;
-const WORKBENCH_NAVIGATION = [
-  ...WORKBENCH_MODULES,
-  { id: "experts", icon: "sparkles", zh: "专家", en: "Experts" } as const,
-  // 资讯不是 Agent 模块，没有负责人。这个工作台视图只在桌面注册，手机端第一期没有入口。
-  { id: "news", icon: "newspaper", zh: "资讯", en: "News" } as const
-];
-const isProNavigation = (id: typeof WORKBENCH_NAVIGATION[number]["id"]): boolean => id === "experts" || id === "news" || isProWorkbenchModule(id);
+const isProNavigation = (id: WorkbenchPanelId): boolean => id === "experts" || id === "news" || (id !== "overview" && isProWorkbenchModule(id));
 
 function latestMaintenanceActivities(activities: readonly Readonly<MaintenanceActivity>[], entries: readonly TaskEntry[] = []): Map<string, Readonly<MaintenanceActivity>> {
   const latest = new Map<string, Readonly<MaintenanceActivity>>();
@@ -127,7 +125,8 @@ export class EchoInkWorkbenchView extends ItemView {
   private navigationInFlight = false;
   private navigationDelay: { owner: Window; id: number; cancel(): void } | null = null;
   private readonly navigationAnimations = new Map<HTMLButtonElement, () => void>();
-  private overflowModules: typeof WORKBENCH_NAVIGATION[number][] = [];
+  private overflowModules: WorkbenchNavigationItem[] = [];
+  private navigationSignature = "";
   private memoryNotice: VaultMemoryNotice | null = null;
   private memoryError: string | null = null;
   private readonly port: WorkbenchDataPort;
@@ -165,8 +164,13 @@ export class EchoInkWorkbenchView extends ItemView {
   private searchResolvedQuery: string | null = null;
   private searchMatches: HomeSearchMatch[] = [];
   private searchIndex = -1;
-  private lockedModule: typeof WORKBENCH_MODULES[number]["id"] | null = null;
-  private modulePageState = "";
+  /** What sits below the navigation: the overview or one module page. Part of the view state, so Obsidian's back/forward step through it. */
+  private panelId: WorkbenchPanelId = WORKBENCH_OVERVIEW.id;
+  private panelToken = 0;
+  private modulePanel: WorkbenchModulePanel | null = null;
+  private panelHost: HTMLElement | null = null;
+  private modulePageState: string | null = null;
+  private panelFailed: WorkbenchPanelId | null = null;
   private companyService: CompanyService | null = null;
   private companyUnsubscribe?: () => void;
   private syncUnsubscribe?: () => void;
@@ -182,6 +186,18 @@ export class EchoInkWorkbenchView extends ItemView {
   getViewType(): string { return VIEW_TYPE_ECHOINK_WORKBENCH; }
   getDisplayText(): string { return this.t("工作台", "Workbench"); }
   getIcon(): string { return "layout-grid"; }
+  getState(): Record<string, unknown> { return { ...super.getState(), module: this.panelId }; }
+  async setState(state: unknown, result: ViewStateResult): Promise<void> {
+    const requested = (state as { module?: unknown } | null)?.module;
+    const next = this.availablePanel(isWorkbenchPanelId(requested) ? requested : WORKBENCH_OVERVIEW.id);
+    if (next !== this.panelId) {
+      result.history = true;
+      await this.showPanel(next);
+    }
+    await super.setState(state, result);
+  }
+  /** The module page shown below the navigation, if any. */
+  embeddedModuleView(): WorkbenchEmbeddedView | null { return this.modulePanel?.current ?? null; }
   private get language() { return this.plugin.settings.settingsLanguage; }
   private t(zh: string, en: string): string { return this.language === "en" ? en : zh; }
   private field(name: string): HTMLElement { return this.contentEl.querySelector<HTMLElement>(`[data-wb="${name}"]`)!; }
@@ -239,6 +255,9 @@ export class EchoInkWorkbenchView extends ItemView {
     this.syncUnsubscribe?.(); this.syncUnsubscribe = undefined;
     this.companyInteractions.dispose();
     this.clearTimers(); this.stopSearchWork();
+    this.panelToken++;
+    const panel = this.modulePanel; this.modulePanel = null; this.panelHost = null;
+    await panel?.clear();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.contentEl.removeClass("echoink-workbench");
   }
   private clearTimers(): void {
@@ -394,6 +413,8 @@ export class EchoInkWorkbenchView extends ItemView {
         for (const id of this.completedPreviews.keys()) if (!completedIds.has(id)) this.completedPreviews.delete(id);
       }
       this.render(now);
+      // Previews and interruption details only feed the overview cards; they load when it is showing.
+      if (this.panelId !== WORKBENCH_OVERVIEW.id) return;
       await Promise.all([
         this.loadCompletedPreviews(groups?.completed ?? [], version, now),
         (async () => {
@@ -426,7 +447,13 @@ export class EchoInkWorkbenchView extends ItemView {
     if (query !== null) { (this.field("search-input") as HTMLInputElement).value = query; this.openSearch(); }
     await this.refresh();
   }
-  refreshIfSettingsChanged(): void { this.refreshHomeSurfaces(); }
+  refreshIfSettingsChanged(): void {
+    this.syncModuleEntry();
+    this.refreshHomeSurfaces();
+    void this.embeddedModuleView()?.refreshIfSettingsChanged?.();
+  }
+  /** Returns to the overview, as the workbench entry points (ribbon, startup, a module tab's back button) expect. */
+  async showOverview(): Promise<void> { await this.navigatePanel(WORKBENCH_OVERVIEW.id); }
   refreshHomeSurfaces(): void { if (this.snapshot && !this.closed) this.renderSignals(); this.scheduleRefresh(0); }
   private scheduleClock(): void {
     if (!this.active()) return;
@@ -498,6 +525,8 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private renderShell(): void {
     this.disposeHeader();
+    // The module page outlives a shell redraw (language change); detach it before its controls could be disposed.
+    this.panelHost?.remove();
     this.disposeControls(this.contentEl); this.contentEl.empty(); this.searchOpen = false;
     const page = this.contentEl.createDiv({ cls: "wb-page", attr: { "data-wb": "page" } });
     const header = page.createEl("header", { cls: "wb-header" });
@@ -506,36 +535,85 @@ export class EchoInkWorkbenchView extends ItemView {
     titles.createEl("time", { cls: "wb-date", attr: { "data-wb": "date" } });
     const nav = header.createEl("nav", { cls: "wb-modules", attr: { "data-wb": "modules", "aria-labelledby": `${this.id}-nav-label` } });
     header.createSpan({ cls: "echoink-sr-only", text: this.t("插件导航", "Modules"), attr: { id: `${this.id}-nav-label` } });
-    for (const module of WORKBENCH_NAVIGATION) {
-      const button = this.navigationButton(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, module.icon, () => this.openModule(module.id));
-      button.dataset.module = module.id;
-    }
-    this.navigationButton(nav, this.t("更多", "More"), "module-more", "ellipsis", () => this.openMoreModules(), 0).dataset.wb = "module-more";
+    this.renderNavigationButtons(nav);
     this.weatherStage = new WorkbenchWeatherStage(header, this.plugin, state => {
       const key = { unfinished: "interrupted", waiting: "waiting", working: "running", done: "completed", idle: "" }[state];
-      const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
-      section?.scrollIntoView({ block: "start", behavior: this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
-      section?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+      const reveal = () => {
+        const section = this.field("groups").querySelector<HTMLElement>(`[data-wb-group="${key}"]`);
+        section?.scrollIntoView({ block: "start", behavior: this.contentEl.ownerDocument.defaultView?.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+        section?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+      };
+      // The task groups live in the overview; bring it back first when a module page is showing.
+      if (this.panelId === WORKBENCH_OVERVIEW.id) reveal();
+      else void this.navigatePanel(WORKBENCH_OVERVIEW.id).then(reveal).catch(error => showWorkbenchActionFailure(this.plugin, error));
     }, () => this.scheduleNav());
     if (this.foreground) this.weatherStage.setActive(this.active());
     const actions = header.createDiv({ cls: "wb-header-actions" });
     this.button(actions, this.t("搜索笔记", "Search notes"), "search-trigger", () => this.openSearch(), "icon", "search").dataset.wb = "search-trigger";
     this.button(actions, this.t("插件设置", "Plugin settings"), "settings", () => this.plugin.openEchoInkGeneralSettings(), "icon", "settings");
     this.button(actions, this.t("新任务", "New task"), "new-task", () => this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID), "primary", "plus");
-    page.createDiv({ attr: { "data-wb": "cloud-sync" } });
+    // Search opens right under the navigation, on the overview and on module pages alike.
     this.renderSearchShell(page);
-    page.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
-    page.createDiv({ attr: { "data-wb": "release-reminders", "aria-live": "polite" } }).hidden = true;
-    page.createDiv({ attr: { "data-wb": "setup-todos", "aria-live": "polite" } });
-    page.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
+    const overview = page.createDiv({ cls: "wb-overview", attr: { "data-wb": "overview" } });
+    overview.createDiv({ attr: { "data-wb": "cloud-sync" } });
+    overview.createDiv({ attr: { "data-wb": "memory-notice", "aria-live": "polite" } });
+    overview.createDiv({ attr: { "data-wb": "release-reminders", "aria-live": "polite" } }).hidden = true;
+    overview.createDiv({ attr: { "data-wb": "setup-todos", "aria-live": "polite" } });
+    overview.createDiv({ attr: { "data-wb": "diary-organizer", "aria-live": "polite" } });
     const Observer = this.contentEl.ownerDocument.defaultView?.ResizeObserver;
     if (Observer) { this.navObserver = new Observer(() => this.scheduleNav()); this.navObserver.observe(header); this.navObserver.observe(actions); this.navObserver.observe(this.weatherStage.element); }
     void this.contentEl.ownerDocument.fonts?.ready.then(() => this.scheduleNav());
-    page.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
-    page.createDiv({ cls: "wb-groups", attr: { "data-wb": "groups" } });
-    page.createDiv({ cls: "wb-empty", text: this.t("暂时没有待处理的事", "Nothing to handle right now"), attr: { "data-wb": "empty" } }).hidden = true;
-    if (this.lockedModule) this.showModuleLock(this.lockedModule);
+    overview.createDiv({ cls: "wb-status", attr: { "data-wb": "status", "aria-live": "polite" } });
+    overview.createDiv({ cls: "wb-groups", attr: { "data-wb": "groups" } });
+    overview.createDiv({ cls: "wb-empty", text: this.t("暂时没有待处理的事", "Nothing to handle right now"), attr: { "data-wb": "empty" } }).hidden = true;
+    const firstMount = !this.panelHost;
+    if (this.panelHost) page.appendChild(this.panelHost);
+    else {
+      this.panelHost = page.createDiv({ cls: "wb-module-panel", attr: { "data-wb": "module-panel" } });
+      this.modulePanel = this.createModulePanel(this.panelHost);
+    }
+    // A redraw keeps the open module page; only the locked/setup notice belongs to the old language.
+    if (this.panelId !== WORKBENCH_OVERVIEW.id && (firstMount || this.modulePageState !== null)) {
+      void this.showPanel(this.availablePanel(this.panelId)).catch(error => showWorkbenchActionFailure(this.plugin, error));
+    }
+    this.syncPanelVisibility();
     this.render();
+  }
+
+  private createModulePanel(host: HTMLElement): WorkbenchModulePanel { return new WorkbenchModulePanel(host, this.leaf, this.plugin); }
+  /** Overview first and fixed, then the user's order from settings; the More button collects what does not fit. */
+  private renderNavigationButtons(nav: HTMLElement): void {
+    this.clearNavigationPlayback();
+    this.disposeControls(nav); nav.empty();
+    const items = visibleWorkbenchNavigation(this.plugin);
+    this.navigationSignature = this.navigationKey(items);
+    for (const module of [WORKBENCH_OVERVIEW, ...items]) this.moduleButton(nav, module);
+    this.navigationButton(nav, this.t("更多", "More"), "module-more", "ellipsis", () => this.openMoreModules(), 0).dataset.wb = "module-more";
+    this.syncNavigationSelection();
+  }
+  private navigationKey(items: readonly WorkbenchNavigationItem[]): string { return `${this.language}|${items.map(item => item.id).join(",")}`; }
+  /** Settings changed the order or visibility: rebuild only the navigation row. */
+  refreshNavigation(): void {
+    if (this.closed) return;
+    const nav = this.contentEl.querySelector<HTMLElement>('[data-wb="modules"]');
+    if (!nav || this.navigationKey(visibleWorkbenchNavigation(this.plugin)) === this.navigationSignature) return;
+    const focused = nav.contains(this.contentEl.ownerDocument.activeElement) ? (this.contentEl.ownerDocument.activeElement as HTMLElement).dataset.module : undefined;
+    this.renderNavigationButtons(nav);
+    this.syncNavigationBadges();
+    if (focused) nav.querySelector<HTMLElement>(`[data-module="${focused}"]`)?.focus();
+    this.scheduleNav();
+  }
+  private moduleButton(nav: HTMLElement, module: WorkbenchNavigationItem | typeof WORKBENCH_OVERVIEW): HTMLButtonElement {
+    const button = this.button(nav, this.language === "en" ? module.en : module.zh, `module-${module.id}`, () => undefined, "tertiary", module.icon);
+    button.dataset.module = module.id;
+    const open = (newTab: boolean) => {
+      this.playNavigationIcon(button);
+      void this.selectModule(module.id, newTab).catch(error => showWorkbenchActionFailure(this.plugin, error));
+    };
+    // Plain click switches below the navigation; Cmd/Ctrl-click or middle-click keeps the old tab.
+    button.onclick = event => open(event.metaKey || event.ctrlKey);
+    button.onauxclick = event => { if (event.button === 1) { event.preventDefault(); open(true); } };
+    return button;
   }
 
   private disposeHeader(): void {
@@ -555,9 +633,7 @@ export class EchoInkWorkbenchView extends ItemView {
     const header = nav.closest<HTMLElement>(".wb-header")!;
     // Always retry with the full layout so weather returns when space becomes available.
     header.classList.remove("is-weather-condensed"); header.style.removeProperty("column-gap");
-    const visible = WORKBENCH_NAVIGATION.filter(module => module.id !== "experts" || expertModuleEnabled(this.plugin));
-    nav.querySelector<HTMLButtonElement>('[data-module="experts"]')!.hidden = !expertModuleEnabled(this.plugin);
-    const buttons = visible.map(module => nav.querySelector<HTMLButtonElement>(`[data-module="${module.id}"]`)!);
+    const buttons = Array.from(nav.querySelectorAll<HTMLButtonElement>("button[data-module]"));
     buttons.forEach(button => { button.hidden = false; }); more.hidden = true; this.overflowModules = [];
     if (!nav.getBoundingClientRect().width) return;
     const gap = Number.parseFloat(this.contentEl.ownerDocument.defaultView!.getComputedStyle(nav).columnGap) || 4;
@@ -575,15 +651,35 @@ export class EchoInkWorkbenchView extends ItemView {
       const columnGap = Number.parseFloat(this.contentEl.ownerDocument.defaultView!.getComputedStyle(header).columnGap) || 0;
       header.style.columnGap = `${Math.max(0, columnGap - (firstWithMore - nav.getBoundingClientRect().width) / 2)}px`;
     }
-    for (let i = buttons.length - 1; i >= 0 && !fits(total() + moreWidth + (buttons.some(button => !button.hidden) ? gap : 0)); i--) {
-      buttons[i].hidden = true; this.overflowModules.unshift(visible[i]);
+    // The overview stays in place; later entries move into More from the end.
+    for (let i = buttons.length - 1; i >= 1 && !fits(total() + moreWidth + gap); i--) {
+      buttons[i].hidden = true;
+      const id = buttons[i].dataset.module;
+      const item = WORKBENCH_NAVIGATION.find(module => module.id === id);
+      if (item) this.overflowModules.unshift(item);
     }
+    this.syncNavigationSelection();
     const focused = this.contentEl.ownerDocument.activeElement;
     if (buttons.some(button => button.hidden && button === focused)) (more as HTMLButtonElement).focus();
   }
+  /** The current entry keeps a selected state; when it sits in More, More carries it. */
+  private syncNavigationSelection(): void {
+    const nav = this.contentEl.querySelector<HTMLElement>('[data-wb="modules"]');
+    if (!nav) return;
+    nav.querySelectorAll<HTMLButtonElement>("button[data-module]").forEach(button => {
+      const current = button.dataset.module === this.panelId;
+      button.classList.toggle("is-current", current);
+      if (current) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
+    });
+    const more = nav.querySelector<HTMLButtonElement>('[data-wb="module-more"]');
+    const inMore = this.overflowModules.some(module => module.id === this.panelId);
+    more?.classList.toggle("is-current", inMore);
+    if (inMore) more?.setAttribute("aria-current", "page"); else more?.removeAttribute("aria-current");
+  }
   private openMoreModules(): void {
     const menu = new Menu();
-    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${isProNavigation(module.id) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).onClick(() => { void this.openModule(module.id); }));
+    for (const module of this.overflowModules) menu.addItem(item => item.setTitle(`${this.language === "en" ? module.en : module.zh}${isProNavigation(module.id) && !workbenchHasPro(this.plugin) ? " · PRO" : ""}`).setIcon(module.icon).setChecked(module.id === this.panelId)
+      .onClick(event => { void this.selectModule(module.id, event instanceof MouseEvent && (event.metaKey || event.ctrlKey)).catch(error => showWorkbenchActionFailure(this.plugin, error)); }));
     const box = this.field("module-more").getBoundingClientRect(); menu.showAtPosition({ x: box.left, y: box.bottom });
   }
   private async syncOnboardingHistory(version: number): Promise<void> {
@@ -623,7 +719,7 @@ export class EchoInkWorkbenchView extends ItemView {
     else if (step.key === "avatar" || step.key === "appearance") await this.plugin.openWorkbenchSetup(step.key === "avatar" ? "agent" : "appearance");
     else if (step.key === "journal") await prefillWorkbenchModule(this.plugin, "journal", this.t("帮我开始写今天的日记，先问我三个问题。", "Help me start today's journal. Ask me three questions first."));
     else if (step.key === "reading") await this.plugin.openAgentTaskList(GENERAL_ASSISTANT_ID, this.t("带我精读 @", "Read closely @"));
-    else await this.openModule(step.key === "english" ? "english-diary" : "pdf-reading");
+    else await this.selectModule(step.key === "english" ? "english-diary" : "pdf-reading");
   }
   private async markGuide(done: Record<string, true> | "all"): Promise<void> {
     const settings = this.plugin.settings, previous = { done: settings.setup.onboardingGuideDone, dismissed: settings.workbenchOnboardingDismissed };
@@ -733,38 +829,112 @@ export class EchoInkWorkbenchView extends ItemView {
     }
   }
 
-  private async openModule(id: typeof WORKBENCH_NAVIGATION[number]["id"]): Promise<void> {
+  /** Opens a module in its own tab, the way the navigation worked before (Cmd/Ctrl-click, middle-click). */
+  private async openModuleTab(id: WorkbenchNavigationId): Promise<void> {
     if (id === "experts") { if (expertModuleEnabled(this.plugin)) await this.plugin.openExpertHall(); return; }
     // 资讯页自己处理免费、未开放、下线等状态，这里只负责打开。
     if (id === "news") { await this.plugin.activateNewsPage(); return; }
-    if (isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) || workbenchModuleSetupReason(this.plugin, id)) { this.showModuleLock(id); return; }
     await openWorkbenchModule(this.plugin, id);
   }
-  private showModuleLock(id: typeof WORKBENCH_MODULES[number]["id"]): void {
-    this.closeSearch(false);
-    const previous = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
-    if (previous) { this.disposeControls(previous); previous.remove(); }
-    this.lockedModule = id;
-    this.clearNavigationPlayback();
-    this.weatherStage?.setActive(false);
-    this.field("page").hidden = true;
-    this.field("page").inert = true;
-    const reason = workbenchModuleSetupReason(this.plugin, id);
-    const locked = isProWorkbenchModule(id) && !workbenchHasPro(this.plugin);
-    this.modulePageState = locked ? "pro" : reason ?? "";
-    const page = locked ? renderWorkbenchModuleLock(this.contentEl, this.plugin, id, () => this.closeModuleLock())
-      : renderWorkbenchModuleSetup(this.contentEl, this.plugin, id, reason!, () => this.closeModuleLock());
-    page.querySelector<HTMLButtonElement>("button")?.focus();
+  /** "pro" for a PRO lock, a setup reason, or null when the module page can open. */
+  private moduleNotice(id: WorkbenchPanelId): string | null {
+    if (id === WORKBENCH_OVERVIEW.id || id === "experts" || id === "news") return null;
+    if (isProWorkbenchModule(id) && !workbenchHasPro(this.plugin)) return "pro";
+    return workbenchModuleSetupReason(this.plugin, id) ?? null;
   }
-  private closeModuleLock(): void {
-    const id = this.lockedModule;
-    const page = this.contentEl.querySelector<HTMLElement>('[data-wb="module-lock"], [data-wb="module-setup"]');
+  private async selectModule(id: WorkbenchPanelId, newTab = false): Promise<void> {
+    // A locked or unconfigured module has no page of its own yet; its notice always shows here.
+    if (newTab && id !== WORKBENCH_OVERVIEW.id && !this.moduleNotice(id)) { await this.openModuleTab(id); return; }
+    if (id === this.panelId) {
+      this.contentEl.scrollTo({ top: 0 });
+      if (this.panelFailed === id || this.moduleNotice(id) !== this.modulePageState) await this.showPanel(this.availablePanel(id));
+      return;
+    }
+    await this.navigatePanel(id);
+  }
+  private availablePanel(id: WorkbenchPanelId): WorkbenchPanelId {
+    return id === "experts" && !expertModuleEnabled(this.plugin) ? WORKBENCH_OVERVIEW.id : id;
+  }
+  /**
+   * Switches the panel and records the step for Obsidian's back/forward.
+   * Obsidian records history only for navigable views, and a navigable
+   * workbench would let opened notes replace its tab, so the step is pushed here.
+   */
+  private async navigatePanel(requested: WorkbenchPanelId): Promise<void> {
+    const id = this.availablePanel(requested);
+    if (id === this.panelId || this.closed) return;
+    const leaf = this.leaf as WorkspaceLeaf & { getHistoryState?(): unknown; history?: { pushState?(state: unknown): void } };
+    const step = leaf.getHistoryState?.();
+    // showPanel applies the selection synchronously. Loading the selected page
+    // must not delay recording the previous selection for Back.
+    const showing = this.showPanel(id);
+    if (step) leaf.history?.pushState?.(step);
+    this.app.workspace.requestSaveLayout?.();
+    await showing;
+  }
+  private async showPanel(id: WorkbenchPanelId): Promise<void> {
+    const token = ++this.panelToken;
+    const previous = this.panelId;
+    this.panelId = id;
+    const host = this.panelHost, panel = this.modulePanel;
+    if (this.closed || !host || !panel) return;
+    const isCurrent = () => token === this.panelToken && !this.closed;
+    const notice = this.moduleNotice(id);
+    this.modulePageState = notice;
+    this.panelFailed = null;
+    this.closeSearch(false);
+    this.removeModuleNotice();
+    this.syncPanelVisibility();
+    this.syncNavigationSelection();
+    if (previous !== id) this.contentEl.scrollTop = 0;
+    try {
+      if (id === WORKBENCH_OVERVIEW.id || notice) {
+        await panel.clear();
+        if (!isCurrent()) return;
+        if (id === WORKBENCH_OVERVIEW.id) {
+          // The overview skipped redraws while hidden; draw the data already loaded, then refresh it.
+          this.render();
+          this.scheduleRefresh(0);
+        } else {
+          const moduleId = id as typeof WORKBENCH_MODULES[number]["id"];
+          if (notice === "pro") renderWorkbenchModuleLock(host, this.plugin, moduleId as Parameters<typeof renderWorkbenchModuleLock>[2], () => { void this.navigatePanel(WORKBENCH_OVERVIEW.id); });
+          else if (notice) renderWorkbenchModuleSetup(host, this.plugin, moduleId, notice, () => { void this.navigatePanel(WORKBENCH_OVERVIEW.id); });
+        }
+        return;
+      }
+      if (!await panel.show(id) && isCurrent()) this.panelFailed = id;
+    } catch (error) {
+      if (!isCurrent()) return;
+      this.panelFailed = id;
+      throw error;
+    }
+  }
+  private removeModuleNotice(): void {
+    const page = this.panelHost?.querySelector<HTMLElement>(':scope > [data-wb="module-lock"], :scope > [data-wb="module-setup"]');
     if (page) { this.disposeControls(page); page.remove(); }
-    this.lockedModule = null; this.modulePageState = "";
-    this.field("page").hidden = false;
-    this.field("page").inert = false;
-    this.weatherStage?.setActive(this.active());
-    this.field("modules").querySelector<HTMLButtonElement>(`[data-module="${id}"]`)?.focus();
+  }
+  private syncModuleEntry(): void {
+    if (this.closed || this.panelId === WORKBENCH_OVERVIEW.id) return;
+    const id = this.availablePanel(this.panelId);
+    const pending = id !== this.panelId ? this.navigatePanel(id)
+      : this.moduleNotice(id) !== this.modulePageState ? this.showPanel(id) : null;
+    void pending?.catch(error => showWorkbenchActionFailure(this.plugin, error));
+  }
+  private syncPanelVisibility(): void {
+    const overview = this.contentEl.querySelector<HTMLElement>('[data-wb="overview"]');
+    const onOverview = this.panelId === WORKBENCH_OVERVIEW.id;
+    if (overview) { overview.hidden = !onOverview; overview.inert = !onOverview; }
+    if (this.panelHost) this.panelHost.hidden = onOverview;
+    this.contentEl.toggleClass("has-module-panel", !onOverview);
+  }
+  private syncNavigationBadges(): void {
+    this.field("modules").querySelectorAll<HTMLButtonElement>("button[data-module]").forEach(button => {
+      const id = button.dataset.module as WorkbenchPanelId;
+      const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
+      const locked = isProNavigation(id) && !workbenchHasPro(this.plugin);
+      if (locked && !badge) createPluginEditionBadge(button, "pro", this.language);
+      else if (!locked) badge?.remove();
+    });
   }
 
   private render(now = Date.now()): void {
@@ -779,21 +949,10 @@ export class EchoInkWorkbenchView extends ItemView {
     const date = this.field("date");
     date.textContent = new Intl.DateTimeFormat(this.language, { month: "long", day: "numeric", weekday: "long" }).format(new Date(now));
     date.setAttribute("datetime", dayKey(now));
-    this.field("modules").querySelectorAll<HTMLButtonElement>("[data-module]").forEach(button => {
-      const id = button.dataset.module as typeof WORKBENCH_NAVIGATION[number]["id"];
-      const proModule = isProNavigation(id);
-      button.hidden = id === "experts" && !expertModuleEnabled(this.plugin);
-      const badge = button.querySelector<HTMLElement>('[data-plugin-edition="pro"]');
-      const locked = proModule && !workbenchHasPro(this.plugin);
-      if (locked && !badge) createPluginEditionBadge(button, "pro", this.language);
-      else if (!locked) badge?.remove();
-    });
-    if (this.lockedModule) {
-      const id = this.lockedModule;
-      const state = isProWorkbenchModule(id) && !workbenchHasPro(this.plugin) ? "pro" : workbenchModuleSetupReason(this.plugin, id) ?? "";
-      if (!state) { this.closeModuleLock(); void this.openModule(id).catch(error => new Notice(message(error, this.language))); }
-      else if (state !== this.modulePageState) this.showModuleLock(id);
-    }
+    // The experts switch can change while open; the row follows settings like a reorder.
+    this.refreshNavigation();
+    this.syncNavigationBadges();
+    this.syncModuleEntry();
     this.scheduleNav();
     this.syncGuideVisibility();
     this.renderReleaseReminders();
@@ -810,6 +969,8 @@ export class EchoInkWorkbenchView extends ItemView {
     const state = this.taskError || this.entries === null ? null : workbenchAgentState(groups, linkingGroup);
     const count = state === "unfinished" ? counts.interrupted : state === "waiting" ? counts.waiting : state === "working" ? counts.running : counts.completed;
     this.weatherStage?.update(state, state === "unfinished" ? this.t(`${count} 件没做完`, `${count} unfinished`) : state === "waiting" ? this.t(`${count} 件等你回应`, `${count} waiting for you`) : state === "working" ? this.t(`${count} 件在跑`, `${count} in progress`) : state === "done" ? this.t(`今天做完 ${count} 件`, `${count} completed today`) : this.t("一切安静", "All quiet"));
+    // A module page is showing: the header stays live, the hidden overview redraws when it returns.
+    if (this.panelId !== WORKBENCH_OVERVIEW.id) return;
     const pending = this.plugin.getConversationRunService().pendingInteractions;
     groups.waiting.sort((a, b) => (pending.get(a.conversationId)?.createdAt ?? a.updatedAt) - (pending.get(b.conversationId)?.createdAt ?? b.updatedAt));
     this.renderProjects();
@@ -1080,6 +1241,8 @@ export class EchoInkWorkbenchView extends ItemView {
     if (this.interruptionErrors.has(entry.conversationId)) return `${time}${this.t("暂时无法读取中断记录", "Interruption details are temporarily unavailable")}`;
     if (info === undefined) return `${time}${this.t("正在读取中断记录…", "Reading interruption details…")}`;
     if (!info) return `${time}${this.t("中断原因未记录", "Cause was not recorded")}`;
+    const modelFailure = info.reason === "run_failed" ? providerFailureText(info.detail, this.language) : null;
+    if (modelFailure) return `${time}${modelFailure}`;
     const reasons: Record<TaskInterruptionInfo["reason"], [string, string]> = {
       app_closed: ["关闭 Obsidian 时中断", "Obsidian closed"], user_stopped: ["被你停止", "Stopped by you"],
       plugin_disabled: ["插件关闭时中断", "Plugin stopped"], run_failed: ["执行失败后中断", "Execution failed"],
@@ -1284,10 +1447,6 @@ export class EchoInkWorkbenchView extends ItemView {
   }
   private handleKeys(event: KeyboardEvent): void {
     if (isImeKeyEvent(event)) return;
-    if (this.lockedModule) {
-      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeModuleLock(); }
-      return;
-    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); event.stopPropagation(); this.openSearch(); return; }
     if (!this.searchOpen) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); this.closeSearch(true); return; }

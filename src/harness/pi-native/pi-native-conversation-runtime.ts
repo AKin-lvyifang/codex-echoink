@@ -254,7 +254,7 @@ export interface PiNativeAgentSessionFactoryInput {
   skillName?: string;
   skillPaths?: readonly string[];
   skillNames?: readonly string[];
-  currentExecutionContext(): Readonly<PiNativeProviderExecutionContext>;
+  currentExecutionContext(options?: { preview?: boolean }): Readonly<PiNativeProviderExecutionContext>;
   currentToolExecutionContext(): Readonly<{
     conversationId: string;
     piSessionId: string;
@@ -3264,7 +3264,7 @@ export class PiNativeConversationRuntime {
         run.interruption = { at: this.now(), reason: "tool_loop_limit", stage: taskInterruptionStage(active) };
         void this.abort(conversationId).catch(error => { run.eventError ??= error; });
       },
-      currentExecutionContext: () => {
+      currentExecutionContext: (options) => {
         const active = holder.active;
         const run = active?.currentRun;
         const execution = active?.currentExecution;
@@ -3275,8 +3275,8 @@ export class PiNativeConversationRuntime {
           );
         }
         assertPiSubmissionActive(run?.knowledgeAbort.signal);
-        this.checkpointConversationLeaf(active);
-        if (run && run.providerStartedAt === undefined) {
+        if (!options?.preview) this.checkpointConversationLeaf(active);
+        if (!options?.preview && run && !run.providerCompacting && run.providerStartedAt === undefined) {
           const providerStartedAt = this.now();
           run.providerStartedAt = providerStartedAt;
           reportPreparation(run.onPreparationStage, { stage: "thinking", status: "active", readyForModel: true });
@@ -3714,8 +3714,10 @@ export class PiNativeConversationRuntime {
       if (!execution) return;
       if (event.type === "compaction_start" || event.type === "compaction_end") execution.providerCompacting = event.type === "compaction_start";
       if (event.type === "tool_execution_start") execution.providerToolStep = true;
+      const compactionEntryId = event.type === "compaction_end" && event.result
+        ? lastEntryOfType(active.sessionManager.getBranch(), "compaction")?.id : undefined;
       active.eventLane = active.eventLane.then(async () => {
-        await this.handleAgentSessionEvent(active, execution, event);
+        await this.handleAgentSessionEvent(active, execution, event, compactionEntryId);
       }).catch((error) => {
         execution.eventError ??= error;
       });
@@ -4646,7 +4648,8 @@ export class PiNativeConversationRuntime {
   private async handleAgentSessionEvent(
     active: ActiveConversation,
     execution: ActiveProductRun,
-    event: AgentSessionEvent
+    event: AgentSessionEvent,
+    compactionEntryId?: string
   ): Promise<void> {
     if (["message_end", "tool_execution_start", "tool_execution_end", "compaction_end", "agent_settled"].includes(event.type)) this.checkpointConversationLeaf(active);
     if (event.type === "message_update"
@@ -4855,10 +4858,7 @@ export class PiNativeConversationRuntime {
         await this.emitRuntimeEvent(active, execution, {
           type: "compaction_end",
           reason: event.reason,
-          entryId: lastEntryOfType(
-            active.sessionManager.getEntries(),
-            "compaction"
-          )?.id,
+          entryId: compactionEntryId,
           aborted: event.aborted,
           willRetry: event.willRetry,
           error: event.errorMessage

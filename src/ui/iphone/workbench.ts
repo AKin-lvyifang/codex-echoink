@@ -1,6 +1,9 @@
 import { settingsErrorText } from "../../core/error-copy";
 import { runErrors } from "../../run-reports/recent-errors";
 import { Notice } from "obsidian";
+import { MobileTaskFileChanged } from "../../mobile/store";
+import { createTaskFileRecovery } from "../mobile/task-file-recovery";
+import { iphoneButton } from "./workbench-elements";
 import { SETTINGS_FALLBACK } from "../../core/error-copy/codes/settings";
 import { IPhoneShell } from "./shell";
 import { createAgentPage, createHomePage } from "./workbench-pages";
@@ -29,8 +32,11 @@ export class IPhoneWorkbench {
   private serial = Promise.resolve();
   private closed = false;
   private readonly settingsPages: IPhoneSettingsPages;
+  private readonly recovery: ReturnType<typeof createTaskFileRecovery>;
   constructor(private readonly root: HTMLElement, private readonly host: IPhoneWorkbenchHost) {
-    this.shell = new IPhoneShell(root, { onError: error => this.error(error) });
+    this.recovery = createTaskFileRecovery(root.ownerDocument, host, (label, action) => iphoneButton(root.ownerDocument, label, action, "is-primary"));
+    this.shell = new IPhoneShell(root, { onError: error => this.error(error),
+      pageNotice: id => /^(iphone-home$|iphone-agent-(?!form)|task:)/u.test(id) ? this.recovery?.element : undefined });
     this.context = { host: { ...host, openLegacy: page => this.openLegacy(page) }, document: root.ownerDocument, shell: this.shell,
       navigate: (route, replace) => this.navigate(route, replace), error: error => this.error(error) };
     this.settingsPages = new IPhoneSettingsPages(this.context, page => this.openLegacy(page));
@@ -38,7 +44,7 @@ export class IPhoneWorkbench {
   async mount(): Promise<void> {
     this.shell.mount(createHomePage(this.context));
     const page = this.host.store.state.page;
-    if (page.kind === "detail") {
+    if (page.kind === "detail" && !this.host.store.taskFileChanged) {
       const task = this.host.store.state.sessions.find(task => task.id === page.taskId);
       if (task && (task.messages.length || task.draft)) {
         await this.navigate({ kind: "agent", agentId: task.agentId });
@@ -72,12 +78,14 @@ export class IPhoneWorkbench {
       const moved = existing ? await this.shell.backTo(page.id) : replace ? await this.shell.replace(page) : await this.shell.push(page);
       if (existing) page.dispose?.();
       if (!moved) { if (!existing) page.dispose?.(); return; }
-      if (route.kind === "agent" && !this.host.store.unavailableReason) await this.host.store.update(state => { state.page = { kind: "list", agentId: route.agentId }; });
-      if (route.kind === "task") await this.host.store.update(state => {
-        state.activeSessionId = route.taskId; state.page = { kind: "detail", taskId: route.taskId };
-        const task = state.sessions.find(task => task.id === route.taskId);
-        if (task) task.lastReadAt = Date.now();
-      });
+      try {
+        if (route.kind === "agent" && !this.host.store.unavailableReason) await this.host.store.update(state => { state.page = { kind: "list", agentId: route.agentId }; });
+        if (route.kind === "task") await this.host.store.update(state => {
+          state.activeSessionId = route.taskId; state.page = { kind: "detail", taskId: route.taskId };
+          const task = state.sessions.find(task => task.id === route.taskId);
+          if (task) task.lastReadAt = Date.now();
+        });
+      } catch (error) { if (!(error instanceof MobileTaskFileChanged)) throw error; }
       if (route.kind === "task") this.host.workbench.refreshTasks?.();
     });
     this.serial = next;
@@ -115,6 +123,10 @@ export class IPhoneWorkbench {
     if (module === "finance") return openIPhoneFinance(this.context);
     if (module === "english-diary") return openIPhoneEnglishDiary(this.context);
   }
-  private error(error: unknown): void { runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined }); new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage)); }
-  dispose(): void { this.closed = true; this.shell.dispose(); }
+  private error(error: unknown): void {
+    if (error instanceof MobileTaskFileChanged) return;
+    runErrors.record("mobile.page", error, { conversationId: this.shell.activePageId?.startsWith("task:") ? this.shell.activePageId.slice(5) : undefined });
+    new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, this.host.settings().settingsLanguage));
+  }
+  dispose(): void { this.closed = true; this.recovery?.dispose(); this.shell.dispose(); }
 }

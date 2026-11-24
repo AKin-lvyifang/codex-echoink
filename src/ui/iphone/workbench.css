@@ -21,6 +21,17 @@
 .echoink-iphone .ip-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .echoink-iphone .ip-empty { padding: 32px 0; text-align: center; color: var(--ip-secondary); font-size: calc(var(--ip-ui-font) * 0.875); }
 .echoink-iphone .ip-error { margin-top: 12px; color: var(--text-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-iphone .echoink-task-file-recovery:not([hidden]) {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 10px;
+  padding: 0 14px;
+  color: var(--text-normal);
+}
+.echoink-iphone .echoink-task-file-recovery > span { flex: 1 1 15em; min-width: 0; overflow-wrap: anywhere; }
+.echoink-iphone .echoink-task-file-recovery > button.ip-button { margin-inline-start: auto; }
 .echoink-iphone .ip-error[hidden],
 .echoink-iphone .ip-agent-form [hidden] { display: none; }
 .echoink-iphone button.ip-button {

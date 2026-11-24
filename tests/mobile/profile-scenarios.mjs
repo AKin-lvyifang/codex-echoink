@@ -9,6 +9,15 @@ export async function profileScenarios(api, test, settings) {
   const hash = text => createHash("sha256").update(text).digest("hex");
   const identity = { schema: "echoink.agent-identity.v1", revision: 2, displayName: "墨墨", avatar: { kind: "preset", presetId: "sol" }, updatedAt: 42 };
   const habits = [{ key: "short-first", text: "长期习惯独有证据" }];
+  await test("finance accepts JSON formatting changes and preserves all existing data", async () => {
+    const path = "custom/lifestyle.json";
+    const host = createHost({ [path]: '{"version":1,"unowned":{"keep":true},"budgets":[]}' });
+    const store = api.mobileLifestyleStore(host.adapter, path); await store.initialize();
+    host.files.set(path, '{\r\n  "budgets": [], "unowned": {"keep":true}, "version": 1\r\n}\r\n');
+    await store.update(data => { data.budgets.push({ month: "2026-10", totalCents: 5000, allocations: {} }); });
+    assert.equal(store.snapshot().unowned.keep, true);
+    assert.equal(JSON.parse(host.files.get(path)).budgets[0].totalCents, 5000);
+  });
   await test("finance replacement supports non-overwriting adapters and restores failed saves", async () => {
     const path = "custom/lifestyle.json", initial = JSON.stringify({ version: 1, unowned: { keep: true }, budgets: [] });
     const host = createHost({ [path]: initial }), store = api.mobileLifestyleStore(host.adapter, path);

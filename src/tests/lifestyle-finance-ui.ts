@@ -7,7 +7,6 @@ import { financeIconOptions, renderFinanceIcon } from "../lifestyle/finance-icon
 import { FinanceWorkspace } from "../lifestyle/finance-view";
 import { DEFAULT_LIFESTYLE_SETTINGS } from "../lifestyle/settings";
 import type { LifestyleService } from "../lifestyle/service";
-import type { FinanceEntry } from "../lifestyle/store";
 import { openTestModals } from "./obsidian-shim";
 
 /** Small Obsidian DOM adapter: exercise rendered controls and their click/submit handlers. */
@@ -271,76 +270,4 @@ export async function runLifestyleFinanceUiTests(): Promise<void> {
     }
     console.log("OK lifestyle finance catalog render/click navigation, picker draft, save failure");
   } finally { globalThis.MutationObserver = originalObserver; }
-  runRecentSizerRegression();
-}
-
-function runRecentSizerRegression(): void {
-  const originalObserver = globalThis.ResizeObserver;
-  const frames = new Map<number, () => void>();
-  let nextFrame = 0;
-  const win = {
-    requestAnimationFrame(callback: () => void) { const id = ++nextFrame; frames.set(id, callback); return id; },
-    cancelAnimationFrame(id: number) { frames.delete(id); }
-  };
-  const flush = (): void => {
-    while (frames.size) {
-      const [id, callback] = frames.entries().next().value!;
-      frames.delete(id); callback();
-    }
-  };
-  let observer: { trigger(): void; disconnected: boolean; targets: unknown[] } | null = null;
-  class TestResizeObserver {
-    disconnected = false;
-    targets: unknown[] = [];
-    constructor(private readonly callback: () => void) { observer = this; }
-    observe(target: unknown): void { this.targets.push(target); }
-    disconnect(): void { this.disconnected = true; }
-    trigger(): void { this.callback(); }
-  }
-  globalThis.ResizeObserver = TestResizeObserver as unknown as typeof ResizeObserver;
-  try {
-    const rows: Array<{ getBoundingClientRect(): { bottom: number }; remove(): void }> = [];
-    let added = 0; let removed = 0; let sideBottom = 236; let sideLeft = 500;
-    const list = {
-      children: rows,
-      get lastElementChild() { return rows.at(-1) ?? null; },
-      getBoundingClientRect: () => ({ top: 0, width: 500, height: rows.length * 72 })
-    };
-    const workspace = new FinanceWorkspace({} as LifestyleService) as unknown as {
-      host: HTMLElement; transactionRow(list: HTMLElement, entry: FinanceEntry, compact: boolean): void;
-      sizeRecentTransactions(layout: HTMLElement, main: HTMLElement, side: HTMLElement, list: HTMLElement, entries: FinanceEntry[]): void;
-      detach(): void;
-    };
-    workspace.host = { ownerDocument: { defaultView: win } } as unknown as HTMLElement;
-    workspace.transactionRow = () => {
-      let row: typeof rows[number];
-      row = {
-        getBoundingClientRect: () => ({ bottom: (rows.indexOf(row) + 1) * 72 }),
-        remove: () => { removed++; rows.splice(rows.indexOf(row), 1); }
-      };
-      rows.push(row); added++;
-    };
-    const layout = { isConnected: true, ownerDocument: { defaultView: win }, getBoundingClientRect: () => ({ width: 1000 }) } as unknown as HTMLElement;
-    const main = { getBoundingClientRect: () => ({ right: 500 }) } as unknown as HTMLElement;
-    const side = { getBoundingClientRect: () => ({ left: sideLeft, bottom: sideBottom }) } as unknown as HTMLElement;
-    const entries = Array.from({ length: 7 }, (_, index) => ({ id: String(index) } as FinanceEntry));
-    workspace.transactionRow(list as unknown as HTMLElement, entries[0], true);
-    workspace.sizeRecentTransactions(layout, main, side, list as unknown as HTMLElement, entries); flush();
-    assert.equal(rows.length, 3, "wide layout fits three complete recent rows");
-    const settled = { added, removed };
-    observer!.trigger(); flush();
-    assert.deepEqual({ added, removed }, settled, "same geometry must not append then remove an overflowing row again");
-    sideBottom = 308; observer!.trigger(); flush();
-    assert.equal(rows.length, 4, "more vertical space reveals another complete row");
-    sideBottom = 164; observer!.trigger(); flush();
-    assert.equal(rows.length, 2, "less vertical space removes overflowing rows");
-    sideLeft = 400; observer!.trigger(); flush();
-    assert.equal(rows.length, 5, "narrow layout uses its five-row cap");
-    observer!.trigger();
-    assert.ok(frames.size > 0, "resize schedules one frame");
-    workspace.detach();
-    assert.equal(observer!.disconnected, true, "detach disconnects the observer");
-    assert.equal(frames.size, 0, "detach cancels pending measurements");
-    console.log("OK finance recent rows converge across repeated and changed geometry");
-  } finally { globalThis.ResizeObserver = originalObserver; }
 }

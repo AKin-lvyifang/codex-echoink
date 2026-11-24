@@ -162,7 +162,7 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   statisticsDialog.close();
   assert.equal(parent.querySelectorAll(".plan").length, 0);
   assert.equal(parent.querySelector(".price-amount"), null, "missing catalogue never shows fallback amounts");
-  assert.equal(findButton(parent, "新建计划").disabled, true);
+  assert.equal(findButton(parent, "新建预算").disabled, true);
   assert.equal(findButton(parent, "生成讲解").disabled, true);
   assert.equal(parent.querySelectorAll(".plugin-feature-card").length, 3);
   assert.match(parent.textContent ?? "", /官方 PRO Skill/u);
@@ -276,7 +276,7 @@ export async function runAccountMembershipTests(win: Window & typeof globalThis)
   cells.at(-1)!.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Home", bubbles: true, cancelable: true })); assert.equal(win.document.activeElement, cells[0]);
   page.dispose();
   page = mountAccountMembership(parent, { app: new App(), viewModel: { ...partial, provider: "configured", membership: { ...vm.membership, state: "active" } }, language: "en", openProviders() {} });
-  assert.equal(findButton(parent, "New plan").disabled, false, "valid membership sample enables PRO display actions");
+  assert.equal(findButton(parent, "New budget").disabled, false, "valid membership sample enables PRO display actions");
   page.dispose();
   const resolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
   try {

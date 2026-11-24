@@ -10,7 +10,7 @@ import { el, settingsContent, settingsGroup, settingsRow, settingsBrand, setting
 
 const providerLabels: Record<string, readonly [string, string]> = {
   glm: ["智谱 GLM", "智谱开放平台"], kimi: ["Kimi", "月之暗面 · 中国版"], deepseek: ["DeepSeek", "深度求索"],
-  qwen: ["通义千问", "阿里云百炼"], "qwen-token-plan": ["通义千问 Token Plan", "阿里云百炼套餐"], custom: ["自定义服务", "兼容 OpenAI 接口"]
+  qwen: ["通义千问", "阿里云百炼"], "qwen-token-plan": ["通义千问 Token Plan", "阿里云百炼套餐"], "opencode-go": ["OpenCode Go", "OpenCode 套餐"], custom: ["自定义服务", "兼容 OpenAI 接口"]
 };
 
 export function createModelPage(ctx: IPadSettingsContext): MobileShellPage {

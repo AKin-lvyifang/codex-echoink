@@ -15,9 +15,11 @@ import {
   type PiProviderConnectionFailureKind
 } from "../harness/pi/pi-provider-protocol-adapter";
 import {
+  openCodeGoPlanFailureCode,
   sanitizeProviderFailureDetail,
   type AssistantProviderFailure,
   type ProviderFailureDetail,
+  type ProviderPlanFailureCode,
   providerFailureCodeFromError
 } from "../harness/pi/provider-failure";
 import {
@@ -89,7 +91,7 @@ export interface PiProviderModelListResult {
 }
 
 export type PiProviderConnectionFailure =
-  PiProviderConnectionFailureKind;
+  PiProviderConnectionFailureKind | ProviderPlanFailureCode;
 
 export type PiProviderConnectionTestResult =
   | { readonly status: "available" }
@@ -508,27 +510,25 @@ export async function testProviderConnection(input: {
     ) {
       return { status: "available" };
     }
+    const errorMessage = message.errorMessage ?? "";
     const detail = sanitizeProviderFailureDetail(responseStatus,
-      (message as AssistantProviderFailure).echoInkProviderFailure ?? message.errorMessage, [input.apiKey]);
+      (message as AssistantProviderFailure).echoInkProviderFailure ?? errorMessage, [input.apiKey]);
     return {
       status: "failed",
       ...(detail ? { detail } : {}),
-      failure: classifyPiProviderConnectionFailure(
-        responseStatus,
-        message.errorMessage ?? ""
-      )
+      failure: openCodeGoPlanFailureCode(input.draft.baseUrl, responseStatus ?? detail?.status ?? null, errorMessage)
+        ?? classifyPiProviderConnectionFailure(responseStatus, errorMessage)
     };
   } catch (error) {
-    const detail = sanitizeProviderFailureDetail(responseStatus, error instanceof Error ? error.message : "", [input.apiKey]);
+    const errorMessage = error instanceof Error ? error.message : "";
+    const detail = sanitizeProviderFailureDetail(responseStatus, errorMessage, [input.apiKey]);
     return {
       status: "failed",
       ...(detail ? { detail } : {}),
       failure: controller.signal.aborted
         ? "timeout"
-        : classifyPiProviderConnectionFailure(
-          responseStatus,
-          error instanceof Error ? error.message : ""
-        )
+        : openCodeGoPlanFailureCode(input.draft.baseUrl, responseStatus, errorMessage)
+          ?? classifyPiProviderConnectionFailure(responseStatus, errorMessage)
     };
   } finally {
     window.clearTimeout(timer);

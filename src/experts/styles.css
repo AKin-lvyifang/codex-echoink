@@ -193,7 +193,16 @@ body.is-mobile.is-tablet .echoink-expert-hall .echoink-expert-button:is(.is-seco
   padding-top: 12px;
 }
 .echoink-expert-submission-consent button { flex-shrink: 0; margin-top: 3px; }
-.echoink-expert-submission-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.echoink-expert-submission-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.echoink-expert-submission-reviews { list-style: none; margin: 0; padding: 0; }
+.echoink-expert-submission-reviews > li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.echoink-expert-submission-reason { white-space: pre-wrap; }
 .echoink-expert-submission :is(.echoink-expert-submission-upload, .echoink-expert-submission-back) { align-self: flex-start; }
 .echoink-expert-submission-muted { color: var(--text-muted); }
 .echoink-expert-submission-error { color: var(--text-error); }

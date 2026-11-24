@@ -161,8 +161,8 @@ export class EchoInkJournalView extends ItemView {
     const header = this.field("header");
     if (!header.firstChild) {
       const title = header.createDiv({ cls: "journal-title" });
-      this.iconButton(title, "arrow-left", this.t("返回工作台", "Back to workbench"), () => this.plugin.activateHomeView({ keepRightSidebar: true }));
-      title.createEl("h1");
+      this.iconButton(title, "arrow-left", this.t("返回工作台", "Back to workbench"), () => this.plugin.activateHomeView({ keepRightSidebar: true })).dataset.echoinkWorkbenchBack = "";
+      title.createEl("h1").dataset.echoinkModuleTitle = "";
       this.button(header, "", async () => { this.updateOwner(); await prefillWorkbenchModule(this.plugin, "journal", "聊聊今天"); }, "is-primary").dataset.journal = "owner";
     }
     header.querySelector("h1")!.setText(this.t("日记", "Journal"));
@@ -172,8 +172,9 @@ export class EchoInkJournalView extends ItemView {
     const label = moduleOwnerLabel(this.plugin, "journal");
     this.field("owner").setText(label);
   }
-  private iconButton(parent: HTMLElement, name: string, label: string, action: () => void | Promise<unknown>): void {
+  private iconButton(parent: HTMLElement, name: string, label: string, action: () => void | Promise<unknown>): HTMLButtonElement {
     const button = this.button(parent, "", action, "is-icon"); button.setAttribute("aria-label", label); setIcon(button, name);
+    return button;
   }
   private changeMonth(offset: number): void {
     this.month = new Date(this.month.getFullYear(), this.month.getMonth() + offset, 1);

@@ -37,7 +37,7 @@ try {
   await symlink(path.resolve("node_modules"), path.join(temporary, "node_modules"), "dir");
   const build = await esbuild.build({
     stdin: { contents: 'export { runWorkbenchUiTests } from "./src/tests/workbench-ui"; export { runWorkbenchHomeRefreshTests } from "./src/tests/workbench-home-refresh"; export { runWorkbenchCheckinTests } from "./src/tests/workbench-checkin"; export { runWorkbenchWeatherTests } from "./src/tests/workbench-weather";', resolveDir: process.cwd(), loader: "ts" }, bundle: true, write: false, platform: "node", target: "node22", format: "esm",
-    banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
+    banner: { js: 'import { createRequire as createVaultMemoryUiRequire } from "node:module"; const require = createVaultMemoryUiRequire(import.meta.url);' },
     alias: { obsidian: path.resolve("src/tests/obsidian-shim.ts") },
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "yaml"],
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text" },

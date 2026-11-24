@@ -231,6 +231,8 @@ export class IPhoneShell {
   }
 
   private activate(entry: IPhonePageEntry, motion?: "forward" | "back"): void {
+    const notice = this.options.pageNotice?.(entry.page.id);
+    if (notice) entry.scroll.before(notice);
     entry.panel.hidden = false;
     entry.panel.inert = false;
     entry.panel.removeAttribute("aria-hidden");

@@ -226,6 +226,8 @@ export class IPadShell {
   }
 
   private showPage(state: PageState, animate: boolean): void {
+    const notice = this.options.pageNotice?.(state.page.id);
+    if (notice) state.content.before(notice);
     state.element.hidden = false;
     state.element.inert = false;
     state.element.removeAttribute("aria-hidden");

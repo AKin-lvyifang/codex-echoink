@@ -109,13 +109,13 @@ export class FinanceBillPlanView {
     heading.createEl("h2", { text: title }); return heading;
   }
   private list(parent: HTMLElement): void {
-    const head = this.heading(parent, "账单计划");
-    const create = button(head, "新建账单", () => this.actions.edit(), "echoink-finance-primary");
+    const head = this.heading(parent, "专项预算");
+    const create = button(head, "新建专项预算", () => this.actions.edit(), "echoink-finance-primary");
     const notice = capabilityMessage(this.service.finance.access, "finance.bill_plan.write");
     create.disabled = !!notice;
     if (notice) parent.createEl("p", { cls: "echoink-finance-empty", text: notice });
     const plans = this.service.finance.billPlans();
-    if (!plans.length) parent.createEl("p", { text: "还没有账单计划。先填名称和总预算，账目可随后添加。", cls: "echoink-finance-empty" });
+    if (!plans.length) parent.createEl("p", { text: "还没有专项预算。先填名称和总预算，账目可随后添加。", cls: "echoink-finance-empty" });
     const list = parent.createDiv({ cls: "echoink-finance-bill-list" });
     for (const plan of plans) {
       const stats = this.service.finance.billPlanStats(plan.id);
@@ -203,7 +203,7 @@ export class FinanceBillPlanView {
     if (this.state.category !== null) button(rows, `分类：${this.state.category || "未分类"} ×`, () => { this.detailPage = 1; this.state.category = null; this.updateDashboardRows(parent, entries); });
     const visible = sortFinanceBillPlanEntries(entries.filter(entry => this.state.category === null || entry.category === this.state.category), this.state.sort);
     rows.createEl("p", { text: `显示 ${visible.length} / ${entries.length} 笔`, cls: "echoink-finance-bill-note" });
-    if (!visible.length) rows.createEl("p", { text: "当前账单没有匹配的记录。", cls: "echoink-finance-empty" });
+    if (!visible.length) rows.createEl("p", { text: "当前专项预算没有匹配的记录。", cls: "echoink-finance-empty" });
     const page = financePage(visible, this.detailPage); this.detailPage = page.page;
     for (const entry of page.items) this.actions.transaction(rows, entry);
     const footer = financePagination(pageHost, page.page, page.pages, visible.length, target => {
@@ -253,8 +253,8 @@ export class FinanceBillPlanView {
     all.checked = eligible.length > 0 && eligible.every(entry => this.selected.has(entry.id)); all.indeterminate = this.selected.size > 0 && !all.checked; all.disabled = this.saving || !eligible.length;
     all.onchange = () => { for (const entry of eligible) { if (all.checked) this.selected.add(entry.id); else this.selected.delete(entry.id); } this.updateAssociationRows(parent, plan); };
     const moved = visible.filter(entry => this.selected.has(entry.id) && entry.billPlanId && entry.billPlanId !== plan.id).length;
-    heading.createSpan({ text: `已选 ${this.selected.size} 笔${moved ? ` · 从其他账单移入 ${moved} 笔` : ""}`, attr: { role: "status", "aria-live": "polite" } });
-    if (moved) rows.createEl("p", { text: `确认后，将有 ${moved} 笔从其他账单移入「${plan.name}」。`, cls: "echoink-finance-bill-move-notice" });
+    heading.createSpan({ text: `已选 ${this.selected.size} 笔${moved ? ` · 从其他专项预算移入 ${moved} 笔` : ""}`, attr: { role: "status", "aria-live": "polite" } });
+    if (moved) rows.createEl("p", { text: `确认后，将有 ${moved} 笔从其他专项预算移入「${plan.name}」。`, cls: "echoink-finance-bill-move-notice" });
     if (invalidDates) rows.createEl("p", { text: "开始日期不能晚于结束日期。", cls: "echoink-life-error" });
     if (!visible.length) rows.createEl("p", { text: "当前条件没有匹配记录。", cls: "echoink-finance-empty" });
     const plans = new Map(this.service.finance.billPlans().map(item => [item.id, item.name]));
@@ -264,7 +264,7 @@ export class FinanceBillPlanView {
       check.checked = this.selected.has(entry.id); check.disabled = this.saving || entry.billPlanId === plan.id;
       check.onchange = () => { if (check.checked) this.selected.add(entry.id); else this.selected.delete(entry.id); this.updateAssociationRows(parent, plan); };
       const copy = row.createDiv(); copy.createEl("strong", { text: entry.merchant || "未指定" }); copy.createEl("small", { text: `${entry.description || entry.category} · ${entry.date.slice(0, 10)} · ${entry.account || "未指定"}` });
-      copy.createEl("small", { text: entry.billPlanId === plan.id ? "已关联当前账单" : entry.billPlanId ? `来自：${plans.get(entry.billPlanId) || "未找到原账单"}` : "未关联" });
+      copy.createEl("small", { text: entry.billPlanId === plan.id ? "已关联当前专项预算" : entry.billPlanId ? `来自：${plans.get(entry.billPlanId) || "未找到原专项预算"}` : "未关联" });
       row.createSpan({ text: `${labels[entry.kind]} ¥ ${money(entry.amountCents)}` });
     }
     if (this.message) rows.createEl("p", { text: this.message, cls: "echoink-life-error", attr: { role: "alert" } });

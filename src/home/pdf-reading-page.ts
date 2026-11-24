@@ -132,7 +132,7 @@ export class PdfReadingPageView extends ItemView {
     if (!header.firstChild) {
       const title = header.createDiv({ cls: "pdf-page-title" });
       const back = this.button(title, "", () => this.plugin.activateHomeView({ keepRightSidebar: true }), "is-icon");
-      setIcon(back, "arrow-left"); title.createEl("h1");
+      setIcon(back, "arrow-left"); back.dataset.echoinkWorkbenchBack = ""; title.createEl("h1").dataset.echoinkModuleTitle = "";
       const upload = this.button(header, "", () => { if (!workbenchModuleOwner(this.plugin, "pdf-reading")) this.plugin.openModuleOwnerPicker("pdf-reading", async () => { new PdfReadingUploadModal(this.plugin, upload).open(); }); else new PdfReadingUploadModal(this.plugin, upload).open(); }, "is-primary");
       upload.dataset.pdfPage = "upload";
     }

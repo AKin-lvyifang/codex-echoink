@@ -8,6 +8,8 @@ type NumberModule = typeof import("number-flow");
 const moduleKey = Symbol.for("echoink.finance.number-flow.0.2.3.module");
 const tag = "echoink-finance-number-flow-v023";
 const formatter = new Intl.NumberFormat("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: true });
+/** Monthly overview figures read as whole yuan (¥8,495), as in the approved Demo. */
+const wholeFormatter = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0, useGrouping: true });
 type Watched = { observer: IntersectionObserver; callbacks: Map<Element, (visible: boolean) => void> };
 const watchers = new WeakMap<Document, Watched>();
 function watch(element: HTMLElement, update: (visible: boolean) => void): () => void {
@@ -30,20 +32,21 @@ function loadNumberFlow(owner: Window): Promise<NumberModule> {
     return module;
   });
 }
-type Mounted = { parent: HTMLElement; fallback: HTMLElement; wrapper?: HTMLElement; sign?: HTMLElement; flow?: NumberFlowLite; frame: number; stop: () => void; target: number; value: number; entrance: boolean; used: boolean; generation: number };
+type Mounted = { format: Intl.NumberFormat; parent: HTMLElement; fallback: HTMLElement; wrapper?: HTMLElement; sign?: HTMLElement; flow?: NumberFlowLite; frame: number; stop: () => void; target: number; value: number; entrance: boolean; used: boolean; generation: number };
 /** One instance per same-page metric; entering a page deliberately replays from zero. */
 export class FinanceNumbers {
   private mounted = new Map<string, Mounted>();
   begin(enter = false): void {
     for (const record of this.mounted.values()) { record.used = false; this.stop(record); if (enter) { this.dropFlow(record); record.entrance = true; record.value = 0; } }
   }
-  mount(parent: HTMLElement, key: string, cents: number): void {
-    const final = `¥ ${money(cents)}`; parent.setAttribute("aria-label", final); parent.setAttribute("role", "img");
+  mount(parent: HTMLElement, key: string, cents: number, whole = false): void {
+    const format = whole ? wholeFormatter : formatter;
+    const final = whole ? `¥${wholeFormatter.format(cents / 100)}` : `¥ ${money(cents)}`; parent.setAttribute("aria-label", final); parent.setAttribute("role", "img");
     const fallback = parent.createSpan({ cls: "echoink-finance-amount-static", text: final, attr: { "aria-hidden": "true" } });
     const win = parent.ownerDocument.defaultView;
     if (typeof win?.createEl !== "function" || !win.customElements) return;
-    const record = this.mounted.get(key) ?? { parent, fallback, frame: 0, stop: () => {}, target: cents, value: 0, entrance: true, used: true, generation: 0 };
-    this.stop(record); record.parent = parent; record.fallback = fallback; record.target = cents; record.used = true;
+    const record = this.mounted.get(key) ?? { format, parent, fallback, frame: 0, stop: () => {}, target: cents, value: 0, entrance: true, used: true, generation: 0 };
+    this.stop(record); if (record.format !== format) this.dropFlow(record); record.format = format; record.parent = parent; record.fallback = fallback; record.target = cents; record.used = true;
     const generation = ++record.generation; this.mounted.set(key, record);
     if (record.wrapper) { parent.appendChild(record.wrapper); fallback.hidden = true; }
     void loadNumberFlow(win).then(module => {
@@ -64,7 +67,7 @@ export class FinanceNumbers {
             flow.classList.add("echoink-finance-number-flow");
             flow.xTiming = flow.yTiming = { duration: 550, easing: "cubic-bezier(.2,.8,.2,1)" }; flow.fadeTiming = { duration: 180, easing: "ease-out" }; flow.root = true;
             const initial = record.entrance ? 0 : record.value;
-            const parts = module.partitionParts(initial / 100, formatter); parts.pre = []; flow.parts = parts;
+            const parts = module.partitionParts(initial / 100, record.format); parts.pre = []; flow.parts = parts;
             // Copy constructed sheets once so the same metric remains styled when
             // Obsidian moves its existing leaf into a different Document.
             if (flow.shadowRoot?.adoptedStyleSheets?.length) {
@@ -72,7 +75,7 @@ export class FinanceNumbers {
               flow.shadowRoot.adoptedStyleSheets = []; flow.shadowRoot.appendChild(style);
             }
             const wrapper = parent.createSpan({ cls: "echoink-finance-amount", attr: { "aria-hidden": "true" } });
-            wrapper.createSpan({ cls: "echoink-finance-currency", text: "¥ " }); record.sign = wrapper.createSpan({ cls: "echoink-finance-sign", text: initial < 0 ? "-" : "" }); record.sign.hidden = initial >= 0;
+            wrapper.createSpan({ cls: "echoink-finance-currency", text: record.format === wholeFormatter ? "¥" : "¥ " }); record.sign = wrapper.createSpan({ cls: "echoink-finance-sign", text: initial < 0 ? "-" : "" }); record.sign.hidden = initial >= 0;
             wrapper.appendChild(flow); record.wrapper = wrapper; record.flow = flow; record.value = initial;
             try { (win).CSS?.registerProperty?.({ name: "--_number-flow-scale-x", syntax: "<number>", inherits: false, initialValue: "1" }); } catch { /* Already registered in this Document. */ }
           }
@@ -80,7 +83,7 @@ export class FinanceNumbers {
           const apply = () => {
             record.frame = 0; if (!record.used || record.generation !== generation || !record.flow) return;
             try {
-              const parts = module.partitionParts(record.target / 100, formatter);
+              const parts = module.partitionParts(record.target / 100, record.format);
               record.sign!.setText(parts.pre.filter(part => part.type === "sign").map(part => part.value).join("")); parts.pre = [];
               record.sign!.hidden = !record.sign!.textContent;
               if (record.value !== record.target) { record.flow.parts = parts; record.value = record.target; }

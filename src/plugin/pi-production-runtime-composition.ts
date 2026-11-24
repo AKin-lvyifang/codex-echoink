@@ -63,7 +63,7 @@ import { bindVaultBodySearchEvents, VaultBodySearch } from "../knowledge-base/va
 import { KNOWLEDGE_SEARCH_KINDS, type KnowledgeSearchKind } from "../knowledge-base/search/contracts";
 import { getPiKnowledgeLinkingBatch, createPiKnowledgeLinkingTool, knowledgeLinkingInlineExtension, PI_KNOWLEDGE_LINKING_TOOL } from "../harness/pi-native/pi-knowledge-linking-tool";
 import { privateMaintenanceSourceScope } from "./pi-knowledge-maintenance-production";
-import { readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
+import { readMaintenanceCompactionCheckpoint, readPrivateMaintenanceRecords } from "./pi-knowledge-maintenance-production";
 import { knowledgePrivateRoot } from "../knowledge-base/root-paths";
 import { knowledgePathRole, getKnowledgeFolderBindings } from "../knowledge-base/root-paths";
 import { PiPdfReadingSecurity, createPdfReadingTools, PDF_TOOL_NAMES } from "../harness/pi-native/pi-pdf-reading-tools";
@@ -83,6 +83,7 @@ import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
   ModelRuntime,
   SettingsManager,
+  VERSION,
   createAgentSession,
   defineTool,
   type ExtensionContext,
@@ -108,12 +109,15 @@ import {
 import {
   FileConversationCatalog
 } from "../harness/pi-native/file-conversation-catalog";
+import type { FileProductRunStore } from "../harness/pi-native/file-product-run-store";
 import {
+  buildPiNativeProviderContext,
   createPiNativeControlledProvider,
   createPiNativeModelFromConfiguration,
   piModelSupportsImageInput,
   PiNativeModelMetadataError
 } from "../harness/pi-native/pi-native-controlled-provider";
+import { installPiMidrunCompaction } from "../harness/pi-native/pi-midrun-compaction";
 import {
   calculatePiEffectiveInputBudget,
   PI_PERSONAL_MEMORY_CONTEXT_CUSTOM_TYPE,
@@ -804,6 +808,7 @@ export async function createPiProductionRuntimeBundle(
             plugin,
             input,
             catalog,
+            productRuns,
             vaultRootPath,
             roots,
             storeBindingAuthority,
@@ -2286,6 +2291,7 @@ async function createProductionAgentSession(input: {
   plugin: PiProductionPluginHost;
   input: PiNativeAgentSessionFactoryInput;
   catalog: FileConversationCatalog;
+  productRuns: FileProductRunStore;
   vaultRootPath: string;
   roots: DevicePiCanonicalStoreRoots;
   storeBindingAuthority: PiRuntimeBindingAuthorityPort;
@@ -3221,6 +3227,29 @@ async function createProductionAgentSession(input: {
     settingsManager,
     resourceLoader,
     ...toolRegistration
+  });
+  installPiMidrunCompaction({
+    session: created.session,
+    codingAgentVersion: VERSION,
+    budget: contextBudget,
+    measure: async (context, requestModel) => {
+      const execution = input.input.currentExecutionContext({ preview: true });
+      const normalized = buildPiNativeProviderContext(context, configured.toolCalling, execution.shortReply === true);
+      const prepared = controlledStream.prepareProviderInput(normalized, requestModel, execution.turnId);
+      return await contextLedger.estimateProviderInputAsync(prepared.requestContext, execution, prepared.additionalInputTokens);
+    },
+    maintenanceCheckpoint: async () => {
+      const turn = input.input.currentKnowledgeTurnContext();
+      if (turn?.kind !== "maintain" || turn.command.scope.mode !== "batch") return undefined;
+      const { conversationId, piSessionId, productRunId } = input.input.currentToolExecutionContext();
+      const branch = new Set(input.input.sessionManager.getBranch().map(entry => entry.id));
+      const runs = await input.productRuns.list(conversationId);
+      const branchProductRunIds = runs.filter(run => run.piSessionId === piSessionId && branch.has(run.userEntryId))
+        .map(run => run.productRunId);
+      return await readMaintenanceCompactionCheckpoint(input.vaultRootPath, {
+        conversationId, productRunId, branchProductRunIds, sourcePaths: turn.command.scope.sourcePaths ?? []
+      });
+    }
   });
   created.session.setActiveToolsByName(!configured.toolCalling ? [] : systemTask ? [...KNOWLEDGE_SYSTEM_TOOLS] : linkingBatch ? [PI_KNOWLEDGE_LINKING_TOOL] : [
     RESOURCE_LOOKUP,

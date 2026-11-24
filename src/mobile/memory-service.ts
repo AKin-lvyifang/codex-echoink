@@ -19,6 +19,7 @@ import { selectedModel, type MobileSettings } from "./settings";
 import { MobileDataConflictError, type MobileStore } from "./store";
 import { sha256Hex } from "../utils/sha256";
 import { MobileMemoryRepository, memoryConflict, type MobileCanonicalSnapshot } from "./memory-repository";
+import { validateMobileMemoryWriteEnums } from "./memory-contracts";
 import type { MobileMemorySettingsPort, MobileMemorySettingsSnapshot, MobileMemoryCorrection, MobileMemoryCorrectionPreview, MobileUserProfileSnapshot, MobileDreamStatus, MobileForgottenMemory } from "./memory-contracts";
 import { CAUSE, joinErrorCopy, userFacingErrorText } from "../core/error-copy";
 
@@ -103,6 +104,7 @@ export class MobileMemoryService implements MobileMemorySettingsPort {
   }
   async prepareToolMemory(input: { targetId?: string; kind: PersonalMemoryKind; title: string; content: string; recallWhen: string; basis: "explicit" | "observed" },
     taskId: string, runId: string, callId: string): Promise<MobileCanonicalMemoryWritePlan> {
+    validateMobileMemoryWriteEnums(input.kind, input.basis);
     const before = await this.snapshot(), original = input.targetId ? before.records.find(record => record.id === input.targetId && record.status === "current") : undefined;
     if (input.targetId && !original) throw new Error("要修正的记忆不存在或已变化。");
     const kind = original?.kind ?? input.kind;

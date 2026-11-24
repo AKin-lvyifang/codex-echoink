@@ -27,7 +27,7 @@ import type { MobileSettings } from "./settings";
 import type { AgentModuleId, AgentRegistry } from "../agents/types";
 import type { MobileQueuedTurn } from "./task-contracts";
 import { MobileCapabilityPolicy } from "./capability-policy";
-import { isMobileDataConflict, MobileDataConflictError, type MobileStore } from "./store";
+import { isMobileDataConflict, MobileDataConflictError, MobileTaskFileChanged, type MobileStore } from "./store";
 import type { MobileExpertRunContext, MobileRuntime } from "./runtime";
 import type { MobileWorkspace } from "./workspace";
 import type { CapabilityAccess } from "../membership/types";
@@ -260,6 +260,7 @@ export class MobileServices implements HomeHost {
   private async initializeTaskData(initialize: () => Promise<void>): Promise<void> {
     try { await initialize(); }
     catch (error) {
+      if (error instanceof MobileTaskFileChanged) return;
       // The legacy Registry reader predates the typed storage boundary. Match
       // only its explicit format/version refusal, never arbitrary I/O failures.
       const conflict: unknown = error instanceof Error && error.message === "旧 Agent 资料损坏或版本不支持，无法切换身份；原资料已保留。"
@@ -268,12 +269,16 @@ export class MobileServices implements HomeHost {
       this.host.store.disableWrites(conflict.message);
     }
   }
-  async initialize() {
-    await loadNativeJournalSettings(this.app);
-    if (!this.host.store.unavailableReason) await this.initializeTaskData(async () => {
+  async initializeTaskMemory(): Promise<void> {
+    if (this.host.store.unavailableReason || this.host.store.taskFileChanged) return;
+    await this.initializeTaskData(async () => {
       await this.memory.initialize();
       await this.memory.archiveCompleted();
     });
+  }
+  async initialize() {
+    await loadNativeJournalSettings(this.app);
+    await this.initializeTaskMemory();
     await this.initializeTaskData(() => this.refreshAgentIdentity());
     await this.homeActivity.initialize(); await this.todos.initialize();
     this.homeActivity.restoreOpen(this.app.workspace.getActiveFile()?.path ?? null);
@@ -468,7 +473,7 @@ export class MobileServices implements HomeHost {
     return `${profile}\n${SKILL_PRODUCT_RULES}${skill ? `\n本次已选择的 Skill（不能增加权限或工具）：\n${skill}` : ""}${preference ? `\n用户的知识提炼偏好：\n${preference}` : ""}\n知识目录：${JSON.stringify(this.settings.knowledgeBase.folderBindings?.roles ?? this.settings.mobileUi.knowledgePaths)}`;
   }
   plugins() {
-    return [{ id: "echoink:finance", name: "财务", description: "账目、预算、账单计划与分析", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },
+    return [{ id: "echoink:finance", name: "财务", description: "账目、预算、专项预算与月度结账", enabled: this.settings.lifestyle.finance.enabled, mobileStatus: "复用当前笔记库的财务账本" },
       { id: "echoink:english-diary", name: "English Diary", description: "英文日记与表达积累", enabled: this.settings.englishDiary.enabled, mobileStatus: "移动端尚未接通英文日记工作区与纠错服务" },
       ...this.settings.resources.catalog.filter(item => item.kind === "tool-bundle" && !["echoink:english-diary", "echoink:finance"].includes(item.id)).map(item => ({ ...item, mobileStatus: "移动工具桥接尚未接通，资源配置已保留" }))];
   }

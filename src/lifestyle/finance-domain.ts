@@ -161,7 +161,7 @@ export function allocateBudgetByPercent(month: string, totalCents: number, perce
 
 export function financeEntryCsv(entries: readonly FinanceEntry[]): string {
   const quote = (value: string) => `"${value.replace(/"/gu, '""')}"`;
-  const header = ["日期", "类型", "商户", "消费说明", "分类", "账户", "金额", "币种", "备注", "账单计划 ID", "来源", "来源日记"];
+  const header = ["日期", "类型", "商户", "消费说明", "分类", "账户", "金额", "币种", "备注", "专项预算 ID", "来源", "来源日记"];
   const rows = entries.map((entry) => [entry.date, entry.kind, entry.merchant, entry.description, entry.category, entry.account, money(entry.amountCents), entry.currency, entry.note, entry.billPlanId || "", FINANCE_SOURCE_LABELS[entry.source], entry.journalPath || ""]);
   return "\uFEFF" + [header, ...rows].map((row) => row.map(quote).join(",")).join("\r\n") + "\r\n";
 }

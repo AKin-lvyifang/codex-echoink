@@ -10,7 +10,7 @@ import { attachNativeTooltip } from "../ui/native-tooltip";
 import { newsAgentPrompt, newsNoteContent, newsNoteFileName } from "../news/actions";
 import {
   NEWS_PAGE_SIZE, newsClock, newsDayGroups, newsDayLabel, newsEventItem, newsHotEvents, newsLeadItems, newsMatchesQuery,
-  newsRelativeTime, newsSourceCount, newsUpdatedLabel, safeNewsUrl, type NewsAnnouncement, type NewsCategory, type NewsFeed, type NewsItem, type NewsTrend
+  localizeNewsFeed, newsRelativeTime, newsSourceCount, newsUpdatedLabel, safeNewsUrl, type NewsAnnouncement, type NewsCategory, type NewsFeed, type NewsItem, type NewsTrend
 } from "../news/feed";
 import { buildNewsRelevanceIndex, matchNewsRelevance, newsReasonText, NEWS_RELEVANCE_MAX_NOTES, type NewsNoteSource, type NewsRelevance } from "../news/relevance";
 import { addRssSubscription, NewsRssError, NewsRssService, rssErrorText, type NewsRssItem, type NewsRssRequest } from "../news/rss";
@@ -94,7 +94,12 @@ export class NewsPageView extends ItemView {
     this.releaseAccount?.(); this.releaseAccount = null;
     this.clear();
   }
-  refreshLanguage(): void { if (this.visible) this.render(); }
+  refreshLanguage(): void {
+    if (this.visible) this.render();
+    const title = (this as ItemView & { titleEl?: HTMLElement }).titleEl;
+    if (title) title.textContent = this.getDisplayText();
+    (this.leaf as WorkspaceLeaf & { updateHeader?: () => void }).updateHeader?.();
+  }
   refreshIfSettingsChanged(): void { this.syncVisibility(); }
   private clear(): void { disposeOriginControls(this.contentEl); this.contentEl.empty(); }
   /** 标签页被切走时这个容器没有布局盒：清空 DOM、丢弃在途结果；切回来再渲染并按 10 分钟规则取数。 */
@@ -190,8 +195,9 @@ export class NewsPageView extends ItemView {
       this.renderBulletin(inner, state.feed.announcement);
       this.renderTop(inner);
       const grid = inner.createDiv({ cls: "news-grid" });
-      this.renderMain(grid.createDiv({ cls: "news-main" }), state.feed);
-      this.renderRail(grid, state.feed, updated);
+      const feed = this.displayFeed(state.feed);
+      this.renderMain(grid.createDiv({ cls: "news-main" }), feed);
+      this.renderRail(grid, feed, updated);
     } else if (state?.kind === "empty" && !this.loading) {
       this.renderHeader(inner, "");
       const row = this.renderNotice(inner, "cloud-off", this.t("暂时取不到资讯", "News is unavailable right now"));
@@ -210,7 +216,7 @@ export class NewsPageView extends ItemView {
   private renderHeader(parent: HTMLElement, status: string): void {
     const header = parent.createEl("header", { cls: "news-header" });
     const title = header.createDiv({ cls: "news-title" });
-    title.createEl("h1", { text: this.t("资讯", "News") });
+    title.createEl("h1", { text: this.t("资讯", "News") }).dataset.echoinkModuleTitle = "";
     if (status) title.createSpan({ cls: "news-status", text: status, attr: { "data-news": "status", "aria-live": "polite" } });
     const badge = title.createSpan({ cls: "news-tag", text: this.t("AI 摘要", "AI summary"), attr: { tabindex: "0" } });
     attachNativeTooltip(badge, this.t("标题和摘要由 AI 根据原文整理，可能有误，请以原文为准", "Titles and summaries are written by AI from the original and may be wrong. Check the original."));
@@ -253,6 +259,12 @@ export class NewsPageView extends ItemView {
   }
   private selectTab(tab: NewsTab): void { this.tab = tab; this.openId = null; this.limit = NEWS_PAGE_SIZE; this.render(); }
 
+  private localized?: { source: NewsFeed; english: boolean; feed: NewsFeed };
+  private displayFeed(source: NewsFeed): NewsFeed {
+    const english = this.english;
+    if (this.localized?.source !== source || this.localized.english !== english) this.localized = { source, english, feed: localizeNewsFeed(source, english) };
+    return this.localized.feed;
+  }
   private rows(feed: NewsFeed): { rows: Row[]; lead: NewsItem[] } {
     const showLead = this.tab === "all" && !this.query.trim(), lead = showLead ? newsLeadItems(feed) : [], leadIds = new Set(lead.map(item => item.id));
     const pool: Row[] = this.tab === "mine" ? this.rssItems : feed.items.filter(item => this.tab === "all" ? !leadIds.has(item.id) : this.tab === "foryou" ? this.relevance.has(item.id) : item.category === this.tab);

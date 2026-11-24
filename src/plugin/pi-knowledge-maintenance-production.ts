@@ -20,7 +20,7 @@ import { knowledgeBodyLinkSpans } from "../knowledge-base/knowledge-relations";
 import { readKnowledgeLinkingDocument, buildKnowledgeLinkingTargets, deferKnowledgeLinkingNewLinks, validateKnowledgeLinkingNewLinks } from "../knowledge-base/knowledge-linking";
 import type { KnowledgeLinkingDocument } from "../knowledge-base/knowledge-linking-types";
 import { rebaseKnowledgePathRecords } from "../knowledge-base/root-paths-core";
-import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
+import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, maintenanceP1SourceProgress, latestMaintenanceSourceStates, type KnowledgeMaintenanceRecord } from "../knowledge-base/maintenance-record";
 import { knowledgeMaintenanceNoteFromReadback } from "../knowledge-base/knowledge-maintenance-result";
 import { readRawDigestRegistry, writeRawDigestRegistry } from "../knowledge-base/raw-digest";
 import { registerKnowledgePrivateRoot, knowledgePrivateRoot } from "../knowledge-base/root-paths";
@@ -1058,6 +1058,27 @@ export async function readOpenMaintenanceSelection(vaultRoot: string, input: {
   if (candidates.length > 1) throw new Error("本会话有多个未完成整理任务，请选择原任务继续。");
   const record = candidates[0];
   return record ? { recordId: record.recordId, productRunId: input.branchProductRunIds.find(id => record.runId.startsWith(`${id}:`))!, sourcePaths: record.sources.map(source => source.path), folderBindingsRevision: record.p1!.folderBindingsRevision } : null;
+}
+
+export async function readMaintenanceCompactionCheckpoint(vaultRoot: string, input: {
+  conversationId: string; productRunId: string; branchProductRunIds: readonly string[]; sourcePaths: readonly string[];
+}): Promise<string> {
+  const root = knowledgePrivateRoot(vaultRoot);
+  const allowed = new Set(input.sourcePaths);
+  const record = root ? (await readPrivateMaintenanceRecords(root)).find(record => record.p1
+    && record.originConversationId === input.conversationId
+    && record.sources.length === allowed.size
+    && record.sources.every(source => allowed.has(source.path))
+    && (record.runId.startsWith(`${input.productRunId}:`)
+      || isP1Open(record) && input.branchProductRunIds.some(id => record.runId.startsWith(`${id}:`)))) : undefined;
+  const progress = record ? maintenanceP1SourceProgress(record) : undefined;
+  const checkpoint = {
+    sourcePaths: input.sourcePaths,
+    phase: record?.p1?.phase ?? "decompose",
+    ...(progress ? { sourceProgress: progress.map(source => source.complete === false
+      ? { ...source, nextOffset: source.nextOffset ?? 0 } : source) } : {})
+  };
+  return `维护检查点（压缩时从本批记录读取）。继续原批次，详细进度用 knowledge_maintain 的 stage=inspect 查询；之后以最新工具回执为准。\n${JSON.stringify(checkpoint)}`;
 }
 
 /** Pre-model guard: a new conversation cannot turn saved failures into a new writing job. */

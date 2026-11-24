@@ -1,8 +1,9 @@
 import { replaceKnownSecrets } from "../../security/local-secrets";
-import { xiaoechoFailureText } from "../../membership/xiaoecho-catalog";
+import { XIAOECHO_REQUEST_REJECTED, xiaoechoFailureCode, xiaoechoFailureText } from "../../membership/xiaoecho-catalog";
 import { CAUSE, pickErrorCopy } from "../../core/error-copy";
 import { PROVIDER_CODES, PROVIDER_FAILURE_CODE_IDS } from "../../core/error-copy/codes/provider";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { isOpenCodeGoApiProviderUrl } from "../../settings/provider-presets";
 
 export interface ProviderFailureDetail {
   status?: number;
@@ -30,6 +31,32 @@ export function isReasoningOutputLimit(message: {
 /** Billing/account exhaustion can arrive as HTTP 429, without being a throttle. */
 export function isProviderQuotaExhausted(message: string): boolean {
   return /insufficient[_ -]?quota|quota[_ -]?(?:exceeded|exhausted)|out of (?:budget|credits?)|insufficient (?:balance|credits?)|billing|gousagelimiterror|freeusagelimiterror|monthly usage limit reached|available balance|余额不足|额度(?:不足|用尽|耗尽)/iu.test(message.slice(0, 8_192));
+}
+
+export type ProviderPlanFailureCode =
+  | "provider_plan_subscription_required"
+  | "provider_plan_usage_limited";
+
+/** Recognize the raw provider error and the safe code emitted by the desktop adapter. */
+export function providerPlanFailureCode(message: string): ProviderPlanFailureCode | null {
+  const head = message.slice(0, 8_192);
+  if (head === "provider_plan_subscription_required" || /\bEntitlementError\b|subscription required/iu.test(head)) return "provider_plan_subscription_required";
+  if (head === "provider_plan_usage_limited" || /\b(?:Go|Free)UsageLimitError\b/iu.test(head)) return "provider_plan_usage_limited";
+  return null;
+}
+
+export function openCodeGoPlanFailureCode(baseUrl: string, status: number | null, raw: unknown): ProviderPlanFailureCode | null {
+  if (!isOpenCodeGoApiProviderUrl(baseUrl)) return null;
+  const error = raw && typeof raw === "object" && "error" in raw ? raw.error : raw;
+  const message = error && typeof error === "object"
+    ? ["type", "code", "message"].map(key => (error as Record<string, unknown>)[key])
+      .filter((value): value is string => typeof value === "string").join(" ")
+    : typeof error === "string" ? error : "";
+  const code = providerPlanFailureCode(message);
+  const httpStatus = status ?? providerFailureHttpStatus(message);
+  if (httpStatus === 403) return code === "provider_plan_subscription_required" ? code : null;
+  if (httpStatus === 429) return code === "provider_plan_usage_limited" ? code : null;
+  return httpStatus === null ? code : null;
 }
 
 export type AssistantProviderFailure = AssistantMessage & {
@@ -116,12 +143,19 @@ export function assistantProviderFailureText(message: { errorMessage?: string; e
 export function xiaoechoProviderFailureText(value: unknown): string | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as ProviderFailureDetail;
+  if (raw.code === XIAOECHO_REQUEST_REJECTED) return xiaoechoFailureText(raw.code, undefined, raw.message);
   for (const candidate of [raw.code, raw.message]) {
     if (typeof candidate !== "string" || !/^[A-Z][A-Z_]{3,40}$/u.test(candidate)) continue;
     const text = xiaoechoFailureText(candidate);
     if (text) return text;
   }
   return null;
+}
+
+export function xiaoechoProviderFailureDetail(value: unknown): ProviderFailureDetail {
+  const code = xiaoechoFailureCode(value);
+  if (code === XIAOECHO_REQUEST_REJECTED) return { code };
+  return xiaoechoFailureText(code) ? { message: code } : { code: XIAOECHO_REQUEST_REJECTED, message: code };
 }
 
 const PROVIDER_FAILURE_CODES: ReadonlySet<string> = new Set(PROVIDER_FAILURE_CODE_IDS);
@@ -183,6 +217,11 @@ export function preventProviderRetryAfterPartial(
 
 /** Code → sentence from core/error-copy/codes/provider.ts; Chinese unless a language is given. */
 export function providerFailureText(value: unknown, language?: string): string | null {
-  const code = safeProviderFailureCode(value);
+  if (typeof value !== "string") return null;
+  const [reason, diagnostic] = value.split(`\n${PROVIDER_FAILURE_DETAIL_PREFIX}`, 2);
+  if (diagnostic === "CONTENT_TOO_LONG") return xiaoechoFailureText(diagnostic, language);
+  const [serviceCode, serverCode] = diagnostic?.split(" · ", 2) ?? [];
+  if (serviceCode === XIAOECHO_REQUEST_REJECTED) return xiaoechoFailureText(serviceCode, language, serverCode);
+  const code = safeProviderFailureCode(reason);
   return code ? pickErrorCopy(PROVIDER_CODES[code], language) : null;
 }

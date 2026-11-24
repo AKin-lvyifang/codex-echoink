@@ -4,6 +4,7 @@ import type { TodoHost } from "./home-host";
 import { getTodoProjects, resolveTodoProject, type TodoProject } from "./todo-projects";
 import { newId } from "../core/new-id";
 import { isTodoDueTime, normalizeTodoDueTime } from "./todo-due";
+import { setSubtaskLine, subtaskLine, todoSubtasks } from "./todo-planner";
 import {
   appendRecordBlock,
   locateRecord,
@@ -583,6 +584,29 @@ export class EchoInkTodoStore {
       throw new Error(this.plugin.settings.settingsLanguage === "en"
         ? "Use a valid deadline time (HH:mm)." : "截止时间请使用有效的 HH:mm 格式。");
     }
+  }
+
+  /** Toggle or append one native indented subtask line inside the record block. */
+  async updateSubtasks(target: ParsedTodoRecord, change: { line: number; done: boolean } | { add: string }, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {
+    await this.enqueueWrite((content) => {
+      const parsed = parseTodoMarkdown(content);
+      const current = locateRecord(parsed.records, target);
+      if (!current || !this.sameRecord(current, target)) return { content, skipped: true };
+      const extra = [...current.extraMetaLines];
+      if ("add" in change) { if (!change.add.trim()) return { content, skipped: true }; extra.push(subtaskLine(change.add)); }
+      else { if (!todoSubtasks(current).some(item => item.line === change.line)) return { content, skipped: true }; extra[change.line] = setSubtaskLine(extra[change.line], change.done); }
+      const block = (current.sourceBlock ?? serializeTodoRecord(current)).split("\n");
+      let next = block;
+      if ("add" in change) next = [...block, extra[extra.length - 1]];
+      else {
+        // Indented carrier lines keep their order; find the same occurrence of this exact line.
+        const text = current.extraMetaLines[change.line];
+        const nth = current.extraMetaLines.slice(0, change.line).filter(line => line === text).length;
+        let seen = -1;
+        next = block.map((line, index) => index > 0 && line === text && ++seen === nth ? extra[change.line] : line);
+      }
+      return { content: replaceRecordLines(content, current, next.join("\n")) };
+    }, expectedVersion, expectedSourcePath);
   }
 
   async toggleDone(target: ParsedTodoRecord, done: boolean, expectedVersion?: string | null, expectedSourcePath?: string): Promise<void> {

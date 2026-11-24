@@ -29,6 +29,12 @@ const cold=new MobileUsageStore(adapter,'plugin/mobile','usage-instance',()=>now
 const other=new MobileUsageStore(adapter,'plugin/mobile','other-instance',()=>now);await other.initialize();assert.equal(other.readStatistics().totalTurns,0);assert.equal(files.get(usage.path),before);
 files.set('plugin/mobile/devices/bad-instance/usage.json','{bad');await assert.rejects(new MobileUsageStore(adapter,'plugin/mobile','bad-instance').initialize());assert.equal(files.get('plugin/mobile/devices/bad-instance/usage.json'),'{bad');
 await cold.recordUsage({...request,requestId:'new-cold'});await assert.rejects(usage.recordUsage({...request,requestId:'stale'}));assert.equal(cold.readStatistics().totalTokens,52);
+await usage.recordUsage({...request,requestId:'after-refresh'});
+const rebased = JSON.parse(files.get(usage.path));
+assert.deepEqual(rebased.requests.map(item => item.requestId), ['r1', 'new-cold', 'after-refresh']);
+files.set(usage.path, JSON.stringify(Object.fromEntries(Object.entries(rebased).reverse()), null, 2) + "\n");
+await usage.recordUsage({...request,requestId:'after-formatting'});
+assert.deepEqual(JSON.parse(files.get(usage.path)).requests.map(item => item.requestId), ['r1', 'new-cold', 'after-refresh', 'after-formatting']);
 console.log('PASS mobile usage numeric schema, dedup, streak, cold read, partition, invalid data, stale writer and save rollback');
 // Exercise the production runtime; no UI may fabricate usage counters.
 const store=new MobileStore(adapter,'runtime/mobile','runtime-instance');await store.load();

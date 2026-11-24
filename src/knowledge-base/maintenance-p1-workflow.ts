@@ -12,7 +12,7 @@ import { extractMachineSourceMarkers } from "./knowledge-maintenance-protocol";
 import { getDesktopCrypto } from "../platform/desktop-crypto";
 import { getDesktopUtil } from "../platform/desktop-runtime";
 import type { PiKnowledgeMaintenanceToolInput, PiKnowledgeMaintenanceToolResult } from "../harness/pi-native/contracts";
-import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, SOURCE_FRONTMATTER_UNSAFE, type KnowledgeMaintenanceRecord } from "./maintenance-record";
+import { isP1Open, hasP1PartialSettlement, maintenanceP1RetryRecord, maintenanceP1SourceProgress, SOURCE_FRONTMATTER_UNSAFE, type KnowledgeMaintenanceRecord } from "./maintenance-record";
 import type { MaintenanceDecomposition, MaintenanceSourceFields, MaintenanceWritingItem } from "./maintenance-p1-contract";
 import { createKnowledgeMaintenanceResultEnvelope, knowledgeMaintenanceNoteFromReadback } from "./knowledge-maintenance-result";
 import { createMaintenanceSectionSnapshot, applyMaintenanceSectionPatches, appendMaintenanceBlock, appendMaintenanceManagedBlock, assertMaintenanceQuoteSectionsPreserved } from "./maintenance-section-patch";
@@ -687,13 +687,7 @@ export class MaintenanceP1Workflow {
     const inspection = maintenanceInspection(state, view ?? (state.phase === "plan" ? "candidates" : "pages"), offset);
     const managed = state.p2?.finalization.filter(item => !state.p2!.committedFinalization[item.id]) ?? [];
     const userReceipt = maintenanceReceiptForRecord(record);
-    const sourceProgress = state.phase === "decompose" ? record.sources.map(source => {
-      const segmented = state.segmentedSources?.[source.path];
-      return { path: source.path, ...(source.skipReason ? { skipped: true } : segmented ? {
-        complete: segmented.complete, sourceRevision: segmented.sourceRevision,
-        nextOffset: segmented.ranges[0]?.start === 0 ? segmented.ranges[0].end : 0
-      } : { complete: state.decompositions.some(item => item.sourcePath === source.path) }) };
-    }) : undefined;
+    const sourceProgress = maintenanceP1SourceProgress(record);
     const summary = { sourceProgress, recordId: record.recordId, phase: state.phase, sourceCount: record.sources.length, userReceipt, unitCount: state.decompositions.reduce((count,d) => count + d.units.length,0), committedPageCount: Object.keys(state.committedPages).length, pendingPageCount: state.writingPlan.filter(page => !state.committedPages[page.id]).length, pendingFinalizationCount: record.sources.filter(source => !source.skipReason && !state.finalizedSources.includes(source.path)).length, pendingManagedFinalizationCount: managed.length, pendingManagedFinalization: managed.slice(0,3).map(item => ({ kind: item.kind, targetPath: item.targetPath })), inspection };
     const notice = state.p2?.templateNotice ? `\n${state.p2.templateNotice}` : "";
     return { status: "completed", recordId: record.recordId, maintenanceStage: state.phase, userReceipt, processedSourcePaths: record.sources.filter(s => s.status === "processed").map(s => s.path), ...(!isP1Open(record) ? { maintenanceResult: record.result, producedPaths: Object.values(state.committedPages).map(p => p.path) } : {}), message: `${hasP1PartialSettlement(record) ? "本批部分完成；部分来源属性无法安全回写，请修正属性后重试。" : !isP1Open(record) && record.result.status === "partial" ? "本批仍有未完成项，请查看具体错误。" : message}${notice}\n${JSON.stringify(summary)}${inspection.nextOffset === null ? "" : `\n还有未返回的${inspection.view}，请用stage=inspect,view=${inspection.view},offset=${inspection.nextOffset}读取下一页。`}` };

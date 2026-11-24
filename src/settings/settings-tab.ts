@@ -1,4 +1,7 @@
+import { renderWorkbenchNavigationSettings } from "./workbench-navigation-section";
 import { bindPressFeedback } from "../ui/press-feedback";
+import { categoryColor as todoCategoryColor } from "../home/todo-planner";
+import { FINANCE_CATEGORY_COLORS } from "../ui/category-palette";
 import { xiaoechoDesktopModelName, xiaoechoTypicalPointsLabel } from "../membership/xiaoecho-points";
 import { getModuleOwner } from "../agents/registry";
 import { KnowledgePreferenceWizard } from "../ui/knowledge-preference-wizard";
@@ -1302,6 +1305,7 @@ export class CodexSettingTab extends PluginSettingTab {
         });
       }));
     renderObsidianCliStatus(interfaceGroup, zh);
+    if (Platform.isDesktopApp) renderWorkbenchNavigationSettings(page, this.plugin, zh);
 
     const quickChatSection = createSettingsSection(page, { title: zh ? "快捷 AI 小窗" : "Quick AI window", surface: "group" });
     const quickDrawer = Platform.isDesktopApp ? quickChatSection.createEl("details", { cls: "echoink-quick-chat-drawer" }) : quickChatSection;
@@ -1765,6 +1769,30 @@ export class CodexSettingTab extends PluginSettingTab {
       const rowCopy = row.createDiv({ cls: "echoink-settings-compact-copy" });
       rowCopy.createDiv({ cls: "echoink-settings-compact-title", text: category.name });
       const rowActions = row.createDiv({ cls: "echoink-settings-compact-actions" });
+      const colorButton = createOriginButton(rowActions, {
+        cls: "icon-button echoink-todo-category-color",
+        attr: { type: "button", "aria-label": zh ? `分类颜色 ${category.name}` : `Category color ${category.name}`, "aria-expanded": "false" }
+      });
+      colorButton.createSpan({ cls: "echoink-todo-category-swatch", attr: { "aria-hidden": "true" } }).style.setProperty("--finance-swatch", todoCategoryColor(category.name, this.plugin.settings.todoCategories));
+      colorButton.onclick = () => {
+        const open = row.nextElementSibling?.classList.contains("echoink-todo-category-palette");
+        if (open) { row.nextElementSibling!.remove(); colorButton.setAttr("aria-expanded", "false"); return; }
+        colorButton.setAttr("aria-expanded", "true");
+        const palette = row.parentElement!.createDiv({ cls: "echoink-finance-color-palette echoink-todo-category-palette" });
+        row.after(palette);
+        const current = todoCategoryColor(category.name, this.plugin.settings.todoCategories).toLowerCase();
+        for (const [name, color] of FINANCE_CATEGORY_COLORS) {
+          const swatch = palette.createEl("button", { cls: "echoink-finance-color-swatch", attr: { type: "button", "aria-label": `${name} ${color}`, "aria-pressed": String(current === color.toLowerCase()), title: name } });
+          swatch.style.setProperty("--finance-swatch", color);
+          if (current === color.toLowerCase()) setIcon(swatch, "check");
+          swatch.onclick = () => void (async () => {
+            category.color = color;
+            await this.plugin.saveSettings();
+            this.plugin.notifyHomeSurfacesChanged();
+            this.scheduleDisplay();
+          })();
+        }
+      };
       const renameButton = createOriginButton(rowActions, {
         cls: "icon-button",
         attr: { type: "button", "aria-label": zh ? `重命名分类 ${category.name}` : `Rename category ${category.name}` }

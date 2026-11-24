@@ -74,7 +74,7 @@ try {
     const f = sourceFixture(endpoint);
     try {
       if (endpoint === "phone") await api.phoneTodos(f.ctx); else await f.pages.push(api.padTodos(f.ctx)); await tick();
-      const main = endpoint === "phone" ? f.root.querySelector(".ip-todo-main") : [...f.root.querySelectorAll(".pd-todo-table button")].find(item => item.textContent.trim() === "A task"); assert.ok(main); main.click(); await tick();
+      const main = [...f.root.querySelectorAll(".em-todo-row-main")].find(item => item.querySelector(".em-todo-row-title")?.textContent === "A task"); assert.ok(main); main.click(); await tick();
       const title = f.root.querySelector('[aria-label="事项"]'); title.value = "Old source draft"; title.dispatchEvent(new Event("input"));
       await f.switchSource();
       if (endpoint === "phone") { button(f.root, "重新读取").click(); await tick(); assert.match(f.root.textContent, /数据文件已切换/); }

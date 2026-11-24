@@ -41,25 +41,35 @@ export class ExpertSubmissionService {
   private readonly receipts = new Map<string, ExpertSubmissionReceipt>();
   private readonly sending = new Set<string>();
   constructor(private readonly options: {
-    files: ExpertContentFiles; cacheRoot: string; account(): ExpertDeliveryAccount | null | undefined; pluginVersion: string;
+    files: ExpertContentFiles; cacheRoot: string; account(): ExpertDeliveryAccount | null | undefined;
   }) {}
 
-  owner(): string | null { return this.options.account()?.expertSubmissionOwner?.() ?? null; }
+  owner(): string | null { return this.options.account()?.expertSubmissionHistoryOwner?.() ?? null; }
+
+  canSubmit(): boolean { return !!this.options.account()?.expertSubmissionOwner?.(); }
+
+  subscribe(listener: () => void): () => void {
+    return this.options.account()?.subscribe?.(listener) ?? (() => {});
+  }
 
   async presets(owner: string) {
     return this.account(owner).getExpertAvatarPresets!();
   }
 
   async receipt(agentId: string, owner: string): Promise<ExpertSubmissionReceipt | null> {
-    this.account(owner);
+    this.assertOwner(owner);
     return this.readReceipt(this.path(agentId, owner));
   }
 
-  async published(receipt: ExpertSubmissionReceipt, owner: string): Promise<boolean> {
-    const account = this.account(owner);
-    const catalog = await account.getExpertCatalog(this.options.pluginVersion);
-    return this.owner() === owner && catalog.experts.some(entry => entry.id === receipt.id
-      && entry.source === "community" && entry.status === "published" && entry.version === `v${receipt.version}`);
+  async history(owner: string, page: number) {
+    this.assertOwner(owner);
+    const account = this.options.account();
+    if (!account?.getExpertSubmissionHistory) throw new Error("暂时无法读取投稿回执。");
+    return account.getExpertSubmissionHistory(owner, page);
+  }
+
+  private assertOwner(owner: string): void {
+    if (this.owner() !== owner) throw new Error("账号已切换，请重新打开投稿页。");
   }
 
   async submit(agentId: string, owner: string, payload: ExpertSubmissionPayload): Promise<{ receipt: ExpertSubmissionReceipt; saved: boolean }> {

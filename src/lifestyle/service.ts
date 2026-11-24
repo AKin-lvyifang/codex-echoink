@@ -44,16 +44,37 @@ export class LifestyleService {
   registerView(view: LifestyleViewPort): void { this.views.add(view); }
   unregisterView(view: LifestyleViewPort): void { this.views.delete(view); }
 
+  private canEnterFinance(): boolean {
+    try { requireProPluginAction(this.finance.access, this.plugin.settings.lifestyle.finance.enabled, "enter"); }
+    catch (error) { new Notice(userFacingErrorText(error, "无法打开财务。请稍后重试。")); return false; }
+    return true;
+  }
+
+  private canOpenFinanceWorkspace(): boolean {
+    if (!this.canEnterFinance()) return false;
+    if (!this.plugin.settings.lifestyle.finance.enabled) { new Notice("财务功能尚未开启。请在 设置 中开启财务后重试。"); return false; }
+    if (!this.plugin.app.workspace.layoutReady) { new Notice("工作区正在加载。请稍后重新打开财务。"); return false; }
+    return true;
+  }
+
+  /** Both the standalone tab and the embedded panel need the ready Vault and ledger. */
+  async prepareFinanceOpen(isCurrent: () => boolean = () => true): Promise<boolean> {
+    if (this.disposed || !isCurrent() || !this.canOpenFinanceWorkspace()) return false;
+    try { await this.finance.initialize(); }
+    catch (error) {
+      if (!this.disposed && isCurrent()) new Notice(`财务账本尚未准备完成。${userFacingErrorText(error, "请稍后重新打开财务。")}`);
+      return false;
+    }
+    return !this.disposed && isCurrent() && this.canOpenFinanceWorkspace();
+  }
+
   async open(kind: LifestyleKind, mode: "main" | "settings" = "main"): Promise<void> {
     if (this.disposed) return;
-    try { requireProPluginAction(this.finance.access, this.plugin.settings.lifestyle.finance.enabled, "enter"); }
-    catch (error) { new Notice(userFacingErrorText(error, "无法打开财务。请稍后重试。")); return; }
-    if (mode === "settings") { await this.plugin.openLifestyleSettings(kind); return; }
-    if (!this.plugin.settings.lifestyle.finance.enabled) { new Notice("财务功能尚未开启。请在 设置 中开启财务后重试。"); return; }
-    if (!this.plugin.app.workspace.layoutReady) { new Notice("工作区正在加载。请稍后重新打开财务。"); return; }
-    try { await this.finance.initialize(); }
-    catch (error) { if (!this.disposed) new Notice(`财务账本尚未准备完成。${userFacingErrorText(error, "请稍后重新打开财务。")}`); return; }
-    if (this.disposed) return;
+    if (mode === "settings") {
+      if (this.canEnterFinance()) await this.plugin.openLifestyleSettings(kind);
+      return;
+    }
+    if (!await this.prepareFinanceOpen() || this.disposed) return;
     const leaf = this.plugin.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: LIFE_VIEW_TYPES.finance, active: true });
     if (this.disposed) return;

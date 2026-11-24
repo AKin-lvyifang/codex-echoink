@@ -26,9 +26,9 @@ export function renderWorkbenchModuleLock(parent: HTMLElement, plugin: CodexForO
   const page = parent.createDiv({ cls: "wb-page wb-module-lock", attr: { "data-wb": "module-lock", "data-locked-module": id } });
   const header = page.createDiv({ cls: "wb-module-lock-header" });
   const back = createOriginButton(header, { cls: "wb-button is-icon", attr: { "aria-label": en ? "Back to workbench" : "返回工作台", "data-wb-focus": "module-lock-back" } });
-  setIcon(back, "arrow-left"); applyAmicroButton(back, { variant: "icon" }); back.onclick = onBack;
+  setIcon(back, "arrow-left"); applyAmicroButton(back, { variant: "icon" }); back.onclick = onBack; back.dataset.echoinkWorkbenchBack = "";
   const title = header.createDiv({ cls: "wb-module-lock-title" });
-  title.createEl("h1", { text: en ? module.en : module.zh });
+  title.createEl("h1", { text: en ? module.en : module.zh }).dataset.echoinkModuleTitle = "";
   createPluginEditionBadge(title, "pro", plugin.settings.settingsLanguage);
   const descriptions = {
     finance: en ? "Finance is a PRO module for recording expenses, importing bills, budgeting and analysis." : "财务是 PRO 模块，可记账、导入账单、管理预算与分析收支。",

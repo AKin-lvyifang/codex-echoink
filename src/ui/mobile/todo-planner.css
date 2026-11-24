@@ -1,0 +1,140 @@
+/* Mobile to-do planner shared by iPhone and iPad. Hit areas stay 44; visible compact backgrounds follow each platform. */
+:is(.echoink-iphone, .echoink-ipad) .em-todo {
+  --em-todo-ink: var(--ip-ink, var(--pd-ink, var(--text-normal)));
+  --em-todo-secondary: var(--ip-secondary, var(--pd-secondary, var(--text-muted)));
+  --em-todo-muted: var(--text-faint, var(--em-todo-secondary));
+  --em-todo-line: var(--ip-line, var(--pd-line, var(--background-modifier-border)));
+  --em-todo-soft: var(--ip-soft, var(--pd-soft, var(--background-modifier-hover)));
+  --em-todo-bg: var(--ip-bg, var(--pd-bg, var(--background-primary)));
+  --em-todo-fill: var(--echoink-control-fill, var(--interactive-accent));
+  --em-todo-on-fill: var(--echoink-control-on-fill, var(--text-on-accent));
+  --em-todo-danger: var(--text-error, #c4453a);
+  --em-todo-compact: 32px;
+  --em-todo-row: 52px;
+  --em-todo-tint: 14%;
+  color: var(--em-todo-ink); min-width: 0;
+}
+.echoink-ipad .em-todo { --em-todo-compact: 28px; --em-todo-row: 48px; }
+body.theme-dark :is(.echoink-iphone, .echoink-ipad) .em-todo { --em-todo-tint: 24%; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo * { box-sizing: border-box; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo button { -webkit-tap-highlight-color: transparent; font: inherit; color: inherit; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-icon { display: inline-grid; place-items: center; flex: none; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-icon svg { width: 16px; height: 16px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-grow { flex: 1; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-count { color: var(--em-todo-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--todo-c, var(--em-todo-muted)); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-dot.is-late { background: var(--em-todo-danger); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-ring { display: block; transform: rotate(-90deg); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-ring .is-bg { stroke: var(--em-todo-line); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo .em-todo-ring .is-fg { stroke: var(--em-todo-ink); }
+
+/* 布局：iPad 左栏 + 主区；iPhone 单列 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-layout { display: flex; gap: 20px; min-width: 0; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-main { flex: 1; min-width: 0; }
+.echoink-ipad .em-todo-rail { flex: none; width: 184px; }
+@container (max-width: 640px) { .echoink-ipad .em-todo-rail { display: none; } }
+
+/* 头部与筛选 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-head { display: flex; align-items: center; gap: 2px; min-height: 52px; }
+.echoink-iphone button.em-todo-filter-trigger { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin-left: -10px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent; font-size: 22px; font-weight: 600; }
+.echoink-iphone button.em-todo-filter-trigger:active { background: var(--em-todo-soft); }
+.echoink-iphone .em-todo-filter-trigger .is-chevron svg { width: 18px; height: 18px; color: var(--em-todo-muted); }
+.echoink-ipad .em-todo-title { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 22px; font-weight: 600; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-filter-lead { display: inline-grid; place-items: center; min-width: 18px; color: var(--em-todo-secondary); }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-icon-button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px; background: transparent; color: var(--em-todo-secondary); }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-icon-button:is(:active, .is-on) { background: var(--em-todo-soft); color: var(--em-todo-ink); }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-icon-button .em-todo-icon svg { width: 18px; height: 18px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-filter-list { display: flex; flex-direction: column; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-filter-heading { margin: 18px 4px 6px; color: var(--em-todo-secondary); font-size: .72em; font-weight: 500; }
+.echoink-iphone .em-todo-filter-group { overflow: hidden; border: 1px solid var(--em-todo-line); border-radius: 12px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-filter-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 0 14px; border: 0; background: transparent; text-align: left; }
+.echoink-iphone button.em-todo-filter-row + button.em-todo-filter-row { border-top: 1px solid var(--em-todo-line); }
+.echoink-ipad button.em-todo-filter-row { min-height: 44px; padding: 0 8px; border-radius: 8px; color: var(--em-todo-secondary); }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-filter-row.is-selected { background: var(--em-todo-soft); color: var(--em-todo-ink); font-weight: 600; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-filter-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+:is(.echoink-iphone, .echoink-ipad) .em-todo-summary { margin: -6px 0 8px; color: var(--em-todo-secondary); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+/* 分段控件：轨道内距 4、圆角 10，按钮圆角 7 等分 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-segments { display: flex; margin: 4px 0 12px; padding: 4px; border-radius: 10px; background: var(--em-todo-soft); }
+.echoink-ipad .em-todo-segments:not(.is-sub) { display: inline-flex; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-segment { flex: 1; min-height: var(--em-todo-compact); padding: 0 12px; border: 0; border-radius: 7px; background: transparent; color: var(--em-todo-secondary); font-size: 14px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-segment.is-selected { background: var(--em-todo-bg); color: var(--em-todo-ink); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+
+/* 输入：文字至少 16，最小高 44 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-field { display: flex; align-items: center; gap: 8px; min-height: 44px; margin-bottom: 8px; padding: 0 10px; border: 1px solid var(--em-todo-line); border-radius: 9px; color: var(--em-todo-muted); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-field:focus-within { background: var(--em-todo-soft); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-field input { flex: 1; min-width: 0; height: 42px; padding: 0; border: 0; background: transparent; color: var(--em-todo-ink); font-size: max(16px, 1em); box-shadow: none; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-quick { margin-bottom: 14px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-chips:empty { display: none; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-chip { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 0 2px 0 8px; border-radius: 6px; background: var(--em-todo-soft); font-size: 13px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-chip.is-implied { padding-right: 8px; color: var(--em-todo-secondary); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-chip .em-todo-icon svg { width: 13px; height: 13px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-chip-remove { display: grid; place-items: center; width: 32px; height: 32px; margin: -3px 0; padding: 0; border: 0; background: transparent; color: var(--em-todo-muted); }
+
+/* 列表 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-section { margin-top: 18px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-section-head { display: flex; align-items: center; gap: 8px; min-height: 24px; margin-bottom: 8px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-section-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-section.is-overdue h3 { color: var(--em-todo-danger); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-rows { overflow: hidden; border: 1px solid var(--em-todo-line); border-radius: 12px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-item + .em-todo-item { border-top: 1px solid var(--em-todo-line); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row { display: flex; align-items: center; gap: 6px; min-height: var(--em-todo-row); padding: 4px 12px 4px 2px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-check { display: grid; place-items: center; flex: none; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-check-mark { display: grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--todo-c); border-radius: 50%; color: #fff; transition: background .2s; }
+body.theme-dark :is(.echoink-iphone, .echoink-ipad) .em-todo-check-mark { color: #18181b; }
+.echoink-ipad .em-todo-check-mark { width: 18px; height: 18px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-check-mark .em-todo-icon svg { width: 13px; height: 13px; stroke-width: 3; opacity: 0; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-check.is-checked .em-todo-check-mark { background: var(--todo-c); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-check.is-checked .em-todo-check-mark .em-todo-icon svg { opacity: 1; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-row-main { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; min-height: 44px; justify-content: center; padding: 4px 0; border: 0; background: transparent; text-align: left; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row-title { line-height: 1.4; overflow-wrap: anywhere; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row.is-done .em-todo-row-title { color: var(--em-todo-muted); text-decoration: line-through; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; color: var(--em-todo-secondary); font-size: 12.5px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row-meta > span { display: inline-flex; align-items: center; gap: 3px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-row-meta .em-todo-icon svg { width: 13px; height: 13px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-subcount { display: inline-flex; align-items: center; gap: 2px; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--em-todo-secondary); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-subcount .em-todo-icon svg { width: 13px; height: 13px; transition: transform .2s; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-subcount.is-open .em-todo-icon svg { transform: rotate(90deg); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-time { flex: none; color: var(--em-todo-secondary); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-time.is-late { color: var(--em-todo-danger); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-subrows { display: flex; flex-direction: column; padding: 0 14px 10px 46px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-subrow { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 14px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-subrow.is-done span:last-child { color: var(--em-todo-muted); text-decoration: line-through; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-done-toggle { display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--em-todo-secondary); font-size: 13px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-done-toggle .em-todo-icon svg { width: 15px; height: 15px; transition: transform .2s; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-done-toggle.is-open .em-todo-icon svg { transform: rotate(90deg); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-empty { padding: 36px 0; color: var(--em-todo-muted); font-size: .88em; text-align: center; }
+
+/* 日历 */
+:is(.echoink-iphone, .echoink-ipad) .em-todo-cal-bar { display: flex; align-items: center; gap: 2px; margin: -4px -6px 4px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-cal-bar h3 { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-compact { display: inline-flex; align-items: center; min-height: var(--em-todo-compact); padding: 0 12px; border: 1px solid var(--em-todo-line); border-radius: 8px; background: transparent; font-size: 14px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-month { padding: 6px 4px 4px; border: 1px solid var(--em-todo-line); border-radius: 12px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-month-head, :is(.echoink-iphone, .echoink-ipad) .em-todo-month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-month-head span { padding-bottom: 2px; color: var(--em-todo-muted); font-size: 11px; text-align: center; }
+/* 密集日期网格：不撑成 44 高 */
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-day { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; min-height: 0; padding: 4px 0 5px; border: 0; border-radius: 9px; background: transparent; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-day-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; font-size: 14px; font-variant-numeric: tabular-nums; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-day.is-other .em-todo-day-number { color: var(--em-todo-muted); opacity: .55; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-day.is-today .em-todo-day-number { background: var(--em-todo-fill); color: var(--em-todo-on-fill); font-weight: 600; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-day.is-selected { background: var(--em-todo-soft); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-dots { display: flex; gap: 3px; height: 5px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-dots .em-todo-dot { width: 5px; height: 5px; }
+.echoink-ipad button.em-todo-day { align-items: stretch; min-height: 92px; padding: 4px; border-radius: 0; border-top: 1px solid var(--em-todo-line); }
+.echoink-ipad .em-todo-day .em-todo-day-number { width: 24px; height: 24px; font-size: 12px; }
+.echoink-ipad .em-todo-bar { display: block; height: 20px; padding: 0 5px; overflow: hidden; border-left: 3px solid var(--todo-c); border-radius: 4px; background: color-mix(in srgb, var(--todo-c) var(--em-todo-tint), var(--em-todo-bg)); font-size: 11.5px; line-height: 20px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.echoink-ipad .em-todo-bar.is-late { border-left-color: var(--em-todo-danger); }
+.echoink-ipad .em-todo-more { color: var(--em-todo-secondary); font-size: 11px; text-align: left; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-timeline { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr); overflow: hidden; border: 1px solid var(--em-todo-line); border-radius: 12px; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-timeline-gutter { position: relative; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-timeline-gutter span { position: absolute; right: 6px; color: var(--em-todo-muted); font-size: 11px; font-variant-numeric: tabular-nums; transform: translateY(-7px); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-timeline-col { position: relative; border-left: 1px solid var(--em-todo-line); background-image: linear-gradient(var(--em-todo-line) 1px, transparent 1px); background-size: 100% 44px; }
+:is(.echoink-iphone, .echoink-ipad) button.em-todo-block { position: absolute; display: flex; flex-direction: column; gap: 1px; padding: 3px 6px; overflow: hidden; border: 0; border-left: 3px solid var(--todo-c); border-radius: 5px; background: color-mix(in srgb, var(--todo-c) var(--em-todo-tint), var(--em-todo-bg)); font-size: 12px; line-height: 1.35; text-align: left; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-block.is-late { border-left-color: var(--em-todo-danger); }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-block.is-done { opacity: .5; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-block-title { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+:is(.echoink-iphone, .echoink-ipad) .em-todo-block-meta { color: var(--em-todo-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { :is(.echoink-iphone, .echoink-ipad) .em-todo.em-todo.em-todo * { transition: none; } }

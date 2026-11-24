@@ -27,7 +27,23 @@ export const PROVIDER_CODES: Readonly<Record<string, ErrorCopy>> = {
   // Conversation length
   context_length_exceeded: CAUSE.contextTooLong,
   provider_partial_interrupted_context: CAUSE.contextTooLong,
+  provider_history_compaction_failed: [
+    "对话太长，暂时没能压缩，请稍后重试或新开对话。",
+    "The conversation is too long and could not be condensed. Try again later or start a new conversation."
+  ],
+  provider_history_still_too_long: [
+    "对话压缩后仍太长，请新开对话或缩短本次输入。",
+    "The conversation is still too long after condensing. Start a new conversation or shorten your message."
+  ],
   // Quota and availability
+  provider_plan_subscription_required: [
+    "当前账号未开通该模型服务的套餐，或套餐已到期。请在服务商后台确认订阅状态后重试。",
+    "This account has no active plan for this model service, or the plan has expired. Check the subscription status in the provider's console, then try again."
+  ],
+  provider_plan_usage_limited: [
+    "套餐额度已用完。请等待额度重置后重试，或在服务商后台开启超额用量。",
+    "The plan allowance has been used up. Wait for it to reset and try again, or turn on extra usage in the provider's console."
+  ],
   provider_rate_limited: CAUSE.providerRateLimit,
   provider_partial_interrupted_rate: CAUSE.providerRateLimit,
   provider_service_failed: CAUSE.providerUnavailable,
@@ -101,6 +117,7 @@ export const XIAOECHO_CODES: Readonly<Record<string, ErrorCopy>> = {
   XIAOECHO_TIMEOUT: CAUSE.providerTimeout,
   XIAOECHO_DISABLED: CAUSE.providerUnavailable,
   CONTENT_TOO_LONG: CAUSE.contextTooLong,
+  XIAOECHO_REQUEST_REJECTED: ["模型服务没有接受这次请求。", "The model service did not accept this request."],
   AUTH_REQUIRED: CAUSE.signInRequired,
   ACCOUNT_DISABLED: ["EchoInk 账号已停用，无法使用小echo。请联系客服。", "This EchoInk account is disabled, so xiaoecho cannot be used. Contact support."]
 };

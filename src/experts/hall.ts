@@ -1,4 +1,4 @@
-import type { ExpertMetadata } from "./contracts";
+import { localizeExpert, type ExpertMetadata } from "./contracts";
 import type { ExpertContentService } from "./service";
 import { ownedEl } from "../ui/owned-dom";
 import { userFacingErrorText } from "../core/error-copy";
@@ -8,6 +8,8 @@ export interface ExpertHallOptions {
   service: ExpertContentService;
   getHiredIds(): Iterable<string>;
   hasPro?(): boolean;
+  /** Reader language; defaults to Chinese. */
+  english?(): boolean;
   initialExpertId?: string;
   onHire(expert: ExpertMetadata): Promise<void>;
   onDismiss(expert: ExpertMetadata): Promise<void>;
@@ -23,6 +25,8 @@ export interface ExpertHallHandle {
   /** Accept old routes without exposing their old UI. */
   showAbout(id: string): Promise<void>;
   showHall(): void;
+  /** Re-render with the current language without refetching. */
+  redraw(): void;
   dispose(): void;
 }
 function element<K extends keyof HTMLElementTagNameMap>(document: Document, parent: HTMLElement, tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
@@ -30,11 +34,14 @@ function element<K extends keyof HTMLElementTagNameMap>(document: Document, pare
   if (text !== undefined) node.textContent = text;
   parent.appendChild(node); return node;
 }
-function errorText(error: unknown): string { return userFacingErrorText(error, "专家操作未能完成。请稍后重试；如问题持续，请点击“上报问题”。"); }
 
 /** Both pages render catalog metadata only; no private package is loaded for browsing. */
 export function renderExpertHall(container: HTMLElement, options: ExpertHallOptions): ExpertHallHandle {
   const document = options.document ?? container.ownerDocument;
+  const english = (): boolean => options.english?.() ?? false;
+  const t = (zh: string, en: string): string => english() ? en : zh;
+  const errorText = (error: unknown): string => userFacingErrorText(error, t("专家操作未能完成。请稍后重试；如问题持续，请点击“上报问题”。", "The expert action could not be completed. Please try again later. If the problem persists, select Report issue."), english() ? "en" : "zh");
+  const shown = (expert: ExpertMetadata): ExpertMetadata => localizeExpert(expert, english());
   let disposed = false, generation = 0, catalog: ExpertMetadata[] = [], view: string | null = options.initialExpertId ?? null;
   let loading = false, catalogReady = false, loadError = "";
   const pending = new Map<string, string>(), errors = new Map<string, string>();
@@ -66,39 +73,45 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
       if (!disposed) { draw(); if (restoreFocus && view === origin) focus(`action:${expert.id}`); }
     }
   };
-  const identity = (parent: HTMLElement, expert: ExpertMetadata, detail = false): void => {
+  const identity = (parent: HTMLElement, source: ExpertMetadata, detail = false): void => {
+    const expert = shown(source);
     const top = element(document, parent, "header", "echoink-expert-card-top");
     const avatar = element(document, top, "img", "echoink-expert-avatar");
     avatar.src = expert.avatarUrl; avatar.alt = ""; avatar.width = 56; avatar.height = 56; avatar.loading = "lazy"; avatar.referrerPolicy = "no-referrer";
     const text = element(document, top, "div", "echoink-expert-identity");
     element(document, text, detail ? "h2" : "h3", detail ? "echoink-expert-detail-title" : "echoink-expert-name", expert.name);
     element(document, text, "p", "echoink-expert-scene", expert.scene);
-    const attribution = [expert.author?.name, expert.hireCount === undefined ? undefined : `${expert.hireCount} 人聘请`].filter(value => value !== undefined).join(" · ");
-    if (attribution) element(document, text, "p", "echoink-expert-scene echoink-expert-attribution", attribution);
+    const sourceLabel = expert.source === "community" ? t("社区", "Community") : t("官方", "Official");
+    const author = expert.author?.name;
+    const count = expert.hireCount;
+    const attribution = [sourceLabel];
+    if (author) attribution.push(t(`作者：${author}`, `By ${author}`));
+    if (count !== undefined) attribution.push(t(`${count} 人聘请`, `${count.toLocaleString("en")}${count === 1 ? " hire" : " hires"}`));
+    element(document, text, "p", "echoink-expert-scene echoink-expert-attribution", attribution.join(" · "));
   };
   const tags = (parent: HTMLElement, expert: ExpertMetadata): void => {
     const list = element(document, parent, "ul", "echoink-expert-tags");
-    for (const tag of expert.tags) element(document, list, "li", "echoink-expert-tag", tag);
+    for (const tag of shown(expert).tags) element(document, list, "li", "echoink-expert-tag", tag);
   };
   const action = (parent: HTMLElement, expert: ExpertMetadata, detail = false): void => {
     const actions = element(document, parent, "div", "echoink-expert-actions");
     const busy = pending.get(expert.id), hired = new Set(options.getHiredIds()).has(expert.id);
     const variant = detail ? "primary" : "secondary";
     let control: HTMLButtonElement;
-    if (busy) { control = button(actions, busy, variant, () => {}); control.disabled = true; control.setAttribute("aria-busy", "true"); control.title = "正在处理，请稍候。"; }
-    else if (hired) control = button(actions, "解聘", variant, () => run(expert, "解聘", () => options.onDismiss(expert)));
-    else if (!hasPro()) control = button(actions, "开通 PRO", variant, () => run(expert, "开通 PRO", () => options.onUpgrade()));
-    else if (!options.service.compatible(expert)) { control = button(actions, "聘请", variant, () => {}); control.disabled = true; control.title = "此专家不支持当前插件版本或设备，请更新插件或使用支持的设备。"; }
-    else control = button(actions, "聘请", "primary", () => run(expert, "聘请", () => options.onHire(expert)));
+    if (busy) { control = button(actions, busy, variant, () => {}); control.disabled = true; control.setAttribute("aria-busy", "true"); control.title = t("正在处理，请稍候。", "Processing. Please wait."); }
+    else if (hired) control = button(actions, t("解聘", "Dismiss"), variant, () => run(expert, t("解聘", "Dismiss"), () => options.onDismiss(expert)));
+    else if (!hasPro()) control = button(actions, t("开通 PRO", "Get PRO"), variant, () => run(expert, t("开通 PRO", "Get PRO"), () => options.onUpgrade()));
+    else if (!options.service.compatible(expert)) { control = button(actions, t("聘请", "Hire"), variant, () => {}); control.disabled = true; control.title = t("此专家不支持当前插件版本或设备，请更新插件或使用支持的设备。", "This expert does not support the current plugin version or device. Update the plugin or use a supported device."); }
+    else control = button(actions, t("聘请", "Hire"), "primary", () => run(expert, t("聘请", "Hire"), () => options.onHire(expert)));
     control.dataset.expertFocus = `action:${expert.id}`;
     const message = errors.get(expert.id);
     if (message) { const error = element(document, parent, "p", "echoink-expert-card-error", message); error.setAttribute("role", "alert"); }
     else if (!hired && hasPro() && !options.service.compatible(expert)) {
-      const error = element(document, parent, "p", "echoink-expert-card-error", `当前插件版本或设备不支持此专家。请更新至 ${expert.minPluginVersion} 或更新版本，并使用支持的设备。`);
+      const error = element(document, parent, "p", "echoink-expert-card-error", t(`当前插件版本或设备不支持此专家。请更新至 ${expert.minPluginVersion} 或更新版本，并使用支持的设备。`, `The current plugin version or device does not support this expert. Update to ${expert.minPluginVersion} or later and use a supported device.`));
       error.setAttribute("role", "alert");
     }
   };
-  const back = (): void => { const control = button(root, "返回专家", "tertiary", showHall); control.classList.add("echoink-expert-back"); control.dataset.expertFocus = "back"; };
+  const back = (): void => { const control = button(root, t("返回专家", "Back to experts"), "tertiary", showHall); control.classList.add("echoink-expert-back"); control.dataset.expertFocus = "back"; };
   const draw = (): void => {
     if (disposed) return;
     const active = document.activeElement as HTMLElement | null, activeKey = root.contains(active) ? active?.dataset.expertFocus : undefined;
@@ -106,38 +119,39 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
     if (loading) root.setAttribute("aria-busy", "true"); else root.removeAttribute("aria-busy");
     if (view !== null) back();
     if (loadError || !catalogReady) {
-      element(document, root, "h2", "echoink-expert-hall-title", "专家");
-      status(root, loadError || "正在加载专家…", !!loadError);
-      if (loadError) button(root, "重试", "secondary", () => refresh(true));
+      element(document, root, "h2", "echoink-expert-hall-title", t("专家", "Experts"));
+      status(root, loadError || t("正在加载专家…", "Loading experts…"), !!loadError);
+      if (loadError) button(root, t("重试", "Retry"), "secondary", () => refresh(true));
     } else if (view !== null) {
       const expert = catalog.find(item => item.id === view);
-      if (!expert) status(root, "此专家已不在当前目录中。请返回后刷新列表。", true);
+      if (!expert) status(root, t("此专家已不在当前目录中。请返回后刷新列表。", "This expert is no longer in the catalog. Go back and refresh the list."), true);
       else {
         const detail = element(document, root, "article", "echoink-expert-detail"); detail.dataset.expertId = expert.id;
+        const copy = shown(expert);
         identity(detail, expert, true);
-        element(document, detail, "p", "echoink-expert-detail-summary", expert.summary);
+        element(document, detail, "p", "echoink-expert-detail-summary", copy.summary);
         tags(detail, expert);
-        if (expert.description?.trim()) element(document, detail, "p", "echoink-expert-detail-description", expert.description);
-        if (expert.story?.trim()) element(document, detail, "p", "echoink-expert-detail-story", expert.story);
-        const examples = expert.examples?.filter(item => item.trim()) ?? [];
+        if (copy.description?.trim()) element(document, detail, "p", "echoink-expert-detail-description", copy.description);
+        if (copy.story?.trim()) element(document, detail, "p", "echoink-expert-detail-story", copy.story);
+        const examples = copy.examples?.filter(item => item.trim()) ?? [];
         if (examples.length) {
           const section = element(document, detail, "section", "echoink-expert-example-section");
-          element(document, section, "h3", "echoink-expert-detail-section-title", "你可以这样问他");
+          element(document, section, "h3", "echoink-expert-detail-section-title", t("你可以这样问他", "Try asking"));
           const list = element(document, section, "ul", "echoink-expert-examples");
           for (const example of examples) element(document, list, "li", "echoink-expert-example", example);
         }
         action(detail, expert, true);
       }
     } else {
-      element(document, root, "h2", "echoink-expert-hall-title", "专家");
-      if (!catalog.length) status(root, "暂时没有可聘请的专家。");
+      element(document, root, "h2", "echoink-expert-hall-title", t("专家", "Experts"));
+      if (!catalog.length) status(root, t("暂时没有可聘请的专家。", "No experts are available to hire right now."));
       const grid = element(document, root, "div", "echoink-expert-grid");
       for (const expert of catalog) {
         const card = element(document, grid, "article", "echoink-expert-card"); card.dataset.expertId = expert.id;
         const link = element(document, card, "a", "echoink-expert-card-link"); link.href = `#expert-${expert.id}`;
-        link.setAttribute("aria-label", `查看${expert.name}详情`); link.dataset.expertFocus = `card:${expert.id}`;
+        link.setAttribute("aria-label", t(`查看${shown(expert).name}详情`, `View ${shown(expert).name}`)); link.dataset.expertFocus = `card:${expert.id}`;
         identity(link, expert);
-        element(document, link, "p", "echoink-expert-quote", `“${expert.quote}”`);
+        element(document, link, "p", "echoink-expert-quote", `“${shown(expert).quote}”`);
         tags(link, expert); action(card, expert);
         card.addEventListener("click", event => {
           if ((event.target as Element | null)?.closest("button")) return;
@@ -175,5 +189,5 @@ export function renderExpertHall(container: HTMLElement, options: ExpertHallOpti
     }
   });
   void refresh();
-  return { refresh, showDetail, showAbout: showDetail, showHall, dispose() { disposed = true; ++generation; unsubscribe(); root.remove(); } };
+  return { refresh, redraw: draw, showDetail, showAbout: showDetail, showHall, dispose() { disposed = true; ++generation; unsubscribe(); root.remove(); } };
 }

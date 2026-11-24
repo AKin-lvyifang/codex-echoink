@@ -36,7 +36,7 @@ import { parseExpertCatalog, parseExpertDelivery, validExpertId,
 import { membershipErrorText, membershipFailureText } from "./messages";
 import { PRO_ACCESS_COPY } from "../core/error-copy/codes/account";
 import { MembershipNetworkError } from "./network-error";
-import { parseExpertAvatarPresets, parseExpertSubmissionReceipt, type ExpertSubmissionPayload } from "../experts/submission-contract";
+import { parseExpertAvatarPresets, parseExpertSubmissionHistory, parseExpertSubmissionReceipt, type ExpertSubmissionPayload } from "../experts/submission-contract";
 
 function hasTimerUnref(value: unknown): value is { unref(): void } {
   return value !== null && typeof value === "object" && "unref" in value && typeof value.unref === "function";
@@ -286,10 +286,21 @@ export class AccountService implements CapabilityAccess {
     return parseExpertCatalog(result, this.apiUrl);
   }
 
-  expertSubmissionOwner(): string | null {
+  expertSubmissionHistoryOwner(): string | null {
     const { token, accountId } = this.operation();
-    return !this.closed && token && accountId && hasProPluginAccess(this)
-      ? sha256Hex(JSON.stringify([this.apiUrl, accountId])) : null;
+    return !this.closed && token && accountId ? sha256Hex(JSON.stringify([this.apiUrl, accountId])) : null;
+  }
+
+  expertSubmissionOwner(): string | null {
+    return hasProPluginAccess(this) ? this.expertSubmissionHistoryOwner() : null;
+  }
+
+  async getExpertSubmissionHistory(owner: string, page: number) {
+    const operation = this.operation();
+    if (this.expertSubmissionHistoryOwner() !== owner) throw new MembershipApiError("OPERATION_CANCELLED");
+    const response = await this.call(`/api/experts/submissions/mine?page=${page}`, "GET", undefined, operation);
+    this.assertCurrent(operation);
+    return parseExpertSubmissionHistory(response);
   }
 
   async getExpertAvatarPresets() {

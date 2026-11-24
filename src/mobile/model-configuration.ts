@@ -1,8 +1,9 @@
 import { requestUrl } from "obsidian";
 import { CAUSE, NEXT } from "../core/error-copy";
 import { providerStatusCopy } from "../core/error-copy/codes/settings";
+import { openCodeGoPlanFailureCode, providerFailureText } from "../harness/pi/provider-failure";
 import type { ApiProviderConfig, ApiProviderModelConfig } from "../settings/settings";
-import { apiProviderModelsUrl, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
+import { apiProviderModelsUrl, isOpenCodeGoApiProviderUrl, normalizeApiProviderBaseUrl, type ApiProviderId } from "../settings/provider-presets";
 import { parseProviderModelResponse } from "../settings/provider-model-discovery";
 import { MOBILE_PROVIDER_UNSUPPORTED, mobileModel, mobileProvider, mobileStreamingEnabled, supportedProvider, type MobileSettings } from "./settings";
 import { mobileGenerateText, MOBILE_STREAM_BLOCKED, type MobileRequest, type MobileStreamFetch, type MobileUsageObserver } from "./transport";
@@ -10,7 +11,7 @@ import { enableTargetToolCalling, type ToolCallRecoveryTarget } from "../agents/
 
 export const MOBILE_MODEL_GROUPS: readonly { title: string; ids: readonly ApiProviderId[] }[] = [
   { title: "API Key", ids: ["glm", "kimi", "deepseek", "qwen"] },
-  { title: "套餐", ids: ["qwen-token-plan"] },
+  { title: "套餐", ids: ["qwen-token-plan", "opencode-go"] },
   { title: "其他", ids: ["custom"] }
 ];
 export const MOBILE_MODEL_REQUEST_TIMEOUT_MS = 20_000;
@@ -44,8 +45,15 @@ function validateConnection(provider: ApiProviderConfig): void {
   if (!provider.apiKey.trim()) throw new Error("请填写 API Key。");
 }
 
-function checkResponse(status: number): void {
-  if (status < 200 || status >= 300) throw new Error(providerStatusCopy(status)[0]);
+async function checkResponse(status: number, connection?: { baseUrl: string; readBody(): unknown }): Promise<void> {
+  if (status >= 200 && status < 300) return;
+  if ((status === 403 || status === 429) && connection && isOpenCodeGoApiProviderUrl(connection.baseUrl)) {
+    let body: unknown;
+    try { body = await connection.readBody(); } catch { /* Non-JSON reply: use the HTTP status. */ }
+    const text = providerFailureText(openCodeGoPlanFailureCode(connection.baseUrl, status, body));
+    if (text) throw new Error(text);
+  }
+  throw new Error(providerStatusCopy(status)[0]);
 }
 
 export class MobileModelConfiguration {
@@ -120,12 +128,14 @@ export class MobileModelConfiguration {
           let response: Awaited<ReturnType<MobileStreamFetch>>;
           try { response = await fetchStream(url, init); }
           catch (error) { requestFailure = new Error(MOBILE_STREAM_BLOCKED, { cause: error }); throw requestFailure; }
-          try { checkResponse(response.status); } catch (error) { requestFailure = error as Error; throw error; }
+          try {
+            await checkResponse(response.status, { baseUrl: draft.baseUrl, readBody: async () => JSON.parse(await response.text()) as unknown });
+          } catch (error) { requestFailure = error as Error; throw error; }
           return response;
         });
         try {
           const text = await mobileGenerateText(draft, { ...model, reasoningEnabled: false }, async request => {
-            try { return await this.checkedRequest(request); }
+            try { return await this.checkedRequest(request, draft.baseUrl); }
             catch (error) { requestFailure = error as Error; throw error; }
           }, "Connection check. Reply with OK only.", "只回复 OK", 32, signal, this.usage, "connection-test", streamFetch);
           if (!text.trim()) throw new Error("连接测试未返回有效内容。请检查 Model ID 后重试。");
@@ -221,11 +231,11 @@ export class MobileModelConfiguration {
     }
   }
 
-  private async checkedRequest(request: Parameters<MobileRequest>[0]): ReturnType<MobileRequest> {
+  private async checkedRequest(request: Parameters<MobileRequest>[0], connectionBaseUrl?: string): ReturnType<MobileRequest> {
     let response: Awaited<ReturnType<MobileRequest>>;
     try { response = await this.request(request); }
     catch { throw new Error(CAUSE.providerNetwork[0]); }
-    checkResponse(response.status);
+    await checkResponse(response.status, connectionBaseUrl ? { baseUrl: connectionBaseUrl, readBody: () => response.json } : undefined);
     try { return { status: response.status, json: response.json }; }
     catch { throw new Error("模型服务返回的模型列表格式无效。请重试，或手动填写 Model ID。"); }
   }

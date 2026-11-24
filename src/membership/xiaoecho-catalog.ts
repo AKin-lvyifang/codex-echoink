@@ -136,15 +136,48 @@ async function fetchXiaoechoModels(input: XiaoechoModelListInput): Promise<{
 let languageProbe: () => string | undefined = () => undefined;
 export function setXiaoechoLanguageProbe(probe: () => string | undefined): void { languageProbe = probe; }
 const FAILURE_TEXT = XIAOECHO_CODES;
-/** Server error codes → what the user reads, in the plugin's language. Anything else keeps the generic provider failure text. */
-export function xiaoechoFailureText(code: string, language: string | undefined = languageProbe()): string | null {
+export const XIAOECHO_REQUEST_REJECTED = "XIAOECHO_REQUEST_REJECTED";
+const SERVER_CODE = /^[A-Za-z][A-Za-z0-9_]{2,63}$/u;
+
+/** Only a bounded machine code is shown alongside the generic rejection text. */
+export function xiaoechoFailureText(code: string, language: string | undefined = languageProbe(), serverCode?: string): string | null {
+  if (code === XIAOECHO_REQUEST_REJECTED && serverCode && SERVER_CODE.test(serverCode)) {
+    return language === "en"
+      ? `The model service did not accept this request (error code ${serverCode}).`
+      : `模型服务没有接受这次请求（错误码 ${serverCode}）。`;
+  }
+  if (code === "BODY_TOO_LARGE") code = "CONTENT_TOO_LONG";
   const pair = Object.hasOwn(FAILURE_TEXT, code) ? FAILURE_TEXT[code] : null;
   return pair ? pair[language === "en" ? 1 : 0] : null;
 }
 
-/** Only known local codes cross the display boundary. */
+/** Recognize server codes from the response or from a sanitized provider detail. */
 export function xiaoechoFailureCode(value: unknown): string {
- const raw = typeof value === "string" ? value : value && typeof value === "object" ? JSON.stringify(value) : "";
- for (const code of Object.keys(FAILURE_TEXT)) if (new RegExp(`\\b${code}\\b`).test(raw)) return code;
- return "XIAOECHO_UNAVAILABLE";
+  let detail = value;
+  if (typeof value === "string") {
+    const raw = value.trim().slice(0, 8192);
+    detail = raw;
+    const start = raw.indexOf("{"), end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        detail = JSON.parse(raw.slice(start, end + 1));
+      } catch {
+        detail = raw;
+      }
+    } else if (!/^[A-Z][A-Z0-9_]{2,63}$/u.test(raw)) {
+      return /^(?:HTTP\s+)?[45]\d{2}\b/u.test(raw) ? XIAOECHO_REQUEST_REJECTED : "XIAOECHO_UNAVAILABLE";
+    }
+  }
+  if (detail && typeof detail === "object") {
+    const outer = detail as Record<string, unknown>;
+    const error = outer.error ?? outer;
+    if (error && typeof error === "object") {
+      const fields = error as Record<string, unknown>;
+      detail = fields.code ?? fields.message;
+    } else {
+      detail = error;
+    }
+  }
+  if (detail === "BODY_TOO_LARGE") return "CONTENT_TOO_LONG";
+  return typeof detail === "string" && SERVER_CODE.test(detail) ? detail : XIAOECHO_REQUEST_REJECTED;
 }

@@ -43,7 +43,7 @@ export async function openFinanceEntry(ctx: IPhonePageContext, saved: () => Prom
     const accounts = ctx.host.settings().lifestyle.finance.accounts.filter(item => item.active).map(item => item.name);
     view.select(view.body, "账户", [["", moduleText(ctx, "未指定")], ...[...new Set([...accounts, draft.account].filter(Boolean))].map(name => [name, name] as const)], draft.account, value => { draft.account = value; });
     if (!target) { view.field(view.body, "日期", draft.date, value => { draft.date = value; }, "date"); view.field(view.body, "备注", draft.note, value => { draft.note = value; }); }
-    const plans = service.billPlans(); view.select(view.body, "账单计划", [["", moduleText(ctx, "不关联账单")], ...plans.map(plan => [plan.id, plan.name] as const), ...(draft.billPlanId && !plans.some(plan => plan.id === draft.billPlanId) ? [[draft.billPlanId, moduleText(ctx, "原账单未找到（保留关联）")] as const] : [])], draft.billPlanId, value => { draft.billPlanId = value; });
+    const plans = service.billPlans(); view.select(view.body, "专项预算", [["", moduleText(ctx, "不关联")], ...plans.map(plan => [plan.id, plan.name] as const), ...(draft.billPlanId && !plans.some(plan => plan.id === draft.billPlanId) ? [[draft.billPlanId, moduleText(ctx, "原专项预算未找到（保留关联）")] as const] : [])], draft.billPlanId, value => { draft.billPlanId = value; });
     financeIconField(view, view.body, "entry", draft.icon, value => { draft.icon = value; });
     if (target) view.button(view.body, "在笔记中查看 Bases", () => service.openBase(target!.id));
   };

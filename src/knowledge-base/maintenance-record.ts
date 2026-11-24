@@ -54,6 +54,20 @@ export function isP1Open(record: Readonly<KnowledgeMaintenanceRecord>): boolean 
   return !!record.p1 && record.p1.phase !== "completed" && !hasP1PartialSettlement(record);
 }
 
+export function maintenanceP1SourceProgress(record: Readonly<KnowledgeMaintenanceRecord>): {
+  path: string; skipped?: boolean; complete?: boolean; sourceRevision?: string; nextOffset?: number;
+}[] | undefined {
+  const state = record.p1;
+  if (!state || state.phase !== "decompose") return undefined;
+  return record.sources.map(source => {
+    const segmented = state.segmentedSources?.[source.path];
+    return { path: source.path, ...(source.skipReason ? { skipped: true } : segmented ? {
+      complete: segmented.complete, sourceRevision: segmented.sourceRevision,
+      nextOffset: segmented.ranges[0]?.start === 0 ? segmented.ranges[0].end : 0
+    } : { complete: state.decompositions.some(item => item.sourcePath === source.path) }) };
+  });
+}
+
 /** A retry belongs to one original record; mixed selections never create duplicate work. */
 export function maintenanceP1RetryRecord(records: readonly KnowledgeMaintenanceRecord[], conversationId: string, selected: readonly string[]): KnowledgeMaintenanceRecord | undefined {
   const latest = new Map<string, KnowledgeMaintenanceRecord>();

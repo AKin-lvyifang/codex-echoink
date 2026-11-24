@@ -5,7 +5,7 @@ import { renderComposerSubmission } from "../composer-submission-renderer";
 import { isAgentHired, isExpertAgent } from "../../agents/persona";
 import { setIcon } from "obsidian";
 import type { TaskDraft } from "../../agents/task-workspace";
-import type { MobilePermission } from "../../mobile/store";
+import { MobileTaskFileChanged, type MobilePermission } from "../../mobile/store";
 import { selectedModel, supportedProvider } from "../../mobile/settings";
 import { toolCallRecoveryTarget } from "../../agents/tool-call-recovery";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
@@ -43,6 +43,7 @@ export async function requestIPhoneTaskResume(ctx: IPhonePageContext, taskId: st
       const submission = submissionId ? await ctx.host.runtime.submitComposerSubmission(submissionId, fingerprint) : await ctx.host.runtime.resumeTask(taskId, text?.trim() ? text : undefined, fingerprint);
       void submission.completion.catch(error => ctx.error(error)); accepted?.();
     } catch (error) {
+      if (error instanceof MobileTaskFileChanged) throw error;
       const review = ctx.host.runtime.stateFor(taskId).resumeReview;
       if (!review?.issues.length || review.taskId !== taskId) {
         if (!submissionId || !ctx.host.runtime.composerSubmissions.captureFailure(submissionId, failureText(ctx, error))) ctx.error(error);
@@ -100,7 +101,9 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
     return { text: task?.draft ?? "", attachments: [], ...(target ? { selectedProviderSettingsId: target.providerSettingsId, selectedModel: target.modelId } : {}), ...task?.draftContext };
   };
   input.value = readDraft().text;
-  const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(ctx, failure); error.hidden = false; } };
+  const showFailure = (failure: unknown) => {
+    if (!disposed && !(failure instanceof MobileTaskFileChanged)) { error.textContent = failureText(ctx, failure); error.hidden = false; }
+  };
   const update = (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission): Promise<void> => {
     const command = saves.catch(() => {}).then(() => host.store.update(latest => {
       if (workspacePermission) latest.permission = workspacePermission;
@@ -226,7 +229,13 @@ export function createIPhoneComposer(ctx: IPhonePageContext, target: { agentId?:
       dirty = false;
       if (taskId && host.store.getSession(taskId)?.taskStatus === "interrupted") await requestIPhoneTaskResume(ctx, taskId, text, () => refresh(), submissionId);
       else await submitSnapshot(submissionId);
-    } catch (failure) { host.runtime.composerSubmissions.fail(submissionId, failureText(ctx, failure)); }
+    } catch (failure) {
+      if (failure instanceof MobileTaskFileChanged) {
+        if (!input.value) input.value = text;
+        dirty = true;
+        host.runtime.composerSubmissions.remove(submissionId);
+      } else host.runtime.composerSubmissions.fail(submissionId, failureText(ctx, failure));
+    }
     finally { sending = false; refresh(); }
   }); send.classList.add("ip-composer-send"); bar.append(send);
   const submitSnapshot = async (id: string) => {

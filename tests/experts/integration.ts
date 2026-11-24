@@ -20,7 +20,7 @@ import { hireExpert } from "../../src/agents/expert-lifecycle";
 const backend = process.env.ECHOINK_EXPERT_BACKEND_ROOT;
 if (!backend || process.env.NODE_ENV === "production") throw new Error("An explicit local backend checkout is required.");
 const backendRequire = createRequire(path.join(backend, "package.json"));
-const { expertCatalog: expectedCatalog } = await import(pathToFileURL(path.join(backend, "src/experts-content.ts")).href);
+const { officialExperts } = await import(pathToFileURL(path.join(backend, "src/experts-content.ts")).href);
 const { fixture } = await import(pathToFileURL(path.join(backend, "test/helpers.ts")).href);
 const { serve } = await import(pathToFileURL(backendRequire.resolve("@hono/node-server")).href);
 const port = await new Promise<number>((resolve, reject) => {
@@ -28,13 +28,14 @@ const port = await new Promise<number>((resolve, reject) => {
   probe.listen(0, "127.0.0.1", () => { const selected = (probe.address() as net.AddressInfo).port; probe.close(error => error ? reject(error) : resolve(selected)); });
 });
 const baseURL = `http://127.0.0.1:${port}`;
-const runtime = await fixture({ baseURL, origins: [baseURL], adminEmails: [] });
+const ownerEmail = "expert-owner@example.test";
+const runtime = await fixture({ baseURL, origins: [baseURL], adminEmails: [ownerEmail] });
 const cache = await mkdtemp(path.join(os.tmpdir(), "echoink-expert-http-cache-"));
 const services: AccountService[] = [];
 let server: ReturnType<typeof serve> | undefined;
 let scenarios = 0;
 const test = async (name: string, run: () => Promise<void> | void) => { await run(); scenarios++; console.log(`OK expert HTTP: ${name}`); };
-const seeded = ["pro", "free"] as const;
+const seeded = ["pro", "free", "owner"] as const;
 const localPassword = "Expert-local-only-2026"; // Same disposable identities as backend dev:experts, never a live credential.
 try {
   for (const kind of seeded) {
@@ -81,7 +82,7 @@ try {
   const content = new ExpertContentService({ files: expertFixtureFiles(cache), cacheRoot: ".isolated/plugins/echoink/expert-cache", account: () => pro.service, pluginVersion: packageInfo.version, platform: "desktop" });
   let catalog = await content.publicCatalog();
   await test("anonymous catalog supplies the current dynamic public cards and no account credentials", () => {
-    assert.deepEqual(catalog.experts.map(item => item.id).sort(), expectedCatalog.experts.map(item => item.id).sort());
+    assert.deepEqual(catalog.experts.map(item => item.id).sort(), officialExperts.catalog.experts.map(item => item.id).sort());
     assert.ok(pro.calls.filter(call => call.path === "/api/experts/catalog").every(call => !call.credential));
     assert.ok(!JSON.stringify(catalog).includes('"persona"'));
   });
@@ -94,7 +95,7 @@ try {
   });
   catalog = await content.publicCatalog(true);
   const packs = new Map<string, Awaited<ReturnType<ExpertContentService["resolve"]>>>();
-  await test("all nine real packages validate hashes, offline bounds, bundled avatars and complete licenses", async () => {
+  await test("all official packages validate hashes, offline bounds, bundled avatars and complete licenses", async () => {
     for (const metadata of catalog.experts) {
       const pack = await content.resolve(metadata.id); pack.assertAvailable(); packs.set(metadata.id, pack);
       const delivery = pro.deliveries.at(-1)!;
@@ -142,6 +143,48 @@ try {
     await assert.rejects(free.service.getExpertPackage(id, { pluginVersion: packageInfo.version, platform: "desktop" }), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
     await assert.rejects(free.transport(`/api/experts/${id}/package`, "POST", { deviceId: "unbound-free-fixture", lease: "none", pluginVersion: packageInfo.version, platform: "desktop" }, free.state().token), error => error instanceof MembershipApiError && error.code === "PRO_REQUIRED");
     assert.equal(free.calls.at(-1)!.status, 403);
+  });
+  await test("author sees each version and its reason through review, resubmission and unlisting", async () => {
+    const session = await makeAccount();
+    await session.service.actions.signIn!({ email: ownerEmail, method: "password", credential: localPassword });
+    const adminRequest = async (route: string, method: string, body: object, proof?: string) => {
+      const response = await fetch(baseURL + route, { method, body: JSON.stringify(body), headers: {
+        "Content-Type": "application/json", Authorization: `Bearer ${session.state().token}`,
+        "X-Admin-Key": runtime.config.adminKey, ...(proof ? { "X-Admin-Session": proof } : {}),
+      } });
+      assert.equal(response.status, 200);
+      return await response.json() as { adminSession?: string };
+    };
+    const { adminSession } = await adminRequest("/api/admin/verify", "POST", {});
+    assert.ok(adminSession);
+    const author = content.submissions, owner = author.owner()!;
+    assert.ok(owner && author.canSubmit());
+    const payload = { name: "资料整理员", scene: "知识整理", summary: "提炼笔记要点", quote: "先分类，再整理。",
+      author: { name: "合成投稿作者" }, avatar: { presetId: "nova" }, persona: "把当前提供的资料按主题组织。",
+      tags: ["笔记", "整理", "知识"], examples: ["梳理主题", "提炼要点", "归类资料"], skills: [] };
+    const { receipt } = await author.submit("review-fixture-agent", owner, payload);
+    const history = () => author.history(owner, 1);
+    assert.deepEqual((await history()).items.map(item => [item.version, item.status, item.reason]), [[1, "pending", null]]);
+    const outsider = free.service.expertSubmissionHistoryOwner()!;
+    assert.ok(outsider && outsider !== owner);
+    assert.deepEqual((await free.service.getExpertSubmissionHistory(outsider, 1)).items, []);
+    await assert.rejects(free.service.getExpertSubmissionHistory(owner, 1));
+    const review = (version: number, action: string, reason: string) =>
+      adminRequest(`/api/admin/expert-submissions/${receipt.id}/${version}`, "PATCH", { action, reason }, adminSession);
+    await review(1, "reject", "请补充实际使用场景。");
+    assert.deepEqual((await history()).items.map(item => [item.version, item.status, item.reason]), [[1, "rejected", "请补充实际使用场景。"]]);
+    const revised = await author.submit("review-fixture-agent", owner, { ...payload, scene: "复盘会议记录" });
+    assert.deepEqual([revised.receipt.id, revised.receipt.version], [receipt.id, 2]);
+    await review(2, "publish", "新版示例清楚。");
+    assert.deepEqual((await history()).items.map(item => [item.version, item.status, item.reason]),
+      [[2, "published", "新版示例清楚。"], [1, "rejected", "请补充实际使用场景。"]]);
+    await review(2, "unlist", "示例需要更新。");
+    const fresh = await makeAccount();
+    await fresh.service.actions.signIn!({ email: "expert-pro@example.test", method: "password", credential: localPassword });
+    assert.equal(fresh.service.expertSubmissionOwner(), null, "a new device has no active PRO lease");
+    assert.deepEqual((await fresh.service.getExpertSubmissionHistory(fresh.service.expertSubmissionHistoryOwner()!, 1))
+      .items.map(item => [item.version, item.status, item.reason]),
+    [[2, "unlisted", "示例需要更新。"], [1, "rejected", "请补充实际使用场景。"]]);
   });
   await test("real online device removal denies cached packages and invalidates an active package handle", async () => {
     const id = catalog.experts[0].id, selected = packs.get(id)!;

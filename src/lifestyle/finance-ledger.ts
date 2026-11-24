@@ -17,6 +17,8 @@ export interface CreatedFinanceRow { entry: FinanceEntry; sourceFields?: Finance
 export interface FinanceImportResult {
   added: number; updated: number; duplicates: number; invalid: number;
   created: CreatedFinanceRow[]; writeError?: string;
+  /** Months of ledger notes actually created, updated or linked by the import. */
+  affectedMonths: string[];
   linked?: number;
   pending?: ReturnType<typeof classifyImport>["pending"];
 }
@@ -320,7 +322,7 @@ export class FinanceLedger {
         "note.type": { displayName: "类型" },
         "note.category": { displayName: "分类" },
         "note.account": { displayName: "账户" },
-        "note.bill_plan_id": { displayName: "账单计划 ID" }
+        "note.bill_plan_id": { displayName: "专项预算 ID" }
       },
       views: [
         { type: "table", name: "全部账目", order: ["note.date", "note.merchant", "note.description", "note.amount", "note.type", "note.category", "note.account", "note.echoink_id"] },
@@ -567,6 +569,7 @@ export class FinanceLedger {
       const sources = new Map(rows.filter((row) => row.entry && row.sourceFields)
         .map((row) => [`${row.entry!.source}:${row.entry!.sourceId}`, row.sourceFields] as const));
       const created: CreatedFinanceRow[] = [];
+      const affectedMonths = new Set<string>();
       let updated = 0;
       let linked = 0;
       let writeError: string | undefined;
@@ -577,6 +580,7 @@ export class FinanceLedger {
           try { await this.createDirect(entry, sourceFields); }
           catch (error) { writeError = error instanceof Error ? error.message : String(error); break; }
           created.push({ entry: { ...entry, icon: entry.icon || "auto" }, sourceFields: sourceFields ? { ...sourceFields } : undefined });
+          affectedMonths.add(entry.date.slice(0, 7));
           options.onSaved?.(entry, "added");
         }
         if (!writeError && !options.signal?.aborted) for (const entry of result.updated) {
@@ -584,6 +588,7 @@ export class FinanceLedger {
           try { await this.patchDirect(entry.id, { status: entry.status }); }
           catch (error) { writeError = error instanceof Error ? error.message : String(error); break; }
           updated++;
+          affectedMonths.add(entry.date.slice(0, 7));
           options.onSaved?.(entry, "updated");
         }
         if (!writeError && !options.signal?.aborted) for (const pair of result.linked) {
@@ -602,10 +607,11 @@ export class FinanceLedger {
             const observed = parseFinanceNote(await this.app.vault.read(file));
             if (!observed?.sourceLinks?.some(link => link.source === pair.imported.source && link.sourceId === pair.imported.sourceId)) throw new Error("finance_readback_failed");
             linked++;
+            affectedMonths.add(observed.date.slice(0, 7));
           } catch (error) { writeError = error instanceof Error ? error.message : String(error); break; }
         }
       } finally { await this.readDirect(); }
-      return { added: created.length, updated, duplicates: result.duplicates, invalid: result.invalid, created, writeError, linked, pending: result.pending };
+      return { added: created.length, updated, duplicates: result.duplicates, invalid: result.invalid, created, writeError, linked, affectedMonths: [...affectedMonths], pending: result.pending };
     });
   }
 

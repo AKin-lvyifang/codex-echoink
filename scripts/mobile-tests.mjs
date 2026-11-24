@@ -1011,9 +1011,9 @@ await test("mobile full finance: same ledger, budget, plans, real workspace, CSV
   const root = dom.window.document.querySelector("#app"); root.replaceChildren(); root.className = "echoink-lifestyle-view echoink-mobile-finance";
   const body = root.createDiv(); const workspace = new FinanceWorkspace(service); workspace.render(body);
   const click = label => [...root.querySelectorAll("button")].find(b => b.textContent.trim().startsWith(label)).click();
-  click("收支明细"); assert.ok(root.textContent.includes("合成商户")); root.querySelector(".echoink-finance-export").click(); await settle();
+  click("明细"); assert.ok(root.textContent.includes("合成商户")); root.querySelector(".echoink-finance-export").click(); await settle();
   const exported = [...state.files.entries()].find(([path]) => path.endsWith(".csv")); assert.ok(exported); assert.ok(exported[1].includes("合成商户"));
-  click("月度预算"); assert.ok(root.textContent.includes("预算")); click("账单计划"); assert.ok(root.textContent.includes("测试计划"));
+  click("计划"); assert.ok(root.textContent.includes("月度预算")); assert.ok(root.textContent.includes("测试计划"), "special budgets live on the plan page"); click("报告"); assert.ok(root.textContent.includes("结账"));
   qualified = false; assert.equal(finance.accessState().canEnter, true); await assert.rejects(finance.saveBillPlan({ id: "other", name: "禁止", budgetCents: 5000 }), /PRO_REQUIRED/);
   workspace.detach(); root.replaceChildren(); await services.dispose();
 });

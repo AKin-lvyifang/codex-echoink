@@ -18,7 +18,14 @@ export async function runMobileSettingsScenarios(api, win) {
   const store = new api.MobileStore(memory.adapter, "plugin/mobile", `settings-${tablet}`); await store.load();
   const provider = api.mobileProvider("deepseek"); Object.assign(provider,{apiKey:"synthetic-test-only",models:[api.mobileModel("deepseek-chat")],defaultModelId:"deepseek-chat"});
   const settings = api.loadMobileSettings({apiProviders:[provider],activeApiProviderId:provider.id,defaultModel:provider.defaultModelId});
-  const requests=[]; const request = async req => { requests.push(req.method); return req.method === 'GET' ? {status:200,json:{data:[{id:'verified-model',name:'Verified model',supports_tool_calling:true,context_window:128000,max_output_tokens:8192}]}} : answer('openai-completions','OK'); };
+  const requests=[];
+  let openCodeGoFailure;
+  const request = async req => {
+    requests.push(req.method);
+    if (req.method === 'GET') return {status:200,json:{data:[{id:'verified-model',name:'Verified model',supports_tool_calling:true,context_window:128000,max_output_tokens:8192}]}};
+    if (new URL(req.url).hostname === 'opencode.ai' && openCodeGoFailure) return openCodeGoFailure;
+    return answer('openai-completions','OK');
+  };
   const runtime = new api.MobileRuntime(memory.app,store,()=>settings,request); await runtime.initialize();
   const plugin = new api.EchoInkMobilePlugin(memory.app,{id:'codex-echoink',version:'M7 test'});
   const syntheticProAccess={...api.createUnavailableAccountAdapter(),checkCapability:()=>true,requireCapability(){},subscribe:()=>()=>{}};
@@ -155,6 +162,35 @@ export async function runMobileSettingsScenarios(api, win) {
    await test('default model continues to open its selection page without repeated scope copy',async()=>{
     await openCategory('模型');
     await click(root,'deepseek-chat');assert.equal(button(root,'deepseek-chat').closest('[data-page-id]')?.dataset.pageId,tablet?'ipad-model-default':'iphone-settings-default-model','default model keeps its own page');
+    await click(root,'返回');
+   });
+   await test('OpenCode Go test-and-save explains subscription and allowance without persisting the draft',async()=>{
+    await plugin.showPage('providers'); await click(root,'添加模型服务'); await click(root,'OpenCode Go');
+    const key = 'synthetic-never-real-opencode-key';
+    const input = field(win,root,'API Key',key);
+    await click(root,'获取模型');
+    await until(()=>root.textContent.includes('Verified model'),'Go model is available');
+    const model = [...root.querySelectorAll('input[type="checkbox"]')].find(node=>visible(node)&&node.closest('label')?.textContent.includes('Verified model'));
+    assert.ok(model);
+    if (!model.checked) {
+      model.checked = true;
+      model.dispatchEvent(new win.Event('change',{bubbles:true}));
+    }
+    const before = JSON.stringify(settings.apiProviders), saves = saved.length;
+    for (const [status, type, expected] of [[403,'EntitlementError','未开通该模型服务的套餐'],[429,'GoUsageLimitError','套餐额度已用完']]) {
+      openCodeGoFailure = {status,json:{type:'error',error:{type,message:`raw upstream diagnostic ${key}`}}};
+      const posts = requests.filter(method=>method==='POST').length;
+      await click(root,'测试并保存');
+      await until(()=>root.textContent.includes(expected),`OpenCode Go shows the explanation for ${status}`);
+      assert.equal(requests.filter(method=>method==='POST').length,posts+1);
+      assert.equal(input.value,key);
+      assert.doesNotMatch(root.textContent,/raw upstream diagnostic|synthetic-never-real-opencode-key/u);
+      assert.equal(JSON.stringify(settings.apiProviders),before);
+      assert.equal(saved.length,saves);
+    }
+    openCodeGoFailure = undefined;
+    await click(root,'取消');
+    if (tablet) await click(root,'放弃修改');
     await click(root,'返回');
    });
    await test('model form parameters and return preserve the exact connection draft',async()=>{

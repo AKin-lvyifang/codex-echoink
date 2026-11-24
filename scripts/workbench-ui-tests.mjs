@@ -1,5 +1,5 @@
 import { isDisposableTestRoot } from "./disposable-test-root.mjs";
-import { mkdir, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,7 +10,6 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const temporaryVaults = await realpath(path.join(os.homedir(), "EchoInk-TestVaults/90-任务临时"));
 const fixture = await realpath(process.env.ECHOINK_WORKBENCH_TEST_ROOT || path.join(temporaryVaults, "工作台改版-20261017"));
 if (!isDisposableTestRoot(fixture)) throw new Error("Workbench UI fixtures must be inside EchoInk-TestVaults/90-任务临时");
-const directory = path.join(fixture, ".p5-ui-tests");
 const require = createRequire(import.meta.url);
 const { JSDOM } = require("jsdom");
 const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true, url: "https://workbench-fixture.invalid" });
@@ -34,12 +33,13 @@ Object.assign(win.Element.prototype, {
 });
 win.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 globalThis.getComputedStyle = win.getComputedStyle.bind(win);
-await mkdir(directory, { recursive: true });
+const directory = await mkdtemp(path.join(fixture, ".p5-ui-tests-"));
 try {
+  await symlink(path.join(root, "node_modules"), path.join(directory, "node_modules"), "dir");
   const output = path.join(directory, "workbench-ui.mjs");
   await esbuild.build({
     entryPoints: [path.join(root, "src/tests/workbench-ui.ts")], outfile: output, bundle: true, platform: "node", target: "node22", format: "esm",
-    banner: { js: 'import {createRequire} from "node:module"; const require = createRequire(import.meta.url);' },
+    banner: { js: 'import {createRequire as createWorkbenchUiRequire} from "node:module"; const require = createWorkbenchUiRequire(import.meta.url);' },
     alias: { obsidian: path.join(root, "src/tests/obsidian-shim.ts") },
     loader: { ".svg": "dataurl", ".webp": "dataurl", ".md": "text" },
     external: ["@earendil-works/pi-agent-core", "@earendil-works/pi-ai", "@earendil-works/pi-coding-agent"],
@@ -48,12 +48,15 @@ try {
       build.onLoad({ filter: /.*/, namespace: "p5-ui" }, () => ({ contents: "export const getWorkbenchDataService = () => globalThis.__p5WorkbenchPort;", loader: "js" }));
     } }]
   });
-  await (await import(pathToFileURL(output).href)).runWorkbenchUiTests();
+  const suite = await import(pathToFileURL(output).href);
+  await suite.runWorkbenchUiTests();
+  await suite.runWorkbenchFinancePreparationTest(fixture);
   if (process.argv.includes("--typecheck")) {
     const ts = require("typescript");
     const config = ts.readConfigFile(path.join(root, "tsconfig.json"), ts.sys.readFile);
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
-    const owned = ["src/home/workbench-view.ts", "src/home/module-navigation.ts", "src/home/home-view.ts", "src/tests/workbench-ui.ts"].map(file => path.join(root, file));
+    const owned = ["src/home/workbench-view.ts", "src/home/workbench-module-panel.ts", "src/home/module-navigation.ts", "src/home/home-view.ts",
+      "src/lifestyle/service.ts", "src/settings/workbench-navigation-section.ts", "src/tests/workbench-ui.ts"].map(file => path.join(root, file));
     const program = ts.createProgram(owned, { ...parsed.options, noEmit: true });
     const diagnostics = ts.getPreEmitDiagnostics(program);
     const relevant = diagnostics.filter(item => !item.file || owned.includes(item.file.fileName));

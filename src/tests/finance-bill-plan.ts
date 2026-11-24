@@ -103,7 +103,7 @@ export async function runFinanceBillPlanTests(): Promise<void> {
     assert.ok(restored.properties["note.bill_plan_id"]); assert.equal(restored.filters, "USER FILTER");
     assert.deepEqual(restored.views[0].order, custom.views[0].order);
     await service.ledger.reload(); assert.equal(service.entries().find(e => e.id === "free")!.billPlanId, "trip");
-    assert.ok(financeEntryCsv(service.entries()).includes('"账单计划 ID"')); assert.ok(financeEntryCsv(service.entries()).includes('"trip"'));
+    assert.ok(financeEntryCsv(service.entries()).includes('"专项预算 ID"')); assert.ok(financeEntryCsv(service.entries()).includes('"trip"'));
     const filters = { ...emptyFinanceBillPlanFilters(), from: "2026-10-01", to: "2026-10-02", search: "商户", category: "餐饮", merchant: "商户b", account: "银行卡", kind: "expense" as const };
     assert.deepEqual(filterFinanceBillPlanEntries(rows, filters).map(e => e.id), ["b"]);
     const selection = new Set(["a", "b", "free"]); reconcileFinanceBillPlanSelection(selection, [rows[1], rows[8]], "trip"); assert.deepEqual([...selection], ["free"]);

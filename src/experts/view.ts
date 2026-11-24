@@ -11,6 +11,7 @@ export interface ExpertHallViewHost {
   dismiss(agentId: string): Promise<void>;
   open(agentId: string): Promise<void>;
   upgrade(): Promise<void>;
+  english?(): boolean;
 }
 export type ExpertHallHost = ExpertHallViewHost;
 type ExpertHallViewState = { expertId?: string; aboutId?: string };
@@ -22,7 +23,7 @@ export class ExpertHallView extends ItemView {
   private opened = false;
   constructor(leaf: WorkspaceLeaf, private readonly host: ExpertHallViewHost) { super(leaf); }
   getViewType(): string { return EXPERT_HALL_VIEW_TYPE; }
-  getDisplayText(): string { return "专家"; }
+  getDisplayText(): string { return this.host.english?.() ? "Experts" : "专家"; }
   getIcon(): string { return "sparkles"; }
   getState(): ExpertHallViewState { return this.expertId ? { expertId: this.expertId } : {}; }
   async setState(state: ExpertHallViewState, result: ViewStateResult): Promise<void> {
@@ -44,6 +45,7 @@ export class ExpertHallView extends ItemView {
       getHiredIds: () => this.host.getAgents().flatMap(agent => agent.kind === "expert" && agent.expert?.hired ? [agent.expert.expertId] : []),
       onHire: expert => this.host.hire(expert.id),
       onDismiss: expert => this.host.dismiss(this.agentId(expert.id)),
+      english: () => this.host.english?.() ?? false,
       onUpgrade: () => this.host.upgrade(),
       onViewChange: expertId => { this.expertId = expertId; this.app.workspace.requestSaveLayout(); },
     });
@@ -58,9 +60,15 @@ export class ExpertHallView extends ItemView {
     if (!hall || !this.opened) return;
     await hall.refresh(forceCatalog);
   }
+  refreshLanguage(): void {
+    this.hall?.redraw();
+    const title = (this as ItemView & { titleEl?: HTMLElement }).titleEl;
+    if (title) title.textContent = this.getDisplayText();
+    (this.leaf as WorkspaceLeaf & { updateHeader?: () => void }).updateHeader?.();
+  }
   private agentId(expertId: string): string {
     const agent = this.host.getAgents().find(item => item.kind === "expert" && item.expert?.expertId === expertId && item.expert.hired);
-    if (!agent) throw new Error("此专家尚未聘请，请刷新后重试。");
+    if (!agent) throw new Error(this.host.english?.() ? "This expert has not been hired. Refresh and try again." : "此专家尚未聘请，请刷新后重试。");
     return agent.id;
   }
 }

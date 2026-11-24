@@ -1,8 +1,8 @@
 import type { DataAdapter } from "obsidian";
 import { LifestyleStoreCore, type LifestyleFilePort } from "../lifestyle/store-core";
-import { readMobileFile, replaceMobileFile } from "./replace-file";
+import { readMobileFile, replaceMobileFile, sameMobileJson } from "./replace-file";
 
-export function mobileAtomicFilePort(adapter: DataAdapter, file: string): LifestyleFilePort {
+export function mobileAtomicFilePort(adapter: DataAdapter, file: string, same = (left: string | null, right: string | null) => left === right): LifestyleFilePort {
   const directory = file.slice(0, file.lastIndexOf("/"));
   const replacement = `${file}.finance-replace-backup.json`;
   let expected: string | null | undefined;
@@ -31,11 +31,11 @@ export function mobileAtomicFilePort(adapter: DataAdapter, file: string): Lifest
       if (expected === undefined) expected = current;
       const conflict = () => new Error("财务资料已变化，请重新打开账本后再编辑；原资料已保留。");
       const effectiveExpected = expectedContent === undefined ? expected : expectedContent;
-      if (current !== effectiveExpected) throw conflict();
+      if (!same(current, effectiveExpected)) throw conflict();
       // A completed/interrupted install can leave an older recovery copy. The
       // current ledger stays in place until the next prepared replacement.
       if (current !== null && await adapter.exists(replacement)) await adapter.remove(replacement);
-      await replaceMobileFile(adapter, file, content, effectiveExpected, replacement, conflict);
+      await replaceMobileFile(adapter, file, content, current, replacement, conflict, same);
       expected = content;
       // Installation has succeeded; cleanup failure must not report a failed
       // save while the store continues showing its previous snapshot.
@@ -44,4 +44,6 @@ export function mobileAtomicFilePort(adapter: DataAdapter, file: string): Lifest
   };
   return port;
 }
-export function mobileLifestyleStore(adapter: DataAdapter, file: string): LifestyleStoreCore { return new LifestyleStoreCore(mobileAtomicFilePort(adapter, file)); }
+export function mobileLifestyleStore(adapter: DataAdapter, file: string): LifestyleStoreCore {
+  return new LifestyleStoreCore(mobileAtomicFilePort(adapter, file, sameMobileJson));
+}

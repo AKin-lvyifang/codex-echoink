@@ -22,6 +22,17 @@
 .echoink-ipad .pd-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .echoink-ipad .pd-empty { padding: 32px 0; text-align: center; color: var(--pd-secondary); font-size: calc(var(--pd-ui-font) * 0.875); }
 .echoink-ipad .pd-error { margin-top: 12px; color: var(--text-error); white-space: pre-wrap; overflow-wrap: anywhere; }
+.echoink-ipad .echoink-task-file-recovery:not([hidden]) {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 12px;
+  padding: 0 16px;
+  color: var(--text-normal);
+}
+.echoink-ipad .echoink-task-file-recovery > span { flex: 1 1 15em; min-width: 0; overflow-wrap: anywhere; }
+.echoink-ipad .echoink-task-file-recovery > button.pd-button { margin-inline-start: auto; }
 .echoink-ipad .pd-error[hidden],
 .echoink-ipad .pd-agent-form [hidden] { display: none; }
 .echoink-ipad button.pd-button {

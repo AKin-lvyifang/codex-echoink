@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { WorkspaceLeaf, TFile } from "obsidian";
-import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, WORKBENCH_NAVIGATION_DELAY_MS, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
+import { defaultWorkbenchNavigation, isDefaultWorkbenchNavigation, normalizeWorkbenchNavigation } from "../settings/workbench-navigation-settings";
+import { renderWorkbenchNavigationSettings } from "../settings/workbench-navigation-section";
+import { EchoInkWorkbenchView, VIEW_TYPE_ECHOINK_WORKBENCH, groupWorkbenchTasks, workbenchInlineQuestion } from "../home/workbench-view";
+import { WorkbenchModulePanel } from "../home/workbench-module-panel";
 import { openWorkbenchModule } from "../home/module-navigation";
+import { LifestyleService } from "../lifestyle/service";
+import type { OriginCheckElement } from "../settings/origin-controls";
 import { DEFAULT_SETTINGS, createApiProviderConfig, createApiProviderModelConfig } from "../settings/settings";
 import { ReleaseUpdateController } from "../settings/release-update";
 import { toolCallRecoveryGuidance } from "../agents/tool-call-recovery";
@@ -145,16 +150,31 @@ export async function runWorkbenchUiTests(): Promise<void> {
   const container = document.body.createDiv(); container.appendChild(content);
   Object.defineProperty(container, "getClientRects", { value: () => [{ width: 900, height: 800 }] });
   Object.defineProperty(document, "hasFocus", { configurable: true, value: () => hasFocus });
-  const view = new EchoInkWorkbenchView(new WorkspaceLeaf(), plugin);
+  const leaf = new WorkspaceLeaf();
+  const view = new EchoInkWorkbenchView(leaf, plugin);
+  const history: unknown[] = [];
+  Object.assign(leaf, { getHistoryState: () => view.getState(), history: { pushState(state: unknown) { history.push(state); } } });
   const cleanups: (() => void)[] = [];
-  Object.assign(view, { contentEl: content, containerEl: container, app: host.app,
+  // Module pages have their own suites; here the panel only records what the workbench asked it to show.
+  const panelShows: string[] = [];
+  let panelCurrent: string | null = null;
+  let panelOpen: ((id: string) => Promise<void> | undefined) | undefined;
+  const fakePanel = { get current() { return panelCurrent ? {} : null; }, get currentId() { return panelCurrent; },
+    async show(id: string) {
+      if (panelCurrent === id) return true;
+      panelShows.push(id);
+      const loading = panelOpen?.(id);
+      if (loading) await loading;
+      else panelCurrent = id;
+      return true;
+    }, async clear() { panelCurrent = null; } };
+  Object.assign(view, { contentEl: content, containerEl: container, app: host.app, createModulePanel: () => fakePanel,
     register: (dispose: () => void) => cleanups.push(dispose), registerEvent() {},
     registerDomEvent(element: EventTarget, type: string, callback: EventListener, options?: AddEventListenerOptions) { element.addEventListener(type, callback, options); cleanups.push(() => element.removeEventListener(type, callback, options)); }
   });
   const button = (key: string) => Array.from(content.querySelectorAll<HTMLButtonElement>("[data-wb-focus]")).find(node => node.dataset.wbFocus === key)!;
   const click = async (key: string) => {
     const target = button(key); target.click();
-    if (target.hasAttribute("data-module")) await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
     await tick();
   };
   try {
@@ -274,33 +294,81 @@ export async function runWorkbenchUiTests(): Promise<void> {
     memoryError = null; host.settings.settingsLanguage = "zh-CN"; await view.refresh();
     await click("new-task"); assert.deepEqual(calls.at(-1), ["list", GENERAL_ASSISTANT_ID]);
     await click("settings"); assert.deepEqual(calls.at(-1), ["settings"]);
-    assert.deepEqual(Array.from(content.querySelectorAll<HTMLElement>('.wb-modules [data-module]')).map(node => node.dataset.module),
-      ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts", "news"],
-      "navigation keeps the existing module order followed by Experts and News");
+    const navOrder = () => Array.from(content.querySelectorAll<HTMLElement>('.wb-modules [data-module]')).map(node => node.dataset.module);
+    const overviewEl = content.querySelector<HTMLElement>('[data-wb="overview"]')!, panelEl = content.querySelector<HTMLElement>('[data-wb="module-panel"]')!;
+    const onModule = (id: string) => {
+      assert.equal(overviewEl.hidden, true, `${id}: the overview steps aside`); assert.equal(overviewEl.inert, true);
+      assert.equal(panelEl.hidden, false); assert.equal(button(`module-${id}`).getAttribute("aria-current"), "page");
+      assert.equal(button("module-overview").hasAttribute("aria-current"), false);
+    };
+    const onOverview = () => {
+      assert.equal(overviewEl.hidden, false); assert.equal(overviewEl.inert, false); assert.equal(panelEl.hidden, true);
+      assert.equal(button("module-overview").getAttribute("aria-current"), "page");
+    };
+    assert.deepEqual(navOrder(), ["overview", "journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts", "news"],
+      "the overview leads; modules keep the existing order followed by Experts and News");
+    onOverview();
     const journalButton = button("module-journal"), callsBeforeNavigation = calls.length;
     journalButton.click(); journalButton.click(); await tick();
     assert.ok(journalButton.classList.contains("is-nav-animating"), "activation starts playback immediately");
-    assert.equal(calls.length, callsBeforeNavigation, "module opening waits for the icon lead-in");
-    await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
-    assert.deepEqual(calls.slice(callsBeforeNavigation), [["journal"]], "rapid activations open the module only once");
+    assert.deepEqual(panelShows, ["journal"], "rapid activations show the module once, below the navigation, without waiting");
+    assert.equal(calls.length, callsBeforeNavigation, "in-page navigation opens no tab");
+    onModule("journal");
+    assert.deepEqual(view.getState(), { module: "journal" }, "the panel is part of the view state, so Obsidian back/forward follow it");
     journalButton.dispatchEvent(new Event("animationend"));
     assert.equal(journalButton.classList.contains("is-nav-animating"), false, "animation completion clears its playback state");
     await click("module-journal");
     assert.ok(journalButton.classList.contains("is-nav-animating"), "later activation restarts the same icon");
+    assert.deepEqual(panelShows, ["journal"], "choosing the current module keeps its page");
     (view as unknown as { foregroundChanged(active: boolean): void }).foregroundChanged(false);
     assert.equal(journalButton.classList.contains("is-nav-animating"), false, "leaving the workbench clears playback before return");
     (view as unknown as { foregroundChanged(active: boolean): void }).foregroundChanged(true);
+    button("module-todos").dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })); await tick();
+    assert.deepEqual(calls.at(-1), ["todos"], "Cmd-click keeps opening the module in its own tab");
+    button("module-finance").dispatchEvent(new MouseEvent("auxclick", { bubbles: true, button: 1 })); await tick();
+    assert.deepEqual(calls.at(-1), ["lifestyle", "finance"], "middle-click also opens a tab");
+    onModule("journal");
+    const result = { history: false };
+    await view.setState({ module: "overview" }, result);
+    assert.equal(result.history, true, "a panel change is recorded in the leaf history"); onOverview();
+    await view.setState({ module: "todos" }, { history: false }); onModule("todos");
+    await view.setState({ module: "unknown-module" }, { history: false }); onOverview();
+    history.length = 0;
+    let failSlowPanel!: () => void;
+    panelOpen = id => id === "journal" ? new Promise((_, reject) => { failSlowPanel = () => reject(new Error("old page failed")); }) : undefined;
+    await click("module-journal");
+    onModule("journal");
+    assert.deepEqual(history, [{ module: "overview" }], "Back is recorded when the slow selection becomes visible");
+    await click("module-todos");
+    onModule("todos");
+    const staleNotices = openTestNoticeMessages.length;
+    failSlowPanel(); await tick();
+    assert.deepEqual(history, [{ module: "overview" }, { module: "journal" }], "a stale open adds no late history and loses no previous step");
+    assert.equal(openTestNoticeMessages.length, staleNotices, "a stale failure does not notify on the current module");
+    panelOpen = id => id === "journal" ? Promise.reject(new Error("page open failed")) : undefined;
+    await click("module-journal");
+    const beforeRetry = history.length;
+    panelOpen = undefined;
+    await click("module-journal");
+    assert.equal(panelCurrent, "journal", "clicking the selected module retries a failed open");
+    assert.equal(history.length, beforeRetry, "a retry of the same module adds no history");
+    await click("module-overview");
     const beforeExperts = JSON.stringify(host.settings.agentRegistry);
-    assert.equal(button("module-experts").hidden, false, "PRO discovers the expert tab by default");
-    await click("module-experts"); assert.deepEqual(calls.at(-1), ["experts"]);
-    await click("module-news"); await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
-    assert.deepEqual(calls.at(-1), ["news"], "News opens its own page; the page handles locked and rollout states");
+    assert.ok(button("module-experts"), "PRO discovers the expert tab by default");
+    await click("module-experts"); assert.equal(panelShows.at(-1), "experts"); onModule("experts");
+    await click("module-news"); assert.equal(panelShows.at(-1), "news", "News shows its own page; the page handles locked and rollout states");
     host.settings.expertsEnabled = false; await view.refresh();
-    assert.equal(button("module-experts").hidden, true);
+    assert.equal(button("module-experts"), undefined);
     assert.equal(JSON.stringify(host.settings.agentRegistry), beforeExperts, "hiding the hall never dismisses hired Agents");
     host.settings.expertsEnabled = true; await view.refresh();
-    assert.equal(button("module-experts").hidden, false);
+    assert.ok(button("module-experts"));
     host.settings.expertsEnabled = undefined;
+    host.settings.workbenchNavigation = { order: ["news", "pdf-reading", "english-diary", "knowledge-base", "finance", "todos", "journal", "experts"], hidden: ["english-diary", "experts"] };
+    view.refreshNavigation();
+    assert.deepEqual(navOrder(), ["overview", "news", "pdf-reading", "knowledge-base", "finance", "todos", "journal"], "settings order and hidden entries apply in place; the overview stays first");
+    assert.equal(button("module-news").getAttribute("aria-current"), "page", "the current page keeps its selection after a reorder");
+    host.settings.workbenchNavigation = structuredClone(DEFAULT_SETTINGS.workbenchNavigation); view.refreshNavigation();
+    await click("module-overview"); onOverview();
     for (const module of snapshot.modules) await openWorkbenchModule(plugin, module);
     assert.ok(calls.some(call => JSON.stringify(call) === '["journal"]'));
     assert.ok(calls.some(call => JSON.stringify(call) === '["todos"]'));
@@ -308,7 +376,7 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.ok(calls.some(call => call[0] === "knowledge")); assert.ok(calls.some(call => call[0] === "english"));
 
     pro = false; host.settings.englishDiary.enabled = true; await view.refresh();
-    assert.equal(button("module-experts").hidden, true, "free defaults to a hidden expert tab");
+    assert.equal(button("module-experts"), undefined, "free defaults to a hidden expert tab");
     assert.equal(content.querySelector('[data-module="memory"]'), null, "memory is available from Settings instead of workbench navigation");
     const navLandmark = content.querySelector('[data-wb="modules"]')!;
     assert.equal(navLandmark.hasAttribute("aria-label"), false, "the nav landmark must not trigger a delegated tooltip");
@@ -316,52 +384,68 @@ export async function runWorkbenchUiTests(): Promise<void> {
     for (const id of ["finance", "english-diary", "pdf-reading"] as const) {
       assert.equal(button(`module-${id}`).hidden, false);
       assert.ok(button(`module-${id}`).querySelector('[data-plugin-edition="pro"]'));
-      const previousCalls = calls.length;
+      const previousCalls = calls.length, previousShows = panelShows.length;
       await click(`module-${id}`);
-      const locked = content.querySelector<HTMLElement>(`[data-locked-module="${id}"]`)!;
-      assert.ok(locked); assert.match(locked.textContent ?? "", /PRO 模块/);
-      assert.equal(button(`module-${id}`).classList.contains("is-nav-animating"), false, "locked pages hide the workbench without retaining playback for return");
+      const locked = panelEl.querySelector<HTMLElement>(`[data-locked-module="${id}"]`)!;
+      assert.ok(locked, "the PRO notice shows below the navigation"); assert.match(locked.textContent ?? "", /PRO 模块/);
       assert.equal(calls.length, previousCalls, "locked navigation never opens the module service");
-      assert.equal(content.querySelector<HTMLElement>('[data-wb="page"]')!.inert, true);
+      assert.equal(panelShows.length, previousShows, "locked navigation never mounts the module page");
+      onModule(id);
+      assert.notEqual(content.querySelector<HTMLElement>('[data-wb="page"]')!.inert, true, "the navigation stays usable");
+      button(`module-${id}`).dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })); await tick();
+      assert.equal(calls.length, previousCalls, "Cmd-click on a locked module keeps the notice instead of opening a tab");
       await click("module-lock-login"); assert.deepEqual(calls.at(-1), ["account", "login"]);
       await click("module-lock-benefits"); assert.deepEqual(calls.at(-1), ["account", "benefits"]);
-      await click("module-lock-back"); assert.equal(document.activeElement, button(`module-${id}`));
+      await click("module-lock-back"); onOverview();
     }
     host.settings.lifestyle.finance.enabled = false; await view.refresh();
     assert.equal(button("module-finance").hidden, false);
     const disabledCalls = calls.length;
     await click("module-finance"); assert.equal(calls.length, disabledCalls, "disabled PRO navigation cannot open the module service");
-    assert.ok(content.querySelector('[data-locked-module="finance"]'), "PRO gating precedes setup");
-    await click("module-lock-back");
+    assert.ok(panelEl.querySelector('[data-locked-module="finance"]'), "PRO gating precedes setup");
+    await click("module-overview");
     pro = true; host.settings.pdfReading.enabled = false;
     snapshot = { ...snapshot, modules: ["todos"] }; await view.refresh();
     const configured = { ...host.settings };
     Object.assign(host.settings, structuredClone(DEFAULT_SETTINGS)); await view.refresh();
-    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 8, "default/unconfigured modules remain discoverable independently of snapshot.modules");
+    assert.equal(content.querySelectorAll('[data-module]:not([hidden])').length, 9, "default/unconfigured modules remain discoverable independently of snapshot.modules");
     Object.assign(host.settings, configured); await view.refresh();
-    for (const [id, destination] of [["journal", "journal"], ["knowledge-base", "knowledge"]] as const) {
+    for (const id of ["journal", "knowledge-base"] as const) {
       await click(`module-${id}`);
       assert.equal(content.querySelector('[data-wb="module-setup"]'), null, "basic modules open even without configured directories");
-      assert.deepEqual(calls.at(-1), [destination]);
+      assert.equal(panelShows.at(-1), id);
     }
     for (const id of ["finance", "pdf-reading"] as const) {
-      const before = calls.length; await click(`module-${id}`);
-      const setup = content.querySelector<HTMLElement>(`[data-setup-module="${id}"]`)!;
+      const before = calls.length, shows = panelShows.length; await click(`module-${id}`);
+      const setup = panelEl.querySelector<HTMLElement>(`[data-setup-module="${id}"]`)!;
       assert.ok(setup); assert.equal(setup.querySelectorAll(".is-primary").length, 1);
       assert.equal(calls.length, before, "setup landing never starts a module or reads its data");
+      assert.equal(panelShows.length, shows);
       await click("module-setup-settings"); assert.deepEqual(calls.at(-1), ["module-settings", id]);
-      await click("module-setup-back");
+      await click("module-setup-back"); onOverview();
     }
     host.settings.englishDiary.enabled = false; await click("module-english-diary");
-    assert.match(content.querySelector('[data-wb="module-setup"]')?.textContent ?? "", /英文日记尚未开启/);
-    host.settings.englishDiary.enabled = true; await view.refresh();
+    assert.match(panelEl.querySelector('[data-wb="module-setup"]')?.textContent ?? "", /英文日记尚未开启/);
+    host.settings.englishDiary.enabled = true; await view.refresh(); await tick();
     assert.equal(content.querySelector('[data-wb="module-setup"]'), null, "configuration completion opens the actual module");
-    assert.deepEqual(calls.at(-1), ["english"]);
+    assert.equal(panelShows.at(-1), "english-diary");
     host.settings.pdfReading.enabled = true;
     snapshot = { ...snapshot, modules: ["journal", "todos", "finance", "knowledge-base", "english-diary", "pdf-reading"] };
     host.settings.lifestyle.finance.enabled = true; pro = true; await view.refresh();
     assert.equal(button("module-finance").querySelector('[data-plugin-edition="pro"]'), null);
-    await click("module-finance"); assert.deepEqual(calls.at(-1), ["lifestyle", "finance"]);
+    await click("module-finance"); assert.equal(panelShows.at(-1), "finance");
+    const beforeGateUpdates = history.length;
+    pro = false; view.refreshIfSettingsChanged(); await tick();
+    assert.equal(panelCurrent, null);
+    assert.ok(panelEl.querySelector('[data-locked-module="finance"]'), "a mounted finance page follows the workbench lock after PRO expires");
+    pro = true; view.refreshIfSettingsChanged(); await tick();
+    assert.equal(panelCurrent, "finance", "regaining PRO restores the selected module");
+    host.settings.lifestyle.finance.enabled = false; view.refreshIfSettingsChanged(); await tick();
+    assert.equal(panelCurrent, null);
+    assert.ok(panelEl.querySelector('[data-setup-module="finance"]'), "manual disable replaces a mounted module with the same setup state as a fresh entry");
+    assert.equal(history.length, beforeGateUpdates, "changing entry eligibility does not add a navigation step");
+    host.settings.lifestyle.finance.enabled = true; view.refreshIfSettingsChanged(); await tick();
+    await click("module-overview"); onOverview();
     host.settings.englishDiary.enabled = false;
 
     const completed = Object.freeze({ ...entry("done", "completed"), unreadAnswerAt: Date.now() });
@@ -597,11 +681,13 @@ export async function runWorkbenchUiTests(): Promise<void> {
     assert.equal(content.querySelectorAll('[data-wb-group] .wb-count:not([hidden])').length, 0);
     failTasks = failData = false; pro = false; host.settings.englishDiary.enabled = true;
     snapshot = { ...snapshot, issues: [] }; await view.refresh();
+    // Hiding one module leaves the overview plus the same six widths this layout case has always measured.
+    host.settings.workbenchNavigation = { ...structuredClone(DEFAULT_SETTINGS.workbenchNavigation), hidden: ["journal"] }; view.refreshNavigation();
     const header = content.querySelector<HTMLElement>(".wb-header")!, nav = content.querySelector<HTMLElement>(".wb-modules")!;
     const navStyles = document.createElement("style"); navStyles.textContent = ".wb-header { column-gap: 16px } .wb-modules { column-gap: 4px }"; document.head.append(navStyles);
     cleanups.push(() => navStyles.remove());
     const navButtons = Array.from(nav.querySelectorAll<HTMLButtonElement>("[data-module]")), more = content.querySelector<HTMLElement>('[data-wb="module-more"]')!;
-    [80, 80, 140, 105, 160, 160, 80, 60].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
+    [80, 80, 140, 105, 160, 160, 60].forEach((width, index) => { navButtons[index].getBoundingClientRect = () => ({ width } as DOMRect); });
     more.getBoundingClientRect = () => ({ width: 74 } as DOMRect);
     let withoutWeather = 1020;
     nav.getBoundingClientRect = () => ({ width: Math.max(1, withoutWeather
@@ -627,22 +713,94 @@ export async function runWorkbenchUiTests(): Promise<void> {
     const beforeClose = calls.length;
     button("module-journal")?.click(); await tick();
     await view.onClose();
-    await new Promise(resolve => setTimeout(resolve, WORKBENCH_NAVIGATION_DELAY_MS + 20));
-    assert.equal(calls.length, beforeClose, "closing the view cancels a pending module opening");
+    assert.equal(panelCurrent, null, "closing the workbench closes the module page it was showing");
+    assert.equal(calls.length, beforeClose, "closing the view opens nothing else");
     for (const cleanup of cleanups.reverse()) cleanup(); container.remove();
     assert.equal(subscribers.size, 0); assert.equal(dataSubscribers.size, 0); assert.equal(activityListeners.size, 0);
   }
   await runDesktopModuleSettingsTests();
   await runGuidedSetupModelDependencyTest();
+  await runWorkbenchNavigationSettingsTest();
+}
+async function runWorkbenchNavigationSettingsTest(): Promise<void> {
+  assert.deepEqual(normalizeWorkbenchNavigation(undefined), defaultWorkbenchNavigation(), "missing settings fall back to the product order");
+  const saved = normalizeWorkbenchNavigation({ order: ["news", "removed-module", "todos", "news", 3], hidden: ["todos", "overview", "todos", "gone"] });
+  assert.deepEqual(saved.order, ["news", "todos", "journal", "finance", "knowledge-base", "english-diary", "pdf-reading", "experts"],
+    "unknown and repeated entries drop; entries the saved order lacks join at the end");
+  assert.deepEqual(saved.hidden, ["todos"], "only real modules can be hidden; the overview never is");
+  assert.equal(isDefaultWorkbenchNavigation(defaultWorkbenchNavigation()), true);
+  assert.equal(isDefaultWorkbenchNavigation(saved), false);
+  const settings = { workbenchNavigation: defaultWorkbenchNavigation(), expertsEnabled: false, settingsLanguage: "zh-CN" };
+  const writes: { candidate: typeof saved; finish(): void; fail(): void }[] = [];
+  let onDisk = structuredClone(settings.workbenchNavigation);
+  const host = { settings, refreshWorkbenchNavigation() {}, persistPiNativeSettings: () => new Promise<void>((resolve, reject) => {
+    const candidate = structuredClone(settings.workbenchNavigation);
+    writes.push({ candidate, finish() { onDisk = candidate; resolve(); }, fail() { reject(new Error("fixture write failure")); } });
+  }) } as unknown as CodexForObsidianPlugin;
+  const page = document.body.createDiv();
+  try {
+    renderWorkbenchNavigationSettings(page, host, true);
+    const journalToggle = () => page.querySelector<OriginCheckElement>('[data-workbench-nav-toggle="journal"]')!;
+    const hideJournal = () => {
+      const toggle = journalToggle(); toggle.checked = false; toggle.dispatchEvent(new Event("change"));
+    };
+    const moveTodosUp = () => page.querySelector('[data-workbench-nav-handle="todos"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp" }));
+    hideJournal(); moveTodosUp(); await tick();
+    assert.equal(writes.length, 1, "quick changes wait for the preceding durable write");
+    assert.deepEqual(writes[0].candidate.hidden, ["journal"]);
+    assert.equal(writes[0].candidate.order[0], "journal");
+    writes[0].fail(); await tick();
+    assert.deepEqual(writes[1].candidate.hidden, [], "the queued reorder does not carry the failed toggle");
+    assert.equal(writes[1].candidate.order[0], "todos");
+    assert.equal(journalToggle().checked, true, "the failed toggle recovers in the live settings section");
+    writes[1].finish(); await tick();
+    hideJournal(); await tick();
+    writes[2].fail(); await tick();
+    assert.deepEqual(settings.workbenchNavigation, onDisk, "failure restores the most recent durable order");
+    assert.equal(journalToggle().checked, true);
+  } finally { page.remove(); }
+  console.log("PASS workbench navigation settings: defaults, durable saves and recovery across queued toggle/reorder");
+}
+
+export async function runWorkbenchFinancePreparationTest(fixture: string): Promise<void> {
+  const workspace = { layoutReady: false, tabOpens: 0, getLeaf() { this.tabOpens++; return new WorkspaceLeaf(); }, setActiveLeaf() {} };
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.lifestyle.finance.enabled = true;
+  const host = { settings, app: { workspace }, getVaultPath: () => fixture, getPluginDataDirName: () => ".obsidian/plugins/finance-fixture" };
+  const plugin = host as unknown as CodexForObsidianPlugin;
+  const service = new LifestyleService(plugin);
+  Object.assign(host, { lifestyle: service });
+  let starts = 0;
+  let finish!: () => void;
+  service.finance.initialize = () => { starts++; return new Promise(resolve => { finish = resolve; }); };
+  const element = document.body.createDiv();
+  const panel = new WorkbenchModulePanel(element, new WorkspaceLeaf(), plugin);
+  try {
+    assert.equal(await panel.show("finance"), false, "the embedded page cannot open before the workspace layout is ready");
+    assert.equal(starts, 0);
+    workspace.layoutReady = true;
+    const opening = panel.show("finance"); await tick();
+    assert.equal(starts, 1);
+    assert.equal(panel.current, null, "the embedded view waits for ledger initialization");
+    await panel.clear(); finish();
+    assert.equal(await opening, false);
+    assert.equal(element.childElementCount, 0, "finance preparation cannot mount after leaving the panel");
+    const standalone = service.open("finance"); await tick();
+    assert.equal(workspace.tabOpens, 0);
+    finish(); await standalone;
+    assert.equal(workspace.tabOpens, 1, "the standalone route preserves enabled finance access for read-only users");
+  } finally { await panel.clear(); service.dispose(); element.remove(); }
+  console.log("PASS finance open: shared readiness, stale embedded preparation and standalone read-only entry");
 }
 async function runGuidedSetupModelDependencyTest(): Promise<void> {
   const bindings = emptyKnowledgeFolderBindings();
   for (const [role, path] of [["raw", "资料"], ["wiki", "知识成果"], ["inbox", "收件箱"], ["outputs", "产出"], ["journal", "日记"]] as const) {
     Object.assign(bindings.roles[role], { enabled: true, readPaths: [path], writePath: path });
   }
-  const plan = { directoryPlan: { bindings, issues: [], create: [], reuse: [], moves: [] }, sources: [{ path: "资料", noteCount: 1 }],
+  const plan: OnboardingSetupPlan = { directoryPlan: { baseRevision: 0, bindings, issues: [], create: [], reuse: [], moves: [], mode: "build",
+    sources: ["资料"], baseSignature: "fixture", changes: [], excluded: [], fileSnapshot: "fixture" }, sources: [{ path: "资料", noteCount: 1, existingBinding: false }],
     folders: ["资料"], sourceCandidates: [{ path: "资料", noteCount: 1 }], skipped: [], rootNotes: { count: 0, description: "" }, noteCount: 1,
-    outputLocations: { answer: "产出", generation: "产出" }, guide: { path: "产出/开始使用 EchoInk.md", action: "create" } } as OnboardingSetupPlan;
+    outputLocations: { answer: "产出", generation: "产出" }, guide: { path: "产出/开始使用 EchoInk.md", action: "create" } };
   for (const connected of [false, true]) {
     const unexpectedWrite = async (): Promise<never> => { throw new Error("Reviewing choices must not execute setup"); };
     const options: PaperGuideModalOptions = { language: "zh-CN",

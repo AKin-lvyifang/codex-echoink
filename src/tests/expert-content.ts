@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { ExpertContentService } from "../experts/service";
-import { MAX_EXPERT_PACKAGE_BYTES, parseExpertCatalog, parseExpertDelivery, parseExpertPackage } from "../experts/contracts";
+import { localizeExpert, MAX_EXPERT_PACKAGE_BYTES, parseExpertCatalog, parseExpertDelivery, parseExpertPackage } from "../experts/contracts";
 import { selectExpertSkills } from "../experts/prompt";
 import { createExpertAccountFixture, expertFixtureBody, expertFixtureFiles, fixtureExpertId } from "./expert-delivery-fixture";
 import { JSDOM } from "jsdom";
@@ -280,6 +280,31 @@ export async function runExpertHallTests(): Promise<void> {
       assert.equal(detail.querySelector(".echoink-expert-detail-section-title")!.textContent, "你可以这样问他");
       assert.doesNotMatch(f.container.textContent!, /关于|去聊聊|版权|许可|MIT|PRIVATE/u); assert.equal(f.privateRequests(), 0);
       assert.equal(f.document.activeElement?.textContent, "返回专家");
+    } finally { hall.dispose(); f.dom.window.close(); }
+  });
+  await test("English readers see the catalog's English copy and English controls; Chinese stays the default", async () => {
+    const f = expertUiFixture(), body = { ...expertFixtureBody(), description: "中文详情", source: "community", author: { name: "Lin" }, hireCount: 2 };
+    const en = { name: "Socrates", scene: "Thinking", summary: "Questions you until it is clear", quote: "The unexamined life is not worth living.", tags: ["Clarify an idea", "Test a plan", "Find blind spots"], examples: ["Help me question this plan."] };
+    f.setCatalog(parseExpertCatalog({ catalogVersion: "en", experts: [{ ...body, en }] }, "https://fixture.invalid"));
+    let english = true;
+    const hall = renderExpertHall(f.container, { ...f.options, english: () => english }); await hall.refresh();
+    try {
+      assert.equal(f.container.querySelector(".echoink-expert-hall-title")?.textContent, "Experts");
+      assert.equal(f.container.querySelector(".echoink-expert-name")?.textContent, "Socrates");
+      assert.equal(f.container.querySelector(".echoink-expert-quote")?.textContent, `“${en.quote}”`);
+      assert.deepEqual([...f.container.querySelectorAll(".echoink-expert-tag")].map(node => node.textContent), en.tags);
+      assert.equal(f.controls()[0].textContent, "Hire");
+      assert.equal(f.container.querySelector(".echoink-expert-attribution")?.textContent, "Community · By Lin · 2 hires");
+      await hall.showDetail(body.id);
+      assert.equal(f.container.querySelector(".echoink-expert-detail-summary")?.textContent, en.summary);
+      assert.equal(f.container.querySelector(".echoink-expert-detail-description")?.textContent, body.description);
+      hall.showHall();
+      english = false; hall.redraw();
+      assert.equal(f.container.querySelector(".echoink-expert-attribution")?.textContent, "社区 · 作者：Lin · 2 人聘请");
+      assert.equal(f.container.querySelector(".echoink-expert-name")?.textContent, body.name); assert.equal(f.controls()[0].textContent, "聘请");
+      // Invalid English copy is ignored instead of rejecting the expert.
+      const broken = parseExpertCatalog({ catalogVersion: "bad", experts: [{ ...body, en: { name: "Only a name" } }] }, "https://fixture.invalid").experts[0];
+      assert.equal(broken.en, undefined); assert.equal(localizeExpert(broken, true).name, body.name);
     } finally { hall.dispose(); f.dom.window.close(); }
   });
   await test("the sole action never navigates, prevents duplicate submissions and recovers after a failed hire", async () => {

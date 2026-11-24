@@ -6,7 +6,7 @@ import { isAgentHired, isExpertAgent } from "../../agents/persona";
 import { attachNativeTooltip } from "../native-tooltip";
 import { setIcon } from "obsidian";
 import type { TaskDraft } from "../../agents/task-workspace";
-import type { MobilePermission } from "../../mobile/store";
+import { MobileTaskFileChanged, type MobilePermission } from "../../mobile/store";
 import { selectedModel, supportedProvider } from "../../mobile/settings";
 import { toolCallRecoveryTarget } from "../../agents/tool-call-recovery";
 import { renderProviderBrandIcon } from "../../settings/provider-brand-icons";
@@ -48,6 +48,7 @@ export async function requestIPadTaskResume(ctx: IPadPageContext, taskId: string
       void submission.completion.catch(error => ctx.error(error));
       if (accepted) accepted(); else if (submitted !== undefined) draft?.accepted(submitted);
     } catch (error) {
+      if (error instanceof MobileTaskFileChanged) throw error;
       const review = ctx.host.runtime.stateFor(taskId).resumeReview;
       if (!review?.issues.length || review.taskId !== taskId) {
         if (!submissionId || !ctx.host.runtime.composerSubmissions.captureFailure(submissionId, failureText(ctx, error))) ctx.error(error);
@@ -106,7 +107,9 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
     return { text: task?.draft ?? "", attachments: [], ...(target ? { selectedProviderSettingsId: target.providerSettingsId, selectedModel: target.modelId } : {}), ...task?.draftContext };
   };
   input.value = readDraft().text;
-  const showFailure = (failure: unknown) => { if (!disposed) { error.textContent = failureText(ctx, failure); error.hidden = false; } };
+  const showFailure = (failure: unknown) => {
+    if (!disposed && !(failure instanceof MobileTaskFileChanged)) { error.textContent = failureText(ctx, failure); error.hidden = false; }
+  };
   const update = (change: (draft: TaskDraft) => void, workspacePermission?: MobilePermission): Promise<void> => {
     const command = saves.catch(() => {}).then(() => host.store.update(latest => {
       if (workspacePermission) latest.permission = workspacePermission;
@@ -231,7 +234,13 @@ export function createIPadComposer(ctx: IPadPageContext, target: { agentId?: str
       dirty = false;
       if (taskId && host.store.getSession(taskId)?.taskStatus === "interrupted") await requestIPadTaskResume(ctx, taskId, text, () => refresh(), submissionId);
       else await submitSnapshot(submissionId);
-    } catch (failure) { host.runtime.composerSubmissions.fail(submissionId, failureText(ctx, failure)); }
+    } catch (failure) {
+      if (failure instanceof MobileTaskFileChanged) {
+        if (!input.value) input.value = text;
+        dirty = true;
+        host.runtime.composerSubmissions.remove(submissionId);
+      } else host.runtime.composerSubmissions.fail(submissionId, failureText(ctx, failure));
+    }
     finally { sending = false; refresh(); }
   }); send.classList.add("pd-composer-send"); bar.append(send);
   const submitSnapshot = async (id: string) => {

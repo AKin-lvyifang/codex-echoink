@@ -256,12 +256,51 @@ export async function runStorageScenarios({ MobileStore, getMobileTaskInstanceId
     assert.equal(adapter.files.get(statePath), damaged); assert.equal(adapter.calls.some(e => e.op === "write" || e.op === "rename" || e.path === legacyPath), false);
   });
 
-  await test("optimistic conflict preserves externally installed state and blocks stale writer", async () => {
-    const { adapter, store } = await create(); const external = { ...store.state, revision: 10 }; external.sessions[0].draft = "外部保存";
+  await test("equivalent JSON rewrites are accepted; no-op updates preserve bytes and revision", async () => {
+    const { adapter, store } = await create();
+    const state = store.state;
+    const reordered = Object.fromEntries(Object.entries(state).reverse());
+    const reformatted = JSON.stringify(reordered, null, 2).replaceAll("\n", "\r\n") + "\r\n";
+    adapter.files.set(statePath, reformatted);
+    await store.update(() => {}, { skipUnchanged: true });
+    assert.equal(adapter.files.get(statePath), reformatted);
+    assert.equal(store.state.revision, state.revision);
+    await store.patchSession(store.session.id, { draft: "继续编辑" });
+    assert.equal(JSON.parse(adapter.files.get(statePath)).sessions[0].draft, "继续编辑");
+    assert.equal(store.taskFileChanged, false);
+  });
+
+  for (const offset of [0, -1, 1]) await test(`changed content at revision offset ${offset} rejects only the stale save`, async () => {
+    const { adapter, store } = await create();
+    await store.patchSession(store.session.id, { draft: "本机已保存" });
+    const external = { ...store.state, revision: store.state.revision + offset };
+    external.sessions[0].draft = "外部保存";
     const externalBytes = JSON.stringify(external); adapter.files.set(statePath, externalBytes);
-    await assert.rejects(store.patchSession(store.session.id, { draft: "旧进程" }), /资料已变化/);
-    assert.match(store.unavailableReason, /资料已变化.*任务暂不可用/u);
-    await assert.rejects(store.patchSession(store.session.id, { draft: "再试" }), /资料已变化.*任务暂不可用/u); assert.equal(adapter.files.get(statePath), externalBytes);
+    await assert.rejects(store.patchSession(store.session.id, { draft: "未保存输入" }), error => error.name === "MobileTaskFileChanged");
+    assert.equal(store.unavailableReason, undefined);
+    assert.equal(store.taskFileChanged, true);
+    assert.equal(adapter.files.get(statePath), externalBytes);
+    assert.equal(store.session.draft, "本机已保存");
+    await store.reloadTaskFile();
+    assert.equal(store.taskFileChanged, false);
+    assert.equal(store.session.draft, "外部保存");
+    assert.equal(adapter.files.get(statePath), externalBytes);
+    await store.patchSession(store.session.id, { title: "可继续保存" });
+  });
+
+  await test("reload while the primary and backup are absent keeps history and creates no replacement", async () => {
+    const { adapter, store } = await create();
+    await store.patchSession(store.session.id, { draft: "保留历史" });
+    const original = adapter.files.get(statePath);
+    adapter.files.delete(statePath);
+    await assert.rejects(store.createSession(), error => error.name === "MobileTaskFileChanged");
+    await assert.rejects(store.reloadTaskFile(), error => error.name === "MobileTaskFileChanged");
+    assert.equal(adapter.files.has(statePath), false);
+    assert.equal(store.session.draft, "保留历史");
+    adapter.files.set(recoveryPath, original);
+    await store.reloadTaskFile();
+    assert.equal(adapter.files.get(statePath), original);
+    assert.equal(store.session.draft, "保留历史");
   });
 
   await test("instance A/B and Vault 甲/乙 stay isolated, including copied foreign partitions", async () => {

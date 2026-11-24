@@ -131,6 +131,8 @@ export class View extends Component {
   }
   getViewType(): string { return "test-view"; }
   getDisplayText(): string { return "Test View"; }
+  getState(): Record<string, unknown> { return {}; }
+  async setState(_state: unknown, _result: unknown): Promise<void> {}
   async onOpen(): Promise<void> {}
   async onClose(): Promise<void> {}
 }

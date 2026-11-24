@@ -15,7 +15,7 @@ import { registerGalleryFeature } from "../gallery/controller";
 import { normalizeMarkdownMath } from "../core/markdown-math";
 import { migrateKnowledgeFolderBindings } from "../knowledge-base/folder-bindings";
 import { View, ItemView, MarkdownRenderer, Component, Notice, Platform, Plugin, requestUrl, TFile, type App, type WorkspaceLeaf } from "obsidian";
-import { isMobileDataConflict, MobileDataConflictError, MobileStore } from "./store";
+import { isMobileDataConflict, MobileDataConflictError, MobileStore, MobileTaskFileChanged } from "./store";
 import type { AgentRegistry } from "../agents/types";
 import { getMobileTaskInstanceId } from "./task-identity";
 import { loadMobileSettings, mobileAgentRegistrySource, type MobileSettings } from "./settings";
@@ -77,6 +77,9 @@ export default class EchoInkMobilePlugin extends Plugin {
   /** Streaming transport; absent where the WebView has no fetch. */
   modelFetch?: MobileStreamFetch;
   private settingsWrites: Promise<void> = Promise.resolve();
+  private reloadFlight?: Promise<void>;
+  private taskUsageStarted = false;
+  private usageWarningShown = false;
   private reportedSettingsSaveFailure = false;
   private retainedRegistry?: { present: boolean; value: unknown };
   private taskLifecycleRegistered = false;
@@ -121,39 +124,21 @@ export default class EchoInkMobilePlugin extends Plugin {
       this.store = new MobileStore(this.app.vault.adapter, mobileDirectory, instanceId, taskStorageIssue);
       await this.initializeTaskData(() => this.store.load());
       this.usage = new MobileUsageStore(this.app.vault.adapter, mobileDirectory, instanceId);
-      let usageWarningShown = false;
-      const usageWarning = () => { if (!usageWarningShown) { usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。"); } };
-      if (!this.store.unavailableReason) await this.usage.initialize().catch(usageWarning);
       this.runtime = new MobileRuntime(this.app, this.store, () => this.settings, requestUrl,
         (id, turn, preparation) => this.services.context(id, turn, preparation), () => this.saveSettings(), () => this.accountService);
-      if (!this.store.unavailableReason) this.runtime.setUsage(this.usage);
       this.modelFetch ??= webviewFetch(); this.runtime.setStreamFetch(this.modelFetch);
       this.navigation = new MobileWorkspace(this.app.workspace, Platform.isTablet);
       this.services = new MobileServices(this, `${this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`}/mobile`);
       this.services.usePluginDataRoot(await mobilePluginDataRoot(this.app.vault.adapter, this.services.directory.replace(/\/mobile$/u, ""), this.manifest.id, this.app.vault.configDir, this.manifest.dir));
+      if (!this.store.unavailableReason && !this.store.taskFileChanged) await this.startTaskUsage();
       await this.services.initialize();
-      if (!this.store.unavailableReason) this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: usageWarning });
       if (migratedBindings || migratedTheme || migratedToolCalling || migratedOwners) await this.saveSettings();
       this.accountService = await createMobileAccountService(this.app, () => this.settings);
       this.register(this.accountService.onSignInReturned(() => this.reportLogin.returned()));
       this.accountService.setStatisticsSource({ read: () => this.usage.readStatistics(), subscribe: listener => this.usage.subscribe(listener) });
       this.startDecisionClient();
-      if (!this.store.unavailableReason) await this.initializeTaskData(() => this.runtime.initialize());
-      if (!this.store.unavailableReason) this.company = await startMobileCompany({ runtime: this.runtime, store: this.store, settings: () => this.settings,
-        adapter: this.app.vault.adapter, file: `${mobileDirectory}/devices/${instanceId}/company.v1.json`,
-        sync: { fs: this.app.vault.adapter, deviceId: instanceId, deviceName: Platform.isTablet ? "iPad" : "iPhone", deviceKind: Platform.isTablet ? "tablet" : "phone", enabled: this.settings.syncMirrorEnabled !== false },
-        folders: createMobileCompanyFolders(this.app, () => this.settings, () => this.saveSettings()),
-        changed: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); this.runtime.onChange(); } });
+      await this.initializeTaskData(() => this.startTaskServices());
       this.registerTaskLifecycle();
-      if (!this.store.unavailableReason) {
-        const cloud = createCloudSyncController({ app: this.app, pluginDir: this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`, deviceId: instanceId, deviceKind: Platform.isTablet ? "tablet" : "phone",
-          defaultDeviceName: Platform.isTablet ? "iPad" : "iPhone", account: () => this.accountService, settings: () => this.settings.cloudSync, saveSettings: () => this.saveSettings(), onLocalWrite: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); } });
-        this.cloudSync = cloud;
-        this.register(this.accountService.subscribe(() => { void cloud.accountChanged(); }));
-        this.registerDomEvent(window, "online", () => cloud.wake());
-        this.register(() => { cloud.dispose(); this.cloudSync = null; });
-        void cloud.start().catch(error => console.error("EchoInk cloud sync could not start", error));
-      }
       const noteSync = (file: { path: string }, kind: "create" | "modify" | "delete" | "rename", oldPath?: string) => { this.company?.overview?.noteVaultChange(file.path); this.company?.requests?.noteVaultChange(file.path); this.cloudSync?.noteVaultChange(file.path, kind, oldPath); };
       this.registerEvent(this.app.vault.on("create", file => noteSync(file, "create"))); this.registerEvent(this.app.vault.on("modify", file => noteSync(file, "modify")));
       this.registerEvent(this.app.vault.on("delete", file => noteSync(file, "delete"))); this.registerEvent(this.app.vault.on("rename", (file, oldPath) => noteSync(file, "rename", oldPath)));
@@ -197,20 +182,68 @@ export default class EchoInkMobilePlugin extends Plugin {
   /** Fixed plain sentence for the user; the raw error goes to the run report. */
   private failureNotice(error: unknown, zh: string, en: string, timeout?: number): void {
     runErrors.record("mobile.plugin", error);
+    if (error instanceof MobileTaskFileChanged) return;
     new Notice((this.settings as MobileSettings | undefined)?.settingsLanguage === "en" ? en : zh, timeout);
   }
   /** Opening a page: keep user-written reasons (e.g. a disabled module), hide raw exceptions. */
   private openFailureNotice(error: unknown): void {
     runErrors.record("mobile.plugin", error);
+    if (error instanceof MobileTaskFileChanged) return;
     new Notice(settingsErrorText(error, SETTINGS_FALLBACK.mobilePage, (this.settings as MobileSettings | undefined)?.settingsLanguage));
   }
   private async initializeTaskData(initialize: () => Promise<void>): Promise<void> {
     try { await initialize(); }
     catch (error) {
+      if (error instanceof MobileTaskFileChanged) return;
       if (!isMobileDataConflict(error)) throw error;
       this.store.disableWrites(error.message);
       new Notice(this.store.unavailableReason!, 10000);
     }
+  }
+  private async startTaskUsage(): Promise<void> {
+    if (this.taskUsageStarted) return;
+    const warn = () => {
+      if (this.usageWarningShown) return;
+      this.usageWarningShown = true; new Notice("使用统计未能完整保存，本次统计可能有缺口；任务记录不受影响。");
+    };
+    await this.usage.initialize().catch(warn);
+    this.runtime.setUsage(this.usage);
+    this.services.setUsage({ recordUsage: event => this.usage.recordUsage(event), onRecordError: warn });
+    this.taskUsageStarted = true;
+  }
+  private async startTaskServices(): Promise<void> {
+    if (this.unloaded || this.store.unavailableReason || this.store.taskFileChanged) return;
+    await this.runtime.initialize();
+    const { instanceId } = this.store;
+    const deviceName = Platform.isTablet ? "iPad" : "iPhone", deviceKind = Platform.isTablet ? "tablet" : "phone";
+    if (!this.company) {
+      const company = await startMobileCompany({ runtime: this.runtime, store: this.store, settings: () => this.settings,
+        adapter: this.app.vault.adapter, file: `${this.services.directory}/devices/${instanceId}/company.v1.json`,
+        sync: { fs: this.app.vault.adapter, deviceId: instanceId, deviceName, deviceKind, enabled: this.settings.syncMirrorEnabled !== false },
+        folders: createMobileCompanyFolders(this.app, () => this.settings, () => this.saveSettings()),
+        changed: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); this.runtime.onChange(); } });
+      if (this.unloaded) { company?.dispose(); return; }
+      this.company = company;
+    }
+    if (this.cloudSync || this.unloaded) return;
+    const cloud = createCloudSyncController({ app: this.app, pluginDir: this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`, deviceId: instanceId, deviceKind,
+      defaultDeviceName: deviceName, account: () => this.accountService, settings: () => this.settings.cloudSync, saveSettings: () => this.saveSettings(), onLocalWrite: () => { this.workbench?.invalidate(); this.services.notifyHomeSurfacesChanged(); } });
+    this.cloudSync = cloud;
+    this.register(this.accountService.subscribe(() => { void cloud.accountChanged(); }));
+    this.registerDomEvent(window, "online", () => cloud.wake());
+    this.register(() => { cloud.dispose(); this.cloudSync = null; });
+    void cloud.start().catch(error => console.error("EchoInk cloud sync could not start", error));
+  }
+  reloadTaskFile(): Promise<void> {
+    return this.reloadFlight ??= (async () => {
+      await this.runtime.reloadTaskFile();
+      await this.startTaskUsage();
+      await this.services.initializeTaskMemory();
+      await this.startTaskServices();
+      this.workbench?.invalidate();
+      this.services.notifyHomeSurfacesChanged();
+      if (this.store.taskFileChanged) throw new MobileTaskFileChanged();
+    })().finally(() => { this.reloadFlight = undefined; });
   }
   registerStartupWorkbench(): void {
     this.app.workspace.onLayoutReady(() => {
@@ -240,7 +273,7 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.registerDomEvent(window, "pagehide", () => suspend("app_closed"));
     this.registerDomEvent(window, "pageshow", () => { if (document.visibilityState === "visible") foreground(); });
     if (document.visibilityState === "hidden") suspend("app_backgrounded");
-    else if (this.services) void this.services.memory.resumeDream().catch(() => {});
+    else if (this.services && !this.store.taskFileChanged) void this.services.memory.resumeDream().catch(() => {});
   }
   private archiveMobileTasks(): void {
     if (this.unloaded || !this.services || document.visibilityState !== "visible") return;
@@ -305,7 +338,8 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.registerView(EXPERT_HALL_VIEW_TYPE, leaf => new ExpertHallView(leaf, {
       content: this.services.experts, getAgents: () => this.settings.agentRegistry.agents,
       hire: async id => { await this.services.hireExpert(id); await this.services.openExpert(`expert-${id}`); },
-      dismiss: async id => { await this.services.dismissExpert(id); }, open: id => this.services.openExpert(id), upgrade: () => this.showPage("account")
+      dismiss: async id => { await this.services.dismissExpert(id); }, open: id => this.services.openExpert(id), upgrade: () => this.showPage("account"),
+      english: () => this.settings.settingsLanguage === "en"
     }));
     this.registerView(WORKSPACE_PREVIEW_VIEW_TYPE, leaf => new WorkspacePreviewView(leaf, { service: this.services.workspace }));
     registerWorkspacePreviewExtension(this);
@@ -438,10 +472,15 @@ export default class EchoInkMobilePlugin extends Plugin {
     this.ipadNavigation?.dispose();
     this.accountService?.dispose();
     const stopped = this.runtime?.shutdown("plugin_disabled");
+    if (stopped !== undefined) this.store.trackShutdown(stopped);
     this.runtime?.dispose();
     void stopped?.catch(error => this.failureNotice(error, "中断记录未能保存，原有内容未受影响。请重新打开 EchoInk。", "The interruption record could not be saved; your content is unaffected. Reopen EchoInk."));
     void this.services?.dispose();
   }
+}
+
+async function flushTaskView(store: MobileStore): Promise<void> {
+  await store.flush().catch(error => { if (!(error instanceof MobileTaskFileChanged)) throw error; });
 }
 
 export class EchoInkIPhoneView extends ItemView {
@@ -462,6 +501,7 @@ export class EchoInkIPhoneView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     this.ui = new IPhoneWorkbench(this.contentEl, {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      reloadTaskFile: () => this.plugin.reloadTaskFile(),
       releaseUpdate: this.plugin.releaseUpdate,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
@@ -486,7 +526,7 @@ export class EchoInkIPhoneView extends ItemView {
   async showPage(page: MobileSettingsRoute): Promise<void> { await (await this.ready())?.openLegacy(page); }
   async onClose(): Promise<void> {
     const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
-    this.removeChild(this.markdown); await this.plugin.store.flush();
+    this.removeChild(this.markdown); await flushTaskView(this.plugin.store);
   }
 }
 
@@ -511,6 +551,7 @@ export class EchoInkIPadView extends ItemView {
     this.contentEl.replaceChildren(); this.addChild(this.markdown); this.refreshSettings();
     const host: IPadWorkbenchHost = {
       app: this.app, store: this.plugin.store, runtime: this.plugin.runtime, services: this.plugin.services,
+      reloadTaskFile: () => this.plugin.reloadTaskFile(),
       releaseUpdate: this.plugin.releaseUpdate,
       agents: this.plugin.services.agents, workbench: this.plugin.workbench!, company: () => this.plugin.company?.service ?? null, syncOverview: () => this.plugin.company?.overview ?? null, syncRequests: () => this.plugin.company?.requests ?? null, cloudSync: () => this.plugin.cloudSync,
       accountService: this.plugin.accountService, reportLogin: this.plugin.reportLogin, version: this.plugin.manifest.version,
@@ -546,7 +587,7 @@ export class EchoInkIPadView extends ItemView {
   async openProject(projectId: string): Promise<void> { const ui = await this.ready(); if (ui instanceof IPadWorkbench) await ui.openProject(projectId); }
   async onClose(): Promise<void> {
     const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
-    this.removeChild(this.markdown); await this.plugin.store.flush();
+    this.removeChild(this.markdown); await flushTaskView(this.plugin.store);
   }
 }
 
@@ -593,7 +634,7 @@ export class EchoInkIPadSettingsView extends ItemView {
   }
   async onClose(): Promise<void> {
     const ui = this.ui; this.ui = undefined; this.mounting = undefined; ui?.dispose();
-    this.removeChild(this.markdown); await this.plugin.store.flush();
+    this.removeChild(this.markdown); await flushTaskView(this.plugin.store);
   }
 }
 
@@ -643,7 +684,7 @@ export class EchoInkMobileView extends ItemView {
   async onClose(): Promise<void> {
     this.ui?.destroy();
     this.ui = undefined;
-    await this.plugin.store.flush();
+    await flushTaskView(this.plugin.store);
   }
 }
 

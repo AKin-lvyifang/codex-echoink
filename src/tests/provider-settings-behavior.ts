@@ -371,6 +371,7 @@ export async function runProviderSettingsBehaviorTests(): Promise<void> {
   await assertFreshCustomModelDiscoveryLifecycle();
   await assertProviderLimitOverrideRoundTrip();
   await assertProviderModelModalPreflightLifecycle();
+  await assertOpenCodeGoSettingsConnectionFailures();
   await assertProviderApiKeyEditLifecycle();
   await assertProviderModalModelAccessibleNameIncludesValue();
   assertProviderModelReasoningOverrideBoundary();
@@ -10255,6 +10256,48 @@ async function assertProviderLimitOverrideRoundTrip(): Promise<void> {
   });
 }
 
+async function assertOpenCodeGoSettingsConnectionFailures(): Promise<void> {
+  installProviderModalDomFixture();
+  const copy = settingsCopy("en");
+  const cases = [
+    { status: 403, type: "EntitlementError", expected: providerFailureText("provider_plan_subscription_required", "en") },
+    { status: 429, type: "GoUsageLimitError", expected: providerFailureText("provider_plan_usage_limited", "en") },
+    { status: 401, type: "AuthenticationError", expected: copy.providers.connectionFailures.auth },
+    { status: 429, type: "RateLimitError", expected: copy.providers.connectionFailures.rate_limit },
+    { status: 403, type: "EntitlementError", expected: copy.providers.connectionFailures.request, baseUrl: "https://opencode.ai/zen/v1" },
+    { status: 403, type: "EntitlementError", expected: copy.providers.connectionFailures.request, baseUrl: "https://models.invalid/v1" }
+  ];
+  for (const { status, type, expected, baseUrl } of cases) {
+    const draft = createApiProviderConfig("opencode-go", "open-code-settings-fixture");
+    draft.apiKey = "synthetic-settings-key";
+    if (baseUrl) draft.baseUrl = baseUrl;
+    const host = { settings: { ...structuredClone(DEFAULT_SETTINGS), apiProviders: [draft] } };
+    let requests = 0;
+    const adapter = providerStreamFixture(async (_model, _context, options) => {
+      requests++;
+      await options?.onResponse?.({ status, headers: { "content-type": "application/json" } });
+      return { status: "error", message: `${status} ${JSON.stringify({ type: "error", error: { type, message: `raw upstream diagnostic ${draft.apiKey}` } })}` };
+    });
+    const preflight = new PiProviderConfigurationService(host, { adapters: { "openai-completions": adapter } });
+    const modal = new ProviderModelModal({
+      app: new App(), draft, editing: true, language: "en", copy, preflight,
+      save: async () => { assert.fail("Testing a connection must not save settings"); }
+    });
+    modal.open();
+    try {
+      const button = providerModalElementByFocusKey(modal, "provider-test-connection");
+      assert.ok(button && !button.disabled);
+      button.click();
+      await flushProviderModalTasks();
+      assert.equal(requests, 1);
+      assert.equal(providerModalStatus(modal).textContent, expected);
+      assert.doesNotMatch(modal.contentEl.textContent, /synthetic-settings-key|raw upstream diagnostic/u);
+    } finally {
+      modal.close();
+    }
+  }
+}
+
 async function assertProviderModelModalPreflightLifecycle(): Promise<void> {
   installProviderModalDomFixture();
   const copy = settingsCopy("en");
@@ -11912,6 +11955,9 @@ if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "provider-output-limit") {
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "english-diary") {
   await runEnglishDiaryProviderTests(installProviderModalDomFixture);
   console.log("PASS English Diary saved Provider selection, rollback, credential reuse and recipient consent");
+} else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "opencode-go") {
+  await assertOpenCodeGoSettingsConnectionFailures();
+  console.log("PASS OpenCode Go desktop connection test, plan copy and ordinary endpoint failures");
 } else if (process.env.ECHOINK_PROVIDER_SETTINGS_CASE === "codex-connection") {
   await assertCodexConnectionTestContract();
   await assertProviderAuthResolutionFailureContract();

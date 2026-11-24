@@ -14,6 +14,9 @@ import { getDesktopPath } from "../../platform/desktop-paths";
 
 import {
   PERSONAL_MEMORY_SCHEMA,
+  isPersonalMemoryKind,
+  isPersonalMemoryBasis,
+  isPersonalMemoryContentOrigin,
   type PersonalMemoryBasis,
   type PersonalMemoryContentOrigin,
   type PersonalMemoryKind,
@@ -768,10 +771,34 @@ export class PersonalMemoryRepository {
   }
 
   async write(
-    request: PersonalMemoryWriteRequest,
+    input: PersonalMemoryWriteRequest,
     runtime: Readonly<PersonalMemoryRuntimeContext>
   ): Promise<Readonly<PersonalMemoryWriteResult>> {
     this.assertRuntime(runtime);
+    const request = { ...input };
+    switch (request.operation) {
+      case "create":
+        if (request.pinned && !runtime.explicitlyAuthorized) throw new PersonalMemoryAccessError("invalid_request", "固定记忆需要用户明确要求，本次未固定。请由用户明确提出后再固定。");
+        if (!isPersonalMemoryKind(request.kind)) invalidWriteEnum("kind");
+        validateWriteEnums(request.basis, request.contentOrigin);
+        validateWriteContent(request.kind, request.basis, request.contentOrigin, runtime.explicitlyAuthorized === true);
+        break;
+      case "supersede":
+        if ("kind" in request && !isPersonalMemoryKind(request.kind)) invalidWriteEnum("kind");
+        validateWriteEnums(request.basis, request.contentOrigin);
+        break;
+      case "profile_update":
+        if (request.basis !== "explicit") invalidWriteEnum("basis");
+        validateWriteEnums(request.basis, request.contentOrigin);
+        break;
+      case "close":
+      case "forget":
+      case "pin":
+      case "unpin":
+        break;
+      default:
+        invalidWriteEnum("operation");
+    }
     await this.initialize();
     return await this.withMutation(async () => {
       await this.assertManagedPathsSafe([this.layout.manifest, this.layout.audit]);
@@ -786,13 +813,6 @@ export class PersonalMemoryRepository {
       const manifest = await this.readManifest();
       const records = await this.readAllRecords(manifest);
       if (request.operation === "create") {
-        if (request.pinned && !runtime.explicitlyAuthorized) throw new PersonalMemoryAccessError("invalid_request", "固定记忆需要用户明确要求，本次未固定。请由用户明确提出后再固定。");
-        validateWriteContent(
-          request.kind,
-          request.basis,
-          request.contentOrigin,
-          runtime.explicitlyAuthorized === true
-        );
         const duplicate = this.classifyCreateDuplicate(records, request);
         if (duplicate) {
           return Object.freeze({
@@ -1913,7 +1933,6 @@ const plan = await planDreamCorrections({ records: await this.readAllRecords(man
     request: Extract<PersonalMemoryWriteRequest, { operation: "create" }>,
     runtime: Readonly<PersonalMemoryRuntimeContext>
   ): Promise<Readonly<PersonalMemoryWriteResult>> {
-    validateWriteContent(request.kind, request.basis, request.contentOrigin, runtime.explicitlyAuthorized === true);
     const targetRevision = manifest.revision + 1;
     const record = this.newRecord({ ...request, targetRevision, source: runtimeSource(runtime) });
     if (manifest.records.some((item) => item.id === record.id)) {
@@ -3702,6 +3721,15 @@ function productRunIdFromRuntimeSource(source: string): string | null {
   if (!query) return null;
   const productRunId = new URLSearchParams(query).get("productRun");
   return productRunId?.trim() || null;
+}
+
+function invalidWriteEnum(field: string): never {
+  throw new PersonalMemoryAccessError("invalid_request", `Memory write ${field} is invalid`);
+}
+
+function validateWriteEnums(basis: unknown, origin: unknown): void {
+  if (!isPersonalMemoryBasis(basis)) invalidWriteEnum("basis");
+  if (origin !== undefined && !isPersonalMemoryContentOrigin(origin)) invalidWriteEnum("contentOrigin");
 }
 
 function validateWriteContent(

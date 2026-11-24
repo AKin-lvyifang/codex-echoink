@@ -35,7 +35,7 @@ export function createFinanceEntryForm(ctx: IPadPageContext, data: Readonly<Life
     { key: "account", label: t(ctx, "账户", "Account"), value: entry?.account ?? "" },
     { key: "description", label: t(ctx, "说明", "Description"), value: entry?.description ?? "" },
     { key: "note", label: t(ctx, "备注", "Note"), value: entry?.note ?? "", multiline: true },
-    { key: "billPlanId", label: t(ctx, "账单计划", "Bill plan"), value: entry?.billPlanId ?? "", options: [["", t(ctx, "不关联", "None")], ...data.financeBillPlans.map(item => [item.id, item.name] as const), ...(entry?.billPlanId && !data.financeBillPlans.some(item => item.id === entry.billPlanId) ? [[entry.billPlanId, t(ctx, "原账单未找到（保留关联）", "Original bill missing (keep link)")]] as const : [])] },
+    { key: "billPlanId", label: t(ctx, "专项预算", "Special budget"), value: entry?.billPlanId ?? "", options: [["", t(ctx, "不关联", "None")], ...data.financeBillPlans.map(item => [item.id, item.name] as const), ...(entry?.billPlanId && !data.financeBillPlans.some(item => item.id === entry.billPlanId) ? [[entry.billPlanId, t(ctx, "原专项预算未找到（保留关联）", "Original special budget missing (link kept)")]] as const : [])] },
     iconField(ctx, "icon", entry?.icon ?? "auto", "entry")
   ];
   return createModuleForm(ctx, `ipad-finance-entry-${entry?.id ?? "new"}`, t(ctx, entry ? "编辑账目" : "记一笔", entry ? "Edit transaction" : "Add transaction"), fields, async values => {
@@ -107,7 +107,7 @@ export function createFinanceMonthlyGoalForm(ctx: IPadPageContext, month: string
 }
 export function createFinanceBillForm(ctx: IPadPageContext, plan?: FinanceBillPlan): MobileShellPage {
   const names = [...new Set([...categories(ctx), ...Object.keys(plan?.allocations ?? {})])], id = plan?.id ?? key(ctx, "bill");
-  return createModuleForm(ctx, `ipad-finance-bill-form-${id}`, t(ctx, plan ? "编辑账单计划" : "新增账单计划", plan ? "Edit bill plan" : "Add bill plan"), [
+  return createModuleForm(ctx, `ipad-finance-bill-form-${id}`, t(ctx, plan ? "编辑专项预算" : "新增专项预算", plan ? "Edit special budget" : "Add special budget"), [
     { key: "name", label: t(ctx, "计划名称", "Plan name"), value: plan?.name ?? "" }, { key: "budget", label: t(ctx, "总预算 · 元", "Total budget · CNY"), value: plan ? (plan.budgetCents / 100).toFixed(2) : "", type: "number" },
     ...names.map((name, index) => ({ key: `category-${index}`, label: name, value: String((plan?.allocations?.[name] ?? 0) / 100), type: "number" }))
   ], values => port(ctx).service.writeConversationBill(plan ? "update" : "create", id, financeValueVersion(plan ?? null), { name: values.name, budgetCents: parseYuan(values.budget), allocations: Object.fromEntries(names.map((name, index) => [name, parseYuan(values[`category-${index}`], true)])) }));
@@ -117,7 +117,7 @@ export function createFinanceSettingsPage(ctx: IPadPageContext): MobileShellPage
   const service = port(ctx).service, v = moduleView(ctx, "ipad-finance-settings", t(ctx, "财务设置", "Finance settings"));
   v.content.classList.add("is-settings");
   const settings = ctx.host.settings().lifestyle.finance, options = moduleSettingsGroup(ctx, v.body);
-  for (const [key, label] of [["aiEnabled", t(ctx, "AI 分析", "AI analysis")], ["importAiEnabled", t(ctx, "账单智能整理", "Organize imported bills")], ["showOnHome", t(ctx, "在首页显示", "Show on home")]] as const) {
+  for (const [key, label] of [["aiEnabled", t(ctx, "AI 结账报告", "AI monthly closing")], ["importAiEnabled", t(ctx, "账单智能整理", "Organize imported bills")], ["showOnHome", t(ctx, "在首页显示", "Show on home")]] as const) {
     const row = el(ctx.document, "label", "pd-module-check-row"), input = el(ctx.document, "input", ""); input.type = "checkbox"; input.checked = key === "showOnHome" ? ctx.host.settings().homeModules.finance !== false : settings[key]; input.setAttribute("aria-label", label); row.append(el(ctx.document, "span", "", label), input); options.append(row);
     input.addEventListener("change", () => { const requested = input.checked; void v.run(() => service.saveOption(key, requested)).then(saved => { if (!saved) input.checked = !requested; }); });
   }

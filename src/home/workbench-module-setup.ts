@@ -21,8 +21,8 @@ export function renderWorkbenchModuleSetup(parent: HTMLElement, plugin: CodexFor
   const page = parent.createDiv({ cls: "wb-page wb-module-setup", attr: { "data-wb": "module-setup", "data-setup-module": id } });
   const header = page.createDiv({ cls: "wb-module-setup-header" });
   const back = createOriginButton(header, { cls: "wb-button is-icon", attr: { "aria-label": en ? "Back to workbench" : "返回工作台", "data-wb-focus": "module-setup-back" } });
-  setIcon(back, "arrow-left"); applyAmicroButton(back, { variant: "icon" }); back.onclick = onBack;
-  header.createEl("h1", { text: en ? module.en : module.zh });
+  setIcon(back, "arrow-left"); applyAmicroButton(back, { variant: "icon" }); back.onclick = onBack; back.dataset.echoinkWorkbenchBack = "";
+  header.createEl("h1", { text: en ? module.en : module.zh }).dataset.echoinkModuleTitle = "";
   const settings = createOriginButton(header, { text: en ? "Go to settings" : "去设置", cls: "wb-button is-primary", attr: { "data-wb-focus": "module-setup-settings" } });
   applyAmicroButton(settings, { variant: "primary" });
   settings.onclick = () => { void plugin.openWorkbenchModuleSettings(id).catch(error => new Notice(failureText(error, ["模块设置未能打开。", "Module settings could not be opened."], NEXT.retryLater, plugin.settings.settingsLanguage))); };

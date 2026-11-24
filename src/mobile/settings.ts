@@ -54,7 +54,7 @@ export const MOBILE_DEFAULT_WELCOME = {
   title: "让想法，慢慢清晰。",
   subtitle: "聊聊此刻的思考，读一篇笔记，或把今天写下来。"
 } as const;
-export const mobilePresets = API_PROVIDER_PRESETS.filter(p => ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "custom"].includes(p.id));
+export const mobilePresets = API_PROVIDER_PRESETS.filter(p => ["glm", "kimi", "deepseek", "qwen", "qwen-token-plan", "opencode-go", "custom"].includes(p.id));
 export function supportedProvider(p: ApiProviderConfig): boolean {
   return p.authMode === "api-key" && !["openai-codex", "anthropic", "minimax", "ollama"].includes(p.providerId ?? "")
     && (p.apiProtocol === "openai-completions" || p.apiProtocol === "openai-responses");

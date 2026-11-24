@@ -4,7 +4,7 @@ import { userFacingErrorText } from "../core/error-copy";
 import type { EchoInkResource } from "../resources/types";
 import { ownedEl } from "../ui/owned-dom";
 import { MAX_SUBMISSION_AVATAR_BYTES, type ExpertAvatarPreset, type ExpertSubmissionAvatar,
-  type ExpertSubmissionPayload, type ExpertSubmissionReceipt } from "./submission-contract";
+  type ExpertSubmissionHistory, type ExpertSubmissionPayload, type ExpertSubmissionReceipt, type ExpertReviewStatus } from "./submission-contract";
 import { collectExpertSubmissionSkills, submissionText, type ExpertSubmissionService } from "./submission-service";
 
 export interface ExpertSubmissionViewOptions {
@@ -16,6 +16,7 @@ export interface ExpertSubmissionViewOptions {
   button(parent: HTMLElement, text: string, action: () => void, primary?: boolean): HTMLButtonElement;
   input(parent: HTMLElement): HTMLInputElement;
   checkbox(parent: HTMLElement): HTMLButtonElement & { checked: boolean };
+  pagination(parent: HTMLElement, page: number, pages: number, onChange: (page: number) => void): HTMLElement;
   clearControls?(root: HTMLElement): void;
 }
 
@@ -24,11 +25,11 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
   const lang = options.language === "en" ? "en" : "zh";
   const t = (zh: string, en: string) => lang === "en" ? en : zh;
   const owner = service.owner();
-  if (!owner || isExpertAgent(agent)) throw new Error(t("请使用 PRO 账号为自建 Agent 投稿。", "A PRO account and a custom Agent are required."));
+  if (!owner || isExpertAgent(agent)) throw new Error(t("请登录后查看投稿回执。", "Sign in to view submission receipts."));
   let disposed = false, busy = false;
   let presets: ExpertAvatarPreset[] = [];
   let receipt: ExpertSubmissionReceipt | null = null;
-  let published = false, justSubmitted = false, receiptSaved = true;
+  let history: ExpertSubmissionHistory | null = null, justSubmitted = false, receiptSaved = true;
   let staged: { payload: ExpertSubmissionPayload; avatarUrl: string } | undefined;
 
   function el<K extends keyof HTMLElementTagNameMap>(parent: HTMLElement, tag: K, cls: string, text?: string): HTMLElementTagNameMap[K] {
@@ -67,6 +68,7 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
     status.textContent = code && copy[code] || userFacingErrorText(error,
       t("暂时无法完成投稿，请稍后重试。", "The submission could not be completed. Try again later."), lang);
   };
+  const current = () => !disposed && service.owner() === owner;
   const statusArea = () => {
     const status = el(root, "p", "echoink-expert-submission-error");
     status.setAttribute("role", "alert");
@@ -81,6 +83,10 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
 
   function drawForm() {
     clear();
+    if (history?.total || receipt) {
+      options.button(root, t("查看投稿回执", "View submission receipts"), () => { void load(); })
+        .classList.add("echoink-expert-submission-back");
+    }
     const fields = el(root, "fieldset", "echoink-expert-submission-fields");
     const field = (key: keyof typeof value, max: number, multi = false, rows = 3) => {
       const label = el(fields, "label", "echoink-expert-submission-field");
@@ -214,9 +220,9 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
       status.textContent = t("正在提交…", "Submitting…");
       try {
         const result = await service.submit(agent.id, owner!, payload);
-        if (disposed) return;
-        receipt = result.receipt; receiptSaved = result.saved; justSubmitted = true; published = false;
-        drawReceipt();
+        if (!current()) return;
+        receipt = result.receipt; receiptSaved = result.saved; justSubmitted = true;
+        await load();
       } catch (error) { if (!disposed) report(status, error); }
       finally {
         busy = false; submit.disabled = !checkbox.checked; checkbox.disabled = false;
@@ -225,22 +231,43 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
       }
     }
   }
-  function drawReceipt() {
-    if (!receipt) return;
+  const statusNames: Record<ExpertReviewStatus, string> = {
+    pending: t("待审", "Pending review"), published: t("已收录", "Published"),
+    rejected: t("已驳回", "Rejected"), unlisted: t("已下架", "Unlisted"),
+  };
+  const date = new Intl.DateTimeFormat(lang === "en" ? "en" : "zh-CN", { dateStyle: "medium" });
+
+  function drawReceipt(page: ExpertSubmissionHistory) {
     clear();
-    el(root, "h3", "", published ? t("已收录", "Published")
-      : justSubmitted ? t("已提交，等待审核", "Submitted for review") : t("已提交", "Submitted"));
-    el(root, "p", "echoink-expert-submission-muted", t(`第 ${receipt.version} 版`, `Version ${receipt.version}`));
-    if (!published && !justSubmitted) el(root, "p", "echoink-expert-submission-muted",
-      t("当前审核结果暂不可查询。", "The current review result is unavailable."));
+    if (service.canSubmit()) el(root, "h3", "", t("投稿回执", "Submission receipts"));
+    if (!page.items.length) el(root, "p", "echoink-expert-submission-muted", t("暂无投稿", "No submissions yet"));
+    else {
+      const list = el(root, "ul", "echoink-expert-submission-reviews");
+      for (const review of page.items) {
+        const row = el(list, "li", "");
+        el(row, "h4", "", review.name);
+        const version = t(`第 ${review.version} 版`, `Version ${review.version}`);
+        const state = review.superseded ? t("已收录（已被新版替代）", "Published (replaced by a newer version)") : statusNames[review.status];
+        el(row, "p", "echoink-expert-submission-muted", `${version} · ${state} · ${date.format(review.updatedAt)}`);
+        if (review.reason) el(row, "p", "echoink-expert-submission-reason", review.reason);
+      }
+    }
     if (!receiptSaved) el(root, "p", "echoink-expert-submission-error",
       t("提交成功，回执未能保存在本机。", "The submission succeeded, but the receipt could not be saved on this device."));
+    const pages = Math.ceil(page.total / page.pageSize);
+    if (pages > 1) options.pagination(root, page.page, pages, next => { void load(next); });
     const status = statusArea();
     const actions = el(root, "div", "echoink-expert-submission-actions");
-    options.button(actions, t("提交新版本", "Submit a new version"), () => { void openForm(status); }, true);
+    options.button(actions, t("刷新", "Refresh"), () => { void load(page.page); });
+    if (service.canSubmit()) {
+      const label = receipt ? t("提交新版本", "Submit a new version") : t("新投稿", "New submission");
+      const button = options.button(actions, label, () => { void openForm(status); }, true);
+      button.disabled = page.items.some(review => review.id === receipt?.id && review.status === "pending");
+    }
   }
+
   async function openForm(status: HTMLElement) {
-    if (busy || disposed) return;
+    if (busy || !current() || !service.canSubmit()) return;
     busy = true;
     try {
       presets = await service.presets(owner!);
@@ -248,27 +275,41 @@ export function renderExpertSubmission(root: HTMLElement, options: ExpertSubmiss
         const preferred = presets.find(item => initialAvatar.kind === "preset" && item.id === initialAvatar.presetId) ?? presets[0];
         if (preferred) { avatar = { presetId: preferred.id }; avatarUrl = preferred.avatarUrl; }
       }
-      if (!disposed) drawForm();
+      if (current()) drawForm();
     } catch (error) { if (!disposed) report(status, error); }
     finally { busy = false; }
   }
-  async function load() {
+  async function load(page = 1) {
+    if (!current()) return;
     clear();
     const status = statusArea();
     status.textContent = t("正在读取…", "Loading…");
+    const retry = () => options.button(root, t("重试", "Retry"), () => { void load(page); });
     try {
-      receipt = await service.receipt(agent.id, owner!);
-      if (receipt) {
-        published = await service.published(receipt, owner!).catch(() => false);
-        if (!disposed) drawReceipt();
-      } else await openForm(status);
-      if (!disposed && root.querySelector(".echoink-expert-submission-error") === status && status.textContent) {
-        options.button(root, t("重试", "Retry"), () => { void load(); });
+      const [saved, result] = await Promise.all([service.receipt(agent.id, owner!), service.history(owner!, page)]);
+      if (!current()) return;
+      receipt ??= saved;
+      history = result;
+      if (receipt || result.total || !service.canSubmit()) drawReceipt(result);
+      else {
+        await openForm(status);
+        if (current() && root.contains(status)) retry();
       }
+      justSubmitted = false;
     } catch (error) {
-      if (!disposed) { report(status, error); options.button(root, t("重试", "Retry"), () => { void load(); }); }
+      if (!current()) return;
+      status.textContent = justSubmitted
+        ? t("已提交，等待审核。暂时无法读取投稿回执。", "Submitted for review. Receipts could not be loaded.")
+        : userFacingErrorText(error, t("暂时无法读取投稿回执。", "Could not load submission receipts."), lang);
+      retry();
     }
   }
+
+  const unsubscribe = service.subscribe(() => {
+    if (disposed || current()) return;
+    clear();
+    statusArea().textContent = t("账号已切换，请重新打开投稿回执。", "Your account changed. Reopen the submission receipts.");
+  });
   void load();
-  return { canLeave: () => !busy, dispose() { disposed = true; clear(); } };
+  return { canLeave: () => !busy, dispose() { disposed = true; unsubscribe(); clear(); } };
 }

@@ -1,6 +1,5 @@
 import { anthropicCacheRoute, applyPromptCacheBoundary, providerCacheKey } from "./prompt-cache";
 import { withXiaoechoTurn } from "../../membership/xiaoecho-turn";
-import { xiaoechoFailureCode } from "../../membership/xiaoecho-catalog";
 import { publishXiaoechoModelSignal } from "../../membership/xiaoecho-model-signal";
 import { XIAOECHO_RETRY_DELAY_MS, xiaoechoBusyCode } from "./xiaoecho-retry";
 import {
@@ -47,11 +46,14 @@ import {
   sanitizeProviderFailureDetail,
   preventProviderRetryAfterPartial,
   providerFailureCodeFromError,
+  providerPlanFailureCode,
   providerFailureHttpStatus,
   safeProviderFailureCode,
+  xiaoechoProviderFailureDetail,
   type AssistantProviderFailure
 } from "./provider-failure";
 import { validProviderHistory } from "./provider-stream-codec";
+import { openCodeSessionHeaders, withOpenCodeRequestHeaders } from "./opencode-go-headers";
 import { observeUsageStream, type UsageRequestEvent } from "../usage/usage-stream";
 import { estimateTokenValue } from "../usage/token-estimator";
 import type { PiChatPreparedDocument } from "../pi-native/contracts";
@@ -141,7 +143,7 @@ export class PiProviderProtocolDispatcher {
       },
       start: (model, options) => streamWithXiaoechoModelSignals(
         model,
-        options,
+        withOpenCodeRequestHeaders(model, options),
         (requestOptions) => this.adapters[protocol].stream(model, input.context, requestOptions)
       )
     });
@@ -174,11 +176,15 @@ export class PiProviderProtocolDispatcher {
       },
       start: (model, options) => streamWithXiaoechoModelSignals(
         model,
-        options,
+        withOpenCodeRequestHeaders(model, options),
         (requestOptions) => this.adapters[protocol].streamSimple(model, input.context, requestOptions)
       )
     });
   }
+}
+
+function withDefinedHeaders(headers: Record<string, string> | undefined): { headers?: Record<string, string> } {
+  return headers ? { headers } : {};
 }
 
 /** Scope fallback attribution to the actual HTTP request, including existing retries. */
@@ -324,6 +330,21 @@ implements ControlledPiStreamPort {
     this.storeSetId = options.storeSetId;
   }
 
+  prepareProviderInput(context: Readonly<Context>, model: Model<Api>, turnId: string) {
+    const nativeDocuments = (this.options.documentInput?.currentDocuments() ?? [])
+      .filter(document => document.transport === "native");
+    const fallbackLocked = this.documentFallbackTurnId === turnId && nativeDocuments.length > 0;
+    const providerContext: Context = { ...context, messages: validProviderHistory(context.messages, model) };
+    const injectDocuments = nativeDocuments.length > 0 && !fallbackLocked;
+    return {
+      providerContext, nativeDocuments, fallbackLocked, injectDocuments,
+      requestContext: fallbackLocked ? contextWithPiDocumentFallback(providerContext, nativeDocuments) : providerContext,
+      additionalInputTokens: injectDocuments
+        ? nativeDocuments.reduce((sum, document) => sum + Math.max(1_200, estimateTokenValue(document.text ?? "")), 0)
+        : 0
+    };
+  }
+
   async stream(
     input: ControlledPiStreamInput
   ): Promise<AssistantMessageEventStream> {
@@ -350,16 +371,8 @@ implements ControlledPiStreamPort {
     try {
       const dispatcher = this.options.dispatcher
         ?? new PiProviderProtocolDispatcher();
-      const documents = this.options.documentInput?.currentDocuments() ?? [];
-      const nativeDocuments = documents.filter(
-        (document) => document.transport === "native"
-      );
-      const fallbackLocked = this.documentFallbackTurnId === input.turnId
-        && nativeDocuments.length > 0;
-      const providerContext: Context = {
-        ...input.context,
-        messages: validProviderHistory(input.context.messages, input.model)
-      };
+      const prepared = this.prepareProviderInput(input.context, input.model, input.turnId);
+      const { nativeDocuments, providerContext, requestContext, fallbackLocked, injectDocuments } = prepared;
       const autoOutputLimitState: PiAutoOutputLimitRequestState = {
         retried: false,
         ...(input.options.timeoutMs && input.options.timeoutMs > 0
@@ -370,9 +383,7 @@ implements ControlledPiStreamPort {
         context: Context,
         injectNativeDocuments: boolean
       ): AssistantMessageEventStream => deferredStream(input.model, async () => {
-        const additionalInputTokens = injectNativeDocuments
-          ? nativeDocuments.reduce((sum, document) => sum + Math.max(1_200, estimateTokenValue(document.text ?? "")), 0)
-          : 0;
+        const additionalInputTokens = injectNativeDocuments ? prepared.additionalInputTokens : 0;
         await this.options.observeRequest?.(context, input, additionalInputTokens);
         const upstream = dispatcher.streamSimple({
         model: input.model,
@@ -390,6 +401,7 @@ implements ControlledPiStreamPort {
           temperature: input.options.temperature,
           cacheRetention: input.options.cacheRetention,
           ...(input.options.cacheRetention === "short" ? { sessionId: providerCacheKey(input.conversationId) } : {}),
+          ...withDefinedHeaders(openCodeSessionHeaders(input.model, providerCacheKey(input.conversationId))),
           maxRetries: input.options.maxRetries,
           timeoutMs: input.options.timeoutMs,
           onPayload: (payload: unknown) => {
@@ -421,15 +433,10 @@ implements ControlledPiStreamPort {
           onRecordError: () => console.error("EchoInk request usage could not be recorded")
         }) : upstream;
       });
-      let requestContext = providerContext;
       if (fallbackLocked) {
         if (nativeDocuments.some((document) => !document.text?.trim())) {
           return failedStream(input.model, "provider_protocol_failed");
         }
-        requestContext = contextWithPiDocumentFallback(
-          providerContext,
-          nativeDocuments
-        );
         if (!piDocumentFallbackFitsInputBudget(input, requestContext)) {
           return failedStream(
             input.model,
@@ -437,7 +444,6 @@ implements ControlledPiStreamPort {
           );
         }
       }
-      const injectDocuments = nativeDocuments.length > 0 && !fallbackLocked;
       const upstream = dispatchRequest(requestContext, injectDocuments);
       // 小echo: the server's concurrency gate says "busy" → wait 2 s and send the same request once more, silently.
       let busyRetried = false;
@@ -616,20 +622,19 @@ function sanitizeProviderStream(
             }
           }
           partial = event.error;
+          const status = responseStatus();
+          const raw = (event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage;
+          const detail = model.provider === "xiaoecho"
+            ? xiaoechoProviderFailureDetail(raw) : sanitizeProviderFailureDetail(status, raw, secrets);
+          const declaredOverflow = model.provider === "xiaoecho"
+            ? status === 413 || detail?.message === "CONTENT_TOO_LONG"
+            : isStatusContextOverflow(status, detail?.code ?? "") || isStatusContextOverflow(status, detail?.message ?? "");
           output.push({
             type: "error",
             reason: event.reason,
             error: Object.assign({}, event.error, {
-              echoInkProviderFailure: model.provider === "xiaoecho"
-                ? { message: xiaoechoFailureCode((event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage) }
-                : sanitizeProviderFailureDetail(responseStatus(),
-                    (event.error as AssistantProviderFailure).echoInkProviderFailure ?? event.error.errorMessage, secrets),
-              errorMessage: runtimeProviderFailureCode(
-                responseStatus(),
-                event.error.errorMessage ?? "",
-                event.error,
-                model.contextWindow
-              )
+              echoInkProviderFailure: detail,
+              errorMessage: runtimeProviderFailureCode(status, event.error.errorMessage ?? "", event.error, model.contextWindow, declaredOverflow)
             })
           });
         }
@@ -656,14 +661,15 @@ function sanitizeProviderStream(
 
 /**
  * Preserve Pi's context-overflow signal while reducing every other Provider
- * error to EchoInk's public failure vocabulary. AgentSession relies on the
- * canonical code to start its native compact-and-retry path.
+ * error to EchoInk's public failure vocabulary. The live request can recover
+ * from the canonical code before Pi commits an assistant failure.
  */
 function runtimeProviderFailureCode(
   status: number | null,
   message: string,
   assistantMessage?: AssistantMessage,
-  contextWindow?: number
+  contextWindow?: number,
+  declaredOverflow = false
 ): string {
   if (message === PI_OUTPUT_LIMIT_REJECTED || message === PI_AUTO_OUTPUT_REQUEST_REJECTED) return message;
   for (const code of [
@@ -673,7 +679,7 @@ function runtimeProviderFailureCode(
     if (message.includes(code)) return code;
   }
   if (
-    (
+    declaredOverflow || (
       assistantMessage
       && isContextOverflow(assistantMessage, contextWindow)
     )
@@ -687,7 +693,7 @@ function runtimeProviderFailureCode(
   if (/Stream ended without finish_reason|stream ended before (?:message_stop|a terminal response event)/iu.test(message)) {
     return preventProviderRetryAfterPartial("provider_network_error_http_incomplete", assistantMessage);
   }
-  const safeCode = safeProviderFailureCode(message) ?? providerFailureCode(
+  const safeCode = safeProviderFailureCode(message) ?? providerPlanFailureCode(message) ?? providerFailureCode(
     classifyPiProviderConnectionFailure(status, message)
   );
   return preventProviderRetryAfterPartial(safeCode, assistantMessage);
@@ -707,7 +713,7 @@ function thrownProviderFailureCode(
   }
   const safeCode = isStatusContextOverflow(status, message)
     ? "context_length_exceeded"
-    : safeProviderFailureCode(message) ?? providerFailureCode(
+    : safeProviderFailureCode(message) ?? providerPlanFailureCode(message) ?? providerFailureCode(
       classifyPiProviderConnectionFailure(status, message)
     );
   return preventProviderRetryAfterPartial(safeCode, partial);

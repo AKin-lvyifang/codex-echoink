@@ -6,28 +6,29 @@ export const PERSONAL_MEMORY_ACCEPTANCE_IDS = Object.freeze([
 ] as const);
 
 export type PersonalMemoryAcceptanceId = (typeof PERSONAL_MEMORY_ACCEPTANCE_IDS)[number];
-export type PersonalMemoryKind =
-  | "fact"
-  | "view"
-  | "decision"
-  | "goal"
-  | "task"
-  | "open_loop"
-  | "episode";
+export const PERSONAL_MEMORY_KINDS = ["fact", "view", "decision", "goal", "task", "open_loop", "episode"] as const;
+const PERSONAL_MEMORY_BASES = ["explicit", "observed", "inferred"] as const;
+const PERSONAL_MEMORY_CONTENT_ORIGINS = [
+  "user_statement", "user_edit", "dream_correction", "confirmed_change", "current_instruction",
+  "quotation", "code", "hypothesis", "knowledge", "tool_output"
+] as const;
+export type PersonalMemoryKind = (typeof PERSONAL_MEMORY_KINDS)[number];
+export type PersonalMemoryBasis = (typeof PERSONAL_MEMORY_BASES)[number];
 export type PersonalMemoryStatus = "current" | "superseded" | "closed";
-export type PersonalMemoryBasis = "explicit" | "observed" | "inferred";
 export type PersonalMemoryMode = "normal" | "no_memory";
-export type PersonalMemoryContentOrigin =
-  | "user_statement"
-  | "user_edit"
-  | "dream_correction"
-  | "confirmed_change"
-  | "current_instruction"
-  | "quotation"
-  | "code"
-  | "hypothesis"
-  | "knowledge"
-  | "tool_output";
+export type PersonalMemoryContentOrigin = (typeof PERSONAL_MEMORY_CONTENT_ORIGINS)[number];
+
+export function isPersonalMemoryKind(value: unknown): value is PersonalMemoryKind {
+  return PERSONAL_MEMORY_KINDS.some(kind => kind === value);
+}
+
+export function isPersonalMemoryBasis(value: unknown): value is PersonalMemoryBasis {
+  return PERSONAL_MEMORY_BASES.some(basis => basis === value);
+}
+
+export function isPersonalMemoryContentOrigin(value: unknown): value is PersonalMemoryContentOrigin {
+  return PERSONAL_MEMORY_CONTENT_ORIGINS.some(origin => origin === value);
+}
 
 export interface PersonalMemoryRuntimeContext {
   readonly vaultId: string;

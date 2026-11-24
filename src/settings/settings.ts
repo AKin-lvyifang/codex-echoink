@@ -1,3 +1,4 @@
+import { defaultWorkbenchNavigation, normalizeWorkbenchNavigation, type WorkbenchNavigationSettings } from "./workbench-navigation-settings";
 import { emptyWorkbenchDismissals, normalizeWorkbenchDismissals, type WorkbenchDismissals } from "../home/workbench-dismissals";
 import { CAUSE, pickErrorCopy } from "../core/error-copy";
 import { normalizeEchoInkMcpServerSettings, type EchoInkMcpServerSettings } from "../mcp-server/settings";
@@ -537,6 +538,8 @@ export interface QuickChatSettings {
 export interface EchoInkTodoCategory {
   id: string;
   name: string;
+  /** Preset hex from the shared category palette; absent uses a stable default. */
+  color?: string;
 }
 
 export interface EchoInkTodoItem {
@@ -560,6 +563,7 @@ export interface CodexForObsidianSettings {
   workbenchCheckin: WorkbenchCheckinData;
   workbenchDismissals: WorkbenchDismissals;
   workbenchOnboardingDismissed?: boolean;
+  workbenchNavigation: WorkbenchNavigationSettings;
   generationTemplates: GenerationTemplate[];
   pdfReading: import("../pdf-reading/types").PdfReadingSettings;
   selectionAsk: import("../selection-ask/settings").SelectionAskSettings;
@@ -633,6 +637,7 @@ export const DEFAULT_SETTINGS: CodexForObsidianSettings = {
   news: { subscriptions: [], dismissedAnnouncement: "" },
   workbenchCheckin: { signedDates: [], agentDates: [] },
   workbenchOnboardingDismissed: false,
+  workbenchNavigation: defaultWorkbenchNavigation(),
   workbenchDismissals: emptyWorkbenchDismissals(),
   generationTemplates: defaultGenerationTemplates(),
   pdfReading: { enabled: false, mineruToken: "", engine: "local", translationLanguage: "中文" },
@@ -822,6 +827,7 @@ export function normalizeSettingsData(input: unknown): { settings: CodexForObsid
     workbenchCheckin: normalizeWorkbenchCheckin(data.workbenchCheckin),
     workbenchDismissals: normalizeWorkbenchDismissals(data.workbenchDismissals),
     workbenchOnboardingDismissed: data.workbenchOnboardingDismissed === true,
+    workbenchNavigation: normalizeWorkbenchNavigation(data.workbenchNavigation),
     weatherCity: normalizeWeatherCity(data.weatherCity),
     news: normalizeNewsSettings(data.news),
     // Plan is a conversation/draft choice, never a default for future tasks.
@@ -1896,7 +1902,8 @@ export function normalizeTodoCategories(input: unknown): EchoInkTodoCategory[] {
     const id = typeof record.id === "string" && record.id.trim() ? record.id.trim() : newId("todo-category");
     if (seen.has(id)) continue;
     seen.add(id);
-    categories.push({ id, name });
+    const color = typeof record.color === "string" && /^#[0-9a-f]{6}$/iu.test(record.color) ? record.color.toLowerCase() : undefined;
+    categories.push(color ? { id, name, color } : { id, name });
   }
   return Array.isArray(input)
     ? categories

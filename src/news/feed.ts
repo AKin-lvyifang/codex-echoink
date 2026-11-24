@@ -5,8 +5,10 @@ export type NewsTrend = "new" | "up" | "flat" | "down";
 export interface NewsItem {
   id: string; title: string; summary: string; url: string; source: string;
   category: NewsCategory; score: number; publishedAt: string; eventId: string;
+  /** Optional English copy written by the server job alongside the Chinese one. */
+  titleEn?: string; summaryEn?: string;
 }
-export interface NewsEvent { id: string; title: string; heat: number; trend: NewsTrend; sourceCount: number; itemIds: string[] }
+export interface NewsEvent { id: string; title: string; heat: number; trend: NewsTrend; sourceCount: number; itemIds: string[]; titleEn?: string }
 export interface NewsAnnouncement { text: string; url: string | null }
 export interface NewsFeed {
   paused: boolean; announcement: NewsAnnouncement | null; version: 1; generatedAt: string | null;
@@ -32,6 +34,15 @@ export function safeNewsUrl(value: unknown): string | null {
 const isoTime = (value: unknown): string | null => typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value)) ? new Date(Date.parse(value)).toISOString() : null;
 const idText = (value: unknown): string | null => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/u.test(value) ? value : null;
 
+/** 英文界面用服务端给的英文标题和摘要；没有英文的条目保持原文。 */
+export function localizeNewsFeed(feed: NewsFeed, english: boolean): NewsFeed {
+  if (!english) return feed;
+  return { ...feed,
+    items: feed.items.map(item => item.titleEn || item.summaryEn
+      ? { ...item, title: item.titleEn ?? item.title, summary: item.summaryEn ?? item.summary } : item),
+    events: feed.events.map(event => event.titleEn ? { ...event, title: event.titleEn } : event) };
+}
+
 /** 顶层结构不对就整体拒绝；单条不合格只丢这一条，不让一条坏数据拖垮整页。 */
 export function parseNewsFeed(value: unknown): NewsFeed {
   const data = record(value);
@@ -44,7 +55,8 @@ export function parseNewsFeed(value: unknown): NewsFeed {
     const item = record(raw), id = idText(item?.id), title = newsPlainText(item?.title, 300), url = safeNewsUrl(item?.url), publishedAt = isoTime(item?.publishedAt);
     if (!item || !id || seen.has(id) || !title || !url || !publishedAt || !NEWS_CATEGORIES.includes(item.category as NewsCategory)) continue;
     seen.add(id);
-    items.push({ id, title, summary: newsPlainText(item.summary, 2000), url, source: newsPlainText(item.source, 80), category: item.category as NewsCategory,
+    const titleEn = newsPlainText(item.titleEn, 300), summaryEn = newsPlainText(item.summaryEn, 2000);
+    items.push({ ...(titleEn ? { titleEn } : {}), ...(summaryEn ? { summaryEn } : {}), id, title, summary: newsPlainText(item.summary, 2000), url, source: newsPlainText(item.source, 80), category: item.category as NewsCategory,
       score: typeof item.score === "number" && Number.isFinite(item.score) ? item.score : 0, publishedAt, eventId: idText(item.eventId) ?? "" });
   }
   const events: NewsEvent[] = [], eventIds = new Set<string>();
@@ -53,7 +65,8 @@ export function parseNewsFeed(value: unknown): NewsFeed {
     const itemIds = Array.isArray(event?.itemIds) ? event.itemIds.filter((item): item is string => typeof item === "string" && seen.has(item)) : [];
     if (!event || !id || eventIds.has(id) || !title || !itemIds.length) continue;
     eventIds.add(id);
-    events.push({ id, title, heat: typeof event.heat === "number" && Number.isFinite(event.heat) ? event.heat : 0,
+    const eventTitleEn = newsPlainText(event.titleEn, 300);
+    events.push({ id, title, ...(eventTitleEn ? { titleEn: eventTitleEn } : {}), heat: typeof event.heat === "number" && Number.isFinite(event.heat) ? event.heat : 0,
       trend: (["new", "up", "flat", "down"] as const).find(trend => trend === event.trend) ?? "flat",
       sourceCount: typeof event.sourceCount === "number" && Number.isSafeInteger(event.sourceCount) && event.sourceCount > 0 ? event.sourceCount : 1, itemIds });
   }

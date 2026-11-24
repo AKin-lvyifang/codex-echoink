@@ -22,6 +22,7 @@ export interface IPadWorkbenchHost {
   app: App;
   releaseUpdate?: import("../../settings/release-update").ReleaseUpdateController;
   store: MobileStore;
+  reloadTaskFile?: () => Promise<void>;
   runtime: MobileRuntime;
   services: MobileServices;
   agents: MobileAgentRegistryService;

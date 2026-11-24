@@ -18,7 +18,8 @@ import { getDesktopCrypto } from "./platform/desktop-crypto";
 import { DesktopExpertController } from "./plugin/expert-controller";
 import { applyExpertIdentityOverrides, isExpertAgent, isAgentHired, assertExpertAgentLocks } from "./agents/persona";
 import type { AgentRegistry } from "./agents/types";
-import { EXPERT_HALL_VIEW_TYPE, type ExpertHallHost } from "./experts/view";
+import { EXPERT_HALL_VIEW_TYPE, ExpertHallView, type ExpertHallHost } from "./experts/view";
+import { embeddedWorkbenchViews } from "./home/workbench-module-panel";
 import { createObsidianWorkspaceService, type WorkspaceService } from "./workspace/service";
 import { createDesktopWorkspacePathGuard } from "./workspace/desktop-safety";
 import { WORKSPACE_PREVIEW_VIEW_TYPE } from "./workspace/view";
@@ -327,7 +328,8 @@ export default class CodexForObsidianPlugin extends Plugin {
   expertDecisionSkills(agentId: string) { return this.experts.decisionSkills(agentId); }
   getExpertHallHost(): ExpertHallHost { return { content: this.experts.content, getAgents: () => this.settings.agentRegistry.agents,
     hire: async id => { await this.experts.hire(id); }, dismiss: id => this.dismissExpert(id),
-    open: id => this.openExpertConversation(id), upgrade: () => this.openEchoInkAccountSettings("benefits") }; }
+    open: id => this.openExpertConversation(id), upgrade: () => this.openEchoInkAccountSettings("benefits"),
+    english: () => this.settings.settingsLanguage === "en" }; }
   async openExpertHall(aboutId?: string): Promise<void> {
     let leaf = this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)[0];
     if (!leaf) leaf = this.app.workspace.getLeaf("tab");
@@ -475,7 +477,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     void this.refreshXiaoechoCatalog(true);
     // Already signed in from an earlier session: list 小echo once the layout (and runtime) is ready.
     this.app.workspace.onLayoutReady(() => { void this.ensureXiaoechoAfterSignIn(); });
-    this.register(this.accountService.subscribe(() => { for (const leaf of this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE)) { const view = leaf.view as unknown as { refresh?(): Promise<void> }; void view.refresh?.().catch(() => {}); } }));
+    this.register(this.accountService.subscribe(() => { for (const view of [...this.app.workspace.getLeavesOfType(EXPERT_HALL_VIEW_TYPE).map(leaf => leaf.view as unknown), ...embeddedWorkbenchViews()]) { if (view instanceof ExpertHallView) void view.refresh().catch(() => {}); } }));
     if (Platform.isDesktopApp) {
       this.echoInkMcp = new EchoInkMcpController(this);
       this.register(() => { this.echoInkMcp?.dispose(); this.echoInkMcp = null; });
@@ -622,6 +624,7 @@ export default class CodexForObsidianPlugin extends Plugin {
     this.appearance?.refresh();
   }
   async activateHomeView(options: { keepRightSidebar?: boolean } = {}): Promise<void> { return this.getViewService().activateHomeView(options); }
+  refreshWorkbenchNavigation(): void { this.getViewService().refreshWorkbenchNavigation(); }
   async activateKnowledgeView(page: "overview" | "health" | "history" = "overview"): Promise<void> { return this.getViewService().activateKnowledgeView(page); }
   async activateMemoryView(request: MemoryPageRequest = {}): Promise<void> { return this.getViewService().activateMemoryView(request); }
 

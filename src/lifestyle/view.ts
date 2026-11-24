@@ -55,8 +55,8 @@ export class LifestyleView extends ItemView {
     const identity = header.createDiv({ cls: Platform.isDesktopApp ? "echoink-module-identity" : "" });
     if (Platform.isDesktopApp) this.addWorkbenchBack(identity);
     const title = Platform.isDesktopApp ? identity.createDiv() : identity;
-    title.createEl("small", { text: "EchoInk / life" });
-    title.createEl("h1", { text: "财务" });
+    title.createEl("small", { text: "EchoInk / life" }).dataset.echoinkModuleTitle = "";
+    title.createEl("h1", { text: "财务" }).dataset.echoinkModuleTitle = "";
     const actions = header.createDiv({ cls: "echoink-life-header-actions" });
     const back = actions.createEl("button", { text: "设置" });
     back.onclick = () => void this.service.plugin.openLifestyleSettings("finance");
@@ -80,7 +80,7 @@ export class LifestyleView extends ItemView {
   private addWorkbenchBack(parent: HTMLElement): void {
     if (!this.service.plugin.activateHomeView) return;
     const back = createOriginButton(parent, { cls: "echoink-module-back", attr: { type: "button", "aria-label": "返回工作台" } });
-    applyAmicroButton(back, { variant: "icon" }); setIcon(back, "arrow-left");
+    applyAmicroButton(back, { variant: "icon" }); setIcon(back, "arrow-left"); back.dataset.echoinkWorkbenchBack = "";
     back.onclick = () => { void this.service.plugin.activateHomeView!({ keepRightSidebar: true }).catch(error => new Notice(userFacingErrorText(error, "无法返回工作台。请稍后重试。"))); };
   }
 }

@@ -1,7 +1,7 @@
 {
   "id": "codex-echoink",
   "name": "EchoInk Agent",
-  "version": "2.9.2",
+  "version": "2.9.3",
   "minAppVersion": "1.11.4",
   "description": "Chat with your notes, get cited answers from your vault, and let AI agents organize sources into a knowledge base. Keeps long-term memory you can view and edit. Works with OpenAI-compatible models using your own API key.",
   "author": "AKin-lvyifang",
