@@ -200,6 +200,7 @@ export class FinanceWorkspace {
     this.unsubscribeAnalysis ??= this.service.finance.subscribe(() => this.redraw());
     this.unsubscribeMembership ??= this.service.finance.access.subscribe(() => { if (this.inlineControls) this.inlineControls.refresh(); else this.redraw(); });
     body.addClass("echoink-finance-workspace");
+    body.toggleClass("echoink-finance-desktop-overview", Platform.isDesktopApp && this.state.page === "overview");
     const top = body.createDiv({ cls: "echoink-finance-top" });
     const tabs = top.createDiv({ cls: "echoink-finance-tabs echoink-page-tabs", attr: { role: "tablist", "aria-label": "财务页面" } });
     const pages: [FinancePage, string, string][] = [["overview", "总览", "layout-dashboard"], ["ledger", "明细", "list"], ["plan", "计划", "calendar-range"], ["report", "报告", "file-text"]];
@@ -990,7 +991,7 @@ export class FinanceWorkspace {
       journal.onkeydown = (event) => event.stopPropagation();
     }
     copy.createEl("small", { text: entry.description || entry.category });
-    copy.createEl("small", { text: FINANCE_SOURCE_LABELS[entry.source] });
+    copy.createEl("small", { cls: "echoink-finance-transaction-source", text: FINANCE_SOURCE_LABELS[entry.source] });
     const category = row.createDiv({ cls: "echoink-finance-transaction-category" });
     const categoryLine = category.createSpan({ cls: "echoink-finance-transaction-category-line" });
     const dot = categoryLine.createSpan({ cls: "echoink-finance-category-dot", attr: { "aria-hidden": "true" } });

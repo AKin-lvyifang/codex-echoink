@@ -233,6 +233,12 @@ export async function runWorkbenchDataTests(root: string): Promise<void> {
     status: "completed", currency: "CNY", account: "合成账户", description: "", note: "" });
   snapshot = await reloaded.load(now); assert.ok([3, 11, 13].every(id => snapshot.signals.some(signal => signal.id === id)));
   const beforeSnapshot = await userFileContents(f); await reloaded.load(now); assert.deepEqual(await userFileContents(f), beforeSnapshot, "financial snapshots do not create a Base or mutate ledger notes");
+  let ledgerNotifications = 0;
+  const stopLedgerProbe = f.finance.subscribeEntries(() => { ledgerNotifications++; });
+  try {
+    await reloaded.load(now);
+    assert.equal(ledgerNotifications, 0, "reading workbench signals must not retrigger the finance view or workbench snapshot");
+  } finally { stopLedgerProbe(); }
   f.plugin.accountService = { checkCapability: () => false, subscribe: () => () => {} };
   const financeRead = f.finance.ledger.readSnapshots.bind(f.finance.ledger), pdfHistory = f.plugin.pdfReading.api.history.bind(f.plugin.pdfReading.api);
   const englishReader = reloaded as unknown as { readEnglishMissing(target: string): Promise<boolean> };

@@ -27446,7 +27446,7 @@ body:not(.is-mobile) .echoink-home-workspace:not(.echoink-mobile-home) .echoink-
 .echoink-finance-card{min-width:0;padding:20px;border:1px solid var(--finance-line);border-radius:12px;background:var(--background-primary);box-shadow:0 3px 16px #00000008}
 .echoink-finance-card>small,.echoink-finance-card>p,.echoink-finance-card .echoink-finance-section-head small{color:var(--text-muted)}
 .echoink-finance-card>small{display:block;font-size:.8em}
-.echoink-finance-number{display:block;margin:9px 0 6px;font-size:clamp(1.3rem,2.2vw,2rem);font-weight:550;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.echoink-finance-number{display:block;margin:9px 0 6px;font-size:clamp(1.3rem,2.2vw,2rem);font-weight:550;font-variant-numeric:tabular-nums}
 .echoink-finance-card p{font-size:.88em;line-height:1.6;margin:8px 0}
 .echoink-finance-section-head{margin-bottom:10px;flex-wrap:wrap}
 .echoink-finance-section-head h3{margin:0;font-size:1.05em;font-weight:600}
@@ -27884,7 +27884,7 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-finance-bill-summary p{font-size:.85em;line-height:1.7}
 .echoink-finance-bill-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
 .echoink-finance-bill-metrics>div{display:grid;gap:8px;min-width:0}
-.echoink-finance-bill-metrics strong{font-size:1.45em;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.echoink-finance-bill-metrics strong{font-size:1.45em;font-weight:600;line-height:1.45}
 .echoink-finance-bill-extremes{display:flex;flex-wrap:wrap;gap:18px;padding:0 2px}
 .echoink-finance-bill-extremes>div{flex:1;min-width:145px;display:grid;gap:6px}
 .echoink-finance-bill-extremes span{font-size:.85em;color:var(--text-muted)}
@@ -27970,7 +27970,8 @@ button.echoink-finance-bill-list-row{display:grid;grid-template-columns:minmax(0
 .echoink-finance-budget-month-tabs{margin:12px 0}.echoink-finance-budget-month-tabs [aria-invalid=true]{color:var(--text-error)}
 .echoink-finance-budget-editing{color:var(--text-muted);margin:10px 0 14px;font-size:.88em}
 
-.echoink-finance-amount{display:inline-flex;align-items:baseline;white-space:nowrap;letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums}
+.echoink-finance-amount,.echoink-finance-number-flow,.echoink-finance-amount-static{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.echoink-finance-amount{display:inline-flex;align-items:baseline;letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums}
 .echoink-finance-currency{white-space:pre;flex:none}.echoink-finance-sign{display:inline-block;flex:none;margin-right:.12em;letter-spacing:normal}.echoink-finance-sign[hidden]{display:none}
 
 .echoink-finance-amount-static{letter-spacing:normal;font-kerning:none;font-variant-numeric:tabular-nums}
@@ -35129,6 +35130,135 @@ textarea.echoink-agent-editor-persona { display:block; width:100%; min-height:22
 .echoink-finance-plan-budget-daily>span{color:var(--text-muted)}
 .echoink-finance-plan-budget-daily>strong{font-weight:500;font-variant-numeric:tabular-nums}
 .echoink-finance-plan-budget-daily>button{width:auto;margin-left:auto}
+
+/* Desktop finance overview, including the toolbar while this tab is active. */
+.echoink-finance-desktop-overview {
+  --finance-overview-11: calc(var(--font-text-size,16px) * 11 / 16);
+  --finance-overview-12: calc(var(--font-text-size,16px) * 12 / 16);
+  --finance-overview-13: calc(var(--font-text-size,16px) * 13 / 16);
+  --finance-overview-14: calc(var(--font-text-size,16px) * 14 / 16);
+  --finance-overview-20: calc(var(--font-text-size,16px) * 20 / 16);
+  --finance-overview-36: calc(var(--font-text-size,16px) * 36 / 16);
+  --finance-overview-chart-inset: 34px;
+  font-size: var(--finance-overview-12);
+}
+.echoink-finance-desktop-overview .echoink-finance-month-lead strong,
+.echoink-finance-desktop-overview .echoink-finance-year-summary > div:first-child strong {
+  font-size: var(--finance-overview-36);
+  font-weight: 500;
+  line-height: 1.15;
+}
+.echoink-finance-desktop-overview .echoink-finance-month-figure strong,
+.echoink-finance-desktop-overview .echoink-finance-year-summary > div:not(:first-child) strong,
+.echoink-finance-desktop-overview .echoink-finance-mini-value {
+  font-size: var(--finance-overview-20);
+  font-weight: 500;
+  line-height: 1.3;
+}
+.echoink-finance-desktop-overview .echoink-finance-monthly :is(.echoink-finance-section-head, .echoink-finance-month-empty) h3 {
+  font-size: var(--finance-overview-14);
+  font-weight: 600;
+  line-height: 1.45;
+}
+.echoink-finance-desktop-overview :is(
+  .echoink-finance-rank-name, .echoink-finance-rank-amount b,
+  .echoink-finance-trend:not(.is-head) > span:nth-child(n+3),
+  .echoink-finance-goal .echoink-finance-section-head > strong,
+  .echoink-finance-day-cell .echoink-finance-day-number
+) {
+  font-size: var(--finance-overview-13);
+  font-weight: 500;
+}
+.echoink-finance-desktop-overview .echoink-finance-month-list :is(.echoink-finance-transaction-copy strong, .echoink-finance-transaction-amount) {
+  font-size: var(--finance-overview-13);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.echoink-finance-desktop-overview :is(
+  .echoink-finance-month-summary small, .echoink-finance-year-summary small, .echoink-finance-month-compare,
+  .echoink-finance-monthly .echoink-finance-section-head > small, .echoink-finance-monthly .echoink-finance-card p,
+  .echoink-finance-rank-amount span, .echoink-finance-rank-change, .echoink-finance-chart-key, .echoink-finance-trend.is-head,
+  .echoink-finance-filter-chip, .echoink-finance-mini > small, .echoink-finance-mini-lines,
+  .echoink-finance-goal > small, .echoink-finance-legacy-goals small,
+  .echoink-finance-quick .echoink-finance-chip, .echoink-finance-quick-field input
+) {
+  font-size: var(--finance-overview-12);
+  font-weight: 400;
+  line-height: 1.55;
+}
+.echoink-finance-workspace.echoink-finance-desktop-overview :is(.echoink-finance-actions button, .echoink-finance-monthly button:not(.echoink-finance-day-cell, .echoink-finance-column, .echoink-finance-rank-row)) {
+  font-size: var(--finance-overview-12);
+  font-weight: 400;
+  line-height: 1.55;
+}
+.echoink-finance-desktop-overview .echoink-finance-month-list :is(.echoink-finance-transaction-copy small, .echoink-finance-transaction-category, time) {
+  font-size: var(--finance-overview-12);
+  font-weight: 400;
+  line-height: 1.55;
+}
+.echoink-finance-desktop-overview :is(
+  .echoink-finance-columns-grid span, .echoink-finance-column > small, .echoink-finance-column-plot small,
+  .echoink-finance-day-week, .echoink-finance-day-cell .echoink-finance-day-amount,
+  .echoink-finance-tabs .echoink-finance-tab-count, .echoink-finance-month-list .echoink-finance-refund-label,
+  .echoink-finance-month-list .echoink-finance-transaction-copy .echoink-finance-transaction-source
+) {
+  font-size: var(--finance-overview-11);
+  font-weight: 400;
+}
+.echoink-finance-desktop-overview .echoink-finance-transaction-copy .echoink-finance-transaction-source { color: var(--text-faint); }
+.echoink-finance-desktop-overview .echoink-finance-rank-name,
+.echoink-finance-desktop-overview .echoink-finance-month-list .echoink-finance-transaction-copy :is(strong, small) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.echoink-finance-desktop-overview .echoink-finance-rank-name span:last-child,
+.echoink-finance-desktop-overview .echoink-finance-month-list .echoink-finance-transaction-copy :is(strong, small) { overflow: visible; }
+.echoink-finance-workspace.echoink-finance-desktop-overview button.echoink-finance-day-cell {
+  align-content: start;
+  gap: 4px;
+  height: auto;
+  min-height: 58px;
+  padding-block: 4px;
+}
+.echoink-finance-desktop-overview .echoink-finance-day-mark,
+.echoink-finance-desktop-overview .echoink-finance-day-mark svg { width: 34px; height: 34px; }
+.echoink-finance-desktop-overview .echoink-finance-month-history .echoink-finance-columns { padding-left: var(--finance-overview-chart-inset); }
+.echoink-finance-desktop-overview :is(.echoink-finance-columns-grid, .echoink-finance-columns-average) { left: var(--finance-overview-chart-inset); }
+.echoink-finance-desktop-overview .echoink-finance-columns-grid span { left: calc(-1 * var(--finance-overview-chart-inset)); }
+.echoink-finance-desktop-overview .echoink-finance-month-list .echoink-finance-transaction.is-compact { gap: 10px; }
+@container life-workspace (width > 660px) {
+  .echoink-finance-desktop-overview .echoink-finance-month-list .echoink-finance-transaction.is-compact {
+    grid-template-columns: minmax(130px, 2fr) minmax(70px, .7fr) 56px minmax(90px, .8fr);
+  }
+}
+@container life-workspace (430px < width <= 660px) {
+  .echoink-finance-desktop-overview .echoink-finance-month-list .echoink-finance-transaction.is-compact {
+    grid-template-columns: minmax(120px, 1fr) 56px minmax(85px, auto);
+  }
+}
+@container life-workspace (width > 560px) {
+  .echoink-finance-workspace.echoink-finance-desktop-overview button.echoink-finance-rank-row {
+    grid-template-columns: 82px minmax(0, 1fr) minmax(128px, max-content) minmax(74px, max-content);
+  }
+}
+@container life-workspace (560px < width <= 820px) {
+  .echoink-finance-desktop-overview .echoink-finance-month-summary { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+  .echoink-finance-desktop-overview :is(.echoink-finance-month-lead, .echoink-finance-month-figure) { flex: 1 1 0; min-width: max-content; }
+  .echoink-finance-desktop-overview .echoink-finance-month-lead { flex-grow: 1.4; }
+  .echoink-finance-desktop-overview .echoink-finance-month-compare { flex-basis: 100%; }
+  /* Reserve the final value's width while NumberFlow grows from zero. */
+  .echoink-finance-desktop-overview .echoink-finance-month-summary .echoink-finance-number { display: grid; justify-items: start; }
+  .echoink-finance-desktop-overview .echoink-finance-month-summary .echoink-finance-number::before {
+    content: attr(aria-label);
+    visibility: hidden;
+    white-space: nowrap;
+    padding-inline-end: .12em;
+    letter-spacing: normal;
+    font-kerning: none;
+  }
+  .echoink-finance-desktop-overview .echoink-finance-month-summary .echoink-finance-number::before,
+  .echoink-finance-desktop-overview .echoink-finance-month-summary .echoink-finance-number > span { grid-area: 1 / 1; }
+}
 
 /* Workbench in-page navigation: module pages open below the navigation; the overview is the fixed first entry. */
 .echoink-workbench .wb-modules button.wb-button.is-current, .echoink-workbench .wb-modules button.wb-button.is-current:not(:disabled):is(:hover, :active) { background: var(--wb-hover); color: var(--wb-text); }

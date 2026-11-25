@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.9.4 - 2026-11-24
+<!-- release-type: fix -->
+### 2.9.4 · 修复财务总览金额显示
+
+### 中文
+
+类型：修复
+
+#### 更新内容
+
+- 财务总览里的金额保持在一行。打开总览时，页面也不会再反复跳动。
+- 电脑上的财务总览调大了主要金额的字号，扫一眼就能找到关键数字。
+
+#### 下载与升级
+
+在 Obsidian 的第三方插件页检查更新。手动升级时，从本页下载同一版本的 `main.js`、`manifest.json` 和 `styles.css`，替换插件目录里的同名文件，保留 `data.json`。需要 Obsidian 1.11.4 或更新版本。
+
+### English
+
+**2.9.4 · Finance overview display fixes**
+
+Type: Fixes
+
+#### What's new
+
+- Amounts in the Finance overview stay on one line, and the page no longer jumps repeatedly when you open it.
+- On desktop, the main amounts in the Finance overview are larger and easier to spot.
+
+#### Download and upgrade
+
+Check for updates in Obsidian's Community plugins settings. For a manual update, download `main.js`, `manifest.json`, and `styles.css` from this release, replace the matching files in the plugin folder, and keep `data.json`. Requires Obsidian 1.11.4 or later.
+
+
 ## 2.9.3 - 2026-11-24
 <!-- release-type: feat -->
 ### 2.9.3 · 新待办，财务改版

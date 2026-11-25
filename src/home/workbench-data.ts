@@ -281,7 +281,9 @@ export class WorkbenchDataService implements WorkbenchDataPort {
       inboxScope: scopeKey(this.roots("inbox")), raw: [], rawScope: scopeKey(this.roots("raw")), pdfJobs: [], reviewComplete: null,
       isolated: null, knowledgeScope: scopeKey([...this.roots("wiki"), ...this.roots("projects")]), language: this.plugin.settings.settingsLanguage };
     if (authorizedModules.includes("finance") && this.plugin.app.workspace.layoutReady) facts.finance = await attempt("财务读取失败", undefined, async () => {
-      const records = await this.plugin.lifestyle.finance.ledger.readSnapshots(), data = await this.plugin.lifestyle.store.readFresh();
+      // The workbench already subscribes to ledger changes. A read must not reschedule itself.
+      const records = await this.plugin.lifestyle.finance.ledger.readSnapshots({ notify: false });
+      const data = await this.plugin.lifestyle.store.readFresh();
       const errors = this.plugin.lifestyle.finance.ledger.issues();
       issues.push(...errors.map(error => `财务：${error.path}：${error.reason}`));
       return { entries: records.map(record => record.entry), data };
