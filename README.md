@@ -114,8 +114,8 @@ You can bring your own model API key on any plan. Signed-in accounts can also re
 
 | Feature | Description | Basic | PRO |
 | --- | --- | --- | --- |
-| One-person company | The assistant delegates on desktop, iPhone, and iPad; projects start after proposal confirmation, with questions and approvals in Pending decisions. Mobile is in Beta | ✅ | ✅ |
-| Module owners | Assign role agents to modules in Agent settings; choose an owner before starting. Paid modules retain their own entitlement requirements | ✅ | ✅ |
+| One-person company | The assistant delegates on desktop, iPhone, and iPad; projects start after proposal confirmation, with questions and approvals under To confirm on desktop and Pending decisions on mobile. Mobile is in Beta | ✅ | ✅ |
+| Module owners | In Agent settings, choose who gets each module’s work first. If no owner is assigned, choose one before starting. Paid modules retain their own entitlement requirements | ✅ | ✅ |
 | Multi-agent tasks | View employee tasks and outputs; review interruptions before resuming. Projects and employee conversations cannot yet be viewed or resumed across devices | ✅ | ✅ |
 | Agent models | Follow the current conversation or set a model and supported reasoning level for each Agent | ✅ | ✅ |
 | Agent persona import | Paste an existing persona when creating an Agent | ✅ | ✅ |

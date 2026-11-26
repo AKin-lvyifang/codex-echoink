@@ -36,8 +36,6 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **Workbench check-in:** Workbench check-in is an online account action. Opening the Workbench while signed in queries your account's status for the local date. Only pulling the weather doll down or pressing Arrow Down submits a manual check-in, sending your account identity through the existing login token, local date, and time zone to **https://echoink.cn**. Check-ins are saved with your server account and cached only in memory by the plugin. There is no automatic check-in or upload of Agent usage days, notes, or conversation content.
 
-- **Workbench gifts:** After sign-in, the plugin checks for pending gifts and sends the gift ID when you claim one.
-
 - **Run records and reports:** From a session’s **…** menu, you can export its run records or voluntarily upload a problem report to **echoink.cn**. Reports include conversations, note excerpts read by the agent, tool and runtime logs, environment details, and errors, together with your description and optional contact information. Signed-in submissions are linked to your account. Recognized secrets are hidden automatically; review the preview before uploading. Reports are used for troubleshooting and may be analyzed with AI assistance. They are retained for **180 days**; to request earlier deletion, contact the author through [support](https://echoink.cn/support) with the report ID. Exporting alone saves a file in your vault without uploading it.
 
 - **Static PRO information:** The plugin’s own interface includes static PRO benefit information and official Skill comparison links opened when you click them. It does not load dynamic online advertising.
@@ -92,7 +90,7 @@ The complete disclosures for the EchoInk Agent plugin. A short summary is in the
 
 - **Knowledge retrieval scope:** Knowledge retrieval excludes the private-memory and internal plugin data folders. This is not a global access restriction for every file tool or third-party service.
 
-- **Folder access when dispatching work.** The assistant can grant assigned agents access to regular folders by default. You can turn this off in the desktop assistant editor. Project folders can also be opened to project staff. Agents can read ordinary notes for their tasks. Writes remain subject to module ownership and the applicable permissions. This rule makes no network request. Any content an agent reads and sends to a model follows that provider's policy.
+- **Vault access in dispatched tasks.** Regular Agents may read and write ordinary folders and module folders within the task’s permissions, including when the Chief of Staff dispatches them. PRO entitlements, module switches, and approval rules still apply. Hired experts remain subject to their module grants and need a task-specific grant to write to ordinary folders when dispatched. Applying these rules makes no network request. Content an Agent sends to a model follows that provider’s policy.
 
 ## Website and account service
 

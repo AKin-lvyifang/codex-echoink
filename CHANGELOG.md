@@ -15,7 +15,8 @@
 - **打开工作台领取更新礼物。** 登录 EchoInk 后，在电脑、iPhone 或 iPad 的工作台点「领取礼物」。符合条件的账号可领一次 100 AI 点数，从领取起 30 天内有效。如果有已经到账的签到补发，礼物入口也会显示到账记录。
 - **在对话旁看点数余额。** 电脑端的对话输入区上方可以展开 AI 点数面板。领取礼物和使用小echo 后，可以就地看余额变化。模型菜单把消耗 EchoInk 点数的小echo 和其他模型分组。工作台也会向部分用户显示「支持作者」，点击会打开 GitHub。
 - **从工作台看进度，把事情交给负责人。** 电脑端概览把提醒、待确认、今日待办、正在进行和未完成分开。各模块标题栏有交给负责人的操作，例如在日记页点「回顾今日」，或在知识库点「整理 Inbox」。
-- **给不同 Agent 配不同模型。** 打开 Agent 编辑页，可以跟随当前对话的模型，也可以指定模型和该模型支持的思考强度。日记、待办等基础能力可按 Agent 配置。
+- **给不同 Agent 配不同模型。** 打开 Agent 编辑页，可以跟随当前对话的模型，也可以指定模型和该模型支持的思考强度。也可为它选择自建 Skill 和 MCP 工具。
+- **模块分工用来决定优先交给谁。** 普通 Agent 可在当次权限允许的范围内读写仓库里的普通文件夹和模块目录。专家仍有专属权限范围，PRO、模块开关和审批继续生效。电脑端也可请总助查找 Obsidian 插件，安装前会请你确认。
 - **从一个月的日记看看自己的写作倾向。** 电脑端某月有至少 8 篇正文满 100 字的日记时，可以点月份旁的人格入口。登录后主动生成，可把结果存成笔记或保存为分享卡。
 - **修复两处卡住的问题。** 知识库整理可以验证文件名里含百分号的来源。多个 Obsidian CLI 调用并发时，读操作超时会结束等待，工具卡也能正确收尾。
 
@@ -34,7 +35,8 @@ Type: New
 - **Claim your update gift from the workbench.** Sign in to EchoInk and select Claim gift on desktop, iPhone, or iPad. Eligible accounts can claim 100 AI points once. They expire 30 days after claiming. If missed check-in points have already been credited to your account, the same entry shows the receipt.
 - **See your AI points while you chat.** On desktop, expand the points panel above the message field to see your balance change after a gift or a Xiaoecho request. The model picker groups Xiaoecho models that use EchoInk points separately from other models. The desktop workbench may also show a Support the developer prompt that opens GitHub when selected.
 - **See what's in progress and hand work to the right Agent.** The desktop workbench groups reminders, items awaiting confirmation, today's to-dos, work in progress, and unfinished tasks. Module headers offer shortcuts to their assigned Agents, such as Review today in Journal and Organize Inbox in Knowledge Base.
-- **Choose a model for each Agent.** In the Agent editor, follow the current conversation or choose a specific model and a supported reasoning level. You can configure basic capabilities such as Journal and To-dos for each Agent.
+- **Choose a model for each Agent.** In the Agent editor, follow the current conversation or choose a specific model and a supported reasoning level. You can also choose custom Skills and MCP tools for each Agent.
+- **Module assignments decide who gets the work first.** Regular Agents can read and write ordinary folders and module folders within the permissions of the current task. Experts keep their own limits. PRO access, module switches, and approvals still apply. On desktop, you can ask the Chief of Staff to find an Obsidian plugin and confirm before it installs it.
 - **Explore your writing tendencies from a month of journal entries.** On desktop, the persona entry appears next to the month when at least eight entries have 100 characters of body text each. Sign in and choose to generate a result, then save it as a note or share card.
 - **Two fixes for stalled work.** Knowledge organization now verifies sources whose file names contain a percent sign. When several Obsidian CLI calls run at once, a read that times out ends the wait and its tool card can finish cleanly.
 
